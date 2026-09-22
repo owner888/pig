@@ -40,7 +40,7 @@ Both were chosen explicitly, not by default:
 running. `pig/tui` additionally requires **`ext-pcntl`**, because SIGWINCH is the only way to learn
 that the window was resized; without it the UI would draw at the startup width forever, so
 `ProcessTerminal` refuses to start rather than doing that quietly. `ext-intl` is deliberately *not*
-required — see [Two upstream dependencies that PCRE already covers](#two-upstream-dependencies-that-pcre-already-covers).
+required — see [Three upstream dependencies the standard library already covers](#three-upstream-dependencies-the-standard-library-already-covers).
 
 One external binary: `stty`. PHP core has no termios binding and ext-pcntl does not add one, so
 raw mode and the window size go through `proc_open('stty …')` against `/dev/tty`.
@@ -60,7 +60,7 @@ all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439),
 (`utils.ts` 712 → `terminal.ts` 138 → `tui.ts` 351 → `keys.ts` 547). Next is `tui/components` —
 `editor.ts` 1322 is the big one — then the coding agent's tools and CLI.
 
-### Two upstream dependencies that PCRE already covers
+### Three upstream dependencies the standard library already covers
 
 `pi-tui` pulls in `get-east-asian-width` and leans on `Intl.Segmenter`, both for one question:
 how many columns will the terminal give this string? Neither is needed here.
@@ -70,6 +70,10 @@ how many columns will the terminal give this string? Neither is needed here.
   `preg_match_all` call — no ext-intl, no table of Unicode ranges.
 - **Character width**: `mb_strwidth()` carries the East Asian Width table, and PCRE answers
   `\p{Extended_Pictographic}` and `\p{Emoji_Presentation}` for the emoji cases it does not cover.
+
+`chalk` is the third, and `Pig\Tui\Style` replaces it: a TUI needs "wrap this string in a
+style and close it again", which is one file, not a package. Components take styles as
+`Closure(string): string`, so `Style::dim(...)` is what gets passed around.
 
 The one thing PCRE has no answer for is JavaScript's `\p{RGI_Emoji}`, which matches a whole emoji
 *sequence*; PCRE properties test single codepoints. `Width` asks the question of the cluster's
