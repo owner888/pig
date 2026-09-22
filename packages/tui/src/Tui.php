@@ -6,6 +6,7 @@ namespace Pig\Tui;
 
 use Closure;
 use Pig\Async\Loop;
+use Pig\Tui\Images\TerminalImage;
 
 /**
  * The screen: a component tree, drawn by redrawing as little as possible.
@@ -33,6 +34,12 @@ class Tui extends Container
     private int $cursorRow = 0;
 
     private bool $renderRequested = false;
+
+    /** The terminal was asked how big a cell is and has not answered yet. */
+    private bool $awaitingCellSize = false;
+
+    /** Input held back while that answer might still be arriving. */
+    private string $cellSizeBuffer = '';
 
     /** @var Closure(): void|null */
     private ?Closure $onDebug = null;
@@ -66,7 +73,63 @@ class Tui extends Container
         );
 
         $this->terminal->hideCursor();
+        $this->askForCellSize();
         $this->requestRender();
+    }
+
+    /**
+     * Ask the terminal how big a character cell is, in pixels.
+     *
+     * Only worth asking on a terminal that draws images, because that is the only thing
+     * the answer is used for. The reply comes back as *input*, so the next few keystrokes
+     * have to be sifted for it before they reach a component.
+     */
+    private function askForCellSize(): void
+    {
+        if (!TerminalImage::capabilities()->drawsImages()) {
+            return;
+        }
+
+        $this->awaitingCellSize = true;
+        $this->terminal->write("\x1b[16t");
+    }
+
+    /**
+     * Pull the cell-size reply out of the input stream, if it is in there.
+     *
+     * Returns what is left for the components. The reply may arrive split across reads,
+     * so an incomplete escape sequence is held back rather than delivered as keystrokes —
+     * but only until something that looks like a finished sequence turns up, because a
+     * terminal that never answers must not swallow the user's typing forever.
+     */
+    private function takeCellSizeReply(string $data): string
+    {
+        $this->cellSizeBuffer .= $data;
+        $size = TerminalImage::parseCellSizeReply($this->cellSizeBuffer);
+
+        if ($size !== null) {
+            TerminalImage::setCellSize($size);
+            $this->awaitingCellSize = false;
+            $rest = (string) preg_replace('/\x1b\[6;\d+;\d+t/', '', $this->cellSizeBuffer, 1);
+            $this->cellSizeBuffer = '';
+
+            // Every image was measured against the wrong cell size until now.
+            $this->invalidate();
+            $this->requestRender(true);
+
+            return $rest;
+        }
+
+        // Still mid-sequence: wait for the rest.
+        if (preg_match('/\x1b(\[6?;?[\d;]*)?$/', $this->cellSizeBuffer) === 1) {
+            return '';
+        }
+
+        $rest = $this->cellSizeBuffer;
+        $this->cellSizeBuffer = '';
+        $this->awaitingCellSize = false;
+
+        return $rest;
     }
 
     public function stop(): void
@@ -104,6 +167,14 @@ class Tui extends Container
 
     private function handleInput(string $data): void
     {
+        if ($this->awaitingCellSize) {
+            $data = $this->takeCellSizeReply($data);
+
+            if ($data === '') {
+                return;
+            }
+        }
+
         if ($this->onDebug !== null && Keys::isShiftCtrlD($data)) {
             ($this->onDebug)();
 

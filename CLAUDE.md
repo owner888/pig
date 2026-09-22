@@ -51,15 +51,15 @@ raw mode and the window size go through `proc_open('stty …')` against `/dev/tt
 packages/async/      → Pig\Async\        (pig/async)       Loop, Future, Deferred, Async, Socket, Abort*
 packages/ai/         → Pig\Ai\           (pig/ai)          unified LLM API, HTTP/SSE, Anthropic
 packages/agent-core/ → Pig\Agent\        (pig/agent-core)  AgentLoop, Agent, tools, events
-packages/tui/        → Pig\Tui\          (pig/tui)         renderer, widths, keys, editor, markdown
+packages/tui/        → Pig\Tui\          (pig/tui)         renderer, widths, keys, editor, markdown, images
 packages/coding-agent/ → Pig\CodingAgent\                  not started
 ```
 
 Ported so far: all of `ai` (`types.ts`, `utils/event-stream.ts`, `stream.ts`, the Anthropic provider),
 all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439), and `tui`'s foundation
 (`utils.ts` 712 → `terminal.ts` 138 → `tui.ts` 351 → `keys.ts` 547 → `autocomplete.ts` 576 →
-`components/` bar the image pair). Left in `tui`: `image.ts` 87 and `terminal-image.ts` 340,
-which are the Kitty and iTerm2 inline-image protocols. Then the coding agent's tools and CLI.
+`components/`, `terminal-image.ts` 340, `image.ts` 87). `pig/tui` is done. Next is the coding
+agent: its tools, then the CLI.
 
 `markdown.ts` has no `marked` under it here: `Pig\Tui\Markdown\Lexer` and `Inline` are a
 hand-written subset — see the dependency note above. They are not CommonMark and do not try
@@ -217,6 +217,30 @@ overwritten by something else.
 
 Caught by `TuiTest::testAResizeRedrawsEverythingAndClearsTheScrollback`, which asserts the
 `\e[3J\e[2J\e[H` is there.
+
+### An image is drawn from the cursor downwards, so the cursor goes up first
+
+Both image protocols put the picture where the cursor is and grow it *down*. The renderer
+works by comparing lines, so it has to know how many rows the picture occupies before the
+terminal draws it. `Image::render()` therefore returns that many lines: the first `rows - 1`
+empty, and the last one `\e[<rows-1>A` followed by the image sequence. By the time the
+terminal draws, the cursor is back at the top of the block and the picture fills exactly the
+rows already accounted for.
+
+`Tui::checkWidth()` skips any line holding `\e_G` or `\e]1337;File=`: an image line is tens
+of kilobytes long and zero columns wide, and measuring it would fail the width check.
+
+### The terminal's reply to a query arrives as keystrokes
+
+`CSI 16 t` asks how many pixels a character cell is, which is the only way to know how tall a
+picture will be. The answer comes back on **stdin**, so it has to be sifted out of the input
+before a component reads it as typing. It can also arrive split across reads, so a partial
+escape sequence is held back — but only until something that looks finished turns up, because
+a terminal that never answers must not swallow the user's typing for the rest of the session.
+Only asked on a terminal that draws images, since nothing else uses the answer.
+
+Regression tests: `ImageTest::testTheReplyIsTakenOutOfTheInputAndTheRestStillArrives` and
+`testATerminalThatNeverAnswersDoesNotSwallowTyping`.
 
 ### A per-line prefix has to go on after the wrap, not before
 
