@@ -7,9 +7,9 @@ namespace Pig\CodingAgent;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentOptions;
 use Pig\Agent\ThinkingLevel;
-use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Model;
+use Pig\Ai\Models;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
@@ -106,28 +106,20 @@ final class CodingAgent
     }
 
     /**
-     * A model described well enough to talk to.
+     * A model by id, from the registry.
      *
-     * Upstream ships a generated registry of several hundred. There is none here yet, so
-     * a caller names the model and gets sensible figures for the rest; a registry arrives
-     * when something needs to choose between models rather than be handed one.
+     * This used to invent the figures around the id — 200k of context, 64k of output,
+     * reasoning on — which was fine for one model and wrong for most. `claude-3-haiku`
+     * caps output at 4096 and cannot reason at all, so the invented numbers produced a
+     * request the provider rejects, from a flag that looked like it had worked.
+     *
+     * @throws \InvalidArgumentException when there is no such model
      */
-    public static function model(string $id, string $provider = 'anthropic'): Model
+    public static function model(string $id): Model
     {
-        return match ($provider) {
-            'anthropic' => new Model(
-                id: $id,
-                name: $id,
-                api: Api::AnthropicMessages,
-                provider: 'anthropic',
-                baseUrl: 'https://api.anthropic.com',
-                contextWindow: 200_000,
-                maxTokens: 64_000,
-                reasoning: true,
-                input: ['text', 'image'],
-            ),
-            default => throw new \InvalidArgumentException("No provider '{$provider}'. Only anthropic so far."),
-        };
+        return Models::get($id) ?? throw new \InvalidArgumentException(
+            "No model called '{$id}'. Only Anthropic's models are in the registry so far.",
+        );
     }
 
     /** The key for this model's provider, from the environment. */

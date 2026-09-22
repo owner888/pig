@@ -11,10 +11,13 @@ use Pig\Agent\AgentToolResult;
 use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\MessageUpdateEvent;
+use Pig\Agent\ThinkingLevel;
 use Pig\Agent\ToolExecutionEndEvent;
 use Pig\Agent\ToolExecutionStartEvent;
 use Pig\Agent\ToolExecutionUpdateEvent;
 use Pig\Ai\AssistantMessage;
+use Pig\Ai\Model;
+use Pig\Ai\Models;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\ToolCall;
@@ -23,6 +26,7 @@ use Pig\Ai\UserMessage;
 use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
@@ -709,6 +713,7 @@ final class InteractiveMode
         ['help', 'Show the keys and commands'],
         ['new', 'Forget the conversation and start over'],
         ['session', 'What this session has cost'],
+        ['model', 'Switch models, or say which one'],
         ['compact', 'Summarise the conversation so far and carry on from the summary'],
         ['resume', 'Pick up an earlier conversation'],
         ['theme', 'Switch between dark and light'],
@@ -724,6 +729,7 @@ final class InteractiveMode
             'new' => $this->newSession(),
             'session' => $this->say($this->sessionSummary()),
             'compact' => $this->startCompaction(trim(substr($text, strlen($name) + 1))),
+            'model' => $this->showModels(trim(substr($text, strlen($name) + 1))),
             'resume' => $this->showSessions(),
             'theme' => $this->switchTheme(),
             'exit', 'quit' => $this->stop(),
@@ -844,6 +850,103 @@ final class InteractiveMode
         // Focus moves to the list, so arrow keys reach it rather than the editor.
         $this->tui->setFocus($picker);
         $this->tui->requestRender();
+    }
+
+    /**
+     * Offer the models there are, newest first.
+     *
+     * Every model rather than the ones an API key exists for: a list that silently hides
+     * what you were looking for teaches nothing, and the missing key is something
+     * `bin/pig` already says plainly when a turn is actually sent.
+     *
+     * @param string $pattern from `/model sonnet` — switches without opening the list
+     */
+    private function showModels(string $pattern = ''): void
+    {
+        if ($this->session->isStreaming()) {
+            $this->sayWarning('Still working. Press esc first.');
+
+            return;
+        }
+
+        if ($pattern !== '') {
+            $this->pickModel($pattern);
+
+            return;
+        }
+
+        $models = Models::all();
+        $current = $this->session->model();
+        $items = [];
+
+        foreach ($models as $index => $model) {
+            $items[] = new SelectItem(
+                (string) $index,
+                $model->id . ($current !== null && $model->is($current) ? ' ·' : ''),
+                sprintf(
+                    '%s · %s in / %s out per Mtok%s',
+                    $model->name,
+                    self::dollars($model->pricing->input),
+                    self::dollars($model->pricing->output),
+                    $model->reasoning ? ' · thinks' : '',
+                ),
+            );
+        }
+
+        $picker = new SelectList($items, 8, $this->palette->selectListTheme());
+        $picker->setSelectHandler(function (SelectItem $item) use ($models): void {
+            $this->closePicker();
+            $this->useModel($models[(int) $item->value]);
+        });
+        $picker->setCancelHandler($this->closePicker(...));
+
+        $this->picker = $picker;
+        $this->status->clear();
+        $this->status->addChild(new Spacer(1));
+        $this->status->addChild(new Text($this->palette->fg('muted', 'Pick a model — enter to switch, esc to cancel'), 1, 0));
+        $this->status->addChild($picker);
+
+        $this->tui->setFocus($picker);
+        $this->tui->requestRender();
+    }
+
+    /** `/model sonnet:high` — resolve it and switch, or say why not. */
+    private function pickModel(string $pattern): void
+    {
+        $choice = ModelResolver::parse($pattern);
+
+        if ($choice === null) {
+            $this->sayError("No model matches \"{$pattern}\". Try /model on its own for the list.");
+
+            return;
+        }
+
+        if ($choice->warning !== null) {
+            $this->sayWarning($choice->warning);
+        }
+
+        $this->useModel($choice->model, $choice->thinking);
+    }
+
+    private function useModel(Model $model, ?ThinkingLevel $thinking = null): void
+    {
+        $this->session->setModel($model, $thinking);
+        $this->footer->invalidate();
+        $this->paintBorder();
+
+        $level = $this->session->thinkingLevel();
+
+        // The level is said too, because switching models can change it under you — and
+        // finding that out from a bill is worse than reading it here.
+        $this->say($level === ThinkingLevel::Off
+            ? "Model: {$model->id}"
+            : "Model: {$model->id} · thinking {$level->value}");
+    }
+
+    /** Prices are per million tokens, and the cheap ones are cents. */
+    private static function dollars(float $amount): string
+    {
+        return '$' . ($amount < 1.0 ? rtrim(rtrim(number_format($amount, 2), '0'), '.') : number_format($amount, 2));
     }
 
     private function closePicker(): void

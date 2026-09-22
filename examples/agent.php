@@ -7,7 +7,7 @@ declare(strict_types=1);
  * The coding agent, without a UI.
  *
  *   ANTHROPIC_API_KEY=sk-ant-... php examples/agent.php "what does Truncate::tail do?"
- *   PIG_MODEL=claude-sonnet-5 php examples/agent.php "add a test for X" --write
+ *   PIG_MODEL=claude-sonnet-4-5 php examples/agent.php "add a test for X" --write
  *
  * Read-only by default, because the first thing anyone does with a coding agent is point
  * it at a repository they care about. Pass --write to give it edit, write and bash.

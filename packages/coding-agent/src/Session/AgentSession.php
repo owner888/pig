@@ -163,6 +163,24 @@ final class AgentSession
         return $this->agent->state->model;
     }
 
+    /**
+     * Switch models, and keep the thinking level honest about the new one.
+     *
+     * A level the new model cannot do is not carried over: leaving `high` set on a model
+     * without reasoning sends a request the provider rejects, and the person who changed
+     * model would have no idea why. Dropped silently to what the model can do, because
+     * they asked for the model, not for the level.
+     */
+    public function setModel(Model $model, ?ThinkingLevel $thinking = null): void
+    {
+        $this->agent->setModel($model);
+
+        $wanted = $thinking ?? $this->thinkingLevel();
+        $levels = $this->availableThinkingLevels();
+
+        $this->setThinkingLevel(in_array($wanted, $levels, true) ? $wanted : ThinkingLevel::Off);
+    }
+
     public function isStreaming(): bool
     {
         return $this->agent->state->isStreaming;

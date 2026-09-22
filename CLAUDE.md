@@ -141,7 +141,7 @@ The rest is left out until something needs it.
 
 `AgentSession` is 1901 lines upstream and ~640 here, because everything it coordinates that is
 not ported is not there to coordinate: auto-retry, branching and tree navigation, hooks, custom
-tools, HTML export, and the model registry. What is left is the conversation, the event fan-out,
+tools and HTML export. What is left is the conversation, the event fan-out,
 the queue of messages someone typed while the agent was working, the thinking level, what the
 session has cost, persistence, and compaction. Each of the rest can arrive on its own when
 something needs it.
@@ -241,7 +241,7 @@ components it draws with are `UserMessageComponent`, `AssistantMessageComponent`
 `InteractiveMode` is ~1070 lines against upstream's 2439, and the difference is almost entirely
 selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
 trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
-an agent you can talk to, seven slash commands, and the keys. Also not ported: custom-tool
+an agent you can talk to, eight slash commands, and the keys. Also not ported: custom-tool
 rendering, images in tool output, and `/copy` (which needs a clipboard *writer*;
 `SystemClipboard` only reads).
 
@@ -258,11 +258,28 @@ a 256-colour terminal. The guard worth knowing about is that the grey ramp only 
 the colour was nearly neutral to begin with — without it every muted tone in the theme
 snaps to a pure grey and the theme loses its tint.
 
-Two things upstream has here are deliberately not ported yet, and both are noted where they
-would go: **skills** (`core/skills.ts`, which the prompt builder would append) and the
-**model registry** (several hundred generated model descriptions; `CodingAgent::model()` builds
-one from an id instead). A registry arrives when something needs to *choose* between models
-rather than be handed one.
+`Ai\Models` is the registry. Upstream generates `models.generated.ts` from models.dev — 7105
+lines, 414 models, twelve providers — and only the Anthropic provider is ported, so only
+Anthropic's 21 models are here. Offering one of the other 393 and then failing to send the
+request is a worse answer than "no such model", and the row is the only thing a new provider
+adds. The figures are upstream's *at the anchor commit*, not whatever models.dev says today:
+a port should agree with the thing it was ported from.
+
+It replaced a `CodingAgent::model()` that invented the figures around an id — 200k of context,
+64k of output, reasoning on. Right for one model and wrong for most: `claude-3-haiku` caps
+output at 4096 and cannot reason, so `--model claude-3-haiku-20240307` built a request the
+provider rejects, from a flag that looked like it had worked.
+
+`ModelResolver` is upstream's `model-resolver.ts`: `sonnet` finds the model, `sonnet:high`
+finds it and sets the thinking level. When several match, the alias beats the dated build
+behind it — someone typing `sonnet` wants the current one, not the June 2024 build that sorts
+first. The pattern is tried whole before it is split on a colon, because an id can contain one
+(OpenRouter's `:exacto`). Not ported: the glob scopes (`--model 'anthropic/*:high'`) for
+running several models against one task — `fnmatch()` is the whole of what `minimatch` was
+doing there, so that is rows of work rather than a dependency when something wants it.
+
+**Skills** (`core/skills.ts`, which the prompt builder would append) is still the one thing
+here deliberately not ported, and it is noted where it would go.
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 

@@ -7,7 +7,7 @@ declare(strict_types=1);
  * pig — a coding agent in a terminal.
  *
  *   ANTHROPIC_API_KEY=sk-ant-... bin/pig
- *   bin/pig --read-only --model claude-sonnet-5 --theme light
+ *   bin/pig --read-only --model sonnet:high --theme light
  *
  * Read-write by default, unlike `examples/agent.php`: this one has someone watching it,
  * and every edit shows up as a diff before the next thing happens.
@@ -22,9 +22,11 @@ foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php
 }
 
 use Pig\Agent\ThinkingLevel;
+use Pig\Ai\Models;
 use Pig\Async\Async;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Interactive\InteractiveMode;
+use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
@@ -72,7 +74,10 @@ if (isset($options['help'])) {
     echo <<<TEXT
     pig — a coding agent in a terminal.
 
-      --model <id>      which model to talk to (default: claude-sonnet-5)
+      --model <id>      which model to talk to (default: claude-sonnet-4-5).
+                        A part of the name will do: `sonnet`, `haiku`, `opus 4.1`.
+                        Add a thinking level with a colon: `sonnet:high`.
+      --models          list the models there are, and stop
       --theme <name>    dark or light (default: dark)
       --thinking <l>    off, minimal, low, medium, high, xhigh
       --read-only       no edit, write or bash
@@ -94,9 +99,38 @@ if (!is_dir($cwd)) {
     exit(1);
 }
 
-$model = CodingAgent::model($options['model'] ?? (getenv('PIG_MODEL') ?: 'claude-sonnet-5'));
+if (isset($options['models'])) {
+    foreach (Models::all() as $listed) {
+        printf("  %-28s %s\n", $listed->id, $listed->name);
+    }
+
+    exit(0);
+}
+
+$wanted = $options['model'] ?? (getenv('PIG_MODEL') ?: 'claude-sonnet-4-5');
+$choice = ModelResolver::parse($wanted);
+
+if ($choice === null) {
+    fwrite(STDERR, Style::red("No model matches '{$wanted}'. Try --models for the list.\n"));
+
+    exit(1);
+}
+
+if ($choice->warning !== null) {
+    fwrite(STDERR, Style::yellow($choice->warning . "\n"));
+}
+
+$model = $choice->model;
 $theme = $options['theme'] ?? (getenv('PIG_THEME') ?: 'dark');
-$level = ThinkingLevel::tryFrom($options['thinking'] ?? 'off') ?? ThinkingLevel::Off;
+
+// `--thinking` is the explicit one, so it wins over a `:level` suffix on the model.
+$level = isset($options['thinking'])
+    ? ThinkingLevel::tryFrom($options['thinking']) ?? ThinkingLevel::Off
+    : $choice->thinking;
+
+if (!$model->reasoning) {
+    $level = ThinkingLevel::Off;
+}
 
 if (!in_array($theme, Palette::names(), true)) {
     fwrite(STDERR, Style::red("No theme called '{$theme}'. There is " . implode(' and ', Palette::names()) . ".\n"));

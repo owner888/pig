@@ -11,7 +11,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 > while it works, and `!cmd` to run a shell command the model can then see (`!!cmd` keeps it
 > out of the conversation). Sessions are saved as they happen — `--continue` picks up the
 > last one, `/resume` picks from a list. When the context fills it summarises itself and
-> carries on, which `/compact` also does on demand. What is missing is a model picker.
+> carries on, which `/compact` also does on demand, and `/model` switches models mid-session.
 
 ## Packages
 
@@ -21,7 +21,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 | `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic streams end to end**; other providers pending |
 | `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — **done** |
 | `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — **done** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions and compaction done**; no model registry yet |
+| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions, compaction and model switching done**; skills pending |
 
 `pig/async` has no counterpart upstream: JavaScript ships an event loop and PHP does not. It
 exists so one `stream_select()` can wait on the model's socket and on the keyboard at the same
@@ -36,8 +36,10 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 ```
 
 `--read-only` takes away edit, write and bash; `--theme light` for a light terminal;
-`--model <id>` to talk to something else; `--continue` to pick up where you left off.
-`/help` inside lists the keys.
+`--continue` to pick up where you left off. `/help` inside lists the keys.
+
+`--model` takes a part of a name rather than a whole id — `--model sonnet`, `--model 'opus 4.1'` —
+and `--model sonnet:high` sets the thinking level at the same time. `--models` lists them.
 
 `examples/ask.php` is the same stack with no UI at all:
 

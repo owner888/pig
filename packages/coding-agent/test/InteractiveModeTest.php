@@ -618,6 +618,73 @@ final class InteractiveModeTest extends TestCase
         $this->assertFalse($this->session->isStreaming());
     }
 
+    // ---- models -----------------------------------------------------------------------------
+
+    public function testModelOnItsOwnOffersTheList(): void
+    {
+        $this->start();
+
+        $this->type('/model');
+        $this->type(self::ENTER);
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('Pick a model', $screen);
+        $this->assertStringContainsString('claude-', $screen);
+    }
+
+    public function testModelWithAPatternSwitchesWithoutOpeningTheList(): void
+    {
+        $this->start();
+
+        $this->type('/model haiku');
+        $this->type(self::ENTER);
+
+        $this->assertSame('claude-haiku-4-5', $this->session->model()?->id);
+        $this->assertStringNotContainsString('Pick a model', $this->screen());
+        $this->assertStringContainsString('Model: claude-haiku-4-5', $this->screen());
+    }
+
+    public function testAThinkingLevelCanRideAlongWithTheModel(): void
+    {
+        $this->start();
+
+        $this->type('/model sonnet:high');
+        $this->type(self::ENTER);
+
+        $this->assertSame(ThinkingLevel::High, $this->session->thinkingLevel());
+
+        // Said out loud, because switching models can change the level under you and
+        // finding that out from a bill is worse than reading it here.
+        $this->assertStringContainsString('thinking high', $this->screen());
+    }
+
+    public function testAPatternThatMatchesNothingSaysSoInsteadOfPickingOne(): void
+    {
+        $this->start();
+        $before = $this->session->model()?->id;
+
+        $this->type('/model gpt-5.2');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('Error: No model matches "gpt-5.2"', $this->screen());
+        $this->assertSame($before, $this->session->model()?->id);
+    }
+
+    public function testPickingFromTheListSwitches(): void
+    {
+        $this->start();
+
+        $this->type('/model');
+        $this->type(self::ENTER);
+        $this->type(self::ENTER);
+
+        // The first row of the list, whichever it is — what matters is that choosing
+        // one actually changes the model and closes the picker.
+        $this->assertSame('claude-3-5-haiku-20241022', $this->session->model()?->id);
+        $this->assertStringNotContainsString('Pick a model', $this->screen());
+    }
+
     // ---- compaction -------------------------------------------------------------------------
 
     public function testCompactSummarisesTheConversationAndSaysSoInTheTranscript(): void

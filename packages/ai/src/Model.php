@@ -7,9 +7,9 @@ namespace Pig\Ai;
 /**
  * One model: which API it speaks, where it lives, what it costs, what it accepts.
  *
- * Upstream ships a generated registry of several hundred of these and looks them up by
- * provider and id. There is no registry here yet — callers build the model they want —
- * and one arrives when something needs to choose between models rather than be handed one.
+ * `Models` holds the ones there are, by id. A caller can still build one by hand — a proxy,
+ * a local server, something the registry has not heard of — which is why this is a plain
+ * constructor and not something only the registry may call.
  */
 final readonly class Model
 {

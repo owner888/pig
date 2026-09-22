@@ -18,6 +18,7 @@ use Pig\Ai\Context;
 use Pig\Ai\Cost;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\Model;
+use Pig\Ai\Models;
 use Pig\Ai\Pricing;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StartEvent;
@@ -510,6 +511,45 @@ final class AgentSessionTest extends TestCase
         $this->assertSame([], $asked->tools, 'a summariser with tools is an agent, not a summariser');
         $this->assertStringContainsString('summarization assistant', (string) $asked->systemPrompt);
         $this->assertStringContainsString('Additional focus: the parser bug', self::textOf($asked->messages[0]));
+    }
+
+    // ---- switching models ------------------------------------------------------------
+
+    public function testSwitchingToAModelThatCannotThinkDropsTheThinkingLevel(): void
+    {
+        $session = $this->session([], null, $this->thinkingModel());
+        $session->setThinkingLevel(ThinkingLevel::High);
+
+        $session->setModel(Models::get('claude-3-haiku-20240307') ?? throw new RuntimeException('no model'));
+
+        // Left at `high`, the next turn asks a model without reasoning to reason, and the
+        // person who changed model would have no idea why the request failed.
+        $this->assertSame(ThinkingLevel::Off, $session->thinkingLevel());
+    }
+
+    public function testSwitchingBetweenThinkingModelsKeepsTheLevel(): void
+    {
+        $session = $this->session([], null, $this->thinkingModel());
+        $session->setThinkingLevel(ThinkingLevel::Medium);
+
+        $session->setModel(Models::get('claude-sonnet-4-5') ?? throw new RuntimeException('no model'));
+
+        $this->assertSame(ThinkingLevel::Medium, $session->thinkingLevel());
+        $this->assertSame('claude-sonnet-4-5', $session->model()?->id);
+    }
+
+    public function testAskingForXhighOnAModelWithoutItFallsToOffRatherThanPretending(): void
+    {
+        $session = $this->session([]);
+
+        $session->setModel(
+            Models::get('claude-sonnet-4-5') ?? throw new RuntimeException('no model'),
+            ThinkingLevel::Xhigh,
+        );
+
+        // Anthropic has no xhigh. Silently sending `high` instead would be answering a
+        // different question from the one asked.
+        $this->assertSame(ThinkingLevel::Off, $session->thinkingLevel());
     }
 
     // ---- thinking ----------------------------------------------------------------

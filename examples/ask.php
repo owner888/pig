@@ -7,17 +7,16 @@ declare(strict_types=1);
  * Ask a model something and watch the answer arrive.
  *
  *   ANTHROPIC_API_KEY=sk-ant-... php examples/ask.php "why is the sky blue?"
- *   PIG_MODEL=claude-sonnet-5 php examples/ask.php
+ *   PIG_MODEL=claude-sonnet-4-5 php examples/ask.php
  *
  * The whole stack under this is pig's own: one non-blocking TLS socket, HTTP/1.1 by
  * hand, SSE parsed as it arrives, coroutines on top of Fiber. Ctrl-C mid-answer and the
  * abort path is the one the TUI will use.
  */
 
-use Pig\Ai\Api;
 use Pig\Ai\Context;
 use Pig\Ai\ErrorEvent;
-use Pig\Ai\Model;
+use Pig\Ai\Models;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\Stream;
 use Pig\Ai\TextDeltaEvent;
@@ -32,18 +31,13 @@ require __DIR__ . '/../vendor/autoload.php';
 $prompt = $argv[1] ?? 'In one sentence: what is a coroutine?';
 $modelId = getenv('PIG_MODEL') ?: 'claude-haiku-4-5-20251001';
 
-// No registry yet, so the model is described here. Fill in Pricing to get real dollars
-// out of $message->usage->cost; left empty, the token counts below are still exact.
-$model = new Model(
-    id: $modelId,
-    name: $modelId,
-    api: Api::AnthropicMessages,
-    provider: 'anthropic',
-    baseUrl: 'https://api.anthropic.com',
-    contextWindow: 200_000,
-    maxTokens: 64_000,
-    reasoning: true,
-);
+$model = Models::get($modelId);
+
+if ($model === null) {
+    fwrite(STDERR, "No model called '{$modelId}'.\n");
+
+    exit(1);
+}
 
 $controller = new AbortController();
 
