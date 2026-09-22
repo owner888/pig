@@ -22,8 +22,73 @@ final class HttpClient
 
     private const int READ_SIZE = 8192;
 
+    /** Enough for any sane chain; more than this is a loop somebody wrote by accident. */
+    private const int MAX_REDIRECTS = 5;
+
     public function __construct(private readonly float $timeout = 60.0)
     {
+    }
+
+    /**
+     * Send the request, following redirects, and return once status and headers are in.
+     *
+     * Separate from `send()` because a streaming API never redirects and paying for the
+     * possibility on every token would be silly — while a file download almost always
+     * does, since GitHub answers a release URL with a 302 to its object store.
+     *
+     * A redirected POST becomes a GET on 301, 302 and 303, which is what every browser
+     * does and what every server expects; 307 and 308 keep the method, which is what
+     * they exist for.
+     */
+    public function follow(Request $request, ?AbortSignal $signal = null): Response
+    {
+        for ($hop = 0; $hop <= self::MAX_REDIRECTS; $hop++) {
+            $response = $this->send($request, $signal);
+            $location = $response->header('location');
+
+            if ($location === null || $response->status < 300 || $response->status >= 400) {
+                return $response;
+            }
+
+            // The body of a redirect is not wanted, and the socket has to be let go of
+            // before the next one is opened.
+            $response->body->close();
+
+            $keepMethod = $response->status === 307 || $response->status === 308;
+
+            $request = new Request(
+                $keepMethod ? $request->method : 'GET',
+                self::absolute($location, $request->url),
+                $request->headers,
+                $keepMethod ? $request->body : null,
+            );
+        }
+
+        throw new HttpError('Too many redirects, starting from "' . $request->url . '"');
+    }
+
+    /** A Location header, which may be relative, against the URL it came from. */
+    private static function absolute(string $location, string $from): string
+    {
+        if (preg_match('#^https?://#i', $location) === 1) {
+            return $location;
+        }
+
+        $parts = parse_url($from);
+
+        if ($parts === false || !isset($parts['scheme'], $parts['host'])) {
+            throw new HttpError("Cannot resolve redirect to \"{$location}\"");
+        }
+
+        $base = $parts['scheme'] . '://' . $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '');
+
+        if (str_starts_with($location, '/')) {
+            return $base . $location;
+        }
+
+        $directory = rtrim(dirname($parts['path'] ?? '/'), '/');
+
+        return $base . $directory . '/' . $location;
     }
 
     /** Send the request and return once status and headers are in. */

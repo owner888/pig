@@ -84,11 +84,22 @@ $agent->subscribe(static function (AgentEvent $event) use ($text): void {
     }
 
     if ($event instanceof ToolExecutionEndEvent) {
-        // One line back, so a long tool result does not bury the answer.
-        $first = strtok($text($event->result->content), "\n");
-        $mark = $event->isError ? Style::red('    ✗ ') : Style::dim('    → ');
+        $said = $text($event->result->content);
 
-        echo $mark, Style::dim(Width::truncate((string) $first, 70)), "\n";
+        if ($event->isError) {
+            // In full, and every line of it. An error is the one tool result whose
+            // whole purpose is to tell someone what to do next, and trimming it to
+            // one line is how "install it with ..." gets cut off.
+            foreach (explode("\n", rtrim($said)) as $line) {
+                echo Style::red('    ✗ '), $line, "\n";
+            }
+
+            return;
+        }
+
+        // A success is summarised: the model has read all of it, and a thousand lines
+        // of output here would bury the answer underneath.
+        echo Style::dim('    → '), Style::dim(Width::truncate((string) strtok($said, "\n"), 70)), "\n";
 
         return;
     }

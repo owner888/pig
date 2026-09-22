@@ -25,7 +25,18 @@ final class SearchToolsTest extends ToolTestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Nothing here may reach GitHub: a test that downloads is a test that fails for
+        // reasons unrelated to the code.
+        putenv('PIG_OFFLINE=1');
         ExternalTool::forget();
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        putenv('PIG_OFFLINE');
+        ExternalTool::forget();
+        parent::tearDown();
     }
 
     private function needsFd(): void
@@ -66,8 +77,7 @@ final class SearchToolsTest extends ToolTestCase
         ExternalTool::forget();
 
         try {
-            // Upstream downloads it; that part is deliberately not ported, so what the
-            // model gets is one command the person can run.
+            // With downloading off, what the model gets is one command a person can run.
             $error = $this->assertThrows(
                 AgentError::class,
                 fn () => $this->run(new FindTool($this->cwd), ['pattern' => '*']),
@@ -195,8 +205,8 @@ final class SearchToolsTest extends ToolTestCase
         $this->file('src/generated/Big.php');
         $this->file('other/generated/Kept.php');
 
-        // fd honours nested .gitignore files on its own only inside a repository, so
-        // they are collected and passed explicitly.
+        // fd honours nested .gitignore files on its own only inside a repository;
+        // --no-require-git makes it do so anywhere, with the ordinary nesting rules.
         $found = $this->output($this->run(new FindTool($this->cwd), ['pattern' => '*.php']));
 
         $this->assertStringNotContainsString('src/generated', $found);

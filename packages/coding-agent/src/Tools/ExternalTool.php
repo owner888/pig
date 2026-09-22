@@ -9,14 +9,14 @@ use Pig\Agent\AgentError;
 /**
  * The two search tools `find` and `grep` are built on.
  *
- * Upstream requires the same two and **downloads them from GitHub** when they are
- * missing. That part is not ported: fetching and running a binary at run time is not
- * something this project does to someone's machine. So a missing tool is an error that
- * says how to install it, which is one command and a decision the person makes.
+ * Looked for in the order upstream uses: pig's own `tools/` directory first, then the
+ * PATH, and only then fetched from GitHub — which is why the agent works on a machine
+ * where `which fd` finds nothing. `ToolInstaller` does the fetching and says what it is
+ * doing while it happens.
  *
  * Reimplementing them in PHP was considered and measured — a walk over a 100k-file tree
  * takes about 220ms against fd's ~40 — and rejected by the developer, because matching
- * upstream's search semantics exactly is worth more than saving an install step.
+ * upstream's search semantics exactly is worth more than the saved dependency.
  */
 final class ExternalTool
 {
@@ -38,25 +38,35 @@ final class ExternalTool
     ];
 
     private const array DESCRIPTION = [
-        'fd' => 'fd (https://github.com/sharkdp/fd)',
-        'rg' => 'ripgrep (https://github.com/BurntSushi/ripgrep)',
+        'fd' => 'fd',
+        'rg' => 'ripgrep (rg)',
+    ];
+
+    private const array HOMEPAGE = [
+        'fd' => 'https://github.com/sharkdp/fd',
+        'rg' => 'https://github.com/BurntSushi/ripgrep',
     ];
 
     /** @var array<string, string|false> found paths, and the ones known to be missing */
     private static array $found = [];
 
-    /** Where `fd` is, or an error saying how to get it. */
-    public static function fd(): string
+    /**
+     * Where `fd` is, fetching it if need be.
+     *
+     * @param callable(string): void|null $say progress, for whoever is watching
+     */
+    public static function fd(?callable $say = null): string
     {
-        return self::require('fd');
+        return self::require('fd', $say);
     }
 
-    /** Where `rg` is, or an error saying how to get it. */
-    public static function ripgrep(): string
+    /** @param callable(string): void|null $say */
+    public static function ripgrep(?callable $say = null): string
     {
-        return self::require('rg');
+        return self::require('rg', $say);
     }
 
+    /** Whether it is already here — without downloading anything to find out. */
     public static function has(string $tool): bool
     {
         return self::locate($tool) !== false;
@@ -68,12 +78,20 @@ final class ExternalTool
         self::$found = [];
     }
 
-    private static function require(string $tool): string
+    /** @param callable(string): void|null $say */
+    private static function require(string $tool, ?callable $say = null): string
     {
         $path = self::locate($tool);
 
         if ($path !== false) {
             return $path;
+        }
+
+        if (ToolInstaller::enabled()) {
+            $installed = ToolInstaller::install($tool, $say);
+            self::$found[$tool] = $installed;
+
+            return $installed;
         }
 
         $install = self::INSTALL[$tool];
@@ -82,8 +100,13 @@ final class ExternalTool
             default => "{$install['apt']}  (or {$install['pacman']} on Arch)",
         };
 
+        // Only reachable with PIG_OFFLINE set, so say which of the two things to do.
+        // The command comes first and on the first line: anything that shows a tool
+        // error as a single truncated line — which a compact UI will — must still show
+        // the person what to do about it.
         throw new AgentError(
-            self::DESCRIPTION[$tool] . " is not installed, and this tool needs it.\nInstall it with: {$how}",
+            self::DESCRIPTION[$tool] . " is not installed. Install it with: {$how}\n"
+                . 'Or unset PIG_OFFLINE to let pig download it. See ' . self::HOMEPAGE[$tool],
         );
     }
 
@@ -92,6 +115,18 @@ final class ExternalTool
     {
         if (array_key_exists($tool, self::$found)) {
             return self::$found[$tool];
+        }
+
+        if (!isset(self::NAMES[$tool])) {
+            return self::$found[$tool] = false;
+        }
+
+        // pig's own copy first, so a downloaded one is used even if something else on
+        // the PATH later shadows it.
+        $downloaded = ToolInstaller::path($tool);
+
+        if (is_file($downloaded) && is_executable($downloaded)) {
+            return self::$found[$tool] = $downloaded;
         }
 
         $path = getenv('PATH');

@@ -70,16 +70,23 @@ same thing either way — "this machine has no `wl-paste`" is a capability, not 
 | `powershell.exe`, `wslpath` | clipboard images | WSL |
 | `fd` | the `@` file picker in `pig/tui` | anywhere; `@` offers nothing without it |
 
-**`fd` and `rg` are required by the `find` and `grep` tools**, which is upstream's design and
-the developer's decision. A PHP walk with `.gitignore` support was written and measured first —
-about 220ms over a 100k-file tree against fd's ~40 — and then deleted: matching upstream's
-search semantics exactly is worth more than saving an install step, and two implementations
-that can disagree about which files exist is a bug the model would have to debug.
+**`fd` and `rg` are required by the `find` and `grep` tools**, as upstream requires them. A PHP
+walk with `.gitignore` support was written and measured first — about 220ms over a 100k-file
+tree against fd's ~40 — and then deleted: matching upstream's search semantics exactly is worth
+more than the saved dependency, and two implementations that can disagree about which files
+exist is a bug the model would have to debug.
 
-What is **not** ported is upstream's `ensureTool()`, which downloads both from GitHub releases
-when they are missing. Fetching and running a binary on someone's machine is not something this
-project does. A missing tool is an error naming the one command that installs it —
-`ExternalTool`, which also knows that Debian calls `fd` `fdfind`.
+`ensureTool()` is ported too, so the same thing happens as in pi: `ExternalTool` looks in
+`~/.pig/tools/`, then the PATH (knowing that Debian calls `fd` `fdfind`), and only then has
+`ToolInstaller` fetch the release from GitHub. Two differences, both of which upstream has at
+HEAD or would be better for: `PIG_OFFLINE=1` turns fetching off, and the download says what it
+is pulling and from where **before** it starts, because an executable arriving from the
+internet should not arrive quietly. Nothing checks a signature — neither project publishes
+one — so this trusts GitHub and those two repositories exactly as far as upstream does.
+
+The download goes through `pig/ai`'s own HTTP client, which grew `HttpClient::follow()` for it:
+a release URL is answered with a 302 to GitHub's object store, and a streaming API never
+redirects, so `send()` keeps its single-request behaviour and only downloads pay for the loop.
 
 ## Layout
 

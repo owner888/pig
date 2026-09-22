@@ -18,7 +18,7 @@
         }
     },
     "suggest": {
-        "fd": "Required by the find tool — brew install fd, or apt install fd-find",
-        "ripgrep": "Required by the grep tool — brew install ripgrep, or apt install ripgrep"
+        "fd": "find tool — pig downloads it to ~/.pig/tools if missing; brew install fd to use your own",
+        "ripgrep": "grep tool — pig downloads it to ~/.pig/tools if missing; brew install ripgrep to use your own"
     }
 }
