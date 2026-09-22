@@ -7,8 +7,9 @@ runs on a famously small core. Same architecture, same file layout, written for 
 runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the standard library.
 
 > **Status: it runs.** `bin/pig` is a coding agent you can talk to in a terminal: streaming
-> answers, seven tools with live output, edits shown as diffs, Escape to interrupt, and typing
-> while it works. What is missing is everything around that — sessions are not saved, there is
+> answers, seven tools with live output, edits shown as diffs, Escape to interrupt, typing
+> while it works, and `!cmd` to run a shell command the model can then see (`!!cmd` keeps it
+> out of the conversation). What is missing is everything around that — sessions are not saved, there is
 > no model picker, and the context is not compacted when it fills.
 
 ## Packages

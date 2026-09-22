@@ -36,6 +36,7 @@ the developer asked for it, it is ported and listed here:
 |---|---|---|
 | Ctrl+V pastes a clipboard image as a temp file, and its path into the prompt | `Pig\Tui\Clipboard`, `Editor::pasteFromClipboard()` | `coding-agent/src/utils/clipboard-image.ts` + `interactive-mode.ts` |
 | A three-line banner with the keys on one line, the rest behind ctrl+o, and a `[Context]` section for what was loaded | `InteractiveMode::banner()` | the startup screen at 0.87 |
+| `!!command` runs without joining the conversation | `AgentSession::executeBash(remember: false)` | `!!` at 0.87; the anchor has `!` only |
 
 The anchor's banner is a column of thirteen keys, which is taller than most of the
 conversations it sits above; HEAD moved the list behind `ctrl+o` and put a one-line
@@ -151,6 +152,18 @@ tables, and the bridges that turn them into `pig/tui`'s `MarkdownTheme`, `Editor
 unknown name throws where the component is wired rather than rendering colourless later.
 Reading a theme from JSON, the custom-themes directory and the watcher that reloads one as
 it is edited are not ported; they arrive with a `/theme` command if that is ever wanted.
+
+`!command` runs a shell command and puts the result in the conversation, as a
+`Session\BashExecution` — an app message, not an LLM one. `CodingAgent` supplies the
+`convertToLlm` that turns it into a user message on the way to the model; the agent's own
+default drops anything that is not one of the three LLM types, which is exactly what
+`!!command` wants, since it never makes a `BashExecution` at all. So the difference
+between the two is one boolean and no special case downstream.
+
+A command run while the agent is working is **held back until the run ends**. A message
+added between a tool call and its result is a request the provider rejects outright, so
+`AgentSession` queues it and flushes on `AgentEndEvent` — before the listeners see that
+event, so a UI redrawing on it already has the message.
 
 `Interactive\` is the terminal front end. `InteractiveMode` is the arrangement — which event
 becomes which component, which key means what — and `bin/pig` is the entry point. The

@@ -30,6 +30,7 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\BashExecution;
 use Pig\Test\AssertsThrows;
 use RuntimeException;
 
@@ -179,6 +180,102 @@ final class AgentSessionTest extends TestCase
         $this->assertSame([], $session->queued());
     }
 
+    // ---- running a command yourself ---------------------------------------------------
+
+    public function testABangCommandJoinsTheConversationAndReachesTheModel(): void
+    {
+        $session = $this->session(['ok']);
+
+        $execution = Async::run(static fn () => $session->executeBash('echo hi'));
+
+        $this->assertSame('hi', trim($execution->output));
+        $this->assertSame(0, $execution->exitCode);
+        $this->assertSame([$execution], $session->messages());
+
+        // The whole point of typing `!` is that the output reaches the model.
+        $this->assertStringContainsString('Ran `echo hi`', $execution->toText());
+        $this->assertStringContainsString('hi', $execution->toText());
+    }
+
+    public function testTwoBangsRunItWithoutJoiningTheConversation(): void
+    {
+        $session = $this->session([]);
+
+        $execution = Async::run(static fn () => $session->executeBash('echo hi', remember: false));
+
+        $this->assertSame('hi', trim($execution->output));
+        $this->assertSame([], $session->messages());
+    }
+
+    public function testAFailingCommandCarriesItsExitCode(): void
+    {
+        $session = $this->session([]);
+
+        $execution = Async::run(static fn () => $session->executeBash('echo bad >&2; exit 7'));
+
+        $this->assertSame(7, $execution->exitCode);
+        $this->assertStringContainsString('bad', $execution->output);
+        $this->assertStringContainsString('Command exited with code 7', $execution->toText());
+    }
+
+    public function testOutputArrivesWhileItIsStillRunning(): void
+    {
+        $session = $this->session([]);
+        $seen = [];
+
+        Async::run(static function () use ($session, &$seen): void {
+            $session->executeBash('echo one; sleep 0.1; echo two', onOutput: static function (string $output) use (&$seen): void {
+                $seen[] = $output;
+            });
+        });
+
+        // Not one lump at the end: a command that takes a while has to show something
+        // while it takes it.
+        $this->assertNotSame([], $seen);
+        $this->assertStringContainsString('one', $seen[0]);
+    }
+
+    public function testASecondCommandIsRefusedWhileOneIsRunning(): void
+    {
+        $session = $this->session([]);
+
+        Async::run(function () use ($session): void {
+            Async::spawn(static fn () => $session->executeBash('sleep 0.3'));
+            Async::delay(0.05);
+
+            $this->assertTrue($session->isBashRunning());
+            $this->assertThrows(
+                AgentError::class,
+                static fn () => $session->executeBash('echo second'),
+                'already running',
+            );
+
+            $session->abortBash();
+        });
+    }
+
+    public function testACommandRunDuringATurnWaitsForTheTurnToEnd(): void
+    {
+        // A message added between a tool call and its result is a request the provider
+        // rejects outright, so anything that arrives mid-run waits for the run to end.
+        $during = null;
+        $session = null;
+        $session = $this->session(['answer'], static function (Agent $agent) use (&$session, &$during): void {
+            if ($during !== null) {
+                return;
+            }
+
+            $session->executeBash('echo mid-run');
+            $during = count($session->messages());
+        });
+
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $this->assertSame(1, $during, 'held back while the agent was working');
+        $this->assertCount(3, $session->messages());
+        $this->assertInstanceOf(BashExecution::class, $session->messages()[2]);
+    }
+
     // ---- thinking ----------------------------------------------------------------
 
     public function testAModelThatCannotThinkOffersNoLevels(): void
@@ -289,7 +386,7 @@ final class AgentSessionTest extends TestCase
         $agent->setModel($model ?? $this->model());
         $this->current = $agent;
 
-        return new AgentSession($agent);
+        return new AgentSession($agent, sys_get_temp_dir());
     }
 
     /**

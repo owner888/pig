@@ -121,7 +121,7 @@ try {
 }
 
 $mode = new InteractiveMode(
-    new AgentSession($agent),
+    new AgentSession($agent, $cwd),
     Palette::named($theme),
     $cwd,
     VERSION,

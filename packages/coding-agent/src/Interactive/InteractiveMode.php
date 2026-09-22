@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Interactive;
 use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentStartEvent;
+use Pig\Agent\AgentToolResult;
 use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\MessageUpdateEvent;
@@ -81,6 +82,9 @@ final class InteractiveMode
     private bool $expanded = false;
 
     private bool $hideThinking = false;
+
+    /** The editor's text starts with `!`, so it is a command and not a prompt. */
+    private bool $bashMode = false;
 
     private float $lastCtrlC = 0.0;
 
@@ -248,7 +252,7 @@ final class InteractiveMode
         'escape interrupt',
         'ctrl+c/ctrl+d clear/exit',
         '/ commands',
-        '@ files',
+        '! bash',
         'ctrl+o more',
     ];
 
@@ -264,6 +268,8 @@ final class InteractiveMode
         'ctrl+t' => 'show or hide thinking',
         '/' => 'commands',
         '@' => 'files',
+        '!' => 'run a command, and let the model see the output',
+        '!!' => 'run a command and keep it out of the conversation',
     ];
 
     // ---- keys ---------------------------------------------------------------------------
@@ -311,6 +317,12 @@ final class InteractiveMode
      */
     private function interrupt(): void
     {
+        if ($this->session->isBashRunning()) {
+            $this->session->abortBash();
+
+            return;
+        }
+
         if ($this->working === null) {
             return;
         }
@@ -372,11 +384,7 @@ final class InteractiveMode
             return;
         }
 
-        $this->editor->setTheme(new EditorTheme(
-            $this->palette->thinkingBorder($level),
-            $this->palette->selectListTheme(),
-        ));
-
+        $this->paintBorder();
         $this->footer->invalidate();
         $this->say('Thinking: ' . $level->value);
     }
@@ -400,6 +408,19 @@ final class InteractiveMode
             ExternalTool::has('fd') ? ExternalTool::fd() : null,
         ));
 
+        // The border turns green the moment the line becomes a command, so there is no
+        // way to press Enter thinking it was a prompt.
+        $this->editor->setChangeHandler(function (string $text): void {
+            $isBash = str_starts_with(ltrim($text), '!');
+
+            if ($isBash === $this->bashMode) {
+                return;
+            }
+
+            $this->bashMode = $isBash;
+            $this->paintBorder();
+        });
+
         $this->editor->setSubmitHandler(function (string $text): void {
             $text = trim($text);
 
@@ -408,6 +429,15 @@ final class InteractiveMode
             }
 
             $this->editor->addToHistory($text);
+
+            if (str_starts_with($text, '!')) {
+                $this->editor->setText('');
+                $this->bashMode = false;
+                $this->paintBorder();
+                $this->runCommand($text);
+
+                return;
+            }
 
             if (str_starts_with($text, '/')) {
                 $this->editor->setText('');
@@ -430,6 +460,72 @@ final class InteractiveMode
             $this->editor->setText('');
             $this->send($text);
         });
+    }
+
+    /**
+     * Run a `!` command and show it happening.
+     *
+     * `!` puts the result in the conversation, `!!` does not. Both show the same thing on
+     * screen — what differs is whether the model sees it afterwards, which is worth being
+     * told rather than left to remember.
+     */
+    private function runCommand(string $typed): void
+    {
+        $remember = !str_starts_with($typed, '!!');
+        $command = trim(substr($typed, $remember ? 1 : 2));
+
+        if ($command === '') {
+            return;
+        }
+
+        if ($this->session->isBashRunning()) {
+            $this->say($this->palette->fg('warning', 'A command is already running. Press esc to stop it.'));
+
+            return;
+        }
+
+        $shown = new ToolExecutionComponent('bash', ['command' => $command], $this->palette);
+        $shown->setExpanded($this->expanded);
+        $this->chat->addChild($shown);
+        $this->tui->requestRender();
+
+        Async::spawn(function () use ($command, $remember, $shown): void {
+            try {
+                $execution = $this->session->executeBash(
+                    $command,
+                    $remember,
+                    function (string $output) use ($shown): void {
+                        $shown->updateResult(new AgentToolResult([new TextContent($output)]), false, true);
+                        $this->tui->requestRender();
+                    },
+                );
+
+                $shown->updateResult(
+                    new AgentToolResult([new TextContent($execution->output)]),
+                    $execution->cancelled || ($execution->exitCode ?? 0) !== 0,
+                );
+
+                if (!$remember) {
+                    $this->say('Not added to the conversation');
+                }
+            } catch (Throwable $error) {
+                $shown->fail($error->getMessage());
+            }
+
+            $this->footer->invalidate();
+            $this->tui->requestRender();
+        });
+    }
+
+    /** Green while the line is a command, otherwise the thinking level's colour. */
+    private function paintBorder(): void
+    {
+        $colour = $this->bashMode
+            ? $this->palette->of('bashMode')
+            : $this->palette->thinkingBorder($this->session->thinkingLevel());
+
+        $this->editor->setTheme(new EditorTheme($colour, $this->palette->selectListTheme()));
+        $this->tui->requestRender();
     }
 
     /**

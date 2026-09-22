@@ -8,7 +8,11 @@ use Pig\Agent\Agent;
 use Pig\Agent\AgentOptions;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Api;
+use Pig\Ai\AssistantMessage;
 use Pig\Ai\Model;
+use Pig\Ai\ToolResultMessage;
+use Pig\Ai\UserMessage;
+use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Tools\ToolSet;
@@ -40,7 +44,10 @@ final class CodingAgent
         ?array $contextFiles = null,
         ThinkingLevel $thinking = ThinkingLevel::Off,
     ): Agent {
-        $agent = new Agent(new AgentOptions(apiKey: $apiKey ?? self::apiKey($model)));
+        $agent = new Agent(new AgentOptions(
+            apiKey: $apiKey ?? self::apiKey($model),
+            convertToLlm: self::toLlm(...),
+        ));
 
         $agent->setModel($model);
         $agent->setTools(ToolSet::create($cwd, $tools));
@@ -54,6 +61,40 @@ final class CodingAgent
         ));
 
         return $agent;
+    }
+
+    /**
+     * The conversation as the model should see it.
+     *
+     * The agent's own default keeps the three LLM message types and drops everything
+     * else, which is right for an app message nobody meant to send. A `!` command is the
+     * exception: the whole point of typing one is that its output reaches the model, so
+     * it is turned into a user message here. A `!!` command never becomes one of these
+     * in the first place, so it falls through the same filter and stays out.
+     *
+     * @param list<mixed> $messages
+     * @return list<mixed>
+     */
+    private static function toLlm(array $messages): array
+    {
+        $converted = [];
+
+        foreach ($messages as $message) {
+            if ($message instanceof BashExecution) {
+                $converted[] = new UserMessage($message->toText(), $message->timestamp);
+
+                continue;
+            }
+
+            if ($message instanceof UserMessage
+                || $message instanceof AssistantMessage
+                || $message instanceof ToolResultMessage
+            ) {
+                $converted[] = $message;
+            }
+        }
+
+        return $converted;
     }
 
     /**

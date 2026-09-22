@@ -24,6 +24,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Prompt\ContextFile;
+use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
@@ -391,6 +392,80 @@ final class InteractiveModeTest extends TestCase
 
         // Nothing to interrupt, so the draft stays where it was typed.
         $this->assertStringContainsString('a draft', $this->screen());
+    }
+
+    // ---- running a command yourself -----------------------------------------------------
+
+    public function testABangCommandRunsAndJoinsTheConversation(): void
+    {
+        $this->start();
+
+        $this->type('!echo hello-from-bash');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('$ echo hello-from-bash', $screen);
+        $this->assertStringContainsString('hello-from-bash', $screen);
+        $this->assertCount(1, $this->session->messages());
+        $this->assertInstanceOf(BashExecution::class, $this->session->messages()[0]);
+    }
+
+    public function testTwoBangsRunItAndKeepItOut(): void
+    {
+        $this->start();
+
+        $this->type('!!echo quiet');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        // Shown the same way — what differs is whether the model sees it afterwards,
+        // which is worth saying rather than leaving someone to remember.
+        $this->assertStringContainsString('$ echo quiet', $screen);
+        $this->assertStringContainsString('quiet', $screen);
+        $this->assertStringContainsString('Not added to the conversation', $screen);
+        $this->assertSame([], $this->session->messages());
+    }
+
+    public function testABareBangDoesNothing(): void
+    {
+        $this->start();
+
+        $this->type('!');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertSame([], $this->session->messages());
+        $this->assertStringNotContainsString('$', $this->screen());
+    }
+
+    public function testAFailingCommandIsMarkedAsOne(): void
+    {
+        $this->start();
+
+        $this->type('!exit 3');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // dark's toolErrorBg.
+        $this->assertStringContainsString("\e[48;2;60;40;40m", implode('', $this->mode->screen()->render(80)));
+        $this->assertSame(3, $this->session->messages()[0]->exitCode);
+    }
+
+    public function testACommandIsNotSentToTheModel(): void
+    {
+        // No scripted answers: if this reached the provider the test would blow up on
+        // "out of scripted answers" rather than pass.
+        $this->start();
+
+        $this->type('!echo x');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertFalse($this->session->isStreaming());
     }
 
     // ---- the queue ------------------------------------------------------------------------------

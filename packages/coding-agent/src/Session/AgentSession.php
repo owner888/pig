@@ -7,8 +7,10 @@ namespace Pig\CodingAgent\Session;
 use Closure;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentError;
+use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentState;
+use Pig\Agent\AgentToolResult;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\AssistantMessage;
@@ -19,7 +21,10 @@ use Pig\Ai\TextContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
+use Pig\Async\AbortController;
 use Pig\Async\Future;
+use Pig\CodingAgent\Tools\Run;
+use Pig\CodingAgent\Tools\Truncate;
 
 /**
  * A conversation with a UI attached to it.
@@ -56,7 +61,12 @@ final class AgentSession
 
     private ?Closure $unsubscribeAgent = null;
 
-    public function __construct(public readonly Agent $agent)
+    private ?AbortController $bash = null;
+
+    /** @var list<BashExecution> run while the agent was working, waiting for it to stop */
+    private array $pendingBash = [];
+
+    public function __construct(public readonly Agent $agent, private readonly string $cwd = '.')
     {
         $this->unsubscribeAgent = $this->agent->subscribe($this->onAgentEvent(...));
     }
@@ -90,6 +100,12 @@ final class AgentSession
 
     private function onAgentEvent(AgentEvent $event): void
     {
+        // Held-back commands join the conversation before the listeners see the end of
+        // the run, so a UI redrawing on that event already has them.
+        if ($event instanceof AgentEndEvent) {
+            $this->flushBash();
+        }
+
         // A queued message leaves the queue *before* the event goes out, so a listener
         // redrawing the "3 messages waiting" line sees three, not four.
         if ($event instanceof MessageStartEvent && $event->message instanceof UserMessage) {
@@ -213,6 +229,97 @@ final class AgentSession
         if ($at !== false) {
             array_splice($this->followUps, (int) $at, 1);
         }
+    }
+
+    // ---- running a command yourself ---------------------------------------------------
+
+    /** Whether a `!` command is running right now. */
+    public function isBashRunning(): bool
+    {
+        return $this->bash !== null;
+    }
+
+    /**
+     * Run a command the person typed, and give them the result.
+     *
+     * @param bool $remember whether it joins the conversation — `!` does, `!!` does not
+     * @param Closure(string): void|null $onOutput called as output arrives
+     */
+    public function executeBash(string $command, bool $remember = true, ?Closure $onOutput = null): BashExecution
+    {
+        if ($this->bash !== null) {
+            throw new AgentError('A command is already running. Press esc to stop it first.');
+        }
+
+        $this->bash = new AbortController();
+
+        try {
+            // Run hands its callback the partial output as a tool result, which is what
+            // its other caller wants; here the text is enough.
+            $onUpdate = $onOutput === null ? null : static function (AgentToolResult $partial) use ($onOutput): void {
+                $block = $partial->content[0] ?? null;
+                $onOutput($block instanceof TextContent ? $block->text : '');
+            };
+
+            $run = new Run($this->cwd, $command, $onUpdate);
+            $run->start();
+            $exit = $run->wait($this->bash->signal, null);
+            $truncation = Truncate::tail($run->output());
+
+            $execution = new BashExecution(
+                $command,
+                $truncation->content,
+                $run->aborted ? null : $exit,
+                $run->aborted,
+                $truncation->truncated,
+                $run->spillPath,
+            );
+        } finally {
+            $this->bash = null;
+        }
+
+        if ($remember) {
+            $this->append($execution);
+        }
+
+        return $execution;
+    }
+
+    /** Stop the running command. Does nothing when none is. */
+    public function abortBash(): void
+    {
+        $this->bash?->abort('Cancelled');
+    }
+
+    /**
+     * Put it in the conversation — now, or once the agent has finished.
+     *
+     * A message added mid-run lands between a tool call and its result, and a provider
+     * that sees those two separated rejects the whole request. So anything that arrives
+     * while the agent is working waits for it to stop.
+     */
+    private function append(BashExecution $execution): void
+    {
+        if ($this->isStreaming()) {
+            $this->pendingBash[] = $execution;
+
+            return;
+        }
+
+        $this->agent->appendMessage($execution);
+    }
+
+    /** @return list<BashExecution> what was held back, now in the conversation */
+    private function flushBash(): array
+    {
+        $held = $this->pendingBash;
+        $this->pendingBash = [];
+
+        foreach ($held as $execution) {
+            $this->agent->appendMessage($execution);
+        }
+
+        return $held;
     }
 
     // ---- thinking ----------------------------------------------------------------
