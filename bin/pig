@@ -25,6 +25,7 @@ use Pig\Agent\ThinkingLevel;
 use Pig\Async\Async;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Interactive\InteractiveMode;
+use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ToolSet;
@@ -99,11 +100,16 @@ if (!in_array($theme, Palette::names(), true)) {
     exit(1);
 }
 
+// Loaded here rather than left to the prompt builder, so the banner and the system
+// prompt cannot disagree about what was picked up.
+$contextFiles = ContextFiles::load($cwd);
+
 try {
     $agent = CodingAgent::create(
         $model,
         $cwd,
         isset($options['read-only']) ? ToolSet::READ_ONLY : ToolSet::ALL,
+        contextFiles: $contextFiles,
         thinking: $level,
     );
 } catch (Throwable $error) {
@@ -114,7 +120,14 @@ try {
     exit(1);
 }
 
-$mode = new InteractiveMode(new AgentSession($agent), Palette::named($theme), $cwd, VERSION, $theme);
+$mode = new InteractiveMode(
+    new AgentSession($agent),
+    Palette::named($theme),
+    $cwd,
+    VERSION,
+    $theme,
+    contextFiles: $contextFiles,
+);
 
 // One fiber around the whole program: the prompt suspends on a socket, the terminal
 // wakes on a keystroke, and both need the same loop underneath them.

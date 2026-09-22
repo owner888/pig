@@ -35,6 +35,12 @@ the developer asked for it, it is ported and listed here:
 | From HEAD | Where it lives here | Upstream |
 |---|---|---|
 | Ctrl+V pastes a clipboard image as a temp file, and its path into the prompt | `Pig\Tui\Clipboard`, `Editor::pasteFromClipboard()` | `coding-agent/src/utils/clipboard-image.ts` + `interactive-mode.ts` |
+| A three-line banner with the keys on one line, the rest behind ctrl+o, and a `[Context]` section for what was loaded | `InteractiveMode::banner()` | the startup screen at 0.87 |
+
+The anchor's banner is a column of thirteen keys, which is taller than most of the
+conversations it sits above; HEAD moved the list behind `ctrl+o` and put a one-line
+summary in its place. `[Skills]` and `[Extensions]` are sections there too — neither is
+ported, so neither has a heading here to be empty under.
 
 Upstream reads the clipboard through a native Node addon on macOS and Windows and falls back
 to `wl-paste` / `xclip` / PowerShell on Linux. PHP has no addon, so every platform goes

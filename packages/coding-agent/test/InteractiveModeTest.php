@@ -23,6 +23,7 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Interactive\InteractiveMode;
+use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
@@ -71,8 +72,16 @@ final class InteractiveModeTest extends TestCase
         $this->mode->stop();
     }
 
-    /** @param list<string> $answers one per model call */
-    private function start(array $answers = [], bool $reasoning = false): void
+    private function startWithContext(): void
+    {
+        $this->start(context: [new ContextFile('/somewhere/AGENTS.md', 'be careful')]);
+    }
+
+    /**
+     * @param list<string>      $answers one per model call
+     * @param list<ContextFile> $context
+     */
+    private function start(array $answers = [], bool $reasoning = false, array $context = []): void
     {
         $this->answers = $answers;
         $agent = new Agent(new AgentOptions(streamFn: $this->provider(...), apiKey: 'k'));
@@ -95,6 +104,7 @@ final class InteractiveModeTest extends TestCase
             '0.0.0',
             'dark',
             $this->terminal,
+            $context,
         );
 
         $this->mode->start();
@@ -156,14 +166,51 @@ final class InteractiveModeTest extends TestCase
 
     // ---- the first frame ------------------------------------------------------------
 
-    public function testTheHeaderSaysWhatTheKeysDo(): void
+    public function testTheBannerIsThreeLinesUntilAskedForMore(): void
     {
         $this->start();
         $screen = $this->screen();
 
+        // A column of thirteen keys was taller than most of the conversations it sat
+        // above, so the list moved behind ctrl+o.
         $this->assertStringContainsString('pig v0.0.0', $screen);
-        $this->assertStringContainsString('esc to interrupt', $screen);
-        $this->assertStringContainsString('/ for commands', $screen);
+        $this->assertStringContainsString('escape interrupt · ctrl+c/ctrl+d clear/exit', $screen);
+        $this->assertStringContainsString('Press ctrl+o', $screen);
+        $this->assertStringNotContainsString('suspend', $screen);
+    }
+
+    public function testCtrlOOpensTheFullListAndClosesItAgain(): void
+    {
+        $this->start();
+
+        $this->type("\x0f");
+        $this->assertStringContainsString('suspend', $this->screen());
+        $this->assertStringNotContainsString('Press ctrl+o', $this->screen());
+
+        $this->type("\x0f");
+        $this->assertStringNotContainsString('suspend', $this->screen());
+    }
+
+    public function testWhatWasLoadedIsListedUnderTheFullList(): void
+    {
+        $this->startWithContext();
+
+        $this->assertStringNotContainsString('[Context]', $this->screen());
+
+        $this->type("\x0f");
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('[Context]', $screen);
+        $this->assertStringContainsString('AGENTS.md', $screen);
+    }
+
+    public function testNoContextFilesMeansNoEmptyHeading(): void
+    {
+        $this->start();
+        $this->type("\x0f");
+
+        // A heading with nothing under it is worse than no heading.
+        $this->assertStringNotContainsString('[Context]', $this->screen());
     }
 
     public function testTheFooterIsDrawnUnderEverything(): void
@@ -333,13 +380,7 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('Thinking shown', $this->screen());
     }
 
-    public function testCtrlOTogglesToolOutput(): void
-    {
-        $this->start();
 
-        $this->type("\x0f");
-        $this->assertStringContainsString('Tool output expanded', $this->screen());
-    }
 
     public function testEscapeAtAnIdlePromptDoesNothing(): void
     {

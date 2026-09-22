@@ -20,6 +20,7 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\UserMessage;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ExternalTool;
@@ -76,7 +77,8 @@ final class InteractiveMode
     /** @var array<string, ToolExecutionComponent> by tool call id */
     private array $tools = [];
 
-    private bool $expandTools = false;
+    /** ctrl+o: more of everything — tool output, and the full key list. */
+    private bool $expanded = false;
 
     private bool $hideThinking = false;
 
@@ -87,6 +89,11 @@ final class InteractiveMode
     /** Which of the two built-in themes is on, so /theme knows what to switch to. */
     private string $theme = 'dark';
 
+    /** @var list<ContextFile> what the system prompt was given, so it can be shown */
+    private array $contextFiles = [];
+
+    private ?Text $banner = null;
+
     public function __construct(
         private readonly AgentSession $session,
         private Palette $palette,
@@ -94,8 +101,10 @@ final class InteractiveMode
         private readonly string $version,
         string $theme = 'dark',
         ?Terminal $terminal = null,
+        array $contextFiles = [],
     ) {
         $this->theme = $theme;
+        $this->contextFiles = $contextFiles;
 
         // Injected so a test can drive this without a terminal, the same way the editor
         // takes its clipboard: everything below here is arrangement, and arrangement is
@@ -162,8 +171,10 @@ final class InteractiveMode
 
     private function layout(): void
     {
+        $this->banner = new Text($this->banner(), 1, 0);
+
         $this->tui->addChild(new Spacer(1));
-        $this->tui->addChild(new Text($this->header(), 1, 0));
+        $this->tui->addChild($this->banner);
         $this->tui->addChild(new Spacer(1));
         $this->tui->addChild($this->chat);
         $this->tui->addChild($this->pending);
@@ -174,29 +185,85 @@ final class InteractiveMode
         $this->tui->setFocus($this->editor);
     }
 
-    private function header(): string
+    /**
+     * The three lines at the top, and the full list behind ctrl+o.
+     *
+     * One line of keys rather than a column of thirteen, which is what upstream settled
+     * on: the list was taller than most of the conversations it sat above. The rest is
+     * still there, one key away, for the session where someone needs it.
+     */
+    private function banner(): string
     {
-        $logo = Style::bold($this->palette->fg('accent', 'pig')) . $this->palette->fg('dim', " v{$this->version}");
-        $keys = '';
+        $lines = [
+            Style::bold($this->palette->fg('accent', 'pig')) . $this->palette->fg('dim', " v{$this->version}"),
+            $this->palette->fg('muted', implode(' · ', self::SUMMARY)),
+        ];
 
-        foreach (self::KEYS as $key => $does) {
-            $keys .= "\n" . $this->palette->fg('dim', $key) . $this->palette->fg('muted', ' ' . $does);
+        if (!$this->expanded) {
+            $lines[] = $this->palette->fg('dim', 'Press ctrl+o for the full list of keys, and what is loaded.');
+
+            return implode("\n", $lines);
         }
 
-        return $logo . $keys;
+        $lines[] = '';
+
+        foreach (self::KEYS as $key => $does) {
+            $lines[] = $this->palette->fg('dim', str_pad($key, 12)) . $this->palette->fg('muted', $does);
+        }
+
+        $lines[] = '';
+
+        foreach (self::COMMANDS as [$name, $does]) {
+            $lines[] = $this->palette->fg('dim', str_pad('/' . $name, 12)) . $this->palette->fg('muted', $does);
+        }
+
+        $loaded = $this->loaded();
+
+        return implode("\n", $lines) . ($loaded === '' ? '' : "\n\n" . $loaded);
     }
+
+    /**
+     * What was loaded into this session, as sections.
+     *
+     * A section with nothing in it is not drawn. Upstream lists skills and extensions
+     * here too; neither is ported, so neither has a heading to be empty under.
+     */
+    private function loaded(): string
+    {
+        if ($this->contextFiles === []) {
+            return '';
+        }
+
+        $names = array_map(
+            static fn (ContextFile $file): string => basename($file->path),
+            $this->contextFiles,
+        );
+
+        return $this->palette->fg('mdHeading', '[Context]') . "\n"
+            . $this->palette->fg('muted', '  ' . implode(', ', array_unique($names)));
+    }
+
+    /** The keys worth knowing before the first prompt, on one line. */
+    private const array SUMMARY = [
+        'escape interrupt',
+        'ctrl+c/ctrl+d clear/exit',
+        '/ commands',
+        '@ files',
+        'ctrl+o more',
+    ];
 
     /** @var array<string, string> */
     private const array KEYS = [
-        'esc' => 'to interrupt',
-        'ctrl+c' => 'to clear, twice to exit',
-        'ctrl+d' => 'to exit (empty)',
-        'ctrl+z' => 'to suspend',
-        'shift+tab' => 'to cycle thinking',
-        'ctrl+o' => 'to expand tool output',
-        'ctrl+t' => 'to show or hide thinking',
-        '/' => 'for commands',
-        '@' => 'for files',
+        'esc' => 'interrupt the agent',
+        'ctrl+c' => 'clear the prompt, twice to exit',
+        'ctrl+d' => 'exit from an empty prompt',
+        'ctrl+z' => 'suspend',
+        'ctrl+v' => 'paste, including an image from the clipboard',
+        'shift+tab' => 'cycle the thinking level',
+        'ctrl+o' => 'show more: tool output, and this list',
+        'ctrl+t' => 'show or hide thinking',
+        '/' => 'commands',
+        '@' => 'files',
     ];
 
     // ---- keys ---------------------------------------------------------------------------
@@ -210,15 +277,16 @@ final class InteractiveMode
         $this->editor->on('shift+tab', $this->cycleThinking(...));
 
         $this->editor->on('ctrl+o', function (): void {
-            $this->expandTools = !$this->expandTools;
+            $this->expanded = !$this->expanded;
+            $this->banner?->setText($this->banner());
 
             foreach ($this->chat->children() as $child) {
                 if ($child instanceof ToolExecutionComponent) {
-                    $child->setExpanded($this->expandTools);
+                    $child->setExpanded($this->expanded);
                 }
             }
 
-            $this->say($this->expandTools ? 'Tool output expanded' : 'Tool output collapsed');
+            $this->tui->requestRender();
         });
 
         $this->editor->on('ctrl+t', function (): void {
@@ -396,7 +464,7 @@ final class InteractiveMode
         $name = ltrim(strtok($text, " \t") ?: '', '/');
 
         match ($name) {
-            'help' => $this->say(trim(Style::dim($this->commandHelp()))),
+            'help' => $this->say($this->commandHelp()),
             'new' => $this->newSession(),
             'session' => $this->say($this->sessionSummary()),
             'theme' => $this->switchTheme(),
@@ -419,7 +487,9 @@ final class InteractiveMode
             $lines[] = $this->palette->fg('dim', str_pad('/' . $name, 12)) . $this->palette->fg('muted', $does);
         }
 
-        return implode("\n", $lines);
+        $loaded = $this->loaded();
+
+        return implode("\n", $lines) . ($loaded === '' ? '' : "\n\n" . $loaded);
     }
 
     private function newSession(): void
@@ -604,7 +674,7 @@ final class InteractiveMode
     private function addTool(string $id, string $name, array $arguments): void
     {
         $tool = new ToolExecutionComponent($name, $arguments, $this->palette);
-        $tool->setExpanded($this->expandTools);
+        $tool->setExpanded($this->expanded);
         $this->chat->addChild($tool);
         $this->tools[$id] = $tool;
     }
