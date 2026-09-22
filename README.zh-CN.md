@@ -17,7 +17,7 @@ amphp、不用 ncurses，只用标准库。
 | 包 | 命名空间 | 状态 |
 |---|---|---|
 | `pig/async` | `Pig\Async\` | 事件循环、Future、协程 —— **已完成** |
-| `pig/ai` | `Pig\Ai\` | 统一 LLM API —— **Anthropic、OpenAI chat-completions、OpenAI Responses 三条全链路可用**；Google 待移植 |
+| `pig/ai` | `Pig\Ai\` | 统一 LLM API —— **Anthropic、OpenAI chat-completions、OpenAI Responses、Gemini 四条全链路可用** |
 | `pig/agent-core` | `Pig\Agent\` | 带工具调用和状态管理的 agent 循环 —— **已完成** |
 | `pig/tui` | `Pig\Tui\` | 差分渲染的终端 UI —— **已完成** |
 | `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **工具、系统提示、交互式 CLI、会话持久化、上下文压缩、模型切换、skills 已完成** |
@@ -39,8 +39,8 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 `--model` 不用写全 id，写一部分就行——`--model sonnet`、`--model 'opus 4.1'`——`--model sonnet:high`
 还能顺手把思考档位一起设了。`--models` 列出全部。
 
-内置 126 个模型：Anthropic 的、OpenAI 自家走 Responses API 的，加上 Groq、Cerebras、xAI、Zai、
-Mistral——这五家说的都是 OpenAI chat-completions。设好对应的 `*_API_KEY`，`--model` 就能指过去。
+内置 147 个模型：Anthropic 的、OpenAI 自家走 Responses API 的、Gemini，加上 Groq、Cerebras、xAI、
+Zai、Mistral——这五家说的都是 OpenAI chat-completions。设好对应的 `*_API_KEY`，`--model` 就能指过去。
 
 skill 就是一个带 `SKILL.md` 的文件夹。pig 读 `~/.pig/skills` 和 `.pig/skills`，同时也读
 `~/.claude/skills`、`.claude/skills` 和 `~/.codex/skills`——给别的 agent 写的 skill 在这儿直接能用。

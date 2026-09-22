@@ -6,6 +6,8 @@ namespace Pig\Ai;
 
 use Pig\Ai\Providers\Anthropic;
 use Pig\Ai\Providers\AnthropicOptions;
+use Pig\Ai\Providers\Google;
+use Pig\Ai\Providers\GoogleOptions;
 use Pig\Ai\Providers\OpenAiCompletions;
 use Pig\Ai\Providers\OpenAiOptions;
 use Pig\Ai\Providers\OpenAiResponses;
@@ -57,6 +59,7 @@ final class Stream
             Api::AnthropicMessages => (new Anthropic())->stream($model, $context, self::anthropic($options, $apiKey)),
             Api::OpenAiCompletions => (new OpenAiCompletions())->stream($model, $context, self::openAi($options, $apiKey)),
             Api::OpenAiResponses => (new OpenAiResponses())->stream($model, $context, self::openAi($options, $apiKey)),
+            Api::GoogleGenerativeAi => (new Google())->stream($model, $context, self::google($options, $apiKey)),
             default => throw new ProviderError("No provider for {$model->api->value} has been ported yet"),
         };
     }
@@ -116,6 +119,7 @@ final class Stream
                 $apiKey,
                 reasoning: $model->supportsXhigh() ? $options?->reasoning : $options?->reasoning?->clampToHigh(),
             ),
+            Api::GoogleGenerativeAi => self::gemini($model, $options, $maxTokens, $apiKey),
             Api::AnthropicMessages => new AnthropicOptions(
                 $options?->temperature,
                 $maxTokens,
@@ -145,6 +149,86 @@ final class Stream
         }
 
         return new AnthropicOptions($options?->temperature, $options?->maxTokens, $options?->signal, $apiKey);
+    }
+
+    /**
+     * How hard Gemini should think, said the way the model in question understands it.
+     *
+     * Gemini 3 takes a named level and ignores a budget; 2.5 takes a budget in tokens and
+     * has different ceilings for pro and flash. And saying nothing means *dynamic*
+     * thinking, not none — so a turn that did not ask for thinking has to ask for none.
+     */
+    private static function gemini(Model $model, ?SimpleStreamOptions $options, int $maxTokens, ?string $apiKey): GoogleOptions
+    {
+        $base = [$options?->temperature, $maxTokens, $options?->signal, $apiKey];
+        $effort = $options?->reasoning?->clampToHigh();
+
+        if ($effort === null) {
+            return new GoogleOptions(...$base, thinkingEnabled: false);
+        }
+
+        if (str_contains($model->id, 'gemini-3')) {
+            return new GoogleOptions(...$base, thinkingEnabled: true, thinkingLevel: self::geminiLevel($model, $effort));
+        }
+
+        return new GoogleOptions(...$base, thinkingEnabled: true, thinkingBudget: self::geminiBudget($model, $effort));
+    }
+
+    /** Gemini 3 Pro offers two levels; Flash offers four. */
+    private static function geminiLevel(Model $model, ReasoningEffort $effort): string
+    {
+        if (str_contains($model->id, 'gemini-3-pro')) {
+            return match ($effort) {
+                ReasoningEffort::Minimal, ReasoningEffort::Low => 'LOW',
+                default => 'HIGH',
+            };
+        }
+
+        return strtoupper($effort->value);
+    }
+
+    /** https://ai.google.dev/gemini-api/docs/thinking#set-budget */
+    private static function geminiBudget(Model $model, ReasoningEffort $effort): int
+    {
+        if (str_contains($model->id, '2.5-pro')) {
+            return match ($effort) {
+                ReasoningEffort::Minimal => 128,
+                ReasoningEffort::Low => 2048,
+                ReasoningEffort::Medium => 8192,
+                default => 32768,
+            };
+        }
+
+        if (str_contains($model->id, '2.5-flash')) {
+            return match ($effort) {
+                ReasoningEffort::Minimal => 128,
+                ReasoningEffort::Low => 2048,
+                ReasoningEffort::Medium => 8192,
+                default => 24576,
+            };
+        }
+
+        // A model with no published ceiling: -1 lets it decide, which beats a guess.
+        return -1;
+    }
+
+    /** The key is resolved late; a caller's own Google options are otherwise kept whole. */
+    private static function google(?StreamOptions $options, string $apiKey): GoogleOptions
+    {
+        if ($options instanceof GoogleOptions) {
+            return new GoogleOptions(
+                $options->temperature,
+                $options->maxTokens,
+                $options->signal,
+                $apiKey,
+                $options->thinkingEnabled,
+                $options->thinkingBudget,
+                $options->thinkingLevel,
+                $options->toolChoice,
+            );
+        }
+
+        return new GoogleOptions($options?->temperature, $options?->maxTokens, $options?->signal, $apiKey);
     }
 
     /** The same shape as `anthropic()`: the key is resolved late, everything else is kept. */

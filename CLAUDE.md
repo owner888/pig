@@ -317,6 +317,28 @@ no counterpart anywhere else:
 `# Juice: 0 !important` is not a joke: gpt-5 has no documented way to turn reasoning off, and
 that developer message is what upstream found works.
 
+`Providers\Google` is upstream's `google.ts` plus `google-shared.ts` — Gemini, and the shape
+furthest from the other three. A chunk carries a list of *parts*, and a part is text, or
+thinking (text with `thought: true` on it), or a whole function call. Which means:
+
+- **A tool call arrives complete**, arguments and all, in one part — so it is opened,
+  delivered and closed in the same breath. There is nothing to stream.
+- **Thinking and text are the same field**, told apart by a flag, so a block ends where the
+  flag changes: the boundary problem from `openai-completions`, one field over.
+- **Gemini often sends no id for a call**, and a result has to be addressed to something, so
+  one is invented — and a repeat within a message is replaced for the same reason.
+- **Saying nothing about thinking means dynamic thinking, not none.** A turn that did not ask
+  for it has to ask for `thinkingBudget: 0`, or the model thinks anyway and bills for it.
+- **Thinking is said two ways.** Gemini 3 takes a named level and ignores a budget; 2.5 takes a
+  budget in tokens, with a different ceiling for pro and flash. `Stream::gemini()` picks; the
+  provider sends whichever arrived.
+- **Eighteen of its twenty finish reasons mean "no"** — safety, recitation, a malformed call, a
+  language it will not answer in. Only `STOP` and `MAX_TOKENS` are not errors.
+
+Upstream hands this to `@google/genai`; the REST endpoint is called directly here —
+`:streamGenerateContent?alt=sse`, which is what that package does underneath. Without `alt=sse`
+the response is one enormous JSON array rather than a stream.
+
 `ModelResolver` is upstream's `model-resolver.ts`: `sonnet` finds the model, `sonnet:high`
 finds it and sets the thinking level. When several match, the alias beats the dated build
 behind it — someone typing `sonnet` wants the current one, not the June 2024 build that sorts
@@ -357,10 +379,10 @@ all scalars and pig has no YAML parser to reach for; what this cannot read stays
 for a nested `metadata:` block means its key and nothing else — and the key is all that is
 validated anyway. `fnmatch()` is `minimatch` for `--ignore`-style patterns.
 
-Nothing here is deliberately unported any more. What is left is the two Google protocols
-(`google-generative-ai`, `google-gemini-cli`), GitHub Copilot (which needs an OAuth device
-flow), `/copy` (which needs a clipboard *writer*), images in tool output, custom-tool
-rendering, and branch and tree navigation.
+Nothing here is deliberately unported any more. Four of upstream's five protocols are here;
+what is left needs an OAuth device flow rather than a protocol — `google-gemini-cli` (the same
+Gemini shape behind Google's sign-in) and GitHub Copilot. Then `/copy` (which needs a clipboard
+*writer*), images in tool output, custom-tool rendering, and branch and tree navigation.
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 

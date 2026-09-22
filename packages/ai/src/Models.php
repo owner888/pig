@@ -9,12 +9,11 @@ namespace Pig\Ai;
  *
  * Upstream generates `models.generated.ts` from models.dev: 7105 lines, 414 models,
  * twelve providers. Here are the ones whose protocol is ported — Anthropic's 21, OpenAI's
- * own 33 on the Responses API, and the 72 across five providers that speak
+ * own 33 on the Responses API, Google's 21, and the 72 across five providers that speak
  * `openai-completions`. A model that could be selected and then not talked to is a worse
- * answer than "no such model", so the rest arrive with their protocols. OpenRouter's 236
- * speak a ported protocol and are still left out: that list is a directory of everyone
- * else's models and goes stale fastest, and GitHub Copilot's 19 need an OAuth device flow
- * that is not ported.
+ * answer than "no such model". What is left out: OpenRouter's 236, because that list is a
+ * directory of everyone else's models and goes stale fastest; and GitHub Copilot's 19 and
+ * the two Gemini CLI providers, which need OAuth device flows that are not ported.
  *
  * The figures are upstream's at the anchor commit, which is the source a port should
  * agree with rather than whatever models.dev says today.
@@ -213,6 +212,35 @@ final class Models
         'o4-mini-deep-research' => ['o4-mini-deep-research', 200_000, 100_000, true, true, 2.0, 8.0, 0.5, 0.0],
     ];
 
+    /**
+     * Google's, on the Generative Language API.
+     *
+     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float}>
+     */
+    private const array GOOGLE_MODELS = [
+        'gemini-1.5-flash' => ['Gemini 1.5 Flash', 1_000_000, 8_192, false, true, 0.075, 0.3, 0.01875, 0.0],
+        'gemini-1.5-flash-8b' => ['Gemini 1.5 Flash-8B', 1_000_000, 8_192, false, true, 0.0375, 0.15, 0.01, 0.0],
+        'gemini-1.5-pro' => ['Gemini 1.5 Pro', 1_000_000, 8_192, false, true, 1.25, 5.0, 0.3125, 0.0],
+        'gemini-2.0-flash' => ['Gemini 2.0 Flash', 1_048_576, 8_192, false, true, 0.1, 0.4, 0.025, 0.0],
+        'gemini-2.0-flash-lite' => ['Gemini 2.0 Flash Lite', 1_048_576, 8_192, false, true, 0.075, 0.3, 0.0, 0.0],
+        'gemini-2.5-flash' => ['Gemini 2.5 Flash', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.075, 0.0],
+        'gemini-2.5-flash-lite' => ['Gemini 2.5 Flash Lite', 1_048_576, 65_536, true, true, 0.1, 0.4, 0.025, 0.0],
+        'gemini-2.5-flash-lite-preview-06-17' => ['Gemini 2.5 Flash Lite Preview 06-17', 1_048_576, 65_536, true, true, 0.1, 0.4, 0.025, 0.0],
+        'gemini-2.5-flash-lite-preview-09-2025' => ['Gemini 2.5 Flash Lite Preview 09-25', 1_048_576, 65_536, true, true, 0.1, 0.4, 0.025, 0.0],
+        'gemini-2.5-flash-preview-04-17' => ['Gemini 2.5 Flash Preview 04-17', 1_048_576, 65_536, true, true, 0.15, 0.6, 0.0375, 0.0],
+        'gemini-2.5-flash-preview-05-20' => ['Gemini 2.5 Flash Preview 05-20', 1_048_576, 65_536, true, true, 0.15, 0.6, 0.0375, 0.0],
+        'gemini-2.5-flash-preview-09-2025' => ['Gemini 2.5 Flash Preview 09-25', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.075, 0.0],
+        'gemini-2.5-pro' => ['Gemini 2.5 Pro', 1_048_576, 65_536, true, true, 1.25, 10.0, 0.31, 0.0],
+        'gemini-2.5-pro-preview-05-06' => ['Gemini 2.5 Pro Preview 05-06', 1_048_576, 65_536, true, true, 1.25, 10.0, 0.31, 0.0],
+        'gemini-2.5-pro-preview-06-05' => ['Gemini 2.5 Pro Preview 06-05', 1_048_576, 65_536, true, true, 1.25, 10.0, 0.31, 0.0],
+        'gemini-3-flash-preview' => ['Gemini 3 Flash Preview', 1_048_576, 65_536, true, true, 0.5, 3.0, 0.05, 0.0],
+        'gemini-3-pro-preview' => ['Gemini 3 Pro Preview', 1_000_000, 64_000, true, true, 2.0, 12.0, 0.2, 0.0],
+        'gemini-flash-latest' => ['Gemini Flash Latest', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.075, 0.0],
+        'gemini-flash-lite-latest' => ['Gemini Flash-Lite Latest', 1_048_576, 65_536, true, true, 0.1, 0.4, 0.025, 0.0],
+        'gemini-live-2.5-flash' => ['Gemini Live 2.5 Flash', 128_000, 8_000, true, true, 0.5, 2.0, 0.0, 0.0],
+        'gemini-live-2.5-flash-preview-native-audio' => ['Gemini Live 2.5 Flash Preview Native Audio', 131_072, 65_536, true, false, 0.5, 2.0, 0.0, 0.0],
+    ];
+
     /** @var array<string, Model>|null built once, on the first lookup that needs it */
     private static ?array $models = null;
 
@@ -307,6 +335,21 @@ final class Models
                 Api::OpenAiResponses,
                 'openai',
                 'https://api.openai.com/v1',
+                $window,
+                $maxTokens,
+                $reasoning,
+                $images ? ['text', 'image'] : ['text'],
+                new Pricing($in, $out, $read, $write),
+            );
+        }
+
+        foreach (self::GOOGLE_MODELS as $id => [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write]) {
+            $models['google/' . $id] = new Model(
+                $id,
+                $name,
+                Api::GoogleGenerativeAi,
+                'google',
+                'https://generativelanguage.googleapis.com/v1beta',
                 $window,
                 $maxTokens,
                 $reasoning,

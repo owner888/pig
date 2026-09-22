@@ -17,7 +17,7 @@ final class ModelsTest extends TestCase
     {
         $models = Models::all();
 
-        $this->assertCount(126, $models);
+        $this->assertCount(147, $models);
 
         foreach ($models as $model) {
             $this->assertNotSame('', $model->id, 'a model with no id cannot be selected');
@@ -36,7 +36,7 @@ final class ModelsTest extends TestCase
             // "no such model" — which is the whole reason the table is not all 414.
             $this->assertContains(
                 $model->api,
-                [Api::AnthropicMessages, Api::OpenAiCompletions, Api::OpenAiResponses],
+                [Api::AnthropicMessages, Api::OpenAiCompletions, Api::OpenAiResponses, Api::GoogleGenerativeAi],
                 $model->id . ' speaks ' . $model->api->value,
             );
         }
@@ -88,7 +88,7 @@ final class ModelsTest extends TestCase
         // Every provider here speaks a protocol that is ported. Google's and OpenAI's own
         // arrive with theirs.
         $this->assertSame(
-            ['anthropic', 'openai', 'cerebras', 'groq', 'mistral', 'xai', 'zai'],
+            ['anthropic', 'openai', 'google', 'cerebras', 'groq', 'mistral', 'xai', 'zai'],
             Models::providers(),
         );
     }
