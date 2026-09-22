@@ -283,6 +283,31 @@ Only asked on a terminal that draws images, since nothing else uses the answer.
 Regression tests: `ImageTest::testTheReplyIsTakenOutOfTheInputAndTheRestStillArrives` and
 `testATerminalThatNeverAnswersDoesNotSwallowTyping`.
 
+### Killing the shell does not kill what the shell started
+
+`bash -c 'npm test'` makes the test runner a *grandchild*. Kill the shell and the runner keeps
+going, holding the port it bound and writing to a terminal that has moved on — which is what
+Escape looks like when it does not work.
+
+Upstream puts the child in its own process group (`detached: true`) and kills the group. PHP
+cannot do that through `proc_open`, and macOS has no `setsid` binary to borrow. So `Shell::killTree()`
+reads the whole process table once with `ps -eo pid=,ppid=`, walks down from the shell, and kills
+children before their parents so nothing gets a chance to start more. One `ps`, not one per node:
+this runs while someone is waiting for Escape to take effect.
+
+Regression test: `BashToolTest::testAbortingKillsWhatTheCommandStartedToo`, which starts a
+grandchild that would write a file half a second later and asserts the file never appears.
+
+### Output truncated by line count also needs somewhere to look
+
+Upstream's bash tool writes the full output to a temp file only once it passes the **byte**
+limit, and the truncation notice then names that file. Two thousand short lines is nowhere near
+50KB and is still truncated by the line limit, so upstream's notice in that case says where to
+find a file it never wrote. Here the spill starts when *either* limit is passed, which is the
+same pair of limits truncation itself uses.
+
+Regression test: `BashToolTest::testTruncatedOutputSaysWhereTheWholeOfItIs`.
+
 ### `--ignore-file` applies a nested `.gitignore` in the wrong place
 
 Upstream's `find` collects every `.gitignore` below the search root and passes each one to
