@@ -141,6 +141,57 @@ final class ToolInstallerTest extends ToolTestCase
         );
     }
 
+    // ---- what the archive is called ------------------------------------------------
+
+    public function testTheArchiveIsNamedTheWayEachProjectNamesIts(): void
+    {
+        // The naming was one shared rule for both tools for a while, which named a
+        // ripgrep archive that does not exist. Pinned here because the only other place
+        // it shows up is a 404 on someone else's machine.
+        $fd = ToolInstaller::archive('fd', '10.2.0');
+        $rg = ToolInstaller::archive('rg', '14.1.1');
+
+        $arch = in_array(php_uname('m'), ['arm64', 'aarch64'], true) ? 'aarch64' : 'x86_64';
+
+        [$fdPlatform, $rgPlatform, $extension] = match (PHP_OS_FAMILY) {
+            'Darwin' => ['apple-darwin', 'apple-darwin', '.tar.gz'],
+            'Linux' => [
+                'unknown-linux-gnu',
+                $arch === 'aarch64' ? 'unknown-linux-gnu' : 'unknown-linux-musl',
+                '.tar.gz',
+            ],
+            'Windows' => ['pc-windows-msvc', 'pc-windows-msvc', '.zip'],
+            default => $this->markTestSkipped('no published build for ' . PHP_OS_FAMILY),
+        };
+
+        $this->assertSame("fd-v10.2.0-{$arch}-{$fdPlatform}{$extension}", $fd);
+        $this->assertSame("ripgrep-14.1.1-{$arch}-{$rgPlatform}{$extension}", $rg);
+    }
+
+    public function testTheUrlCarriesEachProjectsTagStyle(): void
+    {
+        // fd tags releases v10.2.0, ripgrep tags them 14.1.1 — getting this backwards is
+        // another 404.
+        $this->assertStringContainsString(
+            'https://github.com/sharkdp/fd/releases/download/v10.2.0/',
+            ToolInstaller::url('fd', '10.2.0'),
+        );
+
+        $this->assertStringContainsString(
+            'https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/',
+            ToolInstaller::url('rg', '14.1.1'),
+        );
+    }
+
+    public function testAnUnknownToolHasNoArchiveName(): void
+    {
+        $this->assertThrows(
+            AgentError::class,
+            static fn () => ToolInstaller::archive('emacs', '1.0'),
+            "Nothing known about 'emacs'",
+        );
+    }
+
     // ---- the redirect the download needs -------------------------------------------
 
     public function testFollowGoesWhereTheLocationHeaderPoints(): void

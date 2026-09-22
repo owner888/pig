@@ -84,6 +84,13 @@ is pulling and from where **before** it starts, because an executable arriving f
 internet should not arrive quietly. Nothing checks a signature — neither project publishes
 one — so this trusts GitHub and those two repositories exactly as far as upstream does.
 
+The archive names are upstream's table, copied per tool rather than tidied into one rule.
+The two projects do not publish the same Linux builds — ripgrep has an x86_64 musl build but
+only a gnu one for aarch64, fd publishes gnu for both — so a shared rule names an archive that
+does not exist, which is a 404 at download time on a machine nobody is watching. `archive()`
+and `url()` are public so the naming can be tested without a download; that was the only way
+the first version's wrong names could have been caught.
+
 The download goes through `pig/ai`'s own HTTP client, which grew `HttpClient::follow()` for it:
 a release URL is answered with a 302 to GitHub's object store, and a streaming API never
 redirects, so `send()` keeps its single-request behaviour and only downloads pay for the loop.

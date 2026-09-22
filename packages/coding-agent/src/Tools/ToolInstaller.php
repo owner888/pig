@@ -28,10 +28,31 @@ use Pig\Tui\Process;
  */
 final class ToolInstaller
 {
-    /** @var array<string, array{repo: string, binary: string, tagPrefix: string, archive: string}> */
+    /**
+     * The two repositories, and what each of them calls its builds.
+     *
+     * `linux` is per tool and per architecture because the two projects do not publish
+     * the same set: ripgrep has an x86_64 musl build but only a gnu one for aarch64, and
+     * fd publishes gnu for both. This table is upstream's, copied rather than tidied —
+     * a shared rule here would name an archive that does not exist and 404 on download.
+     *
+     * @var array<string, array{repo: string, binary: string, tagPrefix: string, archive: string, linux: array<string, string>}>
+     */
     private const array TOOLS = [
-        'fd' => ['repo' => 'sharkdp/fd', 'binary' => 'fd', 'tagPrefix' => 'v', 'archive' => 'fd-v{version}-{arch}-{platform}'],
-        'rg' => ['repo' => 'BurntSushi/ripgrep', 'binary' => 'rg', 'tagPrefix' => '', 'archive' => 'ripgrep-{version}-{arch}-{platform}'],
+        'fd' => [
+            'repo' => 'sharkdp/fd',
+            'binary' => 'fd',
+            'tagPrefix' => 'v',
+            'archive' => 'fd-v{version}-{arch}-{platform}',
+            'linux' => ['aarch64' => 'unknown-linux-gnu', 'x86_64' => 'unknown-linux-gnu'],
+        ],
+        'rg' => [
+            'repo' => 'BurntSushi/ripgrep',
+            'binary' => 'rg',
+            'tagPrefix' => '',
+            'archive' => 'ripgrep-{version}-{arch}-{platform}',
+            'linux' => ['aarch64' => 'unknown-linux-gnu', 'x86_64' => 'unknown-linux-musl'],
+        ],
     ];
 
     private const float API_TIMEOUT = 10.0;
@@ -66,19 +87,14 @@ final class ToolInstaller
     public static function install(string $tool, ?callable $say = null): string
     {
         $config = self::TOOLS[$tool] ?? throw new AgentError("Nothing known about '{$tool}'");
-        $target = self::target();
 
-        if ($target === null) {
-            throw new AgentError(
-                'No published build of ' . $config['repo'] . ' for ' . PHP_OS_FAMILY . '/' . php_uname('m')
-                    . '. Install it with your package manager instead.',
-            );
-        }
+        // Before the network: a machine with no published build should not spend a round
+        // trip to GitHub to be told so.
+        self::target($config);
 
         $version = self::latestVersion($config['repo']);
-        $name = strtr($config['archive'], ['{version}' => $version, '{arch}' => $target[0], '{platform}' => $target[1]])
-            . $target[2];
-        $url = "https://github.com/{$config['repo']}/releases/download/{$config['tagPrefix']}{$version}/{$name}";
+        $name = self::archive($tool, $version);
+        $url = self::url($tool, $version);
 
         // Said before the fetch, not after: pulling an executable off the internet is
         // not something that should happen quietly.
@@ -111,11 +127,40 @@ final class ToolInstaller
     }
 
     /**
-     * The archive naming for this machine.
+     * What this machine's archive of $tool is called.
      *
-     * @return array{0: string, 1: string, 2: string}|null arch, platform triple, extension
+     * Separate from the download so it can be tested without one: getting a name wrong
+     * here is a 404 on a machine nobody is holding, which is how the Linux names were
+     * wrong for a while — one shared rule for both tools, where upstream has two.
      */
-    private static function target(): ?array
+    public static function archive(string $tool, string $version): string
+    {
+        $config = self::TOOLS[$tool] ?? throw new AgentError("Nothing known about '{$tool}'");
+        $target = self::target($config);
+
+        return strtr($config['archive'], [
+            '{version}' => $version,
+            '{arch}' => $target[0],
+            '{platform}' => $target[1],
+        ]) . $target[2];
+    }
+
+    /** Where that archive is downloaded from. */
+    public static function url(string $tool, string $version): string
+    {
+        $config = self::TOOLS[$tool] ?? throw new AgentError("Nothing known about '{$tool}'");
+
+        return "https://github.com/{$config['repo']}/releases/download/"
+            . $config['tagPrefix'] . $version . '/' . self::archive($tool, $version);
+    }
+
+    /**
+     * The archive naming for this machine, or an error naming what it is.
+     *
+     * @param array{repo: string, linux: array<string, string>, ...} $config
+     * @return array{0: string, 1: string, 2: string} arch, platform triple, extension
+     */
+    private static function target(array $config): array
     {
         $machine = php_uname('m');
         $arch = match (true) {
@@ -124,17 +169,17 @@ final class ToolInstaller
             default => null,
         };
 
-        if ($arch === null) {
-            return null;
-        }
-
-        return match (PHP_OS_FAMILY) {
+        $target = $arch === null ? null : match (PHP_OS_FAMILY) {
             'Darwin' => [$arch, 'apple-darwin', '.tar.gz'],
-            // musl, so the binary does not depend on the host's glibc version.
-            'Linux' => [$arch, 'unknown-linux-musl', '.tar.gz'],
+            'Linux' => isset($config['linux'][$arch]) ? [$arch, $config['linux'][$arch], '.tar.gz'] : null,
             'Windows' => [$arch, 'pc-windows-msvc', '.zip'],
             default => null,
         };
+
+        return $target ?? throw new AgentError(
+            'No published build of ' . $config['repo'] . ' for ' . PHP_OS_FAMILY . '/' . $machine
+                . '. Install it with your package manager instead.',
+        );
     }
 
     private static function latestVersion(string $repo): string
