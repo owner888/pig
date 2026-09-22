@@ -9,8 +9,10 @@ namespace Pig\Ai;
  *
  * Also the shape a stream carries while it is still filling up — the `partial` on
  * every event is one of these, and the same class is the final result.
+ *
+ * One arm of the Message union — see Context for the alias.
  */
-final readonly class AssistantMessage implements Message
+final readonly class AssistantMessage
 {
     public int $timestamp;
 

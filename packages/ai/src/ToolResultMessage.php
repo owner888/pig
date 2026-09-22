@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace Pig\Ai;
 
-/** What a tool returned, addressed back to the call that asked for it. */
-final readonly class ToolResultMessage implements Message
+/**
+ * What a tool returned, addressed back to the call that asked for it.
+ *
+ * One arm of the Message union — see Context for the alias.
+ */
+final readonly class ToolResultMessage
 {
     public int $timestamp;
 

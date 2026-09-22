@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace Pig\Ai;
 
-/** A turn from the person: text, optionally with images. */
-final readonly class UserMessage implements Message
+/**
+ * A turn from the person: text, optionally with images.
+ *
+ * One arm of the Message union — see Context for the alias.
+ */
+final readonly class UserMessage
 {
     /** @var list<UserContent> */
     public array $content;

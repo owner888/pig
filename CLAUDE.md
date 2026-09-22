@@ -20,7 +20,7 @@ Reference checkout for diffing lives outside this repo — clone pi and `git che
 | Port fidelity | File-by-file literal | Class/file/method names track upstream so `git diff` against a newer upstream commit stays mechanical |
 | Concurrency | Hand-written `Fiber` + `stream_select` loop | One `select()` must wait on the LLM socket and STDIN together — that is what makes Esc-to-interrupt and typing mid-stream possible |
 | HTTP transport | Raw `tls://` streams, hand-written HTTP/1.1 | Sockets and STDIN are then the same kind of thing; one loop, no `ext-curl` |
-| Unions | `interface` + `final readonly class` | `match` stays exhaustive; TS declaration-merging maps to "the app implements `AgentMessage`" |
+| Unions | real union type where the arms are closed and few, marker interface otherwise | PHP has union types; what it lacks is naming one and typing an array's elements — see [Porting the unions](#porting-the-unions) |
 | Layout | composer monorepo, `Pig\*` | Mirrors upstream's package split one-to-one |
 
 ### Deliberate exceptions to kaka-workflow Rule 4 (prefer platform/standard libs)
@@ -46,18 +46,27 @@ packages/coding-agent/ → Pig\CodingAgent\              not started
 Ported so far: `ai/src/utils/event-stream.ts` and all of `ai/src/types.ts`. Next is `ai/src/stream.ts`
 and the Anthropic provider, then `agent-core`: `types.ts` 217 → `agent.ts` 439 → `agent-loop.ts` 417.
 
-### Unions without unions
+### Porting the unions
 
-TypeScript discriminates on a `type`/`role` string; PHP interfaces are nominal, so each arm of a
-union became its own class behind a marker interface, and `switch (event.type)` became
-`match (true)` over `instanceof`. Three consequences worth knowing before adding to the model:
+PHP has union types. What it does not have is a way to **name** one or to use one as an array's
+element type — `type Message = A|B` and `array<A|B>` are both parse errors. That, not any absence
+of unions, is what decides how each of upstream's unions is encoded here:
 
-- Content blocks carry `UserContent` / `AssistantContent` as well as `Content`, so "a user message
-  cannot hold thinking" is enforced by the type rather than by convention.
-- The twelve `AssistantMessageEvent` arms are classes named after their wire strings —
-  `text_delta` → `TextDeltaEvent`. Upstream names them nowhere, so these names are ours.
-- `Message` declares nothing. A `timestamp()` getter beside a public `$timestamp` would be one
-  shape too many, and PHP 8.3 interfaces cannot require a property.
+| Union | Encoding | Why |
+|---|---|---|
+| `Message` (3 arms, closed) | real union type, aliased with `@phpstan-type` on `Context` | closed like upstream, and a `match` over it can be checked for exhaustiveness |
+| `AssistantMessageEvent` (12 arms) | marker interface | with no alias, a union means copying twelve class names into every signature |
+| `AgentMessage` (apps extend it) | marker interface | a union cannot be extended from outside the package |
+| `Content` / `UserContent` / `AssistantContent` | marker interfaces | they are array elements, where the type is a docblock either way — and the interface still holds for a single block passed on its own |
+
+**A marker interface is not exhaustively checkable.** Anything may implement one, so every
+`match (true)` over an interface keeps its `default` arm. Only the closed unions get exhaustiveness.
+At runtime the two encodings are equally safe: a `match` with no arm taken throws
+`UnhandledMatchError` either way.
+
+`UserContent` / `AssistantContent` exist so that "a user message cannot hold thinking" is a type
+error rather than a convention. The twelve event classes are named after their wire strings —
+`text_delta` → `TextDeltaEvent`; upstream leaves those arms anonymous, so the names are ours.
 
 Deliberate deviations from upstream, both to spare every consumer an unpacking step:
 `UserMessage` wraps a bare string into a `TextContent` at construction instead of keeping
