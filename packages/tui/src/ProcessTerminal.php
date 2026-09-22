@@ -18,6 +18,9 @@ use Pig\Async\Loop;
  */
 final class ProcessTerminal implements Terminal
 {
+    /** How long to keep waiting for a full output buffer to drain, in seconds. */
+    private const float DRAIN_TIMEOUT = 5.0;
+
     /** Terminal settings as they were before we touched them, for `stty` to restore. */
     private ?string $savedState = null;
 
@@ -102,10 +105,51 @@ final class ProcessTerminal implements Terminal
         }
     }
 
+    /**
+     * Write all of it, however many calls that takes.
+     *
+     * `fwrite()` to a terminal returns short. It has to: the tty has a buffer of a few
+     * kilobytes and a frame is bigger than that. Taking the return value as "done" drops
+     * the rest of the frame — usually in the middle of an escape sequence — and from
+     * there every cursor move is against a screen that holds something else.
+     *
+     * Non-blocking is not optional here either: STDIN and STDOUT are dups of the same
+     * open file description when both are the terminal, so putting the input in
+     * non-blocking mode does the same to the output whether or not anyone asked.
+     */
     #[\Override]
     public function write(string $data): void
     {
-        fwrite($this->output, $data);
+        $length = strlen($data);
+        $written = 0;
+        $waited = 0.0;
+
+        while ($written < $length) {
+            $count = fwrite($this->output, substr($data, $written));
+
+            if ($count === false) {
+                throw new TuiError("Writing to the terminal failed after {$written} of {$length} bytes");
+            }
+
+            if ($count > 0) {
+                $written += $count;
+                $waited = 0.0;
+
+                continue;
+            }
+
+            // The buffer is full. Wait for the terminal to read some of it — briefly,
+            // because a terminal that has stopped draining is not coming back, and
+            // spinning here would hang the whole program with a half-drawn screen.
+            if ($waited >= self::DRAIN_TIMEOUT) {
+                throw new TuiError("Terminal stopped accepting output after {$written} of {$length} bytes");
+            }
+
+            $read = $except = null;
+            $write = [$this->output];
+            stream_select($read, $write, $except, 0, 50_000);
+            $waited += 0.05;
+        }
     }
 
     #[\Override]

@@ -128,7 +128,10 @@ final class InteractiveMode
         try {
             Loop::get()->run();
         } finally {
-            $this->tui->stop();
+            // Through stop() rather than straight to the terminal, so a quit from a key
+            // handler and a loop that ended on its own both take the same path — and the
+            // terminal is not stopped twice, which showed up as two STOPs in a trace.
+            $this->stop();
         }
     }
 

@@ -452,6 +452,30 @@ throws with fd's own message.
 
 Regression test: `SearchToolsTest::testABadPatternIsReportedRatherThanReadAsNoMatches`.
 
+### `fwrite()` to a terminal returns short, and STDOUT is non-blocking whether you asked or not
+
+`ProcessTerminal::write()` called `fwrite()` once and ignored what it returned. A frame is
+tens of kilobytes; a tty buffer is a few. Measured: a 1,000,000-byte write put **65,536**
+bytes on the wire and dropped the other 93%, and an 11,330-byte frame — the real first
+frame at 178 columns — lost 3,138 bytes. What gets dropped is the middle of an escape
+sequence, so from there every cursor move is against a screen holding something else. On
+screen it looks like frames stacking up instead of replacing each other.
+
+The second half is why it is easy to miss: **`stream_set_blocking($input, false)` makes the
+output non-blocking too.** STDIN and STDOUT are dups of one open file description when both
+are the terminal, and `O_NONBLOCK` belongs to the description, not the descriptor. So the
+input watcher puts the output in a mode where short writes are normal, at a distance, in
+another method.
+
+`write()` now loops until everything is out, waiting on `stream_select()` for the writable
+side when the buffer is full, and throws after five seconds rather than spinning. Anywhere
+else this codebase writes to a stream it may not own, check the return value the same way —
+a partial write is the quietest failure there is.
+
+Regression test: `ProcessTerminalTest::testAWriteBiggerThanTheBufferStillArrivesWhole`. It
+writes through a real pipe, because `FakeTerminal` accepts whatever it is given and so can
+never reproduce this — which is exactly why it shipped.
+
 ### Closing a style with `\e[0m` closes whatever it was nested inside
 
 `Style::bold()` and friends used to end with a full reset. A full reset turns off
