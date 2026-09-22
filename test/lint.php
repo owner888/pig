@@ -64,6 +64,14 @@ foreach ($files as $file) {
             echo "  {$function}() is newer than the floor in composer.json\n";
         }
     }
+
+    // `@` hides every other thing that could have gone wrong in the same call, and the
+    // one it was reached for is always the one you already knew about.
+    if (preg_match('/(?<![\'"\w])@[a-z_]\w*\s*\(/i', (string) preg_replace('/(?s)\/\*.*?\*\/|\/\/[^\n]*|\'[^\']*\'|"[^"]*"/', '', $source), $match) === 1) {
+        $failed++;
+        echo "\033[31m✗\033[0m " . substr($file, strlen($root) + 1) . "\n";
+        echo "  error suppression: {$match[0]}\n";
+    }
 }
 
 printf(

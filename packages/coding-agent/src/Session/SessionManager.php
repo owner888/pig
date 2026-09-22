@@ -70,12 +70,32 @@ final class SessionManager
         );
     }
 
+    /**
+     * A file's lines, or null when there is nothing readable there.
+     *
+     * The readability is checked rather than the warning suppressed: `@` hides every
+     * other thing that could go wrong in the same call, and a session that will not open
+     * is exactly when you want to be told why.
+     *
+     * @return list<string>|null
+     */
+    private static function lines(string $path): ?array
+    {
+        if (!is_file($path) || !is_readable($path)) {
+            return null;
+        }
+
+        $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+
+        return $lines === false ? null : $lines;
+    }
+
     /** Read one back. Its messages are in `messages()`. */
     public static function open(string $path): self
     {
-        $lines = @file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        $lines = self::lines($path);
 
-        if ($lines === false) {
+        if ($lines === null) {
             throw new AgentError("Could not read the session at {$path}");
         }
 
@@ -99,7 +119,7 @@ final class SessionManager
             $message = is_array($entry) ? SessionCodec::decode($entry) : null;
 
             if ($message !== null) {
-                $session->messages[] = $message;
+                $session->add($message);
             }
         }
 
@@ -126,13 +146,33 @@ final class SessionManager
             return;
         }
 
-        $this->messages[] = $message;
+        $this->add($message);
 
         if (!$this->started && !$this->worthKeeping($message)) {
             return;
         }
 
         $this->write($entry);
+    }
+
+    /**
+     * Put a message into the in-memory conversation.
+     *
+     * Every message but one goes on the end. A compaction summary does not: it stands in
+     * for the messages before the cut, so it takes their place. The file still holds them
+     * — nothing is ever rewritten — which is why the summary carries the count: replaying
+     * the log without it would hand a resumed session back the whole conversation that
+     * had just been compacted away.
+     */
+    private function add(mixed $message): void
+    {
+        if ($message instanceof CompactionSummary && $message->replaced > 0) {
+            array_splice($this->messages, 0, $message->replaced, [$message]);
+
+            return;
+        }
+
+        $this->messages[] = $message;
     }
 
     /**
@@ -240,9 +280,9 @@ final class SessionManager
      */
     private static function describe(string $path): ?SessionInfo
     {
-        $lines = @file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        $lines = self::lines($path);
 
-        if ($lines === false || $lines === []) {
+        if ($lines === null || $lines === []) {
             return null;
         }
 

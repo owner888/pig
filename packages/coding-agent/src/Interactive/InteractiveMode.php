@@ -20,11 +20,13 @@ use Pig\Ai\TextContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
+use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Theme\Palette;
@@ -107,6 +109,9 @@ final class InteractiveMode
     /** The session picker, while it is open. */
     private ?SelectList $picker = null;
 
+    /** Set while the summariser is running, so escape can call it off. */
+    private ?AbortController $compaction = null;
+
     public function __construct(
         private readonly AgentSession $session,
         private Palette $palette,
@@ -163,6 +168,12 @@ final class InteractiveMode
 
             if ($message instanceof BashExecution) {
                 $this->replayBash($message);
+
+                continue;
+            }
+
+            if ($message instanceof CompactionSummary) {
+                $this->chat->addChild(new CompactionComponent($message, $this->palette, $this->expanded));
 
                 continue;
             }
@@ -358,7 +369,7 @@ final class InteractiveMode
             $this->banner?->setText($this->banner());
 
             foreach ($this->chat->children() as $child) {
-                if ($child instanceof ToolExecutionComponent) {
+                if ($child instanceof ToolExecutionComponent || $child instanceof CompactionComponent) {
                     $child->setExpanded($this->expanded);
                 }
             }
@@ -388,6 +399,12 @@ final class InteractiveMode
      */
     private function interrupt(): void
     {
+        if ($this->compaction !== null) {
+            $this->compaction->abort('Cancelled');
+
+            return;
+        }
+
         if ($this->session->isBashRunning()) {
             $this->session->abortBash();
 
@@ -610,6 +627,14 @@ final class InteractiveMode
     {
         Async::spawn(function () use ($text): void {
             try {
+                // Before the turn rather than after the failure: a request that does not
+                // fit comes back as an error from the provider, and by then the person
+                // has already waited for it.
+                if ($this->session->shouldCompact()) {
+                    $this->say($this->palette->fg('muted', 'Context is nearly full — summarising first.'));
+                    $this->compact();
+                }
+
                 $this->session->prompt($text);
             } catch (Throwable $error) {
                 $this->say($this->palette->fg('error', $error->getMessage()));
@@ -617,11 +642,65 @@ final class InteractiveMode
         });
     }
 
+    /**
+     * Summarise the older half of the conversation, with something on screen while it runs.
+     *
+     * Called straight from `/compact` and from `send()` when the window is nearly full.
+     * Runs in whatever fiber it was called from — both of those are already off the input
+     * callback — so escape still reaches the loop and can call it off.
+     *
+     * @param string|null $instructions from `/compact focus on the parser`
+     */
+    private function compact(?string $instructions = null): void
+    {
+        if ($this->compaction !== null) {
+            return;
+        }
+
+        $this->working?->stop();
+        $this->status->clear();
+        $this->working = new Loader(
+            $this->tui,
+            $this->palette->of('accent'),
+            $this->palette->of('muted'),
+            'Summarising the conversation... (esc to cancel)',
+        );
+        $this->status->addChild($this->working);
+        $this->tui->requestRender();
+
+        $this->compaction = new AbortController();
+
+        try {
+            $summary = $this->session->compact($instructions, $this->compaction->signal);
+        } catch (Throwable $error) {
+            $summary = null;
+            $this->say($this->palette->fg('error', $error->getMessage()));
+        } finally {
+            $this->compaction = null;
+            $this->working?->stop();
+            $this->working = null;
+            $this->status->clear();
+        }
+
+        if ($summary === null) {
+            $this->say($this->palette->fg('muted', 'Nothing was compacted.'));
+
+            return;
+        }
+
+        // The transcript above is left where it is: it is what was said, and the summary
+        // is a note about it, not a replacement for anyone's memory of reading it.
+        $this->chat->addChild(new CompactionComponent($summary, $this->palette, $this->expanded));
+        $this->footer->invalidate();
+        $this->tui->requestRender();
+    }
+
     /** @var list<array{0: string, 1: string}> */
     private const array COMMANDS = [
         ['help', 'Show the keys and commands'],
         ['new', 'Forget the conversation and start over'],
         ['session', 'What this session has cost'],
+        ['compact', 'Summarise the conversation so far and carry on from the summary'],
         ['resume', 'Pick up an earlier conversation'],
         ['theme', 'Switch between dark and light'],
         ['exit', 'Quit'],
@@ -635,11 +714,29 @@ final class InteractiveMode
             'help' => $this->say($this->commandHelp()),
             'new' => $this->newSession(),
             'session' => $this->say($this->sessionSummary()),
+            'compact' => $this->startCompaction(trim(substr($text, strlen($name) + 1))),
             'resume' => $this->showSessions(),
             'theme' => $this->switchTheme(),
             'exit', 'quit' => $this->stop(),
             default => $this->say($this->palette->fg('error', "No command called /{$name}. Try /help.")),
         };
+    }
+
+    /**
+     * `/compact`, in a fiber of its own.
+     *
+     * Same reason as `send()`: a command runs inside the input callback, and summarising
+     * there would block the escape meant to stop it.
+     */
+    private function startCompaction(string $instructions): void
+    {
+        if ($this->session->isStreaming()) {
+            $this->say($this->palette->fg('warning', 'Still working. Press esc first.'));
+
+            return;
+        }
+
+        Async::spawn(fn () => $this->compact($instructions === '' ? null : $instructions));
     }
 
     private function commandHelp(): string

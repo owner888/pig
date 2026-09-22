@@ -617,6 +617,112 @@ final class InteractiveModeTest extends TestCase
         $this->assertFalse($this->session->isStreaming());
     }
 
+    // ---- compaction -------------------------------------------------------------------------
+
+    public function testCompactSummarisesTheConversationAndSaysSoInTheTranscript(): void
+    {
+        $this->start(['a summary of it all']);
+
+        foreach (range(1, 6) as $ignored) {
+            $this->session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+        }
+
+        $this->type('/compact');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('Compacted', $screen);
+        $this->assertStringContainsString('earlier messages summarised', $screen);
+
+        // Collapsed by default: the summary is long, and the transcript above it is what
+        // the person was reading.
+        $this->assertStringNotContainsString('a summary of it all', $screen);
+    }
+
+    public function testCtrlOOpensTheSummaryTheModelWillBeWorkingFrom(): void
+    {
+        $this->start(['a summary of it all']);
+
+        foreach (range(1, 6) as $ignored) {
+            $this->session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+        }
+
+        $this->type('/compact');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type("\x0f");
+
+        // The only way to tell a good summary from a bad one before it costs you
+        // something.
+        $this->assertStringContainsString('a summary of it all', $this->screen());
+    }
+
+    public function testANearlyFullContextIsCompactedBeforeTheTurnRatherThanAfterTheFailure(): void
+    {
+        $this->start(['a summary of it all', 'and the answer']);
+
+        foreach (range(1, 6) as $ignored) {
+            $this->session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+        }
+
+        // What the provider said the last turn carried: 190k of a 200k window, which
+        // leaves no room for an answer.
+        $this->session->agent->appendMessage(new AssistantMessage(
+            [new TextContent('so far so good')],
+            Api::AnthropicMessages,
+            'anthropic',
+            'claude-test',
+            new Usage(0, 0, 0, 0, 190_000),
+            StopReason::Stop,
+        ));
+
+        $this->type('one more thing');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('Context is nearly full', $screen);
+        $this->assertStringContainsString('Compacted', $screen);
+        $this->assertStringContainsString('and the answer', $screen);
+    }
+
+    public function testCompactingAShortConversationSaysNothingHappened(): void
+    {
+        // No scripted answers: a conversation with nothing old enough to drop must not
+        // reach the provider at all.
+        $this->start();
+
+        $this->type('/compact');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('Nothing was compacted', $this->screen());
+    }
+
+    public function testCompactingWhileTheAgentWorksSaysToStopItFirst(): void
+    {
+        $this->start(['done']);
+
+        $held = $this->holdTheAgent();
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/compact');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('Still working', $this->screen());
+
+        $held();
+        $this->settle();
+    }
+
     // ---- the queue ------------------------------------------------------------------------------
 
     public function testTypingWhileTheAgentWorksQueuesRatherThanRefuses(): void

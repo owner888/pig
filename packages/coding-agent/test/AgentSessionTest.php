@@ -29,9 +29,13 @@ use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\SessionManager;
 use Pig\Test\AssertsThrows;
+use Throwable;
 use RuntimeException;
 
 /**
@@ -276,6 +280,191 @@ final class AgentSessionTest extends TestCase
         $this->assertInstanceOf(BashExecution::class, $session->messages()[2]);
     }
 
+    // ---- making room -------------------------------------------------------------
+
+    public function testAShortConversationIsNotWorthCompacting(): void
+    {
+        $session = $this->session(['answer']);
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $before = $session->messages();
+
+        // Nothing is old enough to be worth dropping, so nothing is dropped — and the
+        // model is not asked to summarise two messages, which costs a request to say so.
+        $this->assertNull(Async::run(static fn () => $session->compact()));
+        $this->assertSame($before, $session->messages());
+    }
+
+    public function testTheOlderHalfIsReplacedByASummaryAndTheRecentHalfIsKept(): void
+    {
+        $session = $this->session(['the summary']);
+        $long = str_repeat('x', 40_000);
+
+        foreach (range(1, 6) as $ignored) {
+            $session->agent->appendMessage(new UserMessage($long));
+        }
+
+        $session->agent->appendMessage(new UserMessage('the last thing I said'));
+
+        $summary = Async::run(static fn () => $session->compact());
+        $messages = $session->messages();
+
+        $this->assertInstanceOf(CompactionSummary::class, $summary);
+        $this->assertSame('the summary', $summary->summary);
+        $this->assertSame($summary, $messages[0]);
+        $this->assertSame('the last thing I said', self::textOf($messages[count($messages) - 1]));
+        $this->assertGreaterThan(0, $summary->replaced);
+    }
+
+    public function testASummaryReachesTheModelAsSomethingItCanRead(): void
+    {
+        $session = $this->session(['answer']);
+        $session->agent->appendMessage(new CompactionSummary('what happened earlier', ['a.php']));
+
+        // The agent's own converter keeps the three LLM message types and drops the rest;
+        // a summary dropped there would compact the conversation into nothing at all.
+        $converted = CodingAgent::toLlm($session->messages());
+
+        $this->assertInstanceOf(UserMessage::class, $converted[0]);
+        $this->assertStringContainsString('what happened earlier', self::textOf($converted[0]));
+        $this->assertStringContainsString('a.php', self::textOf($converted[0]));
+    }
+
+    public function testASavedSessionResumesTheWayCompactionLeftIt(): void
+    {
+        $path = sys_get_temp_dir() . '/pig-compaction-' . bin2hex(random_bytes(4)) . '.jsonl';
+        $store = SessionManager::create(sys_get_temp_dir(), $path);
+        $session = $this->session(['an answer', 'the summary'], null, null, null, $store);
+
+        Async::run(static fn () => $session->prompt('hi'));
+
+        foreach (range(1, 6) as $ignored) {
+            $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+            $store->append($session->messages()[count($session->messages()) - 1]);
+        }
+
+        Async::run(static fn () => $session->compact());
+
+        try {
+            $reopened = SessionManager::open($path)->messages();
+
+            // The point of writing the summary down: the conversation that comes back is
+            // the compacted one, not the one that was compacted away.
+            $this->assertSame(count($session->messages()), count($reopened));
+            $this->assertInstanceOf(CompactionSummary::class, $reopened[0]);
+        } finally {
+            if (is_file($path)) {
+                unlink($path);
+            }
+        }
+    }
+
+    public function testCompactingWhileTheAgentIsWorkingIsRefusedRatherThanQueued(): void
+    {
+        // Replacing the conversation from under a running turn is how a tool result ends
+        // up with no call in front of it.
+        $thrown = null;
+        $session = null;
+        $session = $this->session(['answer'], static function (Agent $agent) use (&$session, &$thrown): void {
+            try {
+                $session->compact();
+            } catch (Throwable $error) {
+                $thrown = $error;
+            }
+        });
+
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $this->assertInstanceOf(AgentError::class, $thrown);
+    }
+
+    public function testCancellingTheSummariserLeavesTheConversationAlone(): void
+    {
+        $session = $this->session([], null, null, static function (Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream {
+            $stream = new AssistantMessageEventStream();
+            $cancelled = new AssistantMessage(
+                [],
+                Api::AnthropicMessages,
+                'anthropic',
+                'test-model',
+                new Usage(),
+                StopReason::Aborted,
+            );
+
+            Async::spawn(static function () use ($stream, $cancelled): void {
+                $stream->push(new DoneEvent(StopReason::Aborted, $cancelled));
+                $stream->end();
+            });
+
+            return $stream;
+        });
+
+        foreach (range(1, 6) as $ignored) {
+            $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+        }
+
+        $before = $session->messages();
+
+        // Pressing escape halfway through is not a reason to lose the conversation.
+        $this->assertNull(Async::run(static fn () => $session->compact()));
+        $this->assertSame($before, $session->messages());
+    }
+
+    public function testASummariserThatFailsSaysSoRatherThanCompactingIntoNothing(): void
+    {
+        $session = $this->session([], null, null, static function (Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream {
+            $stream = new AssistantMessageEventStream();
+            $failed = new AssistantMessage(
+                [],
+                Api::AnthropicMessages,
+                'anthropic',
+                'test-model',
+                new Usage(),
+                StopReason::Error,
+                'overloaded_error',
+            );
+
+            Async::spawn(static function () use ($stream, $failed): void {
+                $stream->push(new DoneEvent(StopReason::Error, $failed));
+                $stream->end();
+            });
+
+            return $stream;
+        });
+
+        foreach (range(1, 6) as $ignored) {
+            $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+        }
+
+        $this->assertThrows(
+            AgentError::class,
+            static fn () => Async::run(static fn () => $session->compact()),
+            'overloaded_error',
+        );
+    }
+
+    public function testWhatTheSummariserIsAskedIsTheConversationAndNotTheTools(): void
+    {
+        $asked = null;
+        $session = $this->session([], null, null, function (Model $model, Context $context, SimpleStreamOptions $options) use (&$asked): AssistantMessageEventStream {
+            $asked = $context;
+
+            return $this->replay('the summary');
+        });
+
+        foreach (range(1, 6) as $ignored) {
+            $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+        }
+
+        Async::run(static fn () => $session->compact('the parser bug'));
+
+        $this->assertInstanceOf(Context::class, $asked);
+        $this->assertCount(1, $asked->messages);
+        $this->assertSame([], $asked->tools, 'a summariser with tools is an agent, not a summariser');
+        $this->assertStringContainsString('summarization assistant', (string) $asked->systemPrompt);
+        $this->assertStringContainsString('Additional focus: the parser bug', self::textOf($asked->messages[0]));
+    }
+
     // ---- thinking ----------------------------------------------------------------
 
     public function testAModelThatCannotThinkOffersNoLevels(): void
@@ -376,17 +565,22 @@ final class AgentSessionTest extends TestCase
      * @param list<string>              $answers one per model call, in order
      * @param Closure(Agent): void|null $hook    run at the top of every model call
      */
-    private function session(array $answers, ?Closure $hook = null, ?Model $model = null): AgentSession
-    {
+    private function session(
+        array $answers,
+        ?Closure $hook = null,
+        ?Model $model = null,
+        ?Closure $streamFn = null,
+        ?SessionManager $store = null,
+    ): AgentSession {
         $agent = new Agent(new AgentOptions(
-            streamFn: $this->provider($answers, $hook),
+            streamFn: $streamFn ?? $this->provider($answers, $hook),
             apiKey: 'test-key',
         ));
 
         $agent->setModel($model ?? $this->model());
         $this->current = $agent;
 
-        return new AgentSession($agent, sys_get_temp_dir());
+        return new AgentSession($agent, sys_get_temp_dir(), $store);
     }
 
     /**
@@ -434,6 +628,19 @@ final class AgentSessionTest extends TestCase
     private function model(): Model
     {
         return new Model('test-model', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000);
+    }
+
+    private static function textOf(mixed $message): string
+    {
+        $text = '';
+
+        foreach ($message->content as $block) {
+            if ($block instanceof TextContent) {
+                $text .= $block->text;
+            }
+        }
+
+        return $text;
     }
 
     private function thinkingModel(string $id = 'test-thinker'): Model

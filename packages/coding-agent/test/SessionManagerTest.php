@@ -18,6 +18,7 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\Test\AssertsThrows;
 
@@ -195,6 +196,59 @@ final class SessionManagerTest extends TestCase
 
         $this->assertSame(StopReason::Error, $back->stopReason);
         $this->assertSame('overloaded_error', $back->errorMessage);
+    }
+
+    // ---- compaction ----------------------------------------------------------------------
+
+    public function testACompactedConversationComesBackCompacted(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('the first thing'));
+        $session->append($this->answer());
+        $session->append(new UserMessage('the second thing'));
+        $session->append($this->answer('and again'));
+        $session->append(new CompactionSummary('we talked about things', ['a.php'], ['b.php'], 1_000, 3));
+
+        $back = SessionManager::open($session->path)->messages();
+
+        // Three messages became one, and the fourth — everything after the cut — is
+        // still there. Replaying the log without the count would hand a resumed session
+        // back the whole conversation that had just been compacted away.
+        $this->assertCount(2, $back);
+        $this->assertInstanceOf(CompactionSummary::class, $back[0]);
+        $this->assertSame('we talked about things', $back[0]->summary);
+        $this->assertSame(['a.php'], $back[0]->readFiles);
+        $this->assertSame(['b.php'], $back[0]->modifiedFiles);
+        $this->assertSame(1_000, $back[0]->tokensBefore);
+        $this->assertSame('and again', $back[1]->content[0]->text);
+    }
+
+    public function testTheMessagesThatWereSummarisedAreStillInTheFile(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('the first thing'));
+        $session->append($this->answer());
+        $session->append(new CompactionSummary('we talked about things', [], [], 0, 2));
+
+        // Nothing is ever rewritten: a session log is a record of what happened, and what
+        // happened is that these were said and then summarised.
+        $this->assertStringContainsString('the first thing', (string) file_get_contents($session->path));
+    }
+
+    public function testTwoCompactionsInARowLeaveOneSummary(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer());
+        $session->append(new CompactionSummary('first summary', [], [], 0, 2));
+        $session->append(new UserMessage('two'));
+        $session->append($this->answer('again'));
+        $session->append(new CompactionSummary('second summary', [], [], 0, 3));
+
+        $back = SessionManager::open($session->path)->messages();
+
+        $this->assertCount(1, $back);
+        $this->assertSame('second summary', $back[0]->summary);
     }
 
     // ---- finding one again ----------------------------------------------------------------

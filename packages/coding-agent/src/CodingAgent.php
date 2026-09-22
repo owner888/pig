@@ -13,6 +13,7 @@ use Pig\Ai\Model;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Tools\ToolSet;
@@ -72,15 +73,22 @@ final class CodingAgent
      * it is turned into a user message here. A `!!` command never becomes one of these
      * in the first place, so it falls through the same filter and stays out.
      *
+     * A compaction summary is the same shape for a different reason: it stands in for the
+     * messages it replaced, so it has to reach the model as something the model reads.
+     *
+     * Public because it is the whole of what a coding agent adds to the agent's own
+     * converter, and the cost of getting it wrong — a summary silently dropped, leaving
+     * the model with a conversation that starts nowhere — is not visible from outside.
+     *
      * @param list<mixed> $messages
      * @return list<mixed>
      */
-    private static function toLlm(array $messages): array
+    public static function toLlm(array $messages): array
     {
         $converted = [];
 
         foreach ($messages as $message) {
-            if ($message instanceof BashExecution) {
+            if ($message instanceof BashExecution || $message instanceof CompactionSummary) {
                 $converted[] = new UserMessage($message->toText(), $message->timestamp);
 
                 continue;

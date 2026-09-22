@@ -139,12 +139,12 @@ components. What is being ported is the part that makes it a coding agent: `core
 `Session\AgentSession`), and an interactive mode built on `pig/tui` (done — `Interactive\`).
 The rest is left out until something needs it.
 
-`AgentSession` is 1901 lines upstream and ~330 here, because everything it coordinates that is
-not ported is not there to coordinate: session persistence (`SessionManager`, 1129 lines),
-compaction, auto-retry, branching and tree navigation, hooks, custom tools, HTML export, and
-the model registry. What is left is the conversation, the event fan-out, the queue of messages
-someone typed while the agent was working, the thinking level, and what the session has cost.
-Each of the rest can arrive on its own when something needs it.
+`AgentSession` is 1901 lines upstream and ~640 here, because everything it coordinates that is
+not ported is not there to coordinate: auto-retry, branching and tree navigation, hooks, custom
+tools, HTML export, and the model registry. What is left is the conversation, the event fan-out,
+the queue of messages someone typed while the agent was working, the thinking level, what the
+session has cost, persistence, and compaction. Each of the rest can arrive on its own when
+something needs it.
 
 `Theme\Palette` is upstream's `theme.ts` down to what it is for: the two built-in themes as
 tables, and the bridges that turn them into `pig/tui`'s `MarkdownTheme`, `EditorTheme` and
@@ -188,20 +188,51 @@ A resumed conversation is **redrawn from its messages**, not from anything saved
 screen — `InteractiveMode::replay()`. A transcript is a view of the conversation, and
 keeping a second copy of it on disk is how the two end up disagreeing.
 
+`Session\Compaction` is upstream's `core/compaction/` (1246 lines) as pure functions: how
+full the window is, where the conversation can be cut, what the summariser is asked, and
+which files were touched. Running the model and swapping the messages over is
+`AgentSession::compact()`, so everything with arithmetic or string handling in it is
+testable without a provider. The summary itself is `Session\CompactionSummary` — an app
+message like `BashExecution`, turned into a user message by `CodingAgent::toLlm()`.
+
+Three things about it are worth knowing before changing any of it:
+
+- **The cut never lands on a tool result.** A result separated from the call that produced
+  it is a request every provider rejects outright, so `cutPoint()` collects the legal
+  positions first and only then looks for the one nearest the budget. `CompactionTest`
+  checks this at every budget from 1 to 6000 rather than at one number, because the
+  arithmetic that picks the cut is exactly the kind of thing that is right for the number
+  you tested.
+- **The log is still append-only.** Compaction does not rewrite the file: the summary is
+  appended like any other message and carries `replaced`, the number of messages from the
+  start it stands in for. `SessionManager::add()` splices on the way back in, so a resumed
+  session comes back compacted. Without that count, replaying the log would hand back the
+  whole conversation that had just been compacted away — and the messages themselves stay
+  in the file, because a session log is a record of what was said.
+- **The file lists are separate from the prose.** A summary that says "read some files"
+  sends the model to read them again. `Compaction::files()` also carries an earlier
+  summary's lists forward, or a file read before the last compaction disappears from the
+  record entirely.
+
+Not ported from upstream's compaction: branch summarisation (`branch-summarization.ts`,
+which needs the tree) and the split-turn prefix summary — upstream generates a second,
+smaller summary when the cut falls inside a turn, which needs turn boundaries that the
+linear log here does not mark.
+
 `Interactive\` is the terminal front end. `InteractiveMode` is the arrangement — which event
 becomes which component, which key means what — and `bin/pig` is the entry point. The
 components it draws with are `UserMessageComponent`, `AssistantMessageComponent`,
-`ToolExecutionComponent`, `FooterComponent`, `DiffView`, `BashOutputComponent` and
-`CustomEditor`. They keep upstream's `…Component` names rather than `pig/tui`'s suffix-free
+`ToolExecutionComponent`, `FooterComponent`, `DiffView`, `BashOutputComponent`,
+`CompactionComponent` and `CustomEditor`. They keep upstream's `…Component` names rather than `pig/tui`'s suffix-free
 `Text` / `Box` / `Markdown`, because `UserMessage` and `AssistantMessage` are already taken by
 `Pig\Ai`; the developer chose matching upstream over matching the sibling package.
 
-`InteractiveMode` is ~600 lines against upstream's 2439, and the difference is almost entirely
+`InteractiveMode` is ~1070 lines against upstream's 2439, and the difference is almost entirely
 selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
 trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
-an agent you can talk to, five slash commands, and the keys. Also not ported: custom-tool
-rendering, images in tool output, `/copy` (which needs a clipboard *writer*; `SystemClipboard`
-only reads), and bash mode (`!command`).
+an agent you can talk to, seven slash commands, and the keys. Also not ported: custom-tool
+rendering, images in tool output, and `/copy` (which needs a clipboard *writer*;
+`SystemClipboard` only reads).
 
 `CustomEditor` wraps `Pig\Tui\Components\Editor` rather than extending it — the editor is
 `final`, and wrapping keeps the list of keys an application may steal explicit. `Editor` grew
@@ -629,8 +660,10 @@ and only the thinking test found it.
 - `declare(strict_types=1)` in every file; PSR-12; one class per file.
 - `match` over `switch`, `#[\Override]` on every override, `str_contains`/`str_starts_with`,
   constructor property promotion, `readonly` for anything that should not change after construction.
-- No `@` error suppression. A function that warns *and* returns false gets a `set_error_handler`
-  around it, because the warning text is usually the only place the errno appears.
+- No `@` error suppression — `test/lint.php` fails the build on one. A function that warns *and*
+  returns false gets a `set_error_handler` around it, because the warning text is usually the only
+  place the errno appears; where the condition is knowable in advance, check it instead
+  (`SessionManager::lines()` checks `is_readable` rather than suppressing `file()`).
 - No silent fallback: `catch` must re-throw (`throw new X(..., $e)`). No `?? default` to paper
   over a missing value, no `clamp`/floor without a reproduced bug behind it.
 - `Deferred::complete()` twice throws. Where ported code relies on a JS promise ignoring its

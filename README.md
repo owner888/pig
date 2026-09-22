@@ -10,9 +10,8 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 > answers, seven tools with live output, edits shown as diffs, Escape to interrupt, typing
 > while it works, and `!cmd` to run a shell command the model can then see (`!!cmd` keeps it
 > out of the conversation). Sessions are saved as they happen — `--continue` picks up the
-> last one, `/resume` picks from a list. What is missing is a model picker, and compaction
-> when the context fills. What is missing is everything around that — sessions are not saved, there is
-> no model picker, and the context is not compacted when it fills.
+> last one, `/resume` picks from a list. When the context fills it summarises itself and
+> carries on, which `/compact` also does on demand. What is missing is a model picker.
 
 ## Packages
 
@@ -22,7 +21,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 | `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic streams end to end**; other providers pending |
 | `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — **done** |
 | `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — **done** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI and saved sessions done**; no compaction yet |
+| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions and compaction done**; no model registry yet |
 
 `pig/async` has no counterpart upstream: JavaScript ships an event loop and PHP does not. It
 exists so one `stream_select()` can wait on the model's socket and on the keyboard at the same

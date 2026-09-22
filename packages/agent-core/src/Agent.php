@@ -61,6 +61,18 @@ final class Agent
     }
 
     /**
+     * The setup this agent was given.
+     *
+     * For the one thing that needs a request made outside the loop: compaction asks the
+     * model to summarise the conversation, and it has to be the same model, the same key
+     * and — in a test — the same stand-in provider, or it is not summarising this session.
+     */
+    public function options(): AgentOptions
+    {
+        return $this->options;
+    }
+
+    /**
      * Listen for events.
      *
      * @param Closure(AgentEvent): void $listener

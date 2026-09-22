@@ -60,6 +60,15 @@ final class SessionCodec
                 'details' => self::plain($message->details),
                 'timestamp' => $message->timestamp,
             ],
+            $message instanceof CompactionSummary => [
+                'role' => 'compactionSummary',
+                'summary' => $message->summary,
+                'readFiles' => $message->readFiles,
+                'modifiedFiles' => $message->modifiedFiles,
+                'tokensBefore' => $message->tokensBefore,
+                'replaced' => $message->replaced,
+                'timestamp' => $message->timestamp,
+            ],
             $message instanceof BashExecution => [
                 'role' => 'bashExecution',
                 'command' => $message->command,
@@ -100,6 +109,14 @@ final class SessionCodec
                 self::decodeContent($entry['content'] ?? []),
                 (bool) ($entry['isError'] ?? false),
                 $entry['details'] ?? null,
+                $timestamp,
+            ),
+            'compactionSummary' => new CompactionSummary(
+                (string) ($entry['summary'] ?? ''),
+                array_values(array_map(strval(...), (array) ($entry['readFiles'] ?? []))),
+                array_values(array_map(strval(...), (array) ($entry['modifiedFiles'] ?? []))),
+                (int) ($entry['tokensBefore'] ?? 0),
+                (int) ($entry['replaced'] ?? 0),
                 $timestamp,
             ),
             'bashExecution' => new BashExecution(

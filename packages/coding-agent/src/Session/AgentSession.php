@@ -15,14 +15,19 @@ use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\AssistantMessage;
+use Pig\Ai\Context;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
+use Pig\Ai\ReasoningEffort;
+use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StopReason;
+use Pig\Ai\Stream;
 use Pig\Ai\TextContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\Async\AbortController;
+use Pig\Async\AbortSignal;
 use Pig\Async\Future;
 use Pig\CodingAgent\Tools\Run;
 use Pig\CodingAgent\Tools\Truncate;
@@ -354,6 +359,134 @@ final class AgentSession
         }
 
         return $held;
+    }
+
+    // ---- making room -------------------------------------------------------------------
+
+    /** What the last completed turn carried, or 0 when nothing has been answered yet. */
+    public function contextTokens(): int
+    {
+        $usage = Compaction::lastUsage($this->messages());
+
+        return $usage === null ? 0 : Compaction::contextTokens($usage);
+    }
+
+    /** Whether the next turn would be pushing against the model's window. */
+    public function shouldCompact(): bool
+    {
+        $model = $this->model();
+
+        return $model !== null && Compaction::shouldCompact($this->contextTokens(), $model->contextWindow);
+    }
+
+    /**
+     * Summarise the older half of the conversation and carry on from the summary.
+     *
+     * The summary is a message like any other, so it is appended to the file and the
+     * messages it replaced are not removed from it — a session log is a record of what
+     * happened, and what happened is that these messages were said and then summarised.
+     * Replaying it puts the conversation back the way compaction left it.
+     *
+     * @param string|null $instructions what to pay particular attention to, from `/compact foo`
+     * @return CompactionSummary|null null when there is nothing old enough to be worth dropping
+     * @throws AgentError if the agent is working, there is no model, or the model fails
+     */
+    public function compact(?string $instructions = null, ?AbortSignal $signal = null): ?CompactionSummary
+    {
+        if ($this->isStreaming()) {
+            throw new AgentError('Agent is working. Let it finish, or press esc, then compact.');
+        }
+
+        $model = $this->model();
+
+        if ($model === null) {
+            throw new AgentError('No model selected.');
+        }
+
+        $messages = $this->messages();
+        $cut = Compaction::cutPoint($messages);
+
+        if ($cut <= 0) {
+            return null;
+        }
+
+        $older = array_slice($messages, 0, $cut);
+        $kept = array_slice($messages, $cut);
+        [$read, $modified] = Compaction::files($older);
+
+        $text = $this->summarise(
+            $model,
+            Compaction::request($older, Compaction::previousSummary($older), $instructions),
+            $signal,
+        );
+
+        if ($text === null) {
+            return null;
+        }
+
+        $summary = new CompactionSummary($text, $read, $modified, $this->contextTokens(), $cut);
+
+        $this->agent->replaceMessages([$summary, ...$kept]);
+        $this->store?->append($summary);
+
+        return $summary;
+    }
+
+    /**
+     * One request, outside the agent loop, with no tools and nothing to steer.
+     *
+     * @return string|null null when it was cancelled
+     */
+    private function summarise(Model $model, string $request, ?AbortSignal $signal): ?string
+    {
+        $options = $this->agent->options();
+
+        $stream = new SimpleStreamOptions(
+            maxTokens: (int) (0.8 * Compaction::RESERVE_TOKENS),
+            signal: $signal,
+            apiKey: $options->getApiKey !== null
+                ? ($options->getApiKey)($model->provider) ?? $options->apiKey
+                : $options->apiKey,
+            reasoning: ReasoningEffort::High,
+        );
+
+        $context = new Context([new UserMessage($request)], Compaction::SYSTEM_PROMPT);
+
+        $response = $options->streamFn !== null
+            ? ($options->streamFn)($model, $context, $stream)
+            : Stream::simple($model, $context, $stream);
+
+        foreach ($response as $ignored) {
+            // Nothing streams anywhere: a summary is only useful whole.
+        }
+
+        $message = $response->result()->await();
+
+        if (!$message instanceof AssistantMessage) {
+            throw new AgentError('The summariser answered with something that was not a message.');
+        }
+
+        if ($message->stopReason === StopReason::Aborted) {
+            return null;
+        }
+
+        if ($message->stopReason === StopReason::Error) {
+            throw new AgentError('Could not summarise the conversation: ' . ($message->errorMessage ?? 'unknown error'));
+        }
+
+        $text = '';
+
+        foreach ($message->content as $block) {
+            if ($block instanceof TextContent) {
+                $text .= $block->text;
+            }
+        }
+
+        if (trim($text) === '') {
+            throw new AgentError('The summariser said nothing, so there is nothing to carry forward.');
+        }
+
+        return trim($text);
     }
 
     // ---- thinking ----------------------------------------------------------------
