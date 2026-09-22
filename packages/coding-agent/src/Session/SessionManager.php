@@ -31,13 +31,22 @@ use Pig\CodingAgent\Config;
 final class SessionManager
 {
     /** Bumped when the format changes in a way an older pig could not read. */
-    private const int VERSION = 1;
+    private const int VERSION = 2;
 
     /** How many to offer in a list before it stops being a list. */
     private const int LISTED = 30;
 
-    /** @var list<mixed> everything appended so far, in order */
-    private array $messages = [];
+    /**
+     * @var array<string, array{message: mixed, parent: string|null}> every entry, by id
+     *
+     * Every entry, not every entry on the current branch: going back to an earlier point
+     * and taking the conversation somewhere else leaves the first attempt in the file,
+     * and the whole point is that it can be gone back to.
+     */
+    private array $entries = [];
+
+    /** The end of the branch being talked on. Null in an empty session. */
+    private ?string $leaf = null;
 
     /**
      * Whether the header has been written.
@@ -113,23 +122,145 @@ final class SessionManager
         );
 
         $session->started = true;
+        $previous = null;
 
         foreach (array_slice($lines, 1) as $line) {
             $entry = json_decode($line, true);
             $message = is_array($entry) ? SessionCodec::decode($entry) : null;
 
-            if ($message !== null) {
-                $session->add($message);
+            if ($message === null) {
+                continue;
             }
+
+            // A file written before the tree has no ids. Read linearly, each entry is
+            // the child of the one before it, which is the same conversation the old
+            // format described — so an old session opens as a tree with no branches.
+            $id = (string) ($entry['entryId'] ?? self::newId($session->entries));
+            $parent = array_key_exists('parent', $entry) ? $entry['parent'] : $previous;
+
+            $session->entries[$id] = [
+                'message' => $message,
+                'parent' => is_string($parent) ? $parent : null,
+            ];
+
+            $previous = $id;
         }
+
+        // The end of the file is the end of the branch that was being talked on: a
+        // branch is made by appending, so the newest entry is always on it.
+        $session->leaf = $previous;
 
         return $session;
     }
 
-    /** @return list<mixed> */
+    /**
+     * The conversation on the branch being talked on.
+     *
+     * Walked from the leaf back to the root rather than read in file order, because the
+     * file holds every branch and only one of them is this conversation.
+     *
+     * @return list<mixed>
+     */
     public function messages(): array
     {
-        return $this->messages;
+        $path = [];
+        $id = $this->leaf;
+
+        while ($id !== null && isset($this->entries[$id])) {
+            array_unshift($path, $this->entries[$id]['message']);
+            $id = $this->entries[$id]['parent'];
+        }
+
+        return self::resolve($path);
+    }
+
+    /**
+     * Every point on this branch that could be gone back to, oldest first.
+     *
+     * The ids as well as the messages, because going back means naming one.
+     *
+     * @return list<array{id: string, message: mixed, branches: int}>
+     */
+    public function branch(): array
+    {
+        $path = [];
+        $id = $this->leaf;
+
+        while ($id !== null && isset($this->entries[$id])) {
+            array_unshift($path, [
+                'id' => $id,
+                'message' => $this->entries[$id]['message'],
+                'branches' => $this->childCount($this->entries[$id]['parent']),
+            ]);
+            $id = $this->entries[$id]['parent'];
+        }
+
+        return $path;
+    }
+
+    /**
+     * Go back to an earlier point; the next thing said starts a new branch.
+     *
+     * Nothing is deleted and nothing is rewritten. The entries after this one are still
+     * in the file with their parents intact, so the branch that was abandoned can be
+     * gone back to in exactly the same way.
+     *
+     * @throws AgentError when there is no such point in this session
+     */
+    public function goTo(?string $id): void
+    {
+        if ($id !== null && !isset($this->entries[$id])) {
+            throw new AgentError('No such point in this conversation.');
+        }
+
+        $this->leaf = $id;
+    }
+
+    public function leaf(): ?string
+    {
+        return $this->leaf;
+    }
+
+    /** How many entries call $parent their parent — two or more means a fork. */
+    private function childCount(?string $parent): int
+    {
+        $count = 0;
+
+        foreach ($this->entries as $entry) {
+            if ($entry['parent'] === $parent) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * A path of entries as the conversation it stands for.
+     *
+     * A compaction summary replaces the messages before it rather than following them,
+     * and the file still holds those messages — so the replacement happens here, on the
+     * way out, every time. Doing it once at load would be wrong the moment a branch was
+     * taken from before the compaction.
+     *
+     * @param list<mixed> $path
+     * @return list<mixed>
+     */
+    private static function resolve(array $path): array
+    {
+        $messages = [];
+
+        foreach ($path as $message) {
+            if ($message instanceof CompactionSummary && $message->replaced > 0) {
+                array_splice($messages, 0, $message->replaced, [$message]);
+
+                continue;
+            }
+
+            $messages[] = $message;
+        }
+
+        return $messages;
     }
 
     /**
@@ -146,7 +277,12 @@ final class SessionManager
             return;
         }
 
-        $this->add($message);
+        $id = self::newId($this->entries);
+        $entry['entryId'] = $id;
+        $entry['parent'] = $this->leaf;
+
+        $this->entries[$id] = ['message' => $message, 'parent' => $this->leaf];
+        $this->leaf = $id;
 
         if (!$this->started && !$this->worthKeeping($message)) {
             return;
@@ -156,23 +292,15 @@ final class SessionManager
     }
 
     /**
-     * Put a message into the in-memory conversation.
-     *
-     * Every message but one goes on the end. A compaction summary does not: it stands in
-     * for the messages before the cut, so it takes their place. The file still holds them
-     * — nothing is ever rewritten — which is why the summary carries the count: replaying
-     * the log without it would hand a resumed session back the whole conversation that
-     * had just been compacted away.
+     * @param array<string, mixed> $taken
      */
-    private function add(mixed $message): void
+    private static function newId(array $taken): string
     {
-        if ($message instanceof CompactionSummary && $message->replaced > 0) {
-            array_splice($this->messages, 0, $message->replaced, [$message]);
+        do {
+            $id = bin2hex(random_bytes(6));
+        } while (isset($taken[$id]));
 
-            return;
-        }
-
-        $this->messages[] = $message;
+        return $id;
     }
 
     /**
@@ -208,11 +336,14 @@ final class SessionManager
                 'timestamp' => $this->createdAt,
             ]);
 
-            foreach (array_slice($this->messages, 0, -1) as $earlier) {
-                $encoded = SessionCodec::encode($earlier);
+            // Everything held back so far, in the order it was appended, with the ids
+            // and parents it was given — so the tree that is in memory is the tree the
+            // file describes.
+            foreach (array_slice($this->entries, 0, -1, true) as $id => $earlier) {
+                $encoded = SessionCodec::encode($earlier['message']);
 
                 if ($encoded !== null) {
-                    $lines .= self::line($encoded);
+                    $lines .= self::line([...$encoded, 'entryId' => $id, 'parent' => $earlier['parent']]);
                 }
             }
 

@@ -42,6 +42,9 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 内置 147 个模型：Anthropic 的、OpenAI 自家走 Responses API 的、Gemini，加上 Groq、Cerebras、xAI、
 Zai、Mistral——这五家说的都是 OpenAI chat-completions。设好对应的 `*_API_KEY`，`--model` 就能指过去。
 
+`/tree` 回到对话里更早的某个点，从那儿接着聊。没走的那条路还留在会话文件里——所以往回走不花什么代价，
+而且随时能再走回来。
+
 `/export` 把整段对话导出成一个自包含的 HTML 文件——markdown 渲染好、代码高亮好，里面一行 JS 都没有。
 
 设置放在 `~/.pig/settings.json`，项目可以用 `.pig/settings.json` 覆盖。主题、模型、思考档位选过一次

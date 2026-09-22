@@ -381,6 +381,28 @@ final class AgentSession
         return $held;
     }
 
+    /**
+     * Go back to an earlier point in the conversation.
+     *
+     * The session file keeps every branch, so this is a move rather than a deletion: the
+     * road not taken is still there, and going back to it is the same call again.
+     *
+     * @throws AgentError when there is no session on disk, or no such point
+     */
+    public function goTo(?string $entryId): void
+    {
+        if ($this->store === null) {
+            throw new AgentError('This session is not being saved, so there is nowhere to go back to.');
+        }
+
+        if ($this->isStreaming()) {
+            throw new AgentError('Agent is working. Let it finish, or press esc, then go back.');
+        }
+
+        $this->store->goTo($entryId);
+        $this->restore($this->store->messages());
+    }
+
     // ---- making room -------------------------------------------------------------------
 
     /** What the last completed turn carried, or 0 when nothing has been answered yet. */

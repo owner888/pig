@@ -172,10 +172,30 @@ until the first assistant message** — someone who starts pig, reads the banner
 leaves no file behind, which is what makes the directory worth opening at all; the
 messages before that one are written in front of it when it arrives.
 
-Upstream's is 1129 lines to this one's ~250, and the difference is the tree: upstream
-gives every entry a parent, which is what makes `/branch` and `/tree` possible. That needs
-a UI to navigate it and a compaction system that understands branches, so the log here is
-a line. The file format is upstream's, so adding the parent later is adding a field.
+The log is a **tree**, as upstream's is: every entry carries an `entryId` and a `parent`,
+and the session holds a *leaf* — the end of the branch being talked on. `messages()` walks
+from the leaf back to the root rather than reading the file in order, because the file holds
+every branch and only one of them is this conversation.
+
+Going back (`/tree`) moves the leaf to an earlier entry; the next thing said hangs off it and
+forks. **Nothing is deleted and nothing is rewritten** — the entries on the abandoned road
+keep their parents, so it can be gone back to in exactly the same way. That is the whole
+value of the shape: a wrong turn costs nothing.
+
+Three things this changed that are worth knowing:
+
+- **A compaction is resolved on the way out, every time.** It used to be applied once as the
+  file was read, which was correct while the log was a line and wrong the moment a branch is
+  taken from *before* the compaction — that branch never had it.
+- **Format version 2.** A file with no ids is read linearly, each entry the child of the one
+  before it, which is the same conversation the old format described. So an old session opens
+  as a tree with no branches, and needs no migration step.
+- **The end of the file is the leaf.** A branch is only ever made by appending, so the newest
+  entry is always on the branch that was being talked on when the session was last open.
+
+Not ported: labels on entries, and branch summarisation (upstream summarises an abandoned
+branch so the model knows what was tried) — the second needs `branch-summarization.ts`, which
+needs the tree that now exists, so it is rows of work rather than a subsystem.
 
 `Session\SessionCodec` has no upstream counterpart at all: a message there is a plain
 object and `JSON.stringify` is the whole persistence layer. PHP objects do not survive
@@ -241,7 +261,7 @@ components it draws with are `UserMessageComponent`, `AssistantMessageComponent`
 `InteractiveMode` is ~1070 lines against upstream's 2439, and the difference is almost entirely
 selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
 trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
-an agent you can talk to, eleven slash commands, and the keys. Also not ported: custom-tool
+an agent you can talk to, twelve slash commands, and the keys. Also not ported: custom-tool
 rendering.
 
 `/copy` needed a clipboard *writer*, which nothing had: `SystemClipboard` could only read.
@@ -468,7 +488,6 @@ that is not here yet:
 | `core/hooks/` (1544 lines) | a place to run user code at every stage of a turn |
 | `core/custom-tools/` (541) | the same, plus tool definitions loaded from disk |
 | `modes/rpc/` | a second way in, for editors rather than people |
-| branch and tree navigation | the parent field `SessionManager` does not write yet |
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 

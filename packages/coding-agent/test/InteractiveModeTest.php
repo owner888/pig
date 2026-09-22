@@ -635,6 +635,70 @@ final class InteractiveModeTest extends TestCase
         $this->assertFalse($this->session->isStreaming());
     }
 
+    // ---- going back ---------------------------------------------------------------------------
+
+    public function testTreeOffersThePointsInThisConversation(): void
+    {
+        $this->start(['the answer'], store: true);
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/tree');
+        $this->type(self::ENTER);
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('Go back to', $screen);
+        $this->assertStringContainsString('hello', $screen);
+        $this->assertStringContainsString('where you are', $screen);
+    }
+
+    public function testGoingBackRedrawsTheConversationWithoutWhatCameAfter(): void
+    {
+        $this->start(['first answer', 'second answer'], store: true);
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('and again');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/tree');
+        $this->type(self::ENTER);
+        // Two rows down: past "where you are" and the answer, onto "and again".
+        $this->type("\e[B");
+        $this->type("\e[B");
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('Went back', $this->screen());
+        $this->assertStringNotContainsString('second answer', $this->screen());
+    }
+
+    public function testWithNothingSaidYetThereIsNowhereToGoBackTo(): void
+    {
+        $this->start(store: true);
+
+        $this->type('/tree');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('Nothing to go back to yet', $this->screen());
+    }
+
+    public function testASessionThatIsNotSavedHasNowhereToGoBackTo(): void
+    {
+        $this->start(['the answer']);
+
+        $this->type('/tree');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('not being saved', $this->screen());
+    }
+
     // ---- exporting --------------------------------------------------------------------------
 
     public function testExportWritesTheConversationAsOneHtmlFile(): void

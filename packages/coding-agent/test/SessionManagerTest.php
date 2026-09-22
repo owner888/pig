@@ -251,6 +251,143 @@ final class SessionManagerTest extends TestCase
         $this->assertSame('second summary', $back[0]->summary);
     }
 
+    // ---- going back ------------------------------------------------------------------------
+
+    public function testEveryPointOnTheConversationCanBeNamed(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer('first'));
+        $session->append(new UserMessage('two'));
+
+        $branch = $session->branch();
+
+        $this->assertCount(3, $branch);
+        $this->assertNotSame($branch[0]['id'], $branch[1]['id']);
+        $this->assertSame('one', $branch[0]['message']->content[0]->text);
+    }
+
+    public function testGoingBackAndSayingSomethingElseForksRatherThanOverwrites(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer('first answer'));
+        $after = $session->branch()[1]['id'];
+        $session->append(new UserMessage('down the wrong road'));
+        $session->append($this->answer('wrong'));
+
+        $session->goTo($after);
+        $session->append(new UserMessage('the other way'));
+
+        $messages = $session->messages();
+
+        // The conversation is now the second road, and the first is not in it.
+        $this->assertCount(3, $messages);
+        $this->assertSame('the other way', $messages[2]->content[0]->text);
+    }
+
+    public function testTheAbandonedBranchIsStillThereToGoBackTo(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer('first'));
+        $fork = $session->branch()[1]['id'];
+        $session->append(new UserMessage('down the wrong road'));
+        $wrong = $session->leaf();
+
+        $session->goTo($fork);
+        $session->append(new UserMessage('the other way'));
+
+        $session->goTo($wrong);
+
+        // Nothing is deleted and nothing is rewritten, which is the whole point.
+        $this->assertSame('down the wrong road', $session->messages()[2]->content[0]->text);
+    }
+
+    public function testAForkIsVisibleAsOne(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer('first'));
+        $fork = $session->branch()[1]['id'];
+        $session->append(new UserMessage('road A'));
+
+        $session->goTo($fork);
+        $session->append(new UserMessage('road B'));
+
+        $branch = $session->branch();
+
+        // Two entries call the fork point their parent, so a picker can say so.
+        $this->assertSame(2, $branch[2]['branches']);
+        $this->assertSame(1, $branch[1]['branches']);
+    }
+
+    public function testBothBranchesSurviveBeingWrittenAndReadBack(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer('first'));
+        $fork = $session->branch()[1]['id'];
+        $session->append(new UserMessage('road A'));
+        $session->goTo($fork);
+        $session->append(new UserMessage('road B'));
+
+        $back = SessionManager::open($session->path);
+
+        // The end of the file is the end of the branch that was being talked on.
+        $this->assertSame('road B', $back->messages()[2]->content[0]->text);
+
+        $back->goTo($back->branch()[1]['id']);
+        $this->assertCount(2, $back->messages());
+    }
+
+    public function testGoingNowhereIsRefusedRatherThanSilentlyEmptying(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer());
+
+        $this->assertThrows(
+            AgentError::class,
+            static fn () => $session->goTo('not-an-entry'),
+            'No such point',
+        );
+    }
+
+    public function testASessionWrittenBeforeTheTreeStillOpens(): void
+    {
+        $path = $this->home . '/old.jsonl';
+        mkdir($this->home, 0o700, true);
+        file_put_contents($path, implode("\n", [
+            json_encode(['type' => 'session', 'version' => 1, 'id' => 'x', 'cwd' => '/p', 'timestamp' => 0]),
+            json_encode(['role' => 'user', 'content' => [['type' => 'text', 'text' => 'one']]]),
+            json_encode(['role' => 'user', 'content' => [['type' => 'text', 'text' => 'two']]]),
+        ]) . "\n");
+
+        $back = SessionManager::open($path);
+
+        // Read linearly, each entry the child of the one before it — which is the same
+        // conversation the old format described.
+        $this->assertCount(2, $back->messages());
+        $this->assertSame('two', $back->messages()[1]->content[0]->text);
+        $this->assertCount(2, $back->branch());
+    }
+
+    public function testACompactionOnAnAbandonedBranchDoesNotAffectTheOtherOne(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer('first'));
+        $fork = $session->leaf();
+        $session->append(new CompactionSummary('summarised', [], [], 0, 2));
+
+        $session->goTo($fork);
+
+        // Resolved on the way out, every time: doing it once at load would be wrong the
+        // moment a branch was taken from before the compaction.
+        $this->assertCount(2, $session->messages());
+    }
+
     // ---- finding one again ----------------------------------------------------------------
 
     public function testSessionsAreListedNewestFirstAndLabelledByWhatWasAsked(): void

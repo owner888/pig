@@ -766,6 +766,7 @@ final class InteractiveMode
         ['export', 'Write this conversation out as an HTML file'],
         ['compact', 'Summarise the conversation so far and carry on from the summary'],
         ['resume', 'Pick up an earlier conversation'],
+        ['tree', 'Go back to an earlier point and take it somewhere else'],
         ['theme', 'Switch between dark and light'],
         ['exit', 'Quit'],
     ];
@@ -784,6 +785,7 @@ final class InteractiveMode
             'copy' => $this->copyLastAnswer(),
             'export' => $this->exportSession(trim(substr($text, strlen($name) + 1))),
             'resume' => $this->showSessions(),
+            'tree' => $this->showTree(),
             'theme' => $this->switchTheme(),
             'exit', 'quit' => $this->stop(),
             // A command kept as a file is tried last, so a built-in can never be
@@ -1122,6 +1124,106 @@ final class InteractiveMode
         return '$' . ($amount < 1.0 ? rtrim(rtrim(number_format($amount, 2), '0'), '.') : number_format($amount, 2));
     }
 
+    /**
+     * Offer the points in this conversation that can be gone back to.
+     *
+     * Newest first, because going back is nearly always going back a little. What is
+     * gone back *to* stays; what came after it is left in the file, so a road not taken
+     * is a road that can be taken again.
+     */
+    private function showTree(): void
+    {
+        if ($this->session->isStreaming()) {
+            $this->sayWarning('Still working. Press esc first.');
+
+            return;
+        }
+
+        $store = $this->session->store();
+
+        if ($store === null) {
+            $this->sayError('This session is not being saved, so there is nowhere to go back to.');
+
+            return;
+        }
+
+        $points = array_reverse($store->branch());
+
+        if (count($points) < 2) {
+            $this->say('Nothing to go back to yet.');
+
+            return;
+        }
+
+        $items = [];
+
+        foreach ($points as $index => $point) {
+            $items[] = new SelectItem(
+                $point['id'],
+                self::describe($point['message']),
+                ($index === 0 ? 'where you are' : $index . ' back')
+                    . ($point['branches'] > 1 ? ' · ' . $point['branches'] . ' ways from here' : ''),
+            );
+        }
+
+        $picker = new SelectList($items, 8, $this->palette->selectListTheme());
+        $picker->setSelectHandler(function (SelectItem $item): void {
+            $this->closePicker();
+            $this->goBackTo($item->value);
+        });
+        $picker->setCancelHandler($this->closePicker(...));
+
+        $this->picker = $picker;
+        $this->status->clear();
+        $this->status->addChild(new Spacer(1));
+        $this->status->addChild(new Text(
+            $this->palette->fg('muted', 'Go back to — enter to pick, esc to cancel'),
+            1,
+            0,
+        ));
+        $this->status->addChild($picker);
+
+        $this->tui->setFocus($picker);
+        $this->tui->requestRender();
+    }
+
+    private function goBackTo(string $entryId): void
+    {
+        try {
+            $this->session->goTo($entryId);
+        } catch (Throwable $error) {
+            $this->sayError($error->getMessage());
+
+            return;
+        }
+
+        $this->chat->clear();
+        $this->pending->clear();
+        $this->replay();
+        $this->footer->invalidate();
+        $this->say('Went back — anything you say now starts a new branch');
+    }
+
+    /** One message, short enough to pick from a list. */
+    private static function describe(mixed $message): string
+    {
+        $text = match (true) {
+            $message instanceof UserMessage, $message instanceof AssistantMessage => self::textOf($message),
+            $message instanceof BashExecution => '$ ' . $message->command,
+            $message instanceof ToolResultMessage => $message->toolName . ' result',
+            $message instanceof CompactionSummary => 'compacted',
+            default => '',
+        };
+
+        $text = trim((string) preg_replace('/\s+/u', ' ', $text));
+
+        if ($text === '') {
+            return '(nothing said)';
+        }
+
+        return mb_strlen($text) > 60 ? mb_substr($text, 0, 60) . '...' : $text;
+    }
+
     private function closePicker(): void
     {
         $this->picker = null;
@@ -1363,11 +1465,17 @@ final class InteractiveMode
         $this->tui->requestRender();
     }
 
-    private static function textOf(UserMessage $message): string
+    /**
+     * The words in a message, whoever said them.
+     *
+     * Any message with `content` on it: an assistant's thinking and tool calls are in
+     * there too, and neither is what a transcript line or a list entry is showing.
+     */
+    private static function textOf(mixed $message): string
     {
         $text = '';
 
-        foreach ($message->content as $block) {
+        foreach ($message->content ?? [] as $block) {
             if ($block instanceof TextContent) {
                 $text .= $block->text;
             }
