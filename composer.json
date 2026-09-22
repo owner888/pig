@@ -7,7 +7,8 @@
         "php": ">=8.3",
         "pig/agent-core": "@dev",
         "pig/ai": "@dev",
-        "pig/async": "@dev"
+        "pig/async": "@dev",
+        "pig/tui": "@dev"
     },
     "repositories": [
         {
@@ -22,7 +23,11 @@
     "prefer-stable": true,
     "autoload-dev": {
         "psr-4": {
-            "Pig\\Test\\": "test/"
+            "Pig\\Test\\": "test/",
+            "Pig\\Agent\\Test\\": "packages/agent-core/test/",
+            "Pig\\Ai\\Test\\": "packages/ai/test/",
+            "Pig\\Async\\Test\\": "packages/async/test/",
+            "Pig\\Tui\\Test\\": "packages/tui/test/"
         }
     },
     "config": {

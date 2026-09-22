@@ -34,17 +34,46 @@ Both were chosen explicitly, not by default:
 
 `Pig\Async` has no upstream counterpart at all — JS ships an event loop, PHP does not.
 
+### Extensions
+
+`ext-mbstring`, `ext-json`, `ext-openssl` and `ext-pcre` are required and are in every build worth
+running. `pig/tui` additionally requires **`ext-pcntl`**, because SIGWINCH is the only way to learn
+that the window was resized; without it the UI would draw at the startup width forever, so
+`ProcessTerminal` refuses to start rather than doing that quietly. `ext-intl` is deliberately *not*
+required — see [Two upstream dependencies that PCRE already covers](#two-upstream-dependencies-that-pcre-already-covers).
+
+One external binary: `stty`. PHP core has no termios binding and ext-pcntl does not add one, so
+raw mode and the window size go through `proc_open('stty …')` against `/dev/tty`.
+
 ## Layout
 
 ```
-packages/async/  → Pig\Async\       (pig/async)       Loop, Future, Deferred, Async
-packages/ai/     → Pig\Ai\          (pig/ai)          unified LLM API
-packages/tui/    → Pig\Tui\         (pig/tui)         not started
-packages/coding-agent/ → Pig\CodingAgent\              not started
+packages/async/      → Pig\Async\        (pig/async)       Loop, Future, Deferred, Async, Socket, Abort*
+packages/ai/         → Pig\Ai\           (pig/ai)          unified LLM API, HTTP/SSE, Anthropic
+packages/agent-core/ → Pig\Agent\        (pig/agent-core)  AgentLoop, Agent, tools, events
+packages/tui/        → Pig\Tui\          (pig/tui)         renderer, widths, wrapping, keys
+packages/coding-agent/ → Pig\CodingAgent\                  not started
 ```
 
-Ported so far: `ai/src/utils/event-stream.ts` and all of `ai/src/types.ts`. Next is `ai/src/stream.ts`
-and the Anthropic provider, then `agent-core`: `types.ts` 217 → `agent.ts` 439 → `agent-loop.ts` 417.
+Ported so far: all of `ai` (`types.ts`, `utils/event-stream.ts`, `stream.ts`, the Anthropic provider),
+all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439), and `tui`'s foundation
+(`utils.ts` 712 → `terminal.ts` 138 → `tui.ts` 351 → `keys.ts` 547). Next is `tui/components` —
+`editor.ts` 1322 is the big one — then the coding agent's tools and CLI.
+
+### Two upstream dependencies that PCRE already covers
+
+`pi-tui` pulls in `get-east-asian-width` and leans on `Intl.Segmenter`, both for one question:
+how many columns will the terminal give this string? Neither is needed here.
+
+- **Grapheme clusters**: PCRE's `\X` implements UAX #29 extended grapheme clusters, correctly,
+  including ZWJ emoji sequences and regional-indicator flags. `Graphemes::split()` is one
+  `preg_match_all` call — no ext-intl, no table of Unicode ranges.
+- **Character width**: `mb_strwidth()` carries the East Asian Width table, and PCRE answers
+  `\p{Extended_Pictographic}` and `\p{Emoji_Presentation}` for the emoji cases it does not cover.
+
+The one thing PCRE has no answer for is JavaScript's `\p{RGI_Emoji}`, which matches a whole emoji
+*sequence*; PCRE properties test single codepoints. `Width` asks the question of the cluster's
+first codepoint instead, which gives the same answer for everything a terminal actually draws.
 
 ### Porting the unions
 
@@ -159,6 +188,18 @@ then `fclose()`.
 `$fiber->resume()` on a running fiber throws `FiberError: Cannot resume a fiber that is not
 suspended`. So `FutureState` never invokes callbacks synchronously — every one goes through
 `Loop::defer()`, which also keeps completion callbacks out of the completer's own stack.
+
+### Forcing a render on resize skips the clear it needs
+
+`Tui::requestRender(force: true)` empties `previousLines`, and `draw()` reads an empty
+`previousLines` as "first frame ever" — which writes the new lines with no clear at all. A resize
+needs the opposite: the previous frame must be remembered so the width change is *noticed*, and
+then the screen and the scrollback are cleared before redrawing. So the resize handler calls
+`requestRender()` plain, like upstream, and force stays for callers who know the screen was
+overwritten by something else.
+
+Caught by `TuiTest::testAResizeRedrawsEverythingAndClearsTheScrollback`, which asserts the
+`\e[3J\e[2J\e[H` is there.
 
 ### `stream_socket_pair()` with a dropped peer (tests)
 

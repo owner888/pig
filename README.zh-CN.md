@@ -6,8 +6,8 @@
 pig 保持相同的架构和文件划分，面向 PHP 8.3，**零运行时依赖**——不用 Guzzle、不用 ReactPHP、不用
 amphp、不用 ncurses，只用标准库。
 
-> **状态：早期。** 已经可以向模型提问并逐 token 收到流式回答，且随时可打断。还没有 agent 循环、
-> 没有工具、没有终端 UI。
+> **状态：早期。** agent 循环已经跑通——提问、流式回答、工具调用、运行途中插话都可以了，终端 UI
+> 的渲染内核也已就位。还缺的是界面本身：编辑器、各种组件，以及 coding agent 自己的工具。
 
 ## 包划分
 
@@ -15,8 +15,8 @@ amphp、不用 ncurses，只用标准库。
 |---|---|---|
 | `pig/async` | `Pig\Async\` | 事件循环、Future、协程 —— **已完成** |
 | `pig/ai` | `Pig\Ai\` | 统一 LLM API —— **Anthropic 全链路可用**；其余供应商待移植 |
-| `pig/agent-core` | `Pig\Agent\` | 带工具调用和状态管理的 agent 循环 —— 未开始 |
-| `pig/tui` | `Pig\Tui\` | 差分渲染的终端 UI —— 未开始 |
+| `pig/agent-core` | `Pig\Agent\` | 带工具调用和状态管理的 agent 循环 —— **已完成** |
+| `pig/tui` | `Pig\Tui\` | 差分渲染的终端 UI —— **渲染器、宽度、折行、按键已完成**；组件待补 |
 | `pig/coding-agent` | `Pig\CodingAgent\` | 交互式 coding agent CLI —— 未开始 |
 
 `pig/async` 在上游没有对应物：JavaScript 自带事件循环，PHP 没有。它的存在是为了让**一次

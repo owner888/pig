@@ -6,8 +6,9 @@ A PHP port of [pi](https://github.com/earendil-works/pi), the agent harness whos
 runs on a famously small core. Same architecture, same file layout, written for PHP 8.3 with no
 runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the standard library.
 
-> **Status: early.** A model can be asked a question and the answer streams back token by token,
-> interruptibly. There is no agent loop yet, no tools, and no terminal UI.
+> **Status: early.** The agent loop runs end to end — prompts, streaming answers, tool calls,
+> steering mid-run — and the terminal UI's rendering core is in place. What is missing is the
+> screen itself: the editor, the widgets, and the coding agent's own tools.
 
 ## Packages
 
@@ -15,8 +16,8 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 |---|---|---|
 | `pig/async` | `Pig\Async\` | Event loop, futures, coroutines — **done** |
 | `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic streams end to end**; other providers pending |
-| `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — not started |
-| `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — not started |
+| `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — **done** |
+| `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — **renderer, widths, wrapping, keys done**; widgets pending |
 | `pig/coding-agent` | `Pig\CodingAgent\` | Interactive coding agent CLI — not started |
 
 `pig/async` has no counterpart upstream: JavaScript ships an event loop and PHP does not. It

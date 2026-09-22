@@ -12,12 +12,16 @@
         <testsuite name="pig">
             <directory>packages/async/test</directory>
             <directory>packages/ai/test</directory>
+            <directory>packages/agent-core/test</directory>
+            <directory>packages/tui/test</directory>
         </testsuite>
     </testsuites>
     <source>
         <include>
             <directory>packages/async/src</directory>
             <directory>packages/ai/src</directory>
+            <directory>packages/agent-core/src</directory>
+            <directory>packages/tui/src</directory>
         </include>
     </source>
 </phpunit>

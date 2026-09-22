@@ -1,0 +1,17 @@
+{
+    "name": "pig/tui",
+    "description": "Terminal UI for pig: differential rendering, grapheme-accurate widths, ANSI-aware wrapping.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.3",
+        "ext-mbstring": "*",
+        "ext-pcre": "*",
+        "pig/async": "@dev"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pig\\Tui\\": "src/"
+        }
+    }
+}
