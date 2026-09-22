@@ -42,6 +42,9 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 内置 147 个模型：Anthropic 的、OpenAI 自家走 Responses API 的、Gemini，加上 Groq、Cerebras、xAI、
 Zai、Mistral——这五家说的都是 OpenAI chat-completions。设好对应的 `*_API_KEY`，`--model` 就能指过去。
 
+设置放在 `~/.pig/settings.json`，项目可以用 `.pig/settings.json` 覆盖。主题、模型、思考档位选过一次
+就记住了。
+
 `~/.pig/commands/` 或 `.pig/commands/` 下的一个 md 文件就是一条斜杠命令：`review.md` 就是
 `/review`，正文就是 prompt，`$1`、`$@` 由后面跟的参数填进去。
 

@@ -32,6 +32,7 @@ use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Tui\Style;
@@ -110,7 +111,15 @@ if (isset($options['models'])) {
     exit(0);
 }
 
-$wanted = $options['model'] ?? (getenv('PIG_MODEL') ?: 'claude-sonnet-4-5');
+// The order everywhere below: what was typed, then the environment, then what was chosen
+// last time, then the built-in default.
+$settings = isset($options['no-save']) ? Settings::inMemory() : Settings::load($cwd);
+
+foreach ($settings->problems() as $problem) {
+    fwrite(STDERR, Style::yellow("settings: {$problem}\n"));
+}
+
+$wanted = $options['model'] ?? (getenv('PIG_MODEL') ?: ($settings->defaultModel() ?? 'claude-sonnet-4-5'));
 $choice = ModelResolver::parse($wanted);
 
 if ($choice === null) {
@@ -124,12 +133,15 @@ if ($choice->warning !== null) {
 }
 
 $model = $choice->model;
-$theme = $options['theme'] ?? (getenv('PIG_THEME') ?: 'dark');
+$theme = $options['theme'] ?? (getenv('PIG_THEME') ?: ($settings->theme() ?? 'dark'));
 
-// `--thinking` is the explicit one, so it wins over a `:level` suffix on the model.
+// `--thinking` is the explicit one, so it wins over a `:level` suffix on the model, which
+// in turn wins over the level chosen last time.
 $level = isset($options['thinking'])
     ? ThinkingLevel::tryFrom($options['thinking']) ?? ThinkingLevel::Off
-    : $choice->thinking;
+    : ($choice->thinking === ThinkingLevel::Off
+        ? ($settings->defaultThinkingLevel() ?? ThinkingLevel::Off)
+        : $choice->thinking);
 
 if (!$model->reasoning) {
     $level = ThinkingLevel::Off;
@@ -145,7 +157,14 @@ if (!in_array($theme, Palette::names(), true)) {
 // prompt cannot disagree about what was picked up.
 $contextFiles = ContextFiles::load($cwd);
 
-[$skills, $skillWarnings] = Skills::load($cwd, extraDirs: array_filter([$options['skills-dir'] ?? null]));
+[$skills, $skillWarnings] = $settings->skillsEnabled()
+    ? Skills::load(
+        $cwd,
+        extraDirs: array_filter([$options['skills-dir'] ?? null, ...$settings->skillList('customDirectories')]),
+        ignored: $settings->skillList('ignoredSkills'),
+        only: $settings->skillList('includeSkills'),
+    )
+    : [[], []];
 $fileCommands = SlashCommands::load($cwd);
 
 // On the shell rather than in the UI: a malformed skill is its author's problem, and the
@@ -202,7 +221,7 @@ if (!isset($options['no-save'])) {
     $resumed = $wanted === null ? null : $store;
 }
 
-$session = new AgentSession($agent, $cwd, $store);
+$session = new AgentSession($agent, $cwd, $store, $settings);
 
 if ($resumed !== null) {
     $session->restore($resumed->messages());
@@ -217,6 +236,7 @@ $mode = new InteractiveMode(
     contextFiles: $contextFiles,
     skills: $skills,
     fileCommands: $fileCommands,
+    settings: $settings,
 );
 
 // One fiber around the whole program: the prompt suspends on a socket, the terminal

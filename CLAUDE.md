@@ -365,6 +365,33 @@ first. The pattern is tried whole before it is split on a colon, because an id c
 running several models against one task — `fnmatch()` is the whole of what `minimatch` was
 doing there, so that is rows of work rather than a dependency when something wants it.
 
+`Settings` is upstream's `core/settings-manager.ts`. Two JSON files, both optional:
+`~/.pig/settings.json` is the person's and is written back to; `<cwd>/.pig/settings.json` is
+the project's and is only ever read. The project wins, which is the point of it being
+separate — a repository can say "compaction keeps more here" without touching anyone's
+preferences, and a `/theme` typed in that repository still saves to the person's file and
+still loses to the project's answer while they are in it.
+
+Upstream is 374 lines, most of it forty getter/setter pairs. The pairs here are only for the
+settings something actually reads — theme, model, thinking level, hidden thinking, the three
+compaction numbers, the skill filters — and everything else is reachable through `get()` under
+upstream's own key names, so a settings file written by either project is read by both. A key
+gains a typed accessor when something needs one, not before.
+
+Three decisions in it:
+
+- **Merged one level deep, not recursively.** Every nested thing in this format is a flat
+  group of scalars; a deeper merge would be answering a question the format never asks.
+- **A list replaces rather than appends.** A list here is an answer, not a contribution:
+  merging two would leave a project no way to *stop* ignoring a skill the person ignores.
+- **A file that is not JSON is named, not ignored.** A typo in a settings file is otherwise a
+  setting that quietly does nothing for the rest of its life. `bin/pig` prints the complaints
+  before the UI starts, the same as it does for a malformed skill.
+
+Order for anything with more than one source: what was typed, then the environment, then what
+was chosen last time, then the built-in default. `--no-save` gets `Settings::inMemory()`, so a
+session that is not written down does not write anything else down either.
+
 `Prompt\SlashCommands` is upstream's `core/slash-commands.ts`: a markdown file in
 `~/.pig/commands/` or `.pig/commands/` becomes `/name`, and its body is the prompt.
 `/review src/Foo.php` sends `review.md` with `$1` filled in.
@@ -420,9 +447,8 @@ that is not here yet:
 
 | Upstream | Needs |
 |---|---|
-| `core/hooks/` (1544 lines) | a settings file, and a place to run user code at every stage |
+| `core/hooks/` (1544 lines) | a place to run user code at every stage of a turn |
 | `core/custom-tools/` (541) | the same, plus tool definitions loaded from disk |
-| `core/settings-manager.ts` (374) | a settings file, which nothing yet reads or writes |
 | `core/export-html/` (211) | nothing but the work |
 | `modes/rpc/` | a second way in, for editors rather than people |
 | branch and tree navigation | the parent field `SessionManager` does not write yet |

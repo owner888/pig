@@ -29,6 +29,7 @@ use Pig\Ai\UserMessage;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Future;
+use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Tools\Run;
 use Pig\CodingAgent\Tools\Truncate;
 
@@ -76,6 +77,7 @@ final class AgentSession
         public readonly Agent $agent,
         private readonly string $cwd = '.',
         private readonly ?SessionManager $store = null,
+        private readonly ?Settings $settings = null,
     ) {
         $this->unsubscribeAgent = $this->agent->subscribe($this->onAgentEvent(...));
     }
@@ -394,7 +396,16 @@ final class AgentSession
     {
         $model = $this->model();
 
-        return $model !== null && Compaction::shouldCompact($this->contextTokens(), $model->contextWindow);
+        if ($model === null || !($this->settings?->compactionEnabled() ?? true)) {
+            return false;
+        }
+
+        return Compaction::shouldCompact($this->contextTokens(), $model->contextWindow, $this->reserveTokens());
+    }
+
+    private function reserveTokens(): int
+    {
+        return $this->settings?->compactionReserveTokens(Compaction::RESERVE_TOKENS) ?? Compaction::RESERVE_TOKENS;
     }
 
     /**
@@ -428,7 +439,11 @@ final class AgentSession
             throw new AgentError('Already compacted');
         }
 
-        $cut = Compaction::cutPoint($messages);
+        $cut = Compaction::cutPoint(
+            $messages,
+            $this->settings?->compactionKeepRecentTokens(Compaction::KEEP_RECENT_TOKENS)
+                ?? Compaction::KEEP_RECENT_TOKENS,
+        );
 
         // Upstream's wording, because it is the wording someone will search for. The
         // conversation being smaller than the recent window compaction always keeps is
@@ -470,7 +485,7 @@ final class AgentSession
         $options = $this->agent->options();
 
         $stream = new SimpleStreamOptions(
-            maxTokens: (int) (0.8 * Compaction::RESERVE_TOKENS),
+            maxTokens: (int) (0.8 * $this->reserveTokens()),
             signal: $signal,
             apiKey: $options->getApiKey !== null
                 ? ($options->getApiKey)($model->provider) ?? $options->apiKey

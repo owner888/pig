@@ -36,6 +36,7 @@ use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ExternalTool;
 use Pig\Tui\Autocomplete\CombinedAutocompleteProvider;
@@ -118,6 +119,9 @@ final class InteractiveMode
     /** @var list<FileCommand> prompts kept as files, reachable as `/name` */
     private array $fileCommands = [];
 
+    /** What was chosen last time, and where the choices made here are remembered. */
+    private readonly Settings $settings;
+
     private ?Text $banner = null;
 
     /** The session picker, while it is open. */
@@ -140,11 +144,14 @@ final class InteractiveMode
         array $skills = [],
         ?Clipboard $clipboard = null,
         array $fileCommands = [],
+        ?Settings $settings = null,
     ) {
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
         $this->skills = $skills;
         $this->fileCommands = $fileCommands;
+        $this->settings = $settings ?? Settings::inMemory();
+        $this->hideThinking = $this->settings->hideThinking();
         $this->clipboard = $clipboard ?? new SystemClipboard();
 
         // Injected so a test can drive this without a terminal, the same way the editor
@@ -411,6 +418,7 @@ final class InteractiveMode
 
         $this->editor->on('ctrl+t', function (): void {
             $this->hideThinking = !$this->hideThinking;
+            $this->settings->setHideThinking($this->hideThinking);
 
             foreach ($this->chat->children() as $child) {
                 if ($child instanceof AssistantMessageComponent) {
@@ -504,6 +512,7 @@ final class InteractiveMode
             return;
         }
 
+        $this->settings->setDefaultThinkingLevel($level);
         $this->paintBorder();
         $this->footer->invalidate();
         $this->say('Thinking: ' . $level->value);
@@ -1056,6 +1065,8 @@ final class InteractiveMode
     private function useModel(Model $model, ?ThinkingLevel $thinking = null): void
     {
         $this->session->setModel($model, $thinking);
+        $this->settings->setDefaultModel($model->id, $model->provider);
+        $this->settings->setDefaultThinkingLevel($this->session->thinkingLevel());
         $this->footer->invalidate();
         $this->paintBorder();
 
@@ -1109,6 +1120,7 @@ final class InteractiveMode
         $this->theme = $this->theme === 'dark' ? 'light' : 'dark';
         $wanted = $this->theme;
         $this->palette = Palette::named($wanted);
+        $this->settings->setTheme($wanted);
 
         // Everything already on screen keeps the colours it was drawn with: a component
         // holds its palette, and repainting the transcript would mean rebuilding it from

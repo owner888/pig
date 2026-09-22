@@ -47,6 +47,9 @@ and `--model sonnet:high` sets the thinking level at the same time. `--models` l
 Cerebras, xAI, Zai and Mistral, which all speak OpenAI chat-completions. Set the matching
 `*_API_KEY` and `--model` reaches them.
 
+Settings live in `~/.pig/settings.json`, and a project can override them in
+`.pig/settings.json`. The theme, model and thinking level you pick are remembered.
+
 A markdown file in `~/.pig/commands/` or `.pig/commands/` becomes a slash command: `review.md`
 is `/review`, its body is the prompt, and `$1` and `$@` are filled from what follows.
 

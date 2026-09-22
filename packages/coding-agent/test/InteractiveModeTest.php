@@ -31,6 +31,7 @@ use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
 use Pig\Tui\Test\FakeClipboard;
@@ -69,6 +70,8 @@ final class InteractiveModeTest extends TestCase
     private string $home;
 
     private FakeClipboard $clipboard;
+
+    private Settings $settings;
 
     #[\Override]
     protected function setUp(): void
@@ -128,8 +131,10 @@ final class InteractiveModeTest extends TestCase
         ?string $resume = null,
         array $skills = [],
         array $fileCommands = [],
+        ?Settings $settings = null,
     ): void {
         $this->clipboard = new FakeClipboard();
+        $this->settings = $settings ?? Settings::inMemory();
         $this->answers = $answers;
         $agent = new Agent(new AgentOptions(streamFn: $this->provider(...), apiKey: 'k'));
         $agent->setModel(new Model(
@@ -165,6 +170,7 @@ final class InteractiveModeTest extends TestCase
             $skills,
             $this->clipboard,
             $fileCommands,
+            $this->settings,
         );
 
         $this->mode->start();
@@ -627,6 +633,59 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
 
         $this->assertFalse($this->session->isStreaming());
+    }
+
+    // ---- what is remembered for next time -------------------------------------------------------
+
+    public function testSwitchingThemeIsRemembered(): void
+    {
+        $this->start();
+
+        $this->type('/theme');
+        $this->type(self::ENTER);
+
+        // `/theme` that resets every run is a setting nobody uses twice.
+        $this->assertSame('light', $this->settings->theme());
+    }
+
+    public function testHidingThinkingIsRemembered(): void
+    {
+        $this->start();
+
+        $this->type("\x14");
+
+        $this->assertTrue($this->settings->hideThinking());
+    }
+
+    public function testThinkingHiddenLastTimeStartsHidden(): void
+    {
+        $this->start(settings: Settings::inMemory(['hideThinkingBlock' => true]));
+
+        $this->type("\x14");
+
+        // Toggled from what was saved, not from the default: otherwise the first ctrl+t
+        // of a session does nothing visible.
+        $this->assertFalse($this->settings->hideThinking());
+    }
+
+    public function testSwitchingModelIsRemembered(): void
+    {
+        $this->start();
+
+        $this->type('/model haiku:high');
+        $this->type(self::ENTER);
+
+        $this->assertSame('claude-haiku-4-5', $this->settings->defaultModel());
+        $this->assertSame(ThinkingLevel::High, $this->settings->defaultThinkingLevel());
+    }
+
+    public function testCyclingTheThinkingLevelIsRemembered(): void
+    {
+        $this->start(reasoning: true);
+
+        $this->type("\e[Z");
+
+        $this->assertSame(ThinkingLevel::Minimal, $this->settings->defaultThinkingLevel());
     }
 
     // ---- commands kept as files ---------------------------------------------------------------
