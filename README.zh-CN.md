@@ -6,15 +6,15 @@
 pig 保持相同的架构和文件划分，面向 PHP 8.3，**零运行时依赖**——不用 Guzzle、不用 ReactPHP、不用
 amphp、不用 ncurses，只用标准库。
 
-> **状态：早期。** 协程运行时已完成并有测试覆盖。LLM API、agent 循环、终端 UI、coding agent CLI
-> 按这个顺序移植中。现在还不能当 agent 用。
+> **状态：早期。** 已经可以向模型提问并逐 token 收到流式回答，且随时可打断。还没有 agent 循环、
+> 没有工具、没有终端 UI。
 
 ## 包划分
 
 | 包 | 命名空间 | 状态 |
 |---|---|---|
 | `pig/async` | `Pig\Async\` | 事件循环、Future、协程 —— **已完成** |
-| `pig/ai` | `Pig\Ai\` | 统一多供应商 LLM API —— 进行中 |
+| `pig/ai` | `Pig\Ai\` | 统一 LLM API —— **Anthropic 全链路可用**；其余供应商待移植 |
 | `pig/agent-core` | `Pig\Agent\` | 带工具调用和状态管理的 agent 循环 —— 未开始 |
 | `pig/tui` | `Pig\Tui\` | 差分渲染的终端 UI —— 未开始 |
 | `pig/coding-agent` | `Pig\CodingAgent\` | 交互式 coding agent CLI —— 未开始 |
@@ -22,6 +22,16 @@ amphp、不用 ncurses，只用标准库。
 `pig/async` 在上游没有对应物：JavaScript 自带事件循环，PHP 没有。它的存在是为了让**一次
 `stream_select()` 能同时等模型的 socket 和键盘**——这正是「流式输出途中能打断、能继续打字」
 所依赖的前提。
+
+## 跑一下
+
+```bash
+composer install
+ANTHROPIC_API_KEY=sk-ant-... php examples/ask.php "天为什么是蓝的？"
+```
+
+这行命令底下的每一层都是 pig 自己的：一个非阻塞 TLS socket、手写的 HTTP/1.1、边到边解的 SSE、
+建在 `Fiber` 上的协程。回答途中按 Ctrl-C，走的就是以后 TUI 要用的那条 abort 路径。
 
 ## 环境要求
 

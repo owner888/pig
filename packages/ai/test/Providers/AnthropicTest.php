@@ -258,6 +258,52 @@ final class AnthropicTest extends TestCase
         $this->assertSame('ephemeral', $body['messages'][1]['content'][1]['cache_control']['type']);
     }
 
+    public function testAgainstTheRealApi(): void
+    {
+        if (getenv('PIG_NETWORK_TESTS') !== '1') {
+            self::markTestSkipped('set PIG_NETWORK_TESTS=1 to run tests that reach the internet');
+        }
+
+        $key = getenv('ANTHROPIC_API_KEY');
+
+        if (!is_string($key) || $key === '') {
+            self::markTestSkipped('needs ANTHROPIC_API_KEY');
+        }
+
+        $model = new Model(
+            getenv('PIG_MODEL') ?: 'claude-haiku-4-5-20251001',
+            'live',
+            Api::AnthropicMessages,
+            'anthropic',
+            'https://api.anthropic.com',
+            200_000,
+            64_000,
+        );
+
+        [$deltas, $message] = Async::run(function () use ($model, $key): array {
+            $stream = $this->anthropic()->stream(
+                $model,
+                new Context([new UserMessage('Reply with exactly: pong')], 'Follow the instruction exactly.'),
+                new AnthropicOptions(maxTokens: 16, apiKey: $key),
+            );
+
+            $count = 0;
+
+            foreach ($stream as $event) {
+                if ($event instanceof TextDeltaEvent) {
+                    $count++;
+                }
+            }
+
+            return [$count, $stream->result()->await()];
+        });
+
+        $this->assertSame(StopReason::Stop, $message->stopReason, (string) $message->errorMessage);
+        $this->assertStringContainsString('pong', strtolower($message->content[0]->text));
+        $this->assertGreaterThanOrEqual(1, $deltas);
+        $this->assertGreaterThanOrEqual(1, $message->usage->output);
+    }
+
     /** @return array{0: list<string>, 1: AssistantMessage} */
     private function collect(string $url, Context $context): array
     {

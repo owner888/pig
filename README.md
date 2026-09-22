@@ -6,16 +6,15 @@ A PHP port of [pi](https://github.com/earendil-works/pi), the agent harness whos
 runs on a famously small core. Same architecture, same file layout, written for PHP 8.3 with no
 runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the standard library.
 
-> **Status: early.** The coroutine runtime is done and tested. The LLM API, the agent loop, the
-> terminal UI and the coding agent CLI are being ported in that order. Nothing here is usable as
-> an agent yet.
+> **Status: early.** A model can be asked a question and the answer streams back token by token,
+> interruptibly. There is no agent loop yet, no tools, and no terminal UI.
 
 ## Packages
 
 | Package | Namespace | State |
 |---|---|---|
 | `pig/async` | `Pig\Async\` | Event loop, futures, coroutines — **done** |
-| `pig/ai` | `Pig\Ai\` | Unified multi-provider LLM API — in progress |
+| `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic streams end to end**; other providers pending |
 | `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — not started |
 | `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — not started |
 | `pig/coding-agent` | `Pig\CodingAgent\` | Interactive coding agent CLI — not started |
@@ -24,6 +23,17 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 exists so one `stream_select()` can wait on the model's socket and on the keyboard at the same
 time, which is what makes interrupting a running turn — and typing while the model streams —
 possible at all.
+
+## Try it
+
+```bash
+composer install
+ANTHROPIC_API_KEY=sk-ant-... php examples/ask.php "why is the sky blue?"
+```
+
+Everything under that line is pig's own: one non-blocking TLS socket, HTTP/1.1 written by hand,
+SSE parsed as it arrives, coroutines on `Fiber`. Ctrl-C mid-answer exercises the same abort path
+the TUI will use.
 
 ## Requirements
 
