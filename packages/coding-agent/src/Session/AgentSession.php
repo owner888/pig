@@ -388,8 +388,9 @@ final class AgentSession
      * Replaying it puts the conversation back the way compaction left it.
      *
      * @param string|null $instructions what to pay particular attention to, from `/compact foo`
-     * @return CompactionSummary|null null when there is nothing old enough to be worth dropping
-     * @throws AgentError if the agent is working, there is no model, or the model fails
+     * @return CompactionSummary|null null when it was called off part-way
+     * @throws AgentError if the agent is working, there is no model, there is nothing to
+     *                    compact, or the model fails
      */
     public function compact(?string $instructions = null, ?AbortSignal $signal = null): ?CompactionSummary
     {
@@ -404,10 +405,19 @@ final class AgentSession
         }
 
         $messages = $this->messages();
+
+        if (($messages[count($messages) - 1] ?? null) instanceof CompactionSummary) {
+            throw new AgentError('Already compacted');
+        }
+
         $cut = Compaction::cutPoint($messages);
 
+        // Upstream's wording, because it is the wording someone will search for. The
+        // conversation being smaller than the recent window compaction always keeps is
+        // the usual reason, and the footer does not show it — that percentage is the
+        // provider's count of a whole request, tool schemas and system prompt included.
         if ($cut <= 0) {
-            return null;
+            throw new AgentError('Nothing to compact (session too small)');
         }
 
         $older = array_slice($messages, 0, $cut);

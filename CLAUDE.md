@@ -213,6 +213,14 @@ Three things about it are worth knowing before changing any of it:
   sends the model to read them again. `Compaction::files()` also carries an earlier
   summary's lists forward, or a file read before the last compaction disappears from the
   record entirely.
+- **A usage reading older than the last compaction is discarded.** See the trap below.
+
+`compact()` throws upstream's own messages — `Nothing to compact (session too small)` and
+`Already compacted` — rather than returning quietly, and `InteractiveMode::sayError()`
+draws them the way upstream's `showError()` does: red, prefixed `Error:`. The wording is
+upstream's on purpose, because it is the wording someone will search for. The other three
+places that show an error in `InteractiveMode` still print plain red text with no prefix;
+aligning them is a separate decision.
 
 Not ported from upstream's compaction: branch summarisation (`branch-summarization.ts`,
 which needs the tree) and the split-turn prefix summary — upstream generates a second,
@@ -615,6 +623,26 @@ So `quote()` wraps its children to `width - 2` itself and prefixes each resultin
 by looking at rendered output, not by a test — every assertion about widths and codes passed.
 
 Regression test: `MarkdownTest::testEveryLineOfAWrappedQuoteKeepsItsBorder`.
+
+### A token count measured before a compaction describes a conversation that no longer exists
+
+`shouldCompact()` reads the last completed turn's usage, because the provider's own count
+beats an estimate. Compaction keeps the most recent messages — usage and all — so straight
+after one, the newest usage in the conversation is still the reading that *asked* for the
+compaction. Nothing recomputes it until the next turn comes back.
+
+Left alone, that is a loop: every turn starts by auto-compacting, the second one fails with
+`Already compacted`, and the person gets a red error before everything they type. It is not
+visible in any single-step test, because one compaction does work correctly.
+
+`Compaction::lastUsage()` therefore returns null when the newest `CompactionSummary` is at
+least as new as the assistant message it would otherwise use — by timestamp, not position,
+since the summary sits in *front* of the messages it is newer than. `<=` rather than `<`:
+the summary is written straight after the turn it replaces and a millisecond holds both.
+Discarding a good reading costs one turn without one; keeping a stale one costs every turn
+after it.
+
+Regression test: `AgentSessionTest::testCompactingDoesNotLeaveTheSessionAskingToCompactAgain`.
 
 ### `stream_socket_pair()` with a dropped peer (tests)
 

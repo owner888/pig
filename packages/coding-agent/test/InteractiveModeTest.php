@@ -26,6 +26,7 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Theme\Palette;
@@ -690,7 +691,7 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('and the answer', $screen);
     }
 
-    public function testCompactingAShortConversationSaysNothingHappened(): void
+    public function testCompactingAShortConversationSaysWhyInUpstreamsWords(): void
     {
         // No scripted answers: a conversation with nothing old enough to drop must not
         // reach the provider at all.
@@ -700,7 +701,23 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
         $this->settle();
 
-        $this->assertStringContainsString('Nothing was compacted', $this->screen());
+        // Upstream's wording, because it is the wording someone will search for.
+        $this->assertStringContainsString(
+            'Error: Compaction failed: Nothing to compact (session too small)',
+            $this->screen(),
+        );
+    }
+
+    public function testCompactingTwiceOverSaysItIsAlreadyDone(): void
+    {
+        $this->start();
+        $this->session->agent->appendMessage(new CompactionSummary('already summarised'));
+
+        $this->type('/compact');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('Error: Compaction failed: Already compacted', $this->screen());
     }
 
     public function testCompactingWhileTheAgentWorksSaysToStopItFirst(): void

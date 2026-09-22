@@ -23,6 +23,7 @@ use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
+use Pig\Ai\Timestamp;
 use Pig\Ai\ToolCall;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
@@ -282,17 +283,63 @@ final class AgentSessionTest extends TestCase
 
     // ---- making room -------------------------------------------------------------
 
-    public function testAShortConversationIsNotWorthCompacting(): void
+    public function testAShortConversationSaysThereIsNothingToCompact(): void
     {
         $session = $this->session(['answer']);
         Async::run(static fn () => $session->prompt('hi'));
 
         $before = $session->messages();
 
-        // Nothing is old enough to be worth dropping, so nothing is dropped — and the
-        // model is not asked to summarise two messages, which costs a request to say so.
-        $this->assertNull(Async::run(static fn () => $session->compact()));
+        // Nothing is old enough to be worth dropping. Said rather than silently skipped:
+        // someone who typed `/compact` and saw nothing happen goes looking for a bug.
+        $this->assertThrows(
+            AgentError::class,
+            static fn () => Async::run(static fn () => $session->compact()),
+            'Nothing to compact (session too small)',
+        );
         $this->assertSame($before, $session->messages());
+    }
+
+    public function testCompactingDoesNotLeaveTheSessionAskingToCompactAgain(): void
+    {
+        $session = $this->session(['the summary']);
+
+        foreach (range(1, 6) as $ignored) {
+            $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+        }
+
+        // The last turn reported 190k of a 200k window, which is what asks for a
+        // compaction in the first place.
+        $session->agent->appendMessage(new AssistantMessage(
+            [new TextContent('so far so good')],
+            Api::AnthropicMessages,
+            'anthropic',
+            'test-model',
+            new Usage(0, 0, 0, 0, 190_000),
+            StopReason::Stop,
+            null,
+            Timestamp::nowMs() - 1_000,
+        ));
+
+        $this->assertTrue($session->shouldCompact());
+
+        Async::run(static fn () => $session->compact());
+
+        // That reading described a request that no longer exists. Trusting it after the
+        // compaction means compacting again before every turn, for ever.
+        $this->assertFalse($session->shouldCompact());
+    }
+
+    public function testCompactingWhatIsAlreadyASummarySaysSo(): void
+    {
+        $session = $this->session([]);
+        $session->agent->appendMessage(new CompactionSummary('already summarised'));
+
+        $this->assertThrows(
+            AgentError::class,
+            static fn () => Async::run(static fn () => $session->compact()),
+            'Already compacted',
+        );
     }
 
     public function testTheOlderHalfIsReplacedByASummaryAndTheRecentHalfIsKept(): void

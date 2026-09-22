@@ -57,9 +57,25 @@ final class Compaction
      *
      * An aborted or failed turn reports whatever it had got to, which is not what the
      * next request will carry.
+     *
+     * Nor is a reading taken before a compaction. The messages kept across the cut keep
+     * their usage, and that usage measured a request that no longer exists — believing
+     * it means the session asks to be compacted again before every turn, for ever.
+     * Compare timestamps rather than positions: the summary sits in front of the
+     * messages it is newer than.
+     *
+     * @param list<mixed> $messages
      */
     public static function lastUsage(array $messages): ?Usage
     {
+        $compactedAt = 0;
+
+        foreach ($messages as $message) {
+            if ($message instanceof CompactionSummary && $message->timestamp > $compactedAt) {
+                $compactedAt = $message->timestamp;
+            }
+        }
+
         foreach (array_reverse($messages) as $message) {
             if (!$message instanceof AssistantMessage) {
                 continue;
@@ -69,7 +85,10 @@ final class Compaction
                 continue;
             }
 
-            return $message->usage;
+            // `<=`, not `<`: the summary is written straight after the turn it replaces,
+            // and a millisecond is wide enough to hold both. Discarding a good reading
+            // costs one turn without one; keeping a stale one costs every turn after it.
+            return $message->timestamp <= $compactedAt ? null : $message->usage;
         }
 
         return null;

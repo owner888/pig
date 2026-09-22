@@ -669,12 +669,15 @@ final class InteractiveMode
         $this->tui->requestRender();
 
         $this->compaction = new AbortController();
+        $signal = $this->compaction->signal;
+
+        $failure = null;
 
         try {
-            $summary = $this->session->compact($instructions, $this->compaction->signal);
+            $summary = $this->session->compact($instructions, $signal);
         } catch (Throwable $error) {
             $summary = null;
-            $this->say($this->palette->fg('error', $error->getMessage()));
+            $failure = $error->getMessage();
         } finally {
             $this->compaction = null;
             $this->working?->stop();
@@ -682,8 +685,14 @@ final class InteractiveMode
             $this->status->clear();
         }
 
+        if ($failure !== null) {
+            $this->sayError("Compaction failed: {$failure}");
+
+            return;
+        }
+
         if ($summary === null) {
-            $this->say($this->palette->fg('muted', 'Nothing was compacted.'));
+            $this->sayError('Compaction cancelled');
 
             return;
         }
@@ -1051,6 +1060,19 @@ final class InteractiveMode
     {
         $this->chat->addChild(new Spacer(1));
         $this->chat->addChild(new Text($this->palette->fg('dim', $message), 1, 0));
+        $this->tui->requestRender();
+    }
+
+    /**
+     * Something went wrong, in red and labelled — upstream's `showError()`.
+     *
+     * The label is part of the message rather than a colour on its own, because a red
+     * line in a transcript that is already full of colour is not a signal.
+     */
+    private function sayError(string $message): void
+    {
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild(new Text($this->palette->fg('error', "Error: {$message}"), 1, 0));
         $this->tui->requestRender();
     }
 

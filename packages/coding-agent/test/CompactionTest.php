@@ -11,6 +11,7 @@ use Pig\Ai\Cost;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\ThinkingContent;
+use Pig\Ai\Timestamp;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
@@ -67,6 +68,28 @@ final class CompactionTest extends TestCase
     public function testNothingAnsweredYetIsNull(): void
     {
         $this->assertNull(Compaction::lastUsage([new UserMessage('hello')]));
+    }
+
+    public function testAReadingTakenBeforeACompactionIsNotTrusted(): void
+    {
+        $messages = [
+            new CompactionSummary('what happened', [], [], 0, 2),
+            self::assistant('kept across the cut', 190_000, StopReason::Stop, Timestamp::nowMs() - 1_000),
+        ];
+
+        // The kept message's usage measured a request that no longer exists. Believing
+        // it means asking to compact again before every turn, for ever.
+        $this->assertNull(Compaction::lastUsage($messages));
+    }
+
+    public function testAReadingTakenAfterACompactionIsTheOneThatCounts(): void
+    {
+        $messages = [
+            new CompactionSummary('what happened', [], [], 0, 2, Timestamp::nowMs() - 1_000),
+            self::assistant('answered since', 4_000),
+        ];
+
+        $this->assertSame(4_000, Compaction::lastUsage($messages)?->totalTokens);
     }
 
     // ---- where to cut ---------------------------------------------------------------
@@ -290,8 +313,12 @@ final class CompactionTest extends TestCase
 
     // ---- scaffolding -----------------------------------------------------------------------
 
-    private static function assistant(string $text, int $total = 0, StopReason $stop = StopReason::Stop): AssistantMessage
-    {
+    private static function assistant(
+        string $text,
+        int $total = 0,
+        StopReason $stop = StopReason::Stop,
+        ?int $timestamp = null,
+    ): AssistantMessage {
         return new AssistantMessage(
             [new TextContent($text)],
             Api::AnthropicMessages,
@@ -299,6 +326,8 @@ final class CompactionTest extends TestCase
             'test',
             new Usage(0, 0, 0, 0, $total, new Cost()),
             $stop,
+            null,
+            $timestamp,
         );
     }
 
