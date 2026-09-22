@@ -17,7 +17,7 @@ final class ModelsTest extends TestCase
     {
         $models = Models::all();
 
-        $this->assertCount(93, $models);
+        $this->assertCount(126, $models);
 
         foreach ($models as $model) {
             $this->assertNotSame('', $model->id, 'a model with no id cannot be selected');
@@ -36,7 +36,7 @@ final class ModelsTest extends TestCase
             // "no such model" — which is the whole reason the table is not all 414.
             $this->assertContains(
                 $model->api,
-                [Api::AnthropicMessages, Api::OpenAiCompletions],
+                [Api::AnthropicMessages, Api::OpenAiCompletions, Api::OpenAiResponses],
                 $model->id . ' speaks ' . $model->api->value,
             );
         }
@@ -78,7 +78,7 @@ final class ModelsTest extends TestCase
 
     public function testAnUnknownIdIsNullRatherThanAGuess(): void
     {
-        $this->assertNull(Models::get('gpt-5.2'));
+        $this->assertNull(Models::get('no-such-model'));
         $this->assertNull(Models::find('openai', 'claude-sonnet-4-5'));
         $this->assertNotNull(Models::find('anthropic', 'claude-sonnet-4-5'));
     }
@@ -87,13 +87,25 @@ final class ModelsTest extends TestCase
     {
         // Every provider here speaks a protocol that is ported. Google's and OpenAI's own
         // arrive with theirs.
-        $this->assertSame(['anthropic', 'cerebras', 'groq', 'mistral', 'xai', 'zai'], Models::providers());
+        $this->assertSame(
+            ['anthropic', 'openai', 'cerebras', 'groq', 'mistral', 'xai', 'zai'],
+            Models::providers(),
+        );
     }
 
     public function testAProviderAndIdTogetherFindExactlyOneModel(): void
     {
         $this->assertSame('llama-3.3-70b-versatile', Models::find('groq', 'llama-3.3-70b-versatile')?->id);
         $this->assertNull(Models::find('anthropic', 'llama-3.3-70b-versatile'));
+    }
+
+    public function testOpenAisOwnModelsSpeakTheResponsesApi(): void
+    {
+        // The two OpenAI protocols are not interchangeable: gpt-5 is on the newer one,
+        // and everything else in the table that says "openai" is a different company.
+        $this->assertSame(Api::OpenAiResponses, Models::get('gpt-5.2')?->api);
+        $this->assertSame('openai', Models::get('gpt-5.2')?->provider);
+        $this->assertTrue(Models::get('gpt-5.2')?->supportsXhigh());
     }
 
     public function testAnOpenAiCompatibleModelCarriesItsOwnEndpoint(): void

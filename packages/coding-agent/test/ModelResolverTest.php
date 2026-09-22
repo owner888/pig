@@ -57,9 +57,9 @@ final class ModelResolverTest extends TestCase
 
     public function testNothingMatchingIsNullRatherThanAGuess(): void
     {
-        // Falling back to "something Anthropic" for `gpt-5.2` would spend the person's
-        // money on a model they did not ask for.
-        $this->assertNull(ModelResolver::parse('gpt-5.2'));
+        // Falling back to "something close enough" would spend the person's money on a
+        // model they did not ask for.
+        $this->assertNull(ModelResolver::parse('llama-9'));
         $this->assertNull(ModelResolver::parse(''));
     }
 
@@ -100,6 +100,6 @@ final class ModelResolverTest extends TestCase
 
     public function testASuffixOnSomethingThatMatchesNothingIsStillNothing(): void
     {
-        $this->assertNull(ModelResolver::parse('gpt-5.2:high'));
+        $this->assertNull(ModelResolver::parse('llama-9:high'));
     }
 }

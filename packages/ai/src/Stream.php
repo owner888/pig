@@ -8,6 +8,7 @@ use Pig\Ai\Providers\Anthropic;
 use Pig\Ai\Providers\AnthropicOptions;
 use Pig\Ai\Providers\OpenAiCompletions;
 use Pig\Ai\Providers\OpenAiOptions;
+use Pig\Ai\Providers\OpenAiResponses;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 
 /**
@@ -55,6 +56,7 @@ final class Stream
         return match ($model->api) {
             Api::AnthropicMessages => (new Anthropic())->stream($model, $context, self::anthropic($options, $apiKey)),
             Api::OpenAiCompletions => (new OpenAiCompletions())->stream($model, $context, self::openAi($options, $apiKey)),
+            Api::OpenAiResponses => (new OpenAiResponses())->stream($model, $context, self::openAi($options, $apiKey)),
             default => throw new ProviderError("No provider for {$model->api->value} has been ported yet"),
         };
     }
@@ -105,6 +107,14 @@ final class Stream
                 $apiKey,
                 // Xhigh is OpenAI's alone; everyone else speaking this protocol clamps.
                 reasoning: $options?->reasoning?->clampToHigh(),
+            ),
+            // Not clamped here: this is OpenAI's own API, and xhigh is where it came from.
+            Api::OpenAiResponses => new OpenAiOptions(
+                $options?->temperature,
+                $maxTokens,
+                $options?->signal,
+                $apiKey,
+                reasoning: $model->supportsXhigh() ? $options?->reasoning : $options?->reasoning?->clampToHigh(),
             ),
             Api::AnthropicMessages => new AnthropicOptions(
                 $options?->temperature,

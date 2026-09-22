@@ -8,11 +8,13 @@ namespace Pig\Ai;
  * Every model this can talk to, by provider and id.
  *
  * Upstream generates `models.generated.ts` from models.dev: 7105 lines, 414 models,
- * twelve providers. Here are the ones whose protocol is ported — Anthropic's 21, and the
- * 72 across five providers that speak `openai-completions`. A model that could be
- * selected and then not talked to is a worse answer than "no such model", so the rest
- * arrive with their protocols. OpenRouter's 236 speak a ported protocol and are still
- * left out: that list is a directory of everyone else's models and goes stale fastest.
+ * twelve providers. Here are the ones whose protocol is ported — Anthropic's 21, OpenAI's
+ * own 33 on the Responses API, and the 72 across five providers that speak
+ * `openai-completions`. A model that could be selected and then not talked to is a worse
+ * answer than "no such model", so the rest arrive with their protocols. OpenRouter's 236
+ * speak a ported protocol and are still left out: that list is a directory of everyone
+ * else's models and goes stale fastest, and GitHub Copilot's 19 need an OAuth device flow
+ * that is not ported.
  *
  * The figures are upstream's at the anchor commit, which is the source a port should
  * agree with rather than whatever models.dev says today.
@@ -170,6 +172,47 @@ final class Models
         'glm-4.7' => ['GLM-4.7', 204_800, 131_072, true, false, 0.6, 2.2, 0.11, 0.0],
     ];
 
+    /**
+     * OpenAI's own, which speak the Responses API rather than chat-completions.
+     *
+     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float}>
+     */
+    private const array OPENAI_MODELS = [
+        'codex-mini-latest' => ['Codex Mini', 200_000, 100_000, true, false, 1.5, 6.0, 0.375, 0.0],
+        'gpt-4' => ['GPT-4', 8_192, 8_192, false, false, 30.0, 60.0, 0.0, 0.0],
+        'gpt-4-turbo' => ['GPT-4 Turbo', 128_000, 4_096, false, true, 10.0, 30.0, 0.0, 0.0],
+        'gpt-4.1' => ['GPT-4.1', 1_047_576, 32_768, false, true, 2.0, 8.0, 0.5, 0.0],
+        'gpt-4.1-mini' => ['GPT-4.1 mini', 1_047_576, 32_768, false, true, 0.4, 1.6, 0.1, 0.0],
+        'gpt-4.1-nano' => ['GPT-4.1 nano', 1_047_576, 32_768, false, true, 0.1, 0.4, 0.03, 0.0],
+        'gpt-4o' => ['GPT-4o', 128_000, 16_384, false, true, 2.5, 10.0, 1.25, 0.0],
+        'gpt-4o-2024-05-13' => ['GPT-4o (2024-05-13)', 128_000, 4_096, false, true, 5.0, 15.0, 0.0, 0.0],
+        'gpt-4o-2024-08-06' => ['GPT-4o (2024-08-06)', 128_000, 16_384, false, true, 2.5, 10.0, 1.25, 0.0],
+        'gpt-4o-2024-11-20' => ['GPT-4o (2024-11-20)', 128_000, 16_384, false, true, 2.5, 10.0, 1.25, 0.0],
+        'gpt-4o-mini' => ['GPT-4o mini', 128_000, 16_384, false, true, 0.15, 0.6, 0.08, 0.0],
+        'gpt-5' => ['GPT-5', 400_000, 128_000, true, true, 1.25, 10.0, 0.13, 0.0],
+        'gpt-5-chat-latest' => ['GPT-5 Chat Latest', 128_000, 16_384, false, true, 1.25, 10.0, 0.125, 0.0],
+        'gpt-5-codex' => ['GPT-5-Codex', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0],
+        'gpt-5-mini' => ['GPT-5 Mini', 400_000, 128_000, true, true, 0.25, 2.0, 0.03, 0.0],
+        'gpt-5-nano' => ['GPT-5 Nano', 400_000, 128_000, true, true, 0.05, 0.4, 0.01, 0.0],
+        'gpt-5-pro' => ['GPT-5 Pro', 400_000, 272_000, true, true, 15.0, 120.0, 0.0, 0.0],
+        'gpt-5.1' => ['GPT-5.1', 400_000, 128_000, true, true, 1.25, 10.0, 0.13, 0.0],
+        'gpt-5.1-chat-latest' => ['GPT-5.1 Chat', 128_000, 16_384, true, true, 1.25, 10.0, 0.125, 0.0],
+        'gpt-5.1-codex' => ['GPT-5.1 Codex', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0],
+        'gpt-5.1-codex-max' => ['GPT-5.1 Codex Max', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0],
+        'gpt-5.1-codex-mini' => ['GPT-5.1 Codex mini', 400_000, 128_000, true, true, 0.25, 2.0, 0.025, 0.0],
+        'gpt-5.2' => ['GPT-5.2', 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0],
+        'gpt-5.2-chat-latest' => ['GPT-5.2 Chat', 128_000, 16_384, true, true, 1.75, 14.0, 0.175, 0.0],
+        'gpt-5.2-pro' => ['GPT-5.2 Pro', 400_000, 128_000, true, true, 21.0, 168.0, 0.0, 0.0],
+        'o1' => ['o1', 200_000, 100_000, true, true, 15.0, 60.0, 7.5, 0.0],
+        'o1-pro' => ['o1-pro', 200_000, 100_000, true, true, 150.0, 600.0, 0.0, 0.0],
+        'o3' => ['o3', 200_000, 100_000, true, true, 2.0, 8.0, 0.5, 0.0],
+        'o3-deep-research' => ['o3-deep-research', 200_000, 100_000, true, true, 10.0, 40.0, 2.5, 0.0],
+        'o3-mini' => ['o3-mini', 200_000, 100_000, true, false, 1.1, 4.4, 0.55, 0.0],
+        'o3-pro' => ['o3-pro', 200_000, 100_000, true, true, 20.0, 80.0, 0.0, 0.0],
+        'o4-mini' => ['o4-mini', 200_000, 100_000, true, true, 1.1, 4.4, 0.28, 0.0],
+        'o4-mini-deep-research' => ['o4-mini-deep-research', 200_000, 100_000, true, true, 2.0, 8.0, 0.5, 0.0],
+    ];
+
     /** @var array<string, Model>|null built once, on the first lookup that needs it */
     private static ?array $models = null;
 
@@ -253,6 +296,21 @@ final class Models
                 $maxTokens,
                 $reasoning,
                 ['text', 'image'],
+                new Pricing($in, $out, $read, $write),
+            );
+        }
+
+        foreach (self::OPENAI_MODELS as $id => [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write]) {
+            $models['openai/' . $id] = new Model(
+                $id,
+                $name,
+                Api::OpenAiResponses,
+                'openai',
+                'https://api.openai.com/v1',
+                $window,
+                $maxTokens,
+                $reasoning,
+                $images ? ['text', 'image'] : ['text'],
                 new Pricing($in, $out, $read, $write),
             );
         }

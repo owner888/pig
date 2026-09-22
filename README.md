@@ -19,7 +19,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 | Package | Namespace | State |
 |---|---|---|
 | `pig/async` | `Pig\Async\` | Event loop, futures, coroutines — **done** |
-| `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic and the OpenAI chat-completions protocol stream end to end**; Google and OpenAI's own Responses API pending |
+| `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic, OpenAI chat-completions and OpenAI Responses all stream end to end**; Google pending |
 | `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — **done** |
 | `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — **done** |
 | `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions, compaction, model switching and skills done** |
@@ -42,8 +42,9 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 `--model` takes a part of a name rather than a whole id — `--model sonnet`, `--model 'opus 4.1'` —
 and `--model sonnet:high` sets the thinking level at the same time. `--models` lists them.
 
-93 models are known: Anthropic's, plus Groq, Cerebras, xAI, Zai and Mistral, which all speak
-the OpenAI chat-completions protocol. Set the matching `*_API_KEY` and `--model` reaches them.
+126 models are known: Anthropic's, OpenAI's own on the Responses API, and Groq, Cerebras, xAI,
+Zai and Mistral, which all speak OpenAI chat-completions. Set the matching `*_API_KEY` and
+`--model` reaches them.
 
 Skills are folders with a `SKILL.md` in them. pig reads `~/.pig/skills` and `.pig/skills`, and
 also `~/.claude/skills`, `.claude/skills` and `~/.codex/skills`, so a skill written for another

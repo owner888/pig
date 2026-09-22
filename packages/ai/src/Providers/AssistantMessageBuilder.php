@@ -108,6 +108,18 @@ final class AssistantMessageBuilder
     }
 
     /**
+     * Replace a block's signature, rather than adding to it.
+     *
+     * Anthropic streams a thinking signature in pieces, which is why `append()` exists.
+     * OpenAI's responses API hands over the whole reasoning item at the end instead, and
+     * appending that to the deltas would produce a signature that is neither.
+     */
+    public function setSignature(int $index, string $signature): void
+    {
+        $this->blocks[$index]['signature'] = $signature;
+    }
+
+    /**
      * Fill in a tool call's id and name after it was opened.
      *
      * Anthropic names a tool call in the event that opens it. OpenAI does not have to:
@@ -176,7 +188,9 @@ final class AssistantMessageBuilder
                 $block['signature'] === '' ? null : $block['signature'],
             ),
             'toolCall' => new ToolCall($block['id'], $block['name'], $block['arguments']),
-            default => new TextContent($block['text']),
+            // Text carries a signature too on the responses API: the message's own id,
+            // which has to go back with it or the turn is a different message.
+            default => new TextContent($block['text'], $block['signature'] === '' ? null : $block['signature']),
         };
     }
 

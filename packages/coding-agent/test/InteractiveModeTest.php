@@ -715,10 +715,10 @@ final class InteractiveModeTest extends TestCase
         $this->start();
         $before = $this->session->model()?->id;
 
-        $this->type('/model gpt-5.2');
+        $this->type('/model llama-9');
         $this->type(self::ENTER);
 
-        $this->assertStringContainsString('Error: No model matches "gpt-5.2"', $this->screen());
+        $this->assertStringContainsString('Error: No model matches "llama-9"', $this->screen());
         $this->assertSame($before, $this->session->model()?->id);
     }
 

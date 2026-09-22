@@ -300,6 +300,23 @@ invented** saying so, because an interrupted turn leaves a dangling call and eve
 rejects the whole conversation rather than ignoring it. A stated "No result provided" is worse
 than the truth and far better than a request that cannot be sent at all.
 
+`Providers\OpenAiResponses` is upstream's `openai-responses.ts` — what gpt-5 and codex speak,
+and the third shape in three providers. A response is a list of *items* and the stream says
+when each opens and closes, which after `openai-completions` is a relief. Two things in it have
+no counterpart anywhere else:
+
+- **A reasoning item goes back whole.** What arrives as text is a *summary*; the reasoning
+  itself is encrypted and opaque, and the model wants its own item back verbatim or it reasons
+  from nothing again. So the entire item is kept as the thinking block's signature and replayed
+  as it came — which is what `TextContent::$textSignature` and the builder's `setSignature()`
+  are for. Asking for it at all needs `include: ["reasoning.encrypted_content"]`.
+- **A tool call has two ids.** `call_id` addresses the result, `id` is the item's own, and both
+  have to go back, so they travel joined as `call_id|id` and are split on the way out. A call
+  from another provider has one id, which is then used for both.
+
+`# Juice: 0 !important` is not a joke: gpt-5 has no documented way to turn reasoning off, and
+that developer message is what upstream found works.
+
 `ModelResolver` is upstream's `model-resolver.ts`: `sonnet` finds the model, `sonnet:high`
 finds it and sets the thinking level. When several match, the alias beats the dated build
 behind it — someone typing `sonnet` wants the current one, not the June 2024 build that sorts
@@ -340,10 +357,10 @@ all scalars and pig has no YAML parser to reach for; what this cannot read stays
 for a nested `metadata:` block means its key and nothing else — and the key is all that is
 validated anyway. `fnmatch()` is `minimatch` for `--ignore`-style patterns.
 
-Nothing here is deliberately unported any more. What is left is the three remaining protocols
-(`openai-responses`, `google-generative-ai`, `google-gemini-cli`), `/copy` (which needs a
-clipboard *writer*), images in tool output, custom-tool rendering, and branch and tree
-navigation.
+Nothing here is deliberately unported any more. What is left is the two Google protocols
+(`google-generative-ai`, `google-gemini-cli`), GitHub Copilot (which needs an OAuth device
+flow), `/copy` (which needs a clipboard *writer*), images in tool output, custom-tool
+rendering, and branch and tree navigation.
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 
@@ -707,6 +724,23 @@ So `quote()` wraps its children to `width - 2` itself and prefixes each resultin
 by looking at rendered output, not by a test — every assertion about widths and codes passed.
 
 Regression test: `MarkdownTest::testEveryLineOfAWrappedQuoteKeepsItsBorder`.
+
+### A tool result outliving the call it answers
+
+`OpenAiResponses` drops a tool call from a turn that ended in an error, because an aborted
+call has half-parsed arguments and asking the model to continue from one is worse than
+dropping it. `TransformMessages` runs *first* and, seeing a call with no result, invents one.
+Put together, the request carries a `function_call_output` addressed to a `call_id` that was
+never sent — which OpenAI rejects outright, so the conversation cannot be continued at all.
+
+Upstream has the same two halves and the same gap. Found here by building the case rather than
+by a 400: the shape is visible in the assembled request, which is why the provider tests assert
+on what went out and not only on what came back.
+
+The fix is in `input()`: it records the calls it actually emitted and drops a result whose call
+is not among them. Both halves of a dropped turn go, or neither.
+
+Regression test: `OpenAiResponsesTest::testAnAbortedTurnsThinkingAndCallsAreNotSentBack`.
 
 ### A token count measured before a compaction describes a conversation that no longer exists
 
