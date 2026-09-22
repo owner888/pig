@@ -4,8 +4,35 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "432dd3fb0318a2a501bb06a0ff510532",
+    "content-hash": "fa21391a203b8e9399eb923e2655b596",
     "packages": [
+        {
+            "name": "pig/agent-core",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "packages/agent-core",
+                "reference": "5a1f0451ef698c8afc1dadb5f40d55e15f5d8a96"
+            },
+            "require": {
+                "php": ">=8.3",
+                "pig/ai": "@dev",
+                "pig/async": "@dev"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Pig\\Agent\\": "src/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "description": "Agent loop for pig: tool calling, steering, and conversation state.",
+            "transport-options": {
+                "relative": true
+            }
+        },
         {
             "name": "pig/ai",
             "version": "dev-main",
@@ -56,6 +83,34 @@
                 "MIT"
             ],
             "description": "Coroutine runtime for pig: event loop, futures, fibers. No dependencies.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
+            "name": "pig/tui",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "packages/tui",
+                "reference": "4bc17d61d77fccd8406d72cdcf7d37d7fd231731"
+            },
+            "require": {
+                "ext-mbstring": "*",
+                "ext-pcre": "*",
+                "php": ">=8.3",
+                "pig/async": "@dev"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Pig\\Tui\\": "src/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "description": "Terminal UI for pig: differential rendering, grapheme-accurate widths, ANSI-aware wrapping.",
             "transport-options": {
                 "relative": true
             }
@@ -1759,8 +1814,10 @@
     "aliases": [],
     "minimum-stability": "dev",
     "stability-flags": {
+        "pig/agent-core": 20,
         "pig/ai": 20,
-        "pig/async": 20
+        "pig/async": 20,
+        "pig/tui": 20
     },
     "prefer-stable": true,
     "prefer-lowest": false,
