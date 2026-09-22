@@ -1,0 +1,16 @@
+{
+    "name": "pig/agent-core",
+    "description": "Agent loop for pig: tool calling, steering, and conversation state.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.3",
+        "pig/ai": "@dev",
+        "pig/async": "@dev"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pig\\Agent\\": "src/"
+        }
+    }
+}

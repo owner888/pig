@@ -23,7 +23,7 @@ Reference checkout for diffing lives outside this repo — clone pi and `git che
 | Unions | real union type where the arms are closed and few, marker interface otherwise | PHP has union types; what it lacks is naming one and typing an array's elements — see [Porting the unions](#porting-the-unions) |
 | Layout | composer monorepo, `Pig\*` | Mirrors upstream's package split one-to-one |
 
-### Deliberate exceptions to kaka-workflow Rule 4 (prefer platform/standard libs)
+### Deliberate exceptions to "prefer the platform library over your own"
 
 Both were chosen explicitly, not by default:
 
@@ -195,6 +195,10 @@ and only the thinking test found it.
 
 ## Conventions
 
+- **A new composer dependency is the developer's call, every time.** Ask before adding one, and say what
+  it would cost to write instead — something small enough to write in an afternoon gets written
+  here. Zero runtime dependencies is the point of the project, not an accident of it. `partial-json`
+  and `sanitize-unicode` were both replaced by a file each rather than pulled in.
 - `README.md` and `README.zh-CN.md` are one document in two languages. Every change to one lands
   in the other in the same commit — a half-translated README is worse than an untranslated one.
 - `declare(strict_types=1)` in every file; PSR-12; one class per file.

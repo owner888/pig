@@ -5,6 +5,7 @@
     "license": "MIT",
     "require": {
         "php": ">=8.3",
+        "pig/agent-core": "@dev",
         "pig/ai": "@dev",
         "pig/async": "@dev"
     },
