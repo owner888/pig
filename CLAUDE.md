@@ -365,6 +365,20 @@ first. The pattern is tried whole before it is split on a colon, because an id c
 running several models against one task — `fnmatch()` is the whole of what `minimatch` was
 doing there, so that is rows of work rather than a dependency when something wants it.
 
+`Prompt\SlashCommands` is upstream's `core/slash-commands.ts`: a markdown file in
+`~/.pig/commands/` or `.pig/commands/` becomes `/name`, and its body is the prompt.
+`/review src/Foo.php` sends `review.md` with `$1` filled in.
+
+Not the same thing as a skill, though both are markdown with frontmatter and the two are
+easy to confuse. A skill is **offered** to the model, which reads it when a task matches; a
+command is **sent** by the person, now, as the message. One is a capability, the other is a
+macro. They are loaded separately for that reason.
+
+Two things worth keeping straight: a built-in command is tried **first**, so a `help.md`
+someone forgot they wrote cannot shadow `/help`; and `$@` is substituted **before** the
+numbered placeholders, or an argument that happens to contain `$1` would have an argument
+substituted into it.
+
 `Prompt\Skills` is upstream's `core/skills.ts`. A skill is a folder with a `SKILL.md` whose
 frontmatter says what it is for; only the name and description reach the prompt, and the
 instructions are a file the model reads when a task matches. That is what makes many skills
@@ -397,11 +411,21 @@ all scalars and pig has no YAML parser to reach for; what this cannot read stays
 for a nested `metadata:` block means its key and nothing else — and the key is all that is
 validated anyway. `fnmatch()` is `minimatch` for `--ignore`-style patterns.
 
-Nothing here is deliberately unported any more. Four of upstream's five protocols are here;
-what is left needs an OAuth device flow rather than a protocol — `google-gemini-cli` (the same
-Gemini shape behind Google's sign-in) and GitHub Copilot. Beyond that: custom-tool rendering,
-and branch and tree navigation, which needs the parent field `SessionManager` does not write
-yet.
+Four of upstream's five protocols are here; the fifth needs an OAuth device flow rather than a
+protocol — `google-gemini-cli` is the same Gemini shape behind Google's sign-in, and GitHub
+Copilot is the same again.
+
+What is left in `coding-agent`, none of it deliberately left out, all of it needing something
+that is not here yet:
+
+| Upstream | Needs |
+|---|---|
+| `core/hooks/` (1544 lines) | a settings file, and a place to run user code at every stage |
+| `core/custom-tools/` (541) | the same, plus tool definitions loaded from disk |
+| `core/settings-manager.ts` (374) | a settings file, which nothing yet reads or writes |
+| `core/export-html/` (211) | nothing but the work |
+| `modes/rpc/` | a second way in, for editors rather than people |
+| branch and tree navigation | the parent field `SessionManager` does not write yet |
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 

@@ -47,6 +47,9 @@ and `--model sonnet:high` sets the thinking level at the same time. `--models` l
 Cerebras, xAI, Zai and Mistral, which all speak OpenAI chat-completions. Set the matching
 `*_API_KEY` and `--model` reaches them.
 
+A markdown file in `~/.pig/commands/` or `.pig/commands/` becomes a slash command: `review.md`
+is `/review`, its body is the prompt, and `$1` and `$@` are filled from what follows.
+
 Skills are folders with a `SKILL.md` in them. pig reads `~/.pig/skills` and `.pig/skills`, and
 also `~/.claude/skills`, `.claude/skills` and `~/.codex/skills`, so a skill written for another
 agent works here unchanged. `/skills` lists what was found and where each one came from.

@@ -25,6 +25,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Prompt\ContextFile;
+use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
@@ -126,6 +127,7 @@ final class InteractiveModeTest extends TestCase
         bool $store = false,
         ?string $resume = null,
         array $skills = [],
+        array $fileCommands = [],
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->answers = $answers;
@@ -162,6 +164,7 @@ final class InteractiveModeTest extends TestCase
             $context,
             $skills,
             $this->clipboard,
+            $fileCommands,
         );
 
         $this->mode->start();
@@ -624,6 +627,50 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
 
         $this->assertFalse($this->session->isStreaming());
+    }
+
+    // ---- commands kept as files ---------------------------------------------------------------
+
+    public function testAFileCommandIsSentAsTheMessageItStandsFor(): void
+    {
+        $this->start(['done'], fileCommands: [
+            new FileCommand('review', 'Review a file', 'Please review $1 closely.', '(user)'),
+        ]);
+
+        $this->type('/review src/Foo.php');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        // A command here is a stored prompt, not a program: it goes as if it were typed.
+        $this->assertStringContainsString('Please review src/Foo.php closely.', $screen);
+        $this->assertStringContainsString('done', $screen);
+    }
+
+    public function testAFileCommandCannotShadowABuiltInOne(): void
+    {
+        // No scripted answers: if `/help` reached the model this would blow up on
+        // "out of scripted answers" rather than pass.
+        $this->start(fileCommands: [new FileCommand('help', 'Not this one', 'send me instead', '(user)')]);
+
+        $this->type('/help');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('ctrl+c', $this->screen());
+        $this->assertStringNotContainsString('send me instead', $this->screen());
+    }
+
+    public function testAnUnknownCommandIsStillUnknownWhenThereAreFileCommands(): void
+    {
+        $this->start(fileCommands: [new FileCommand('review', 'd', 'x', '(user)')]);
+
+        $this->type('/nonsense');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('Error: No command called /nonsense', $this->screen());
     }
 
     // ---- copying ----------------------------------------------------------------------------

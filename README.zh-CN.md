@@ -42,6 +42,9 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 内置 147 个模型：Anthropic 的、OpenAI 自家走 Responses API 的、Gemini，加上 Groq、Cerebras、xAI、
 Zai、Mistral——这五家说的都是 OpenAI chat-completions。设好对应的 `*_API_KEY`，`--model` 就能指过去。
 
+`~/.pig/commands/` 或 `.pig/commands/` 下的一个 md 文件就是一条斜杠命令：`review.md` 就是
+`/review`，正文就是 prompt，`$1`、`$@` 由后面跟的参数填进去。
+
 skill 就是一个带 `SKILL.md` 的文件夹。pig 读 `~/.pig/skills` 和 `.pig/skills`，同时也读
 `~/.claude/skills`、`.claude/skills` 和 `~/.codex/skills`——给别的 agent 写的 skill 在这儿直接能用。
 `/skills` 列出找到了哪些、各自来自哪个目录。

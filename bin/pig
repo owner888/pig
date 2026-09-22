@@ -29,6 +29,7 @@ use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Prompt\Skills;
+use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Theme\Palette;
@@ -145,6 +146,7 @@ if (!in_array($theme, Palette::names(), true)) {
 $contextFiles = ContextFiles::load($cwd);
 
 [$skills, $skillWarnings] = Skills::load($cwd, extraDirs: array_filter([$options['skills-dir'] ?? null]));
+$fileCommands = SlashCommands::load($cwd);
 
 // On the shell rather than in the UI: a malformed skill is its author's problem, and the
 // author is whoever just started pig — not the model, and not the transcript.
@@ -214,6 +216,7 @@ $mode = new InteractiveMode(
     $theme,
     contextFiles: $contextFiles,
     skills: $skills,
+    fileCommands: $fileCommands,
 );
 
 // One fiber around the whole program: the prompt suspends on a socket, the terminal

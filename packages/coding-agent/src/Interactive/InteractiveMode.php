@@ -28,7 +28,9 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\ContextFile;
+use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
+use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
@@ -113,6 +115,9 @@ final class InteractiveMode
     /** @var list<Skill> likewise — shown, not discovered here */
     private array $skills = [];
 
+    /** @var list<FileCommand> prompts kept as files, reachable as `/name` */
+    private array $fileCommands = [];
+
     private ?Text $banner = null;
 
     /** The session picker, while it is open. */
@@ -134,10 +139,12 @@ final class InteractiveMode
         array $contextFiles = [],
         array $skills = [],
         ?Clipboard $clipboard = null,
+        array $fileCommands = [],
     ) {
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
         $this->skills = $skills;
+        $this->fileCommands = $fileCommands;
         $this->clipboard = $clipboard ?? new SystemClipboard();
 
         // Injected so a test can drive this without a terminal, the same way the editor
@@ -511,10 +518,19 @@ final class InteractiveMode
         $this->editor->setClipboard($this->clipboard);
 
         $this->editor->setAutocompleteProvider(new CombinedAutocompleteProvider(
-            array_map(
-                static fn (array $command): SlashCommand => new SlashCommand($command[0], $command[1]),
-                self::COMMANDS,
-            ),
+            [
+                ...array_map(
+                    static fn (array $command): SlashCommand => new SlashCommand($command[0], $command[1]),
+                    self::COMMANDS,
+                ),
+                ...array_map(
+                    static fn (FileCommand $command): SlashCommand => new SlashCommand(
+                        $command->name,
+                        $command->description,
+                    ),
+                    $this->fileCommands,
+                ),
+            ],
             $this->cwd,
             // Only if it is already here. Reaching for the network to draw a completion
             // list is not something a keystroke should do.
@@ -758,7 +774,9 @@ final class InteractiveMode
             'resume' => $this->showSessions(),
             'theme' => $this->switchTheme(),
             'exit', 'quit' => $this->stop(),
-            default => $this->sayError("No command called /{$name}. Try /help."),
+            // A command kept as a file is tried last, so a built-in can never be
+            // shadowed by a file someone forgot they wrote.
+            default => $this->runFileCommand($text, $name),
         };
     }
 
@@ -777,6 +795,35 @@ final class InteractiveMode
         }
 
         Async::spawn(fn () => $this->compact($instructions === '' ? null : $instructions));
+    }
+
+    /**
+     * Send a prompt kept as a file, or say there is no such command.
+     *
+     * The expansion is sent as if it had been typed, because that is what it is: a
+     * command here is a stored prompt, not a program.
+     */
+    private function runFileCommand(string $text, string $name): void
+    {
+        $expanded = SlashCommands::expand($text, $this->fileCommands);
+
+        if ($expanded === null) {
+            $this->sayError("No command called /{$name}. Try /help.");
+
+            return;
+        }
+
+        if ($this->session->isStreaming()) {
+            $this->session->followUp($expanded);
+            $this->showQueue();
+            $this->tui->requestRender();
+
+            return;
+        }
+
+        // Not drawn here: `onMessageStart` draws every user message, and drawing it
+        // twice is what happens to anything that helpfully draws its own.
+        $this->send($expanded);
     }
 
     /**
