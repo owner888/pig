@@ -14,7 +14,13 @@ foreach (['packages', 'test', 'bin', 'examples'] as $dir) {
 
     /** @var SplFileInfo $file */
     foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator("{$root}/{$dir}")) as $file) {
-        if ($file->isFile() && $file->getExtension() === 'php' && !str_contains($file->getPathname(), '/vendor/')) {
+        if (!$file->isFile() || str_contains($file->getPathname(), '/vendor/')) {
+            continue;
+        }
+
+        // An extension, or a `#!` line saying it is PHP anyway — `bin/pig` is the second
+        // kind, and leaving an executable unlinted is leaving the entry point unlinted.
+        if ($file->getExtension() === 'php' || str_starts_with((string) file_get_contents($file->getPathname(), false, null, 0, 20), '#!/usr/bin/env php')) {
             $files[] = $file->getPathname();
         }
     }

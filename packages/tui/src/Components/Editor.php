@@ -99,13 +99,26 @@ final class Editor implements Component, InputHandler
     /** While the agent is working, Enter should not start another turn. */
     public bool $disableSubmit = false;
 
-    private readonly EditorTheme $theme;
+    private EditorTheme $theme;
 
     public function __construct(?EditorTheme $theme = null)
     {
         // Not a default parameter: a theme is made of closures, and a default value has
         // to be a constant expression.
         $this->theme = $theme ?? EditorTheme::default();
+    }
+
+    /**
+     * Repaint with a different theme.
+     *
+     * The border is the one part of an editor that says something while you type — the
+     * coding agent colours it by thinking level — and a theme made of closures cannot be
+     * changed in place, so it is replaced whole.
+     */
+    public function setTheme(EditorTheme $theme): void
+    {
+        $this->theme = $theme;
+        $this->invalidate();
     }
 
     public function setAutocompleteProvider(?AutocompleteProvider $provider): void

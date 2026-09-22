@@ -1,0 +1,125 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * pig — a coding agent in a terminal.
+ *
+ *   ANTHROPIC_API_KEY=sk-ant-... bin/pig
+ *   bin/pig --read-only --model claude-sonnet-5 --theme light
+ *
+ * Read-write by default, unlike `examples/agent.php`: this one has someone watching it,
+ * and every edit shows up as a diff before the next thing happens.
+ */
+
+foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php'] as $autoload) {
+    if (is_file($autoload)) {
+        require $autoload;
+
+        break;
+    }
+}
+
+use Pig\Agent\ThinkingLevel;
+use Pig\Async\Async;
+use Pig\CodingAgent\CodingAgent;
+use Pig\CodingAgent\Interactive\InteractiveMode;
+use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Tools\ToolSet;
+use Pig\Tui\Style;
+
+const VERSION = '0.1.0';
+
+/** @return array{0: array<string, string>, 1: list<string>} options and what was left */
+function options(array $arguments): array
+{
+    $options = [];
+    $rest = [];
+
+    for ($at = 0; $at < count($arguments); $at++) {
+        $argument = $arguments[$at];
+
+        if (!str_starts_with($argument, '--')) {
+            $rest[] = $argument;
+
+            continue;
+        }
+
+        $name = substr($argument, 2);
+
+        if (str_contains($name, '=')) {
+            [$name, $value] = explode('=', $name, 2);
+            $options[$name] = $value;
+
+            continue;
+        }
+
+        // A flag that takes no value, followed by one that does: `--read-only --model x`.
+        $next = $arguments[$at + 1] ?? null;
+        $options[$name] = $next !== null && !str_starts_with($next, '--') ? $arguments[++$at] : '';
+    }
+
+    return [$options, $rest];
+}
+
+[$options, $rest] = options(array_slice($argv, 1));
+
+if (isset($options['help'])) {
+    echo <<<TEXT
+    pig — a coding agent in a terminal.
+
+      --model <id>      which model to talk to (default: claude-sonnet-5)
+      --theme <name>    dark or light (default: dark)
+      --thinking <l>    off, minimal, low, medium, high, xhigh
+      --read-only       no edit, write or bash
+      --cwd <path>      where to work (default: here)
+
+    TEXT;
+
+    exit(0);
+}
+
+$cwd = $options['cwd'] ?? (getcwd() ?: '.');
+
+if (!is_dir($cwd)) {
+    fwrite(STDERR, Style::red("No such directory: {$cwd}\n"));
+
+    exit(1);
+}
+
+$model = CodingAgent::model($options['model'] ?? (getenv('PIG_MODEL') ?: 'claude-sonnet-5'));
+$theme = $options['theme'] ?? (getenv('PIG_THEME') ?: 'dark');
+$level = ThinkingLevel::tryFrom($options['thinking'] ?? 'off') ?? ThinkingLevel::Off;
+
+if (!in_array($theme, Palette::names(), true)) {
+    fwrite(STDERR, Style::red("No theme called '{$theme}'. There is " . implode(' and ', Palette::names()) . ".\n"));
+
+    exit(1);
+}
+
+try {
+    $agent = CodingAgent::create(
+        $model,
+        $cwd,
+        isset($options['read-only']) ? ToolSet::READ_ONLY : ToolSet::ALL,
+        thinking: $level,
+    );
+} catch (Throwable $error) {
+    // Almost always a missing API key, which is worth saying plainly rather than as a
+    // stack trace on a screen that was about to become a UI.
+    fwrite(STDERR, Style::red($error->getMessage() . "\n"));
+
+    exit(1);
+}
+
+$mode = new InteractiveMode(new AgentSession($agent), Palette::named($theme), $cwd, VERSION, $theme);
+
+// One fiber around the whole program: the prompt suspends on a socket, the terminal
+// wakes on a keystroke, and both need the same loop underneath them.
+Async::run(static fn () => $mode->run());
+
+// The first thing a person sees after quitting is their own shell, so the screen is
+// handed back the way it was found.
+echo "\n";

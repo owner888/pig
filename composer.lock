@@ -93,7 +93,7 @@
             "dist": {
                 "type": "path",
                 "url": "packages/coding-agent",
-                "reference": "a760c586427751060ed7e49cd9abe0717f03567e"
+                "reference": "07ef2ba8014e9f912db7275bcf51da2de80190a7"
             },
             "require": {
                 "ext-json": "*",
@@ -105,8 +105,8 @@
                 "pig/tui": "@dev"
             },
             "suggest": {
-                "fd": "Required by the find tool — brew install fd, or apt install fd-find",
-                "ripgrep": "Required by the grep tool — brew install ripgrep, or apt install ripgrep"
+                "fd": "find tool — pig downloads it to ~/.pig/tools if missing; brew install fd to use your own",
+                "ripgrep": "grep tool — pig downloads it to ~/.pig/tools if missing; brew install ripgrep to use your own"
             },
             "type": "library",
             "autoload": {

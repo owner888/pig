@@ -116,7 +116,8 @@ packages/async/      → Pig\Async\        (pig/async)       Loop, Future, Defer
 packages/ai/         → Pig\Ai\           (pig/ai)          unified LLM API, HTTP/SSE, Anthropic
 packages/agent-core/ → Pig\Agent\        (pig/agent-core)  AgentLoop, Agent, tools, events
 packages/tui/        → Pig\Tui\          (pig/tui)         renderer, widths, keys, editor, markdown, images
-packages/coding-agent/ → Pig\CodingAgent\ (pig/coding-agent) tools, then the CLI
+packages/coding-agent/ → Pig\CodingAgent\ (pig/coding-agent) tools, theme, session, interactive CLI
+bin/pig                                     the entry point
 ```
 
 Ported so far: all of `ai` (`types.ts`, `utils/event-stream.ts`, `stream.ts`, the Anthropic provider),
@@ -128,8 +129,8 @@ all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439),
 the agent: RPC mode, hooks, custom tools, compaction, HTML export, OAuth, twenty-five selector
 components. What is being ported is the part that makes it a coding agent: `core/tools/` (done),
 `core/system-prompt.ts` (done), enough of `core/agent-session.ts` to hold a session (done —
-`Session\AgentSession`), and an interactive mode built on `pig/tui`. The rest is left out until
-something needs it.
+`Session\AgentSession`), and an interactive mode built on `pig/tui` (done — `Interactive\`).
+The rest is left out until something needs it.
 
 `AgentSession` is 1901 lines upstream and ~330 here, because everything it coordinates that is
 not ported is not there to coordinate: session persistence (`SessionManager`, 1129 lines),
@@ -145,13 +146,28 @@ unknown name throws where the component is wired rather than rendering colourles
 Reading a theme from JSON, the custom-themes directory and the watcher that reloads one as
 it is edited are not ported; they arrive with a `/theme` command if that is ever wanted.
 
-`Interactive\` holds the components the transcript is drawn from — `UserMessageComponent`,
-`AssistantMessageComponent`, `ToolExecutionComponent`, `FooterComponent`, plus `DiffView`
-and `BashOutputComponent`. They keep upstream's `…Component` names rather than `pig/tui`'s
-suffix-free `Text` / `Box` / `Markdown`, because `UserMessage` and `AssistantMessage` are
-already taken by `Pig\Ai`; the developer chose matching upstream over matching the sibling
-package. Not ported: custom-tool rendering and images, both of which need something that
-is not here yet.
+`Interactive\` is the terminal front end. `InteractiveMode` is the arrangement — which event
+becomes which component, which key means what — and `bin/pig` is the entry point. The
+components it draws with are `UserMessageComponent`, `AssistantMessageComponent`,
+`ToolExecutionComponent`, `FooterComponent`, `DiffView`, `BashOutputComponent` and
+`CustomEditor`. They keep upstream's `…Component` names rather than `pig/tui`'s suffix-free
+`Text` / `Box` / `Markdown`, because `UserMessage` and `AssistantMessage` are already taken by
+`Pig\Ai`; the developer chose matching upstream over matching the sibling package.
+
+`InteractiveMode` is ~600 lines against upstream's 2439, and the difference is almost entirely
+selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
+trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
+an agent you can talk to, five slash commands, and the keys. Also not ported: custom-tool
+rendering, images in tool output, `/copy` (which needs a clipboard *writer*; `SystemClipboard`
+only reads), and bash mode (`!command`).
+
+`CustomEditor` wraps `Pig\Tui\Components\Editor` rather than extending it — the editor is
+`final`, and wrapping keeps the list of keys an application may steal explicit. `Editor` grew
+one method for this: `setTheme()`, so the border can change colour with the thinking level.
+
+The terminal is injected, so `InteractiveModeTest` drives the whole front end by typing into a
+`FakeTerminal`: `start()` draws the first frame, keystrokes go in by hand, and `run()` — which
+blocks on the loop — is the only thing a test never calls.
 
 `Theme\Colour` carries the one piece of real arithmetic in there: fitting a hex colour onto
 a 256-colour terminal. The guard worth knowing about is that the grey ramp only wins when

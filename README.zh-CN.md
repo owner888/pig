@@ -6,10 +6,9 @@
 pig 保持相同的架构和文件划分，面向 PHP 8.3，**零运行时依赖**——不用 Guzzle、不用 ReactPHP、不用
 amphp、不用 ncurses，只用标准库。
 
-> **状态：早期。** agent 循环已经跑通——提问、流式回答、工具调用、运行途中插话都可以了；终端 UI
-> 也已完整：差分渲染、带历史和补全的多行编辑器、markdown 渲染、终端内联图片。还缺的是
-> coding agent 的前端。七个工具都能用了——read、write、edit、bash、grep、find、ls——
-> `examples/agent.php` 能把整条链路跑通；还缺的是交互式 CLI。
+> **状态：能跑了。** `bin/pig` 就是一个可以在终端里对话的 coding agent：流式回答、七个工具的
+> 实时输出、改动以 diff 呈现、Esc 打断、干活途中可以继续打字。还缺的是它周围的东西——会话不会
+> 保存、没有模型选择器、上下文满了也不会自动压缩。
 
 ## 包划分
 
@@ -19,7 +18,7 @@ amphp、不用 ncurses，只用标准库。
 | `pig/ai` | `Pig\Ai\` | 统一 LLM API —— **Anthropic 全链路可用**；其余供应商待移植 |
 | `pig/agent-core` | `Pig\Agent\` | 带工具调用和状态管理的 agent 循环 —— **已完成** |
 | `pig/tui` | `Pig\Tui\` | 差分渲染的终端 UI —— **已完成** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **七个工具和系统提示已完成**；CLI 待补 |
+| `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **工具、系统提示、交互式 CLI 已完成**；会话持久化待补 |
 
 `pig/async` 在上游没有对应物：JavaScript 自带事件循环，PHP 没有。它的存在是为了让**一次
 `stream_select()` 能同时等模型的 socket 和键盘**——这正是「流式输出途中能打断、能继续打字」
@@ -29,15 +28,26 @@ amphp、不用 ncurses，只用标准库。
 
 ```bash
 composer install
+ANTHROPIC_API_KEY=sk-ant-... bin/pig
+```
+
+`--read-only` 去掉 edit、write、bash；`--theme light` 给浅色终端用；`--model <id>` 换模型。
+进去之后 `/help` 列出所有按键。
+
+`examples/ask.php` 是同一套东西，完全不带 UI：
+
+```bash
 ANTHROPIC_API_KEY=sk-ant-... php examples/ask.php "天为什么是蓝的？"
 ```
 
 这行命令底下的每一层都是 pig 自己的：一个非阻塞 TLS socket、手写的 HTTP/1.1、边到边解的 SSE、
-建在 `Fiber` 上的协程。回答途中按 Ctrl-C，走的就是以后 TUI 要用的那条 abort 路径。
+建在 `Fiber` 上的协程。回答途中按 Ctrl-C，走的就是 TUI 用的那条 abort 路径。
 
 ## 环境要求
 
 PHP >= 8.3，需要 `ext-json`、`ext-mbstring`、`ext-openssl`，终端 UI 还需要 `ext-pcntl`。
+唯一必须的外部程序是 `stty`。`find` 和 `grep` 两个工具需要 `fd` 和 `rg`，机器上没有的话 pig 会在
+第一次用到时下载到 `~/.pig/tools/`（`PIG_OFFLINE=1` 可以关掉）。
 
 `Fiber` 是 PHP 8.1 引入的，整套地基都建在它上面，所以 8.1 是绝对下限。实际声明的下限定在 8.3：
 8.1 已经 EOL，8.2 的安全支持 2026 年底到期。

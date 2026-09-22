@@ -6,11 +6,10 @@ A PHP port of [pi](https://github.com/earendil-works/pi), the agent harness whos
 runs on a famously small core. Same architecture, same file layout, written for PHP 8.3 with no
 runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the standard library.
 
-> **Status: early.** The agent loop runs end to end — prompts, streaming answers, tool calls,
-> steering mid-run — and the terminal UI is complete: differential rendering, a multi-line
-> editor with history and completion, markdown, and inline images. What is missing is the
-> coding agent's own front end. All seven tools work — read, write, edit, bash, grep, find,
-> ls — and `examples/agent.php` runs them end to end; what is missing is the interactive CLI.
+> **Status: it runs.** `bin/pig` is a coding agent you can talk to in a terminal: streaming
+> answers, seven tools with live output, edits shown as diffs, Escape to interrupt, and typing
+> while it works. What is missing is everything around that — sessions are not saved, there is
+> no model picker, and the context is not compacted when it fills.
 
 ## Packages
 
@@ -20,7 +19,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 | `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic streams end to end**; other providers pending |
 | `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — **done** |
 | `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — **done** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **all seven tools and the prompt done**; CLI pending |
+| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt and interactive CLI done**; no session persistence yet |
 
 `pig/async` has no counterpart upstream: JavaScript ships an event loop and PHP does not. It
 exists so one `stream_select()` can wait on the model's socket and on the keyboard at the same
@@ -31,16 +30,28 @@ possible at all.
 
 ```bash
 composer install
+ANTHROPIC_API_KEY=sk-ant-... bin/pig
+```
+
+`--read-only` takes away edit, write and bash; `--theme light` for a light terminal;
+`--model <id>` to talk to something else. `/help` inside lists the keys.
+
+`examples/ask.php` is the same stack with no UI at all:
+
+```bash
 ANTHROPIC_API_KEY=sk-ant-... php examples/ask.php "why is the sky blue?"
 ```
 
 Everything under that line is pig's own: one non-blocking TLS socket, HTTP/1.1 written by hand,
 SSE parsed as it arrives, coroutines on `Fiber`. Ctrl-C mid-answer exercises the same abort path
-the TUI will use.
+the TUI uses.
 
 ## Requirements
 
 PHP >= 8.3 with `ext-json`, `ext-mbstring`, `ext-openssl`, and `ext-pcntl` for the terminal UI.
+`stty` is the one external binary that is required. `fd` and `rg` are needed by the `find` and
+`grep` tools, and pig downloads them into `~/.pig/tools/` on first use if they are not installed
+(`PIG_OFFLINE=1` turns that off).
 
 `Fiber` arrived in PHP 8.1 and everything rests on it, so 8.1 is the absolute floor. 8.3 is the
 floor actually declared: 8.1 is end-of-life and 8.2 loses security support at the end of 2026.
