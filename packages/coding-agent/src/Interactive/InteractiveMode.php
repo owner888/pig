@@ -38,6 +38,7 @@ use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ExternalTool;
 use Pig\Tui\Autocomplete\CombinedAutocompleteProvider;
 use Pig\Tui\Autocomplete\SlashCommand;
+use Pig\Tui\Clipboard\Clipboard;
 use Pig\Tui\Clipboard\SystemClipboard;
 use Pig\Tui\Components\Editor;
 use Pig\Tui\Components\EditorTheme;
@@ -120,6 +121,9 @@ final class InteractiveMode
     /** Set while the summariser is running, so escape can call it off. */
     private ?AbortController $compaction = null;
 
+    /** Injected so a test can see what a copy would have put there. */
+    private Clipboard $clipboard;
+
     public function __construct(
         private readonly AgentSession $session,
         private Palette $palette,
@@ -129,10 +133,12 @@ final class InteractiveMode
         ?Terminal $terminal = null,
         array $contextFiles = [],
         array $skills = [],
+        ?Clipboard $clipboard = null,
     ) {
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
         $this->skills = $skills;
+        $this->clipboard = $clipboard ?? new SystemClipboard();
 
         // Injected so a test can drive this without a terminal, the same way the editor
         // takes its clipboard: everything below here is arrangement, and arrangement is
@@ -502,7 +508,7 @@ final class InteractiveMode
     {
         // Ctrl+V: an image on the clipboard is written to a temp file and its path
         // pasted, which is how a screenshot gets to the model.
-        $this->editor->setClipboard(new SystemClipboard());
+        $this->editor->setClipboard($this->clipboard);
 
         $this->editor->setAutocompleteProvider(new CombinedAutocompleteProvider(
             array_map(
@@ -730,6 +736,7 @@ final class InteractiveMode
         ['session', 'What this session has cost'],
         ['model', 'Switch models, or say which one'],
         ['skills', 'What the model can reach for, and where it came from'],
+        ['copy', 'Put the last answer on the clipboard'],
         ['compact', 'Summarise the conversation so far and carry on from the summary'],
         ['resume', 'Pick up an earlier conversation'],
         ['theme', 'Switch between dark and light'],
@@ -747,6 +754,7 @@ final class InteractiveMode
             'compact' => $this->startCompaction(trim(substr($text, strlen($name) + 1))),
             'model' => $this->showModels(trim(substr($text, strlen($name) + 1))),
             'skills' => $this->say($this->skillList()),
+            'copy' => $this->copyLastAnswer(),
             'resume' => $this->showSessions(),
             'theme' => $this->switchTheme(),
             'exit', 'quit' => $this->stop(),
@@ -769,6 +777,33 @@ final class InteractiveMode
         }
 
         Async::spawn(fn () => $this->compact($instructions === '' ? null : $instructions));
+    }
+
+    /**
+     * Put the last answer on the clipboard.
+     *
+     * The last thing the *assistant* said, not the last thing on screen: what someone
+     * wants after reading an answer is the answer, not the status line under it.
+     */
+    private function copyLastAnswer(): void
+    {
+        $text = $this->session->lastAssistantText();
+
+        if ($text === null) {
+            $this->sayError('No agent messages to copy yet.');
+
+            return;
+        }
+
+        if (!$this->clipboard->write($text)) {
+            // A machine with no clipboard tool is not a broken machine, but it is worth
+            // naming the thing to install rather than saying it did not work.
+            $this->sayError('Could not copy. On Linux this needs wl-copy, xclip or xsel.');
+
+            return;
+        }
+
+        $this->say('Copied the last answer — ' . number_format(mb_strlen($text)) . ' characters');
     }
 
     /**

@@ -12,7 +12,8 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 > out of the conversation). Sessions are saved as they happen — `--continue` picks up the
 > last one, `/resume` picks from a list. When the context fills it summarises itself and
 > carries on, which `/compact` also does on demand, and `/model` switches models mid-session.
-> Skills are picked up from `~/.pig/skills` and from Claude's and Codex's folders too.
+> Skills are picked up from `~/.pig/skills` and from Claude's and Codex's folders too, and
+> images a tool returns are drawn in the terminal.
 
 ## Packages
 

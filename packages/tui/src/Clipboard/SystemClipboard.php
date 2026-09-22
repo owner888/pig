@@ -28,6 +28,9 @@ final class SystemClipboard implements Clipboard
     private const float LIST_TIMEOUT = 1.0;
     private const float POWERSHELL_TIMEOUT = 5.0;
 
+    /** Copying a long answer is one process launch; five seconds is generous for it. */
+    private const float WRITE_TIMEOUT = 5.0;
+
     public function __construct(private readonly ?string $platform = null)
     {
     }
@@ -42,6 +45,38 @@ final class SystemClipboard implements Clipboard
         };
 
         return $text === null || $text === '' ? null : $text;
+    }
+
+    /**
+     * Put text on the clipboard, with whatever this machine has.
+     *
+     * Wayland first on Linux, as in `text()`. Upstream's writer knows only about `xclip`
+     * and `xsel`, which is the asymmetry this avoids: its own *reader* handles Wayland,
+     * so a session that can paste but not copy would be a puzzle with no cause on screen.
+     */
+    #[\Override]
+    public function write(string $text): bool
+    {
+        return match ($this->platform()) {
+            'darwin' => Process::feed(['pbcopy'], $text, self::WRITE_TIMEOUT),
+            'windows' => Process::feed(['clip.exe'], $text, self::WRITE_TIMEOUT),
+            default => $this->linuxWrite($text),
+        };
+    }
+
+    private function linuxWrite(string $text): bool
+    {
+        $commands = getenv('WAYLAND_DISPLAY') !== false
+            ? [['wl-copy'], ['xclip', '-selection', 'clipboard'], ['xsel', '--clipboard', '--input']]
+            : [['xclip', '-selection', 'clipboard'], ['xsel', '--clipboard', '--input'], ['wl-copy']];
+
+        foreach ($commands as $command) {
+            if (Process::feed($command, $text, self::WRITE_TIMEOUT)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     #[\Override]

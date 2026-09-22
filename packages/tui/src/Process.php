@@ -118,6 +118,82 @@ final class Process
     }
 
     /**
+     * Run a command, give it $input on standard input, and wait for it to finish.
+     *
+     * For the programs that take their argument that way rather than on the command line
+     * — `pbcopy`, `wl-copy`, `xclip` — where passing the text as an argument would put it
+     * in the process list for anyone to read, if the length limit allowed it at all.
+     *
+     * The write is looped and the pipe is closed before waiting: a large clipboard fills
+     * the pipe buffer, and a program that has not been told the input ended will not exit.
+     *
+     * @param list<string> $command
+     * @return bool whether it ran and exited cleanly
+     */
+    public static function feed(array $command, string $input, float $timeout = self::DEFAULT_TIMEOUT): bool
+    {
+        if ($command === []) {
+            throw new TuiError('Process::feed() needs a command');
+        }
+
+        // Same reason as run(): a missing program makes proc_open warn, and the value is
+        // what decides rather than the warning.
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $process = proc_open(
+                $command,
+                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+                $pipes,
+            );
+        } finally {
+            restore_error_handler();
+        }
+
+        if (!is_resource($process)) {
+            return false;
+        }
+
+        $written = 0;
+        $length = strlen($input);
+        $deadline = microtime(true) + $timeout;
+
+        while ($written < $length && microtime(true) < $deadline) {
+            $count = fwrite($pipes[0], substr($input, $written));
+
+            if ($count === false) {
+                break;
+            }
+
+            $written += $count;
+
+            if ($count === 0) {
+                usleep(self::POLL_MICROSECONDS);
+            }
+        }
+
+        // Closed before the wait, because that is what says the input has ended.
+        fclose($pipes[0]);
+
+        while (proc_get_status($process)['running'] && microtime(true) < $deadline) {
+            usleep(self::POLL_MICROSECONDS);
+        }
+
+        $timedOut = proc_get_status($process)['running'];
+
+        if ($timedOut) {
+            proc_terminate($process, 9);
+        }
+
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        $exit = proc_close($process);
+
+        return !$timedOut && $written === $length && $exit === 0;
+    }
+
+    /**
      * Run a command and hand its output to $onLine as the lines arrive.
      *
      * For a program that can produce far more than is wanted — a search across a large

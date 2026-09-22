@@ -32,6 +32,7 @@ use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
+use Pig\Tui\Test\FakeClipboard;
 use Pig\Tui\Test\FakeTerminal;
 use RuntimeException;
 
@@ -65,6 +66,8 @@ final class InteractiveModeTest extends TestCase
     private string $cwd;
 
     private string $home;
+
+    private FakeClipboard $clipboard;
 
     #[\Override]
     protected function setUp(): void
@@ -124,6 +127,7 @@ final class InteractiveModeTest extends TestCase
         ?string $resume = null,
         array $skills = [],
     ): void {
+        $this->clipboard = new FakeClipboard();
         $this->answers = $answers;
         $agent = new Agent(new AgentOptions(streamFn: $this->provider(...), apiKey: 'k'));
         $agent->setModel(new Model(
@@ -157,6 +161,7 @@ final class InteractiveModeTest extends TestCase
             $this->terminal,
             $context,
             $skills,
+            $this->clipboard,
         );
 
         $this->mode->start();
@@ -619,6 +624,51 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
 
         $this->assertFalse($this->session->isStreaming());
+    }
+
+    // ---- copying ----------------------------------------------------------------------------
+
+    public function testCopyPutsTheLastAnswerOnTheClipboard(): void
+    {
+        $this->start(['the whole answer']);
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/copy');
+        $this->type(self::ENTER);
+
+        $this->assertSame('the whole answer', $this->clipboard->written);
+        $this->assertStringContainsString('Copied the last answer', $this->screen());
+    }
+
+    public function testCopyWithNothingAnsweredYetSaysSo(): void
+    {
+        $this->start();
+
+        $this->type('/copy');
+        $this->type(self::ENTER);
+
+        $this->assertNull($this->clipboard->written);
+        $this->assertStringContainsString('Error: No agent messages to copy yet', $this->screen());
+    }
+
+    public function testAMachineWithNoClipboardToolIsToldWhatToInstall(): void
+    {
+        $this->start(['the whole answer']);
+        $this->clipboard->writable = false;
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/copy');
+        $this->type(self::ENTER);
+
+        // Not a broken machine, but worth naming the thing to install rather than
+        // saying it did not work.
+        $this->assertStringContainsString('wl-copy, xclip or xsel', $this->screen());
     }
 
     // ---- skills -----------------------------------------------------------------------------

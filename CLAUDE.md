@@ -241,9 +241,27 @@ components it draws with are `UserMessageComponent`, `AssistantMessageComponent`
 `InteractiveMode` is ~1070 lines against upstream's 2439, and the difference is almost entirely
 selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
 trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
-an agent you can talk to, nine slash commands, and the keys. Also not ported: custom-tool
-rendering, images in tool output, and `/copy` (which needs a clipboard *writer*;
-`SystemClipboard` only reads).
+an agent you can talk to, ten slash commands, and the keys. Also not ported: custom-tool
+rendering.
+
+`/copy` needed a clipboard *writer*, which nothing had: `SystemClipboard` could only read.
+`Process::feed()` is the piece under it — a command with text on its standard input, which is
+how `pbcopy`, `wl-copy` and `xclip` take theirs. Passing the text as an argument would put a
+whole answer in the process list for anyone to read, if the length limit allowed it at all.
+Two things in `feed()` are the whole reason it is not three lines: the write is **looped**,
+because a long answer is larger than a pipe buffer and one `fwrite` stops short; and stdin is
+**closed before waiting**, because that is what tells the program its input ended — a copy that
+hangs forever is the other way round.
+
+The writer knows about Wayland, which upstream's does not. Its own *reader* handles `wl-paste`,
+so a session that could paste but not copy would be a puzzle with nothing on screen to explain
+it.
+
+An image in a tool result is **drawn**, on terminals that can draw one. `pig/tui`'s `Image`
+falls back to a label by itself, so `ToolExecutionComponent` does not choose — it adds the
+component and lets it decide, and the text half stopped naming the image so it is not named
+twice. The images are rebuilt on every `draw()` rather than appended to, because a running
+tool reports its result again on each update.
 
 `CustomEditor` wraps `Pig\Tui\Components\Editor` rather than extending it — the editor is
 `final`, and wrapping keeps the list of keys an application may steal explicit. `Editor` grew
@@ -381,8 +399,9 @@ validated anyway. `fnmatch()` is `minimatch` for `--ignore`-style patterns.
 
 Nothing here is deliberately unported any more. Four of upstream's five protocols are here;
 what is left needs an OAuth device flow rather than a protocol — `google-gemini-cli` (the same
-Gemini shape behind Google's sign-in) and GitHub Copilot. Then `/copy` (which needs a clipboard
-*writer*), images in tool output, custom-tool rendering, and branch and tree navigation.
+Gemini shape behind Google's sign-in) and GitHub Copilot. Beyond that: custom-tool rendering,
+and branch and tree navigation, which needs the parent field `SessionManager` does not write
+yet.
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 

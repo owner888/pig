@@ -16,8 +16,26 @@ final class FakeClipboard implements Clipboard
 {
     public int $imageReads = 0;
 
+    /** What was last written to it, so a test can see what a copy would have put there. */
+    public ?string $written = null;
+
+    /** Set false to stand in for a machine with no way to copy. */
+    public bool $writable = true;
+
     public function __construct(private ?string $text = null, private ?ClipboardImage $image = null)
     {
+    }
+
+    #[\Override]
+    public function write(string $text): bool
+    {
+        if (!$this->writable) {
+            return false;
+        }
+
+        $this->written = $text;
+
+        return true;
     }
 
     #[\Override]
@@ -99,6 +117,46 @@ final class ClipboardTest extends TestCase
 
         // A paste that never returns would freeze the whole UI.
         $this->assertNull(Process::capture(['sleep', '30'], 0.3));
+        $this->assertLessThan(3.0, microtime(true) - $started);
+    }
+
+    // ---- giving a program its input --------------------------------------------------
+
+    public function testFeedHandsTheTextToTheCommandsStandardInput(): void
+    {
+        $path = $this->directory . '/fed.txt';
+
+        $this->assertTrue(Process::feed(['sh', '-c', 'cat > ' . escapeshellarg($path)], 'hello'));
+        $this->assertSame('hello', file_get_contents($path));
+    }
+
+    public function testMoreThanFitsInThePipeIsStillWrittenWhole(): void
+    {
+        $path = $this->directory . '/big.txt';
+        // Larger than a pipe buffer, which is where a single fwrite would stop short and
+        // a copy would silently lose its tail.
+        $text = str_repeat('x', 300_000);
+
+        $this->assertTrue(Process::feed(['sh', '-c', 'cat > ' . escapeshellarg($path)], $text, 10.0));
+        $this->assertSame(300_000, (int) filesize($path));
+    }
+
+    public function testFeedingAMissingProgramIsFalseRatherThanAnError(): void
+    {
+        $this->assertFalse(Process::feed(['pig-definitely-not-installed'], 'hello'));
+    }
+
+    public function testAProgramThatFailsIsFalse(): void
+    {
+        $this->assertFalse(Process::feed(['false'], 'hello'));
+    }
+
+    public function testAProgramThatNeverReadsIsKilled(): void
+    {
+        $started = microtime(true);
+
+        // `sleep` never reads its input, so this is both halves of the timeout at once.
+        $this->assertFalse(Process::feed(['sleep', '30'], 'hello', 0.3));
         $this->assertLessThan(3.0, microtime(true) - $started);
     }
 

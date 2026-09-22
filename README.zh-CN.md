@@ -10,7 +10,7 @@ amphp、不用 ncurses，只用标准库。
 > 实时输出、改动以 diff 呈现、Esc 打断、干活途中可以继续打字，`!命令` 跑一条 shell 命令并把结果
 > 交给模型（`!!命令` 则不进上下文）。会话边聊边存——`--continue` 接上最近一次，`/resume` 从列表里
 > 挑。上下文快满了会自我总结之后接着聊，`/compact` 也可以随时手动压一次，`/model` 中途换模型。
-> skills 从 `~/.pig/skills` 读，也顺带读 Claude 和 Codex 的那几个目录。
+> skills 从 `~/.pig/skills` 读，也顺带读 Claude 和 Codex 的那几个目录；工具返回的图片直接画在终端里。
 
 ## 包划分
 

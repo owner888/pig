@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\AgentToolResult;
+use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\Interactive\ToolExecutionComponent;
 use Pig\CodingAgent\Theme\Palette;
@@ -44,6 +45,53 @@ final class ToolExecutionTest extends TestCase
     private function said(string $text): AgentToolResult
     {
         return new AgentToolResult([new TextContent($text)]);
+    }
+
+    /** A 1x1 PNG, which is enough for anything that reads a header. */
+    private const string PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+    // ---- images in the result ----------------------------------------------------------
+
+    public function testAnImageInAResultIsDrawnRatherThanNamedTwice(): void
+    {
+        $tool = $this->tool('screenshot', []);
+        $tool->updateResult(new AgentToolResult([
+            new TextContent('captured the window'),
+            new ImageContent(self::PNG, 'image/png'),
+        ]));
+
+        $shown = $this->text($tool);
+
+        $this->assertStringContainsString('captured the window', $shown);
+
+        // On a terminal that cannot draw one, `Image` labels it itself — so the text
+        // half must not label it as well.
+        $this->assertSame(1, substr_count($shown, 'image'));
+    }
+
+    public function testAResultThatArrivesTwiceDoesNotDrawTheImageTwice(): void
+    {
+        $tool = $this->tool('screenshot', []);
+        $result = new AgentToolResult([new ImageContent(self::PNG, 'image/png')]);
+
+        // A running tool reports its result again on every update.
+        $tool->updateResult($result, false, true);
+        $tool->updateResult($result, false, true);
+        $tool->updateResult($result);
+
+        $this->assertSame(1, substr_count($this->text($tool), 'image'));
+    }
+
+    public function testAResultWithNoImageDrawsNothingExtra(): void
+    {
+        $tool = $this->tool('ls', ['path' => '.']);
+        $tool->updateResult($this->said("one\ntwo"));
+
+        $lines = explode("\n", rtrim($this->text($tool)));
+
+        // Every tool now carries an image container; an empty one must cost no rows.
+        $this->assertStringNotContainsString('image', $this->text($tool));
+        $this->assertSame('two', trim($lines[count($lines) - 1]));
     }
 
     // ---- what state it is in ---------------------------------------------------------

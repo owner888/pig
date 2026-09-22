@@ -13,6 +13,8 @@ use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\Paths;
 use Pig\Tui\Ansi;
 use Pig\Tui\Components\Box;
+use Pig\Tui\Components\Image;
+use Pig\Tui\Components\ImageTheme;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
 use Pig\Tui\Container;
@@ -26,8 +28,12 @@ use Pig\Tui\Style;
  * heading naming what it did to what, and output cut to a few lines unless expanded,
  * since a thousand-line read would bury the conversation it belongs to.
  *
+ * An image in the result is drawn rather than named, on terminals that can draw one —
+ * `pig/tui`'s `Image` falls back to a label by itself elsewhere, so there is nothing to
+ * decide here. It sits under the text, because the text is what says which image it is.
+ *
  * Ported from upstream's `components/tool-execution.ts`. Not ported: custom tools, which
- * would render themselves, and images, which want `pig/tui`'s `Image` and arrive with it.
+ * would render themselves.
  */
 final class ToolExecutionComponent extends Container
 {
@@ -50,6 +56,9 @@ final class ToolExecutionComponent extends Container
     private readonly Text $body;
 
     private readonly BashOutputComponent $bash;
+
+    /** Pictures from the result, under the text. Empty for every tool that returns none. */
+    private readonly Container $images;
 
     private ?AgentToolResult $result = null;
 
@@ -79,6 +88,9 @@ final class ToolExecutionComponent extends Container
         // bash is the one tool whose output has to be cut at render width rather than by
         // newlines, so it is the one that needs a box with a component inside it.
         $this->addChild($this->tool === 'bash' ? $this->box : $this->body);
+
+        $this->images = new Container();
+        $this->addChild($this->images);
 
         $this->draw();
     }
@@ -112,6 +124,8 @@ final class ToolExecutionComponent extends Container
 
     private function draw(): void
     {
+        $this->drawImages();
+
         $background = $this->palette->of(match (true) {
             $this->partial => 'toolPendingBg',
             $this->failed => 'toolErrorBg',
@@ -128,6 +142,27 @@ final class ToolExecutionComponent extends Container
 
         $this->body->setBackground($background);
         $this->body->setText($this->format());
+    }
+
+    /**
+     * Rebuild the pictures from the result.
+     *
+     * Rebuilt rather than added to, because a result arrives more than once while a tool
+     * is still running and the same image would otherwise be drawn on every update.
+     */
+    private function drawImages(): void
+    {
+        $this->images->clear();
+
+        foreach ($this->result?->content ?? [] as $block) {
+            if ($block instanceof ImageContent) {
+                $this->images->addChild(new Image(
+                    $block->data,
+                    $block->mimeType,
+                    new ImageTheme(fn (string $text): string => $this->palette->fg('toolOutput', $text)),
+                ));
+            }
+        }
     }
 
     // ---- bash ----------------------------------------------------------------------
@@ -355,10 +390,9 @@ final class ToolExecutionComponent extends Container
                 continue;
             }
 
-            if ($block instanceof ImageContent) {
-                // Named rather than drawn, until Image is wired in here.
-                $parts[] = '[' . $block->mimeType . ' image]';
-            }
+            // An image is drawn below rather than named here; a terminal that cannot
+            // draw it gets a label from `Image` itself, so naming it twice is all this
+            // would add.
         }
 
         return implode("\n", $parts);
