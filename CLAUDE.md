@@ -150,7 +150,7 @@ rather than be handed one.
 hand-written subset — see the dependency note above. They are not CommonMark and do not try
 to be; what they cannot parse stays a paragraph and is drawn as the text it was.
 
-### Four upstream dependencies that are not needed here
+### Five upstream dependencies that are not needed here
 
 `pi-tui` pulls in `get-east-asian-width` and leans on `Intl.Segmenter`, both for one question:
 how many columns will the terminal give this string? Neither is needed here.
@@ -172,6 +172,22 @@ tables. The developer chose to write that subset here rather than take `league/c
 which would have brought `league/config`, `dflydev/dot-access-data` and a row of Symfony
 polyfills with it and ended the zero-dependency claim. It is not CommonMark and does not
 try to be; anything it cannot parse is drawn as the plain text it came from.
+
+`cli-highlight` is the fifth — it wraps highlight.js and its two hundred grammars, and
+`theme.ts` uses it to colour fenced code blocks. `Theme\Highlight` replaces it with a
+left-to-right scanner and a table of thirteen languages, which the developer chose over
+the dependency. The trade is stated plainly in the class: fewer languages, and inside a
+language a handful of things coloured slightly wrong that highlight.js would get right.
+
+The one design point worth keeping: it is a **scanner**, not a pile of `preg_replace`
+calls over a keyword list. A replacement-based highlighter paints the `if` inside
+`"if you like"` blue and the `#` inside a URL grey, and a reader who has seen that once
+stops trusting any of the colours. Asking "what starts here?" at each position means that
+once the scanner is inside a string, nothing inside that string is anything else.
+
+Two places it does guess — a Capitalised word is a type, a word before `(` is a call —
+and both are documented as guesses. This is the one part of the codebase where a guess is
+allowed, because the cost of being wrong is a wrong colour.
 
 The one thing PCRE has no answer for is JavaScript's `\p{RGI_Emoji}`, which matches a whole emoji
 *sequence*; PCRE properties test single codepoints. `Width` asks the question of the cluster's
@@ -399,6 +415,19 @@ run". `Process::run()` was added to return the exit code and stderr separately, 
 throws with fd's own message.
 
 Regression test: `SearchToolsTest::testABadPatternIsReportedRatherThanReadAsNoMatches`.
+
+### A style must not be left open at the end of a line
+
+`Tui` compares frames line by line, so a line is the unit that has to be self-contained:
+a colour opened on one line and closed on the next means the second line carries a style
+it never asked for, and a differential redraw of only the first line leaves the rest of
+the screen tinted.
+
+This bites anything whose tokens can span a newline — a block comment, a triple-quoted
+string. `Highlight` therefore splits every token on `\n` and styles each piece on its own
+line, rather than styling the token once and splitting afterwards.
+
+Regression test: `HighlightTest::testEachLineClosesItsOwnStyles`.
 
 ### A per-line prefix has to go on after the wrap, not before
 
