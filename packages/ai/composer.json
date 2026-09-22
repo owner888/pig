@@ -1,0 +1,18 @@
+{
+    "name": "pig/ai",
+    "description": "Unified multi-provider LLM API for pig: streaming messages, tools, usage accounting.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.3",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "ext-openssl": "*",
+        "pig/async": "@dev"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pig\\Ai\\": "src/"
+        }
+    }
+}

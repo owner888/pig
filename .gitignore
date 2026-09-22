@@ -1,0 +1,39 @@
+# Dependencies — composer.lock IS tracked (this root is type=project)
+/vendor/
+/packages/*/vendor/
+
+# PHPUnit — phpunit.xml.dist is the tracked template, phpunit.xml the local override
+/phpunit.xml
+/.phpunit.cache/
+/.phpunit.result.cache
+/coverage/
+/clover.xml
+
+# Static analysis caches
+/.php-cs-fixer.cache
+/.phpstan.cache
+/.rector.cache
+
+# Local environment
+.env
+.env.local
+
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+
+# Windows / Linux desktop
+Thumbs.db
+desktop.ini
+.directory
+
+# Editors
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
