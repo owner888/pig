@@ -40,9 +40,12 @@ final class FindTool implements AgentTool
 
         return new Tool(
             'find',
-            "Find files by glob pattern — '*.php', '**/*.json', 'src/**/*Test.php'. Returns paths "
-                . "relative to the search directory. Respects .gitignore. Cut off at {$limit} results "
-                . "or {$bytes}, whichever comes first.",
+            "Find files by glob pattern. A pattern with no '/' matches a file name at any "
+                . "depth — '*.php' finds every PHP file. A pattern with a '/' matches a path — "
+                . "'src/*.php' finds PHP files directly inside any src directory, and "
+                . "'src/**/*Test.php' finds them at any depth under one. Returns paths relative to "
+                . "the search directory. Respects .gitignore. Cut off at {$limit} results or "
+                . "{$bytes}, whichever comes first.",
             [
                 'type' => 'object',
                 'properties' => [
@@ -84,6 +87,7 @@ final class FindTool implements AgentTool
             $fd,
             '--glob',
             '--color=never',
+            ...self::matching($pattern),
             // Hidden files are searched, but .gitignore still applies: a dotfile is
             // often exactly what is being looked for, and node_modules never is.
             '--hidden',
@@ -91,15 +95,19 @@ final class FindTool implements AgentTool
             // agent gets pointed at plenty of directories that are not one.
             '--no-require-git',
             '--max-results', (string) $limit,
-            $pattern,
+            self::pattern($pattern),
             $root,
         ];
 
-        $output = Process::capture($command, self::TIMEOUT);
+        [$exit, $output, $errors] = Process::run($command, self::TIMEOUT);
 
-        if ($output === null) {
-            // fd exits non-zero when it found nothing, which is not a failure.
-            return new AgentToolResult([new TextContent('No files found matching pattern')]);
+        // fd exits 0 when it found nothing, so a non-zero code is a real failure — most
+        // often a pattern it would not accept. Reporting that as "no files found" sends
+        // the model off looking for why its search came up empty.
+        if ($exit !== 0) {
+            $said = trim($errors);
+
+            throw new AgentError($said === '' ? "fd exited with code {$exit}" : $said);
         }
 
         $found = $this->relative($output, $root);
@@ -124,6 +132,38 @@ final class FindTool implements AgentTool
         $output = $truncation->content . ($notices === [] ? '' : "\n\n[" . implode('. ', $notices) . ']');
 
         return new AgentToolResult([new TextContent($output)], $notices === [] ? null : $truncation);
+    }
+
+    /**
+     * The flags that decide what the pattern is matched against.
+     *
+     * fd matches a glob against the **file name** unless told otherwise, so a pattern
+     * with a directory in it silently matches nothing — which is how this shipped broken
+     * the first time. A pattern with a '/' in it is plainly about a path, so it gets
+     * --full-path; one without is about a name, which is the more useful default for
+     * '*.php'.
+     *
+     * @return list<string>
+     */
+    private static function matching(string $pattern): array
+    {
+        return str_contains($pattern, '/') ? ['--full-path'] : [];
+    }
+
+    /**
+     * The pattern as fd wants it.
+     *
+     * A --full-path glob has to match the path from its start, and fd walks from the
+     * search root, so an unanchored pattern needs a '**\/' in front of it or it matches
+     * only things directly in the root.
+     */
+    private static function pattern(string $pattern): string
+    {
+        if (!str_contains($pattern, '/') || str_starts_with($pattern, '**/') || str_starts_with($pattern, '/')) {
+            return $pattern;
+        }
+
+        return '**/' . $pattern;
     }
 
     /**

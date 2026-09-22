@@ -31,12 +31,29 @@ final class Process
      * Null rather than an exception: every caller here is asking whether a capability is
      * present, and "this machine has no `wl-paste`" is an answer, not an error.
      *
+     * A caller that needs to tell "it ran and said nothing" from "it did not run" wants
+     * `run()` instead — conflating the two turns a broken command into an empty result.
+     *
      * @param list<string> $command the program and its arguments, unquoted
      */
     public static function capture(array $command, float $timeout = self::DEFAULT_TIMEOUT): ?string
     {
+        [$exit, $output] = self::run($command, $timeout);
+
+        return $exit === 0 ? $output : null;
+    }
+
+    /**
+     * Exit code, standard output and standard error.
+     *
+     * @param list<string> $command
+     * @return array{0: int, 1: string, 2: string} STOPPED as the code when it timed out
+     *         or could not be started
+     */
+    public static function run(array $command, float $timeout = self::DEFAULT_TIMEOUT): array
+    {
         if ($command === []) {
-            throw new TuiError('Process::capture() needs a command');
+            throw new TuiError('Process::run() needs a command');
         }
 
         // The array form: PHP builds the argv itself, so an argument with a space in it
@@ -54,13 +71,14 @@ final class Process
         }
 
         if (!is_resource($process)) {
-            return null;
+            return [self::STOPPED, '', ''];
         }
 
         stream_set_blocking($pipes[1], false);
         stream_set_blocking($pipes[2], false);
 
         $output = '';
+        $errors = '';
         $deadline = microtime(true) + $timeout;
         $timedOut = false;
 
@@ -68,7 +86,7 @@ final class Process
             $output .= (string) stream_get_contents($pipes[1]);
             // Read stderr too, or a command that writes a lot to it fills the pipe and
             // blocks forever with nothing on stdout to show for it.
-            stream_get_contents($pipes[2]);
+            $errors .= (string) stream_get_contents($pipes[2]);
 
             $status = proc_get_status($process);
 
@@ -89,14 +107,14 @@ final class Process
         }
 
         $output .= (string) stream_get_contents($pipes[1]);
-        stream_get_contents($pipes[2]);
+        $errors .= (string) stream_get_contents($pipes[2]);
 
         fclose($pipes[1]);
         fclose($pipes[2]);
 
         $exit = proc_close($process);
 
-        return $timedOut || $exit !== 0 ? null : $output;
+        return [$timedOut ? self::STOPPED : $exit, $output, $errors];
     }
 
     /**

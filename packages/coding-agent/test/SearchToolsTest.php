@@ -125,6 +125,73 @@ final class SearchToolsTest extends ToolTestCase
         $this->assertSame(['src/Main.php', 'src/Tools/Read.php', 'src/Tools/Walk.php', 'test/MainTest.php'], $found);
     }
 
+    public function testAPatternWithASlashMatchesThePathNotTheName(): void
+    {
+        $this->needsFd();
+        $this->project();
+
+        // fd matches a glob against the file name unless told otherwise, so this shipped
+        // once matching nothing at all: every pattern the model wrote with a directory in
+        // it came back "No files found", and it fell back to walking the tree with `ls`.
+        $found = $this->lines($this->output($this->run(new FindTool($this->cwd), ['pattern' => 'src/*.php'])));
+
+        $this->assertSame(['src/Main.php'], $found);
+    }
+
+    public function testASingleStarDoesNotCrossADirectoryButTwoDo(): void
+    {
+        $this->needsFd();
+        $this->project();
+
+        $shallow = $this->lines($this->output($this->run(new FindTool($this->cwd), ['pattern' => 'src/*.php'])));
+        $deep = $this->lines($this->output($this->run(new FindTool($this->cwd), ['pattern' => 'src/**/*.php'])));
+        sort($deep);
+
+        $this->assertNotContains('src/Tools/Read.php', $shallow);
+        $this->assertSame(['src/Main.php', 'src/Tools/Read.php', 'src/Tools/Walk.php'], $deep);
+    }
+
+    public function testASlashPatternMatchesAtAnyDepth(): void
+    {
+        $this->needsFd();
+        $this->project();
+        $this->file('vendor-ish/src/Deep.php');
+
+        // 'src/*.php' means "in any src directory", not "in the src directory at the
+        // root" — the anchoring a --full-path glob would otherwise have.
+        $found = $this->lines($this->output($this->run(new FindTool($this->cwd), ['pattern' => 'src/*.php'])));
+        sort($found);
+
+        $this->assertSame(['src/Main.php', 'vendor-ish/src/Deep.php'], $found);
+    }
+
+    public function testAnAlreadyAnchoredPatternIsNotAnchoredTwice(): void
+    {
+        $this->needsFd();
+        $this->project();
+
+        $found = $this->lines($this->output($this->run(new FindTool($this->cwd), ['pattern' => '**/Tools/*.php'])));
+        sort($found);
+
+        $this->assertSame(['src/Tools/Read.php', 'src/Tools/Walk.php'], $found);
+    }
+
+    public function testABadPatternIsReportedRatherThanReadAsNoMatches(): void
+    {
+        $this->needsFd();
+        $this->project();
+
+        // fd exits 0 when it found nothing, so a failure that was read as "no matches"
+        // hid every real error behind an answer the model had no reason to doubt.
+        $error = $this->assertThrows(
+            AgentError::class,
+            fn () => $this->run(new FindTool($this->cwd), ['pattern' => '[unclosed']),
+            'unclosed character class',
+        );
+
+        $this->assertStringNotContainsString('No files found', $error->getMessage());
+    }
+
     public function testPathsComeBackRelativeToTheSearchDirectory(): void
     {
         $this->needsFd();

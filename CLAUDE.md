@@ -337,6 +337,40 @@ So the collection is not ported and the flag is passed instead.
 
 Regression test: `SearchToolsTest::testANestedGitignoreAppliesOutsideAGitRepositoryToo`.
 
+### `fd --glob` matches the file name, so every pattern with a directory in it found nothing
+
+`fd --glob '*.php'` matches the **base name**, not the path. `src/*.php` therefore matches no
+file that has ever existed, and fd says nothing about it — so `find` answered "No files found
+matching pattern" for every pattern the model wrote with a `/` in it, and the model, believing
+the answer, walked the tree with eight `ls` calls instead.
+
+Two flags fix it, and both are needed. `--full-path` matches against the path; a `--full-path`
+glob is then anchored at the search root, so an unanchored pattern also needs `**/` in front or
+`src/*.php` only means the `src` directory at the top. `--full-path` is added only when the
+pattern contains a `/`, because matching a bare `*.php` against the path would be worse.
+
+This shipped broken because the PHP walk that preceded `fd` was deleted along with its tests —
+including the only ones that passed a pattern with a slash. **A test deleted with the code it
+covered takes its coverage with it; the replacement needs its own.**
+
+Regression tests: `SearchToolsTest::testAPatternWithASlashMatchesThePathNotTheName`,
+`testASingleStarDoesNotCrossADirectoryButTwoDo`, `testASlashPatternMatchesAtAnyDepth`,
+`testAnAlreadyAnchoredPatternIsNotAnchoredTwice`.
+
+### `fd` exits 0 when it found nothing, so failure cannot be read off an empty result
+
+`rg` exits 1 for "no matches" and 2 for an error; `fd` exits **0** either way. So a non-zero
+exit from `fd` is always a real failure — usually a glob it would not parse — and `find` was
+reporting all of them as "No files found matching pattern", which is a silent fallback of
+exactly the kind this project forbids: the model is handed a plausible answer and has no way
+to tell it apart from the truth.
+
+`Process::capture()` cannot express this, since it folds "ran and said nothing" into "did not
+run". `Process::run()` was added to return the exit code and stderr separately, and `find` now
+throws with fd's own message.
+
+Regression test: `SearchToolsTest::testABadPatternIsReportedRatherThanReadAsNoMatches`.
+
 ### A per-line prefix has to go on after the wrap, not before
 
 `Markdown` styles a block, then wraps it. That is right for *inline* styling — the wrapper
