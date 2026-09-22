@@ -635,6 +635,44 @@ final class InteractiveModeTest extends TestCase
         $this->assertFalse($this->session->isStreaming());
     }
 
+    // ---- exporting --------------------------------------------------------------------------
+
+    public function testExportWritesTheConversationAsOneHtmlFile(): void
+    {
+        $this->start(['the answer'], store: true);
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $path = $this->cwd . '/out.html';
+        $this->type('/export ' . $path);
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertFileExists($path);
+
+        $html = (string) file_get_contents($path);
+
+        $this->assertStringContainsString('hello', $html);
+        $this->assertStringContainsString('the answer', $html);
+        $this->assertStringNotContainsString('<script', $html);
+        $this->assertStringContainsString('Exported to ' . $path, $this->screen());
+    }
+
+    public function testASessionThatIsNotSavedHasNothingToExport(): void
+    {
+        $this->start(['the answer']);
+
+        $this->type('/export');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // The file is built from what is on disk, so a `--no-save` run has nothing to
+        // build from — saying so beats writing an empty page.
+        $this->assertStringContainsString('not being saved', $this->screen());
+    }
+
     // ---- what is remembered for next time -------------------------------------------------------
 
     public function testSwitchingThemeIsRemembered(): void

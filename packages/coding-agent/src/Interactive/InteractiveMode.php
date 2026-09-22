@@ -27,6 +27,7 @@ use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\ModelResolver;
+use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
@@ -762,6 +763,7 @@ final class InteractiveMode
         ['model', 'Switch models, or say which one'],
         ['skills', 'What the model can reach for, and where it came from'],
         ['copy', 'Put the last answer on the clipboard'],
+        ['export', 'Write this conversation out as an HTML file'],
         ['compact', 'Summarise the conversation so far and carry on from the summary'],
         ['resume', 'Pick up an earlier conversation'],
         ['theme', 'Switch between dark and light'],
@@ -780,6 +782,7 @@ final class InteractiveMode
             'model' => $this->showModels(trim(substr($text, strlen($name) + 1))),
             'skills' => $this->say($this->skillList()),
             'copy' => $this->copyLastAnswer(),
+            'export' => $this->exportSession(trim(substr($text, strlen($name) + 1))),
             'resume' => $this->showSessions(),
             'theme' => $this->switchTheme(),
             'exit', 'quit' => $this->stop(),
@@ -833,6 +836,40 @@ final class InteractiveMode
         // Not drawn here: `onMessageStart` draws every user message, and drawing it
         // twice is what happens to anything that helpfully draws its own.
         $this->send($expanded);
+    }
+
+    /**
+     * Write the conversation out as one HTML file.
+     *
+     * Only a saved session can be exported, because the file is built from what is on
+     * disk rather than from what is on screen — a `--no-save` run has nothing to build
+     * from, and saying so beats writing an empty page.
+     *
+     * @param string $path from `/export somewhere.html`; beside the session when empty
+     */
+    private function exportSession(string $path): void
+    {
+        $store = $this->session->store();
+
+        if ($store === null) {
+            $this->sayError('This session is not being saved, so there is nothing to export.');
+
+            return;
+        }
+
+        try {
+            $written = HtmlExport::write(
+                $store,
+                $path === '' ? HtmlExport::defaultPath($store, $this->cwd) : $path,
+                $this->theme,
+            );
+        } catch (Throwable $error) {
+            $this->sayError($error->getMessage());
+
+            return;
+        }
+
+        $this->say('Exported to ' . $written);
     }
 
     /**

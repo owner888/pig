@@ -241,7 +241,7 @@ components it draws with are `UserMessageComponent`, `AssistantMessageComponent`
 `InteractiveMode` is ~1070 lines against upstream's 2439, and the difference is almost entirely
 selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
 trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
-an agent you can talk to, ten slash commands, and the keys. Also not ported: custom-tool
+an agent you can talk to, eleven slash commands, and the keys. Also not ported: custom-tool
 rendering.
 
 `/copy` needed a clipboard *writer*, which nothing had: `SystemClipboard` could only read.
@@ -365,6 +365,24 @@ first. The pattern is tried whole before it is split on a colon, because an id c
 running several models against one task — `fnmatch()` is the whole of what `minimatch` was
 doing there, so that is rows of work rather than a dependency when something wants it.
 
+`Export\HtmlExport` and `Export\MarkdownHtml` are upstream's `core/export-html/`, with the
+rendering moved from the browser into PHP. Upstream's export is 211 lines of logic, 65KB of
+templates, and **160KB of vendored `marked.min.js` and `highlight.min.js`** — and `marked` is
+the dependency `Pig\Tui\Markdown` was written to replace, so shipping it in the export would
+be the same dependency through a side door. The lexer and the highlighter are already here;
+`MarkdownHtml` is the second thing that walks their output, and the file it writes has no
+script in it at all. The same conversation comes out at 5KB rather than 230KB, and it reads
+with JavaScript off, prints, and greps.
+
+`Highlight` is reused through the seam that already existed for theming: a `HighlightTheme`
+whose closures write `<span class="hl-keyword">` instead of an escape sequence. The one trap
+in that is below.
+
+`<details>` does the folding, which is the only interaction upstream's JavaScript provided
+that was worth keeping. Open or closed is decided on the *text* length, not the number of
+newlines — the renderer turns a paragraph of prose into one long line, so counting newlines
+folds every code block and never folds any thinking, which is exactly backwards.
+
 `Settings` is upstream's `core/settings-manager.ts`. Two JSON files, both optional:
 `~/.pig/settings.json` is the person's and is written back to; `<cwd>/.pig/settings.json` is
 the project's and is only ever read. The project wins, which is the point of it being
@@ -449,7 +467,6 @@ that is not here yet:
 |---|---|
 | `core/hooks/` (1544 lines) | a place to run user code at every stage of a turn |
 | `core/custom-tools/` (541) | the same, plus tool definitions loaded from disk |
-| `core/export-html/` (211) | nothing but the work |
 | `modes/rpc/` | a second way in, for editors rather than people |
 | branch and tree navigation | the parent field `SessionManager` does not write yet |
 
@@ -815,6 +832,20 @@ So `quote()` wraps its children to `width - 2` itself and prefixes each resultin
 by looking at rendered output, not by a test — every assertion about widths and codes passed.
 
 Regression test: `MarkdownTest::testEveryLineOfAWrappedQuoteKeepsItsBorder`.
+
+### `Highlight` hands back the code unchanged when it has no grammar
+
+Which is right in a terminal — an unknown language is printed as it is — and is an injection
+hole on a page. `MarkdownHtml::code()` therefore asks `Grammar::for()` first and escapes the
+lines itself when there is none, rather than trusting the highlighter to have touched them.
+
+A tool result is the obvious way in (a `<script>` in a file the model read), but so is any
+fenced block in an answer whose language pig has no grammar for, which is most of them.
+
+Regression test: `HtmlExportTest::testAToolCallSaysWhichToolAndWhatOn` asserts `&lt;?php` in
+an un-languaged result. `testAJavascriptLinkIsNotALink` covers the other half: a
+`javascript:` href in a transcript is a script the model wrote, running when someone opens
+the file, so only `http(s)`, `mailto` and `ftp` become links at all.
 
 ### A tool result outliving the call it answers
 

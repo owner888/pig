@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pig — Can you tidy `src/Foo.php`? It has **two** problems.</title>
+<style>
+:root { --bg: #16161d; --fg: #d8d8e0; --dim: #8a8a99; --card: #1e1e26; --line: #2c2c38;
+  --user: #2a2a3a; --accent: #8abeb7; --error: #cc6666; --code: #14141a; }
+[data-theme="light"] { --bg: #fbfbfd; --fg: #2a2a33; --dim: #6a6a78; --card: #ffffff;
+  --line: #e2e2ea; --user: #eef1f6; --accent: #2a7d74; --error: #a33; --code: #f4f4f8; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0 1rem 4rem; background: var(--bg); color: var(--fg);
+  font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif; }
+header, main { max-width: 52rem; margin: 0 auto; }
+header { padding: 2rem 0 1rem; border-bottom: 1px solid var(--line); margin-bottom: 1rem; }
+h1 { font-size: 1.3rem; margin: 0; }
+.where { color: var(--dim); font-size: .85rem; margin: .3rem 0 0; }
+.turn { padding: .75rem 1rem; border-radius: 8px; margin: 1rem 0; background: var(--card); }
+.turn.user { background: var(--user); }
+.turn.compaction { background: transparent; border: 1px dashed var(--line); }
+.turn h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--dim); margin: 0 0 .5rem; font-weight: 600; }
+p { margin: .6rem 0; }
+pre { background: var(--code); border: 1px solid var(--line); border-radius: 6px;
+  padding: .6rem .8rem; overflow-x: auto; margin: .6rem 0; }
+code { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+p code, li code, td code { background: var(--code); padding: .1em .35em; border-radius: 4px; }
+details { margin: .5rem 0; border: 1px solid var(--line); border-radius: 6px; padding: .4rem .6rem; }
+summary { cursor: pointer; color: var(--dim); font: 13px/1.5 ui-monospace, Menlo, monospace; }
+details.failed { border-color: var(--error); }
+details.failed > summary { color: var(--error); }
+.failed { color: var(--error); }
+.empty, .href { color: var(--dim); }
+blockquote { border-left: 3px solid var(--line); margin: .6rem 0; padding: 0 0 0 .8rem; color: var(--dim); }
+table { border-collapse: collapse; margin: .6rem 0; }
+th, td { border: 1px solid var(--line); padding: .3rem .6rem; text-align: left; }
+img { max-width: 100%; border-radius: 6px; margin: .5rem 0; }
+a { color: var(--accent); }
+hr { border: 0; border-top: 1px solid var(--line); margin: 1.2rem 0; }
+.hl-comment { color: var(--dim); font-style: italic; }
+.hl-string { color: #b5bd68; }
+.hl-number { color: #b294bb; }
+.hl-keyword { color: #81a2be; }
+.hl-type, .hl-variable { color: #8abeb7; }
+.hl-function { color: #f0c674; }</style>
+</head>
+<body>
+<header><h1>Can you tidy `src/Foo.php`? It has **two** problems.</h1><p class="where">/Users/kaka/Development/owner/pig</p></header>
+<main>
+<section class="turn user">
+<h2>You</h2>
+<p>Can you tidy <code>src/Foo.php</code>? It has <strong>two</strong> problems.</p>
+</section>
+<section class="turn assistant">
+<h2>claude-sonnet-4-5</h2>
+<details class="thinking"><summary>Thinking</summary>
+<p>Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. Let me look at the file first and see what is there. </p>
+</details>
+<p>I will read it.</p>
+<ol>
+<li>first</li>
+<li>second</li>
+</ol>
+<details class="call" open><summary>read src/Foo.php</summary>
+<pre class="lang-json"><code>{
+    <span class="hl-string">&quot;path&quot;</span>: <span class="hl-string">&quot;src/Foo.php&quot;</span>
+}</code></pre></details>
+</section>
+<details class="result" open><summary>read</summary>
+<pre><code>&lt;?php
+function hi() { return 1; } // note</code></pre></details>
+<section class="turn assistant">
+<h2>claude-sonnet-4-5</h2>
+<p>Done:</p>
+<pre class="lang-php"><code>&lt;?php
+<span class="hl-keyword">function</span> <span class="hl-function">hi</span>(): <span class="hl-type">int</span> { <span class="hl-keyword">return</span> <span class="hl-number">1</span>; }</code></pre>
+<table>
+<thead>
+<tr><th>what</th><th>why</th></tr>
+</thead>
+<tbody>
+<tr><td>types</td><td>clarity</td></tr>
+</tbody>
+</table>
+</section>
+</main>
+</body>
+</html>
