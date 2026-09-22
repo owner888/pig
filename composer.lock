@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "fa21391a203b8e9399eb923e2655b596",
+    "content-hash": "e01519cbada1463fe2b76b6df45abddd",
     "packages": [
         {
             "name": "pig/agent-core",
@@ -83,6 +83,41 @@
                 "MIT"
             ],
             "description": "Coroutine runtime for pig: event loop, futures, fibers. No dependencies.",
+            "transport-options": {
+                "relative": true
+            }
+        },
+        {
+            "name": "pig/coding-agent",
+            "version": "dev-main",
+            "dist": {
+                "type": "path",
+                "url": "packages/coding-agent",
+                "reference": "a760c586427751060ed7e49cd9abe0717f03567e"
+            },
+            "require": {
+                "ext-json": "*",
+                "ext-mbstring": "*",
+                "php": ">=8.3",
+                "pig/agent-core": "@dev",
+                "pig/ai": "@dev",
+                "pig/async": "@dev",
+                "pig/tui": "@dev"
+            },
+            "suggest": {
+                "fd": "Required by the find tool — brew install fd, or apt install fd-find",
+                "ripgrep": "Required by the grep tool — brew install ripgrep, or apt install ripgrep"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Pig\\CodingAgent\\": "src/"
+                }
+            },
+            "license": [
+                "MIT"
+            ],
+            "description": "The coding agent: tools the model runs, and the CLI around them.",
             "transport-options": {
                 "relative": true
             }
@@ -1817,6 +1852,7 @@
         "pig/agent-core": 20,
         "pig/ai": 20,
         "pig/async": 20,
+        "pig/coding-agent": 20,
         "pig/tui": 20
     },
     "prefer-stable": true,

@@ -9,7 +9,8 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 > **Status: early.** The agent loop runs end to end — prompts, streaming answers, tool calls,
 > steering mid-run — and the terminal UI is complete: differential rendering, a multi-line
 > editor with history and completion, markdown, and inline images. What is missing is the
-> coding agent itself: its tools and its CLI.
+> coding agent's own front end. All seven tools work — read, write, edit, bash, grep, find,
+> ls — and `examples/agent.php` runs them end to end; what is missing is the interactive CLI.
 
 ## Packages
 
@@ -19,7 +20,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 | `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic streams end to end**; other providers pending |
 | `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — **done** |
 | `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — **done** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | Interactive coding agent CLI — not started |
+| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **all seven tools and the prompt done**; CLI pending |
 
 `pig/async` has no counterpart upstream: JavaScript ships an event loop and PHP does not. It
 exists so one `stream_select()` can wait on the model's socket and on the keyboard at the same

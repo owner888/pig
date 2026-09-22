@@ -98,9 +98,17 @@ all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439),
 
 `coding-agent` is upstream's biggest package — 23k lines at the anchor, and most of it is not
 the agent: RPC mode, hooks, custom tools, compaction, HTML export, OAuth, twenty-five selector
-components. What is being ported is the part that makes it a coding agent: `core/tools/` (~1900
-lines), `core/system-prompt.ts`, enough of `core/agent-session.ts` to hold a session, and an
+components. What is being ported is the part that makes it a coding agent: `core/tools/` (done),
+`core/system-prompt.ts` (done), enough of `core/agent-session.ts` to hold a session, and an
 interactive mode built on `pig/tui`. The rest is left out until something needs it.
+
+Two things upstream has here are deliberately not ported yet, and both are noted where they
+would go: **skills** (`core/skills.ts`, which the prompt builder would append) and the
+**model registry** (several hundred generated model descriptions; `CodingAgent::model()` builds
+one from an id instead). A registry arrives when something needs to *choose* between models
+rather than be handed one.
+
+`examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 
 `markdown.ts` has no `marked` under it here: `Pig\Tui\Markdown\Lexer` and `Inline` are a
 hand-written subset — see the dependency note above. They are not CommonMark and do not try

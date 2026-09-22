@@ -8,7 +8,8 @@ amphp、不用 ncurses，只用标准库。
 
 > **状态：早期。** agent 循环已经跑通——提问、流式回答、工具调用、运行途中插话都可以了；终端 UI
 > 也已完整：差分渲染、带历史和补全的多行编辑器、markdown 渲染、终端内联图片。还缺的是
-> coding agent 本身：它的工具和 CLI。
+> coding agent 的前端。七个工具都能用了——read、write、edit、bash、grep、find、ls——
+> `examples/agent.php` 能把整条链路跑通；还缺的是交互式 CLI。
 
 ## 包划分
 
@@ -18,7 +19,7 @@ amphp、不用 ncurses，只用标准库。
 | `pig/ai` | `Pig\Ai\` | 统一 LLM API —— **Anthropic 全链路可用**；其余供应商待移植 |
 | `pig/agent-core` | `Pig\Agent\` | 带工具调用和状态管理的 agent 循环 —— **已完成** |
 | `pig/tui` | `Pig\Tui\` | 差分渲染的终端 UI —— **已完成** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | 交互式 coding agent CLI —— 未开始 |
+| `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **七个工具和系统提示已完成**；CLI 待补 |
 
 `pig/async` 在上游没有对应物：JavaScript 自带事件循环，PHP 没有。它的存在是为了让**一次
 `stream_select()` 能同时等模型的 socket 和键盘**——这正是「流式输出途中能打断、能继续打字」
