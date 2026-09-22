@@ -234,6 +234,11 @@ class Tui extends Container
         $buffer = "\x1b[?2026h" . ($clear ? "\x1b[3J\x1b[2J\x1b[H" : '');
 
         foreach ($lines as $index => $line) {
+            // Checked here as well as in drawFrom, and for the same reason. A too-wide
+            // line wraps, and every cursor move after it lands a row low — but this path
+            // draws the *first* frame, whose top half a differential redraw never
+            // revisits, so without this the corruption has no visible cause at all.
+            $this->checkWidth($lines, $index, $width);
             $buffer .= ($index > 0 ? "\r\n" : '') . $line;
         }
 

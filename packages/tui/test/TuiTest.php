@@ -256,4 +256,19 @@ final class TuiTest extends TestCase
 
         $this->assertStringContainsString('terminal is 20', $error->getMessage());
     }
+
+    public function testAFirstFrameThatIsTooWideIsRefusedToo(): void
+    {
+        // The first frame goes down a different path, and it is the worse one to miss:
+        // a differential redraw never revisits the top of the screen, so a wrapped line
+        // up there pushes every later cursor move a row low with nothing to point at.
+        $this->tui->addChild(new TextComponent(str_repeat('x', 50), wrap: false));
+        $this->tui->start();
+
+        $this->assertThrows(
+            TuiError::class,
+            fn () => Loop::get()->tick(),
+            'columns wide',
+        );
+    }
 }
