@@ -13,6 +13,20 @@ Upstream at that commit was still published as `@mariozechner/pi-*`; it is `@ear
 
 Reference checkout for diffing lives outside this repo — clone pi and `git checkout d0a4c37`.
 
+### The anchor commit does not compile
+
+`d0a4c37` is the commit that split the agent's single queue into `steer()` and
+`followUp()`, and it changed `packages/agent` **only**. `coding-agent/src/core/agent-session.ts`
+at that same commit still calls `agent.queueMessage()`, `clearMessageQueue()`,
+`getQueueMode()` and `setQueueMode()` — none of which exist there any more. The anchor is a
+snapshot taken mid-break.
+
+So "port it literally" has no meaning for the parts of `coding-agent` that touch the queue:
+there is no working original. Those are ported against the **split** API, which is what
+`Pig\Agent\Agent` has, and the mapping is written down where it happens. Anywhere else the
+anchor turns out not to build, do the same and say so here rather than porting a call that
+cannot have worked.
+
 ### Things taken from upstream HEAD on purpose
 
 The anchor is a floor, not a ban. Where HEAD has solved something the snapshot had not, and
@@ -113,8 +127,16 @@ all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439),
 `coding-agent` is upstream's biggest package — 23k lines at the anchor, and most of it is not
 the agent: RPC mode, hooks, custom tools, compaction, HTML export, OAuth, twenty-five selector
 components. What is being ported is the part that makes it a coding agent: `core/tools/` (done),
-`core/system-prompt.ts` (done), enough of `core/agent-session.ts` to hold a session, and an
-interactive mode built on `pig/tui`. The rest is left out until something needs it.
+`core/system-prompt.ts` (done), enough of `core/agent-session.ts` to hold a session (done —
+`Session\AgentSession`), and an interactive mode built on `pig/tui`. The rest is left out until
+something needs it.
+
+`AgentSession` is 1901 lines upstream and ~330 here, because everything it coordinates that is
+not ported is not there to coordinate: session persistence (`SessionManager`, 1129 lines),
+compaction, auto-retry, branching and tree navigation, hooks, custom tools, HTML export, and
+the model registry. What is left is the conversation, the event fan-out, the queue of messages
+someone typed while the agent was working, the thinking level, and what the session has cost.
+Each of the rest can arrive on its own when something needs it.
 
 Two things upstream has here are deliberately not ported yet, and both are noted where they
 would go: **skills** (`core/skills.ts`, which the prompt builder would append) and the
