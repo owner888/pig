@@ -145,6 +145,14 @@ unknown name throws where the component is wired rather than rendering colourles
 Reading a theme from JSON, the custom-themes directory and the watcher that reloads one as
 it is edited are not ported; they arrive with a `/theme` command if that is ever wanted.
 
+`Interactive\` holds the components the transcript is drawn from — `UserMessageComponent`,
+`AssistantMessageComponent`, `ToolExecutionComponent`, `FooterComponent`, plus `DiffView`
+and `BashOutputComponent`. They keep upstream's `…Component` names rather than `pig/tui`'s
+suffix-free `Text` / `Box` / `Markdown`, because `UserMessage` and `AssistantMessage` are
+already taken by `Pig\Ai`; the developer chose matching upstream over matching the sibling
+package. Not ported: custom-tool rendering and images, both of which need something that
+is not here yet.
+
 `Theme\Colour` carries the one piece of real arithmetic in there: fitting a hex colour onto
 a 256-colour terminal. The guard worth knowing about is that the grey ramp only wins when
 the colour was nearly neutral to begin with — without it every muted tone in the theme
@@ -427,6 +435,22 @@ run". `Process::run()` was added to return the exit code and stderr separately, 
 throws with fd's own message.
 
 Regression test: `SearchToolsTest::testABadPatternIsReportedRatherThanReadAsNoMatches`.
+
+### Closing a style with `\e[0m` closes whatever it was nested inside
+
+`Style::bold()` and friends used to end with a full reset. A full reset turns off
+*everything* — including a colour somebody else opened around that text. So a bold word
+inside a red line left the rest of that line un-red, and the coding agent, which wraps
+everything in a palette colour, hit it on the first component that used both.
+
+Each attribute now closes with its own off-code: `22m` after bold or dim, `23m` italic,
+`24m` underline, `27m` inverse, `29m` strikethrough, and `39m`/`49m` after a foreground
+or background colour. The one exception is `Style::of()`, which is handed arbitrary
+codes and cannot know which off-code goes with each — so a combination built that way is
+a leaf style, and nesting is done with the named methods.
+
+Regression tests: `ComponentsTest::testEachStyleClosesOnlyWhatItOpened` and
+`testAStyleNestedInAColourLeavesTheColourStanding`.
 
 ### A style must not be left open at the end of a line
 

@@ -21,6 +21,18 @@ final class Style
 {
     private const string RESET = "\x1b[0m";
 
+    /**
+     * What turns each attribute back off again.
+     *
+     * Not `\e[0m`. A full reset closes everything that was open, including a colour
+     * somebody else opened around this text — so a bold word inside a red line would
+     * leave the rest of that line un-red. Each attribute has its own off-code, and
+     * closing with that one leaves everything else exactly as it was found.
+     */
+    private const string FOREGROUND_OFF = "\x1b[39m";
+
+    private const string BACKGROUND_OFF = "\x1b[49m";
+
     /** @var array<string, int> */
     private const array NAMED = [
         'black' => 30, 'red' => 31, 'green' => 32, 'yellow' => 33,
@@ -31,6 +43,10 @@ final class Style
 
     /**
      * A style built from raw SGR parameters, as a callable.
+     *
+     * The only one here that closes with a full reset: it is handed arbitrary codes, so
+     * it cannot know which off-code belongs to each of them. A combination is a leaf
+     * style — use the named methods to nest one inside another.
      *
      * @param int|string ...$codes e.g. `1, 31` for bold red, or `'38;5;240'`
      * @return Closure(string): string
@@ -47,7 +63,7 @@ final class Style
     {
         $code = self::NAMED[$name] ?? throw new TuiError("Unknown colour '{$name}'");
 
-        return "\x1b[{$code}m{$text}" . self::RESET;
+        return "\x1b[{$code}m{$text}" . self::FOREGROUND_OFF;
     }
 
     /** Background in one of the sixteen named colours. */
@@ -55,7 +71,7 @@ final class Style
     {
         $code = self::NAMED[$name] ?? throw new TuiError("Unknown colour '{$name}'");
 
-        return "\x1b[" . ($code + 10) . "m{$text}" . self::RESET;
+        return "\x1b[" . ($code + 10) . "m{$text}" . self::BACKGROUND_OFF;
     }
 
     public static function black(string $text): string
@@ -105,53 +121,53 @@ final class Style
 
     public static function bold(string $text): string
     {
-        return "\x1b[1m{$text}" . self::RESET;
+        return "\x1b[1m{$text}\x1b[22m";
     }
 
     public static function dim(string $text): string
     {
-        return "\x1b[2m{$text}" . self::RESET;
+        return "\x1b[2m{$text}\x1b[22m";
     }
 
     public static function italic(string $text): string
     {
-        return "\x1b[3m{$text}" . self::RESET;
+        return "\x1b[3m{$text}\x1b[23m";
     }
 
     public static function underline(string $text): string
     {
-        return "\x1b[4m{$text}" . self::RESET;
+        return "\x1b[4m{$text}\x1b[24m";
     }
 
     public static function inverse(string $text): string
     {
-        return "\x1b[7m{$text}" . self::RESET;
+        return "\x1b[7m{$text}\x1b[27m";
     }
 
     public static function strikethrough(string $text): string
     {
-        return "\x1b[9m{$text}" . self::RESET;
+        return "\x1b[9m{$text}\x1b[29m";
     }
 
     /** One of the 256 palette colours. */
     public static function ansi256(int $colour, string $text): string
     {
-        return "\x1b[38;5;" . self::checkByte($colour) . "m{$text}" . self::RESET;
+        return "\x1b[38;5;" . self::checkByte($colour) . "m{$text}" . self::FOREGROUND_OFF;
     }
 
     public static function onAnsi256(int $colour, string $text): string
     {
-        return "\x1b[48;5;" . self::checkByte($colour) . "m{$text}" . self::RESET;
+        return "\x1b[48;5;" . self::checkByte($colour) . "m{$text}" . self::BACKGROUND_OFF;
     }
 
     public static function rgb(int $red, int $green, int $blue, string $text): string
     {
-        return "\x1b[38;2;" . self::rgbParameters($red, $green, $blue) . "m{$text}" . self::RESET;
+        return "\x1b[38;2;" . self::rgbParameters($red, $green, $blue) . "m{$text}" . self::FOREGROUND_OFF;
     }
 
     public static function onRgb(int $red, int $green, int $blue, string $text): string
     {
-        return "\x1b[48;2;" . self::rgbParameters($red, $green, $blue) . "m{$text}" . self::RESET;
+        return "\x1b[48;2;" . self::rgbParameters($red, $green, $blue) . "m{$text}" . self::BACKGROUND_OFF;
     }
 
     private static function rgbParameters(int $red, int $green, int $blue): string

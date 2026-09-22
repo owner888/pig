@@ -335,9 +335,12 @@ final class MarkdownTest extends TestCase
 
         $line = $markdown->render(40)[0];
 
-        // Bold closes with a reset, which takes the grey with it; the grey goes straight
-        // back on, or the rest of the paragraph would come out in the terminal's default.
-        $this->assertStringContainsString("\x1b[0m\x1b[90m", $line);
+        // Bold closes with `22m`, which turns bold off and leaves the grey alone, so the
+        // rest of the paragraph is still grey. Nothing on this line fully resets: a
+        // reset here would drop the default style on the floor for everything after it.
+        $this->assertStringContainsString("\x1b[1m", $line);
+        $this->assertStringContainsString("\x1b[22m", $line);
+        $this->assertStringNotContainsString("\x1b[0m", $line);
     }
 
     public function testTheBackgroundReachesTheEndOfTheLine(): void

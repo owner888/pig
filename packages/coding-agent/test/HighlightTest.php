@@ -103,7 +103,7 @@ final class HighlightTest extends TestCase
     {
         $line = $this->first('// if for while', 'javascript');
 
-        $this->assertSame("\e[2m// if for while\e[0m", $line);
+        $this->assertSame("\e[2m// if for while\e[22m", $line);
     }
 
     public function testAnUnclosedQuoteEndsWithItsLine(): void
@@ -131,7 +131,7 @@ final class HighlightTest extends TestCase
         // The renderer compares lines, so a style left open at the end of one line is a
         // style the next line never asked for.
         foreach (Highlight::lines("/* one\ntwo\nthree */", 'javascript') as $line) {
-            $this->assertSame("\e[2m" . $this->plain($line) . "\e[0m", $line);
+            $this->assertSame("\e[2m" . $this->plain($line) . "\e[22m", $line);
         }
     }
 
@@ -149,7 +149,7 @@ final class HighlightTest extends TestCase
 
     public function testAPhpHashCommentStillWorks(): void
     {
-        $this->assertSame("\e[2m# a comment\e[0m", $this->first('# a comment', 'php'));
+        $this->assertSame("\e[2m# a comment\e[22m", $this->first('# a comment', 'php'));
     }
 
     public function testSqlKeywordsAreMatchedWhateverTheirCase(): void
@@ -178,14 +178,14 @@ final class HighlightTest extends TestCase
     public function testNumbersAreFoundInEveryNotation(): void
     {
         foreach (['0x1f', '1_000', '3.14', '1.5e3'] as $number) {
-            $this->assertStringContainsString("\e[35m{$number}\e[0m", $this->first("x = {$number};", 'javascript'), $number);
+            $this->assertStringContainsString("\e[35m{$number}\e[39m", $this->first("x = {$number};", 'javascript'), $number);
         }
     }
 
     public function testATrailingDotBelongsToWhatFollowsIt(): void
     {
         // `1..5` is a range and `2.toString()` a call; neither dot is part of the number.
-        $this->assertStringContainsString("\e[35m1\e[0m..", $this->first('let r = 1..5;', 'rust'));
+        $this->assertStringContainsString("\e[35m1\e[39m..", $this->first('let r = 1..5;', 'rust'));
     }
 
     // ---- which language --------------------------------------------------------------

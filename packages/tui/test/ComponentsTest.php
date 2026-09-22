@@ -208,7 +208,7 @@ final class ComponentsTest extends TestCase
         $list = $this->list(['one']);
         $list->setFilter('zzz');
 
-        $this->assertSame(["\x1b[2m  No matches\x1b[0m"], $list->render(30));
+        $this->assertSame(["\x1b[2m  No matches\x1b[22m"], $list->render(30));
         $this->assertNull($list->selectedItem());
     }
 
@@ -313,14 +313,32 @@ final class ComponentsTest extends TestCase
         $loader->dispose();
     }
 
-    public function testStyleWrapsAndClosesEverythingItOpens(): void
+    public function testEachStyleClosesOnlyWhatItOpened(): void
     {
-        $this->assertSame("\x1b[31mred\x1b[0m", Style::red('red'));
-        $this->assertSame("\x1b[38;5;240mgrey\x1b[0m", Style::ansi256(240, 'grey'));
-        $this->assertSame("\x1b[48;2;1;2;3mbg\x1b[0m", Style::onRgb(1, 2, 3, 'bg'));
+        // Not `\e[0m`. A full reset closes whatever somebody else opened around this
+        // text too, so a bold word inside a red line would leave the rest of that line
+        // un-red — which is what the coding agent's nested palette colours do.
+        $this->assertSame("\x1b[31mred\x1b[39m", Style::red('red'));
+        $this->assertSame("\x1b[38;5;240mgrey\x1b[39m", Style::ansi256(240, 'grey'));
+        $this->assertSame("\x1b[48;2;1;2;3mbg\x1b[49m", Style::onRgb(1, 2, 3, 'bg'));
+        $this->assertSame("\x1b[1mbold\x1b[22m", Style::bold('bold'));
+        $this->assertSame("\x1b[7minverse\x1b[27m", Style::inverse('inverse'));
+
+        // The one exception: of() is handed arbitrary codes, so it cannot know which
+        // off-code belongs to each of them.
         $this->assertSame("\x1b[1;31mboth\x1b[0m", Style::of(1, 31)('both'));
+
         // Styled text still measures as its visible content.
         $this->assertSame(3, Width::visible(Style::bold(Style::red('abc'))));
+    }
+
+    public function testAStyleNestedInAColourLeavesTheColourStanding(): void
+    {
+        $line = Style::red('a ' . Style::bold('b') . ' c');
+
+        // The colour is opened once and closed once, at the end — nothing in between
+        // cancels it.
+        $this->assertSame("\x1b[31ma \x1b[1mb\x1b[22m c\x1b[39m", $line);
     }
 
     /** @param list<string> $values */
