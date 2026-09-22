@@ -110,6 +110,39 @@ final class FutureTest extends TestCase
         );
     }
 
+    public function testRunReturnsWhenAWatcherOutlivesTheCoroutine(): void
+    {
+        if (!function_exists('pcntl_alarm')) {
+            self::markTestSkipped('needs ext-pcntl for the watchdog');
+        }
+
+        // A watcher on a socket nothing will ever write to — a listening server, in the
+        // case that found this. The tick that finishes the coroutine used to carry on
+        // into poll() and block on it forever.
+        [$idle, $peer] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+        Loop::get()->onReadable($idle, static function (): void {
+        });
+
+        // A regression here hangs the whole suite, so make it a failure instead.
+        pcntl_async_signals(true);
+        pcntl_signal(SIGALRM, static fn () => throw new RuntimeException('Async::run() never returned'));
+        pcntl_alarm(5);
+
+        try {
+            $result = Async::run(static function (): string {
+                Async::delay(0.01);
+
+                return 'finished';
+            });
+        } finally {
+            pcntl_alarm(0);
+            pcntl_signal(SIGALRM, SIG_DFL);
+        }
+
+        $this->assertSame('finished', $result);
+        $this->assertTrue(is_resource($peer));
+    }
+
     public function testACoroutineThatFailsUnobservedStillSurfaces(): void
     {
         $error = $this->assertThrows(RuntimeException::class, static fn () => Async::run(static function (): void {

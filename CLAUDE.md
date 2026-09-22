@@ -127,6 +127,26 @@ if ($ready === false) {
 
 Regression test: `LoopTest::testASignalDuringSelectDoesNotKillTheLoop`.
 
+### A tick polls after its callbacks, even when they ended the program
+
+`tick()` runs deferred callbacks and only then polls. A coroutine always resumes in that first
+phase, so the root coroutine can *finish* there — and the same tick then settles into
+`stream_select()` with no timeout, waiting on watchers whose only interested party is gone.
+Found as a hang in a test whose server socket stayed armed and never became readable again;
+other tests survived only because a timer or a readable stream happened to break the poll.
+
+`Async::run()` therefore wakes the loop from the fiber's `finally`. Anything else that finishes
+work during the callback phase and leaves nothing to poll for must do the same.
+
+```php
+$fiber = new Fiber(static function () use ($main, $loop): mixed {
+    try { return $main(); } finally { $loop->wake(); }
+});
+```
+
+Regression test: `FutureTest::testRunReturnsWhenAWatcherOutlivesTheCoroutine` — with a watchdog,
+because a regression here hangs the suite rather than failing it.
+
 ### Closing a stream without cancelling its watcher
 
 `stream_select()` silently drops closed streams from the array, then fails with

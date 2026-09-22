@@ -25,6 +25,9 @@ final class Loop
     /** @var array<string, array{stream: resource, callback: Closure}> */
     private array $readers = [];
 
+    /** @var array<string, array{stream: resource, callback: Closure}> */
+    private array $writers = [];
+
     /** @var array<string, array{at: float, callback: Closure}> */
     private array $timers = [];
 
@@ -67,10 +70,27 @@ final class Loop
         return $id;
     }
 
-    /** Disarm a reader or a timer. Unknown ids are a no-op. */
+    /**
+     * Invoke $callback whenever $stream can accept bytes.
+     *
+     * Needed because fwrite() on a non-blocking socket short-writes: it returns the
+     * count it managed, and the rest waits for the kernel buffer to drain.
+     *
+     * @param resource $stream
+     * @return string watcher id for cancel()
+     */
+    public function onWritable($stream, Closure $callback): string
+    {
+        $id = 'w' . $this->nextId++;
+        $this->writers[$id] = ['stream' => $stream, 'callback' => $callback];
+
+        return $id;
+    }
+
+    /** Disarm a reader, a writer or a timer. Unknown ids are a no-op. */
     public function cancel(string $id): void
     {
-        unset($this->readers[$id], $this->timers[$id]);
+        unset($this->readers[$id], $this->writers[$id], $this->timers[$id]);
     }
 
     /**
@@ -98,6 +118,7 @@ final class Loop
     {
         return $this->queue === []
             && $this->readers === []
+            && $this->writers === []
             && $this->timers === [];
     }
 
@@ -122,6 +143,20 @@ final class Loop
     public function stop(): void
     {
         $this->stopped = true;
+    }
+
+    /**
+     * Keep the next poll from blocking.
+     *
+     * A tick runs deferred callbacks and only then polls, so anything that finishes
+     * during that first phase — a coroutine returning, for one — must say so, or the
+     * poll settles in to wait on watchers whose work is already over. Single-threaded,
+     * there is no way to interrupt a select() already under way; this makes sure the
+     * next one returns at once instead.
+     */
+    public function wake(): void
+    {
+        $this->queue[] = static fn () => null;
     }
 
     private function runQueue(): void
@@ -162,7 +197,7 @@ final class Loop
 
     private function poll(?float $timeout): void
     {
-        if ($this->readers === []) {
+        if ($this->readers === [] && $this->writers === []) {
             // Timers but no streams. stream_select() cannot wait on nothing — PHP 8 raises
             // ValueError("No stream arrays were passed") — so the wait is a sleep. Nothing
             // else can make progress here: with no watchers armed, no callback can fire.
@@ -186,7 +221,15 @@ final class Loop
             $read[$id] = $watcher['stream'];
         }
 
-        $write = null;
+        $write = [];
+        foreach ($this->writers as $id => $watcher) {
+            if (!is_resource($watcher['stream'])) {
+                throw new AsyncError("Writer {$id} watches a closed stream; cancel the watcher before closing it");
+            }
+
+            $write[$id] = $watcher['stream'];
+        }
+
         $except = null;
         $seconds = $timeout === null ? null : (int) $timeout;
         $microseconds = $timeout === null ? 0 : (int) round(($timeout - (int) $timeout) * 1_000_000);
@@ -231,6 +274,12 @@ final class Loop
             // A callback may have cancelled a later watcher in this same batch.
             if (isset($this->readers[$id])) {
                 ($this->readers[$id]['callback'])($this->readers[$id]['stream']);
+            }
+        }
+
+        foreach (array_keys($write) as $id) {
+            if (isset($this->writers[$id])) {
+                ($this->writers[$id]['callback'])($this->writers[$id]['stream']);
             }
         }
     }

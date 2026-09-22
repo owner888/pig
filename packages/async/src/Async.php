@@ -32,7 +32,16 @@ final class Async
         $spawnedBefore = self::$spawned;
         self::$spawned = [];
 
-        $fiber = new Fiber($main);
+        // wake() on the way out: the fiber finishes inside a tick's callback phase, and
+        // without it that same tick goes on to poll — blocking on watchers that only the
+        // finished coroutine cared about.
+        $fiber = new Fiber(static function () use ($main, $loop): mixed {
+            try {
+                return $main();
+            } finally {
+                $loop->wake();
+            }
+        });
 
         try {
             $fiber->start();
