@@ -9,7 +9,9 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 > **Status: it runs.** `bin/pig` is a coding agent you can talk to in a terminal: streaming
 > answers, seven tools with live output, edits shown as diffs, Escape to interrupt, typing
 > while it works, and `!cmd` to run a shell command the model can then see (`!!cmd` keeps it
-> out of the conversation). What is missing is everything around that — sessions are not saved, there is
+> out of the conversation). Sessions are saved as they happen — `--continue` picks up the
+> last one, `/resume` picks from a list. What is missing is a model picker, and compaction
+> when the context fills. What is missing is everything around that — sessions are not saved, there is
 > no model picker, and the context is not compacted when it fills.
 
 ## Packages
@@ -20,7 +22,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 | `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic streams end to end**; other providers pending |
 | `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — **done** |
 | `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — **done** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt and interactive CLI done**; no session persistence yet |
+| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI and saved sessions done**; no compaction yet |
 
 `pig/async` has no counterpart upstream: JavaScript ships an event loop and PHP does not. It
 exists so one `stream_select()` can wait on the model's socket and on the keyboard at the same
@@ -35,7 +37,8 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 ```
 
 `--read-only` takes away edit, write and bash; `--theme light` for a light terminal;
-`--model <id>` to talk to something else. `/help` inside lists the keys.
+`--model <id>` to talk to something else; `--continue` to pick up where you left off.
+`/help` inside lists the keys.
 
 `examples/ask.php` is the same stack with no UI at all:
 

@@ -11,6 +11,7 @@ use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentState;
 use Pig\Agent\AgentToolResult;
+use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\AssistantMessage;
@@ -66,9 +67,31 @@ final class AgentSession
     /** @var list<BashExecution> run while the agent was working, waiting for it to stop */
     private array $pendingBash = [];
 
-    public function __construct(public readonly Agent $agent, private readonly string $cwd = '.')
-    {
+    public function __construct(
+        public readonly Agent $agent,
+        private readonly string $cwd = '.',
+        private readonly ?SessionManager $store = null,
+    ) {
         $this->unsubscribeAgent = $this->agent->subscribe($this->onAgentEvent(...));
+    }
+
+    /** Where this session is being written, if it is. */
+    public function store(): ?SessionManager
+    {
+        return $this->store;
+    }
+
+    /**
+     * Pick a saved session up where it was left.
+     *
+     * The messages go straight into the agent: they are the conversation, and the model
+     * is handed them on the next turn exactly as if they had just happened.
+     *
+     * @param list<mixed> $messages
+     */
+    public function restore(array $messages): void
+    {
+        $this->agent->replaceMessages($messages);
     }
 
     // ---- events ------------------------------------------------------------------
@@ -110,6 +133,12 @@ final class AgentSession
         // redrawing the "3 messages waiting" line sees three, not four.
         if ($event instanceof MessageStartEvent && $event->message instanceof UserMessage) {
             $this->dequeue(self::textOf($event->message));
+        }
+
+        // Written when the message is finished, not when it starts: a streamed answer is
+        // re-sent complete on every update, and only the last one is the whole of it.
+        if ($event instanceof MessageEndEvent) {
+            $this->store?->append($event->message);
         }
 
         foreach ($this->listeners as $listener) {
@@ -307,6 +336,10 @@ final class AgentSession
         }
 
         $this->agent->appendMessage($execution);
+
+        // Appended directly rather than through a turn, so there is no message_end to
+        // carry it to the file.
+        $this->store?->append($execution);
     }
 
     /** @return list<BashExecution> what was held back, now in the conversation */
@@ -317,6 +350,7 @@ final class AgentSession
 
         foreach ($held as $execution) {
             $this->agent->appendMessage($execution);
+            $this->store?->append($execution);
         }
 
         return $held;

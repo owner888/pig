@@ -19,6 +19,7 @@ use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\Usage;
+use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -26,6 +27,7 @@ use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
 use Pig\Tui\Test\FakeTerminal;
@@ -58,6 +60,10 @@ final class InteractiveModeTest extends TestCase
 
     private bool $holding = false;
 
+    private string $cwd;
+
+    private string $home;
+
     #[\Override]
     protected function setUp(): void
     {
@@ -65,12 +71,38 @@ final class InteractiveModeTest extends TestCase
         $this->held = null;
         $this->holding = false;
         $this->terminal = new FakeTerminal(80, 24);
+        $this->cwd = sys_get_temp_dir() . '/pig-interactive-' . bin2hex(random_bytes(4));
+        $this->home = $this->cwd . '-home';
+        mkdir($this->cwd, 0o755, true);
+        putenv('PIG_HOME=' . $this->home);
     }
 
     #[\Override]
     protected function tearDown(): void
     {
         $this->mode->stop();
+        putenv('PIG_HOME');
+        self::remove($this->home);
+        self::remove($this->cwd);
+    }
+
+    private static function remove(string $path): void
+    {
+        if (is_dir($path) && !is_link($path)) {
+            foreach (scandir($path) ?: [] as $entry) {
+                if ($entry !== '.' && $entry !== '..') {
+                    self::remove($path . '/' . $entry);
+                }
+            }
+
+            rmdir($path);
+
+            return;
+        }
+
+        if (file_exists($path)) {
+            unlink($path);
+        }
     }
 
     private function startWithContext(): void
@@ -82,8 +114,13 @@ final class InteractiveModeTest extends TestCase
      * @param list<string>      $answers one per model call
      * @param list<ContextFile> $context
      */
-    private function start(array $answers = [], bool $reasoning = false, array $context = []): void
-    {
+    private function start(
+        array $answers = [],
+        bool $reasoning = false,
+        array $context = [],
+        bool $store = false,
+        ?string $resume = null,
+    ): void {
         $this->answers = $answers;
         $agent = new Agent(new AgentOptions(streamFn: $this->provider(...), apiKey: 'k'));
         $agent->setModel(new Model(
@@ -97,11 +134,21 @@ final class InteractiveModeTest extends TestCase
             $reasoning,
         ));
 
-        $this->session = new AgentSession($agent);
+        $saved = match (true) {
+            $resume !== null => SessionManager::open($resume),
+            $store => SessionManager::create($this->cwd),
+            default => null,
+        };
+
+        $this->session = new AgentSession($agent, $this->cwd, $saved);
+
+        if ($resume !== null && $saved !== null) {
+            $this->session->restore($saved->messages());
+        }
         $this->mode = new InteractiveMode(
             $this->session,
             Palette::dark(true),
-            sys_get_temp_dir(),
+            $this->cwd,
             '0.0.0',
             'dark',
             $this->terminal,
@@ -392,6 +439,108 @@ final class InteractiveModeTest extends TestCase
 
         // Nothing to interrupt, so the draft stays where it was typed.
         $this->assertStringContainsString('a draft', $this->screen());
+    }
+
+    // ---- sessions on disk ----------------------------------------------------------------
+
+    public function testAConversationIsWrittenAsItHappens(): void
+    {
+        $this->start(['an answer'], store: true);
+
+        $this->type('a question');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $saved = SessionManager::open($this->session->store()->path)->messages();
+
+        $this->assertCount(2, $saved);
+        $this->assertInstanceOf(UserMessage::class, $saved[0]);
+        $this->assertSame('an answer', $saved[1]->content[0]->text);
+    }
+
+    public function testASavedConversationIsDrawnAgainWhenItIsResumed(): void
+    {
+        $this->start(['the first answer'], store: true);
+        $this->type('the first question');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $path = $this->session->store()->path;
+        $this->mode->stop();
+
+        // A fresh pig in the same directory, resuming.
+        $this->start(store: true, resume: $path);
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('the first question', $screen);
+        $this->assertStringContainsString('the first answer', $screen);
+        $this->assertCount(2, $this->session->messages());
+    }
+
+    public function testResumeOffersTheSessionsInThisDirectory(): void
+    {
+        $this->start(['answered'], store: true);
+        $this->type('something memorable');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->mode->stop();
+
+        $this->start(store: true);
+        $this->type('/resume');
+        $this->type(self::ENTER);
+
+        // Labelled by what was asked, which is how anyone remembers a conversation.
+        $this->assertStringContainsString('something memorable', $this->screen());
+        $this->assertStringContainsString('Pick a session', $this->screen());
+    }
+
+    public function testPickingOneReplacesTheConversation(): void
+    {
+        $this->start(['answered'], store: true);
+        $this->type('something memorable');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->mode->stop();
+
+        $this->start(store: true);
+        $this->type('/resume');
+        $this->type(self::ENTER);
+        $this->type(self::ENTER);
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('something memorable', $screen);
+        $this->assertStringContainsString('Resumed 2 messages', $screen);
+        $this->assertStringNotContainsString('Pick a session', $screen);
+        $this->assertCount(2, $this->session->messages());
+    }
+
+    public function testEscapeClosesThePickerAndChangesNothing(): void
+    {
+        $this->start(['answered'], store: true);
+        $this->type('something memorable');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->mode->stop();
+
+        $this->start(store: true);
+        $this->type('/resume');
+        $this->type(self::ENTER);
+        $this->type(self::ESC);
+
+        $this->assertStringNotContainsString('Pick a session', $this->screen());
+        $this->assertSame([], $this->session->messages());
+    }
+
+    public function testWithNothingSavedResumeSaysSo(): void
+    {
+        $this->start(store: true);
+
+        $this->type('/resume');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('No earlier sessions here yet', $this->screen());
     }
 
     // ---- running a command yourself -----------------------------------------------------

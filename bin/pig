@@ -27,6 +27,7 @@ use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Tui\Style;
@@ -76,6 +77,9 @@ if (isset($options['help'])) {
       --thinking <l>    off, minimal, low, medium, high, xhigh
       --read-only       no edit, write or bash
       --cwd <path>      where to work (default: here)
+      --continue        pick up the most recent session here
+      --resume <file>   pick up a particular one
+      --no-save         do not write this session to disk
 
     TEXT;
 
@@ -120,8 +124,45 @@ try {
     exit(1);
 }
 
+// Resolved before the UI starts, so a bad --resume is a line on the shell rather than
+// an error inside a screen that has just been taken over.
+$store = null;
+$resumed = null;
+
+if (!isset($options['no-save'])) {
+    $wanted = $options['resume'] ?? null;
+
+    if ($wanted === null && isset($options['continue'])) {
+        $latest = SessionManager::latestFor($cwd);
+
+        if ($latest === null) {
+            fwrite(STDERR, Style::red("No earlier session in {$cwd}.\n"));
+
+            exit(1);
+        }
+
+        $wanted = $latest->path;
+    }
+
+    try {
+        $store = $wanted === null ? SessionManager::create($cwd) : SessionManager::open($wanted);
+    } catch (Throwable $error) {
+        fwrite(STDERR, Style::red($error->getMessage() . "\n"));
+
+        exit(1);
+    }
+
+    $resumed = $wanted === null ? null : $store;
+}
+
+$session = new AgentSession($agent, $cwd, $store);
+
+if ($resumed !== null) {
+    $session->restore($resumed->messages());
+}
+
 $mode = new InteractiveMode(
-    new AgentSession($agent, $cwd),
+    $session,
     Palette::named($theme),
     $cwd,
     VERSION,

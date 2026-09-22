@@ -18,11 +18,15 @@ use Pig\Ai\AssistantMessage;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\ToolCall;
+use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\SessionInfo;
+use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ExternalTool;
 use Pig\Tui\Autocomplete\CombinedAutocompleteProvider;
@@ -31,6 +35,8 @@ use Pig\Tui\Clipboard\SystemClipboard;
 use Pig\Tui\Components\Editor;
 use Pig\Tui\Components\EditorTheme;
 use Pig\Tui\Components\Loader;
+use Pig\Tui\Components\SelectItem;
+use Pig\Tui\Components\SelectList;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
 use Pig\Tui\Components\TruncatedText;
@@ -98,6 +104,9 @@ final class InteractiveMode
 
     private ?Text $banner = null;
 
+    /** The session picker, while it is open. */
+    private ?SelectList $picker = null;
+
     public function __construct(
         private readonly AgentSession $session,
         private Palette $palette,
@@ -129,8 +138,70 @@ final class InteractiveMode
         $this->bindEditor();
         $this->session->subscribe($this->onEvent(...));
 
+        $this->replay();
         $this->running = true;
         $this->tui->start();
+    }
+
+    /**
+     * Draw a conversation that already happened.
+     *
+     * Built from the messages rather than from anything saved about the screen: a
+     * transcript is a view of the conversation, and keeping a second copy of it on disk
+     * is how the two end up disagreeing.
+     */
+    private function replay(): void
+    {
+        $tools = [];
+
+        foreach ($this->session->messages() as $message) {
+            if ($message instanceof UserMessage) {
+                $this->chat->addChild(new UserMessageComponent(self::textOf($message), $this->palette));
+
+                continue;
+            }
+
+            if ($message instanceof BashExecution) {
+                $this->replayBash($message);
+
+                continue;
+            }
+
+            if ($message instanceof AssistantMessage) {
+                $this->chat->addChild(new AssistantMessageComponent($this->palette, $message, $this->hideThinking));
+
+                foreach ($message->content as $block) {
+                    if ($block instanceof ToolCall) {
+                        $tools[$block->id] = $this->addTool($block->id, $block->name, $block->arguments);
+                    }
+                }
+
+                continue;
+            }
+
+            if ($message instanceof ToolResultMessage && isset($tools[$message->toolCallId])) {
+                $tools[$message->toolCallId]->updateResult(
+                    new AgentToolResult($message->content, $message->details),
+                    $message->isError,
+                );
+            }
+        }
+
+        // Nothing is left pending: every tool in a saved conversation has already run,
+        // and one still showing as running would never stop.
+        $this->tools = [];
+    }
+
+    private function replayBash(BashExecution $execution): void
+    {
+        $shown = new ToolExecutionComponent('bash', ['command' => $execution->command], $this->palette);
+        $shown->setExpanded($this->expanded);
+        $shown->updateResult(
+            new AgentToolResult([new TextContent($execution->output)]),
+            $execution->cancelled || ($execution->exitCode ?? 0) !== 0,
+        );
+
+        $this->chat->addChild($shown);
     }
 
     /** Draw, then hand the terminal over until someone quits. */
@@ -551,6 +622,7 @@ final class InteractiveMode
         ['help', 'Show the keys and commands'],
         ['new', 'Forget the conversation and start over'],
         ['session', 'What this session has cost'],
+        ['resume', 'Pick up an earlier conversation'],
         ['theme', 'Switch between dark and light'],
         ['exit', 'Quit'],
     ];
@@ -563,6 +635,7 @@ final class InteractiveMode
             'help' => $this->say($this->commandHelp()),
             'new' => $this->newSession(),
             'session' => $this->say($this->sessionSummary()),
+            'resume' => $this->showSessions(),
             'theme' => $this->switchTheme(),
             'exit', 'quit' => $this->stop(),
             default => $this->say($this->palette->fg('error', "No command called /{$name}. Try /help.")),
@@ -615,6 +688,86 @@ final class InteractiveMode
             number_format($stats->totalTokens()),
             number_format($stats->cost, 4),
         ));
+    }
+
+    /**
+     * Offer the earlier conversations in this directory.
+     *
+     * In this directory only: a session is about a project, and a list mixing three
+     * projects together is a list nobody reads.
+     */
+    private function showSessions(): void
+    {
+        if ($this->session->isStreaming()) {
+            $this->say($this->palette->fg('warning', 'Still working. Press esc first.'));
+
+            return;
+        }
+
+        $sessions = SessionManager::listFor($this->cwd);
+
+        if ($sessions === []) {
+            $this->say('No earlier sessions here yet.');
+
+            return;
+        }
+
+        $items = [];
+
+        foreach ($sessions as $index => $info) {
+            $items[] = new SelectItem(
+                (string) $index,
+                $info->opening === '' ? '(nothing was said)' : $info->opening,
+                $info->when() . ' · ' . $info->messages . ' messages',
+            );
+        }
+
+        $picker = new SelectList($items, 8, $this->palette->selectListTheme());
+        $picker->setSelectHandler(function (SelectItem $item) use ($sessions): void {
+            $this->closePicker();
+            $this->resume($sessions[(int) $item->value]);
+        });
+        $picker->setCancelHandler($this->closePicker(...));
+
+        $this->picker = $picker;
+        $this->status->clear();
+        $this->status->addChild(new Spacer(1));
+        $this->status->addChild(new Text($this->palette->fg('muted', 'Pick a session — enter to open, esc to cancel'), 1, 0));
+        $this->status->addChild($picker);
+
+        // Focus moves to the list, so arrow keys reach it rather than the editor.
+        $this->tui->setFocus($picker);
+        $this->tui->requestRender();
+    }
+
+    private function closePicker(): void
+    {
+        $this->picker = null;
+        $this->status->clear();
+        $this->tui->setFocus($this->editor);
+        $this->tui->requestRender();
+    }
+
+    /** Replace this conversation with a saved one, and redraw it. */
+    private function resume(SessionInfo $info): void
+    {
+        try {
+            $saved = SessionManager::open($info->path);
+        } catch (Throwable $error) {
+            $this->say($this->palette->fg('error', $error->getMessage()));
+
+            return;
+        }
+
+        $this->session->restore($saved->messages());
+        $this->chat->clear();
+        $this->pending->clear();
+        $this->replay();
+        $this->footer->invalidate();
+
+        // Said after the transcript, so it is the last thing on screen rather than the
+        // first thing buried above a conversation.
+        $this->say('Resumed ' . count($saved->messages()) . ' messages from ' . $info->when());
     }
 
     private function switchTheme(): void
@@ -767,12 +920,14 @@ final class InteractiveMode
     }
 
     /** @param array<string, mixed> $arguments */
-    private function addTool(string $id, string $name, array $arguments): void
+    private function addTool(string $id, string $name, array $arguments): ToolExecutionComponent
     {
         $tool = new ToolExecutionComponent($name, $arguments, $this->palette);
         $tool->setExpanded($this->expanded);
         $this->chat->addChild($tool);
         $this->tools[$id] = $tool;
+
+        return $tool;
     }
 
     // ---- the two lines that are not the conversation ------------------------------------------

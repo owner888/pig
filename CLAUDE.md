@@ -165,6 +165,29 @@ added between a tool call and its result is a request the provider rejects outri
 `AgentSession` queues it and flushes on `AgentEndEvent` — before the listeners see that
 event, so a UI redrawing on it already has the message.
 
+`Session\SessionManager` is the conversation on disk: one JSON object per line, appended
+to, under `~/.pig/sessions/<the project's path, flattened>/`. Appending rather than
+rewriting is what makes a session survive whatever ends the process. **Nothing is written
+until the first assistant message** — someone who starts pig, reads the banner and quits
+leaves no file behind, which is what makes the directory worth opening at all; the
+messages before that one are written in front of it when it arrives.
+
+Upstream's is 1129 lines to this one's ~250, and the difference is the tree: upstream
+gives every entry a parent, which is what makes `/branch` and `/tree` possible. That needs
+a UI to navigate it and a compaction system that understands branches, so the log here is
+a line. The file format is upstream's, so adding the parent later is adding a field.
+
+`Session\SessionCodec` has no upstream counterpart at all: a message there is a plain
+object and `JSON.stringify` is the whole persistence layer. PHP objects do not survive
+that, so the shapes are written out by hand — which is the one place that has to change
+when a message type gains a field. A tool's `details` is `mixed`, so it is flattened to
+arrays on the way out; the only thing anything reads back out of it is `edit`'s diff,
+which is strings and integers and survives exactly.
+
+A resumed conversation is **redrawn from its messages**, not from anything saved about the
+screen — `InteractiveMode::replay()`. A transcript is a view of the conversation, and
+keeping a second copy of it on disk is how the two end up disagreeing.
+
 `Interactive\` is the terminal front end. `InteractiveMode` is the arrangement — which event
 becomes which component, which key means what — and `bin/pig` is the entry point. The
 components it draws with are `UserMessageComponent`, `AssistantMessageComponent`,

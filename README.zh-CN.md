@@ -8,7 +8,8 @@ amphp、不用 ncurses，只用标准库。
 
 > **状态：能跑了。** `bin/pig` 就是一个可以在终端里对话的 coding agent：流式回答、七个工具的
 > 实时输出、改动以 diff 呈现、Esc 打断、干活途中可以继续打字，`!命令` 跑一条 shell 命令并把结果
-> 交给模型（`!!命令` 则不进上下文）。还缺的是它周围的东西——会话不会
+> 交给模型（`!!命令` 则不进上下文）。会话边聊边存——`--continue` 接上最近一次，`/resume` 从列表里
+> 挑。还缺的是模型选择器，以及上下文满了之后的压缩。还缺的是它周围的东西——会话不会
 > 保存、没有模型选择器、上下文满了也不会自动压缩。
 
 ## 包划分
@@ -19,7 +20,7 @@ amphp、不用 ncurses，只用标准库。
 | `pig/ai` | `Pig\Ai\` | 统一 LLM API —— **Anthropic 全链路可用**；其余供应商待移植 |
 | `pig/agent-core` | `Pig\Agent\` | 带工具调用和状态管理的 agent 循环 —— **已完成** |
 | `pig/tui` | `Pig\Tui\` | 差分渲染的终端 UI —— **已完成** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **工具、系统提示、交互式 CLI 已完成**；会话持久化待补 |
+| `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **工具、系统提示、交互式 CLI、会话持久化已完成**；上下文压缩待补 |
 
 `pig/async` 在上游没有对应物：JavaScript 自带事件循环，PHP 没有。它的存在是为了让**一次
 `stream_select()` 能同时等模型的 socket 和键盘**——这正是「流式输出途中能打断、能继续打字」
@@ -32,8 +33,8 @@ composer install
 ANTHROPIC_API_KEY=sk-ant-... bin/pig
 ```
 
-`--read-only` 去掉 edit、write、bash；`--theme light` 给浅色终端用；`--model <id>` 换模型。
-进去之后 `/help` 列出所有按键。
+`--read-only` 去掉 edit、write、bash；`--theme light` 给浅色终端用；`--model <id>` 换模型；
+`--continue` 接着上次聊。进去之后 `/help` 列出所有按键。
 
 `examples/ask.php` 是同一套东西，完全不带 UI：
 
