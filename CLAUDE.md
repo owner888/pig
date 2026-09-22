@@ -13,6 +13,20 @@ Upstream at that commit was still published as `@mariozechner/pi-*`; it is `@ear
 
 Reference checkout for diffing lives outside this repo — clone pi and `git checkout d0a4c37`.
 
+### Things taken from upstream HEAD on purpose
+
+The anchor is a floor, not a ban. Where HEAD has solved something the snapshot had not, and
+the developer asked for it, it is ported and listed here:
+
+| From HEAD | Where it lives here | Upstream |
+|---|---|---|
+| Ctrl+V pastes a clipboard image as a temp file, and its path into the prompt | `Pig\Tui\Clipboard`, `Editor::pasteFromClipboard()` | `coding-agent/src/utils/clipboard-image.ts` + `interactive-mode.ts` |
+
+Upstream reads the clipboard through a native Node addon on macOS and Windows and falls back
+to `wl-paste` / `xclip` / PowerShell on Linux. PHP has no addon, so every platform goes
+through a command here — including macOS, which uses `pngpaste` when it is installed and
+AppleScript, which always is, when it is not.
+
 ## Decisions on record
 
 | Decision | Choice | Why |
@@ -42,8 +56,19 @@ that the window was resized; without it the UI would draw at the startup width f
 `ProcessTerminal` refuses to start rather than doing that quietly. `ext-intl` is deliberately *not*
 required — see [Four upstream dependencies that are not needed here](#four-upstream-dependencies-that-are-not-needed-here).
 
-One external binary: `stty`. PHP core has no termios binding and ext-pcntl does not add one, so
-raw mode and the window size go through `proc_open('stty …')` against `/dev/tty`.
+**One required external binary: `stty`.** PHP core has no termios binding and ext-pcntl does not
+add one, so raw mode and the window size go through `proc_open('stty …')` against `/dev/tty`.
+
+Everything else is optional and probed, never assumed. `Pig\Tui\Process::capture()` answers
+`null` for a missing program exactly as it does for an empty result, because the caller does the
+same thing either way — "this machine has no `wl-paste`" is a capability, not an error:
+
+| Binary | For | Where |
+|---|---|---|
+| `pbpaste`, `pngpaste`, `osascript` | clipboard text and images | macOS |
+| `wl-paste`, `xclip` | clipboard text and images | Wayland, X11 |
+| `powershell.exe`, `wslpath` | clipboard images | WSL |
+| `fd` | the `@` file search | anywhere, and `@` offers nothing without it |
 
 ## Layout
 

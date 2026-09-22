@@ -1,0 +1,261 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pig\Tui\Test;
+
+use PHPUnit\Framework\TestCase;
+use Pig\Tui\Clipboard\Clipboard;
+use Pig\Tui\Clipboard\ClipboardFile;
+use Pig\Tui\Clipboard\ClipboardImage;
+use Pig\Tui\Components\Editor;
+use Pig\Tui\Process;
+
+/** A clipboard holding exactly what a test put on it. */
+final class FakeClipboard implements Clipboard
+{
+    public int $imageReads = 0;
+
+    public function __construct(private ?string $text = null, private ?ClipboardImage $image = null)
+    {
+    }
+
+    #[\Override]
+    public function text(): ?string
+    {
+        return $this->text;
+    }
+
+    #[\Override]
+    public function image(): ?ClipboardImage
+    {
+        $this->imageReads++;
+
+        return $this->image;
+    }
+}
+
+final class ClipboardTest extends TestCase
+{
+    private string $directory;
+
+    #[\Override]
+    protected function setUp(): void
+    {
+        $this->directory = sys_get_temp_dir() . '/pig-clipboard-test-' . getmypid();
+
+        if (!is_dir($this->directory)) {
+            mkdir($this->directory, 0o755, true);
+        }
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        foreach (glob($this->directory . '/*') ?: [] as $file) {
+            unlink($file);
+        }
+
+        if (is_dir($this->directory)) {
+            rmdir($this->directory);
+        }
+    }
+
+    private function editor(?string $text = null, ?ClipboardImage $image = null): array
+    {
+        $editor = new Editor();
+        $clipboard = new FakeClipboard($text, $image);
+        $editor->setClipboard($clipboard);
+
+        return [$editor, $clipboard];
+    }
+
+    // ---- running other programs ----------------------------------------------------
+
+    public function testCaptureTakesWhatTheCommandPrinted(): void
+    {
+        $this->assertSame("hello\n", Process::capture(['echo', 'hello']));
+    }
+
+    public function testAnArgumentWithSpacesStaysOneArgument(): void
+    {
+        $this->assertSame("a b c\n", Process::capture(['echo', 'a b c']));
+    }
+
+    public function testAMissingProgramIsNullRatherThanAnError(): void
+    {
+        // "this machine has no wl-paste" is an answer, not a failure.
+        $this->assertNull(Process::capture(['pig-definitely-not-installed']));
+    }
+
+    public function testAFailedCommandIsNull(): void
+    {
+        $this->assertNull(Process::capture(['false']));
+    }
+
+    public function testACommandThatHangsIsKilled(): void
+    {
+        $started = microtime(true);
+
+        // A paste that never returns would freeze the whole UI.
+        $this->assertNull(Process::capture(['sleep', '30'], 0.3));
+        $this->assertLessThan(3.0, microtime(true) - $started);
+    }
+
+    // ---- writing the file ----------------------------------------------------------
+
+    public function testAnImageIsWrittenWithAnExtensionMatchingItsFormat(): void
+    {
+        $path = ClipboardFile::write(new ClipboardImage('PNGBYTES', 'image/png'), $this->directory);
+
+        $this->assertNotNull($path);
+        $this->assertStringEndsWith('.png', $path);
+        $this->assertSame('PNGBYTES', file_get_contents($path));
+    }
+
+    public function testTwoPastesDoNotLandOnTheSameFile(): void
+    {
+        $first = ClipboardFile::write(new ClipboardImage('a', 'image/jpeg'), $this->directory);
+        $second = ClipboardFile::write(new ClipboardImage('b', 'image/jpeg'), $this->directory);
+
+        $this->assertNotSame($first, $second);
+        $this->assertSame('a', file_get_contents((string) $first));
+    }
+
+    public function testAFormatWithNoNameIsNotWritten(): void
+    {
+        // Nothing downstream could tell what the file was, so there is no point.
+        $this->assertNull(ClipboardFile::write(new ClipboardImage('bytes', 'image/tiff'), $this->directory));
+        $this->assertNull(ClipboardFile::write(new ClipboardImage('', 'image/png'), $this->directory));
+    }
+
+    public function testEveryNamedFormatGetsAnExtension(): void
+    {
+        $extensions = array_map(
+            static fn (string $mime): ?string => (new ClipboardImage('x', $mime))->extension(),
+            ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/tiff'],
+        );
+
+        $this->assertSame(['png', 'jpg', 'webp', 'gif', null], $extensions);
+    }
+
+    // ---- pasting into the editor ---------------------------------------------------
+
+    public function testCtrlVPastesAPictureAsThePathToIt(): void
+    {
+        [$editor] = $this->editor(image: new ClipboardImage('PNGBYTES', 'image/png'));
+
+        $editor->handleInput("\x16");
+
+        // A terminal cannot carry image bytes in a line of text, and the agent's tools
+        // take paths, so the path is what goes into the prompt.
+        $text = $editor->text();
+        $this->assertStringContainsString('pig-clipboard-', $text);
+        $this->assertStringEndsWith('.png', $text);
+        $this->assertSame('PNGBYTES', file_get_contents($text));
+
+        unlink($text);
+    }
+
+    public function testThePastedPathLandsAtTheCursor(): void
+    {
+        [$editor] = $this->editor(image: new ClipboardImage('B', 'image/png'));
+        $editor->setText('look at  please');
+
+        // Back up over " please".
+        for ($index = 0; $index < 7; $index++) {
+            $editor->handleInput("\x1b[D");
+        }
+
+        $editor->handleInput("\x16");
+
+        $this->assertStringStartsWith('look at ', $editor->text());
+        $this->assertStringEndsWith(' please', $editor->text());
+
+        preg_match('#/\S+\.png#', $editor->text(), $match);
+        unlink($match[0]);
+    }
+
+    public function testWithNoPictureCtrlVPastesTheText(): void
+    {
+        [$editor] = $this->editor(text: 'some text');
+
+        $editor->handleInput("\x16");
+
+        $this->assertSame('some text', $editor->text());
+    }
+
+    public function testPastedTextKeepsItsLines(): void
+    {
+        [$editor] = $this->editor(text: "one\r\ntwo");
+
+        $editor->handleInput("\x16");
+
+        // Through the paste path, so newlines become lines rather than literal escapes.
+        $this->assertSame("one\ntwo", $editor->text());
+    }
+
+    public function testAPictureIsPreferredOverTheTextBesideIt(): void
+    {
+        [$editor] = $this->editor(text: 'ignored', image: new ClipboardImage('B', 'image/png'));
+
+        $editor->handleInput("\x16");
+
+        $this->assertStringNotContainsString('ignored', $editor->text());
+
+        unlink($editor->text());
+    }
+
+    public function testAnUnnameableFormatFallsBackToTheText(): void
+    {
+        [$editor] = $this->editor(text: 'fallback', image: new ClipboardImage('B', 'image/tiff'));
+
+        $editor->handleInput("\x16");
+
+        $this->assertSame('fallback', $editor->text());
+    }
+
+    public function testAnEmptyClipboardChangesNothing(): void
+    {
+        [$editor] = $this->editor();
+        $editor->setText('typed');
+
+        $editor->handleInput("\x16");
+
+        $this->assertSame('typed', $editor->text());
+    }
+
+    public function testWithoutAClipboardCtrlVIsNotEvenAsked(): void
+    {
+        $editor = new Editor();
+        $editor->setText('typed');
+
+        $editor->handleInput("\x16");
+
+        // And the byte is not inserted either: it would be invisible and undeletable.
+        $this->assertSame('typed', $editor->text());
+    }
+
+    public function testCtrlVDuringABracketedPasteIsJustText(): void
+    {
+        [$editor, $clipboard] = $this->editor(text: 'clipboard');
+
+        $editor->handleInput("\x1b[200~a\x16b\x1b[201~");
+
+        // Inside a paste, every byte is content; the clipboard is not consulted.
+        $this->assertSame('ab', $editor->text());
+        $this->assertSame(0, $clipboard->imageReads);
+    }
+
+    public function testInsertAtCursorIsUsableOnItsOwn(): void
+    {
+        $editor = new Editor();
+        $editor->setText('ab');
+        $editor->handleInput("\x01");
+
+        $editor->insertAtCursor('X');
+
+        $this->assertSame('Xab', $editor->text());
+        $this->assertSame(1, $editor->cursor()['col']);
+    }
+}

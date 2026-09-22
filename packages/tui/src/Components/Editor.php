@@ -10,6 +10,8 @@ use Pig\Tui\Autocomplete\AutocompleteProvider;
 use Pig\Tui\Autocomplete\CombinedAutocompleteProvider;
 use Pig\Tui\Autocomplete\Suggestions;
 use Pig\Tui\Chars;
+use Pig\Tui\Clipboard\Clipboard;
+use Pig\Tui\Clipboard\ClipboardFile;
 use Pig\Tui\Component;
 use Pig\Tui\Graphemes;
 use Pig\Tui\InputHandler;
@@ -64,6 +66,8 @@ final class Editor implements Component, InputHandler
 
     private ?AutocompleteProvider $provider = null;
 
+    private ?Clipboard $clipboard = null;
+
     private ?SelectList $suggestionList = null;
 
     /** @var list<AutocompleteItem> the items $suggestionList was built from, in the same order */
@@ -109,6 +113,17 @@ final class Editor implements Component, InputHandler
         $this->provider = $provider;
     }
 
+    /**
+     * Where Ctrl+V gets what it pastes. Without one, Ctrl+V does nothing.
+     *
+     * Injected rather than read directly, because reading the real clipboard means
+     * running other programs — which a test must not do and a sandbox may refuse.
+     */
+    public function setClipboard(?Clipboard $clipboard): void
+    {
+        $this->clipboard = $clipboard;
+    }
+
     /** @param Closure(string): void|null $handler */
     public function setSubmitHandler(?Closure $handler): void
     {
@@ -142,6 +157,14 @@ final class Editor implements Component, InputHandler
     {
         $this->historyIndex = -1;
         $this->replaceText($text);
+    }
+
+    /** Put $text in at the cursor, as if it had been typed. */
+    public function insertAtCursor(string $text): void
+    {
+        if ($text !== '') {
+            $this->insert($text);
+        }
     }
 
     public function isShowingSuggestions(): bool
@@ -373,6 +396,7 @@ final class Editor implements Component, InputHandler
     private function editingKey(string $data): void
     {
         match (true) {
+            Keys::isCtrl($data, 'v') => $this->pasteFromClipboard(),
             Keys::isCtrlK($data) => $this->deleteToLineEnd(),
             Keys::isCtrlU($data) => $this->deleteToLineStart(),
             Keys::isCtrlW($data), Keys::isAltBackspace($data) => $this->deleteWordBackwards(),
@@ -391,6 +415,46 @@ final class Editor implements Component, InputHandler
             Chars::isPrintable($data) => $this->insert($data),
             default => null,
         };
+    }
+
+    /**
+     * Ctrl+V: a picture if there is one on the clipboard, otherwise the text.
+     *
+     * A picture cannot go into a line of text, so it is written to a file and the file's
+     * path is what gets typed — which the agent's tools can then read, and which reads
+     * as a sentence in the prompt.
+     *
+     * Note that most terminals never send this: Cmd+V on macOS and Ctrl+Shift+V on Linux
+     * are handled by the terminal itself and arrive as a bracketed paste, which is a
+     * different path entirely and cannot carry an image. This is the one that can.
+     */
+    private function pasteFromClipboard(): void
+    {
+        if ($this->clipboard === null) {
+            return;
+        }
+
+        $image = $this->clipboard->image();
+
+        if ($image !== null) {
+            $path = ClipboardFile::write($image);
+
+            if ($path !== null) {
+                $this->insertAtCursor($path);
+
+                return;
+            }
+        }
+
+        // No picture, or one in a format nothing here can name: fall back to the text,
+        // which is what a paste usually means anyway. Through paste() rather than
+        // insertAtCursor(), so that newlines become lines instead of literal escapes and
+        // a wall of text still gets held behind a marker.
+        $text = $this->clipboard->text();
+
+        if ($text !== null && $text !== '') {
+            $this->paste($text);
+        }
     }
 
     /**

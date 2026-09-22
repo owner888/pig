@@ -7,7 +7,7 @@ declare(strict_types=1);
 $root = dirname(__DIR__);
 $files = [];
 
-foreach (['packages', 'test', 'bin'] as $dir) {
+foreach (['packages', 'test', 'bin', 'examples'] as $dir) {
     if (!is_dir("{$root}/{$dir}")) {
         continue;
     }
