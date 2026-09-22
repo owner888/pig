@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Interactive;
 use Closure;
 use Pig\Tui\Autocomplete\AutocompleteProvider;
 use Pig\Tui\Clipboard\Clipboard;
+use Pig\Tui\Caret;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Editor;
 use Pig\Tui\Components\EditorTheme;
@@ -26,7 +27,7 @@ use Pig\Tui\Keys;
  *
  * Ported from upstream's `components/custom-editor.ts`.
  */
-final class CustomEditor implements Component, InputHandler
+final class CustomEditor implements Caret, Component, InputHandler
 {
     /** @var array<string, Closure(): void> */
     private array $handlers = [];
@@ -137,6 +138,13 @@ final class CustomEditor implements Component, InputHandler
     public function disableSubmit(bool $disabled): void
     {
         $this->editor->disableSubmit = $disabled;
+    }
+
+    /** Forwarded, or the terminal's cursor would never find the editor inside here. */
+    #[\Override]
+    public function caret(int $width): ?array
+    {
+        return $this->editor->caret($width);
     }
 
     #[\Override]

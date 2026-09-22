@@ -257,6 +257,58 @@ final class TuiTest extends TestCase
         $this->assertStringContainsString('terminal is 20', $error->getMessage());
     }
 
+    // ---- where the terminal's cursor is left ----------------------------------------
+
+    public function testTheCursorEndsUpAtTheFocusedComponentsCaret(): void
+    {
+        // An input method draws what is being composed, and its candidate list, wherever
+        // the terminal's cursor is. Left at the bottom of the frame — where writing one
+        // leaves it — typing Chinese puts the pinyin over the footer.
+        $above = new TextComponent("a\nb");
+        $editor = new TextComponent("cursor here\nsecond");
+        $editor->caret = [1, 4];
+
+        $this->tui->addChild($above);
+        $this->tui->addChild($editor);
+        $this->tui->addChild(new TextComponent('footer'));
+        $this->tui->setFocus($editor);
+        $this->tui->start();
+
+        $output = $this->frame();
+
+        // Five lines drawn, cursor at the last; the caret is on row 3, four columns in.
+        $this->assertStringEndsWith("\x1b[1A\r\x1b[4C", $output);
+    }
+
+    public function testAComponentWithNoCaretLeavesTheCursorWhereItWas(): void
+    {
+        $this->tui->addChild(new TextComponent("one\ntwo"));
+        $this->tui->start();
+
+        $this->assertStringEndsWith("\x1b[?2026l", $this->frame());
+    }
+
+    public function testTheNextFrameStillCountsRowsFromWhereTheCursorActuallyIs(): void
+    {
+        // placeCaret moves the cursor off the bottom line, so the differential draw that
+        // follows has to count from the caret and not from the frame's last row.
+        $editor = new TextComponent("one\ntwo");
+        $editor->caret = [0, 0];
+
+        $this->tui->addChild($editor);
+        $this->tui->addChild(new TextComponent('tail'));
+        $this->tui->setFocus($editor);
+        $this->tui->start();
+        $this->frame();
+
+        $editor->text = "one\nchanged";
+        $this->tui->requestRender();
+        $output = $this->frame();
+
+        // The caret left the cursor on row 0; the changed line is row 1, so down one.
+        $this->assertStringContainsString("\x1b[1B\r", $output);
+    }
+
     public function testAFirstFrameThatIsTooWideIsRefusedToo(): void
     {
         // The first frame goes down a different path, and it is the worse one to miss:

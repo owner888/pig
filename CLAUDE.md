@@ -471,6 +471,31 @@ throws with fd's own message.
 
 Regression test: `SearchToolsTest::testABadPatternIsReportedRatherThanReadAsNoMatches`.
 
+### An input method draws where the terminal's cursor is, not where the caret is drawn
+
+A component paints its caret as an inverted cell; the terminal has a cursor of its own,
+and writing a frame leaves that one at the end of the last line. Nothing looked wrong
+until someone typed Chinese: macOS draws the composing text and the candidate list at the
+terminal's cursor, so the pinyin appeared over the footer, three lines below the box it
+was going into.
+
+So `Tui` moves the cursor to the focused component's caret at the end of every frame. A
+component opts in by implementing `Caret` — a small separate interface, like
+`InputHandler` — and reports the caret in its own coordinates; `Container::rowOf()` turns
+that into a row in the frame. The cursor stays hidden; only its position matters.
+
+Two things fall out of it. `cursorRow` has to be updated to the caret, or the next
+differential draw counts rows from a bottom the cursor is no longer at. And `drawAll()`
+now starts with `\r`, because the caret can leave the cursor part-way along a line and
+that path writes from wherever it is.
+
+A wrapper has to forward `caret()` or the whole thing silently does nothing —
+`Interactive\CustomEditor` wraps the editor, and that is exactly what it did at first.
+
+Regression tests: `TuiTest::testTheCursorEndsUpAtTheFocusedComponentsCaret`,
+`testTheNextFrameStillCountsRowsFromWhereTheCursorActuallyIs`, and
+`EditorTest::testTheCaretIsMeasuredInColumnsNotCharacters`.
+
 ### `fwrite()` to a terminal returns short, and STDOUT is non-blocking whether you asked or not
 
 `ProcessTerminal::write()` called `fwrite()` once and ignored what it returned. A frame is

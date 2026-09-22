@@ -199,12 +199,14 @@ class Tui extends Container
 
         if ($this->previousLines === []) {
             $this->drawAll($lines, $width, clear: false);
+            $this->placeCaret($width);
 
             return;
         }
 
         if ($widthChanged) {
             $this->drawAll($lines, $width, clear: true);
+            $this->placeCaret($width);
 
             return;
         }
@@ -219,11 +221,49 @@ class Tui extends Container
         // is in scrollback, out of the cursor's reach, so the screen is redrawn instead.
         if ($firstChanged < $this->cursorRow - $height + 1) {
             $this->drawAll($lines, $width, clear: true);
+            $this->placeCaret($width);
 
             return;
         }
 
         $this->drawFrom($firstChanged, $lines, $width);
+        $this->placeCaret($width);
+    }
+
+    /**
+     * Leave the terminal's cursor where the focused component's caret is.
+     *
+     * Writing a frame leaves the cursor at the end of the last line, which is the bottom
+     * of the screen. An input method draws the text being composed, and its candidate
+     * list, wherever that cursor is — so typing Chinese put the pinyin and the candidates
+     * over the footer instead of in the box they were going into.
+     *
+     * The cursor stays hidden: what is seen is still the component's own inverted cell.
+     * This is only about where the terminal believes it is.
+     */
+    private function placeCaret(int $width): void
+    {
+        if (!$this->focused instanceof Caret) {
+            return;
+        }
+
+        $caret = $this->focused->caret($width);
+        $top = $caret === null ? null : $this->rowOf($this->focused, $width);
+
+        if ($caret === null || $top === null) {
+            return;
+        }
+
+        $row = $top + $caret[0];
+        $up = $this->cursorRow - $row;
+        $buffer = $up > 0 ? "\x1b[{$up}A" : ($up < 0 ? "\x1b[" . -$up . 'B' : '');
+        $buffer .= "\r" . ($caret[1] > 0 ? "\x1b[{$caret[1]}C" : '');
+
+        $this->terminal->write($buffer);
+
+        // Recorded, or the next differential draw would count rows from the bottom of a
+        // frame the cursor is no longer at the bottom of.
+        $this->cursorRow = $row;
     }
 
     /** @param list<string> $lines */
@@ -231,7 +271,9 @@ class Tui extends Container
     {
         // \e[3J clears the scrollback as well, so a redraw does not leave the previous
         // frame sitting above the new one for the user to scroll back into.
-        $buffer = "\x1b[?2026h" . ($clear ? "\x1b[3J\x1b[2J\x1b[H" : '');
+        // \r because the caret may have left the cursor part-way along a line, and the
+        // first line below is written from wherever it is.
+        $buffer = "\x1b[?2026h" . ($clear ? "\x1b[3J\x1b[2J\x1b[H" : "\r");
 
         foreach ($lines as $index => $line) {
             // Checked here as well as in drawFrom, and for the same reason. A too-wide

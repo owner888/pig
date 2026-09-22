@@ -14,6 +14,7 @@ use Pig\Tui\Clipboard\Clipboard;
 use Pig\Tui\Clipboard\ClipboardFile;
 use Pig\Tui\Component;
 use Pig\Tui\Graphemes;
+use Pig\Tui\Caret;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
 use Pig\Tui\Width;
@@ -32,7 +33,7 @@ use Pig\Tui\Width;
  * line, up and down move between visual ones, because that is what the cursor looks like
  * it is doing.
  */
-final class Editor implements Component, InputHandler
+final class Editor implements Caret, Component, InputHandler
 {
     /** Reverse video for the block cursor, and back to normal. */
     private const string CURSOR_ON = "\x1b[7m";
@@ -202,6 +203,24 @@ final class Editor implements Component, InputHandler
     public function invalidate(): void
     {
         // Nothing is cached: the text is laid out fresh each frame.
+    }
+
+    /**
+     * Where the caret is, for the terminal's own cursor to follow.
+     *
+     * One row down for the top border, and the column is measured rather than counted:
+     * the text before the caret may be CJK, which is two columns a character.
+     */
+    #[\Override]
+    public function caret(int $width): ?array
+    {
+        foreach ($this->layout($width) as $row => $line) {
+            if ($line->cursorPos !== null) {
+                return [$row + 1, Width::visible(substr($line->text, 0, $line->cursorPos))];
+            }
+        }
+
+        return null;
     }
 
     #[\Override]

@@ -479,4 +479,47 @@ final class EditorTest extends TestCase
         // At an empty prompt Ctrl+C means quit, and only the application knows that.
         $this->assertSame('hello', $this->editor->text());
     }
+
+    // ---- where the terminal's cursor should sit -------------------------------------
+
+    public function testTheCaretIsOneRowDownForTheBorder(): void
+    {
+        $editor = new Editor();
+
+        $this->assertSame([1, 0], $editor->caret(40));
+    }
+
+    public function testTheCaretFollowsTypingAcrossTheLine(): void
+    {
+        $editor = new Editor();
+        $editor->setText('hello');
+
+        $this->assertSame([1, 5], $editor->caret(40));
+    }
+
+    public function testTheCaretIsMeasuredInColumnsNotCharacters(): void
+    {
+        // Two columns a character, which is the whole reason this cannot be a count of
+        // characters: an input method draws its candidates at the terminal's cursor.
+        $editor = new Editor();
+        $editor->setText('你好');
+
+        $this->assertSame([1, 4], $editor->caret(40));
+    }
+
+    public function testTheCaretFollowsAWrappedLineDown(): void
+    {
+        $editor = new Editor();
+        $editor->setText(str_repeat('x', 25));
+
+        $this->assertSame([2, 5], $editor->caret(20));
+    }
+
+    public function testTheCaretFollowsSeveralLinesDown(): void
+    {
+        $editor = new Editor();
+        $editor->setText("one\ntwo\nthree");
+
+        $this->assertSame([3, 5], $editor->caret(40));
+    }
 }
