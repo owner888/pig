@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\Tui;
 
+use Closure;
+
 /**
  * Run a command and take what it printed.
  *
@@ -19,6 +21,9 @@ final class Process
 
     /** How long to sleep between reads while waiting. */
     private const int POLL_MICROSECONDS = 5_000;
+
+    /** Exit code for a command this killed rather than let finish. */
+    public const int STOPPED = -1;
 
     /**
      * Standard output, or null when the command failed, was not found, or timed out.
@@ -92,5 +97,90 @@ final class Process
         $exit = proc_close($process);
 
         return $timedOut || $exit !== 0 ? null : $output;
+    }
+
+    /**
+     * Run a command and hand its output to $onLine as the lines arrive.
+     *
+     * For a program that can produce far more than is wanted — a search across a large
+     * repository — where waiting for it to finish means holding all of that in memory
+     * for nothing. Returning false from $onLine kills it there and then.
+     *
+     * @param list<string>          $command
+     * @param Closure(string): bool $onLine  false to stop reading and kill the command
+     * @return int the exit code, or STOPPED when $onLine asked to stop
+     */
+    public static function stream(array $command, Closure $onLine, float $timeout = self::DEFAULT_TIMEOUT): int
+    {
+        if ($command === []) {
+            throw new TuiError('Process::stream() needs a command');
+        }
+
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        } finally {
+            restore_error_handler();
+        }
+
+        if (!is_resource($process)) {
+            return self::STOPPED;
+        }
+
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
+        $buffer = '';
+        $stopped = false;
+        $deadline = microtime(true) + $timeout;
+
+        while (true) {
+            $chunk = stream_get_contents($pipes[1]);
+            stream_get_contents($pipes[2]);
+            $buffer .= (string) $chunk;
+
+            // Only whole lines are delivered; the tail of a half-read line waits for the
+            // rest, because a caller parsing JSON per line cannot do anything with half.
+            while (($newline = strpos($buffer, "\n")) !== false) {
+                $line = substr($buffer, 0, $newline);
+                $buffer = substr($buffer, $newline + 1);
+
+                if (!$onLine($line)) {
+                    $stopped = true;
+
+                    break 2;
+                }
+            }
+
+            $status = proc_get_status($process);
+
+            if (!$status['running'] && ($chunk === false || $chunk === '')) {
+                break;
+            }
+
+            if (microtime(true) >= $deadline) {
+                $stopped = true;
+
+                break;
+            }
+
+            if ($status['running']) {
+                usleep(self::POLL_MICROSECONDS);
+            }
+        }
+
+        if ($stopped) {
+            proc_terminate($process, 9);
+        } elseif ($buffer !== '') {
+            $onLine($buffer);
+        }
+
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        $exit = proc_close($process);
+
+        return $stopped ? self::STOPPED : $exit;
     }
 }

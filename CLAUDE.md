@@ -68,7 +68,18 @@ same thing either way — "this machine has no `wl-paste`" is a capability, not 
 | `pbpaste`, `pngpaste`, `osascript` | clipboard text and images | macOS |
 | `wl-paste`, `xclip` | clipboard text and images | Wayland, X11 |
 | `powershell.exe`, `wslpath` | clipboard images | WSL |
-| `fd` | the `@` file search | anywhere, and `@` offers nothing without it |
+| `fd` | the `@` file picker in `pig/tui` | anywhere; `@` offers nothing without it |
+
+**`fd` and `rg` are required by the `find` and `grep` tools**, which is upstream's design and
+the developer's decision. A PHP walk with `.gitignore` support was written and measured first —
+about 220ms over a 100k-file tree against fd's ~40 — and then deleted: matching upstream's
+search semantics exactly is worth more than saving an install step, and two implementations
+that can disagree about which files exist is a bug the model would have to debug.
+
+What is **not** ported is upstream's `ensureTool()`, which downloads both from GitHub releases
+when they are missing. Fetching and running a binary on someone's machine is not something this
+project does. A missing tool is an error naming the one command that installs it —
+`ExternalTool`, which also knows that Debian calls `fd` `fdfind`.
 
 ## Layout
 
@@ -271,6 +282,20 @@ Only asked on a terminal that draws images, since nothing else uses the answer.
 
 Regression tests: `ImageTest::testTheReplyIsTakenOutOfTheInputAndTheRestStillArrives` and
 `testATerminalThatNeverAnswersDoesNotSwallowTyping`.
+
+### `--ignore-file` applies a nested `.gitignore` in the wrong place
+
+Upstream's `find` collects every `.gitignore` below the search root and passes each one to
+`fd` as `--ignore-file`, so that nested ones apply outside a git repository too. They do not
+apply *where they sit*: `--ignore-file` patterns are matched against the whole search root, so
+a `src/.gitignore` containing `generated/` also excludes `other/generated/`, and files that
+should have been found are silently missing.
+
+Both tools already have the flag for this. `--no-require-git` makes `fd` and `rg` read
+`.gitignore` outside a repository with the ordinary nesting rules, which is what was wanted.
+So the collection is not ported and the flag is passed instead.
+
+Regression test: `SearchToolsTest::testANestedGitignoreAppliesOutsideAGitRepositoryToo`.
 
 ### A per-line prefix has to go on after the wrap, not before
 
