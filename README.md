@@ -13,7 +13,8 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 > last one, `/resume` picks from a list. When the context fills it summarises itself and
 > carries on, which `/compact` also does on demand, and `/model` switches models mid-session.
 > Skills are picked up from `~/.pig/skills` and from Claude's and Codex's folders too, and
-> images a tool returns are drawn in the terminal.
+> images a tool returns are drawn in the terminal. Hooks are PHP files that can block a
+> tool, edit what the model is shown, or add commands of their own.
 
 ## Packages
 
@@ -23,7 +24,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 | `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic, OpenAI chat-completions, OpenAI Responses and Gemini all stream end to end** |
 | `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — **done** |
 | `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — **done** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions, compaction, model switching and skills done** |
+| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions, compaction, model switching, skills and hooks done** |
 
 `pig/async` has no counterpart upstream: JavaScript ships an event loop and PHP does not. It
 exists so one `stream_select()` can wait on the model's socket and on the keyboard at the same
@@ -58,6 +59,32 @@ Settings live in `~/.pig/settings.json`, and a project can override them in
 
 A markdown file in `~/.pig/commands/` or `.pig/commands/` becomes a slash command: `review.md`
 is `/review`, its body is the prompt, and `$1` and `$@` are filled from what follows.
+
+A PHP file in `~/.pig/hooks/` or `.pig/hooks/` that returns a callable is a hook. It gets
+sixteen events — every tool call and result, every turn, the context on its way to the model,
+compaction, `/tree`, startup and shutdown — and can block a tool, rewrite what the model is
+shown, or add a slash command of its own:
+
+```php
+<?php // ~/.pig/hooks/no-force-push.php
+
+use Pig\CodingAgent\Hooks\HookApi;
+use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
+
+return function (HookApi $pi): void {
+    $pi->on('tool_call', function ($event) {
+        if ($event->toolName === 'bash' && str_contains($event->input['command'] ?? '', '--force')) {
+            return new ToolCallEventResult(block: true, reason: 'No force pushes from here.');
+        }
+
+        return null;
+    });
+};
+```
+
+A hook runs inside pig, so it can hand back an object and reach pig's own classes — and a
+hook that loops or calls `exit()` takes the session with it. Broken ones are named on the
+shell at startup rather than crashing; `/hooks` lists what loaded and `--no-hooks` skips them.
 
 Skills are folders with a `SKILL.md` in them. pig reads `~/.pig/skills` and `.pig/skills`, and
 also `~/.claude/skills`, `.claude/skills` and `~/.codex/skills`, so a skill written for another

@@ -11,6 +11,7 @@ amphp、不用 ncurses，只用标准库。
 > 交给模型（`!!命令` 则不进上下文）。会话边聊边存——`--continue` 接上最近一次，`/resume` 从列表里
 > 挑。上下文快满了会自我总结之后接着聊，`/compact` 也可以随时手动压一次，`/model` 中途换模型。
 > skills 从 `~/.pig/skills` 读，也顺带读 Claude 和 Codex 的那几个目录；工具返回的图片直接画在终端里。
+> hooks 是 PHP 文件，能拦下一次工具调用、改写模型看到的内容，或者自己加一条斜杠命令。
 
 ## 包划分
 
@@ -20,7 +21,7 @@ amphp、不用 ncurses，只用标准库。
 | `pig/ai` | `Pig\Ai\` | 统一 LLM API —— **Anthropic、OpenAI chat-completions、OpenAI Responses、Gemini 四条全链路可用** |
 | `pig/agent-core` | `Pig\Agent\` | 带工具调用和状态管理的 agent 循环 —— **已完成** |
 | `pig/tui` | `Pig\Tui\` | 差分渲染的终端 UI —— **已完成** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **工具、系统提示、交互式 CLI、会话持久化、上下文压缩、模型切换、skills 已完成** |
+| `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **工具、系统提示、交互式 CLI、会话持久化、上下文压缩、模型切换、skills、hooks 已完成** |
 
 `pig/async` 在上游没有对应物：JavaScript 自带事件循环，PHP 没有。它的存在是为了让**一次
 `stream_select()` 能同时等模型的 socket 和键盘**——这正是「流式输出途中能打断、能继续打字」
@@ -52,6 +53,31 @@ Zai、Mistral——这五家说的都是 OpenAI chat-completions。设好对应�
 
 `~/.pig/commands/` 或 `.pig/commands/` 下的一个 md 文件就是一条斜杠命令：`review.md` 就是
 `/review`，正文就是 prompt，`$1`、`$@` 由后面跟的参数填进去。
+
+`~/.pig/hooks/` 或 `.pig/hooks/` 下一个「返回 callable」的 PHP 文件就是一个 hook。它能收到十六个
+事件——每次工具调用和它的结果、每一轮、发给模型之前的上下文、压缩、`/tree`、启动和退出——可以拦下
+一次工具调用、改写模型看到的内容，或者自己注册一条斜杠命令：
+
+```php
+<?php // ~/.pig/hooks/no-force-push.php
+
+use Pig\CodingAgent\Hooks\HookApi;
+use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
+
+return function (HookApi $pi): void {
+    $pi->on('tool_call', function ($event) {
+        if ($event->toolName === 'bash' && str_contains($event->input['command'] ?? '', '--force')) {
+            return new ToolCallEventResult(block: true, reason: '这里不许 force push。');
+        }
+
+        return null;
+    });
+};
+```
+
+hook 跑在 pig 进程里——所以它能直接返回对象、也能用 pig 自己的类；代价是 hook 里一个死循环或者一句
+`exit()` 就能把整个会话带走。写坏了的 hook 会在启动时报到 shell 上而不是直接崩掉；`/hooks` 列出
+加载了哪些，`--no-hooks` 则一个都不加载。
 
 skill 就是一个带 `SKILL.md` 的文件夹。pig 读 `~/.pig/skills` 和 `.pig/skills`，同时也读
 `~/.claude/skills`、`.claude/skills` 和 `~/.codex/skills`——给别的 agent 写的 skill 在这儿直接能用。

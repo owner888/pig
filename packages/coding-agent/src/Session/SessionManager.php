@@ -221,6 +221,56 @@ final class SessionManager
         return $this->leaf;
     }
 
+    /**
+     * What would be left behind by moving the leaf to $id, oldest first.
+     *
+     * The messages on the branch being talked on that the branch under $id does not
+     * have. Computed by comparing the two paths rather than by taking everything after
+     * $id, because $id may be on another branch entirely — in which case what is being
+     * left is everything past the point the two paths last agreed.
+     *
+     * Unresolved: these are the entries as they were written, not the conversation they
+     * stand for, so a compaction summary here is the summary and not the messages it
+     * replaced. A caller looking at what is being abandoned wants the entries.
+     *
+     * @return list<mixed>
+     */
+    public function abandoning(?string $id): array
+    {
+        $target = [];
+
+        foreach ($this->pathTo($id) as $entryId) {
+            $target[$entryId] = true;
+        }
+
+        $left = [];
+
+        foreach ($this->pathTo($this->leaf) as $entryId) {
+            if (!isset($target[$entryId])) {
+                $left[] = $this->entries[$entryId]['message'];
+            }
+        }
+
+        return $left;
+    }
+
+    /**
+     * The entry ids from the root down to $id.
+     *
+     * @return list<string>
+     */
+    private function pathTo(?string $id): array
+    {
+        $path = [];
+
+        while ($id !== null && isset($this->entries[$id])) {
+            array_unshift($path, $id);
+            $id = $this->entries[$id]['parent'];
+        }
+
+        return $path;
+    }
+
     /** How many entries call $parent their parent — two or more means a fork. */
     private function childCount(?string $parent): int
     {

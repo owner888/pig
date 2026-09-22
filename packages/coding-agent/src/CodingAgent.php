@@ -12,6 +12,8 @@ use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
+use Pig\CodingAgent\Hooks\HookedTool;
+use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Prompt\ContextFile;
@@ -36,6 +38,8 @@ final class CodingAgent
      * @param list<string>           $tools        tool names, as ToolSet knows them
      * @param list<ContextFile>|null $contextFiles discovered from $cwd when not given
      * @param list<Skill>            $skills       what the model may reach for
+     * @param HookRunner|null        $hooks        wrapped around the tools, and given the
+     *                                             context on its way to the model
      */
     public static function create(
         Model $model,
@@ -47,14 +51,22 @@ final class CodingAgent
         ?array $contextFiles = null,
         ThinkingLevel $thinking = ThinkingLevel::Off,
         array $skills = [],
+        ?HookRunner $hooks = null,
     ): Agent {
         $agent = new Agent(new AgentOptions(
             apiKey: $apiKey ?? self::apiKey($model),
             convertToLlm: self::toLlm(...),
+            // The `context` event. It runs here rather than in `toLlm` because a hook
+            // edits the conversation the agent keeps, not the wire format it becomes:
+            // a hook that wants to drop a message should not have to know what an
+            // Anthropic content block looks like.
+            transformContext: $hooks === null
+                ? null
+                : static fn (array $messages): array => $hooks->emitContext($messages),
         ));
 
         $agent->setModel($model);
-        $agent->setTools(ToolSet::create($cwd, $tools));
+        $agent->setTools(HookedTool::wrap(ToolSet::create($cwd, $tools), $hooks ?? new HookRunner()));
         $agent->setThinkingLevel($thinking);
         $agent->setSystemPrompt(SystemPrompt::build(
             $cwd,

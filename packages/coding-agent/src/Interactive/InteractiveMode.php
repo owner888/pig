@@ -28,6 +28,14 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Export\HtmlExport;
+use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
+use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
+use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
+use Pig\CodingAgent\Hooks\Events\SessionSwitchEvent;
+use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Hooks\HookError;
+use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Hooks\RegisteredCommand;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
@@ -120,6 +128,11 @@ final class InteractiveMode
     /** @var list<FileCommand> prompts kept as files, reachable as `/name` */
     private array $fileCommands = [];
 
+    private ?HookRunner $hooks = null;
+
+    /** @var array<string, RegisteredCommand> what the hooks added, by name */
+    private array $hookCommands = [];
+
     /** What was chosen last time, and where the choices made here are remembered. */
     private readonly Settings $settings;
 
@@ -146,11 +159,13 @@ final class InteractiveMode
         ?Clipboard $clipboard = null,
         array $fileCommands = [],
         ?Settings $settings = null,
+        ?HookRunner $hooks = null,
     ) {
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
         $this->skills = $skills;
         $this->fileCommands = $fileCommands;
+        $this->hooks = $hooks;
         $this->settings = $settings ?? Settings::inMemory();
         $this->hideThinking = $this->settings->hideThinking();
         $this->clipboard = $clipboard ?? new SystemClipboard();
@@ -164,6 +179,17 @@ final class InteractiveMode
         $this->status = new Container();
         $this->editor = new CustomEditor(new Editor($palette->editorTheme()));
         $this->footer = new FooterComponent($session, $palette, $cwd);
+
+        // Last, because reporting a hook's complaints needs the transcript to report
+        // them into, and a name taken twice is a complaint made while reading the hooks.
+        if ($hooks !== null) {
+            $hooks->onError($this->sayHookError(...));
+            [$this->hookCommands, $clashes] = $hooks->commands();
+
+            foreach ($clashes as $clash) {
+                $hooks->emitError($clash);
+            }
+        }
     }
 
     /** Wire everything up and draw the first frame. */
@@ -176,6 +202,7 @@ final class InteractiveMode
 
         $this->replay();
         $this->running = true;
+        $this->hooks?->emit(new SessionStartEvent());
         $this->tui->start();
     }
 
@@ -275,6 +302,12 @@ final class InteractiveMode
 
         $this->running = false;
         $this->working?->stop();
+
+        // Before the session is let go of, so a hook that wants to write something down
+        // still has a session to read. Nothing after this point is drawn — the terminal
+        // is about to be handed back — so a hook that complains here complains to stderr
+        // through whatever it uses itself.
+        $this->hooks?->emit(new SessionShutdownEvent());
         $this->session->dispose();
 
         // Stopped here and not only in run()'s finally: whoever calls this wants the
@@ -363,6 +396,13 @@ final class InteractiveMode
             $names = array_map(static fn (Skill $skill): string => $skill->name, $this->skills);
 
             $sections[] = $this->palette->fg('mdHeading', '[Skills]') . "\n"
+                . $this->palette->fg('muted', '  ' . implode(', ', $names));
+        }
+
+        if ($this->hooks !== null && !$this->hooks->isEmpty()) {
+            $names = array_map(basename(...), $this->hooks->paths());
+
+            $sections[] = $this->palette->fg('mdHeading', '[Hooks]') . "\n"
                 . $this->palette->fg('muted', '  ' . implode(', ', $names));
         }
 
@@ -539,6 +579,13 @@ final class InteractiveMode
                         $command->description,
                     ),
                     $this->fileCommands,
+                ),
+                ...array_map(
+                    static fn (RegisteredCommand $command): SlashCommand => new SlashCommand(
+                        $command->name,
+                        $command->description,
+                    ),
+                    array_values($this->hookCommands),
                 ),
             ],
             $this->cwd,
@@ -768,6 +815,7 @@ final class InteractiveMode
         ['resume', 'Pick up an earlier conversation'],
         ['tree', 'Go back to an earlier point and take it somewhere else'],
         ['theme', 'Switch between dark and light'],
+        ['hooks', 'What hooks loaded, and what they added'],
         ['exit', 'Quit'],
     ];
 
@@ -787,11 +835,66 @@ final class InteractiveMode
             'resume' => $this->showSessions(),
             'tree' => $this->showTree(),
             'theme' => $this->switchTheme(),
+            'hooks' => $this->say($this->hookList()),
             'exit', 'quit' => $this->stop(),
-            // A command kept as a file is tried last, so a built-in can never be
-            // shadowed by a file someone forgot they wrote.
-            default => $this->runFileCommand($text, $name),
+            // A command from a hook or kept as a file is tried last, so a built-in can
+            // never be shadowed by something someone forgot they wrote.
+            default => $this->runAddedCommand($text, $name),
         };
+    }
+
+    /**
+     * A command a hook registered, or a prompt kept as a file, or neither.
+     *
+     * Hooks first: a hook command is code and a file command is a prompt, and the one
+     * that can look at the arguments should get the chance to.
+     */
+    private function runAddedCommand(string $text, string $name): void
+    {
+        $command = $this->hookCommands[$name] ?? null;
+
+        if ($command === null) {
+            $this->runFileCommand($text, $name);
+
+            return;
+        }
+
+        $arguments = trim(substr($text, strlen($name) + 1));
+
+        try {
+            ($command->handler)($arguments, $this->hooks?->context() ?? new HookContext($this->cwd));
+        } catch (Throwable $error) {
+            // Not fatal: a command that failed is one command, and the session it failed
+            // in is still a session.
+            $this->hooks?->emitError(new HookError($command->hookPath, "/{$name}", $error->getMessage()));
+        }
+
+        $this->tui->requestRender();
+    }
+
+    /** What hooks loaded, where from, and what each one is listening for. */
+    private function hookList(): string
+    {
+        if ($this->hooks === null || $this->hooks->isEmpty()) {
+            return 'No hooks loaded. A .php file in ~/.pig/hooks or .pig/hooks that returns a callable is one.';
+        }
+
+        $lines = [];
+
+        foreach ($this->hooks->paths() as $path) {
+            $lines[] = $this->palette->fg('muted', $path);
+        }
+
+        if ($this->hookCommands !== []) {
+            $lines[] = '';
+
+            foreach ($this->hookCommands as $name => $command) {
+                $lines[] = $this->palette->fg('dim', str_pad('/' . $name, 12))
+                    . $this->palette->fg('muted', $command->description);
+            }
+        }
+
+        return implode("\n", $lines);
     }
 
     /**
@@ -953,12 +1056,44 @@ final class InteractiveMode
             return;
         }
 
+        if (!$this->mayLeave('new')) {
+            return;
+        }
+
+        $previous = $this->session->store()?->path;
+
         $this->session->agent->reset();
         $this->chat->clear();
         $this->pending->clear();
         $this->status->clear();
         $this->footer->invalidate();
         $this->say('New session');
+
+        // The same file: `/new` forgets the conversation but keeps writing where it was
+        // writing, so what the hook is handed is where the conversation it just lost is
+        // to be found — which is what a hook asking for it wants.
+        $this->hooks?->emit(new SessionSwitchEvent('new', $previous));
+    }
+
+    /**
+     * Ask the hooks whether this conversation may be left.
+     *
+     * `/new` throws the conversation away and `/resume` replaces it, and both are one
+     * keystroke — which is exactly the kind of thing a hook is for.
+     *
+     * @param 'new'|'resume' $reason
+     */
+    private function mayLeave(string $reason, ?string $target = null): bool
+    {
+        $refusal = $this->hooks?->emitBeforeSwitch(new SessionBeforeSwitchEvent($reason, $target));
+
+        if ($refusal === null || !$refusal->cancel) {
+            return true;
+        }
+
+        $this->say('A hook stopped that.');
+
+        return false;
     }
 
     private function sessionSummary(): string
@@ -1235,6 +1370,12 @@ final class InteractiveMode
     /** Replace this conversation with a saved one, and redraw it. */
     private function resume(SessionInfo $info): void
     {
+        if (!$this->mayLeave('resume', $info->path)) {
+            return;
+        }
+
+        $previous = $this->session->store()?->path;
+
         try {
             $saved = SessionManager::open($info->path);
         } catch (Throwable $error) {
@@ -1252,6 +1393,7 @@ final class InteractiveMode
         // Said after the transcript, so it is the last thing on screen rather than the
         // first thing buried above a conversation.
         $this->say('Resumed ' . count($saved->messages()) . ' messages from ' . $info->when());
+        $this->hooks?->emit(new SessionSwitchEvent('resume', $previous));
     }
 
     private function switchTheme(): void
@@ -1455,6 +1597,18 @@ final class InteractiveMode
         $this->chat->addChild(new Spacer(1));
         $this->chat->addChild(new Text($this->palette->fg('error', "Error: {$message}"), 1, 0));
         $this->tui->requestRender();
+    }
+
+    /**
+     * A hook that failed, in the transcript.
+     *
+     * A warning and not an error, because the turn carried on: the one failure that does
+     * stop something is a `tool_call` hook, and that one reaches the model as a blocked
+     * tool and is drawn as the tool's own error.
+     */
+    private function sayHookError(HookError $error): void
+    {
+        $this->sayWarning('hook ' . $error->toText());
     }
 
     /** Not an error, but not what was asked for either — upstream's `showWarning()`. */

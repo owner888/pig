@@ -47,10 +47,11 @@ final class Process
      * Exit code, standard output and standard error.
      *
      * @param list<string> $command
+     * @param string|null  $cwd     where to run it; null means wherever pig was started
      * @return array{0: int, 1: string, 2: string} STOPPED as the code when it timed out
      *         or could not be started
      */
-    public static function run(array $command, float $timeout = self::DEFAULT_TIMEOUT): array
+    public static function run(array $command, float $timeout = self::DEFAULT_TIMEOUT, ?string $cwd = null): array
     {
         if ($command === []) {
             throw new TuiError('Process::run() needs a command');
@@ -65,7 +66,7 @@ final class Process
         set_error_handler(static fn (): bool => true);
 
         try {
-            $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $cwd);
         } finally {
             restore_error_handler();
         }

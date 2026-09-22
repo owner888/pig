@@ -25,6 +25,8 @@ use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Models;
 use Pig\Async\Async;
 use Pig\CodingAgent\CodingAgent;
+use Pig\CodingAgent\Hooks\HookLoader;
+use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\ContextFiles;
@@ -89,6 +91,7 @@ if (isset($options['help'])) {
       --resume <file>   pick up a particular one
       --no-save         do not write this session to disk
       --skills-dir <d>  one more folder of skills, on top of the standard ones
+      --no-hooks        start without loading ~/.pig/hooks or .pig/hooks
 
     TEXT;
 
@@ -173,25 +176,11 @@ foreach ($skillWarnings as $warning) {
     fwrite(STDERR, Style::yellow("skill {$warning->path}: {$warning->message}\n"));
 }
 
-try {
-    $agent = CodingAgent::create(
-        $model,
-        $cwd,
-        isset($options['read-only']) ? ToolSet::READ_ONLY : ToolSet::ALL,
-        contextFiles: $contextFiles,
-        thinking: $level,
-        skills: $skills,
-    );
-} catch (Throwable $error) {
-    // Almost always a missing API key, which is worth saying plainly rather than as a
-    // stack trace on a screen that was about to become a UI.
-    fwrite(STDERR, Style::red($error->getMessage() . "\n"));
-
-    exit(1);
-}
-
 // Resolved before the UI starts, so a bad --resume is a line on the shell rather than
 // an error inside a screen that has just been taken over.
+//
+// Before the agent as well as before the UI, because the hooks are handed the session
+// file and the agent is handed the hooks.
 $store = null;
 $resumed = null;
 
@@ -221,7 +210,49 @@ if (!isset($options['no-save'])) {
     $resumed = $wanted === null ? null : $store;
 }
 
-$session = new AgentSession($agent, $cwd, $store, $settings);
+// A hook is a PHP file that runs in this process, so a broken one is reported here, on
+// the shell, next to the malformed skills — and for the same reason: whoever wrote it is
+// whoever just started pig.
+[$loadedHooks, $hookProblems] = isset($options['no-hooks'])
+    ? [[], []]
+    : HookLoader::load($cwd, $settings->hooks());
+
+foreach ($hookProblems as $problem) {
+    fwrite(STDERR, Style::yellow("hook {$problem->toText()}\n"));
+}
+
+$hooks = new HookRunner($loadedHooks, $cwd, $store);
+
+try {
+    $agent = CodingAgent::create(
+        $model,
+        $cwd,
+        isset($options['read-only']) ? ToolSet::READ_ONLY : ToolSet::ALL,
+        contextFiles: $contextFiles,
+        thinking: $level,
+        skills: $skills,
+        hooks: $hooks,
+    );
+} catch (Throwable $error) {
+    // Almost always a missing API key, which is worth saying plainly rather than as a
+    // stack trace on a screen that was about to become a UI.
+    fwrite(STDERR, Style::red($error->getMessage() . "\n"));
+
+    exit(1);
+}
+
+$session = new AgentSession($agent, $cwd, $store, $settings, $hooks);
+
+// Closures rather than values: the model changes with `/model`, and a hook that asked
+// for it at startup should not be told about the one that was replaced.
+$hooks->initialize(
+    getModel: static fn () => $session->model(),
+    isIdle: static fn (): bool => !$session->isStreaming(),
+    abort: static function () use ($session): void {
+        $session->abort();
+    },
+    hasQueuedMessages: static fn (): bool => $session->queued() !== [],
+);
 
 if ($resumed !== null) {
     $session->restore($resumed->messages());
@@ -237,6 +268,7 @@ $mode = new InteractiveMode(
     skills: $skills,
     fileCommands: $fileCommands,
     settings: $settings,
+    hooks: $hooks,
 );
 
 // One fiber around the whole program: the prompt suspends on a socket, the terminal

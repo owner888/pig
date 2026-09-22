@@ -133,18 +133,18 @@ all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439),
 `components/`, `terminal-image.ts` 340, `image.ts` 87). `pig/tui` is done.
 
 `coding-agent` is upstream's biggest package — 23k lines at the anchor, and most of it is not
-the agent: RPC mode, hooks, custom tools, compaction, HTML export, OAuth, twenty-five selector
-components. What is being ported is the part that makes it a coding agent: `core/tools/` (done),
-`core/system-prompt.ts` (done), enough of `core/agent-session.ts` to hold a session (done —
-`Session\AgentSession`), and an interactive mode built on `pig/tui` (done — `Interactive\`).
-The rest is left out until something needs it.
+the agent: RPC mode, custom tools, OAuth, twenty-five selector components. What is being ported
+is the part that makes it a coding agent: `core/tools/` (done), `core/system-prompt.ts` (done),
+enough of `core/agent-session.ts` to hold a session (done — `Session\AgentSession`), an
+interactive mode built on `pig/tui` (done — `Interactive\`), and `core/hooks/` (done —
+`Hooks\`). The rest is left out until something needs it.
 
-`AgentSession` is 1901 lines upstream and ~640 here, because everything it coordinates that is
-not ported is not there to coordinate: auto-retry, branching and tree navigation, hooks, custom
-tools and HTML export. What is left is the conversation, the event fan-out,
+`AgentSession` is 1901 lines upstream and ~800 here, because everything it coordinates that is
+not ported is not there to coordinate: auto-retry, branching to a second session file, and
+custom tools. What is left is the conversation, the event fan-out,
 the queue of messages someone typed while the agent was working, the thinking level, what the
-session has cost, persistence, and compaction. Each of the rest can arrive on its own when
-something needs it.
+session has cost, persistence, compaction, tree navigation and the hook events. Each of the
+rest can arrive on its own when something needs it.
 
 `Theme\Palette` is upstream's `theme.ts` down to what it is for: the two built-in themes as
 tables, and the bridges that turn them into `pig/tui`'s `MarkdownTheme`, `EditorTheme` and
@@ -258,11 +258,11 @@ components it draws with are `UserMessageComponent`, `AssistantMessageComponent`
 `Text` / `Box` / `Markdown`, because `UserMessage` and `AssistantMessage` are already taken by
 `Pig\Ai`; the developer chose matching upstream over matching the sibling package.
 
-`InteractiveMode` is ~1070 lines against upstream's 2439, and the difference is almost entirely
+`InteractiveMode` is ~1200 lines against upstream's 2439, and the difference is almost entirely
 selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
 trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
-an agent you can talk to, twelve slash commands, and the keys. Also not ported: custom-tool
-rendering.
+an agent you can talk to, thirteen slash commands plus whatever the hooks add, and the keys.
+Also not ported: custom-tool rendering and the hook UI context.
 
 `/copy` needed a clipboard *writer*, which nothing had: `SystemClipboard` could only read.
 `Process::feed()` is the piece under it — a command with text on its standard input, which is
@@ -480,14 +480,79 @@ Four of upstream's five protocols are here; the fifth needs an OAuth device flow
 protocol — `google-gemini-cli` is the same Gemini shape behind Google's sign-in, and GitHub
 Copilot is the same again.
 
+`Hooks\` is upstream's `core/hooks/`. A hook is a PHP file in `~/.pig/hooks` or
+`.pig/hooks` that returns a callable; the callable is handed a `HookApi` and registers what
+it wants to hear about:
+
+```php
+<?php // ~/.pig/hooks/no-force-push.php
+
+use Pig\CodingAgent\Hooks\HookApi;
+use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
+
+return function (HookApi $pi): void {
+    $pi->on('tool_call', function ($event) {
+        if ($event->toolName === 'bash' && str_contains($event->input['command'] ?? '', '--force')) {
+            return new ToolCallEventResult(block: true, reason: 'No force pushes from here.');
+        }
+
+        return null;
+    });
+};
+```
+
+**`require`, not a subprocess.** That was a decision with a cost, taken deliberately. A hook
+runs in this process with this process's permissions: it can hand back an object, which a
+command-line hook could not, and it can be written against pig's own classes because it is
+running inside pig. What it cannot be given is a timeout or any isolation. A hook that loops
+does not time out; one that calls `exit()` takes the session with it. What *is* caught is
+everything PHP raises as a `Throwable` — including a syntax error, which an included file
+raises as a catchable `ParseError` — so a broken hook is a complaint on the shell at startup
+rather than a crash. `--no-hooks` starts without loading any.
+
+Sixteen of upstream's eighteen events are fired. `session_before_branch` and `session_branch`
+are not: they are about forking a conversation into a second session file, and pig branches
+inside one file instead. Subscribing to either says so rather than silently never firing —
+as does a typo, since the names are a list here rather than eighteen TypeScript overloads.
+
+Four things worth keeping straight:
+
+- **A `tool_call` hook that throws blocks the call.** Upstream's rule and the right one: a
+  hook asked whether a tool may run and answering with an exception has not said yes. The
+  alternative is a `rm -rf` guard that stops working the day someone leaves a typo in it,
+  which is the day it matters. Every other event catches and reports instead — a hook that
+  watches is not allowed to stop the thing it watches.
+- **A handler that returns the wrong type is reported, not ignored.** Treating it as "no
+  opinion" turns a typo into a hook that appears to work.
+- **`context` is chained and nothing else is.** Each `context` handler is given what the last
+  one returned, so two hooks can both edit the conversation without knowing about each other.
+  A `tool_result` handler is given the tool's own output every time, so a hook can always tell
+  the tool from another hook's edit of it.
+- **A hook's note goes in through `prompt()`, not onto the state.** `before_agent_start`
+  returns text that becomes its own user message in front of the prompt — appended to the
+  agent's messages directly it would never reach the session file, and a resumed conversation
+  would be missing the thing that explained it.
+
+`HookedTool` is `tool-wrapper.ts` as a decorator, because PHP has interfaces where TypeScript
+has `{...tool, execute}`. `Process::run()` grew an optional `$cwd` so `$pi->exec()` can run a
+command where the project is.
+
+Not ported from the hook API: `sendMessage()`, `appendEntry()` and `registerMessageRenderer()`,
+which need custom message types the session can store and the UI can draw; and the whole
+`HookUIContext` — `select`, `confirm`, `input`, `editor` — which needs the interactive mode to
+be able to open a picker from inside a tool call. `BeforeAgentStartEventResult` carries text
+for the same reason: upstream's is a `HookMessage`, and the part that survives is the part
+that reaches the model.
+
 What is left in `coding-agent`, none of it deliberately left out, all of it needing something
 that is not here yet:
 
 | Upstream | Needs |
 |---|---|
-| `core/hooks/` (1544 lines) | a place to run user code at every stage of a turn |
-| `core/custom-tools/` (541) | the same, plus tool definitions loaded from disk |
+| `core/custom-tools/` (541) | tool definitions loaded from disk, on the hook loader |
 | `modes/rpc/` | a second way in, for editors rather than people |
+| `branch-summarization.ts` | a summary of the branch being left, for `/tree` |
+| the hook UI context | a picker the interactive mode can open mid-turn |
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 
@@ -902,6 +967,43 @@ Discarding a good reading costs one turn without one; keeping a stale one costs 
 after it.
 
 Regression test: `AgentSessionTest::testCompactingDoesNotLeaveTheSessionAskingToCompactAgain`.
+
+### A hook that fails while being asked for permission has not given it
+
+`tool_call` is the one event whose handler is not wrapped in a `try`. Every other event
+catches a throwing handler, reports it and carries on, because a hook that watches must not
+be able to stop what it watches. Permission is the opposite: a hook asked whether `bash` may
+run `rm -rf` and answering with a `TypeError` has said nothing, and reading nothing as yes is
+how a guard stops working on exactly the day someone leaves a typo in it.
+
+So `HookRunner::emitToolCall()` lets the throwable out and `HookedTool::guard()` turns it into
+a blocked call — `Blocked: a tool_call hook failed, and a hook that cannot answer is not
+consent`, which the model reads as a tool error and can work around. Upstream does the same
+thing in `tool-wrapper.ts` and calls it fail-safe.
+
+Tests: `HookRunnerTest::testAToolCallHandlerThatThrowsIsNotCaughtHere` and
+`testAToolCallHookThatThrowsBlocksTheCall`.
+
+### Two hook files reaching the same path is a fatal error, not a doubled handler
+
+`~/.pig/hooks` symlinked into a project's `.pig/hooks` is a normal way to keep one copy of a
+hook, and the obvious reading is that loading it twice just registers its handlers twice.
+It is worse than that: `require` on a file that declares a function a second time is a fatal
+`Error`, so the second load kills the *first* hook as well and neither works.
+
+`HookLoader` therefore deduplicates on `realpath()` before loading, the same way `Skills`
+does — and for a harder reason. Test:
+`HookLoaderTest::testTheSameFileNamedTwiceIsLoadedOnce`.
+
+### A hook that prints corrupts the screen it printed onto
+
+Hooks load before the UI starts, so an `echo` or a stray `var_dump` in a hook file lands on
+the terminal a moment before the TUI takes it over and redraws across it. What the person
+sees is a session that came up wrong, with nothing to read and nothing to search for.
+
+`HookLoader` wraps the `require` in `ob_start()` and turns anything printed into a load
+complaint naming the file and quoting what it printed. Test:
+`HookLoaderTest::testAFileThatPrintsIsAComplaint`.
 
 ### `stream_socket_pair()` with a dropped peer (tests)
 

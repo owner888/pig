@@ -9,11 +9,14 @@ use Pig\Agent\Agent;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentEvent;
+use Pig\Agent\AgentStartEvent;
 use Pig\Agent\AgentState;
 use Pig\Agent\AgentToolResult;
 use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\ThinkingLevel;
+use Pig\Agent\TurnEndEvent;
+use Pig\Agent\TurnStartEvent;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
 use Pig\Ai\ImageContent;
@@ -29,6 +32,15 @@ use Pig\Ai\UserMessage;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Future;
+use Pig\CodingAgent\Hooks\Events\AgentEndEvent as HookAgentEnd;
+use Pig\CodingAgent\Hooks\Events\AgentStartEvent as HookAgentStart;
+use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
+use Pig\CodingAgent\Hooks\Events\SessionBeforeTreeEvent;
+use Pig\CodingAgent\Hooks\Events\SessionCompactEvent;
+use Pig\CodingAgent\Hooks\Events\SessionTreeEvent;
+use Pig\CodingAgent\Hooks\Events\TurnEndEvent as HookTurnEnd;
+use Pig\CodingAgent\Hooks\Events\TurnStartEvent as HookTurnStart;
+use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Tools\Run;
 use Pig\CodingAgent\Tools\Truncate;
@@ -73,13 +85,23 @@ final class AgentSession
     /** @var list<BashExecution> run while the agent was working, waiting for it to stop */
     private array $pendingBash = [];
 
+    /** How many turns this run has had, for the turn events. */
+    private int $turnIndex = 0;
+
     public function __construct(
         public readonly Agent $agent,
         private readonly string $cwd = '.',
         private readonly ?SessionManager $store = null,
         private readonly ?Settings $settings = null,
+        private readonly ?HookRunner $hooks = null,
     ) {
         $this->unsubscribeAgent = $this->agent->subscribe($this->onAgentEvent(...));
+    }
+
+    /** The hooks this session fires at, if any. */
+    public function hooks(): ?HookRunner
+    {
+        return $this->hooks;
     }
 
     /** Where this session is being written, if it is. */
@@ -136,6 +158,8 @@ final class AgentSession
             $this->flushBash();
         }
 
+        $this->tellHooks($event);
+
         // A queued message leaves the queue *before* the event goes out, so a listener
         // redrawing the "3 messages waiting" line sees three, not four.
         if ($event instanceof MessageStartEvent && $event->message instanceof UserMessage) {
@@ -150,6 +174,46 @@ final class AgentSession
 
         foreach ($this->listeners as $listener) {
             $listener($event);
+        }
+    }
+
+    /**
+     * The four run events, translated for the hooks.
+     *
+     * The agent's own events and the hooks' events are not the same set and are not
+     * meant to be: the agent reports every message and every delta, and a hook is
+     * offered the four moments upstream chose. The turn counter is reset by
+     * `agent_start` rather than kept per session, because upstream's `turnIndex` is
+     * "which turn of this run", which is what a hook watching a long run wants.
+     */
+    private function tellHooks(AgentEvent $event): void
+    {
+        if ($this->hooks === null) {
+            return;
+        }
+
+        if ($event instanceof AgentStartEvent) {
+            $this->turnIndex = 0;
+            $this->hooks->emit(new HookAgentStart());
+
+            return;
+        }
+
+        if ($event instanceof TurnStartEvent) {
+            $this->hooks->emit(new HookTurnStart($this->turnIndex));
+
+            return;
+        }
+
+        if ($event instanceof TurnEndEvent) {
+            $this->hooks->emit(new HookTurnEnd($event->message, $event->toolResults, $this->turnIndex));
+            $this->turnIndex++;
+
+            return;
+        }
+
+        if ($event instanceof AgentEndEvent) {
+            $this->hooks->emit(new HookAgentEnd($event->messages));
         }
     }
 
@@ -212,7 +276,23 @@ final class AgentSession
             throw new AgentError('No model selected.');
         }
 
-        $this->agent->prompt($text, $images);
+        // A hook may put a note in front of the prompt. It goes in as its own user
+        // message rather than being pasted onto the front of theirs, so the transcript
+        // still shows what the person actually typed — and it goes in *through* the
+        // prompt rather than onto the state, so the session file records it and a
+        // resumed conversation still has it.
+        $note = $this->hooks?->emitBeforeAgentStart($text, $images);
+
+        if ($note === null || trim($note->text) === '') {
+            $this->agent->prompt($text, $images);
+
+            return;
+        }
+
+        $this->agent->prompt([
+            new UserMessage($note->text),
+            new UserMessage([new TextContent($text), ...$images]),
+        ]);
     }
 
     /**
@@ -399,8 +479,21 @@ final class AgentSession
             throw new AgentError('Agent is working. Let it finish, or press esc, then go back.');
         }
 
+        $oldLeaf = $this->store->leaf();
+
+        if ($this->hooks !== null) {
+            $leaving = $this->store->abandoning($entryId);
+            $refusal = $this->hooks->emitBeforeTree(new SessionBeforeTreeEvent($entryId, $oldLeaf, $leaving));
+
+            if ($refusal !== null && $refusal->cancel) {
+                throw new AgentError('A hook stopped the jump.');
+            }
+        }
+
         $this->store->goTo($entryId);
         $this->restore($this->store->messages());
+
+        $this->hooks?->emit(new SessionTreeEvent($this->store->leaf(), $oldLeaf));
     }
 
     // ---- making room -------------------------------------------------------------------
@@ -478,12 +571,37 @@ final class AgentSession
         $older = array_slice($messages, 0, $cut);
         $kept = array_slice($messages, $cut);
         [$read, $modified] = Compaction::files($older);
+        $request = Compaction::request($older, Compaction::previousSummary($older), $instructions);
 
-        $text = $this->summarise(
-            $model,
-            Compaction::request($older, Compaction::previousSummary($older), $instructions),
-            $signal,
+        $answer = $this->hooks?->emitBeforeCompact(
+            new SessionBeforeCompactEvent($older, $request, $instructions, $signal),
         );
+
+        if ($answer !== null && $answer->cancel) {
+            throw new AgentError('A hook stopped the compaction.');
+        }
+
+        // A hook that supplied its own summary has done the work, so the model is not
+        // asked. Its `replaced` is taken from the cut rather than from the hook: how many
+        // messages this stands in for is what the session file needs to replay correctly,
+        // and it is not the hook's to get wrong.
+        if ($answer?->compaction !== null) {
+            $summary = new CompactionSummary(
+                $answer->compaction->summary,
+                $answer->compaction->readFiles,
+                $answer->compaction->modifiedFiles,
+                $answer->compaction->tokensBefore,
+                $cut,
+            );
+
+            $this->agent->replaceMessages([$summary, ...$kept]);
+            $this->store?->append($summary);
+            $this->hooks?->emit(new SessionCompactEvent($summary, fromHook: true));
+
+            return $summary;
+        }
+
+        $text = $this->summarise($model, $request, $signal);
 
         if ($text === null) {
             return null;
@@ -493,6 +611,7 @@ final class AgentSession
 
         $this->agent->replaceMessages([$summary, ...$kept]);
         $this->store?->append($summary);
+        $this->hooks?->emit(new SessionCompactEvent($summary));
 
         return $summary;
     }

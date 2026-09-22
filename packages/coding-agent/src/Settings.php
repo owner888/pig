@@ -154,6 +154,22 @@ final class Settings
         return is_int($value) && $value > 0 ? $value : $fallback;
     }
 
+    /**
+     * Hook files named in the settings, on top of the two standard folders.
+     *
+     * Upstream's key exactly: a top-level `hooks` array of paths. The folders are not a
+     * setting there either — they are always read, and `--no-hooks` is how they are not:
+     * a switch here would have to live under `hooks` and that name is already this list.
+     *
+     * @return list<string>
+     */
+    public function hooks(): array
+    {
+        $value = $this->get('hooks');
+
+        return is_array($value) ? array_values(array_map(strval(...), $value)) : [];
+    }
+
     public function skillsEnabled(): bool
     {
         return $this->get('skills.enabled') !== false;

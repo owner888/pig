@@ -23,6 +23,9 @@ use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Hooks\HookApi;
+use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\FileCommand;
@@ -132,6 +135,7 @@ final class InteractiveModeTest extends TestCase
         array $skills = [],
         array $fileCommands = [],
         ?Settings $settings = null,
+        ?HookRunner $hooks = null,
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->settings = $settings ?? Settings::inMemory();
@@ -154,7 +158,7 @@ final class InteractiveModeTest extends TestCase
             default => null,
         };
 
-        $this->session = new AgentSession($agent, $this->cwd, $saved);
+        $this->session = new AgentSession($agent, $this->cwd, $saved, null, $hooks);
 
         if ($resume !== null && $saved !== null) {
             $this->session->restore($saved->messages());
@@ -171,6 +175,7 @@ final class InteractiveModeTest extends TestCase
             $this->clipboard,
             $fileCommands,
             $this->settings,
+            $hooks,
         );
 
         $this->mode->start();
@@ -1159,6 +1164,111 @@ final class InteractiveModeTest extends TestCase
 
         $held();
         $this->settle();
+    }
+
+    // ---- hooks --------------------------------------------------------------------------
+
+    public function testSlashHooksSaysSoWhenThereAreNone(): void
+    {
+        $this->start();
+        $this->type('/hooks');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('No hooks loaded', $this->screen());
+    }
+
+    public function testSlashHooksListsWhatLoadedAndWhatItAdded(): void
+    {
+        $api = new HookApi($this->cwd, '/somewhere/deploy.php');
+        $api->registerCommand('deploy', static fn () => null, 'Ship it');
+
+        $this->start(hooks: $this->runner($api, '/somewhere/deploy.php'));
+        $this->type('/hooks');
+        $this->type(self::ENTER);
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('/somewhere/deploy.php', $screen);
+        $this->assertStringContainsString('/deploy', $screen);
+        $this->assertStringContainsString('Ship it', $screen);
+    }
+
+    public function testACommandAHookRegisteredRunsWithItsArguments(): void
+    {
+        $seen = null;
+        $api = new HookApi($this->cwd, 'deploy.php');
+        $api->registerCommand('deploy', static function (string $arguments) use (&$seen): void {
+            $seen = $arguments;
+        });
+
+        $this->start(hooks: $this->runner($api));
+        $this->type('/deploy staging --now');
+        $this->type(self::ENTER);
+
+        $this->assertSame('staging --now', $seen);
+    }
+
+    public function testACommandThatFailsIsAWarningRatherThanTheEndOfTheSession(): void
+    {
+        $api = new HookApi($this->cwd, 'deploy.php');
+        $api->registerCommand('deploy', static function (): void {
+            throw new RuntimeException('no credentials');
+        });
+
+        $this->start(hooks: $this->runner($api));
+        $this->type('/deploy');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('Warning: hook deploy.php (/deploy): no credentials', $this->screen());
+    }
+
+    public function testAHookCannotShadowABuiltIn(): void
+    {
+        $called = false;
+        $api = new HookApi($this->cwd, 'evil.php');
+        $api->registerCommand('help', static function () use (&$called): void {
+            $called = true;
+        });
+
+        $this->start(hooks: $this->runner($api));
+        $this->type('/help');
+        $this->type(self::ENTER);
+
+        $this->assertFalse($called);
+        $this->assertStringContainsString('ctrl+o', $this->screen());
+    }
+
+    public function testAHookCommandIsOfferedInTheBanner(): void
+    {
+        $api = new HookApi($this->cwd, 'deploy.php');
+        $api->registerCommand('deploy', static fn () => null, 'Ship it');
+
+        $this->start(hooks: $this->runner($api));
+        $this->type("\x0f");
+
+        $this->assertStringContainsString('deploy.php', $this->screen());
+    }
+
+    public function testAHookThatFailsMidRunIsAWarningInTheTranscript(): void
+    {
+        $api = new HookApi($this->cwd, 'watcher.php');
+        $api->on('turn_end', static function (): void {
+            throw new RuntimeException('counted wrong');
+        });
+
+        $this->start(['the answer'], hooks: $this->runner($api, 'watcher.php'));
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('the answer', $screen);
+        $this->assertStringContainsString('Warning: hook watcher.php (turn_end)', $screen);
+    }
+
+    private function runner(HookApi $api, string $path = 'deploy.php'): HookRunner
+    {
+        return new HookRunner([new LoadedHook($path, $path, $api)], $this->cwd);
     }
 
     /**

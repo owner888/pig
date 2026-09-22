@@ -354,6 +354,87 @@ final class SessionManagerTest extends TestCase
         );
     }
 
+    // ---- what a jump would leave behind ------------------------------------------------
+
+    public function testGoingBackOnThisBranchLeavesEverythingAfterThePoint(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer('first'));
+        $target = $session->branch()[1]['id'];
+        $session->append(new UserMessage('two'));
+        $session->append($this->answer('second'));
+
+        $left = $session->abandoning($target);
+
+        $this->assertCount(2, $left);
+        $this->assertSame('two', $left[0]->content[0]->text);
+        $this->assertSame('second', $left[1]->content[0]->text);
+    }
+
+    public function testGoingNowhereLeavesTheWholeConversationBehind(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer('first'));
+
+        $this->assertCount(2, $session->abandoning(null));
+    }
+
+    public function testStayingWhereYouAreLeavesNothingBehind(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer('first'));
+
+        $this->assertSame([], $session->abandoning($session->leaf()));
+    }
+
+    /**
+     * Jumping to another branch leaves everything past the point the two paths last
+     * agreed — which is not "everything after the target", because the target is not on
+     * the branch being left at all.
+     */
+    public function testJumpingToAnotherBranchLeavesOnlyWhatTheTwoDoNotShare(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('shared'));
+        $session->append($this->answer('shared answer'));
+        $fork = $session->leaf();
+
+        $session->append(new UserMessage('first road'));
+        $firstRoad = $session->leaf();
+
+        $session->goTo($fork);
+        $session->append(new UserMessage('second road'));
+        $session->append($this->answer('second answer'));
+
+        $left = $session->abandoning($firstRoad);
+
+        // The two shared messages stay; only this branch's own two are being left.
+        $this->assertCount(2, $left);
+        $this->assertSame('second road', $left[0]->content[0]->text);
+        $this->assertSame('second answer', $left[1]->content[0]->text);
+    }
+
+    /**
+     * Entries, not the conversation they stand for: a summary here is the summary, and
+     * whoever is looking at what is being abandoned wants what was written down.
+     */
+    public function testACompactionSummaryIsLeftBehindAsItself(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer('first'));
+        $target = $session->branch()[0]['id'];
+        $session->append(new CompactionSummary('it was about one thing', replaced: 2));
+
+        $left = $session->abandoning($target);
+
+        $this->assertCount(2, $left);
+        $this->assertInstanceOf(CompactionSummary::class, $left[1]);
+    }
+
     public function testASessionWrittenBeforeTheTreeStillOpens(): void
     {
         $path = $this->home . '/old.jsonl';
