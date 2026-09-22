@@ -10,6 +10,7 @@ amphp、不用 ncurses，只用标准库。
 > 实时输出、改动以 diff 呈现、Esc 打断、干活途中可以继续打字，`!命令` 跑一条 shell 命令并把结果
 > 交给模型（`!!命令` 则不进上下文）。会话边聊边存——`--continue` 接上最近一次，`/resume` 从列表里
 > 挑。上下文快满了会自我总结之后接着聊，`/compact` 也可以随时手动压一次，`/model` 中途换模型。
+> skills 从 `~/.pig/skills` 读，也顺带读 Claude 和 Codex 的那几个目录。
 
 ## 包划分
 
@@ -19,7 +20,7 @@ amphp、不用 ncurses，只用标准库。
 | `pig/ai` | `Pig\Ai\` | 统一 LLM API —— **Anthropic 全链路可用**；其余供应商待移植 |
 | `pig/agent-core` | `Pig\Agent\` | 带工具调用和状态管理的 agent 循环 —— **已完成** |
 | `pig/tui` | `Pig\Tui\` | 差分渲染的终端 UI —— **已完成** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **工具、系统提示、交互式 CLI、会话持久化、上下文压缩、模型切换已完成**；skills 待补 |
+| `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **工具、系统提示、交互式 CLI、会话持久化、上下文压缩、模型切换、skills 已完成**；其余供应商待补 |
 
 `pig/async` 在上游没有对应物：JavaScript 自带事件循环，PHP 没有。它的存在是为了让**一次
 `stream_select()` 能同时等模型的 socket 和键盘**——这正是「流式输出途中能打断、能继续打字」
@@ -37,6 +38,10 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 
 `--model` 不用写全 id，写一部分就行——`--model sonnet`、`--model 'opus 4.1'`——`--model sonnet:high`
 还能顺手把思考档位一起设了。`--models` 列出全部。
+
+skill 就是一个带 `SKILL.md` 的文件夹。pig 读 `~/.pig/skills` 和 `.pig/skills`，同时也读
+`~/.claude/skills`、`.claude/skills` 和 `~/.codex/skills`——给别的 agent 写的 skill 在这儿直接能用。
+`/skills` 列出找到了哪些、各自来自哪个目录。
 
 `examples/ask.php` 是同一套东西，完全不带 UI：
 

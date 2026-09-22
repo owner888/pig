@@ -12,6 +12,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 > out of the conversation). Sessions are saved as they happen — `--continue` picks up the
 > last one, `/resume` picks from a list. When the context fills it summarises itself and
 > carries on, which `/compact` also does on demand, and `/model` switches models mid-session.
+> Skills are picked up from `~/.pig/skills` and from Claude's and Codex's folders too.
 
 ## Packages
 
@@ -21,7 +22,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 | `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic streams end to end**; other providers pending |
 | `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — **done** |
 | `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — **done** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions, compaction and model switching done**; skills pending |
+| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions, compaction, model switching and skills done**; other providers pending |
 
 `pig/async` has no counterpart upstream: JavaScript ships an event loop and PHP does not. It
 exists so one `stream_select()` can wait on the model's socket and on the keyboard at the same
@@ -40,6 +41,10 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 
 `--model` takes a part of a name rather than a whole id — `--model sonnet`, `--model 'opus 4.1'` —
 and `--model sonnet:high` sets the thinking level at the same time. `--models` lists them.
+
+Skills are folders with a `SKILL.md` in them. pig reads `~/.pig/skills` and `.pig/skills`, and
+also `~/.claude/skills`, `.claude/skills` and `~/.codex/skills`, so a skill written for another
+agent works here unchanged. `/skills` lists what was found and where each one came from.
 
 `examples/ask.php` is the same stack with no UI at all:
 

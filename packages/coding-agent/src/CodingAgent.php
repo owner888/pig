@@ -15,6 +15,7 @@ use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Prompt\ContextFile;
+use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Tools\ToolSet;
 
@@ -34,6 +35,7 @@ final class CodingAgent
      *
      * @param list<string>           $tools        tool names, as ToolSet knows them
      * @param list<ContextFile>|null $contextFiles discovered from $cwd when not given
+     * @param list<Skill>            $skills       what the model may reach for
      */
     public static function create(
         Model $model,
@@ -44,6 +46,7 @@ final class CodingAgent
         ?string $appendSystemPrompt = null,
         ?array $contextFiles = null,
         ThinkingLevel $thinking = ThinkingLevel::Off,
+        array $skills = [],
     ): Agent {
         $agent = new Agent(new AgentOptions(
             apiKey: $apiKey ?? self::apiKey($model),
@@ -59,6 +62,7 @@ final class CodingAgent
             SystemPrompt::resolve($systemPrompt),
             SystemPrompt::resolve($appendSystemPrompt),
             $contextFiles,
+            $skills,
         ));
 
         return $agent;

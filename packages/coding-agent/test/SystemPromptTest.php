@@ -8,6 +8,7 @@ use Pig\Agent\AgentError;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\ContextFiles;
+use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Tools\BashTool;
 use Pig\CodingAgent\Tools\ReadTool;
@@ -240,6 +241,45 @@ final class SystemPromptTest extends ToolTestCase
     public function testNoContextFilesMeansNoSection(): void
     {
         $this->assertStringNotContainsString('# Project context', $this->prompt());
+    }
+
+    // ---- skills ------------------------------------------------------------------------
+
+    public function testSkillsAreListedForTheModelToReachFor(): void
+    {
+        $prompt = SystemPrompt::build(
+            $this->cwd,
+            ToolSet::CODING,
+            skills: [new Skill('tidy', 'tidy up a file', '/skills/tidy/SKILL.md', '/skills/tidy', 'user')],
+        );
+
+        $this->assertStringContainsString('<available_skills>', $prompt);
+        $this->assertStringContainsString('<name>tidy</name>', $prompt);
+        $this->assertStringContainsString('/skills/tidy/SKILL.md', $prompt);
+    }
+
+    public function testNoSkillsMeansNoSection(): void
+    {
+        // A hundred skills cost a hundred lines here; none should cost nothing at all.
+        $this->assertStringNotContainsString('<available_skills>', $this->prompt());
+    }
+
+    public function testTheProjectsOwnInstructionsComeBeforeTheSkills(): void
+    {
+        $this->file('AGENTS.md', 'Run the tests with make check.');
+
+        $prompt = SystemPrompt::build(
+            $this->cwd,
+            ToolSet::CODING,
+            skills: [new Skill('tidy', 'tidy up a file', '/skills/tidy/SKILL.md', '/skills/tidy', 'user')],
+        );
+
+        // A skill is a thing to reach for; the rules about how to work here apply
+        // whichever one is reached for, so they are not read past to get to it.
+        $this->assertLessThan(
+            strpos($prompt, '<available_skills>'),
+            strpos($prompt, '# Project context'),
+        );
     }
 
     public function testGivenContextFilesAreUsedInsteadOfLookingForThem(): void

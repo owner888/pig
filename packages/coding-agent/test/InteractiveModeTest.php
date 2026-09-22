@@ -25,6 +25,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Prompt\ContextFile;
+use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\AgentSession;
@@ -121,6 +122,7 @@ final class InteractiveModeTest extends TestCase
         array $context = [],
         bool $store = false,
         ?string $resume = null,
+        array $skills = [],
     ): void {
         $this->answers = $answers;
         $agent = new Agent(new AgentOptions(streamFn: $this->provider(...), apiKey: 'k'));
@@ -154,6 +156,7 @@ final class InteractiveModeTest extends TestCase
             'dark',
             $this->terminal,
             $context,
+            $skills,
         );
 
         $this->mode->start();
@@ -616,6 +619,54 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
 
         $this->assertFalse($this->session->isStreaming());
+    }
+
+    // ---- skills -----------------------------------------------------------------------------
+
+    public function testLoadedSkillsAreListedUnderTheFullList(): void
+    {
+        $this->start(skills: [new Skill('tidy', 'tidy up a file', '/s/tidy/SKILL.md', '/s/tidy', 'user')]);
+
+        $this->type("\x0f");
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('[Skills]', $screen);
+        $this->assertStringContainsString('tidy', $screen);
+    }
+
+    public function testNoSkillsMeansNoEmptyHeading(): void
+    {
+        $this->start();
+
+        $this->type("\x0f");
+
+        $this->assertStringNotContainsString('[Skills]', $this->screen());
+    }
+
+    public function testSkillsSaysWhereEachOneCameFrom(): void
+    {
+        $this->start(skills: [new Skill('tidy', 'tidy up a file', '/s/tidy/SKILL.md', '/s/tidy', 'claude-user')]);
+
+        $this->type('/skills');
+        $this->type(self::ENTER);
+
+        $screen = $this->screen();
+
+        // The same name can live in four places, and a shadowed skill looks exactly like
+        // one that simply does not work.
+        $this->assertStringContainsString('tidy', $screen);
+        $this->assertStringContainsString('claude-user', $screen);
+        $this->assertStringContainsString('/s/tidy/SKILL.md', $screen);
+    }
+
+    public function testWithNoSkillsTheCommandSaysWhereToPutOne(): void
+    {
+        $this->start();
+
+        $this->type('/skills');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('~/.pig/skills', $this->screen());
     }
 
     // ---- models -----------------------------------------------------------------------------

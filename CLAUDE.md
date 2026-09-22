@@ -40,8 +40,8 @@ the developer asked for it, it is ported and listed here:
 
 The anchor's banner is a column of thirteen keys, which is taller than most of the
 conversations it sits above; HEAD moved the list behind `ctrl+o` and put a one-line
-summary in its place. `[Skills]` and `[Extensions]` are sections there too — neither is
-ported, so neither has a heading here to be empty under.
+summary in its place. `[Skills]` and `[Extensions]` are sections there too; `[Skills]` is
+here now, and `[Extensions]` is not ported, so it has no heading to be empty under.
 
 Upstream reads the clipboard through a native Node addon on macOS and Windows and falls back
 to `wl-paste` / `xclip` / PowerShell on Linux. PHP has no addon, so every platform goes
@@ -241,7 +241,7 @@ components it draws with are `UserMessageComponent`, `AssistantMessageComponent`
 `InteractiveMode` is ~1070 lines against upstream's 2439, and the difference is almost entirely
 selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
 trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
-an agent you can talk to, eight slash commands, and the keys. Also not ported: custom-tool
+an agent you can talk to, nine slash commands, and the keys. Also not ported: custom-tool
 rendering, images in tool output, and `/copy` (which needs a clipboard *writer*;
 `SystemClipboard` only reads).
 
@@ -278,8 +278,41 @@ first. The pattern is tried whole before it is split on a colon, because an id c
 running several models against one task — `fnmatch()` is the whole of what `minimatch` was
 doing there, so that is rows of work rather than a dependency when something wants it.
 
-**Skills** (`core/skills.ts`, which the prompt builder would append) is still the one thing
-here deliberately not ported, and it is noted where it would go.
+`Prompt\Skills` is upstream's `core/skills.ts`. A skill is a folder with a `SKILL.md` whose
+frontmatter says what it is for; only the name and description reach the prompt, and the
+instructions are a file the model reads when a task matches. That is what makes many skills
+affordable — a hundred of them cost a hundred lines, not a hundred documents.
+
+Five roots, and they are upstream's, which means other tools' as well as pig's:
+`~/.codex/skills`, `~/.claude/skills`, `.claude/skills`, `~/.pig/skills`, `.pig/skills`, plus
+whatever `--skills-dir` adds. Someone who wrote a skill once should not have to write it again
+per agent. The `~/.claude` roots are scanned **one level deep** and the others recursively,
+because a folder per skill is the layout there and descending further finds a skill's own
+examples rather than more skills.
+
+Three things it does that are easy to get wrong:
+
+- **The first root wins, and the loser is named.** Shadowed silently, the second copy looks
+  like a skill that simply does not work.
+- **One file reached through two roots is one skill, not a collision.** Symlinking a folder of
+  skills into another root is a normal way to keep a single copy, so the check is on
+  `realpath()`, not on the name.
+- **A skill with something wrong is still loaded, and still complained about.** A name two
+  characters too long is worth saying and not worth refusing over. The one exception is a
+  missing description: it is the only thing the model sees, so a skill without one could never
+  be chosen and would sit in the prompt as a name nobody can use.
+
+Warnings go to stderr before the UI starts, not into the transcript: a malformed skill is its
+author's problem, and the author is whoever just ran `bin/pig`.
+
+The frontmatter is read a line at a time rather than with a YAML parser. The spec's fields are
+all scalars and pig has no YAML parser to reach for; what this cannot read stays unread, which
+for a nested `metadata:` block means its key and nothing else — and the key is all that is
+validated anyway. `fnmatch()` is `minimatch` for `--ignore`-style patterns.
+
+Nothing here is deliberately unported any more. What is left is other providers, `/copy`
+(which needs a clipboard *writer*), images in tool output, custom-tool rendering, and branch
+and tree navigation.
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 

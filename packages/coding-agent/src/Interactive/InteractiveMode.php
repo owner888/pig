@@ -28,6 +28,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\ContextFile;
+use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
@@ -108,6 +109,9 @@ final class InteractiveMode
     /** @var list<ContextFile> what the system prompt was given, so it can be shown */
     private array $contextFiles = [];
 
+    /** @var list<Skill> likewise — shown, not discovered here */
+    private array $skills = [];
+
     private ?Text $banner = null;
 
     /** The session picker, while it is open. */
@@ -124,9 +128,11 @@ final class InteractiveMode
         string $theme = 'dark',
         ?Terminal $terminal = null,
         array $contextFiles = [],
+        array $skills = [],
     ) {
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
+        $this->skills = $skills;
 
         // Injected so a test can drive this without a terminal, the same way the editor
         // takes its clipboard: everything below here is arrangement, and arrangement is
@@ -320,17 +326,26 @@ final class InteractiveMode
      */
     private function loaded(): string
     {
-        if ($this->contextFiles === []) {
-            return '';
+        $sections = [];
+
+        if ($this->contextFiles !== []) {
+            $names = array_map(
+                static fn (ContextFile $file): string => basename($file->path),
+                $this->contextFiles,
+            );
+
+            $sections[] = $this->palette->fg('mdHeading', '[Context]') . "\n"
+                . $this->palette->fg('muted', '  ' . implode(', ', array_unique($names)));
         }
 
-        $names = array_map(
-            static fn (ContextFile $file): string => basename($file->path),
-            $this->contextFiles,
-        );
+        if ($this->skills !== []) {
+            $names = array_map(static fn (Skill $skill): string => $skill->name, $this->skills);
 
-        return $this->palette->fg('mdHeading', '[Context]') . "\n"
-            . $this->palette->fg('muted', '  ' . implode(', ', array_unique($names)));
+            $sections[] = $this->palette->fg('mdHeading', '[Skills]') . "\n"
+                . $this->palette->fg('muted', '  ' . implode(', ', $names));
+        }
+
+        return implode("\n\n", $sections);
     }
 
     /** The keys worth knowing before the first prompt, on one line. */
@@ -714,6 +729,7 @@ final class InteractiveMode
         ['new', 'Forget the conversation and start over'],
         ['session', 'What this session has cost'],
         ['model', 'Switch models, or say which one'],
+        ['skills', 'What the model can reach for, and where it came from'],
         ['compact', 'Summarise the conversation so far and carry on from the summary'],
         ['resume', 'Pick up an earlier conversation'],
         ['theme', 'Switch between dark and light'],
@@ -730,6 +746,7 @@ final class InteractiveMode
             'session' => $this->say($this->sessionSummary()),
             'compact' => $this->startCompaction(trim(substr($text, strlen($name) + 1))),
             'model' => $this->showModels(trim(substr($text, strlen($name) + 1))),
+            'skills' => $this->say($this->skillList()),
             'resume' => $this->showSessions(),
             'theme' => $this->switchTheme(),
             'exit', 'quit' => $this->stop(),
@@ -752,6 +769,31 @@ final class InteractiveMode
         }
 
         Async::spawn(fn () => $this->compact($instructions === '' ? null : $instructions));
+    }
+
+    /**
+     * The skills loaded, and which root each came from.
+     *
+     * The source is shown because the same name can live in four places and the one that
+     * won is not obvious — a `~/.claude` skill shadowed by a project one looks like the
+     * project one simply not working.
+     */
+    private function skillList(): string
+    {
+        if ($this->skills === []) {
+            return 'No skills found. A skill is a folder with a SKILL.md in '
+                . '~/.pig/skills, .pig/skills, ~/.claude/skills, .claude/skills or ~/.codex/skills.';
+        }
+
+        $lines = [];
+
+        foreach ($this->skills as $skill) {
+            $lines[] = $this->palette->fg('dim', str_pad($skill->name, 24))
+                . $this->palette->fg('muted', $skill->description);
+            $lines[] = $this->palette->fg('dim', str_repeat(' ', 24) . $skill->source . ' · ' . $skill->path);
+        }
+
+        return implode("\n", $lines);
     }
 
     private function commandHelp(): string

@@ -28,6 +28,7 @@ use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\ContextFiles;
+use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Theme\Palette;
@@ -85,6 +86,7 @@ if (isset($options['help'])) {
       --continue        pick up the most recent session here
       --resume <file>   pick up a particular one
       --no-save         do not write this session to disk
+      --skills-dir <d>  one more folder of skills, on top of the standard ones
 
     TEXT;
 
@@ -142,6 +144,14 @@ if (!in_array($theme, Palette::names(), true)) {
 // prompt cannot disagree about what was picked up.
 $contextFiles = ContextFiles::load($cwd);
 
+[$skills, $skillWarnings] = Skills::load($cwd, extraDirs: array_filter([$options['skills-dir'] ?? null]));
+
+// On the shell rather than in the UI: a malformed skill is its author's problem, and the
+// author is whoever just started pig — not the model, and not the transcript.
+foreach ($skillWarnings as $warning) {
+    fwrite(STDERR, Style::yellow("skill {$warning->path}: {$warning->message}\n"));
+}
+
 try {
     $agent = CodingAgent::create(
         $model,
@@ -149,6 +159,7 @@ try {
         isset($options['read-only']) ? ToolSet::READ_ONLY : ToolSet::ALL,
         contextFiles: $contextFiles,
         thinking: $level,
+        skills: $skills,
     );
 } catch (Throwable $error) {
     // Almost always a missing API key, which is worth saying plainly rather than as a
@@ -202,6 +213,7 @@ $mode = new InteractiveMode(
     VERSION,
     $theme,
     contextFiles: $contextFiles,
+    skills: $skills,
 );
 
 // One fiber around the whole program: the prompt suspends on a socket, the terminal

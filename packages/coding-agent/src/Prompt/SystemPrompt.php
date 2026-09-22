@@ -25,6 +25,8 @@ final class SystemPrompt
      * @param string|null            $custom       replaces the default prompt entirely
      * @param string|null            $append       added after it, whichever was used
      * @param list<ContextFile>|null $contextFiles discovered from $cwd when not given
+     * @param list<Skill>            $skills       passed in rather than discovered, so the
+     *        banner and the prompt cannot disagree about what was picked up
      */
     public static function build(
         string $cwd,
@@ -32,6 +34,7 @@ final class SystemPrompt
         ?string $custom = null,
         ?string $append = null,
         ?array $contextFiles = null,
+        array $skills = [],
     ): string {
         $contextFiles ??= ContextFiles::load($cwd);
         $prompt = $custom ?? self::instructions($tools);
@@ -41,6 +44,10 @@ final class SystemPrompt
         }
 
         $prompt .= self::context($contextFiles);
+
+        // After the project's own instructions: a skill is a thing to reach for, and the
+        // rules about how to work here apply whichever one is reached for.
+        $prompt .= Skills::forPrompt($skills);
 
         // Last, because they are facts rather than instructions and the model should not
         // have to read past them to reach the part that tells it what to do.
