@@ -218,12 +218,13 @@ final class HighlightTest extends TestCase
             keyword: static fn (string $t): string => "<k>{$t}</k>",
             type: static fn (string $t): string => $t,
             function: static fn (string $t): string => $t,
+            variable: static fn (string $t): string => "<v>{$t}</v>",
             plain: static fn (string $t): string => $t,
         );
 
         $this->assertSame(
-            "<k>return</k> <s>'x'</s>; <c>// done</c>",
-            Highlight::lines("return 'x'; // done", 'php', $theme)[0],
+            "<k>return</k> <v>\$x</v>; <c>// done</c>",
+            Highlight::lines('return $x; // done', 'php', $theme)[0],
         );
     }
 }

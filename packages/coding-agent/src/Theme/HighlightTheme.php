@@ -17,6 +17,7 @@ final readonly class HighlightTheme
      * @param Closure(string): string $keyword
      * @param Closure(string): string $type
      * @param Closure(string): string $function called before its opening bracket
+     * @param Closure(string): string $variable a word beginning with `$`
      * @param Closure(string): string $plain    everything else, punctuation included
      */
     public function __construct(
@@ -26,6 +27,7 @@ final readonly class HighlightTheme
         public Closure $keyword,
         public Closure $type,
         public Closure $function,
+        public Closure $variable,
         public Closure $plain,
     ) {
     }
@@ -40,6 +42,9 @@ final readonly class HighlightTheme
             keyword: Style::blue(...),
             type: Style::cyan(...),
             function: Style::yellow(...),
+            variable: Style::cyan(...),
+            // Left alone on purpose: painting every space and bracket would fill each
+            // line with escapes nobody can see, for a colour the terminal already has.
             plain: static fn (string $text): string => $text,
         );
     }

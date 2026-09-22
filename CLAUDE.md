@@ -138,6 +138,18 @@ the model registry. What is left is the conversation, the event fan-out, the que
 someone typed while the agent was working, the thinking level, and what the session has cost.
 Each of the rest can arrive on its own when something needs it.
 
+`Theme\Palette` is upstream's `theme.ts` down to what it is for: the two built-in themes as
+tables, and the bridges that turn them into `pig/tui`'s `MarkdownTheme`, `EditorTheme` and
+`SelectListTheme`. A component asks for `accent` or `toolOutput` and never for cyan, so an
+unknown name throws where the component is wired rather than rendering colourless later.
+Reading a theme from JSON, the custom-themes directory and the watcher that reloads one as
+it is edited are not ported; they arrive with a `/theme` command if that is ever wanted.
+
+`Theme\Colour` carries the one piece of real arithmetic in there: fitting a hex colour onto
+a 256-colour terminal. The guard worth knowing about is that the grey ramp only wins when
+the colour was nearly neutral to begin with — without it every muted tone in the theme
+snaps to a pure grey and the theme loses its tint.
+
 Two things upstream has here are deliberately not ported yet, and both are noted where they
 would go: **skills** (`core/skills.ts`, which the prompt builder would append) and the
 **model registry** (several hundred generated model descriptions; `CodingAgent::model()` builds

@@ -51,6 +51,7 @@ final class Highlight
                 'keyword' => $theme->keyword,
                 'type' => $theme->type,
                 'function' => $theme->function,
+                'variable' => $theme->variable,
                 default => $theme->plain,
             };
 
@@ -234,6 +235,12 @@ final class Highlight
         }
 
         $word = $match[0];
+
+        // `$name` in PHP, `$HOME` in a shell. A bare `$` is punctuation, not a variable.
+        if (str_starts_with($word, '$') && strlen($word) > 1) {
+            return ['variable', $word];
+        }
+
         $lookup = $grammar->caseInsensitiveKeywords ? strtolower($word) : $word;
 
         if (in_array($lookup, $grammar->keywords, true)) {
