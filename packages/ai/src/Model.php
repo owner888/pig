@@ -21,6 +21,8 @@ final readonly class Model
      *        several providers speak the same api
      * @param list<'text'|'image'>  $input    what the model accepts
      * @param array<string, string> $headers  extra headers every request to it carries
+     * @param OpenAiCompat|null     $compat   overrides for `openai-completions` endpoints;
+     *        worked out from the base URL when not given, and meaningless for other APIs
      */
     public function __construct(
         public string $id,
@@ -34,6 +36,7 @@ final readonly class Model
         public array $input = ['text'],
         public Pricing $pricing = new Pricing(),
         public array $headers = [],
+        public ?OpenAiCompat $compat = null,
     ) {
     }
 

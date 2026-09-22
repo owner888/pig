@@ -259,16 +259,46 @@ the colour was nearly neutral to begin with — without it every muted tone in t
 snaps to a pure grey and the theme loses its tint.
 
 `Ai\Models` is the registry. Upstream generates `models.generated.ts` from models.dev — 7105
-lines, 414 models, twelve providers — and only the Anthropic provider is ported, so only
-Anthropic's 21 models are here. Offering one of the other 393 and then failing to send the
-request is a worse answer than "no such model", and the row is the only thing a new provider
-adds. The figures are upstream's *at the anchor commit*, not whatever models.dev says today:
-a port should agree with the thing it was ported from.
+lines, 414 models, twelve providers — and what is here is the models whose *protocol* is
+ported: Anthropic's 21, and the 72 across Cerebras, Groq, Mistral, xAI and Zai that speak
+`openai-completions`. Offering a model and then failing to send the request is a worse answer
+than "no such model", so the rest arrive with their protocols. OpenRouter's 236 speak a ported
+protocol and are still left out: that list is a directory of everyone else's models and goes
+stale fastest. The figures are upstream's *at the anchor commit*, not whatever models.dev says
+today: a port should agree with the thing it was ported from.
+
+The table is keyed `provider/id`, and `get()` takes an id alone only because no two providers
+here claim the same one — `ModelsTest::testNoIdIsClaimedByTwoProviders` is what keeps that
+true, and the first table that breaks it is where `get()` has to go.
 
 It replaced a `CodingAgent::model()` that invented the figures around an id — 200k of context,
 64k of output, reasoning on. Right for one model and wrong for most: `claude-3-haiku` caps
 output at 4096 and cannot reason, so `--model claude-3-haiku-20240307` built a request the
 provider rejects, from a flag that looked like it had worked.
+
+`Providers\OpenAiCompletions` is upstream's `openai-completions.ts`, and it is worth more than
+the one name on it: Groq, Cerebras, xAI, Zai, Mistral, OpenRouter and GitHub Copilot all answer
+this shape. Structurally it differs from `Anthropic` in one way that matters — **Anthropic
+numbers its content blocks and says when each opens and closes; this does not.** A block runs
+until something of a different kind arrives, so the boundaries are worked out in the provider,
+and that is the only real complexity in the file. `AssistantMessageBuilder` grew `nextWire()`
+and `setToolCall()` for it: OpenAI numbers nothing, and a tool call's id and name arrive in
+whichever delta they arrive in.
+
+`Ai\OpenAiCompat` is the table of ways an "OpenAI-compatible" endpoint is not one. Mistral
+wants tool ids of exactly nine alphanumeric characters, Grok rejects `reasoning_effort`,
+Cerebras rejects `store`, Copilot re-answers every earlier prompt if assistant text arrives as
+an array. None of that is documented anywhere as a difference; it is what a 400 looks like
+after you have sent it. A table per endpoint rather than one rule, for the same reason the tool
+archive names are a table — see that note above.
+
+`Providers\TransformMessages` (upstream's `transorm-messages.ts`, misspelling and all) is what
+makes `/model` safe across providers. Two things get cleaned up before any provider sees the
+history: a **thinking block from another provider becomes `<thinking>` text**, because it is
+signed and the signature means nothing anywhere else; and a **tool call with no result gets one
+invented** saying so, because an interrupted turn leaves a dangling call and every provider
+rejects the whole conversation rather than ignoring it. A stated "No result provided" is worse
+than the truth and far better than a request that cannot be sent at all.
 
 `ModelResolver` is upstream's `model-resolver.ts`: `sonnet` finds the model, `sonnet:high`
 finds it and sets the thinking level. When several match, the alias beats the dated build
@@ -310,9 +340,10 @@ all scalars and pig has no YAML parser to reach for; what this cannot read stays
 for a nested `metadata:` block means its key and nothing else — and the key is all that is
 validated anyway. `fnmatch()` is `minimatch` for `--ignore`-style patterns.
 
-Nothing here is deliberately unported any more. What is left is other providers, `/copy`
-(which needs a clipboard *writer*), images in tool output, custom-tool rendering, and branch
-and tree navigation.
+Nothing here is deliberately unported any more. What is left is the three remaining protocols
+(`openai-responses`, `google-generative-ai`, `google-gemini-cli`), `/copy` (which needs a
+clipboard *writer*), images in tool output, custom-tool rendering, and branch and tree
+navigation.
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 

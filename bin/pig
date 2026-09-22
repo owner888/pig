@@ -103,7 +103,7 @@ if (!is_dir($cwd)) {
 
 if (isset($options['models'])) {
     foreach (Models::all() as $listed) {
-        printf("  %-28s %s\n", $listed->id, $listed->name);
+        printf("  %-18s %-46s %s\n", $listed->provider, $listed->id, $listed->name);
     }
 
     exit(0);

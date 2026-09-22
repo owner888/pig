@@ -926,7 +926,8 @@ final class InteractiveMode
                 (string) $index,
                 $model->id . ($current !== null && $model->is($current) ? ' ·' : ''),
                 sprintf(
-                    '%s · %s in / %s out per Mtok%s',
+                    '%s · %s · %s in / %s out per Mtok%s',
+                    $model->provider,
                     $model->name,
                     self::dollars($model->pricing->input),
                     self::dollars($model->pricing->output),

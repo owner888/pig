@@ -6,6 +6,8 @@ namespace Pig\Ai;
 
 use Pig\Ai\Providers\Anthropic;
 use Pig\Ai\Providers\AnthropicOptions;
+use Pig\Ai\Providers\OpenAiCompletions;
+use Pig\Ai\Providers\OpenAiOptions;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 
 /**
@@ -52,6 +54,7 @@ final class Stream
 
         return match ($model->api) {
             Api::AnthropicMessages => (new Anthropic())->stream($model, $context, self::anthropic($options, $apiKey)),
+            Api::OpenAiCompletions => (new OpenAiCompletions())->stream($model, $context, self::openAi($options, $apiKey)),
             default => throw new ProviderError("No provider for {$model->api->value} has been ported yet"),
         };
     }
@@ -95,6 +98,14 @@ final class Stream
         $apiKey = $options?->apiKey ?? self::envApiKey($model->provider);
 
         return match ($model->api) {
+            Api::OpenAiCompletions => new OpenAiOptions(
+                $options?->temperature,
+                $maxTokens,
+                $options?->signal,
+                $apiKey,
+                // Xhigh is OpenAI's alone; everyone else speaking this protocol clamps.
+                reasoning: $options?->reasoning?->clampToHigh(),
+            ),
             Api::AnthropicMessages => new AnthropicOptions(
                 $options?->temperature,
                 $maxTokens,
@@ -124,6 +135,23 @@ final class Stream
         }
 
         return new AnthropicOptions($options?->temperature, $options?->maxTokens, $options?->signal, $apiKey);
+    }
+
+    /** The same shape as `anthropic()`: the key is resolved late, everything else is kept. */
+    private static function openAi(?StreamOptions $options, string $apiKey): OpenAiOptions
+    {
+        if ($options instanceof OpenAiOptions) {
+            return new OpenAiOptions(
+                $options->temperature,
+                $options->maxTokens,
+                $options->signal,
+                $apiKey,
+                $options->reasoning,
+                $options->toolChoice,
+            );
+        }
+
+        return new OpenAiOptions($options?->temperature, $options?->maxTokens, $options?->signal, $apiKey);
     }
 
     /** Anthropic spends reasoning as a token budget rather than an effort level. */

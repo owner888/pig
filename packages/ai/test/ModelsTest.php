@@ -17,20 +17,53 @@ final class ModelsTest extends TestCase
     {
         $models = Models::all();
 
-        $this->assertCount(21, $models);
+        $this->assertCount(93, $models);
 
         foreach ($models as $model) {
-            $this->assertNotSame('', $model->id);
+            $this->assertNotSame('', $model->id, 'a model with no id cannot be selected');
             $this->assertNotSame('', $model->name);
-            $this->assertSame(Api::AnthropicMessages, $model->api);
-            $this->assertSame(Models::ANTHROPIC, $model->provider);
-            $this->assertGreaterThan(0, $model->contextWindow);
-            $this->assertGreaterThan(0, $model->maxTokens);
-
-            // A price of zero would silently report a free session.
-            $this->assertGreaterThan(0.0, $model->pricing->input);
-            $this->assertGreaterThan(0.0, $model->pricing->output);
+            $this->assertGreaterThan(0, $model->contextWindow, $model->id);
+            $this->assertGreaterThan(0, $model->maxTokens, $model->id);
+            $this->assertGreaterThanOrEqual(0.0, $model->pricing->input, $model->id);
+            $this->assertGreaterThanOrEqual(0.0, $model->pricing->output, $model->id);
         }
+    }
+
+    public function testEveryModelSpeaksAProtocolThatIsPorted(): void
+    {
+        foreach (Models::all() as $model) {
+            // A model that can be selected and then not talked to is a worse answer than
+            // "no such model" — which is the whole reason the table is not all 414.
+            $this->assertContains(
+                $model->api,
+                [Api::AnthropicMessages, Api::OpenAiCompletions],
+                $model->id . ' speaks ' . $model->api->value,
+            );
+        }
+    }
+
+    public function testAnthropicsOwnModelsAreAllPricedAndAllSpeakItsApi(): void
+    {
+        $anthropic = array_filter(Models::all(), static fn ($m): bool => $m->provider === Models::ANTHROPIC);
+
+        $this->assertCount(21, $anthropic);
+
+        foreach ($anthropic as $model) {
+            $this->assertSame(Api::AnthropicMessages, $model->api);
+
+            // None of these is free, so a zero here would quietly report a free session.
+            $this->assertGreaterThan(0.0, $model->pricing->input, $model->id);
+            $this->assertGreaterThan(0.0, $model->pricing->output, $model->id);
+        }
+    }
+
+    public function testNoIdIsClaimedByTwoProviders(): void
+    {
+        // `get()` takes an id alone, which is only honest while they are unique. A new
+        // provider's table is where that stops being true.
+        $ids = array_map(static fn ($m): string => $m->id, Models::all());
+
+        $this->assertSame(array_values(array_unique($ids)), $ids);
     }
 
     public function testTheFiguresAreTheModelsOwnAndNotOneSetForAll(): void
@@ -52,9 +85,23 @@ final class ModelsTest extends TestCase
 
     public function testOnlyTheProvidersThatCanBeTalkedToAreListed(): void
     {
-        // 393 of upstream's 414 models belong to providers that are not ported. Offering
-        // one and then failing to send the request is a worse answer than "no such model".
-        $this->assertSame(['anthropic'], Models::providers());
+        // Every provider here speaks a protocol that is ported. Google's and OpenAI's own
+        // arrive with theirs.
+        $this->assertSame(['anthropic', 'cerebras', 'groq', 'mistral', 'xai', 'zai'], Models::providers());
+    }
+
+    public function testAProviderAndIdTogetherFindExactlyOneModel(): void
+    {
+        $this->assertSame('llama-3.3-70b-versatile', Models::find('groq', 'llama-3.3-70b-versatile')?->id);
+        $this->assertNull(Models::find('anthropic', 'llama-3.3-70b-versatile'));
+    }
+
+    public function testAnOpenAiCompatibleModelCarriesItsOwnEndpoint(): void
+    {
+        $model = Models::get('grok-4');
+
+        $this->assertSame(Api::OpenAiCompletions, $model?->api);
+        $this->assertSame('https://api.x.ai/v1', $model?->baseUrl);
     }
 
     public function testCostIsPerMillionTokens(): void

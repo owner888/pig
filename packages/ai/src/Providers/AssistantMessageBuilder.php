@@ -66,6 +66,18 @@ final class AssistantMessageBuilder
         return $this->push($wire, 'toolCall', id: $id, name: $name);
     }
 
+    /**
+     * The next unused wire number.
+     *
+     * Anthropic numbers its blocks and this echoes those numbers back. OpenAI does not
+     * number anything, so its provider asks for one — the number is then only ever an
+     * internal handle, which is what it always was for everything but the lookup.
+     */
+    public function nextWire(): int
+    {
+        return count($this->blocks);
+    }
+
     /** @return int|null null when the provider names a block it never opened */
     public function indexOf(int $wire): ?int
     {
@@ -93,6 +105,24 @@ final class AssistantMessageBuilder
     public function textOf(int $index): string
     {
         return $this->blocks[$index]['text'];
+    }
+
+    /**
+     * Fill in a tool call's id and name after it was opened.
+     *
+     * Anthropic names a tool call in the event that opens it. OpenAI does not have to:
+     * the id and the name arrive in whichever delta they arrive in, and a stream that
+     * sends the name second would otherwise call a tool with no name.
+     */
+    public function setToolCall(int $index, string $id, string $name): void
+    {
+        if ($id !== '') {
+            $this->blocks[$index]['id'] = $id;
+        }
+
+        if ($name !== '') {
+            $this->blocks[$index]['name'] = $name;
+        }
     }
 
     public function toolCallOf(int $index): ToolCall

@@ -17,10 +17,10 @@ amphp、不用 ncurses，只用标准库。
 | 包 | 命名空间 | 状态 |
 |---|---|---|
 | `pig/async` | `Pig\Async\` | 事件循环、Future、协程 —— **已完成** |
-| `pig/ai` | `Pig\Ai\` | 统一 LLM API —— **Anthropic 全链路可用**；其余供应商待移植 |
+| `pig/ai` | `Pig\Ai\` | 统一 LLM API —— **Anthropic 与 OpenAI chat-completions 协议全链路可用**；Google 和 OpenAI 自家的 Responses API 待移植 |
 | `pig/agent-core` | `Pig\Agent\` | 带工具调用和状态管理的 agent 循环 —— **已完成** |
 | `pig/tui` | `Pig\Tui\` | 差分渲染的终端 UI —— **已完成** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **工具、系统提示、交互式 CLI、会话持久化、上下文压缩、模型切换、skills 已完成**；其余供应商待补 |
+| `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **工具、系统提示、交互式 CLI、会话持久化、上下文压缩、模型切换、skills 已完成** |
 
 `pig/async` 在上游没有对应物：JavaScript 自带事件循环，PHP 没有。它的存在是为了让**一次
 `stream_select()` 能同时等模型的 socket 和键盘**——这正是「流式输出途中能打断、能继续打字」
@@ -38,6 +38,9 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 
 `--model` 不用写全 id，写一部分就行——`--model sonnet`、`--model 'opus 4.1'`——`--model sonnet:high`
 还能顺手把思考档位一起设了。`--models` 列出全部。
+
+内置 93 个模型：Anthropic 的，加上 Groq、Cerebras、xAI、Zai、Mistral——后面这五家说的都是 OpenAI
+chat-completions 协议。设好对应的 `*_API_KEY`，`--model` 就能指过去。
 
 skill 就是一个带 `SKILL.md` 的文件夹。pig 读 `~/.pig/skills` 和 `.pig/skills`，同时也读
 `~/.claude/skills`、`.claude/skills` 和 `~/.codex/skills`——给别的 agent 写的 skill 在这儿直接能用。
