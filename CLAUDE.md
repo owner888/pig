@@ -216,11 +216,14 @@ Three things about it are worth knowing before changing any of it:
 - **A usage reading older than the last compaction is discarded.** See the trap below.
 
 `compact()` throws upstream's own messages — `Nothing to compact (session too small)` and
-`Already compacted` — rather than returning quietly, and `InteractiveMode::sayError()`
-draws them the way upstream's `showError()` does: red, prefixed `Error:`. The wording is
-upstream's on purpose, because it is the wording someone will search for. The other three
-places that show an error in `InteractiveMode` still print plain red text with no prefix;
-aligning them is a separate decision.
+`Already compacted` — rather than returning quietly. The wording is upstream's on purpose,
+because it is the wording someone will search for.
+
+Everything `InteractiveMode` says goes through one of three methods, which is what keeps
+the three kinds of line apart on a screen that is already full of colour: `sayError()`
+(red, prefixed `Error:`), `sayWarning()` (yellow, `Warning:`) and `say()` (dim, no label)
+— upstream's `showError()` / `showWarning()`. A message that is drawn by colour alone is
+a message nobody can name, so no new one is drawn that way.
 
 Not ported from upstream's compaction: branch summarisation (`branch-summarization.ts`,
 which needs the tree) and the split-turn prefix summary — upstream generates a second,

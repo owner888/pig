@@ -317,7 +317,7 @@ final class InteractiveModeTest extends TestCase
         $this->type('/nonsense');
         $this->type(self::ENTER);
 
-        $this->assertStringContainsString('No command called /nonsense', $this->screen());
+        $this->assertStringContainsString('Error: No command called /nonsense', $this->screen());
         $this->assertSame([], $this->session->messages());
     }
 
@@ -734,7 +734,7 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
         $this->settle();
 
-        $this->assertStringContainsString('Still working', $this->screen());
+        $this->assertStringContainsString('Warning: Still working', $this->screen());
 
         $held();
         $this->settle();

@@ -567,7 +567,7 @@ final class InteractiveMode
         }
 
         if ($this->session->isBashRunning()) {
-            $this->say($this->palette->fg('warning', 'A command is already running. Press esc to stop it.'));
+            $this->sayWarning('A command is already running. Press esc to stop it.');
 
             return;
         }
@@ -637,7 +637,7 @@ final class InteractiveMode
 
                 $this->session->prompt($text);
             } catch (Throwable $error) {
-                $this->say($this->palette->fg('error', $error->getMessage()));
+                $this->sayError($error->getMessage());
             }
         });
     }
@@ -727,7 +727,7 @@ final class InteractiveMode
             'resume' => $this->showSessions(),
             'theme' => $this->switchTheme(),
             'exit', 'quit' => $this->stop(),
-            default => $this->say($this->palette->fg('error', "No command called /{$name}. Try /help.")),
+            default => $this->sayError("No command called /{$name}. Try /help."),
         };
     }
 
@@ -740,7 +740,7 @@ final class InteractiveMode
     private function startCompaction(string $instructions): void
     {
         if ($this->session->isStreaming()) {
-            $this->say($this->palette->fg('warning', 'Still working. Press esc first.'));
+            $this->sayWarning('Still working. Press esc first.');
 
             return;
         }
@@ -770,7 +770,7 @@ final class InteractiveMode
     private function newSession(): void
     {
         if ($this->session->isStreaming()) {
-            $this->say($this->palette->fg('warning', 'Still working. Press esc first.'));
+            $this->sayWarning('Still working. Press esc first.');
 
             return;
         }
@@ -805,7 +805,7 @@ final class InteractiveMode
     private function showSessions(): void
     {
         if ($this->session->isStreaming()) {
-            $this->say($this->palette->fg('warning', 'Still working. Press esc first.'));
+            $this->sayWarning('Still working. Press esc first.');
 
             return;
         }
@@ -860,7 +860,7 @@ final class InteractiveMode
         try {
             $saved = SessionManager::open($info->path);
         } catch (Throwable $error) {
-            $this->say($this->palette->fg('error', $error->getMessage()));
+            $this->sayError($error->getMessage());
 
             return;
         }
@@ -1067,12 +1067,22 @@ final class InteractiveMode
      * Something went wrong, in red and labelled — upstream's `showError()`.
      *
      * The label is part of the message rather than a colour on its own, because a red
-     * line in a transcript that is already full of colour is not a signal.
+     * line in a transcript that is already full of colour is not a signal. Every error
+     * this mode shows goes through here, so none of them has to be recognised by its
+     * colour alone.
      */
     private function sayError(string $message): void
     {
         $this->chat->addChild(new Spacer(1));
         $this->chat->addChild(new Text($this->palette->fg('error', "Error: {$message}"), 1, 0));
+        $this->tui->requestRender();
+    }
+
+    /** Not an error, but not what was asked for either — upstream's `showWarning()`. */
+    private function sayWarning(string $message): void
+    {
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild(new Text($this->palette->fg('warning', "Warning: {$message}"), 1, 0));
         $this->tui->requestRender();
     }
 
