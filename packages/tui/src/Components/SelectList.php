@@ -80,6 +80,19 @@ final class SelectList implements Component, InputHandler
         return $this->filtered[$this->selected] ?? null;
     }
 
+    /**
+     * Where the selection sits in the list as it currently stands.
+     *
+     * For a caller holding a parallel array of richer objects — the editor holds the
+     * autocomplete items these rows were made from — this is how it finds its own.
+     * Filtering renumbers the rows, so the index is only meaningful against the list
+     * the caller last saw.
+     */
+    public function selectedIndex(): int
+    {
+        return $this->selected;
+    }
+
     /** @param Closure(SelectItem): void|null $handler */
     public function setSelectHandler(?Closure $handler): void
     {

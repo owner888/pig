@@ -40,7 +40,7 @@ Both were chosen explicitly, not by default:
 running. `pig/tui` additionally requires **`ext-pcntl`**, because SIGWINCH is the only way to learn
 that the window was resized; without it the UI would draw at the startup width forever, so
 `ProcessTerminal` refuses to start rather than doing that quietly. `ext-intl` is deliberately *not*
-required — see [Three upstream dependencies the standard library already covers](#three-upstream-dependencies-the-standard-library-already-covers).
+required — see [Four upstream dependencies that are not needed here](#four-upstream-dependencies-that-are-not-needed-here).
 
 One external binary: `stty`. PHP core has no termios binding and ext-pcntl does not add one, so
 raw mode and the window size go through `proc_open('stty …')` against `/dev/tty`.
@@ -51,16 +51,17 @@ raw mode and the window size go through `proc_open('stty …')` against `/dev/tt
 packages/async/      → Pig\Async\        (pig/async)       Loop, Future, Deferred, Async, Socket, Abort*
 packages/ai/         → Pig\Ai\           (pig/ai)          unified LLM API, HTTP/SSE, Anthropic
 packages/agent-core/ → Pig\Agent\        (pig/agent-core)  AgentLoop, Agent, tools, events
-packages/tui/        → Pig\Tui\          (pig/tui)         renderer, widths, wrapping, keys
+packages/tui/        → Pig\Tui\          (pig/tui)         renderer, widths, keys, editor, components
 packages/coding-agent/ → Pig\CodingAgent\                  not started
 ```
 
 Ported so far: all of `ai` (`types.ts`, `utils/event-stream.ts`, `stream.ts`, the Anthropic provider),
 all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439), and `tui`'s foundation
-(`utils.ts` 712 → `terminal.ts` 138 → `tui.ts` 351 → `keys.ts` 547). Next is `tui/components` —
-`editor.ts` 1322 is the big one — then the coding agent's tools and CLI.
+(`utils.ts` 712 → `terminal.ts` 138 → `tui.ts` 351 → `keys.ts` 547 → `autocomplete.ts` 576 →
+`components/` bar two). Left in `tui`: `markdown.ts` 646 and the image pair (`image.ts` 87,
+`terminal-image.ts` 340). Then the coding agent's tools and CLI.
 
-### Three upstream dependencies the standard library already covers
+### Four upstream dependencies that are not needed here
 
 `pi-tui` pulls in `get-east-asian-width` and leans on `Intl.Segmenter`, both for one question:
 how many columns will the terminal give this string? Neither is needed here.
@@ -74,6 +75,14 @@ how many columns will the terminal give this string? Neither is needed here.
 `chalk` is the third, and `Pig\Tui\Style` replaces it: a TUI needs "wrap this string in a
 style and close it again", which is one file, not a package. Components take styles as
 `Closure(string): string`, so `Style::dim(...)` is what gets passed around.
+
+`marked` is the fourth, and the one that was a real decision rather than an obvious win.
+`markdown.ts` uses it for a token stream and throws its HTML away, and a terminal renderer
+needs a subset — headings, emphasis, code spans and fences, lists, quotes, links, rules,
+tables. The developer chose to write that subset here rather than take `league/commonmark`,
+which would have brought `league/config`, `dflydev/dot-access-data` and a row of Symfony
+polyfills with it and ended the zero-dependency claim. It is not CommonMark and does not
+try to be; anything it cannot parse is drawn as the plain text it came from.
 
 The one thing PCRE has no answer for is JavaScript's `\p{RGI_Emoji}`, which matches a whole emoji
 *sequence*; PCRE properties test single codepoints. `Width` asks the question of the cluster's
