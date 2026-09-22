@@ -77,14 +77,19 @@ packages/async/      → Pig\Async\        (pig/async)       Loop, Future, Defer
 packages/ai/         → Pig\Ai\           (pig/ai)          unified LLM API, HTTP/SSE, Anthropic
 packages/agent-core/ → Pig\Agent\        (pig/agent-core)  AgentLoop, Agent, tools, events
 packages/tui/        → Pig\Tui\          (pig/tui)         renderer, widths, keys, editor, markdown, images
-packages/coding-agent/ → Pig\CodingAgent\                  not started
+packages/coding-agent/ → Pig\CodingAgent\ (pig/coding-agent) tools, then the CLI
 ```
 
 Ported so far: all of `ai` (`types.ts`, `utils/event-stream.ts`, `stream.ts`, the Anthropic provider),
 all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439), and `tui`'s foundation
 (`utils.ts` 712 → `terminal.ts` 138 → `tui.ts` 351 → `keys.ts` 547 → `autocomplete.ts` 576 →
-`components/`, `terminal-image.ts` 340, `image.ts` 87). `pig/tui` is done. Next is the coding
-agent: its tools, then the CLI.
+`components/`, `terminal-image.ts` 340, `image.ts` 87). `pig/tui` is done.
+
+`coding-agent` is upstream's biggest package — 23k lines at the anchor, and most of it is not
+the agent: RPC mode, hooks, custom tools, compaction, HTML export, OAuth, twenty-five selector
+components. What is being ported is the part that makes it a coding agent: `core/tools/` (~1900
+lines), `core/system-prompt.ts`, enough of `core/agent-session.ts` to hold a session, and an
+interactive mode built on `pig/tui`. The rest is left out until something needs it.
 
 `markdown.ts` has no `marked` under it here: `Pig\Tui\Markdown\Lexer` and `Inline` are a
 hand-written subset — see the dependency note above. They are not CommonMark and do not try

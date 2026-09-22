@@ -8,6 +8,7 @@
         "pig/agent-core": "@dev",
         "pig/ai": "@dev",
         "pig/async": "@dev",
+        "pig/coding-agent": "@dev",
         "pig/tui": "@dev"
     },
     "repositories": [
@@ -23,10 +24,11 @@
     "prefer-stable": true,
     "autoload-dev": {
         "psr-4": {
-            "Pig\\Test\\": "test/",
             "Pig\\Agent\\Test\\": "packages/agent-core/test/",
             "Pig\\Ai\\Test\\": "packages/ai/test/",
             "Pig\\Async\\Test\\": "packages/async/test/",
+            "Pig\\CodingAgent\\Test\\": "packages/coding-agent/test/",
+            "Pig\\Test\\": "test/",
             "Pig\\Tui\\Test\\": "packages/tui/test/"
         }
     },

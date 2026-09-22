@@ -14,6 +14,7 @@
             <directory>packages/ai/test</directory>
             <directory>packages/agent-core/test</directory>
             <directory>packages/tui/test</directory>
+            <directory>packages/coding-agent/test</directory>
         </testsuite>
     </testsuites>
     <source>
@@ -22,6 +23,7 @@
             <directory>packages/ai/src</directory>
             <directory>packages/agent-core/src</directory>
             <directory>packages/tui/src</directory>
+            <directory>packages/coding-agent/src</directory>
         </include>
     </source>
 </phpunit>

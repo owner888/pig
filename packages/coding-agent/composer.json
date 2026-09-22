@@ -1,0 +1,20 @@
+{
+    "name": "pig/coding-agent",
+    "description": "The coding agent: tools the model runs, and the CLI around them.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.3",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "pig/agent-core": "@dev",
+        "pig/ai": "@dev",
+        "pig/async": "@dev",
+        "pig/tui": "@dev"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pig\\CodingAgent\\": "src/"
+        }
+    }
+}
