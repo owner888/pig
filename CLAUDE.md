@@ -51,15 +51,19 @@ raw mode and the window size go through `proc_open('stty …')` against `/dev/tt
 packages/async/      → Pig\Async\        (pig/async)       Loop, Future, Deferred, Async, Socket, Abort*
 packages/ai/         → Pig\Ai\           (pig/ai)          unified LLM API, HTTP/SSE, Anthropic
 packages/agent-core/ → Pig\Agent\        (pig/agent-core)  AgentLoop, Agent, tools, events
-packages/tui/        → Pig\Tui\          (pig/tui)         renderer, widths, keys, editor, components
+packages/tui/        → Pig\Tui\          (pig/tui)         renderer, widths, keys, editor, markdown
 packages/coding-agent/ → Pig\CodingAgent\                  not started
 ```
 
 Ported so far: all of `ai` (`types.ts`, `utils/event-stream.ts`, `stream.ts`, the Anthropic provider),
 all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439), and `tui`'s foundation
 (`utils.ts` 712 → `terminal.ts` 138 → `tui.ts` 351 → `keys.ts` 547 → `autocomplete.ts` 576 →
-`components/` bar two). Left in `tui`: `markdown.ts` 646 and the image pair (`image.ts` 87,
-`terminal-image.ts` 340). Then the coding agent's tools and CLI.
+`components/` bar the image pair). Left in `tui`: `image.ts` 87 and `terminal-image.ts` 340,
+which are the Kitty and iTerm2 inline-image protocols. Then the coding agent's tools and CLI.
+
+`markdown.ts` has no `marked` under it here: `Pig\Tui\Markdown\Lexer` and `Inline` are a
+hand-written subset — see the dependency note above. They are not CommonMark and do not try
+to be; what they cannot parse stays a paragraph and is drawn as the text it was.
 
 ### Four upstream dependencies that are not needed here
 
@@ -213,6 +217,19 @@ overwritten by something else.
 
 Caught by `TuiTest::testAResizeRedrawsEverythingAndClearsTheScrollback`, which asserts the
 `\e[3J\e[2J\e[H` is there.
+
+### A per-line prefix has to go on after the wrap, not before
+
+`Markdown` styles a block, then wraps it. That is right for *inline* styling — the wrapper
+carries escape codes across its own breaks — and wrong for anything that must appear at the
+start of every line. A block quote built as `"│ " . $text` and wrapped afterwards comes out
+with the border on its first row and the remaining rows hanging in the margin, which reads as
+the quote having ended.
+
+So `quote()` wraps its children to `width - 2` itself and prefixes each resulting line. Found
+by looking at rendered output, not by a test — every assertion about widths and codes passed.
+
+Regression test: `MarkdownTest::testEveryLineOfAWrappedQuoteKeepsItsBorder`.
 
 ### `stream_socket_pair()` with a dropped peer (tests)
 

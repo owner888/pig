@@ -547,7 +547,7 @@ final class Editor implements Component, InputHandler
         }
 
         $line = $this->lines[$this->cursorLine];
-        $from = self::wordStart($line, $this->cursorCol);
+        $from = Chars::wordStart($line, $this->cursorCol);
 
         $this->lines[$this->cursorLine] = substr($line, 0, $from) . substr($line, $this->cursorCol);
         $this->cursorCol = $from;
@@ -666,7 +666,7 @@ final class Editor implements Component, InputHandler
             return;
         }
 
-        $this->cursorCol = self::wordStart($this->lines[$this->cursorLine], $this->cursorCol);
+        $this->cursorCol = Chars::wordStart($this->lines[$this->cursorLine], $this->cursorCol);
     }
 
     private function moveWordForwards(): void
@@ -682,60 +682,7 @@ final class Editor implements Component, InputHandler
             return;
         }
 
-        $this->cursorCol = self::wordEnd($line, $this->cursorCol);
-    }
-
-    /**
-     * Where the word before $offset begins.
-     *
-     * Spaces first, then a run of one kind — all punctuation or all word characters —
-     * so Ctrl+W on a path takes off one segment rather than the whole thing.
-     */
-    private static function wordStart(string $line, int $offset): int
-    {
-        $graphemes = Graphemes::split(substr($line, 0, $offset));
-
-        while ($graphemes !== [] && Chars::isWhitespace(end($graphemes))) {
-            $offset -= strlen((string) array_pop($graphemes));
-        }
-
-        if ($graphemes === []) {
-            return $offset;
-        }
-
-        $matches = Chars::isPunctuation(end($graphemes)) ? Chars::isPunctuation(...) : Chars::isWord(...);
-
-        while ($graphemes !== [] && $matches(end($graphemes))) {
-            $offset -= strlen((string) array_pop($graphemes));
-        }
-
-        return $offset;
-    }
-
-    /** Where the word after $offset ends. The mirror of wordStart(). */
-    private static function wordEnd(string $line, int $offset): int
-    {
-        $graphemes = Graphemes::split(substr($line, $offset));
-        $index = 0;
-        $count = count($graphemes);
-
-        while ($index < $count && Chars::isWhitespace($graphemes[$index])) {
-            $offset += strlen($graphemes[$index]);
-            $index++;
-        }
-
-        if ($index >= $count) {
-            return $offset;
-        }
-
-        $matches = Chars::isPunctuation($graphemes[$index]) ? Chars::isPunctuation(...) : Chars::isWord(...);
-
-        while ($index < $count && $matches($graphemes[$index])) {
-            $offset += strlen($graphemes[$index]);
-            $index++;
-        }
-
-        return $offset;
+        $this->cursorCol = Chars::wordEnd($line, $this->cursorCol);
     }
 
     /**

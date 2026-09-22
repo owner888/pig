@@ -125,8 +125,8 @@ final class Input implements Component, InputHandler
             Keys::isArrowRight($data) => $this->step(1),
             Keys::isCtrlA($data), Keys::isHome($data) => $this->moveTo(0),
             Keys::isCtrlE($data), Keys::isEnd($data) => $this->moveTo(strlen($this->value)),
-            Keys::isCtrlLeft($data), Keys::isAltLeft($data) => $this->moveTo($this->wordStart()),
-            Keys::isCtrlRight($data), Keys::isAltRight($data) => $this->moveTo($this->wordEnd()),
+            Keys::isCtrlLeft($data), Keys::isAltLeft($data) => $this->moveTo(Chars::wordStart($this->value, $this->cursor)),
+            Keys::isCtrlRight($data), Keys::isAltRight($data) => $this->moveTo(Chars::wordEnd($this->value, $this->cursor)),
             default => false,
         };
     }
@@ -219,7 +219,7 @@ final class Input implements Component, InputHandler
 
     private function deleteWordBefore(): bool
     {
-        $from = $this->wordStart();
+        $from = Chars::wordStart($this->value, $this->cursor);
 
         $this->value = substr($this->value, 0, $from) . substr($this->value, $this->cursor);
         $this->cursor = $from;
@@ -256,65 +256,6 @@ final class Input implements Component, InputHandler
         $graphemes = Graphemes::split(substr($this->value, $this->cursor));
 
         return $graphemes === [] ? 0 : strlen($graphemes[0]);
-    }
-
-    /**
-     * Where the word before the cursor begins.
-     *
-     * Trailing spaces are skipped first, then a run of one kind — all punctuation, or all
-     * word characters. Stopping where the kind changes is what makes Ctrl+W useful on a
-     * path or an expression rather than swallowing the whole line.
-     */
-    private function wordStart(): int
-    {
-        $graphemes = Graphemes::split(substr($this->value, 0, $this->cursor));
-        $offset = $this->cursor;
-
-        while ($graphemes !== [] && Chars::isWhitespace(end($graphemes))) {
-            $offset -= strlen((string) array_pop($graphemes));
-        }
-
-        if ($graphemes === []) {
-            return $offset;
-        }
-
-        $matches = Chars::isPunctuation(end($graphemes))
-            ? Chars::isPunctuation(...)
-            : Chars::isWord(...);
-
-        while ($graphemes !== [] && $matches(end($graphemes))) {
-            $offset -= strlen((string) array_pop($graphemes));
-        }
-
-        return $offset;
-    }
-
-    /** Where the word after the cursor ends. The mirror of wordStart(). */
-    private function wordEnd(): int
-    {
-        $graphemes = Graphemes::split(substr($this->value, $this->cursor));
-        $offset = $this->cursor;
-        $index = 0;
-
-        while ($index < count($graphemes) && Chars::isWhitespace($graphemes[$index])) {
-            $offset += strlen($graphemes[$index]);
-            $index++;
-        }
-
-        if ($index >= count($graphemes)) {
-            return $offset;
-        }
-
-        $matches = Chars::isPunctuation($graphemes[$index])
-            ? Chars::isPunctuation(...)
-            : Chars::isWord(...);
-
-        while ($index < count($graphemes) && $matches($graphemes[$index])) {
-            $offset += strlen($graphemes[$index]);
-            $index++;
-        }
-
-        return $offset;
     }
 
     #[\Override]
