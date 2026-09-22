@@ -14,27 +14,24 @@ use Pig\Async\AbortError;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\AssertsThrows;
+use Pig\Test\CannedServer;
 
 final class HttpClientTest extends TestCase
 {
     use AssertsThrows;
 
-    /** @var list<resource> */
-    private array $open = [];
-
-    private string $received = '';
+    private CannedServer $server;
 
     #[\Override]
     protected function setUp(): void
     {
         Loop::reset();
-        $this->open = [];
-        $this->received = '';
+        $this->server = new CannedServer();
     }
 
     public function testReadsStatusHeadersAndBody(): void
     {
-        $url = $this->serve(["HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 13\r\n\r\n{\"ok\":true}\r\n"]);
+        $url = $this->server->start(["HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 13\r\n\r\n{\"ok\":true}\r\n"]);
 
         $result = Async::run(static function () use ($url): array {
             $response = (new HttpClient())->send(new Request('GET', $url));
@@ -50,7 +47,7 @@ final class HttpClientTest extends TestCase
 
     public function testSendsAWellFormedRequest(): void
     {
-        $url = $this->serve(["HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"]);
+        $url = $this->server->start(["HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"]);
 
         Async::run(static function () use ($url): void {
             (new HttpClient())->send(new Request(
@@ -61,20 +58,20 @@ final class HttpClientTest extends TestCase
             ))->body->all();
         });
 
-        $head = strstr($this->received, "\r\n\r\n", true);
+        $head = $this->server->receivedHead();
 
-        $this->assertStringContainsString('POST /v1/messages?beta=true HTTP/1.1', (string) $head);
-        $this->assertStringContainsString('x-api-key: secret', (string) $head);
-        $this->assertStringContainsString('content-length: 13', (string) $head);
-        $this->assertStringContainsString('connection: close', (string) $head);
+        $this->assertStringContainsString('POST /v1/messages?beta=true HTTP/1.1', $head);
+        $this->assertStringContainsString('x-api-key: secret', $head);
+        $this->assertStringContainsString('content-length: 13', $head);
+        $this->assertStringContainsString('connection: close', $head);
         // Nothing here decompresses, so the server must not be left to decide.
-        $this->assertStringContainsString('accept-encoding: identity', (string) $head);
-        $this->assertStringContainsString('{"model":"x"}', $this->received);
+        $this->assertStringContainsString('accept-encoding: identity', $head);
+        $this->assertStringContainsString('{"model":"x"}', $this->server->received());
     }
 
     public function testJoinsRepeatedHeaders(): void
     {
-        $url = $this->serve(["HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n"]);
+        $url = $this->server->start(["HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n"]);
 
         $header = Async::run(static function () use ($url): ?string {
             $response = (new HttpClient())->send(new Request('GET', $url));
@@ -88,7 +85,7 @@ final class HttpClientTest extends TestCase
 
     public function testStreamsAChunkedBodyAsItArrives(): void
     {
-        $url = $this->serve([
+        $url = $this->server->start([
             "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
             "5\r\nHello\r\n",
             "6\r\n world\r\n",
@@ -112,7 +109,7 @@ final class HttpClientTest extends TestCase
     public function testReadsABodyThatEndsWhenTheConnectionCloses(): void
     {
         // No Content-Length and no chunking: the hang-up is the only frame marker.
-        $url = $this->serve(["HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n", 'no length header here']);
+        $url = $this->server->start(["HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n", 'no length header here']);
 
         $body = Async::run(static fn (): string => (new HttpClient())->send(new Request('GET', $url))->body->all());
 
@@ -121,7 +118,7 @@ final class HttpClientTest extends TestCase
 
     public function testRejectsAMalformedStatusLine(): void
     {
-        $url = $this->serve(["I am not HTTP\r\n\r\n"]);
+        $url = $this->server->start(["I am not HTTP\r\n\r\n"]);
 
         $this->assertThrows(
             HttpError::class,
@@ -132,7 +129,7 @@ final class HttpClientTest extends TestCase
 
     public function testABodyShorterThanPromisedIsAnError(): void
     {
-        $url = $this->serve(["HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n", 'only twelve']);
+        $url = $this->server->start(["HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n", 'only twelve']);
 
         $this->assertThrows(
             HttpError::class,
@@ -145,7 +142,7 @@ final class HttpClientTest extends TestCase
 
     public function testAbortingStopsTheBodyMidStream(): void
     {
-        $url = $this->serve([
+        $url = $this->server->start([
             "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
             "5\r\nHello\r\n",
             // …and then nothing, ever.
@@ -171,7 +168,7 @@ final class HttpClientTest extends TestCase
         $body = "event: message_start\ndata: {\"type\":\"message_start\"}\n\n"
             . "event: content_block_delta\ndata: {\"text\":\"Hi\"}\n\n";
 
-        $url = $this->serve([
+        $url = $this->server->start([
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n",
             sprintf("%x\r\n%s\r\n", strlen($body), $body),
             "0\r\n\r\n",
@@ -195,69 +192,5 @@ final class HttpClientTest extends TestCase
             'message_start|{"type":"message_start"}',
             'content_block_delta|{"text":"Hi"}',
         ], $events);
-    }
-
-    /**
-     * A server that replies with canned bytes, one piece every 10ms.
-     *
-     * @param list<string> $pieces
-     * @return string base URL, with a trailing slash
-     */
-    private function serve(array $pieces, bool $closeAfter = true): string
-    {
-        $server = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
-
-        if ($server === false) {
-            throw new HttpError("Cannot open test server: {$errstr}");
-        }
-
-        stream_set_blocking($server, false);
-        $this->open[] = $server;
-
-        Loop::get()->onReadable($server, function ($listening) use ($pieces, $closeAfter): void {
-            $connection = stream_socket_accept($listening, 0);
-
-            if ($connection === false) {
-                return;
-            }
-
-            stream_set_blocking($connection, false);
-            $this->open[] = $connection;
-            $reader = null;
-
-            $reader = Loop::get()->onReadable($connection, function ($peer) use ($pieces, $closeAfter, &$reader): void {
-                $data = fread($peer, 65536);
-
-                if ($data === false || $data === '') {
-                    return;
-                }
-
-                $this->received .= $data;
-
-                // Reply once the whole request head is in.
-                if (!str_contains($this->received, "\r\n\r\n")) {
-                    return;
-                }
-
-                Loop::get()->cancel((string) $reader);
-
-                foreach ($pieces as $index => $piece) {
-                    Loop::get()->delay(0.01 * ($index + 1), static function () use ($peer, $piece): void {
-                        fwrite($peer, $piece);
-                    });
-                }
-
-                if ($closeAfter) {
-                    Loop::get()->delay(0.01 * (count($pieces) + 1), static function () use ($peer): void {
-                        fclose($peer);
-                    });
-                }
-            });
-        });
-
-        $name = stream_socket_get_name($server, false);
-        $separator = strrpos((string) $name, ':');
-
-        return 'http://' . substr((string) $name, 0, $separator) . ':' . substr((string) $name, $separator + 1) . '/';
     }
 }

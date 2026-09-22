@@ -23,6 +23,21 @@ foreach (['packages', 'test', 'bin'] as $dir) {
 sort($files);
 $failed = 0;
 
+/**
+ * Functions newer than the declared floor in composer.json.
+ *
+ * php -l parses; it does not resolve function names, so a call to one of these sails
+ * through the lint and fails at run time only on the line that happens to reach it.
+ * Syntax above the floor is caught by linting with the floor's own php binary; this
+ * covers the other half.
+ */
+$tooNew = [
+    // All 8.4. Raise the floor and this list shrinks.
+    'array_find', 'array_find_key', 'array_any', 'array_all',
+    'mb_trim', 'mb_ltrim', 'mb_rtrim', 'mb_ucfirst', 'mb_lcfirst',
+    'fpow', 'request_parse_body', 'http_get_last_response_headers',
+];
+
 foreach ($files as $file) {
     exec(escapeshellcmd(PHP_BINARY) . ' -l ' . escapeshellarg($file) . ' 2>&1', $output, $status);
 
@@ -33,6 +48,16 @@ foreach ($files as $file) {
     }
 
     $output = [];
+
+    $source = (string) file_get_contents($file);
+
+    foreach ($tooNew as $function) {
+        if (preg_match('/(?<![\w$>])' . $function . '\s*\(/', $source) === 1) {
+            $failed++;
+            echo "\033[31m✗\033[0m " . substr($file, strlen($root) + 1) . "\n";
+            echo "  {$function}() is newer than the floor in composer.json\n";
+        }
+    }
 }
 
 printf(

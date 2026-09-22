@@ -182,8 +182,16 @@ Off-limits until the floor moves, even though the dev machine runs 8.4:
 Where 8.4 would express something better, say so in a comment rather than leaving it unexplained —
 `FutureState` reads that way, since on 8.4 its readers would collapse into `public private(set)`.
 
-Verify against the floor, not just the dev version: `for f in $(find packages test -name '*.php');
-do php8.3 -l $f; done`. 8.3 rejects both 8.4-only constructs above at parse time.
+Verify against the floor, not just the dev version — `php8.3 test/lint.php`. That does two things,
+because `php -l` only parses:
+
+- linting with the **floor's own binary** rejects 8.4-only *syntax* at parse time;
+- a grep catches 8.4-only *functions*, which `php -l` never resolves. `array_any()` lints clean on
+  8.3 and fails only on the line that reaches it.
+
+Neither catches a **missing `use`**: an unimported class is resolved at run time too, and shows up
+only on the code path that touches it. Exercise every branch — `ThinkingStartEvent` went unimported
+and only the thinking test found it.
 
 ## Conventions
 
