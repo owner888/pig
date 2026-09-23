@@ -511,25 +511,6 @@ final class SessionManagerTest extends TestCase
         $this->assertInstanceOf(CompactionSummary::class, $left[1]);
     }
 
-    public function testASessionWrittenBeforeTheTreeStillOpens(): void
-    {
-        $path = $this->home . '/old.jsonl';
-        mkdir($this->home, 0o700, true);
-        file_put_contents($path, implode("\n", [
-            json_encode(['type' => 'session', 'version' => 1, 'id' => 'x', 'cwd' => '/p', 'timestamp' => 0]),
-            json_encode(['role' => 'user', 'content' => [['type' => 'text', 'text' => 'one']]]),
-            json_encode(['role' => 'user', 'content' => [['type' => 'text', 'text' => 'two']]]),
-        ]) . "\n");
-
-        $back = SessionManager::open($path);
-
-        // Read linearly, each entry the child of the one before it — which is the same
-        // conversation the old format described.
-        $this->assertCount(2, $back->messages());
-        $this->assertSame('two', $back->messages()[1]->content[0]->text);
-        $this->assertCount(2, $back->branch());
-    }
-
     public function testACompactionOnAnAbandonedBranchDoesNotAffectTheOtherOne(): void
     {
         $session = SessionManager::create('/some/project');
@@ -608,17 +589,25 @@ final class SessionManagerTest extends TestCase
         );
     }
 
-    public function testALineWrittenBySomethingNewerIsSkippedRatherThanFatal(): void
+    public function testALineWrittenBySomethingNewerIsWalkedPastRatherThanFatal(): void
     {
         $session = SessionManager::create('/some/project');
         $session->append(new UserMessage('one'));
         $session->append($this->answer());
 
-        file_put_contents($session->path, json_encode(['role' => 'somethingElse', 'x' => 1]) . "\n", FILE_APPEND);
+        $leaf = $session->leaf();
+        file_put_contents(
+            $session->path,
+            json_encode(['type' => 'something_else', 'id' => 'zzzzzzzz', 'parentId' => $leaf, 'timestamp' => '2030-01-01T00:00:00.000Z']) . "\n"
+                . json_encode(['type' => 'message', 'id' => 'yyyyyyyy', 'parentId' => 'zzzzzzzz', 'timestamp' => '2030-01-01T00:00:01.000Z', 'message' => ['role' => 'user', 'content' => [['type' => 'text', 'text' => 'after it']]]]) . "\n",
+            FILE_APPEND,
+        );
 
-        // A session written by a later pig should still open in this one, minus whatever
-        // it did not recognise.
-        $this->assertCount(2, SessionManager::open($session->path)->messages());
+        // Kept in the tree, not skipped: the message after it names it as its parent, and
+        // dropping it would have stranded everything downstream.
+        $back = SessionManager::open($session->path)->messages();
+        $this->assertCount(3, $back);
+        $this->assertSame('after it', $back[2]->content[0]->text);
     }
 
     public function testTheTimeAgoReadsTheWayPeopleSayIt(): void

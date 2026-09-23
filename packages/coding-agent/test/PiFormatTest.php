@@ -20,11 +20,11 @@ use Pig\CodingAgent\Session\SessionManager;
 /**
  * The session file, byte for byte as pi writes one.
  *
- * pig used to flatten the message onto the line with `entryId` and `parent` and an integer
- * millisecond timestamp, while calling it `version: 2` — the same number pi uses for a
- * different shape, so pi would agree about the version and then find no `type` on any line.
- * These tests are the fence around that: every assertion here is a field name or a shape
- * taken from upstream's `core/session-manager.ts`, not from what pig happens to do.
+ * pig briefly wrote its own shape under the same `version: 2`, which is worse than a different
+ * number: pi would have agreed about the version and then found no `type` on any line. These
+ * tests are the fence around that. **Every assertion here is a field name or a shape taken
+ * from upstream's `core/session-manager.ts`, not from what pig happens to do** — a test that
+ * asserts what the writer writes proves only that the writer agrees with itself.
  */
 final class PiFormatTest extends TestCase
 {
@@ -313,41 +313,6 @@ final class PiFormatTest extends TestCase
         $this->assertSame('what pi summarised', $messages[0]->summary);
         $this->assertSame(2, $messages[0]->replaced, 'two messages before the kept one');
         $this->assertSame('kept', $messages[1]->content[0]->text);
-    }
-
-    public function testAFilePigWroteBeforeThisStillOpens(): void
-    {
-        $path = $this->home . '/old-pig.jsonl';
-        mkdir(dirname($path), 0o755, true);
-
-        // The flat shape, with `entryId`/`parent` and millisecond timestamps. A session
-        // file is a record of something that happened; old ones have to keep opening.
-        file_put_contents($path, implode("\n", [
-            json_encode(['type' => 'session', 'version' => 2, 'id' => 'abc', 'cwd' => '/p', 'timestamp' => 1_735_849_770_123]),
-            json_encode(['role' => 'user', 'content' => [['type' => 'text', 'text' => 'said long ago']], 'timestamp' => 1_735_849_770_200, 'entryId' => 'aaaaaaaaaaaa', 'parent' => null]),
-        ]) . "\n");
-
-        $messages = SessionManager::open($path)->messages();
-
-        $this->assertCount(1, $messages);
-        $this->assertSame('said long ago', $messages[0]->content[0]->text);
-    }
-
-    public function testAFileWithNoIdsAtAllStillReadsAsOneConversation(): void
-    {
-        $path = $this->home . '/older-pig.jsonl';
-        mkdir(dirname($path), 0o755, true);
-
-        file_put_contents($path, implode("\n", [
-            json_encode(['type' => 'session', 'version' => 1, 'id' => 'abc', 'cwd' => '/p', 'timestamp' => 1_735_849_770_123]),
-            json_encode(['role' => 'user', 'content' => [['type' => 'text', 'text' => 'one']], 'timestamp' => 1]),
-            json_encode(['role' => 'user', 'content' => [['type' => 'text', 'text' => 'two']], 'timestamp' => 2]),
-        ]) . "\n");
-
-        // No parents anywhere, so each line is the child of the one before it — which is
-        // the same conversation the flat format described.
-        $messages = SessionManager::open($path)->messages();
-        $this->assertSame(['one', 'two'], array_map(static fn ($m) => $m->content[0]->text, $messages));
     }
 
     // ---- both directories ------------------------------------------------------------

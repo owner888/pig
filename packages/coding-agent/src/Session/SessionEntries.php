@@ -20,11 +20,11 @@ use Pig\Ai\Timestamp;
  *   {"type":"compaction","id":"…","parentId":"…","timestamp":"…","summary":"…","firstKeptEntryId":"…"}
  * ```
  *
- * pig used to write the message flattened onto the line with `entryId` and `parent`, and an
- * integer millisecond timestamp. Same `version: 2` as pi, different shape — so pi opening a
- * pig file would agree about the version and then find no `type` on any line. That is fixed
- * here; `readOld()` still reads what pig wrote before, because a session file is a record of
- * something that happened and old ones have to keep opening.
+ * pig briefly wrote its own shape under the same `version: 2` — the message flattened onto
+ * the line, `entryId` and `parent`, an integer timestamp — which is worse than a different
+ * version number, because pi would have agreed about the version and then found no `type` on
+ * any line. Nothing ever ran on it, so there is no reader for it: see the decision in
+ * CLAUDE.md. **This file speaks pi's format and no other.**
  */
 final class SessionEntries
 {
@@ -153,32 +153,6 @@ final class SessionEntries
         };
     }
 
-    /**
-     * A line pig wrote before it spoke pi's format.
-     *
-     * Told apart by what it has rather than by a version number, because both formats say
-     * `version: 2` — which is the whole reason this was worth fixing. A flat line carries
-     * `role` at the top level; pi's carries `type`.
-     *
-     * @param array<string, mixed> $line
-     * @return array{0: mixed, 1: string|null, 2: bool}|null the item, its parent, and
-     *         whether the line named one at all
-     */
-    public static function readOld(array $line): ?array
-    {
-        if (!isset($line['role'])) {
-            return null;
-        }
-
-        $item = SessionCodec::decode($line);
-
-        if ($item === null) {
-            return null;
-        }
-
-        return [$item, is_string($line['parent'] ?? null) ? $line['parent'] : null, array_key_exists('parent', $line)];
-    }
-
     /** `2026-01-02T21:29:30.123Z`, which is what pi writes and what its file names are made of. */
     public static function iso(int $millis): string
     {
@@ -188,10 +162,6 @@ final class SessionEntries
     /** Back again. Anything unreadable is now, which is the only answer that is never wrong by years. */
     public static function millis(mixed $timestamp): int
     {
-        if (is_int($timestamp)) {
-            return $timestamp;
-        }
-
         if (!is_string($timestamp) || $timestamp === '') {
             return Timestamp::nowMs();
         }

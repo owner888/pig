@@ -58,6 +58,8 @@ AppleScript, which always is, when it is not.
 | HTTP transport | Raw `tls://` streams, hand-written HTTP/1.1 | Sockets and STDIN are then the same kind of thing; one loop, no `ext-curl` |
 | Unions | real union type where the arms are closed and few, marker interface otherwise | PHP has union types; what it lacks is naming one and typing an array's elements — see [Porting the unions](#porting-the-unions) |
 | Layout | composer monorepo, `Pig\*` | Mirrors upstream's package split one-to-one |
+| Session file | pi's format exactly, in pi's directory layout | A conversation started in either tool opens in the other; `--resume` lists both — see [The session file is pi's file](#the-session-file-is-pis-file) |
+| Back-compatibility | none before a release | pig has never shipped, so there is nobody with an old file; a reader for one would be compatibility with nothing, exercised only by the test written to exercise it |
 
 ### Deliberate exceptions to "prefer the platform library over your own"
 
@@ -191,7 +193,7 @@ Three things this changed that are worth knowing:
   file was read, which was correct while the log was a line and wrong the moment a branch is
   taken from *before* the compaction — that branch never had it.
 - **Format version 2, and it is pi's version 2.** See below — it was not, for a while, and
-  that was worse than a different number.
+  that was worse than a different number. There is no reader for what pig wrote in between.
 - **The end of the file is the leaf.** A branch is only ever made by appending, so the newest
   entry is always on the branch that was being talked on when the session was last open.
 
@@ -242,10 +244,16 @@ Three things this changed that are worth knowing:
   conversation. The `agent` in that path is not a typo: upstream's `getAgentDir()` is
   `join(homedir(), ".pi", "agent")`. `PI_AGENT_DIR` and `PI_HOME` override it.
 
-Old pig files still open. They are told apart by what the line has rather than by the version
-number — pi's carries `type`, pig's old one carries `role` — because both say 2, which is the
-whole reason this was worth fixing. Nothing rewrites a file, so an old session stays old and a
-line pig skipped stays exactly where it was.
+**There is no reader for the old shape, on purpose.** The developer's call, and the reasoning
+is worth keeping because it is the kind that gets forgotten: pig has never been released and
+nobody has ever had a session file in the old format, so a reader for it would be compatibility
+with nothing — code that can only ever be exercised by a test written to exercise it. It was
+written first and then deleted, along with the two tests that covered it. Anything that is not
+a line pi could have written is a line pig has nothing to do with, and takes the same path as
+`thinking_level_change`: a node holding nothing, walked past on the way out.
+
+The general rule, for the next time this comes up: **back-compatibility is a debt to real users,
+and there are none until there is a release.** Before that, a format change is a format change.
 
 Not ported: labels on entries, and branch summarisation (upstream summarises an abandoned
 branch so the model knows what was tried) — the second needs `branch-summarization.ts`, which

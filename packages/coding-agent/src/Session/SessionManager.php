@@ -153,16 +153,18 @@ final class SessionManager
                 continue;
             }
 
-            [$item, $parent, $named] = self::read($raw, $session->entries);
-
             // A line pig has nothing to do with — `thinking_level_change`, `model_change`,
             // `label`, all pi's — is kept in the tree as a node with nothing in it rather
             // than skipped. **Skipping it broke the chain**: the entries after it name it
             // as their parent, so walking back from the leaf stopped there and a pi
             // conversation came back as its first message and nothing else. It is walked
             // past on the way out instead, where it costs nothing.
-            $id = (string) ($raw['id'] ?? $raw['entryId'] ?? self::newId($session->entries));
-            $session->entries[$id] = ['message' => $item, 'parent' => $named ? $parent : $previous];
+            $id = (string) ($raw['id'] ?? self::newId($session->entries));
+
+            $session->entries[$id] = [
+                'message' => SessionEntries::decode($raw),
+                'parent' => is_string($raw['parentId'] ?? null) ? $raw['parentId'] : null,
+            ];
 
             $previous = $id;
         }
@@ -172,27 +174,6 @@ final class SessionManager
         $session->leaf = $previous;
 
         return $session;
-    }
-
-    /**
-     * One line, whichever format wrote it.
-     *
-     * @param array<string, mixed> $raw
-     * @param array<string, mixed> $taken
-     * @return array{0: mixed, 1: string|null, 2: bool} the item, its parent, and whether
-     *         the line named one
-     */
-    private static function read(array $raw, array $taken): array
-    {
-        if (isset($raw['type'])) {
-            return [
-                SessionEntries::decode($raw),
-                is_string($raw['parentId'] ?? null) ? $raw['parentId'] : null,
-                array_key_exists('parentId', $raw),
-            ];
-        }
-
-        return SessionEntries::readOld($raw) ?? [null, null, false];
     }
 
     /**
@@ -689,19 +670,16 @@ final class SessionManager
                 continue;
             }
 
-            // The message is inside the line in pi's format and flat on it in the one pig
-            // used to write. Read without decoding either: this runs once per file for
-            // every session in a list, and all it needs is the first thing anybody said.
-            $message = is_array($entry['message'] ?? null) ? $entry['message'] : $entry;
-
-            if (($entry['type'] ?? 'message') !== 'message' && !isset($entry['role'])) {
+            // Read without decoding: this runs once per file for every session in a list,
+            // and all it needs is a count and the first thing anybody said.
+            if (($entry['type'] ?? null) !== 'message' || !is_array($entry['message'] ?? null)) {
                 continue;
             }
 
             $messages++;
 
-            if ($opening === '' && ($message['role'] ?? null) === 'user') {
-                $opening = self::opening($message);
+            if ($opening === '' && ($entry['message']['role'] ?? null) === 'user') {
+                $opening = self::opening($entry['message']);
             }
         }
 
