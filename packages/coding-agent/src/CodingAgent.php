@@ -12,6 +12,7 @@ use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
+use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Hooks\HookedTool;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Session\BashExecution;
@@ -40,6 +41,8 @@ final class CodingAgent
      * @param list<Skill>            $skills       what the model may reach for
      * @param HookRunner|null        $hooks        wrapped around the tools, and given the
      *                                             context on its way to the model
+     * @param CustomToolSet|null     $customTools  tools loaded from disk, offered to the
+     *                                             model alongside the built-in ones
      */
     public static function create(
         Model $model,
@@ -52,6 +55,7 @@ final class CodingAgent
         ThinkingLevel $thinking = ThinkingLevel::Off,
         array $skills = [],
         ?HookRunner $hooks = null,
+        ?CustomToolSet $customTools = null,
     ): Agent {
         $agent = new Agent(new AgentOptions(
             apiKey: $apiKey ?? self::apiKey($model),
@@ -66,7 +70,14 @@ final class CodingAgent
         ));
 
         $agent->setModel($model);
-        $agent->setTools(HookedTool::wrap(ToolSet::create($cwd, $tools), $hooks ?? new HookRunner()));
+
+        // Custom tools go in beside the built-in ones and are then wrapped with them, so
+        // a `tool_call` hook guards a tool somebody wrote exactly as it guards `bash`.
+        // The built-ins come first: they are what the system prompt lists in that order.
+        $agent->setTools(HookedTool::wrap(
+            [...ToolSet::create($cwd, $tools), ...($customTools?->agentTools() ?? [])],
+            $hooks ?? new HookRunner(),
+        ));
         $agent->setThinkingLevel($thinking);
         $agent->setSystemPrompt(SystemPrompt::build(
             $cwd,

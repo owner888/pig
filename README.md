@@ -14,7 +14,8 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 > carries on, which `/compact` also does on demand, and `/model` switches models mid-session.
 > Skills are picked up from `~/.pig/skills` and from Claude's and Codex's folders too, and
 > images a tool returns are drawn in the terminal. Hooks are PHP files that can block a
-> tool, edit what the model is shown, or add commands of their own.
+> tool, edit what the model is shown, or add commands of their own, and a folder with an
+> `index.php` in it is a tool the model can call.
 
 ## Packages
 
@@ -24,7 +25,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 | `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic, OpenAI chat-completions, OpenAI Responses and Gemini all stream end to end** |
 | `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — **done** |
 | `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — **done** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions, compaction, model switching, skills and hooks done** |
+| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions, compaction, model switching, skills, hooks and custom tools done** |
 
 `pig/async` has no counterpart upstream: JavaScript ships an event loop and PHP does not. It
 exists so one `stream_select()` can wait on the model's socket and on the keyboard at the same
@@ -85,6 +86,38 @@ return function (HookApi $pi): void {
 A hook runs inside pig, so it can hand back an object and reach pig's own classes — and a
 hook that loops or calls `exit()` takes the session with it. Broken ones are named on the
 shell at startup rather than crashing; `/hooks` lists what loaded and `--no-hooks` skips them.
+
+A folder with an `index.php` in `~/.pig/tools/` or `.pig/tools/` is a tool the model can
+call — a folder, because that directory also holds the `fd` and `rg` binaries pig may have
+downloaded, and a file there is one of those. Same loader as hooks, same trade-off; `/tools`
+lists everything the model has and where each one came from, and `--no-tools` skips them:
+
+```php
+<?php // ~/.pig/tools/wc/index.php
+
+use Pig\Agent\AgentToolResult;
+use Pig\Ai\TextContent;
+use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\CustomTools\CustomToolApi;
+
+return fn (CustomToolApi $pi) => new CustomTool(
+    name: 'wc',
+    label: 'Count lines',
+    description: 'Count the lines in a file.',
+    parameters: [
+        'type' => 'object',
+        'properties' => ['path' => ['type' => 'string', 'description' => 'the file']],
+        'required' => ['path'],
+    ],
+    execute: fn ($id, $params, $onUpdate, $ctx) => new AgentToolResult(
+        [new TextContent(trim($pi->exec(['wc', '-l', $params['path']])->stdout))],
+    ),
+);
+```
+
+`$ctx` is the session: the conversation so far, which model is answering, whether the agent
+is busy, and a way to stop it. A tool can also be told when the session starts, switches,
+jumps or ends, which is how one that keeps state rebuilds or lets go of it.
 
 Skills are folders with a `SKILL.md` in them. pig reads `~/.pig/skills` and `.pig/skills`, and
 also `~/.claude/skills`, `.claude/skills` and `~/.codex/skills`, so a skill written for another

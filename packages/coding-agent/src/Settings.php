@@ -170,6 +170,22 @@ final class Settings
         return is_array($value) ? array_values(array_map(strval(...), $value)) : [];
     }
 
+    /**
+     * Custom tool files named in the settings, on top of the two standard folders.
+     *
+     * Upstream's key exactly: a top-level `customTools` array of paths, each one a tool's
+     * entry file. `--no-tools` is how none of them are loaded, for the same reason
+     * `--no-hooks` is a flag rather than a setting — the name here is already this list.
+     *
+     * @return list<string>
+     */
+    public function customTools(): array
+    {
+        $value = $this->get('customTools');
+
+        return is_array($value) ? array_values(array_map(strval(...), $value)) : [];
+    }
+
     public function skillsEnabled(): bool
     {
         return $this->get('skills.enabled') !== false;

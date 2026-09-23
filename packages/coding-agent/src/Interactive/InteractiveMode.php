@@ -28,6 +28,8 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Export\HtmlExport;
+use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\CustomTools\ToolProblem;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
 use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
@@ -130,6 +132,8 @@ final class InteractiveMode
 
     private ?HookRunner $hooks = null;
 
+    private ?CustomToolSet $customTools = null;
+
     /** @var array<string, RegisteredCommand> what the hooks added, by name */
     private array $hookCommands = [];
 
@@ -160,12 +164,14 @@ final class InteractiveMode
         array $fileCommands = [],
         ?Settings $settings = null,
         ?HookRunner $hooks = null,
+        ?CustomToolSet $customTools = null,
     ) {
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
         $this->skills = $skills;
         $this->fileCommands = $fileCommands;
         $this->hooks = $hooks;
+        $this->customTools = $customTools;
         $this->settings = $settings ?? Settings::inMemory();
         $this->hideThinking = $this->settings->hideThinking();
         $this->clipboard = $clipboard ?? new SystemClipboard();
@@ -203,6 +209,7 @@ final class InteractiveMode
         $this->replay();
         $this->running = true;
         $this->hooks?->emit(new SessionStartEvent());
+        $this->sayToolProblems($this->customTools?->notify('start') ?? []);
         $this->tui->start();
     }
 
@@ -308,6 +315,13 @@ final class InteractiveMode
         // is about to be handed back — so a hook that complains here complains to stderr
         // through whatever it uses itself.
         $this->hooks?->emit(new SessionShutdownEvent());
+
+        // Nothing is drawn after this, so a tool that fails while letting go is reported
+        // to stderr — the transcript is a moment away from being scrolled off.
+        foreach ($this->customTools?->notify('shutdown') ?? [] as $problem) {
+            fwrite(STDERR, "tool {$problem->toText()}\n");
+        }
+
         $this->session->dispose();
 
         // Stopped here and not only in run()'s finally: whoever calls this wants the
@@ -404,6 +418,11 @@ final class InteractiveMode
 
             $sections[] = $this->palette->fg('mdHeading', '[Hooks]') . "\n"
                 . $this->palette->fg('muted', '  ' . implode(', ', $names));
+        }
+
+        if ($this->customTools !== null && !$this->customTools->isEmpty()) {
+            $sections[] = $this->palette->fg('mdHeading', '[Tools]') . "\n"
+                . $this->palette->fg('muted', '  ' . implode(', ', $this->customTools->names()));
         }
 
         return implode("\n\n", $sections);
@@ -816,6 +835,7 @@ final class InteractiveMode
         ['tree', 'Go back to an earlier point and take it somewhere else'],
         ['theme', 'Switch between dark and light'],
         ['hooks', 'What hooks loaded, and what they added'],
+        ['tools', 'What the model can call, built-in and loaded'],
         ['exit', 'Quit'],
     ];
 
@@ -836,6 +856,7 @@ final class InteractiveMode
             'tree' => $this->showTree(),
             'theme' => $this->switchTheme(),
             'hooks' => $this->say($this->hookList()),
+            'tools' => $this->say($this->toolList()),
             'exit', 'quit' => $this->stop(),
             // A command from a hook or kept as a file is tried last, so a built-in can
             // never be shadowed by something someone forgot they wrote.
@@ -895,6 +916,33 @@ final class InteractiveMode
         }
 
         return implode("\n", $lines);
+    }
+
+    /**
+     * Every tool the model can call this session, and where each came from.
+     *
+     * Read off the agent rather than off the two loaders, so what is listed is what the
+     * model was actually given — a tool that failed to load is missing here, which is the
+     * answer someone typing this is after.
+     */
+    private function toolList(): string
+    {
+        $custom = [];
+
+        foreach ($this->customTools?->loaded() ?? [] as $one) {
+            $custom[$one->tool->name] = $one->path;
+        }
+
+        $lines = [];
+
+        foreach ($this->session->state()->tools as $tool) {
+            $name = $tool->definition()->name;
+
+            $lines[] = $this->palette->fg('dim', str_pad($name, 14))
+                . $this->palette->fg('muted', $tool->label() . ' · ' . ($custom[$name] ?? 'built-in'));
+        }
+
+        return $lines === [] ? 'This session has no tools at all.' : implode("\n", $lines);
     }
 
     /**
@@ -1073,6 +1121,7 @@ final class InteractiveMode
         // writing, so what the hook is handed is where the conversation it just lost is
         // to be found — which is what a hook asking for it wants.
         $this->hooks?->emit(new SessionSwitchEvent('new', $previous));
+        $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
     }
 
     /**
@@ -1337,6 +1386,7 @@ final class InteractiveMode
         $this->replay();
         $this->footer->invalidate();
         $this->say('Went back — anything you say now starts a new branch');
+        $this->sayToolProblems($this->customTools?->notify('tree') ?? []);
     }
 
     /** One message, short enough to pick from a list. */
@@ -1394,6 +1444,7 @@ final class InteractiveMode
         // first thing buried above a conversation.
         $this->say('Resumed ' . count($saved->messages()) . ' messages from ' . $info->when());
         $this->hooks?->emit(new SessionSwitchEvent('resume', $previous));
+        $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
     }
 
     private function switchTheme(): void
@@ -1609,6 +1660,22 @@ final class InteractiveMode
     private function sayHookError(HookError $error): void
     {
         $this->sayWarning('hook ' . $error->toText());
+    }
+
+    /**
+     * Custom tools that failed on a session event, in the transcript.
+     *
+     * Collected and shown rather than listened for: a tool's session callbacks are called
+     * from here, one call at a time, so there is nothing to subscribe to and nowhere else
+     * the complaint could come from.
+     *
+     * @param list<ToolProblem> $problems
+     */
+    private function sayToolProblems(array $problems): void
+    {
+        foreach ($problems as $problem) {
+            $this->sayWarning('tool ' . $problem->toText());
+        }
     }
 
     /** Not an error, but not what was asked for either — upstream's `showWarning()`. */

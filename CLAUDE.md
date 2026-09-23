@@ -133,15 +133,15 @@ all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439),
 `components/`, `terminal-image.ts` 340, `image.ts` 87). `pig/tui` is done.
 
 `coding-agent` is upstream's biggest package — 23k lines at the anchor, and most of it is not
-the agent: RPC mode, custom tools, OAuth, twenty-five selector components. What is being ported
-is the part that makes it a coding agent: `core/tools/` (done), `core/system-prompt.ts` (done),
-enough of `core/agent-session.ts` to hold a session (done — `Session\AgentSession`), an
-interactive mode built on `pig/tui` (done — `Interactive\`), and `core/hooks/` (done —
-`Hooks\`). The rest is left out until something needs it.
+the agent: RPC mode, OAuth, twenty-five selector components. What is being ported is the part
+that makes it a coding agent: `core/tools/` (done), `core/system-prompt.ts` (done), enough of
+`core/agent-session.ts` to hold a session (done — `Session\AgentSession`), an interactive mode
+built on `pig/tui` (done — `Interactive\`), `core/hooks/` (done — `Hooks\`) and
+`core/custom-tools/` (done — `CustomTools\`). The rest is left out until something needs it.
 
 `AgentSession` is 1901 lines upstream and ~800 here, because everything it coordinates that is
-not ported is not there to coordinate: auto-retry, branching to a second session file, and
-custom tools. What is left is the conversation, the event fan-out,
+not ported is not there to coordinate: auto-retry and branching to a second session file.
+What is left is the conversation, the event fan-out,
 the queue of messages someone typed while the agent was working, the thinking level, what the
 session has cost, persistence, compaction, tree navigation and the hook events. Each of the
 rest can arrive on its own when something needs it.
@@ -261,7 +261,7 @@ components it draws with are `UserMessageComponent`, `AssistantMessageComponent`
 `InteractiveMode` is ~1200 lines against upstream's 2439, and the difference is almost entirely
 selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
 trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
-an agent you can talk to, thirteen slash commands plus whatever the hooks add, and the keys.
+an agent you can talk to, fourteen slash commands plus whatever the hooks add, and the keys.
 Also not ported: custom-tool rendering and the hook UI context.
 
 `/copy` needed a clipboard *writer*, which nothing had: `SystemClipboard` could only read.
@@ -544,15 +544,91 @@ be able to open a picker from inside a tool call. `BeforeAgentStartEventResult` 
 for the same reason: upstream's is a `HookMessage`, and the part that survives is the part
 that reaches the model.
 
+`CustomTools\` is upstream's `core/custom-tools/`, on the same loader. A tool lives in a
+folder of its own — `~/.pig/tools/<name>/index.php`, or the same under `<cwd>/.pig/tools`
+— because a tool is likelier than a hook to want a second file beside it, and a folder is
+where that goes. The file returns a factory; the factory returns a `CustomTool` or a list
+of them:
+
+```php
+<?php // ~/.pig/tools/wc/index.php
+
+use Pig\Agent\AgentToolResult;
+use Pig\Ai\TextContent;
+use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\CustomTools\CustomToolApi;
+
+return fn (CustomToolApi $pi) => new CustomTool(
+    name: 'wc',
+    label: 'Count lines',
+    description: 'Count the lines in a file.',
+    parameters: [
+        'type' => 'object',
+        'properties' => ['path' => ['type' => 'string', 'description' => 'the file']],
+        'required' => ['path'],
+    ],
+    execute: fn ($id, $params, $onUpdate, $ctx) => new AgentToolResult(
+        [new TextContent(trim($pi->exec(['wc', '-l', $params['path']])->stdout))],
+    ),
+);
+```
+
+Upstream's `CustomTool` is an object literal with five fields and three optional callbacks;
+the PHP equivalent of an object literal is a value object built from closures, and the
+developer chose that over an interface to implement. `WrappedCustomTool` turns one into an
+`AgentTool` — upstream's `wrapper.ts` — and the one thing it adds is the session: `execute`
+is given the same `HookContext` a hook gets, which is the reason to write a custom tool
+rather than a built-in one. It can read the conversation, see which model is answering, and
+stop the run.
+
+Five things worth keeping straight:
+
+- **The declaration validates itself.** A nameless tool, a tool with no description, a
+  `parameters` that is not a JSON Schema object — all refused in the constructor, which the
+  loader turns into a complaint naming the file. Left to the provider, a bad name fails the
+  whole request rather than the tool, and a missing description is a tool the model can
+  never choose.
+- **A tool may not take a built-in's name.** `bash` is described in the system prompt; a
+  custom tool answering to that name would be called in its place by a model that was told
+  something else. Named, not dropped, because only the author can fix it.
+- **Custom tools are wrapped with the built-ins, not after them.** `CodingAgent::create()`
+  concatenates first and hands the lot to `HookedTool::wrap()`, so a `tool_call` hook guards
+  a tool somebody wrote exactly as it guards `bash`. A guard that covered only the built-ins
+  would not be a guard.
+- **The session context is a closure, not a value.** `/model` replaces the model mid-session,
+  and a tool that asked which one is answering must not be told about the one that was
+  replaced.
+- **`onSession` is fired from the interactive mode, not from the session.** All four moments
+  a tool hears about — startup, `/new` and `/resume`, `/tree`, quitting — are things someone
+  did in the UI, and the UI is the only place with somewhere to report a callback that
+  failed. Routing them through the hook runner was the other option and was worse: `/hooks`
+  would then list tool files as hooks. Upstream's fifth reason, `branch`, is the fork into a
+  second session file that pig does not do.
+
+`--no-tools` loads none of them. Settings name extra entry files under upstream's key,
+`customTools`. The system prompt's "Available tools" list stays the built-ins, as upstream's
+does: a custom tool reaches the model as a tool definition, which is the part that matters.
+
+**`~/.pig/tools/` holds two unrelated things**, and that is upstream's doing rather than a
+choice made here: `ToolInstaller` downloads `fd` and `rg` into it, and custom tools live in
+it too. They are told apart by shape — a downloaded binary is a file, a custom tool is a
+folder with an entry file — and the discovery glob is `*/index.php`, so neither sees the
+other. Worth knowing before wondering why `ls ~/.pig/tools` shows a mixture.
+
+Not ported: `renderCall` and `renderResult`, which hand back a TUI component for the
+interactive mode to draw in place of the default tool view. pig has the components; what it
+does not have is the lookup in `ToolExecutionComponent` that would reach for them. Nor
+`CustomToolAPI.ui`, which is the hook UI context under another name.
+
 What is left in `coding-agent`, none of it deliberately left out, all of it needing something
 that is not here yet:
 
 | Upstream | Needs |
 |---|---|
-| `core/custom-tools/` (541) | tool definitions loaded from disk, on the hook loader |
 | `modes/rpc/` | a second way in, for editors rather than people |
 | `branch-summarization.ts` | a summary of the branch being left, for `/tree` |
 | the hook UI context | a picker the interactive mode can open mid-turn |
+| `renderCall` / `renderResult` | a renderer lookup in `ToolExecutionComponent` |
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 

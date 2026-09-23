@@ -23,6 +23,9 @@ use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\CustomTools\LoadedCustomTool;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
@@ -36,6 +39,7 @@ use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Tui\Ansi;
 use Pig\Tui\Test\FakeClipboard;
 use Pig\Tui\Test\FakeTerminal;
@@ -136,6 +140,7 @@ final class InteractiveModeTest extends TestCase
         array $fileCommands = [],
         ?Settings $settings = null,
         ?HookRunner $hooks = null,
+        ?CustomToolSet $customTools = null,
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->settings = $settings ?? Settings::inMemory();
@@ -151,6 +156,11 @@ final class InteractiveModeTest extends TestCase
             64_000,
             $reasoning,
         ));
+
+        // The same shape `CodingAgent::create()` builds: one built-in plus whatever was
+        // loaded. Without it `/tools` would be answering about an agent that has none,
+        // which is not the agent anyone runs.
+        $agent->setTools([...ToolSet::create($this->cwd, ['read']), ...($customTools?->agentTools() ?? [])]);
 
         $saved = match (true) {
             $resume !== null => SessionManager::open($resume),
@@ -176,6 +186,7 @@ final class InteractiveModeTest extends TestCase
             $fileCommands,
             $this->settings,
             $hooks,
+            $customTools,
         );
 
         $this->mode->start();
@@ -1269,6 +1280,92 @@ final class InteractiveModeTest extends TestCase
     private function runner(HookApi $api, string $path = 'deploy.php'): HookRunner
     {
         return new HookRunner([new LoadedHook($path, $path, $api)], $this->cwd);
+    }
+
+    // ---- custom tools -------------------------------------------------------------------
+
+    public function testSlashToolsListsTheBuiltInsAndWhereTheyCameFrom(): void
+    {
+        $this->start();
+        $this->type('/tools');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('built-in', $this->screen());
+    }
+
+    public function testSlashToolsNamesTheFileACustomToolCameFrom(): void
+    {
+        $this->start(customTools: $this->tools('wc'));
+        $this->type('/tools');
+        $this->type(self::ENTER);
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('wc', $screen);
+        $this->assertStringContainsString('wc/index.php', $screen);
+    }
+
+    public function testACustomToolIsNamedInTheBanner(): void
+    {
+        $this->start(customTools: $this->tools('wc'));
+        $this->type("\x0f");
+
+        $this->assertStringContainsString('[Tools]', $this->screen());
+    }
+
+    public function testAToolIsToldTheSessionStartedAndThenSwitched(): void
+    {
+        $seen = [];
+        $this->start(customTools: $this->tools('wc', function ($event) use (&$seen): void {
+            $seen[] = $event->reason;
+        }));
+
+        $this->type('/new');
+        $this->type(self::ENTER);
+
+        $this->assertSame(['start', 'switch'], $seen);
+    }
+
+    public function testAToolIsToldOnTheWayOut(): void
+    {
+        $seen = [];
+        $this->start(customTools: $this->tools('wc', function ($event) use (&$seen): void {
+            $seen[] = $event->reason;
+        }));
+
+        $this->mode->stop();
+
+        $this->assertSame(['start', 'shutdown'], $seen);
+    }
+
+    public function testACallbackThatFailsIsAWarningRatherThanAStartupCrash(): void
+    {
+        // Only on start: the tear-down stops the mode, and a tool that also failed on the
+        // way out would print to the test run's stderr for no extra assurance.
+        $this->start(customTools: $this->tools('wc', static function ($event): void {
+            if ($event->reason === 'start') {
+                throw new RuntimeException('could not read its cache');
+            }
+        }));
+
+        $this->assertStringContainsString(
+            'Warning: tool wc/index.php: onSession(start)',
+            $this->screen(),
+        );
+    }
+
+    private function tools(string $name, ?Closure $onSession = null): CustomToolSet
+    {
+        $path = "{$name}/index.php";
+        $tool = new CustomTool(
+            name: $name,
+            label: 'Count lines',
+            description: 'Counts the lines in a file.',
+            parameters: ['type' => 'object', 'properties' => []],
+            execute: static fn () => new \Pig\Agent\AgentToolResult([new TextContent('ran')]),
+            onSession: $onSession,
+        );
+
+        return new CustomToolSet([new LoadedCustomTool($path, $path, $tool)]);
     }
 
     /**

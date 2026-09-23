@@ -25,6 +25,8 @@ use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Models;
 use Pig\Async\Async;
 use Pig\CodingAgent\CodingAgent;
+use Pig\CodingAgent\CustomTools\CustomToolLoader;
+use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Hooks\HookLoader;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Interactive\InteractiveMode;
@@ -92,6 +94,7 @@ if (isset($options['help'])) {
       --no-save         do not write this session to disk
       --skills-dir <d>  one more folder of skills, on top of the standard ones
       --no-hooks        start without loading ~/.pig/hooks or .pig/hooks
+      --no-tools        start without loading ~/.pig/tools or .pig/tools
 
     TEXT;
 
@@ -223,15 +226,30 @@ foreach ($hookProblems as $problem) {
 
 $hooks = new HookRunner($loadedHooks, $cwd, $store);
 
+// The same story, one folder over. The built-in names are handed in so a tool that would
+// shadow `bash` is named rather than quietly replacing it.
+$builtIn = isset($options['read-only']) ? ToolSet::READ_ONLY : ToolSet::ALL;
+
+[$loadedTools, $toolProblems] = isset($options['no-tools'])
+    ? [[], []]
+    : CustomToolLoader::load($cwd, $builtIn, $settings->customTools());
+
+foreach ($toolProblems as $problem) {
+    fwrite(STDERR, Style::yellow("tool {$problem->toText()}\n"));
+}
+
+$customTools = new CustomToolSet($loadedTools);
+
 try {
     $agent = CodingAgent::create(
         $model,
         $cwd,
-        isset($options['read-only']) ? ToolSet::READ_ONLY : ToolSet::ALL,
+        $builtIn,
         contextFiles: $contextFiles,
         thinking: $level,
         skills: $skills,
         hooks: $hooks,
+        customTools: $customTools,
     );
 } catch (Throwable $error) {
     // Almost always a missing API key, which is worth saying plainly rather than as a
@@ -254,6 +272,10 @@ $hooks->initialize(
     hasQueuedMessages: static fn (): bool => $session->queued() !== [],
 );
 
+// The same context the hooks get, and for the same reason it is a closure: a tool that
+// asks which model is answering should be told the current one.
+$customTools->withContext(static fn () => $hooks->context());
+
 if ($resumed !== null) {
     $session->restore($resumed->messages());
 }
@@ -269,6 +291,7 @@ $mode = new InteractiveMode(
     fileCommands: $fileCommands,
     settings: $settings,
     hooks: $hooks,
+    customTools: $customTools,
 );
 
 // One fiber around the whole program: the prompt suspends on a socket, the terminal
