@@ -54,7 +54,9 @@ Cerebras, xAI, Zai and Mistral, which all speak OpenAI chat-completions. Set the
 `*_API_KEY` and `--model` reaches them.
 
 `/tree` goes back to an earlier point in the conversation and carries on from there. The road
-not taken stays in the session file, so going back costs nothing and can be undone the same way.
+not taken stays in the session file, so going back costs nothing and can be undone the same way
+— and it offers to summarise the branch you are leaving, so an hour of exploring arrives on the
+branch you are joining instead of being left behind.
 
 `/export` writes the conversation out as one self-contained HTML file — markdown rendered,
 code highlighted, no JavaScript in it at all.

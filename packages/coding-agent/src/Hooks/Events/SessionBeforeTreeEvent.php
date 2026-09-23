@@ -10,7 +10,9 @@ use Pig\CodingAgent\Hooks\HookEvent;
  * About to jump to another point in the session tree — `/tree`.
  *
  * `$entries` is what is being left behind: the messages on the old branch that the new
- * leaf does not have. Cancellable.
+ * leaf does not have, and `$summarise` says whether the person asked for them to be written
+ * down. Cancellable — and a handler may hand back prose of its own instead, which is then
+ * what gets written rather than anything the model was asked for.
  */
 final readonly class SessionBeforeTreeEvent implements HookEvent
 {
@@ -19,6 +21,7 @@ final readonly class SessionBeforeTreeEvent implements HookEvent
         public ?string $targetId,
         public ?string $oldLeafId,
         public array $entries = [],
+        public bool $summarise = false,
     ) {
     }
 

@@ -375,10 +375,21 @@ final class HookRunner
         return $this->ask($event, SessionBeforeSwitchResult::class, static fn (object $r): bool => $r->cancel);
     }
 
-    /** Ask whether to jump. The first refusal stops the rest. */
+    /**
+     * Ask whether to jump, and whether a hook would rather write the handover itself.
+     *
+     * Stops at the first handler that either refuses or supplies a summary — both mean the
+     * model is not going to be asked, exactly as with `emitBeforeCompact()`. Checking only
+     * `cancel` here was a bug: a hook that wrote a summary was walked straight past and the
+     * model was asked anyway.
+     */
     public function emitBeforeTree(SessionBeforeTreeEvent $event): ?SessionBeforeTreeResult
     {
-        return $this->ask($event, SessionBeforeTreeResult::class, static fn (object $r): bool => $r->cancel);
+        return $this->ask(
+            $event,
+            SessionBeforeTreeResult::class,
+            static fn (object $r): bool => $r->cancel || $r->summary !== null,
+        );
     }
 
     /**

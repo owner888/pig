@@ -16,6 +16,7 @@ use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Hooks\HookedTool;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\Skill;
@@ -101,7 +102,8 @@ final class CodingAgent
      * in the first place, so it falls through the same filter and stays out.
      *
      * A compaction summary is the same shape for a different reason: it stands in for the
-     * messages it replaced, so it has to reach the model as something the model reads.
+     * messages it replaced, so it has to reach the model as something the model reads. A
+     * branch summary is the third: it stands in for a branch the model was never shown.
      *
      * Public because it is the whole of what a coding agent adds to the agent's own
      * converter, and the cost of getting it wrong — a summary silently dropped, leaving
@@ -115,7 +117,10 @@ final class CodingAgent
         $converted = [];
 
         foreach ($messages as $message) {
-            if ($message instanceof BashExecution || $message instanceof CompactionSummary) {
+            if ($message instanceof BashExecution
+                || $message instanceof CompactionSummary
+                || $message instanceof BranchSummary
+            ) {
                 $converted[] = new UserMessage($message->toText(), $message->timestamp);
 
                 continue;

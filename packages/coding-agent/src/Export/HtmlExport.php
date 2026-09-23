@@ -14,6 +14,7 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\SessionManager;
 
@@ -126,6 +127,7 @@ final class HtmlExport
             $message instanceof ToolResultMessage => self::result($message, $calls),
             $message instanceof BashExecution => self::bash($message),
             $message instanceof CompactionSummary => self::compaction($message),
+            $message instanceof BranchSummary => self::branch($message),
             default => '',
         };
     }
@@ -242,6 +244,19 @@ final class HtmlExport
     {
         return "<section class=\"turn compaction\">\n"
             . '<h2>Compacted — ' . number_format($summary->replaced) . " earlier messages summarised</h2>\n"
+            . self::folded('The summary', MarkdownHtml::render($summary->summary), 'thinking')
+            . "</section>\n";
+    }
+
+    private static function branch(BranchSummary $summary): string
+    {
+        $files = count($summary->readFiles) + count($summary->modifiedFiles);
+
+        return "<section class=\"turn compaction\">\n"
+            . '<h2>Branch summarised'
+            . ($summary->fromHook ? ' by a hook' : '')
+            . ($files > 0 ? ' — ' . $files . ' files remembered' : '')
+            . "</h2>\n"
             . self::folded('The summary', MarkdownHtml::render($summary->summary), 'thinking')
             . "</section>\n";
     }

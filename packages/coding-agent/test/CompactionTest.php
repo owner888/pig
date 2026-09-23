@@ -17,6 +17,7 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\Compaction;
 use Pig\CodingAgent\Session\CompactionSummary;
 
@@ -309,6 +310,46 @@ final class CompactionTest extends TestCase
     public function testNoFilesMeansNoEmptyTags(): void
     {
         $this->assertStringNotContainsString('<read-files>', (new CompactionSummary('nothing happened'))->toText());
+    }
+
+    // ---- a branch summary in the conversation -------------------------------------------
+
+    /**
+     * Its file lists carry forward, the same as a compaction summary's.
+     *
+     * Otherwise compacting a conversation that has a branch summary in it loses which files
+     * the other branch touched — and the model goes back to a file on disk that no longer
+     * matches what anything saw.
+     */
+    public function testABranchSummarysFilesCarryForward(): void
+    {
+        [$read, $modified] = Compaction::files([
+            new BranchSummary('over there', ['read/a.php'], ['wrote/b.php']),
+        ]);
+
+        $this->assertSame(['read/a.php'], $read);
+        $this->assertSame(['wrote/b.php'], $modified);
+    }
+
+    /** A hook's prose is not pig's reading of the branch, so its lists are not trusted. */
+    public function testAHooksBranchSummaryDoesNotContributeFiles(): void
+    {
+        [$read, $modified] = Compaction::files([
+            new BranchSummary('over there', ['read/a.php'], ['wrote/b.php'], fromHook: true),
+        ]);
+
+        $this->assertSame([], $read);
+        $this->assertSame([], $modified);
+    }
+
+    public function testABranchSummaryIsSerialisedAsOneRatherThanDropped(): void
+    {
+        $text = Compaction::serialize([
+            new UserMessage('carry on'),
+            new BranchSummary('it was about the parser'),
+        ]);
+
+        $this->assertStringContainsString('[Another branch]: it was about the parser', $text);
     }
 
     // ---- scaffolding -----------------------------------------------------------------------

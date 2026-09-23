@@ -21,6 +21,7 @@ use Pig\Ai\TextContent;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CodingAgent;
@@ -34,6 +35,7 @@ use Pig\CodingAgent\Hooks\Results\ContextEventResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeTreeResult;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\Test\AssertsThrows;
@@ -379,6 +381,115 @@ final class HookWiringTest extends TestCase
         unlink($store->path);
     }
 
+    // ---- the branch that was left behind -----------------------------------------------
+
+    public function testNoSummaryIsWrittenUnlessOneIsAskedFor(): void
+    {
+        [$session, $store, $target] = $this->savedConversation([]);
+
+        $jump = Async::run(static fn () => $session->goTo($target));
+
+        $this->assertTrue($jump->moved);
+        $this->assertNull($jump->summary);
+        $this->assertCount(2, $session->messages());
+
+        unlink($store->path);
+    }
+
+    public function testAskingForOneWritesItOntoTheBranchBeingJoined(): void
+    {
+        [$session, $store, $target] = $this->savedConversation([], ['## Goal' . "\n" . 'It was about the tests.']);
+
+        $jump = Async::run(static fn () => $session->goTo($target, summarise: true));
+
+        $this->assertTrue($jump->moved);
+        $this->assertStringContainsString('It was about the tests.', (string) $jump->summary?->summary);
+
+        // Two from the branch that was joined, then the summary of the one that was left.
+        $messages = $session->messages();
+
+        $this->assertCount(3, $messages);
+        $this->assertInstanceOf(BranchSummary::class, $messages[2]);
+
+        unlink($store->path);
+    }
+
+    /** It has to survive a restart, or the next session starts without the handover. */
+    public function testItIsWrittenToTheSessionFile(): void
+    {
+        [$session, $store, $target] = $this->savedConversation([], ['written down']);
+
+        Async::run(static fn () => $session->goTo($target, summarise: true));
+
+        $reopened = SessionManager::open($store->path)->messages();
+        unlink($store->path);
+
+        $this->assertInstanceOf(BranchSummary::class, $reopened[2] ?? null);
+    }
+
+    public function testTheSummaryReachesTheModelAsSomethingItReads(): void
+    {
+        [$session, $store, $target] = $this->savedConversation([], ['what happened over there']);
+
+        Async::run(static fn () => $session->goTo($target, summarise: true));
+
+        $sent = CodingAgent::toLlm($session->messages());
+        $last = $sent[count($sent) - 1];
+
+        $this->assertInstanceOf(UserMessage::class, $last);
+        $this->assertStringContainsString('what happened over there', $last->content[0]->text);
+        $this->assertStringContainsString('explored a different conversation branch', $last->content[0]->text);
+
+        unlink($store->path);
+    }
+
+    /** Escape during the summary means "put me back", not "go anyway". */
+    public function testCancellingTheSummaryLeavesTheLeafWhereItWas(): void
+    {
+        [$session, $store, $target] = $this->savedConversation([], ['never reached']);
+        $before = $store->leaf();
+
+        $controller = new AbortController();
+        $controller->abort();
+
+        $jump = Async::run(static fn () => $session->goTo($target, summarise: true, signal: $controller->signal));
+
+        $this->assertFalse($jump->moved);
+        $this->assertTrue($jump->aborted);
+        $this->assertSame($before, $store->leaf());
+
+        unlink($store->path);
+    }
+
+    public function testAHookCanWriteTheHandoverItself(): void
+    {
+        [$session, $store, $target] = $this->savedConversation([
+            'session_before_tree' => static fn () => new SessionBeforeTreeResult(summary: 'a hook wrote this'),
+            'session_tree' => $this->record('session_tree'),
+        ]);
+
+        $jump = Async::run(static fn () => $session->goTo($target, summarise: true));
+
+        $this->assertSame('a hook wrote this', $jump->summary?->summary);
+        $this->assertTrue($jump->summary->fromHook);
+        $this->assertSame('a hook wrote this', $this->seen[0][1]->summary?->summary);
+
+        unlink($store->path);
+    }
+
+    public function testTheBeforeTreeEventSaysWhetherASummaryWasAskedFor(): void
+    {
+        [$session, $store, $target] = $this->savedConversation([
+            'session_before_tree' => $this->record('session_before_tree'),
+        ]);
+
+        Async::run(static fn () => $session->goTo($target));
+
+        $this->assertFalse($this->seen[0][1]->summarise);
+
+        unlink($store->path);
+    }
+
     // ---- errors ------------------------------------------------------------------------
 
     public function testAHookThatThrowsDuringARunDoesNotStopTheRun(): void
@@ -454,7 +565,18 @@ final class HookWiringTest extends TestCase
     {
         $index = 0;
         $agent = new Agent(new AgentOptions(
-            streamFn: function () use ($answers, &$index): AssistantMessageEventStream {
+            streamFn: function (
+                Model $model,
+                Context $context,
+                SimpleStreamOptions $options,
+            ) use ($answers, &$index): AssistantMessageEventStream {
+                // A real provider answers an already-aborted request with an aborted
+                // message rather than a refusal, and the difference matters here: it is
+                // what escape during a summary looks like from the session's side.
+                if ($options->signal?->aborted() === true) {
+                    return $this->replay('', StopReason::Aborted);
+                }
+
                 return $this->replay($answers[$index++] ?? throw new RuntimeException('out of scripted answers'));
             },
             apiKey: 'test-key',
@@ -497,9 +619,11 @@ final class HookWiringTest extends TestCase
      * A saved two-message conversation, and a point two messages back to jump to.
      *
      * @param array<string, callable> $handlers
+     * @param list<string>            $answers  what the summariser would say; an empty list
+     *        makes the model call abort, which is what escape does
      * @return array{0: AgentSession, 1: SessionManager, 2: string}
      */
-    private function savedConversation(array $handlers): array
+    private function savedConversation(array $handlers, array $answers = []): array
     {
         $store = SessionManager::create(sys_get_temp_dir() . '/pig-hook-tree-' . bin2hex(random_bytes(3)));
         $store->append(new UserMessage('one'));
@@ -508,7 +632,7 @@ final class HookWiringTest extends TestCase
         $store->append(new UserMessage('two'));
         $store->append($this->answer('second'));
 
-        $session = $this->session([], $handlers, $store);
+        $session = $this->session($answers, $handlers, $store);
         $session->restore($store->messages());
 
         return [$session, $store, $target];
@@ -526,7 +650,7 @@ final class HookWiringTest extends TestCase
         );
     }
 
-    private function replay(string $text): AssistantMessageEventStream
+    private function replay(string $text, StopReason $stop = StopReason::Stop): AssistantMessageEventStream
     {
         $stream = new AssistantMessageEventStream();
         $message = new AssistantMessage(
@@ -535,12 +659,12 @@ final class HookWiringTest extends TestCase
             'anthropic',
             'test-model',
             new Usage(),
-            StopReason::Stop,
+            $stop,
         );
 
-        Async::spawn(static function () use ($stream, $message): void {
+        Async::spawn(static function () use ($stream, $message, $stop): void {
             $stream->push(new StartEvent($message));
-            $stream->push(new DoneEvent(StopReason::Stop, $message));
+            $stream->push(new DoneEvent($stop, $message));
             $stream->end();
         });
 

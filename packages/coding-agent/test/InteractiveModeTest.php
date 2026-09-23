@@ -691,6 +691,10 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
         $this->settle();
 
+        // "Summarise the branch you are leaving?" — No is the default, so Enter is no.
+        $this->type(self::ENTER);
+        $this->settle();
+
         $this->assertStringContainsString('Went back', $this->screen());
         $this->assertStringNotContainsString('second answer', $this->screen());
     }

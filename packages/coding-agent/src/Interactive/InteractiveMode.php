@@ -44,9 +44,11 @@ use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Session\TreeJump;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ExternalTool;
@@ -270,6 +272,12 @@ final class InteractiveMode
 
             if ($message instanceof CompactionSummary) {
                 $this->chat->addChild(new CompactionComponent($message, $this->palette, $this->expanded));
+
+                continue;
+            }
+
+            if ($message instanceof BranchSummary) {
+                $this->chat->addChild(new BranchSummaryComponent($message, $this->palette, $this->expanded));
 
                 continue;
             }
@@ -505,7 +513,10 @@ final class InteractiveMode
             $this->banner?->setText($this->banner());
 
             foreach ($this->chat->children() as $child) {
-                if ($child instanceof ToolExecutionComponent || $child instanceof CompactionComponent) {
+                if ($child instanceof ToolExecutionComponent
+                    || $child instanceof CompactionComponent
+                    || $child instanceof BranchSummaryComponent
+                ) {
                     $child->setExpanded($this->expanded);
                 }
             }
@@ -1482,7 +1493,10 @@ final class InteractiveMode
         $picker = new SelectList($items, 8, $this->palette->selectListTheme());
         $picker->setSelectHandler(function (SelectItem $item): void {
             $this->closePicker();
-            $this->goBackTo($item->value);
+
+            // In a fiber: going back may ask the model to summarise what is being left,
+            // and that suspends. Same reason `send()` spawns.
+            Async::spawn(fn () => $this->goBackTo($item->value));
         });
         $picker->setCancelHandler($this->closePicker(...));
 
@@ -1500,12 +1514,33 @@ final class InteractiveMode
         $this->tui->requestRender();
     }
 
+    /**
+     * Go back, having first asked whether to write down what is being left.
+     *
+     * The question is only asked when there is something to answer it about: jumping to the
+     * point you are already on, or to somewhere with nothing between, leaves nothing behind.
+     */
     private function goBackTo(string $entryId): void
     {
+        $leaving = $this->session->store()?->abandoning($entryId) ?? [];
+
+        $wants = $leaving !== []
+            && $this->session->model() !== null
+            && $this->ui->confirm('Summarise the branch you are leaving?', self::summarise($leaving));
+
         try {
-            $this->session->goTo($entryId);
+            $jump = $wants ? $this->summarisedJump($entryId) : $this->session->goTo($entryId);
         } catch (Throwable $error) {
             $this->sayError($error->getMessage());
+
+            return;
+        }
+
+        if (!$jump->moved) {
+            // Called off part-way: nothing moved, so the list comes back rather than the
+            // person being left wondering which branch they are on.
+            $this->sayWarning('Branch summary cancelled — still where you were.');
+            $this->showTree();
 
             return;
         }
@@ -1515,7 +1550,55 @@ final class InteractiveMode
         $this->replay();
         $this->footer->invalidate();
         $this->say('Went back — anything you say now starts a new branch');
+
+        if ($jump->summary !== null) {
+            $this->chat->addChild(new BranchSummaryComponent($jump->summary, $this->palette, $this->expanded));
+        }
+
         $this->sayToolProblems($this->customTools?->notify('tree') ?? []);
+    }
+
+    /**
+     * The jump with a summary, under a spinner escape can stop.
+     *
+     * The same arrangement `/compact` uses, and for the same reason: a model call with
+     * nothing on screen looks like a session that has frozen.
+     */
+    private function summarisedJump(string $entryId): TreeJump
+    {
+        $controller = new AbortController();
+        $this->compaction = $controller;
+
+        $loader = new Loader(
+            $this->tui,
+            fn (string $frame): string => $this->palette->fg('accent', $frame),
+            fn (string $text): string => $this->palette->fg('muted', $text),
+            'Summarising the branch... (esc to stop)',
+        );
+
+        $this->status->clear();
+        $this->status->addChild(new Spacer(1));
+        $this->status->addChild($loader);
+        $this->tui->requestRender();
+
+        try {
+            return $this->session->goTo($entryId, summarise: true, signal: $controller->signal);
+        } finally {
+            $this->compaction = null;
+            $loader->stop();
+            $this->status->clear();
+            $this->tui->requestRender();
+        }
+    }
+
+    /**
+     * What the confirm dialog says is at stake.
+     *
+     * @param list<mixed> $leaving
+     */
+    private static function summarise(array $leaving): string
+    {
+        return count($leaving) === 1 ? '1 message' : count($leaving) . ' messages';
     }
 
     /** One message, short enough to pick from a list. */

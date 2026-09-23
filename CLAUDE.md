@@ -431,6 +431,37 @@ Order for anything with more than one source: what was typed, then the environme
 was chosen last time, then the built-in default. `--no-save` gets `Settings::inMemory()`, so a
 session that is not written down does not write anything else down either.
 
+`Session\BranchSummarization` is upstream's `core/compaction/branch-summarization.ts`, and
+`Session\BranchSummary` is the message it produces. `/tree` goes back to an earlier point and
+carries on from there; the branch that was left is still in the file, but the model no longer
+sees it — and the model is usually what did the work on it. So `/tree` asks whether to write it
+down, and the answer is appended to the branch being *joined*, which is the whole point: it is
+context for carrying on here, not a note on the branch it describes.
+
+Almost all of it is compaction's machinery reached for rather than repeated —
+`Compaction::estimateTokens()`, `serialize()`, `files()` and `SYSTEM_PROMPT` are the same
+questions about a different span. What differs is the prompt (a handover: goal, progress,
+blocked, next steps — not a recap) and five things worth keeping straight:
+
+- **It replaces nothing.** A `CompactionSummary` stands in for the messages before it and
+  carries a `replaced` count that `SessionManager::resolve()` splices on. A branch summary
+  describes messages that were never on this branch, so it has no count and nothing is spliced.
+- **File lists are collected from the whole branch, prose from as much as fits.** Two passes,
+  and the first is the point: the budget may drop the older half of a long branch, but "which
+  files did this touch" has to be complete or whoever reads it goes to a file on disk that no
+  longer matches. The walk for prose is newest-first for the same reason compaction keeps the
+  recent end.
+- **Cancelling means not moving.** Escape during the summary returns `TreeJump(moved: false,
+  aborted: true)` and the leaf stays where it was, so the tree list comes back up. Jumping
+  anyway would give someone the move they asked for and silently drop the summary they also
+  asked for.
+- **A hook may write it instead**, through `SessionBeforeTreeResult(summary: …)` — and then
+  the file lists are still pig's own reading of the branch. The prose is the hook's; which
+  files were touched is not its to get wrong.
+- **Its lists carry forward into a later compaction**, exactly as a compaction summary's do,
+  *unless* a hook wrote it. Missing that would lose the other branch's files the first time
+  the context filled up.
+
 `Prompt\SlashCommands` is upstream's `core/slash-commands.ts`: a markdown file in
 `~/.pig/commands/` or `.pig/commands/` becomes `/name`, and its body is the prompt.
 `/review src/Foo.php` sends `review.md` with `$1` filled in.
@@ -699,7 +730,6 @@ that is not here yet:
 | Upstream | Needs |
 |---|---|
 | `modes/rpc/` | a second way in, for editors rather than people |
-| `branch-summarization.ts` | a summary of the branch being left, for `/tree` |
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 
@@ -1218,6 +1248,22 @@ Barely covered by a test: `interactive()` opens `/dev/tty` for all three streams
 runner has no tty to open. What is tested is the empty-command guard and that a run with no
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
+
+### A `before_*` hook result is only heard if the runner thinks it decisive
+
+`HookRunner::ask()` walks the handlers and stops at the first *decisive* answer, which each
+event defines for itself. `emitBeforeCompact()` counted both `cancel` and a supplied
+`compaction`; `emitBeforeTree()` counted only `cancel`. So a hook that wrote its own branch
+summary was walked straight past, `ask()` returned null at the end of the list, and the model
+was asked to write one anyway — the hook's work thrown away, silently, with no error anywhere.
+
+It was caught by a test written at the same time as the feature
+(`HookWiringTest::testAHookCanWriteTheHandoverItself`), which is the only reason it was caught
+at all: nothing about the wrong behaviour is visible without a hook that supplies a summary.
+
+Whenever a `before_*` result grows a field that means "I have handled this", the predicate in
+its `emit…()` has to grow with it. There are three of these now and they are the place to look
+first when a hook seems to have been ignored.
 
 ### A dialog opened in front of a suspended fiber has to be escapable
 

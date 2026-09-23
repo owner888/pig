@@ -469,8 +469,12 @@ final class AgentSession
      *
      * @throws AgentError when there is no session on disk, or no such point
      */
-    public function goTo(?string $entryId): void
-    {
+    public function goTo(
+        ?string $entryId,
+        bool $summarise = false,
+        ?string $instructions = null,
+        ?AbortSignal $signal = null,
+    ): TreeJump {
         if ($this->store === null) {
             throw new AgentError('This session is not being saved, so there is nowhere to go back to.');
         }
@@ -481,19 +485,87 @@ final class AgentSession
 
         $oldLeaf = $this->store->leaf();
 
-        if ($this->hooks !== null) {
-            $leaving = $this->store->abandoning($entryId);
-            $refusal = $this->hooks->emitBeforeTree(new SessionBeforeTreeEvent($entryId, $oldLeaf, $leaving));
+        // Read before the move, obviously, and read even when nothing asked for a summary:
+        // a hook is told what is being left behind whether or not anyone is writing it down.
+        $leaving = $this->store->abandoning($entryId);
+        $answer = $this->hooks?->emitBeforeTree(
+            new SessionBeforeTreeEvent($entryId, $oldLeaf, $leaving, $summarise),
+        );
 
-            if ($refusal !== null && $refusal->cancel) {
-                throw new AgentError('A hook stopped the jump.');
-            }
+        if ($answer !== null && $answer->cancel) {
+            throw new AgentError('A hook stopped the jump.');
+        }
+
+        $summary = $this->branchSummary($answer?->summary, $summarise, $leaving, $oldLeaf, $instructions, $signal);
+
+        // Cancelled part-way through summarising: nothing has moved, and the caller is
+        // meant to put the person back where they were rather than jump without the
+        // summary they asked for.
+        if ($summary === false) {
+            return new TreeJump(moved: false, aborted: true);
         }
 
         $this->store->goTo($entryId);
         $this->restore($this->store->messages());
 
-        $this->hooks?->emit(new SessionTreeEvent($this->store->leaf(), $oldLeaf));
+        // After the move, so it lands on the branch being joined — which is the whole
+        // point: it is context for carrying on here, not a note on the branch it describes.
+        if ($summary !== null) {
+            $this->agent->appendMessage($summary);
+            $this->store->append($summary);
+        }
+
+        $this->hooks?->emit(new SessionTreeEvent($this->store->leaf(), $oldLeaf, $summary));
+
+        return new TreeJump(moved: true, summary: $summary);
+    }
+
+    /**
+     * The summary to write down, if any.
+     *
+     * @param list<mixed> $leaving
+     * @return BranchSummary|null|false false when summarising was called off
+     */
+    private function branchSummary(
+        ?string $fromHook,
+        bool $summarise,
+        array $leaving,
+        ?string $oldLeaf,
+        ?string $instructions,
+        ?AbortSignal $signal,
+    ): BranchSummary|null|false {
+        // A hook that wrote one has done the work, and the model is not asked. Its file
+        // lists are pig's own reading of the branch rather than the hook's claim about it:
+        // the prose is the hook's, the facts are not its to get wrong.
+        if ($fromHook !== null) {
+            [$read, $modified] = Compaction::files($leaving);
+
+            return new BranchSummary($fromHook, $read, $modified, $oldLeaf, fromHook: true);
+        }
+
+        $model = $this->model();
+
+        if (!$summarise || $leaving === [] || $model === null) {
+            return null;
+        }
+
+        [$messages, $read, $modified] = BranchSummarization::prepare(
+            $leaving,
+            BranchSummarization::budget($model->contextWindow, $this->reserveTokens()),
+        );
+
+        if ($messages === []) {
+            return null;
+        }
+
+        $text = $this->summarise(
+            $model,
+            BranchSummarization::request($messages, $instructions),
+            $signal,
+            BranchSummarization::MAX_TOKENS,
+        );
+
+        return $text === null ? false : new BranchSummary($text, $read, $modified, $oldLeaf);
     }
 
     // ---- making room -------------------------------------------------------------------
@@ -621,12 +693,12 @@ final class AgentSession
      *
      * @return string|null null when it was cancelled
      */
-    private function summarise(Model $model, string $request, ?AbortSignal $signal): ?string
+    private function summarise(Model $model, string $request, ?AbortSignal $signal, ?int $maxTokens = null): ?string
     {
         $options = $this->agent->options();
 
         $stream = new SimpleStreamOptions(
-            maxTokens: (int) (0.8 * $this->reserveTokens()),
+            maxTokens: $maxTokens ?? (int) (0.8 * $this->reserveTokens()),
             signal: $signal,
             apiKey: $options->getApiKey !== null
                 ? ($options->getApiKey)($model->provider) ?? $options->apiKey

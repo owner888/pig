@@ -18,6 +18,7 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\Test\AssertsThrows;
@@ -352,6 +353,46 @@ final class SessionManagerTest extends TestCase
             static fn () => $session->goTo('not-an-entry'),
             'No such point',
         );
+    }
+
+    public function testABranchSummaryComesBackAsItWent(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer());
+        $session->append(new BranchSummary(
+            'what happened over there',
+            ['read.php'],
+            ['written.php'],
+            'abc123',
+            fromHook: true,
+        ));
+
+        $reopened = SessionManager::open($session->path)->messages();
+        $summary = $reopened[2];
+
+        $this->assertInstanceOf(BranchSummary::class, $summary);
+        $this->assertSame('what happened over there', $summary->summary);
+        $this->assertSame(['read.php'], $summary->readFiles);
+        $this->assertSame(['written.php'], $summary->modifiedFiles);
+        $this->assertSame('abc123', $summary->fromId);
+        $this->assertTrue($summary->fromHook);
+    }
+
+    /**
+     * It replaces nothing, unlike a compaction summary.
+     *
+     * The branch it describes was never on this one, so reading the log back must not
+     * splice anything out on its account.
+     */
+    public function testABranchSummaryDoesNotReplaceWhatCameBeforeIt(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer('first'));
+        $session->append(new BranchSummary('from elsewhere'));
+
+        $this->assertCount(3, SessionManager::open($session->path)->messages());
     }
 
     // ---- what a jump would leave behind ------------------------------------------------

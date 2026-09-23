@@ -69,6 +69,15 @@ final class SessionCodec
                 'replaced' => $message->replaced,
                 'timestamp' => $message->timestamp,
             ],
+            $message instanceof BranchSummary => [
+                'role' => 'branchSummary',
+                'summary' => $message->summary,
+                'readFiles' => $message->readFiles,
+                'modifiedFiles' => $message->modifiedFiles,
+                'fromId' => $message->fromId,
+                'fromHook' => $message->fromHook,
+                'timestamp' => $message->timestamp,
+            ],
             $message instanceof BashExecution => [
                 'role' => 'bashExecution',
                 'command' => $message->command,
@@ -117,6 +126,14 @@ final class SessionCodec
                 array_values(array_map(strval(...), (array) ($entry['modifiedFiles'] ?? []))),
                 (int) ($entry['tokensBefore'] ?? 0),
                 (int) ($entry['replaced'] ?? 0),
+                $timestamp,
+            ),
+            'branchSummary' => new BranchSummary(
+                (string) ($entry['summary'] ?? ''),
+                array_values(array_map(strval(...), (array) ($entry['readFiles'] ?? []))),
+                array_values(array_map(strval(...), (array) ($entry['modifiedFiles'] ?? []))),
+                isset($entry['fromId']) ? (string) $entry['fromId'] : null,
+                (bool) ($entry['fromHook'] ?? false),
                 $timestamp,
             ),
             'bashExecution' => new BashExecution(

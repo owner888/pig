@@ -202,6 +202,12 @@ final class Compaction
                 continue;
             }
 
+            if ($message instanceof BranchSummary) {
+                $parts[] = "[Another branch]: {$message->summary}";
+
+                continue;
+            }
+
             if ($message instanceof AssistantMessage) {
                 foreach (self::assistantParts($message) as $part) {
                     $parts[] = $part;
@@ -229,6 +235,15 @@ final class Compaction
             if ($message instanceof CompactionSummary) {
                 // An earlier summary's lists carry forward, or a file read before the
                 // last compaction disappears from the record entirely.
+                $read = [...$read, ...$message->readFiles];
+                $modified = [...$modified, ...$message->modifiedFiles];
+
+                continue;
+            }
+
+            // A branch summary the same way, with one exception: a hook's own summary is
+            // prose pig did not produce, so its lists are not treated as pig's findings.
+            if ($message instanceof BranchSummary && !$message->fromHook) {
                 $read = [...$read, ...$message->readFiles];
                 $modified = [...$modified, ...$message->modifiedFiles];
 
