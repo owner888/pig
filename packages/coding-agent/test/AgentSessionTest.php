@@ -17,6 +17,7 @@ use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
 use Pig\Ai\Cost;
 use Pig\Ai\DoneEvent;
+use Pig\Ai\ErrorEvent;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\Pricing;
@@ -35,7 +36,12 @@ use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\AutoCompactionEndEvent;
+use Pig\CodingAgent\Session\AutoCompactionStartEvent;
+use Pig\CodingAgent\Session\RetryEndEvent;
+use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Settings;
 use Pig\Test\AssertsThrows;
 use Throwable;
 use RuntimeException;
@@ -652,12 +658,336 @@ final class AgentSessionTest extends TestCase
      * @param list<string>              $answers one per model call, in order
      * @param Closure(Agent): void|null $hook    run at the top of every model call
      */
+    // ---- picking a failed turn back up ------------------------------------------------
+
+    public function testA503IsWaitedOutAndTheTurnIsSentAgain(): void
+    {
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([['error' => 'Anthropic returned 503: overloaded'], 'here you go']),
+            settings: self::quickRetries(),
+        );
+
+        $seen = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$seen): void {
+            $seen[] = $event;
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+
+        $starts = array_values(array_filter($seen, static fn ($e) => $e instanceof RetryStartEvent));
+        $ends = array_values(array_filter($seen, static fn ($e) => $e instanceof RetryEndEvent));
+
+        $this->assertCount(1, $starts);
+        $this->assertSame(1, $starts[0]->attempt);
+        $this->assertStringContainsString('503', $starts[0]->error);
+
+        $this->assertCount(1, $ends);
+        $this->assertTrue($ends[0]->succeeded);
+
+        // The answer it was retrying for is the last thing in the conversation, and the
+        // failure is not in front of it.
+        $messages = $session->messages();
+        $this->assertSame('here you go', self::textOf($messages[count($messages) - 1]));
+    }
+
+    public function testTheFailedTurnIsNotLeftInTheConversationForTheModelToRead(): void
+    {
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([['error' => 'Anthropic returned 503: overloaded'], 'here you go']),
+            settings: self::quickRetries(),
+        );
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+
+        // Two: the question and the answer. "Anthropic returned 503" is not part of the
+        // conversation, and a model shown it would try to make sense of it.
+        $this->assertCount(2, $session->messages());
+
+        foreach ($session->messages() as $message) {
+            $this->assertStringNotContainsString('503', self::textOf($message));
+        }
+    }
+
+    public function testItGivesUpAfterTheAttemptsRunOut(): void
+    {
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky(array_fill(0, 6, ['error' => 'Anthropic returned 503: overloaded'])),
+            settings: self::quickRetries(['maxAttempts' => 2]),
+        );
+
+        $ends = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$ends): void {
+            if ($event instanceof RetryEndEvent) {
+                $ends[] = $event;
+            }
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+
+        $this->assertCount(1, $ends);
+        $this->assertFalse($ends[0]->succeeded);
+        $this->assertSame(2, $ends[0]->attempts);
+        $this->assertStringContainsString('503', $ends[0]->error ?? '');
+        $this->assertFalse($session->isRetrying());
+    }
+
+    public function testTheWaitsDouble(): void
+    {
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky(array_fill(0, 6, ['error' => 'Anthropic returned 503: overloaded'])),
+            settings: self::quickRetries(['maxAttempts' => 3, 'baseDelayMs' => 2]),
+        );
+
+        $delays = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$delays): void {
+            if ($event instanceof RetryStartEvent) {
+                $delays[] = $event->delaySeconds;
+            }
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+
+        // The point of backing off: a fixed delay brings the whole crowd back at once and
+        // the provider that was overloaded is overloaded again.
+        $this->assertSame([0.002, 0.004, 0.008], $delays);
+    }
+
+    public function testSomethingNotWorthRetryingIsNotRetried(): void
+    {
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([['error' => 'Anthropic returned 401: invalid api key']]),
+            settings: self::quickRetries(),
+        );
+
+        $seen = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$seen): void {
+            $seen[] = $event::class;
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+
+        // A bad key is a bad key in four seconds too.
+        $this->assertNotContains(RetryStartEvent::class, $seen);
+    }
+
+    public function testRetryingCanBeTurnedOff(): void
+    {
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([['error' => 'Anthropic returned 503: overloaded']]),
+            settings: Settings::inMemory(['retry' => ['enabled' => false]]),
+        );
+
+        $seen = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$seen): void {
+            $seen[] = $event::class;
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+
+        $this->assertNotContains(RetryStartEvent::class, $seen);
+    }
+
+    public function testRetryingIsOnWhenNobodySaid(): void
+    {
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([['error' => 'Anthropic returned 503: overloaded'], 'here you go']),
+            settings: self::quickRetries(),
+        );
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+
+        // Nothing in the settings turned it on. Someone who never asked for auto-retry still
+        // did not ask to lose a turn because the provider was busy for two seconds.
+        $this->assertSame('here you go', self::textOf($session->messages()[1]));
+    }
+
+    public function testAbortingStopsTheWaiting(): void
+    {
+        $session = $this->session(
+            [],
+            // Half a minute, so the sleep cannot finish on its own while the test works.
+            streamFn: $this->flaky(array_fill(0, 4, ['error' => 'Anthropic returned 503: overloaded'])),
+            settings: self::quickRetries(['baseDelayMs' => 30_000]),
+        );
+
+        $ends = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$ends): void {
+            if ($event instanceof RetryEndEvent) {
+                $ends[] = $event;
+            }
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+
+        // One tick to start the spawned retry and park it on its timer, without waiting the
+        // timer out — see `tickWithoutWaiting()`.
+        self::tickWithoutWaiting();
+
+        $this->assertTrue($session->isRetrying());
+
+        $session->abortRetry();
+        self::settle();
+
+        $this->assertCount(1, $ends);
+        $this->assertFalse($ends[0]->succeeded);
+        $this->assertStringContainsString('cancelled', $ends[0]->error ?? '');
+        $this->assertFalse($session->isRetrying());
+    }
+
+    public function testAbortingTheSessionStopsTheWaitingToo(): void
+    {
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky(array_fill(0, 4, ['error' => 'Anthropic returned 503: overloaded'])),
+            settings: self::quickRetries(['baseDelayMs' => 30_000]),
+        );
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::tickWithoutWaiting();
+
+        $this->assertTrue($session->isRetrying());
+
+        // Escape means stop, and a retry that is sleeping has no agent to interrupt: the run
+        // is already over and the next one has not started. `abort()` has to reach both.
+        Async::run(static function () use ($session): void {
+            $session->abort()->await();
+        });
+        self::settle();
+
+        $this->assertFalse($session->isRetrying());
+    }
+
+    public function testAbortingWhenNothingIsBeingRetriedIsHarmless(): void
+    {
+        $session = $this->session(['hello']);
+
+        $session->abortRetry();
+
+        $this->assertFalse($session->isRetrying());
+    }
+
+    // ---- the overflow half --------------------------------------------------------------
+
+    public function testAPromptTooLongIsSummarisedAndSentAgainRatherThanRetried(): void
+    {
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([
+                'first answer',
+                'second answer',
+                ['error' => 'prompt is too long: 213462 tokens > 200000 maximum'],
+                'the summary',
+                'answered after summarising',
+            ]),
+            // A cut has to be legal *and* worth making: `cutPoint()` works in tokens, and
+            // four short messages are nowhere near the default budget, so nothing would be
+            // cut and the summary would refuse as "too small".
+            settings: self::quickRetries(['keepRecentTokens' => 1]),
+        );
+
+        $seen = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$seen): void {
+            $seen[] = $event;
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('one');
+            $session->prompt('two');
+            $session->prompt('three');
+        });
+        self::settle();
+
+        $starts = array_values(array_filter($seen, static fn ($e) => $e instanceof AutoCompactionStartEvent));
+        $ends = array_values(array_filter($seen, static fn ($e) => $e instanceof AutoCompactionEndEvent));
+
+        $this->assertCount(1, $starts);
+        $this->assertStringContainsString('too long', $starts[0]->error);
+
+        $this->assertCount(1, $ends);
+        $this->assertTrue($ends[0]->succeeded);
+        $this->assertTrue($ends[0]->willRetry, 'the summary is the fix, so the turn goes again');
+        $this->assertInstanceOf(CompactionSummary::class, $ends[0]->summary);
+
+        // Not retried: the request was too big, and it would be exactly as big in four
+        // seconds. Nothing waited.
+        $this->assertNotContains(
+            RetryStartEvent::class,
+            array_map(static fn ($e) => $e::class, $seen),
+        );
+
+        $messages = $session->messages();
+        $this->assertSame('answered after summarising', self::textOf($messages[count($messages) - 1]));
+    }
+
+    public function testASummaryThatFailsEndsItRatherThanSendingTheSameThingAgain(): void
+    {
+        $session = $this->session(
+            [],
+            // The summariser's own turn fails too, which is what a provider that is still
+            // refusing everything looks like.
+            streamFn: $this->flaky([
+                ['error' => 'prompt is too long: 213462 tokens > 200000 maximum'],
+            ]),
+            settings: self::quickRetries(),
+        );
+
+        $ends = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$ends): void {
+            if ($event instanceof AutoCompactionEndEvent) {
+                $ends[] = $event;
+            }
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+
+        $this->assertCount(1, $ends);
+        $this->assertFalse($ends[0]->succeeded);
+        $this->assertFalse($ends[0]->willRetry);
+        $this->assertNotNull($ends[0]->error);
+    }
+
     private function session(
         array $answers,
         ?Closure $hook = null,
         ?Model $model = null,
         ?Closure $streamFn = null,
         ?SessionManager $store = null,
+        ?Settings $settings = null,
     ): AgentSession {
         $agent = new Agent(new AgentOptions(
             streamFn: $streamFn ?? $this->provider($answers, $hook),
@@ -667,7 +997,90 @@ final class AgentSessionTest extends TestCase
         $agent->setModel($model ?? $this->model());
         $this->current = $agent;
 
-        return new AgentSession($agent, sys_get_temp_dir(), $store);
+        return new AgentSession($agent, sys_get_temp_dir(), $store, $settings);
+    }
+
+    /**
+     * A provider that fails for a while, then answers.
+     *
+     * Each turn takes the next entry: a string is an answer, anything else is the error a
+     * failed turn reports. Written as a list rather than a counter so a test reads as the
+     * sequence the provider actually produces.
+     *
+     * @param list<string|array{error: string}> $turns
+     */
+    private function flaky(array $turns): Closure
+    {
+        $at = 0;
+
+        return function () use ($turns, &$at): AssistantMessageEventStream {
+            $turn = $turns[$at++] ?? throw new RuntimeException('out of scripted turns');
+
+            return is_string($turn) ? $this->replay($turn) : $this->fails($turn['error']);
+        };
+    }
+
+    /** A turn that comes back as an error, the way a provider's 503 does. */
+    private function fails(string $error): AssistantMessageEventStream
+    {
+        $stream = new AssistantMessageEventStream();
+        $message = new AssistantMessage(
+            [new TextContent('')],
+            Api::AnthropicMessages,
+            'anthropic',
+            'test-model',
+            new Usage(),
+            StopReason::Error,
+            $error,
+        );
+
+        Async::spawn(static function () use ($stream, $message): void {
+            $stream->push(new StartEvent($message));
+            $stream->push(new ErrorEvent(StopReason::Error, $message));
+            $stream->end();
+        });
+
+        return $stream;
+    }
+
+    /** Settings with the waits short enough that a test is not mostly sleeping. */
+    private static function quickRetries(array $extra = []): Settings
+    {
+        $compaction = [];
+
+        foreach (['keepRecentTokens', 'reserveTokens'] as $key) {
+            if (isset($extra[$key])) {
+                $compaction[$key] = $extra[$key];
+                unset($extra[$key]);
+            }
+        }
+
+        return Settings::inMemory([
+            'retry' => ['baseDelayMs' => 1, ...$extra],
+            'compaction' => $compaction,
+        ]);
+    }
+
+    /** Turn the loop until nothing is left, so a spawned retry gets to happen. */
+    private static function settle(int $ticks = 200): void
+    {
+        for ($tick = 0; $tick < $ticks && !Loop::get()->isIdle(); $tick++) {
+            Loop::get()->tick();
+        }
+    }
+
+    /**
+     * One tick that does not wait out whatever timer is pending.
+     *
+     * A plain `tick()` with a retry's timer armed and no streams to watch calls `usleep()`
+     * for the whole delay — so two ticks really are two seconds, the sleep is over before
+     * the test gets control back, and there is nothing left to abort. An expired timer of
+     * our own makes `pollTimeout()` ~0, so the tick returns with the retry still parked.
+     */
+    private static function tickWithoutWaiting(): void
+    {
+        Loop::get()->delay(0.0, static fn () => null);
+        Loop::get()->tick();
     }
 
     /**

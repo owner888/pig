@@ -65,6 +65,10 @@ Zai、Mistral——这五家说的都是 OpenAI chat-completions。设好对应�
 
 `/export` 把整段对话导出成一个自包含的 HTML 文件——markdown 渲染好、代码高亮好，里面一行 JS 都没有。
 
+一轮因为服务端忙而失败——429、503、半路断掉的 socket——会**等一下再发一次**：从两秒开始翻倍，
+最多三次，屏幕上写着服务端说了什么、还剩几秒、按 esc 停。因为对话超出模型上下文窗口而失败是另一回事，
+也按另一回事处理：先总结再重发，因为同样那个请求四秒后一样长。设置里 `retry.enabled: false` 关掉前者。
+
 设置放在 `~/.pig/settings.json`，项目可以用 `.pig/settings.json` 覆盖。主题、模型、思考档位选过一次
 就记住了。
 
@@ -165,7 +169,7 @@ bin/pig --mode json -p "..." | jq -r 'select(.type=="message_update") | .delta.d
 echo '{"id":"1","type":"prompt","message":"bin/pig 是干什么的？"}' | bin/pig --mode rpc
 ```
 
-二十一条命令——prompt、插话、打断、换模型、压缩上下文、跑一条 shell 命令、在对话树上走、导出——
+二十三条命令——prompt、插话、打断、换模型、压缩上下文、跑一条 shell 命令、在对话树上走、导出——
 回答以终端里画的那同一套流式事件发出来。hook 依然能**问**：问题作为一行 `hook_ui_request` 发出去，
 这次工具调用就停在那儿等宿主回答——和终端里是同一个把戏，换了条传输通道。
 

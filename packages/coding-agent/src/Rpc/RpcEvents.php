@@ -29,6 +29,10 @@ use Pig\Ai\ThinkingStartEvent;
 use Pig\Ai\ToolCallDeltaEvent;
 use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
+use Pig\CodingAgent\Session\AutoCompactionEndEvent;
+use Pig\CodingAgent\Session\AutoCompactionStartEvent;
+use Pig\CodingAgent\Session\RetryEndEvent;
+use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Session\SessionCodec;
 
 /**
@@ -110,6 +114,36 @@ final class RpcEvents
                 'toolName' => $event->toolName,
                 'result' => self::result($event->result),
                 'isError' => $event->isError,
+            ],
+
+            // Not the agent loop's — the session's, from between one run and the next. See
+            // `AgentEvent`'s docblock about why they share a stream.
+            $event instanceof RetryStartEvent => [
+                'type' => 'retry_start',
+                'attempt' => $event->attempt,
+                'maxAttempts' => $event->maxAttempts,
+                'delayMs' => (int) round($event->delaySeconds * 1000),
+                'error' => $event->error,
+            ],
+
+            $event instanceof RetryEndEvent => [
+                'type' => 'retry_end',
+                'succeeded' => $event->succeeded,
+                'attempts' => $event->attempts,
+                'error' => $event->error,
+            ],
+
+            $event instanceof AutoCompactionStartEvent => [
+                'type' => 'auto_compaction_start',
+                'error' => $event->error,
+            ],
+
+            $event instanceof AutoCompactionEndEvent => [
+                'type' => 'auto_compaction_end',
+                'succeeded' => $event->succeeded,
+                'willRetry' => $event->willRetry,
+                'summary' => $event->summary === null ? null : SessionCodec::encode($event->summary),
+                'error' => $event->error,
             ],
 
             default => null,

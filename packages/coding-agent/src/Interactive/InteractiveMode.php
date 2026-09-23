@@ -43,6 +43,10 @@ use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\AutoCompactionEndEvent;
+use Pig\CodingAgent\Session\AutoCompactionStartEvent;
+use Pig\CodingAgent\Session\RetryEndEvent;
+use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
@@ -1741,6 +1745,13 @@ final class InteractiveMode
             $event instanceof ToolExecutionUpdateEvent => $this->onToolUpdate($event),
             $event instanceof ToolExecutionEndEvent => $this->onToolEnd($event),
             $event instanceof AgentEndEvent => $this->onEnd(),
+
+            // The session's own, from between one run and the next. See `AgentEvent`.
+            $event instanceof RetryStartEvent => $this->onRetryStart($event),
+            $event instanceof RetryEndEvent => $this->onRetryEnd($event),
+            $event instanceof AutoCompactionStartEvent => $this->onOverflow(),
+            $event instanceof AutoCompactionEndEvent => $this->onOverflowHandled($event),
+
             default => null,
         };
 
@@ -1859,6 +1870,80 @@ final class InteractiveMode
         $this->status->clear();
         $this->streaming = null;
         $this->tools = [];
+    }
+
+    // ---- picking a failed turn back up --------------------------------------------------
+
+    /**
+     * The provider said no, and the session is waiting before asking again.
+     *
+     * A loader rather than a line in the transcript, and on purpose: this is a thing that is
+     * happening, not a thing that happened, and it has to say escape works — eight seconds
+     * that look like a hang are eight seconds someone spends deciding whether to kill pig.
+     * The reason is said as well as the countdown, because "503" and "rate limited" call for
+     * different amounts of patience.
+     */
+    private function onRetryStart(RetryStartEvent $event): void
+    {
+        $this->working?->stop();
+        $this->status->clear();
+
+        $seconds = rtrim(rtrim(number_format($event->delaySeconds, 1), '0'), '.');
+
+        $this->working = new Loader(
+            $this->tui,
+            $this->palette->of('accent'),
+            $this->palette->of('muted'),
+            "{$event->error} — trying again in {$seconds}s"
+                . " ({$event->attempt}/{$event->maxAttempts}, esc to stop)",
+        );
+
+        $this->status->addChild($this->working);
+    }
+
+    private function onRetryEnd(RetryEndEvent $event): void
+    {
+        $this->working?->stop();
+        $this->working = null;
+        $this->status->clear();
+
+        if ($event->succeeded) {
+            // Nothing said: the answer it retried for is already on screen above this, and
+            // "it worked" about something that never visibly failed is noise.
+            return;
+        }
+
+        $this->sayError($event->error ?? 'Giving up after ' . $event->attempts . ' attempts.');
+    }
+
+    private function onOverflow(): void
+    {
+        $this->working?->stop();
+        $this->status->clear();
+
+        $this->working = new Loader(
+            $this->tui,
+            $this->palette->of('accent'),
+            $this->palette->of('muted'),
+            'Context is full — summarising, then trying again. (esc to cancel)',
+        );
+
+        $this->status->addChild($this->working);
+    }
+
+    private function onOverflowHandled(AutoCompactionEndEvent $event): void
+    {
+        $this->working?->stop();
+        $this->working = null;
+        $this->status->clear();
+
+        if ($event->summary !== null) {
+            $this->chat->addChild(new CompactionComponent($event->summary, $this->palette, $this->expanded));
+
+            return;
+        }
+
+        $this->sayError($event->error ?? 'Could not summarise, so the turn could not be sent again.');
     }
 
     /** @param array<string, mixed> $arguments */

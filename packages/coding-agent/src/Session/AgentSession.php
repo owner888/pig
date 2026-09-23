@@ -29,9 +29,13 @@ use Pig\Ai\TextContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\Overflow;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
+use Pig\Async\Async;
+use Pig\Async\Deferred;
 use Pig\Async\Future;
+use Pig\Async\Loop;
 use Pig\CodingAgent\Hooks\Events\AgentEndEvent as HookAgentEnd;
 use Pig\CodingAgent\Hooks\Events\AgentStartEvent as HookAgentStart;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
@@ -44,6 +48,7 @@ use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Tools\Run;
 use Pig\CodingAgent\Tools\Truncate;
+use Throwable;
 
 /**
  * A conversation with a UI attached to it.
@@ -87,6 +92,15 @@ final class AgentSession
 
     /** How many turns this run has had, for the turn events. */
     private int $turnIndex = 0;
+
+    /** Which retry we are on, or 0 when nothing is being retried. */
+    private int $attempt = 0;
+
+    /** Set while a retry is sleeping, so escape can call it off. */
+    private ?AbortController $retrying = null;
+
+    /** Completed when the retrying is over, so `prompt()` can wait for it. */
+    private ?Deferred $settled = null;
 
     public function __construct(
         public readonly Agent $agent,
@@ -199,6 +213,27 @@ final class AgentSession
         foreach ($this->listeners as $listener) {
             $listener($event);
         }
+
+        // Last, after the listeners have seen the end: whatever this decides to do next is a
+        // new run, and a UI redrawing on `AgentEndEvent` should have finished drawing the old
+        // one before the next one starts arriving.
+        if ($event instanceof AgentEndEvent) {
+            $this->afterTheRun();
+        }
+    }
+
+    /**
+     * Announce something of the session's own on the same stream.
+     *
+     * Retries and self-started compaction are not the agent loop's events — the loop is not
+     * running when they happen — but they are the same listeners' business, so they go the
+     * same way. See `AgentEvent`'s docblock.
+     */
+    private function announce(AgentEvent $event): void
+    {
+        foreach ($this->listeners as $listener) {
+            $listener($event);
+        }
     }
 
     /**
@@ -292,6 +327,11 @@ final class AgentSession
      */
     public function prompt(string $text, array $images = []): void
     {
+        // A retry that is sleeping is not "streaming", so nothing above would have stopped
+        // this — and sending now would race the retry into the same agent. Wait it out: it is
+        // seconds, and what the person typed goes after whatever the retry was rescuing.
+        $this->settled?->future->await();
+
         if ($this->isStreaming()) {
             throw new AgentError('Agent is already working. Use steer() or followUp().');
         }
@@ -366,6 +406,9 @@ final class AgentSession
     /** Stop the current run; resolves once the agent is idle. */
     public function abort(): Future
     {
+        // Before the agent, because a retry that is sleeping has no agent to interrupt: the
+        // run is already over and the next one has not started. Escape has to reach both.
+        $this->abortRetry();
         $this->agent->abort();
 
         return $this->agent->waitForIdle();
@@ -617,6 +660,282 @@ final class AgentSession
     private function reserveTokens(): int
     {
         return $this->settings?->compactionReserveTokens(Compaction::RESERVE_TOKENS) ?? Compaction::RESERVE_TOKENS;
+    }
+
+    // ---- picking a failed turn back up ------------------------------------------------
+
+    /**
+     * The run is over. Was it over because something went wrong that can be undone?
+     *
+     * Two things can be, and they are told apart by what the provider said. A 503 means try
+     * again; "prompt is too long" means the request itself was the problem, and sending it
+     * again unchanged is the one thing guaranteed not to work — that one is summarised first.
+     *
+     * Everything here spawns rather than runs. This is called from inside the agent's own
+     * event fan-out, and `continue()` starts another run: doing that here would re-enter the
+     * agent from inside its own notification, and the sleeping cannot happen in a callback at
+     * all. Upstream reaches for `setTimeout(..., 0)` "to break out of the event handler
+     * chain"; `Async::spawn` is the same idea with a name that says why.
+     */
+    private function afterTheRun(): void
+    {
+        $messages = $this->messages();
+        $last = $messages === [] ? null : $messages[count($messages) - 1];
+
+        if (!$last instanceof AssistantMessage) {
+            return;
+        }
+
+        $window = $this->model()?->contextWindow;
+
+        if (Overflow::happened($last, $window)) {
+            $this->inTheBackground(fn () => $this->compactAndCarryOn($last));
+
+            return;
+        }
+
+        if ($this->retryEnabled() && Retry::worthRetrying($last, $window)) {
+            $this->inTheBackground(fn () => $this->waitAndCarryOn($last));
+
+            return;
+        }
+
+        // A run that ended without failing, after one that did: the retrying worked.
+        if ($this->attempt > 0) {
+            $attempts = $this->attempt;
+            $this->attempt = 0;
+            $this->announce(new RetryEndEvent(true, $attempts));
+            $this->finishRetrying();
+        }
+    }
+
+    /**
+     * Run it in a fiber, and do not let it fail silently.
+     *
+     * `Async::spawn` hands a throw to the future it returns, and nothing awaits this one — so
+     * without the catch, a bug in here is a session that simply stops, with the listeners
+     * left holding a `RetryStartEvent` that never ends. Which is exactly what happened:
+     * `Throwable` was not imported in this file, every `catch (Throwable)` in it was catching
+     * a class that does not exist, and the fibers died without a word. See the trap in
+     * CLAUDE.md about missing imports — this is the shape of it.
+     */
+    private function inTheBackground(Closure $work): void
+    {
+        Async::spawn(function () use ($work): void {
+            try {
+                $work();
+            } catch (Throwable $problem) {
+                $attempts = $this->attempt;
+                $this->attempt = 0;
+                $this->announce(new RetryEndEvent(false, $attempts, $problem->getMessage()));
+                $this->finishRetrying();
+            }
+        });
+    }
+
+    /**
+     * Wait, then send the same turn again.
+     *
+     * The failed message is taken off the agent's state before the retry — it is an error, not
+     * an answer, and leaving it there would have the model reading its own failure as the
+     * conversation. It stays in the session file, because it happened.
+     */
+    private function waitAndCarryOn(AssistantMessage $failed): void
+    {
+        $this->attempt++;
+
+        // Both together, and for the whole retry rather than just the sleep. Created only
+        // around the sleep, there was a window — after `isRetrying()` became true and before
+        // the controller existed — where `abortRetry()` had nothing to abort: it said the
+        // retrying was cancelled and the retrying carried on anyway.
+        if ($this->settled === null) {
+            $this->settled = new Deferred();
+            $this->retrying = new AbortController();
+        }
+
+        $max = $this->settings?->retryMaxAttempts(Retry::MAX_ATTEMPTS) ?? Retry::MAX_ATTEMPTS;
+        $error = $failed->errorMessage ?? 'Unknown error';
+
+        if ($this->attempt > $max) {
+            $this->attempt = 0;
+            $this->announce(new RetryEndEvent(false, $max, $error));
+            $this->finishRetrying();
+
+            return;
+        }
+
+        $delay = Retry::delayFor(
+            $this->attempt,
+            $this->settings?->retryBaseDelay(Retry::BASE_DELAY) ?? Retry::BASE_DELAY,
+        );
+
+        $this->announce(new RetryStartEvent($this->attempt, $max, $delay, $error));
+        $this->dropLastAssistantMessage();
+
+        $signal = $this->retrying?->signal;
+
+        if ($signal === null || !$this->sleep($delay, $signal)) {
+            // Escape, during the sleep. `abortRetry()` has already reset the counter and told
+            // everyone; there is nothing left to do but not send the request.
+            return;
+        }
+
+        $this->carryOn();
+    }
+
+    /**
+     * Summarise, then send the same turn again.
+     *
+     * The turn failed because the conversation outgrew the window, so the summary is the fix
+     * and the retry is the point of doing it. A summary that fails or is cancelled ends it —
+     * sending the same oversized request again would fail the same way.
+     */
+    private function compactAndCarryOn(AssistantMessage $failed): void
+    {
+        $error = $failed->errorMessage ?? 'The conversation outgrew the context window.';
+
+        $this->announce(new AutoCompactionStartEvent($error));
+        $this->dropLastAssistantMessage();
+
+        try {
+            $summary = $this->compact();
+        } catch (Throwable $problem) {
+            $this->announce(new AutoCompactionEndEvent(false, false, null, $problem->getMessage()));
+
+            return;
+        }
+
+        if ($summary === null) {
+            $this->announce(new AutoCompactionEndEvent(false, false, null, 'Summarising was cancelled.'));
+
+            return;
+        }
+
+        $this->announce(new AutoCompactionEndEvent(true, true, $summary));
+        $this->carryOn();
+    }
+
+    /** Run again from the conversation as it stands. A failure lands back in `afterTheRun()`. */
+    private function carryOn(): void
+    {
+        if ($this->retryAborted()) {
+            return;
+        }
+
+        try {
+            $this->agent->continue();
+        } catch (Throwable $problem) {
+            // `continue()` refuses when the agent is already working, which here means
+            // somebody typed while the retry was sleeping. Their turn is the one that should
+            // happen; this one is over.
+            $this->attempt = 0;
+            $this->announce(new RetryEndEvent(false, $this->attempt, $problem->getMessage()));
+            $this->finishRetrying();
+        }
+    }
+
+    /**
+     * Take the failed turn off the agent's state, leaving it in the session file.
+     *
+     * The model must not be shown its own error as though it were part of the conversation:
+     * the next request would carry "Anthropic returned 503" in the transcript, and the model
+     * would try to make sense of it.
+     */
+    private function dropLastAssistantMessage(): void
+    {
+        $messages = $this->agent->state->messages;
+        $last = $messages === [] ? null : $messages[count($messages) - 1];
+
+        if ($last instanceof AssistantMessage) {
+            $this->agent->replaceMessages(array_slice($messages, 0, -1));
+        }
+    }
+
+    /**
+     * Wait, unless somebody says not to.
+     *
+     * `Async::delay()` cannot be interrupted, and eight seconds that escape cannot reach is
+     * eight seconds of a terminal that will not answer. So: a timer and an abort listener
+     * racing to complete the same `Deferred`, whichever gets there first. The timer is
+     * cancelled on an abort rather than left to fire into nothing, because a pending timer
+     * keeps `Loop::isIdle()` false and `bin/pig` would not exit.
+     *
+     * @return bool false if it was interrupted
+     */
+    private function sleep(float $seconds, AbortSignal $signal): bool
+    {
+        if ($signal->aborted()) {
+            return false;
+        }
+
+        $done = new Deferred();
+        $timer = Loop::get()->delay($seconds, static function () use ($done): void {
+            if (!$done->isComplete()) {
+                $done->complete(true);
+            }
+        });
+
+        $listener = $signal->onAbort(static function () use ($done, $timer): void {
+            Loop::get()->cancel($timer);
+
+            if (!$done->isComplete()) {
+                $done->complete(false);
+            }
+        });
+
+        try {
+            return $done->future->await() === true;
+        } finally {
+            $signal->removeListener($listener);
+        }
+    }
+
+    private function retryEnabled(): bool
+    {
+        return $this->settings?->retryEnabled() ?? true;
+    }
+
+    /** Whether a retry is being waited out right now. */
+    public function isRetrying(): bool
+    {
+        return $this->settled !== null;
+    }
+
+    /**
+     * Stop retrying.
+     *
+     * Safe to call when nothing is being retried, because that is how `abort()` calls it:
+     * escape means stop, and whether there was a sleep to interrupt is not the caller's
+     * business.
+     */
+    public function abortRetry(): void
+    {
+        if ($this->settled === null) {
+            return;
+        }
+
+        $attempts = $this->attempt;
+        $this->attempt = 0;
+        $this->retrying?->abort();
+        $this->announce(new RetryEndEvent(false, $attempts, 'Retrying was cancelled.'));
+        $this->finishRetrying();
+    }
+
+    /** Whether escape has reached the retry that is running. */
+    private function retryAborted(): bool
+    {
+        return $this->retrying?->signal->aborted() ?? false;
+    }
+
+    private function finishRetrying(): void
+    {
+        $waiting = $this->settled;
+        $this->settled = null;
+        $this->retrying = null;
+
+        if ($waiting !== null && !$waiting->isComplete()) {
+            $waiting->complete(null);
+        }
     }
 
     /**

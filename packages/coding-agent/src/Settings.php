@@ -155,6 +155,38 @@ final class Settings
     }
 
     /**
+     * Whether a 503 is waited out rather than reported.
+     *
+     * On unless it is turned off, like compaction: the failures this covers are the ones that
+     * go away on their own, and someone who did not ask for auto-retry still did not ask to
+     * lose a turn because the provider was busy for two seconds.
+     */
+    public function retryEnabled(): bool
+    {
+        return $this->get('retry.enabled') !== false;
+    }
+
+    public function setRetryEnabled(bool $enabled): void
+    {
+        $this->set('retry.enabled', $enabled);
+    }
+
+    public function retryMaxAttempts(int $fallback): int
+    {
+        $value = $this->get('retry.maxAttempts');
+
+        return is_int($value) && $value > 0 ? $value : $fallback;
+    }
+
+    /** Seconds, though the setting is written in milliseconds as upstream writes it. */
+    public function retryBaseDelay(float $fallback): float
+    {
+        $value = $this->get('retry.baseDelayMs');
+
+        return is_int($value) && $value > 0 ? $value / 1000 : $fallback;
+    }
+
+    /**
      * Hook files named in the settings, on top of the two standard folders.
      *
      * Upstream's key exactly: a top-level `hooks` array of paths. The folders are not a

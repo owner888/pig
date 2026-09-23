@@ -141,8 +141,8 @@ built on `pig/tui` (done — `Interactive\`), `core/hooks/` (done — `Hooks\`),
 `core/custom-tools/` (done — `CustomTools\`), `modes/rpc/` (done — `Rpc\`) and
 `modes/print-mode.ts` (done — `PrintMode`). The rest is left out until something needs it.
 
-`AgentSession` is 1901 lines upstream and ~800 here, because everything it coordinates that is
-not ported is not there to coordinate: auto-retry and branching to a second session file.
+`AgentSession` is 1901 lines upstream and ~1000 here, because the one thing it coordinates that
+is not ported is not there to coordinate: branching to a second session file.
 What is left is the conversation, the event fan-out,
 the queue of messages someone typed while the agent was working, the thinking level, what the
 session has cost, persistence, compaction, tree navigation and the hook events. Each of the
@@ -725,6 +725,63 @@ things about them:
 `CustomToolAPI.ui` is ported as `HookUi`, in both `$pi->ui()` and the context handed to
 `execute`. Nothing of upstream's custom-tool module is left out.
 
+### Picking a failed turn back up
+
+A turn can fail for a reason that undoes itself — the provider is busy — or for a reason the
+*next* request can fix: the conversation outgrew the window. `AgentSession` handles both,
+after the run ends, from `afterTheRun()`.
+
+Which one it is, is decided by what the provider said, and the two are mutually exclusive on
+purpose. `Retry::worthRetrying()` asks `Overflow::happened()` first and answers false for an
+overflow however retryable the rest of it looks — a 429 that says "prompt is too long" is a
+429 that will say it again in four seconds.
+
+**`Session\Retry` reads the status code, where upstream reads the prose.** Upstream matches
+the error message against `/overloaded|rate.?limit|429|500|.../i` because its providers word
+failures however they like. All four of pig's providers write
+`"<provider> returned <status>: <message>"`, so the number is right there — 408, 429, 500,
+502, 503, 504 and 529 are waited out, and everything else a provider returns is about the
+request, which will not change by being sent again. The word list survives underneath for the
+failures that never reached HTTP at all: a socket that died mid-stream has no status to read.
+
+**`Ai\Utils\Overflow` is a table of what each provider actually says**, ported from upstream's
+`ai/src/utils/overflow.ts` with its examples kept as comments. There is no status code for
+"too long" and no field in any response that says so; every provider says it in prose, two say
+it with an empty 4xx and no body at all, and z.ai does not say it — it accepts the oversized
+request, answers, and bills for more input tokens than the window holds, so the only evidence
+is the usage report. **A pattern with no example beside it is a guess**, and a guess here
+compacts a conversation that was fine.
+
+The four events are `RetryStartEvent`, `RetryEndEvent`, `AutoCompactionStartEvent` and
+`AutoCompactionEndEvent`, and they implement `Pig\Agent\AgentEvent` so they reach the
+listeners that are already there — `AgentEvent`'s docblock says why an event from above the
+loop is on the loop's stream. Each mode draws them as it likes: the terminal turns a retry into
+a loader that names the error and counts down, `--mode json` and RPC encode them through
+`RpcEvents`, `-p` ignores them.
+
+Five things that are load-bearing rather than tidy:
+
+- **The failed message comes off the agent's state before the retry**, and stays in the session
+  file. Leaving it would put "Anthropic returned 503" in the transcript for the model to read
+  and try to make sense of.
+- **Everything spawns.** `afterTheRun()` runs inside the agent's own event fan-out, and
+  `continue()` starts another run — doing that there would re-enter the agent from inside its
+  own notification, and the sleeping cannot happen in a callback at all. Upstream reaches for
+  `setTimeout(..., 0)` "to break out of the event handler chain"; `Async::spawn` is the same
+  idea with a name that says why.
+- **The sleep is abortable**, because eight seconds that escape cannot reach is eight seconds
+  of a terminal that will not answer. A timer and an abort listener race to complete one
+  `Deferred`; the timer is cancelled on an abort rather than left to fire into nothing, because
+  a pending timer keeps `Loop::isIdle()` false and `bin/pig` would not exit.
+- **`prompt()` waits for a retry in progress.** A sleeping retry is not "streaming", so nothing
+  else would have stopped a message racing it into the same agent.
+- **The waits double** — 2s, 4s, 8s from `retry.baseDelayMs`. The failures this waits out are
+  the ones where everybody else is also retrying, and a fixed delay brings the whole crowd back
+  at once.
+
+Settings are upstream's keys: `retry.enabled` (on unless turned off, like compaction),
+`retry.maxAttempts`, `retry.baseDelayMs`.
+
 ### Three ways in
 
 `bin/pig` picks one, by upstream's rule: **`--mode` given at all means no terminal, and `-p`
@@ -810,20 +867,20 @@ field rename there changes the protocol silently.
 wire shape, which here is `RpcMode`'s docblock plus `RpcEvents`; the second is a client for
 driving the mode from TypeScript, and a host writes JSON lines in whatever language it is in.
 
-**Eight of upstream's commands are absent**, and the reasons divide in three:
+**Six of upstream's commands are absent**, and the reasons divide in three:
 
 | Upstream command | Why not |
 |---|---|
-| `set_auto_retry`, `abort_retry` | auto-retry is not ported, so there is nothing to switch on or stop |
 | `queue_message`, `set_queue_mode` | the anchor commit split the one queue into `steer()` and `followUp()`; `steer` and `follow_up` are the two commands that replace them, rather than guessing which one a `queue_message` meant |
 | `cycle_model` | `get_available_models` and `set_model` are what it is made of |
 | `branch` | upstream forks a conversation into a second session file; pig branches inside one, as `go_to` with `get_branch` for the points to go to |
 | `export_html` | it is `export` here, and it honours `outputPath` |
 
-Twenty commands are there: `prompt`, `steer`, `follow_up`, `abort`, `get_state`,
+Twenty-three commands are there: `prompt`, `steer`, `follow_up`, `abort`, `get_state`,
 `get_messages`, `get_last_assistant_text`, `get_session_stats`, `get_available_models`,
 `set_model`, `set_thinking_level`, `cycle_thinking_level`, `compact`, `set_auto_compaction`,
-`bash`, `abort_bash`, `get_branch`, `go_to`, `new_session`, `switch_session` and `export`.
+`set_auto_retry`, `abort_retry`, `bash`, `abort_bash`, `get_branch`, `go_to`, `new_session`,
+`switch_session` and `export`.
 
 Every failure is a `success: false` response rather than a disconnection: a host asking for
 something impossible should be told, not dropped. Warnings that the interactive mode would
@@ -840,7 +897,6 @@ What is left in `coding-agent` is left out on purpose, each for a reason:
 
 | Upstream | Why not |
 |---|---|
-| auto-retry | not ported, so `set_auto_retry` and `abort_retry` have nothing to map to |
 | `auth/` device flows | OAuth for `google-gemini-cli` and GitHub Copilot; an API key reaches every provider pig speaks to |
 | twenty-five selector components | the interactive mode needs six of them |
 | `sendMessage()`, `appendEntry()`, `registerMessageRenderer()` | custom message types, which nothing here has asked for yet |
@@ -1452,6 +1508,64 @@ Tests: `HookUiTest::testEscapingAnInputAnswersWithNothing`,
 
 `[$a] = stream_socket_pair(...)` garbage-collects the peer, putting `$a` at EOF — permanently
 "readable", with `fread()` returning `''`. Keep both ends in scope.
+
+### A missing `use Throwable` makes every catch in the file a no-op
+
+`AgentSession` had no `use Throwable;` and had never needed one. The first three
+`catch (Throwable $problem)` blocks written into it were therefore catching
+`Pig\CodingAgent\Session\Throwable`, a class that does not exist — so nothing was ever
+caught, the exception escaped the `Async::spawn` that was running the work, landed in a
+`Deferred` nobody awaits, and **vanished**. What it looked like: `AutoCompactionStartEvent`
+went out, and then the session sat there. No error, nothing on the shell, nothing in the
+transcript.
+
+`php -l` cannot see it — an unimported class is resolved at run time — and the class is only
+resolved on the path that throws, which is the path nobody exercises by hand. It was caught by
+a test written for the failure case, which is the only reason it was caught at all.
+
+The sweep is worth keeping: for every file, collect its `use` statements and the names it
+writes in `catch (X)`, `instanceof X`, `new X(`, `X::` and typed parameters, and report the
+difference. Run over `packages/*/src` it found this one and nothing else real — three
+docblock mentions and two names that resolve through a sibling file in the same namespace.
+
+Two rules fall out, and the second is the one that generalises:
+
+- A `catch` clause naming a class the file does not import is a `catch` that never fires.
+- **Anything inside `Async::spawn()` whose future nobody awaits must not be able to throw.**
+  `AgentSession::inTheBackground()` wraps the work and turns a throw into a `RetryEndEvent`,
+  so a bug in there is a reported failure rather than a session that stops mid-sentence.
+
+### An abort with nothing yet to abort reports a cancellation that did not happen
+
+`abortRetry()` used to abort a controller created around the *sleep*, while `isRetrying()` was
+already true from the moment the retry started. Between those two points escape said
+"Retrying was cancelled.", reset the counter, completed the waiter — and the retry carried on,
+slept, sent the request, and eventually announced a second, contradictory end.
+
+The controller is now created together with the waiter, so there is never a moment where the
+retry is running and nothing can stop it, and `carryOn()` checks the signal before starting a
+run in case the abort arrived after the sleep finished. **Whenever a flag says "this is
+happening", the thing that stops it has to exist by the time that flag is set** — not a line
+later.
+
+### `tick()` waits out the timer it is polling for (tests)
+
+A test that wants to abort something mid-sleep cannot just tick twice and then abort. With a
+one-second timer armed and no streams to watch, `Loop::poll()` has nothing to select on and
+`usleep()`s the whole second — so two ticks really are two seconds, the sleep is long over,
+and the abort lands on a retry that has already moved on to its next attempt. The symptom is
+a second, successful end event that makes no sense next to the cancellation.
+
+An expired timer of the test's own makes `pollTimeout()` ~0, so the tick returns with the
+retry still parked:
+
+```php
+Loop::get()->delay(0.0, static fn () => null);
+Loop::get()->tick();
+```
+
+Same family as the RPC trap above, opposite direction: there a tick blocked forever because
+nothing was pending, here it blocked for a second because something was.
 
 ### A provider that throws hangs the agent, and swallows the reason
 

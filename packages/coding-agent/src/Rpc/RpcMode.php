@@ -53,9 +53,8 @@ use Throwable;
  * docblock plus `RpcEvents`. Its `rpc-client.ts` — a client for driving the mode from
  * TypeScript — has none either; a host writes JSON lines in whatever language it is in.
  *
- * **Eight of upstream's commands are not here**, and the reasons divide in two:
+ * **Six of upstream's commands are not here**, and the reasons divide in two:
  *
- * - `set_auto_retry` and `abort_retry`: auto-retry is not ported at all.
  * - `queue_message` and `set_queue_mode`: the anchor commit split the agent's one queue into
  *   `steer()` and `followUp()`, so there is no single queue to add to or set a mode on.
  *   `steer` and `follow_up` are the two commands that replace them, which is honest rather
@@ -287,6 +286,9 @@ final class RpcMode
             'compact' => $this->compact($command),
             'set_auto_compaction' => $this->setAutoCompaction($command),
 
+            'set_auto_retry' => $this->setAutoRetry($command),
+            'abort_retry' => $this->abortRetry(),
+
             'bash' => $this->bash($command),
             'abort_bash' => $this->abortBash(),
 
@@ -375,6 +377,8 @@ final class RpcMode
             'queuedMessageCount' => count($this->session->queued()),
             'contextTokens' => $this->session->contextTokens(),
             'autoCompactionEnabled' => $this->settings?->compactionEnabled() ?? true,
+            'autoRetryEnabled' => $this->settings?->retryEnabled() ?? true,
+            'isRetrying' => $this->session->isRetrying(),
         ];
     }
 
@@ -452,6 +456,23 @@ final class RpcMode
     private function setAutoCompaction(array $command): ?array
     {
         $this->settings?->set('compaction.enabled', (bool) ($command['enabled'] ?? true));
+
+        return null;
+    }
+
+    // ---- waiting out a provider -----------------------------------------------------------
+
+    /** @param array<string, mixed> $command */
+    private function setAutoRetry(array $command): ?array
+    {
+        $this->settings?->setRetryEnabled(($command['enabled'] ?? true) === true);
+
+        return null;
+    }
+
+    private function abortRetry(): ?array
+    {
+        $this->session->abortRetry();
 
         return null;
     }

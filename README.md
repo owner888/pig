@@ -73,6 +73,13 @@ branch you are joining instead of being left behind.
 `/export` writes the conversation out as one self-contained HTML file — markdown rendered,
 code highlighted, no JavaScript in it at all.
 
+A turn that fails because the provider is busy — a 429, a 503, a socket that died — is
+**waited out and sent again**, doubling from two seconds, up to three times, with what the
+provider said and a countdown on screen and escape to stop. A turn that fails because the
+conversation outgrew the model's window is a different thing and is treated as one: it is
+summarised first, then sent again, because the same request would be exactly as long in four
+seconds. `retry.enabled: false` in the settings turns the first off.
+
 Settings live in `~/.pig/settings.json`, and a project can override them in
 `.pig/settings.json`. The theme, model and thinking level you pick are remembered.
 
@@ -179,8 +186,8 @@ driving pig from code.
 echo '{"id":"1","type":"prompt","message":"what does bin/pig do?"}' | bin/pig --mode rpc
 ```
 
-Twenty-one commands — prompt, steer, abort, switch models, compact, run a shell command, walk
-the conversation tree, export — and the answer arrives as the same streaming events the terminal
+Twenty-three commands — prompt, steer, abort, switch models, compact, run a shell command,
+walk the conversation tree, export — and the answer arrives as the same streaming events the terminal
 draws. A hook can still **ask**: the question goes out as a `hook_ui_request` line and the tool
 call parks until the host answers it, which is the terminal trick with a different transport.
 
