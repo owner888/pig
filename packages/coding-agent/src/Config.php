@@ -32,7 +32,12 @@ final class Config
      *
      * `~/.pi/agent`, and the `agent` is not a typo: upstream's `getAgentDir()` is
      * `join(homedir(), ".pi", "agent")`, so its sessions are under `~/.pi/agent/sessions/`
-     * rather than `~/.pi/sessions/`. pig reads that directory and never writes to it.
+     * rather than `~/.pi/sessions/`.
+     *
+     * pig reads sessions from there and appends to the one it opened. It also **writes** one
+     * file: `auth.json`, when pi already has one. That is deliberate and `Auth` says why —
+     * Anthropic rotates refresh tokens, so two files holding the same token is two tools
+     * taking it in turns to log each other out.
      *
      * `PI_HOME` overrides it, for a test and for anyone whose pi lives somewhere else —
      * upstream's own override is `PI_AGENT_DIR`, which is read first for the same reason

@@ -26,6 +26,7 @@ use Pig\Ai\Models;
 use Pig\Async\Async;
 use Pig\CodingAgent\Cli\Arguments;
 use Pig\CodingAgent\Cli\FileArguments;
+use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Cli\SessionPicker;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\CustomTools\CustomToolApi;
@@ -147,6 +148,15 @@ $settings = isset($options['no-save']) ? Settings::inMemory() : Settings::load($
 
 foreach ($settings->problems() as $problem) {
     fwrite(STDERR, Style::yellow("settings: {$problem}\n"));
+}
+
+// Not affected by `--no-save`, which is about not writing this conversation down. A stored
+// sign-in is still the way in, and a token renewed during the run has to be kept or the next
+// run starts by renewing a token that was already replaced.
+$auth = Auth::discover();
+
+foreach ($auth->problems() as $problem) {
+    fwrite(STDERR, Style::yellow("credentials: {$problem}\n"));
 }
 
 $wanted = $options['model'] ?? (getenv('PIG_MODEL') ?: ($settings->defaultModel() ?? 'claude-sonnet-4-5'));
@@ -296,6 +306,9 @@ try {
         $model,
         $cwd,
         $builtIn,
+        // Asked per turn rather than resolved once, because an OAuth token expires
+        // mid-conversation and `Auth` renews it on the way past.
+        getApiKey: $auth->apiKey(...),
         contextFiles: $contextFiles,
         thinking: $level,
         skills: $skills,
@@ -369,6 +382,7 @@ if ($mode === 'rpc') {
         settings: $settings,
         hooks: $hooks,
         customTools: $customTools,
+        auth: $auth,
         initialMessages: $messages,
         initialImages: $files->images,
     );

@@ -682,9 +682,68 @@ that would work — it needs no browser either — but Copilot's models are not 
 so signing in would unlock nothing to choose; upstream also enables each model by name against
 a policy endpoint after login, which needs that same list. `google-gemini-cli` and
 `google-antigravity` are loopback PKCE flows: they need an HTTP server on `127.0.0.1` and a
-browser opened at it, neither of which pig has. Storage (`core/auth-storage.ts`) and a `/login`
-command (`components/oauth-selector.ts`) are not here either, so what exists is the flow and
-not yet a way to run it from the CLI.
+browser opened at it, neither of which pig has.
+
+### Where the keys live
+
+`Auth` is upstream's `core/auth-storage.ts`, named after `Settings` rather than after upstream's
+`AuthStorage` — both are one JSON file under the home directory with a typed reader over it, and
+the developer chose to keep those two matching rather than `SessionManager`'s kept suffix. One
+entry per provider, in upstream's own shape, either `{"type":"api_key","key":…}` or
+`{"type":"oauth","refresh":…,"access":…,"expires":…}`.
+
+**It is pi's file, not a copy of it.** `Auth::discover()` opens `~/.pi/agent/auth.json` when
+that exists and only falls back to `~/.pig/auth.json`. That is not the same decision as reading
+pi's sessions, and the reason is specific: Anthropic **rotates** refresh tokens, so the old one
+is void the moment a new one is issued. Two files holding the same token is two tools taking it
+in turns to log each other out — whichever refreshes first wins, and the other has to sign in
+again. One file is the only arrangement where signing in once means signing in once. `Config`'s
+docblock says so too, because it used to claim pig never writes in there.
+
+Five things about it:
+
+- **The order is upstream's**: what was typed, then a stored API key, then a stored OAuth token,
+  then the environment. The last step is `Stream::envApiKey()` rather than a second table of
+  variable names — it is upstream's `getEnvApiKey()` and it already knows that
+  `ANTHROPIC_OAUTH_TOKEN` beats `ANTHROPIC_API_KEY`.
+- **A renewal that fails is reported, not cleaned up.** Upstream deletes the stored credential
+  and carries on to the environment, so one blocked network call throws away a login that was
+  perfectly good — and the person finds out by being asked to sign in again for no reason.
+- **A failed *write* throws**, where `Settings` records a problem and carries on. A preference
+  that did not stick is a preference somebody sets again; a token that did not stick is a
+  sign-in that said it worked, and the next thing that happens is an authentication error
+  nobody can connect back to this.
+- **`0600` in a `0700` directory, and the mode is set before there is anything to read.**
+  Upstream writes the file and then chmods it, which leaves it world-readable for as long as
+  those two calls take — long enough.
+- **A provider name neither tool knows is kept.** The file is shared, so an entry pig has no
+  enum case for still has to survive being read and written back.
+
+`getApiKey` on `AgentOptions` is what it plugs into — a closure asked **per turn** rather than a
+string resolved once, which is what makes renewing an expiring token mid-conversation possible
+at all. It was already there and had no caller; `CodingAgent::create()` gained a parameter to
+pass it through.
+
+`/login` and `/logout` are the same `SelectList` in the same place as `/model`, `/resume` and
+`/tree`, rather than a port of upstream's `oauth-selector.ts` — a fourth picker that behaves
+like the other three is worth more than a literal port of a component that does less. Two
+differences from upstream, both saying more: a provider pig cannot sign in with is greyed
+**and** says why when it is chosen, where upstream ignores the key and reads as broken; and
+`/logout` lists only what is actually signed in, because offering the other three would be
+three ways of doing nothing.
+
+Signing in **spawns**, because the paste box parks the fiber it is asked on and the command is
+running inside the loop's own input callback — suspending there suspends the loop that has to
+deliver the keystrokes. Same reason `send()` and `startCompaction()` spawn.
+
+**`--no-save` does not apply to credentials.** It means "do not write this conversation down";
+a stored sign-in is still the way in, and a token renewed during the run has to be kept or the
+next run begins by renewing one that was already replaced.
+
+Not ported from `auth-storage.ts`: `setFallbackResolver`, which resolves keys for custom
+providers declared in a `models.json` pig does not have. `setRuntimeApiKey` **is** here and has
+no caller yet — upstream's `--api-key` flag is what calls it, and adding a flag is a decision
+about pig's command line rather than a port.
 
 `Hooks\` is upstream's `core/hooks/`, all of it. A hook is a PHP file in `~/.pig/hooks` or
 `.pig/hooks` that returns a callable; the callable is handed a `HookApi` and registers what
@@ -1222,7 +1281,7 @@ What is left in `coding-agent` is left out on purpose, each for a reason:
 
 | Upstream | Why not |
 |---|---|
-| the rest of `ai`'s `utils/oauth/` | Anthropic's flow is ported (see [Signing in instead of pasting a key](#signing-in-instead-of-pasting-a-key)); GitHub Copilot needs its models in the registry, and the two Google flows need a loopback HTTP server and a browser |
+| the rest of `ai`'s `utils/oauth/` | Anthropic's flow, its storage and `/login` are ported (see [Signing in instead of pasting a key](#signing-in-instead-of-pasting-a-key)); GitHub Copilot needs its models in the registry, and the two Google flows need a loopback HTTP server and a browser |
 | twenty-five selector components | the interactive mode needs seven of them |
 | `migrations.ts` | session-file migrations; pig writes pi's format and has never shipped another |
 | `utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |

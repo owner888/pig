@@ -39,6 +39,9 @@ use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\Provider;
+use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ToolSet;
@@ -146,6 +149,7 @@ final class InteractiveModeTest extends TestCase
         ?CustomToolSet $customTools = null,
         array $initialMessages = [],
         array $initialImages = [],
+        ?Auth $auth = null,
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->settings = $settings ?? Settings::inMemory();
@@ -194,6 +198,7 @@ final class InteractiveModeTest extends TestCase
             $customTools,
             $initialMessages,
             $initialImages,
+            $auth,
         );
 
         $this->mode->start();
@@ -1795,4 +1800,93 @@ final class InteractiveModeTest extends TestCase
             $stream->end();
         };
     }
+
+    // ---- signing in ------------------------------------------------------------------
+
+    private const string DOWN = "\e[B";
+
+    public function testSlashLoginListsTheProvidersAndSaysWhichOnesAreNotPorted(): void
+    {
+        $this->start(auth: Auth::inMemory());
+
+        $this->type('/login');
+        $this->type(self::ENTER);
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('Anthropic (Claude Pro/Max)', $screen);
+        $this->assertStringContainsString('GitHub Copilot', $screen);
+        // Greyed and labelled, rather than quietly absent: a list that hides what somebody
+        // came looking for teaches nothing.
+        $this->assertStringContainsString('not ported yet', $screen);
+    }
+
+    public function testChoosingSomethingNotPortedSaysWhyRatherThanDoingNothing(): void
+    {
+        $this->start(auth: Auth::inMemory());
+
+        $this->type('/login');
+        $this->type(self::ENTER);
+        $this->type(self::DOWN);
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // Upstream ignores the key here, which reads as the list being broken.
+        $this->assertStringContainsString('is not ported yet', $this->screen());
+    }
+
+    public function testSlashLogoutWithNothingSignedInSaysSo(): void
+    {
+        $this->start(auth: Auth::inMemory());
+
+        $this->type('/logout');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('Nothing is signed in', $this->screen());
+    }
+
+    public function testSlashLogoutForgetsTheSignIn(): void
+    {
+        $auth = Auth::inMemory();
+        $auth->setCredentials(Provider::Anthropic, new Credentials('r', 'sk-ant-oat-x', 0));
+
+        $this->start(auth: $auth);
+
+        $this->type('/logout');
+        $this->type(self::ENTER);
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertFalse($auth->has('anthropic'));
+        $this->assertStringContainsString('Forgot the Anthropic', $this->screen());
+    }
+
+    public function testSlashLogoutOnlyOffersWhatIsActuallySignedIn(): void
+    {
+        $auth = Auth::inMemory();
+        $auth->setCredentials(Provider::Anthropic, new Credentials('r', 'a', 0));
+
+        $this->start(auth: $auth);
+
+        $this->type('/logout');
+        $this->type(self::ENTER);
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('Anthropic (Claude Pro/Max)', $screen);
+        // The other three have nothing to forget, so offering them would be three ways of
+        // doing nothing.
+        $this->assertStringNotContainsString('GitHub Copilot', $screen);
+    }
+
+    public function testWithNowhereToKeepASignInItSaysSoRatherThanOpeningAList(): void
+    {
+        $this->start();
+
+        $this->type('/login');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('nowhere to keep a sign-in', $this->screen());
+    }
+
 }

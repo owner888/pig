@@ -24,9 +24,11 @@ use Pig\Ai\TextContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\Oauth\Provider;
 use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
@@ -188,6 +190,10 @@ final class InteractiveMode
         ?CustomToolSet $customTools = null,
         private readonly array $initialMessages = [],
         private readonly array $initialImages = [],
+        // Last, because everything before it is passed positionally by a test and by
+        // `bin/pig`, and a parameter inserted in the middle of that is fifteen silent
+        // off-by-ones.
+        private readonly ?Auth $auth = null,
     ) {
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
@@ -1030,6 +1036,8 @@ final class InteractiveMode
         ['resume', 'Pick up an earlier conversation'],
         ['tree', 'Go back to an earlier point and take it somewhere else'],
         ['label', 'Name this point, so /tree can find it again — /label with nothing clears it'],
+        ['login', 'Sign in with a subscription instead of an API key'],
+        ['logout', 'Forget a sign-in'],
         ['theme', 'Switch between dark and light'],
         ['hooks', 'What hooks loaded, and what they added'],
         ['tools', 'What the model can call, built-in and loaded'],
@@ -1052,6 +1060,8 @@ final class InteractiveMode
             'resume' => $this->showSessions(),
             'tree' => $this->showTree(),
             'label' => $this->label(trim(substr($text, strlen($name) + 1))),
+            'login' => $this->showSignIns('login'),
+            'logout' => $this->showSignIns('logout'),
             'theme' => $this->switchTheme(),
             'hooks' => $this->say($this->hookList()),
             'tools' => $this->say($this->toolList()),
@@ -1737,6 +1747,116 @@ final class InteractiveMode
         }
 
         return mb_strlen($text) > 60 ? mb_substr($text, 0, 60) . '...' : $text;
+    }
+
+    /**
+     * Which subscription to sign in with, or which sign-in to forget.
+     *
+     * Upstream's `oauth-selector.ts` has a component of its own for this; here it is the same
+     * `SelectList` in the same place as `/model`, `/resume` and `/tree`, because a fourth
+     * picker that behaves like a fourth picker is worth more than a literal port of a
+     * component that does less.
+     *
+     * A provider pig cannot sign in with is shown greyed and **says why** when it is chosen.
+     * Upstream ignores the key, which reads as the list being broken.
+     */
+    private function showSignIns(string $mode): void
+    {
+        if ($this->auth === null) {
+            $this->sayWarning('This session has nowhere to keep a sign-in.');
+
+            return;
+        }
+
+        $signingIn = $mode === 'login';
+        $items = [];
+        $providers = [];
+
+        foreach (Provider::cases() as $provider) {
+            $signedIn = $this->auth->kind($provider->value) === 'oauth';
+
+            if (!$signingIn && !$signedIn) {
+                continue;
+            }
+
+            $providers[] = $provider;
+            $items[] = new SelectItem(
+                (string) (count($providers) - 1),
+                $provider->available() ? $provider->label() : $this->palette->fg('dim', $provider->label()),
+                $signedIn ? 'signed in' : ($provider->available() ? '' : 'not ported yet'),
+            );
+        }
+
+        if ($items === []) {
+            $this->say('Nothing is signed in. /login first.');
+
+            return;
+        }
+
+        $picker = new SelectList($items, 8, $this->palette->selectListTheme());
+        $picker->setSelectHandler(function (SelectItem $item) use ($providers, $signingIn): void {
+            $this->closePicker();
+            $provider = $providers[(int) $item->value];
+
+            $signingIn ? $this->signIn($provider) : $this->signOut($provider);
+        });
+        $picker->setCancelHandler($this->closePicker(...));
+
+        $this->picker = $picker;
+        $this->status->clear();
+        $this->status->addChild(new Spacer(1));
+        $this->status->addChild(new Text($this->palette->fg(
+            'muted',
+            $signingIn ? 'Sign in with — enter to choose, esc to cancel' : 'Forget which sign-in — enter to choose, esc to cancel',
+        ), 1, 0));
+        $this->status->addChild($picker);
+
+        $this->tui->setFocus($picker);
+        $this->tui->requestRender();
+    }
+
+    /**
+     * Show the URL, wait for what comes back, and keep the tokens.
+     *
+     * Spawned, because the paste box parks the fiber it is asked on and this is running
+     * inside the loop's own input callback — suspending there suspends the loop that has to
+     * deliver the keystrokes. Same reason `send()` and `startCompaction()` spawn.
+     */
+    private function signIn(Provider $provider): void
+    {
+        if (!$provider->available()) {
+            $this->sayWarning("{$provider->label()} is not ported yet — pig cannot finish that sign-in.");
+
+            return;
+        }
+
+        Async::spawn(function () use ($provider): void {
+            try {
+                $this->auth?->login(
+                    $provider,
+                    function (string $url): void {
+                        $this->say("Open this, approve it, and paste what comes back:\n\n{$url}");
+                    },
+                    fn (): ?string => $this->ui->input('Paste the authorization code', 'code#state'),
+                );
+
+                $this->say("Signed in with {$provider->label()}.");
+            } catch (Throwable $problem) {
+                $this->sayError($problem->getMessage());
+            }
+
+            $this->tui->requestRender();
+        });
+    }
+
+    private function signOut(Provider $provider): void
+    {
+        try {
+            $this->auth?->remove($provider->value);
+            $this->say("Forgot the {$provider->label()} sign-in.");
+        } catch (Throwable $problem) {
+            $this->sayError($problem->getMessage());
+        }
     }
 
     private function closePicker(): void

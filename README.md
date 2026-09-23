@@ -46,6 +46,10 @@ a list — type in that list to search it, and the search matches anything said 
 conversation, not just the line it opened with. `-h` for the flags, `-v` for the version.
 `/help` inside lists the keys.
 
+With a Claude Pro or Max subscription there is no key to set: `/login` gives you a URL to open
+and takes the code that comes back, and the token is kept in `~/.pi/agent/auth.json` — pi's own
+file, when pi has one, so signing in once is signing in once. `/logout` forgets it.
+
 Anything that is not an option is a message, and `@some/file` is read in front of it:
 
 ```bash

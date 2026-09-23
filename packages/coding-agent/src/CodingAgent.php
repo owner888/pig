@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
+use Closure;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentOptions;
 use Pig\Agent\ThinkingLevel;
@@ -39,6 +40,8 @@ final class CodingAgent
      * An agent ready to be prompted.
      *
      * @param list<string>           $tools        tool names, as ToolSet knows them
+     * @param Closure(string): ?string|null $getApiKey asked per turn, so an expiring token can
+     *                                             be renewed between them — `Auth::apiKey()`
      * @param list<ContextFile>|null $contextFiles discovered from $cwd when not given
      * @param list<Skill>            $skills       what the model may reach for
      * @param HookRunner|null        $hooks        wrapped around the tools, and given the
@@ -51,6 +54,7 @@ final class CodingAgent
         string $cwd,
         array $tools = ToolSet::CODING,
         ?string $apiKey = null,
+        ?Closure $getApiKey = null,
         ?string $systemPrompt = null,
         ?string $appendSystemPrompt = null,
         ?array $contextFiles = null,
@@ -61,6 +65,10 @@ final class CodingAgent
     ): Agent {
         $agent = new Agent(new AgentOptions(
             apiKey: $apiKey ?? self::apiKey($model),
+            // Asked again on every turn, because a token expires mid-conversation and the
+            // one that answers is not always the one this started with. `Auth::apiKey()` is
+            // what `bin/pig` passes; nothing passed means the key is whatever it was.
+            getApiKey: $getApiKey,
             convertToLlm: self::toLlm(...),
             // The `context` event. It runs here rather than in `toLlm` because a hook
             // edits the conversation the agent keeps, not the wire format it becomes:
