@@ -25,8 +25,20 @@ final readonly class Arguments
     /** Every option that is followed by its value. Everything else is a flag. */
     public const array TAKES_A_VALUE = ['model', 'theme', 'thinking', 'cwd', 'resume', 'skills-dir', 'mode'];
 
-    /** The short ones, and the long option each stands for. */
-    public const array SHORT = ['p' => 'print'];
+    /**
+     * The short ones, and the long option each stands for.
+     *
+     * Upstream's five. A short option is only ever an abbreviation: it resolves to its long
+     * name and then goes through exactly the same handling, so `-r path` and `--resume path`
+     * cannot come to mean different things.
+     */
+    public const array SHORT = [
+        'c' => 'continue',
+        'h' => 'help',
+        'p' => 'print',
+        'r' => 'resume',
+        'v' => 'version',
+    ];
 
     /** The three modes `--mode` accepts. */
     public const array MODES = ['text', 'json', 'rpc'];
@@ -63,28 +75,30 @@ final readonly class Arguments
                 break;
             }
 
-            $short = self::shortOf($argument);
+            $name = self::shortOf($argument);
 
-            if ($short !== null) {
-                $options[$short] = '';
+            if ($name === null) {
+                if (!str_starts_with($argument, '--')) {
+                    $rest[] = $argument;
 
-                continue;
+                    continue;
+                }
+
+                $name = substr($argument, 2);
+
+                if (str_contains($name, '=')) {
+                    [$name, $value] = explode('=', $name, 2);
+                    $options[$name] = $value;
+
+                    continue;
+                }
             }
 
-            if (!str_starts_with($argument, '--')) {
-                $rest[] = $argument;
-
-                continue;
-            }
-
-            $name = substr($argument, 2);
-
-            if (str_contains($name, '=')) {
-                [$name, $value] = explode('=', $name, 2);
-                $options[$name] = $value;
-
-                continue;
-            }
+            // From here the long and the short form are the same thing, which is the point:
+            // resolving `-r` to `resume` and then asking `TAKES_A_VALUE` about it is what
+            // keeps `-r path` and `--resume path` from drifting apart. Giving every short
+            // option an empty value — which is what this did first — would have read that
+            // path as a message and said nothing about it.
 
             if (!in_array($name, self::TAKES_A_VALUE, true)) {
                 $options[$name] = '';

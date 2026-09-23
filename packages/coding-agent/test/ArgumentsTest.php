@@ -78,6 +78,52 @@ final class ArgumentsTest extends TestCase
         $this->assertTrue($this->parse('-p')->has('print'));
     }
 
+    public function testAllFiveOfUpstreamsShortOptionsAreThere(): void
+    {
+        foreach (Arguments::SHORT as $short => $long) {
+            $this->assertTrue($this->parse('-' . $short)->has($long), "-{$short} should mean --{$long}");
+        }
+
+        $this->assertSame(['c', 'h', 'p', 'r', 'v'], array_keys(Arguments::SHORT));
+    }
+
+    public function testAShortOptionTakesAValueWhenItsLongFormDoes(): void
+    {
+        // The bug this guards: every short option used to be treated as a valueless flag, so
+        // `-r some/path.jsonl` set `resume` to `''` — the picker — and read the path as a
+        // message. A short option is an abbreviation and nothing else.
+        $this->assertSame('some/path.jsonl', $this->parse('-r', 'some/path.jsonl')->value('resume'));
+        $this->assertSame([], $this->parse('-r', 'some/path.jsonl')->messages);
+    }
+
+    public function testAShortOptionWithNothingAfterItIsEmptyNotAbsent(): void
+    {
+        // Empty is what `bin/pig` reads as "show me the list", which is the whole point of
+        // a bare `-r`. Absent would mean a new session.
+        $this->assertSame('', $this->parse('-r')->value('resume'));
+        $this->assertTrue($this->parse('-r')->has('resume'));
+    }
+
+    public function testAShortFlagStillDoesNotEatWhatFollows(): void
+    {
+        $parsed = $this->parse('-c', 'carry on from here');
+
+        $this->assertSame('', $parsed->value('continue'));
+        $this->assertSame(['carry on from here'], $parsed->messages);
+    }
+
+    public function testTheShortAndLongFormsAgreeOnEverything(): void
+    {
+        foreach (Arguments::SHORT as $short => $long) {
+            $short = $this->parse('-' . $short, 'a value');
+            $whole = $this->parse('--' . $long, 'a value');
+
+            // One table decides whether a name takes a value, and both spellings ask it.
+            $this->assertSame($whole->options, $short->options, "-{$long} and --{$long} differ");
+            $this->assertSame($whole->messages, $short->messages);
+        }
+    }
+
     public function testSomethingThatIsNotAKnownShortOptionIsAMessage(): void
     {
         // Not silently dropped: `-3` is more likely part of what someone meant to say than

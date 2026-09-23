@@ -908,6 +908,18 @@ arrive through `Loop::defer()` once the screen is open — which is also what a 
 does with whatever was in its buffer when the program took it over, and it keeps the loop
 from deciding it has nothing to do and returning before anybody has typed.
 
+The five short options are upstream's: `-c`, `-h`, `-p`, `-r`, `-v`. **A short option is an
+abbreviation and nothing else** — it resolves to its long name and then goes through the same
+handling, which is what keeps `-r path` and `--resume path` from coming to mean different
+things. The first version gave every short option an empty value, which would have read that
+path as a message; see the trap below.
+
+One place pig's flags are not upstream's: **upstream's `--resume` takes no value at all** and
+always shows the picker. pig's takes an optional path, because `--resume <file>` existed here
+before the picker did and a flag that used to work should keep working. The cost is that
+`--resume "fix the bug"` reads the prompt as a path — which fails loudly, naming what it tried
+to open, rather than quietly.
+
 `Cli\Arguments` is upstream's `cli/args.ts`, and it lives in the package rather than in
 `bin/pig` for one reason: a script that calls `exit()` cannot be called twice by a test, and
 the parser now has something worth testing. See the trap below about the flag that ate the
@@ -1713,6 +1725,19 @@ with nothing said about it.
 `Cli\Arguments::TAKES_A_VALUE` is the list, and everything not on it is a flag. Upstream's
 `args.ts` spells each option out for the same reason. **A CLI cannot afford a guess about what
 the next word means**, and the failure mode of guessing is silent.
+
+### A short option is not automatically a flag
+
+`SHORT` maps `-p` to `print`, and the first version of the branch that handled it did
+`$options[$short] = ''` and moved on — right for `-p`, and wrong for every short option whose
+long form takes a value. Adding `-r` would therefore have made `-r some/path.jsonl` set
+`resume` to the empty string, which `bin/pig` reads as "show me the picker", and left the path
+in the message list to be sent to the model as a prompt.
+
+The same mistake as the flag that ate the prompt, one level down: **two spellings of one
+option must not each carry their own idea of whether it takes a value.** So the short branch
+resolves to the long name and falls through into the same code, and a test asserts that every
+pair in `SHORT` parses identically.
 
 ### One chunk is one key (tests)
 

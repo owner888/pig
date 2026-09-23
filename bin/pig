@@ -52,6 +52,12 @@ const VERSION = '0.1.0';
 $arguments = Arguments::parse(array_slice($argv, 1));
 $options = $arguments->options;
 
+if (isset($options['version'])) {
+    echo 'pig ' . VERSION . "\n";
+
+    exit(0);
+}
+
 if (isset($options['help'])) {
     echo <<<TEXT
     pig — a coding agent in a terminal.
@@ -60,12 +66,14 @@ if (isset($options['help'])) {
                         A part of the name will do: `sonnet`, `haiku`, `opus 4.1`.
                         Add a thinking level with a colon: `sonnet:high`.
       --models          list the models there are, and stop
+      -v, --version     print the version, and stop
+      -h, --help        this
       --theme <name>    dark or light (default: dark)
       --thinking <l>    off, minimal, low, medium, high, xhigh
       --read-only       no edit, write or bash
       --cwd <path>      where to work (default: here)
-      --continue        pick up the most recent session here
-      --resume [file]   pick up a particular one; with no path, choose from a list
+      -c, --continue    pick up the most recent session here
+      -r, --resume      choose from a list; `--resume <file>` opens one by path
       --no-save         do not write this session to disk
       --skills-dir <d>  one more folder of skills, on top of the standard ones
       --no-hooks        start without loading ~/.pig/hooks or .pig/hooks
