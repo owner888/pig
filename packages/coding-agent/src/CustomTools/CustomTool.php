@@ -44,10 +44,9 @@ use InvalidArgumentException;
  * a `HookContext` — which is the reason a custom tool is worth having over a built-in
  * one: it can read the conversation, see which model is answering, and stop the run.
  *
- * Not ported: `renderCall` and `renderResult`, which hand back a TUI component for the
- * interactive mode to draw instead of the default tool view. pig has the components; what
- * it does not have is the lookup in `ToolExecutionComponent` that would reach for them.
- * A custom tool is drawn like any other for now. See CLAUDE.md.
+ * `renderCall` and `renderResult` are optional, and they are what makes a custom tool look
+ * native rather than bolted on: without them the transcript shows the tool's name and its
+ * text output, which is right for most tools and wrong for one whose result is a table.
  */
 final readonly class CustomTool
 {
@@ -60,6 +59,11 @@ final readonly class CustomTool
      * @param Closure(CustomToolSessionEvent, \Pig\CodingAgent\Hooks\HookContext): void|null $onSession
      *        called on `/new`, `/resume`, `/tree` and on the way out — for rebuilding
      *        state from the conversation, or letting go of something that was held
+     * @param Closure(array<string, mixed>, \Pig\CodingAgent\Theme\Palette): \Pig\Tui\Component|null $renderCall
+     *        the heading line, in place of the tool's name — given the arguments, which are
+     *        still arriving and may be half a JSON object
+     * @param Closure(\Pig\Agent\AgentToolResult, RenderOptions, \Pig\CodingAgent\Theme\Palette): \Pig\Tui\Component|null $renderResult
+     *        what came back, in place of its text
      * @throws InvalidArgumentException when the declaration could not work
      */
     public function __construct(
@@ -69,6 +73,8 @@ final readonly class CustomTool
         public array $parameters,
         public Closure $execute,
         public ?Closure $onSession = null,
+        public ?Closure $renderCall = null,
+        public ?Closure $renderResult = null,
     ) {
         // Checked here rather than left to the provider: a tool with no description is
         // one the model will never choose, and a tool with a name the API rejects fails

@@ -17,8 +17,12 @@ use Pig\Tui\Components\Image;
 use Pig\Tui\Components\ImageTheme;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
+use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\CustomTools\RenderOptions;
+use Pig\Tui\Component;
 use Pig\Tui\Container;
 use Pig\Tui\Style;
+use Throwable;
 
 /**
  * One tool call and what came back, redrawn as both arrive.
@@ -32,8 +36,13 @@ use Pig\Tui\Style;
  * `pig/tui`'s `Image` falls back to a label by itself elsewhere, so there is nothing to
  * decide here. It sits under the text, because the text is what says which image it is.
  *
- * Ported from upstream's `components/tool-execution.ts`. Not ported: custom tools, which
- * would render themselves.
+ * A custom tool may draw its own heading and its own result, and then none of the
+ * formatting below applies to it — a tool whose result is a table is not served by a tool
+ * view built for files and commands. A renderer that throws falls back to the default view
+ * *and says so once*, because a picture that silently turns into plain text is a bug nobody
+ * reports.
+ *
+ * Ported from upstream's `components/tool-execution.ts`.
  */
 final class ToolExecutionComponent extends Container
 {
@@ -68,13 +77,21 @@ final class ToolExecutionComponent extends Container
 
     private bool $expanded = false;
 
+    /** One complaint per call, however many times a broken renderer is asked. */
+    private bool $reported = false;
+
     /**
-     * @param array<string, mixed> $arguments still arriving, so any of them may be missing
+     * @param array<string, mixed>          $arguments still arriving, so any of them may be missing
+     * @param CustomTool|null               $custom    the declaration, when this is a tool
+     *        somebody wrote — for `renderCall` and `renderResult`
+     * @param Closure(string): void|null    $onError   told once when a renderer throws
      */
     public function __construct(
         private readonly string $tool,
         private array $arguments,
         private readonly Palette $palette,
+        private readonly ?CustomTool $custom = null,
+        private readonly ?Closure $onError = null,
     ) {
         $this->addChild(new Spacer(1));
 
@@ -86,8 +103,9 @@ final class ToolExecutionComponent extends Container
         );
 
         // bash is the one tool whose output has to be cut at render width rather than by
-        // newlines, so it is the one that needs a box with a component inside it.
-        $this->addChild($this->tool === 'bash' ? $this->box : $this->body);
+        // newlines, so it is the one that needs a box with a component inside it — and a
+        // custom tool hands back components too, so it needs the same.
+        $this->addChild($this->tool === 'bash' || $this->drawsItself() ? $this->box : $this->body);
 
         $this->images = new Container();
         $this->addChild($this->images);
@@ -132,6 +150,14 @@ final class ToolExecutionComponent extends Container
             default => 'toolSuccessBg',
         });
 
+        if ($this->drawsItself()) {
+            $this->box->setBackground($background);
+            $this->box->clear();
+            $this->drawCustom();
+
+            return;
+        }
+
         if ($this->tool === 'bash') {
             $this->box->setBackground($background);
             $this->box->clear();
@@ -163,6 +189,108 @@ final class ToolExecutionComponent extends Container
                 ));
             }
         }
+    }
+
+    /** Whether this tool brought at least one renderer of its own. */
+    private function drawsItself(): bool
+    {
+        return $this->custom !== null
+            && ($this->custom->renderCall !== null || $this->custom->renderResult !== null);
+    }
+
+    // ---- a tool that draws itself ------------------------------------------------------
+
+    /**
+     * The tool's own heading and its own result, each falling back on its own.
+     *
+     * Two independent halves, as upstream has them: a tool may draw its heading and leave
+     * the result to the default text, or the other way round.
+     */
+    private function drawCustom(): void
+    {
+        $heading = $this->drawnBy(
+            'renderCall',
+            fn (): mixed => ($this->custom->renderCall)($this->arguments, $this->palette),
+        );
+
+        $this->box->addChild($heading ?? new Text(
+            $this->palette->fg('toolTitle', Style::bold($this->custom?->label ?? $this->tool)),
+            0,
+            0,
+        ));
+
+        if ($this->result === null) {
+            return;
+        }
+
+        $body = $this->drawnBy(
+            'renderResult',
+            fn (): mixed => ($this->custom->renderResult)(
+                $this->result,
+                new RenderOptions($this->expanded, $this->partial),
+                $this->palette,
+            ),
+        );
+
+        if ($body !== null) {
+            $this->box->addChild(new Spacer(1));
+            $this->box->addChild($body);
+
+            return;
+        }
+
+        // No renderer for the result, or one that failed: the text it produced, which is
+        // what every other tool without a special case shows.
+        $output = trim($this->output());
+
+        if ($output !== '') {
+            $this->box->addChild(new Spacer(1));
+            $this->box->addChild(new Text($this->palette->fg('toolOutput', $output), 0, 0));
+        }
+    }
+
+    /**
+     * Call one of the tool's renderers, or answer null.
+     *
+     * Null for three different reasons on purpose — no renderer, a renderer that returned
+     * nothing, a renderer that threw — because the caller does the same thing in all three:
+     * draw the default. The difference is that the third is reported, once per call, since
+     * `draw()` runs again on every update and a broken renderer would otherwise fill the
+     * transcript with its own failure.
+     *
+     * @param Closure(): mixed $call
+     */
+    private function drawnBy(string $which, Closure $call): ?Component
+    {
+        if ($this->custom?->{$which} === null) {
+            return null;
+        }
+
+        try {
+            $drawn = $call();
+        } catch (Throwable $error) {
+            $this->complain("{$which} failed: " . $error::class . ': ' . $error->getMessage());
+
+            return null;
+        }
+
+        if ($drawn === null || $drawn instanceof Component) {
+            return $drawn;
+        }
+
+        $this->complain("{$which} returned " . get_debug_type($drawn) . ', expected a component');
+
+        return null;
+    }
+
+    private function complain(string $message): void
+    {
+        if ($this->reported || $this->onError === null) {
+            return;
+        }
+
+        $this->reported = true;
+        ($this->onError)($message);
     }
 
     // ---- bash ----------------------------------------------------------------------

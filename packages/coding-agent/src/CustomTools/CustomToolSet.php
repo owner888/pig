@@ -82,6 +82,23 @@ final class CustomToolSet
         return array_map(static fn (LoadedCustomTool $one): string => $one->path, $this->tools);
     }
 
+    /**
+     * The declaration behind a tool name, or null when it is a built-in.
+     *
+     * For the transcript: it is the declaration that carries `renderCall` and
+     * `renderResult`, and the component drawing a call only knows the name.
+     */
+    public function find(string $name): ?CustomTool
+    {
+        foreach ($this->tools as $one) {
+            if ($one->tool->name === $name) {
+                return $one->tool;
+            }
+        }
+
+        return null;
+    }
+
     /** @return list<LoadedCustomTool> */
     public function loaded(): array
     {

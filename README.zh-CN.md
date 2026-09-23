@@ -125,7 +125,8 @@ return fn (CustomToolApi $pi) => new CustomTool(
 
 `$ctx` 就是这次会话：到目前为止的对话、正在回答的是哪个模型、agent 是不是在忙、一个能把它停下来的
 口子，以及和 hook 同一个 `ui`。工具还能收到「会话开始 / 切换 / 跳转 / 结束」四个时机——自己存着状态
-的工具靠这个重建或者放手。
+的工具靠这个重建或者放手。它也能自己画这次调用和这次的结果，所以一个答案是张表的工具，不必
+被塞进给文件设计的那套排版里。
 
 skill 就是一个带 `SKILL.md` 的文件夹。pig 读 `~/.pig/skills` 和 `.pig/skills`，同时也读
 `~/.claude/skills`、`.claude/skills` 和 `~/.codex/skills`——给别的 agent 写的 skill 在这儿直接能用。

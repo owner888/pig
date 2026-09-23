@@ -11,7 +11,13 @@ use Pig\Ai\TextContent;
 use Pig\CodingAgent\Interactive\ToolExecutionComponent;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\EditDiff;
+use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\Tui\Ansi;
+use Pig\Tui\Component;
+use Pig\Tui\Components\Text;
+use Closure;
+use RuntimeException;
 
 /** One tool call drawn as it happens: heading, state, and output cut to size. */
 final class ToolExecutionTest extends TestCase
@@ -301,6 +307,200 @@ final class ToolExecutionTest extends TestCase
     public function testACommandStillArrivingShowsAPlaceholder(): void
     {
         $this->assertStringContainsString('$ ...', $this->text($this->tool('bash')));
+    }
+
+    // ---- a tool that draws itself ------------------------------------------------------
+
+    public function testACustomToolWithNoRenderersIsDrawnLikeAnyOther(): void
+    {
+        $tool = $this->custom();
+        $tool->updateResult($this->said('done'), partial: false);
+
+        $this->assertStringContainsString('done', $this->text($tool));
+    }
+
+    public function testARenderCallReplacesTheHeading(): void
+    {
+        $tool = $this->custom(
+            renderCall: static fn (array $arguments, Palette $palette): Component => new Text(
+                'counting ' . ($arguments['path'] ?? '?'),
+                0,
+                0,
+            ),
+        );
+
+        $this->assertStringContainsString('counting notes.md', $this->text($tool));
+    }
+
+    public function testARenderResultReplacesTheOutput(): void
+    {
+        $tool = $this->custom(
+            renderResult: static fn (AgentToolResult $result, RenderOptions $options): Component => new Text(
+                'drawn by the tool',
+                0,
+                0,
+            ),
+        );
+
+        $tool->updateResult($this->said('the raw text'), partial: false);
+        $shown = $this->text($tool);
+
+        $this->assertStringContainsString('drawn by the tool', $shown);
+        $this->assertStringNotContainsString('the raw text', $shown);
+    }
+
+    /** Two independent halves: a tool may draw one and leave the other to the default. */
+    public function testDrawingOnlyTheHeadingLeavesTheDefaultOutput(): void
+    {
+        $tool = $this->custom(
+            renderCall: static fn (): Component => new Text('my own heading', 0, 0),
+        );
+
+        $tool->updateResult($this->said('the raw text'), partial: false);
+        $shown = $this->text($tool);
+
+        $this->assertStringContainsString('my own heading', $shown);
+        $this->assertStringContainsString('the raw text', $shown);
+    }
+
+    public function testDrawingOnlyTheResultLeavesTheLabelAsTheHeading(): void
+    {
+        $tool = $this->custom(
+            renderResult: static fn (): Component => new Text('my own result', 0, 0),
+        );
+
+        $tool->updateResult($this->said('raw'), partial: false);
+        $shown = $this->text($tool);
+
+        $this->assertStringContainsString('Count lines', $shown);
+        $this->assertStringContainsString('my own result', $shown);
+    }
+
+    public function testTheResultRendererIsToldWhetherItIsExpandedAndStillRunning(): void
+    {
+        $seen = [];
+        $tool = $this->custom(
+            renderResult: static function (AgentToolResult $result, RenderOptions $options) use (&$seen): Component {
+                $seen[] = [$options->expanded, $options->partial];
+
+                return new Text('drawn', 0, 0);
+            },
+        );
+
+        $tool->updateResult($this->said('half'), partial: true);
+        $tool->setExpanded(true);
+        $tool->updateResult($this->said('all of it'), partial: false);
+
+        $this->assertContains([false, true], $seen);
+        $this->assertContains([true, false], $seen);
+    }
+
+    /** A picture that silently turns into plain text is a bug nobody reports. */
+    public function testARendererThatThrowsFallsBackAndSaysSo(): void
+    {
+        $problems = [];
+        $tool = $this->custom(
+            renderCall: static function (): Component {
+                throw new RuntimeException('no colour for that');
+            },
+            onError: static function (string $problem) use (&$problems): void {
+                $problems[] = $problem;
+            },
+        );
+
+        $tool->updateResult($this->said('still shown'), partial: false);
+        $shown = $this->text($tool);
+
+        // The label, which is what a tool with no renderer would have shown.
+        $this->assertStringContainsString('Count lines', $shown);
+        $this->assertStringContainsString('still shown', $shown);
+        $this->assertCount(1, $problems);
+        $this->assertStringContainsString('renderCall failed', $problems[0]);
+        $this->assertStringContainsString('no colour for that', $problems[0]);
+    }
+
+    /** `draw()` runs on every update, and a broken renderer would fill the transcript. */
+    public function testABrokenRendererIsReportedOnceRatherThanEveryFrame(): void
+    {
+        $problems = [];
+        $tool = $this->custom(
+            renderResult: static function (): Component {
+                throw new RuntimeException('still broken');
+            },
+            onError: static function (string $problem) use (&$problems): void {
+                $problems[] = $problem;
+            },
+        );
+
+        $tool->updateResult($this->said('one'), partial: true);
+        $tool->updateResult($this->said('two'), partial: true);
+        $tool->updateResult($this->said('three'), partial: false);
+        $tool->setExpanded(true);
+
+        $this->assertCount(1, $problems);
+    }
+
+    public function testARendererThatReturnsSomethingElseIsReported(): void
+    {
+        $problems = [];
+        $tool = $this->custom(
+            renderCall: static fn (): mixed => 'a string, not a component',
+            onError: static function (string $problem) use (&$problems): void {
+                $problems[] = $problem;
+            },
+        );
+
+        $this->assertStringContainsString('Count lines', $this->text($tool));
+        $this->assertStringContainsString('returned string, expected a component', $problems[0]);
+    }
+
+    /** Returning null is a renderer saying "nothing here", not a failure. */
+    public function testARendererThatDrawsNothingIsNotAComplaint(): void
+    {
+        $problems = [];
+        $tool = $this->custom(
+            renderResult: static fn (): ?Component => null,
+            onError: static function (string $problem) use (&$problems): void {
+                $problems[] = $problem;
+            },
+        );
+
+        $tool->updateResult($this->said('the raw text'), partial: false);
+
+        $this->assertStringContainsString('the raw text', $this->text($tool));
+        $this->assertSame([], $problems);
+    }
+
+    public function testACustomToolStillCarriesTheStateColour(): void
+    {
+        $tool = $this->custom(renderCall: static fn (): Component => new Text('mine', 0, 0));
+        $tool->fail('it broke');
+
+        $this->assertStringContainsString("\e[48;2;60;40;40m", $this->raw($tool));
+    }
+
+    private function custom(
+        ?Closure $renderCall = null,
+        ?Closure $renderResult = null,
+        ?Closure $onError = null,
+    ): ToolExecutionComponent {
+        $declaration = new CustomTool(
+            name: 'wc',
+            label: 'Count lines',
+            description: 'Counts the lines in a file.',
+            parameters: ['type' => 'object', 'properties' => []],
+            execute: static fn () => new AgentToolResult([new TextContent('ran')]),
+            renderCall: $renderCall,
+            renderResult: $renderResult,
+        );
+
+        return new ToolExecutionComponent(
+            'wc',
+            ['path' => 'notes.md'],
+            $this->palette,
+            $declaration,
+            $onError,
+        );
     }
 
     // ---- a tool that never finished --------------------------------------------------------

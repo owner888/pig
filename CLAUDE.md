@@ -263,8 +263,7 @@ components it draws with are `UserMessageComponent`, `AssistantMessageComponent`
 selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
 trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
 an agent you can talk to, fourteen slash commands plus whatever the hooks add, the keys, and
-the dialogs a hook or a custom tool can open mid-turn (`Interactive\TerminalUi`). Also not
-ported: custom-tool rendering.
+the dialogs a hook or a custom tool can open mid-turn (`Interactive\TerminalUi`).
 
 `/copy` needed a clipboard *writer*, which nothing had: `SystemClipboard` could only read.
 `Process::feed()` is the piece under it — a command with text on its standard input, which is
@@ -673,11 +672,26 @@ it too. They are told apart by shape — a downloaded binary is a file, a custom
 folder with an entry file — and the discovery glob is `*/index.php`, so neither sees the
 other. Worth knowing before wondering why `ls ~/.pig/tools` shows a mixture.
 
-Not ported: `renderCall` and `renderResult`, which hand back a TUI component for the
-interactive mode to draw in place of the default tool view. pig has the components; what it
-does not have is the lookup in `ToolExecutionComponent` that would reach for them.
-`CustomToolAPI.ui` *is* ported — it is `HookUi`, in both `$pi->ui()` and the context handed
-to `execute`.
+`renderCall` and `renderResult` are ported too: a tool hands back a `Pig\Tui\Component` and
+`ToolExecutionComponent` draws that instead of its own tool view — which is what stops a tool
+whose result is a table from being shown through formatting built for files and commands. Four
+things about them:
+
+- **Two independent halves.** A tool may draw its heading and leave the result to the default
+  text, or the other way round. `drawsItself()` is true if either is set, and each falls back
+  on its own.
+- **A renderer that throws falls back *and says so*, once.** Upstream catches and silently
+  draws the default; a picture that quietly turns into plain text is a bug nobody reports. Once
+  per call, because `draw()` runs again on every update and a broken renderer would otherwise
+  fill the transcript with its own failure.
+- **Returning null is not a failure.** "Nothing to draw here" is a legitimate answer and gets
+  the default without a complaint; returning something that is not a component is a complaint.
+- **`renderCall` gets the arguments as they stand**, which mid-stream may be half a JSON
+  object. Every field is therefore optional to the renderer, exactly as it is to the built-in
+  headings.
+
+`CustomToolAPI.ui` is ported as `HookUi`, in both `$pi->ui()` and the context handed to
+`execute`. Nothing of upstream's custom-tool module is left out.
 
 What is left in `coding-agent`, none of it deliberately left out, all of it needing something
 that is not here yet:
@@ -686,7 +700,6 @@ that is not here yet:
 |---|---|
 | `modes/rpc/` | a second way in, for editors rather than people |
 | `branch-summarization.ts` | a summary of the branch being left, for `/tree` |
-| `renderCall` / `renderResult` | a renderer lookup in `ToolExecutionComponent` |
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 

@@ -1729,7 +1729,18 @@ final class InteractiveMode
     /** @param array<string, mixed> $arguments */
     private function addTool(string $id, string $name, array $arguments): ToolExecutionComponent
     {
-        $tool = new ToolExecutionComponent($name, $arguments, $this->palette);
+        // A custom tool may draw its own call and result, so the declaration is looked up
+        // rather than the name being enough. Null for every built-in, which is all of them
+        // unless something was loaded.
+        $tool = new ToolExecutionComponent(
+            $name,
+            $arguments,
+            $this->palette,
+            $this->customTools?->find($name),
+            function (string $problem) use ($name): void {
+                $this->sayWarning("tool {$name}: {$problem}");
+            },
+        );
         $tool->setExpanded($this->expanded);
         $this->chat->addChild($tool);
         $this->tools[$id] = $tool;

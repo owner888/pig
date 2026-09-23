@@ -135,7 +135,8 @@ return fn (CustomToolApi $pi) => new CustomTool(
 `$ctx` is the session: the conversation so far, which model is answering, whether the agent
 is busy, a way to stop it, and the same `ui` a hook gets. A tool can also be told when the
 session starts, switches, jumps or ends, which is how one that keeps state rebuilds or lets
-go of it.
+go of it. And it can draw its own call and its own result in the transcript,
+so a tool whose answer is a table is not squeezed through formatting meant for files.
 
 Skills are folders with a `SKILL.md` in them. pig reads `~/.pig/skills` and `.pig/skills`, and
 also `~/.claude/skills`, `.claude/skills` and `~/.codex/skills`, so a skill written for another
