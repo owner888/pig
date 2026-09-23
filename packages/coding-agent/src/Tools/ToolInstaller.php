@@ -218,11 +218,31 @@ final class ToolInstaller
      *
      * `tar` and `unzip` rather than PHP: ext-zip is not always built, PharData does not
      * read every tar variant, and both of these are on any machine that has a shell.
+     *
+     * `extract_tmp` is upstream's fixed name, kept on purpose. Two runs downloading at
+     * once do collide here — but they already collide on the archive, which is
+     * `<tools>/<asset name>` in both projects, and one run's `finally` unlinks the file
+     * the other was about to unpack. A unique name here would remove the lesser half of a
+     * collision and leave pig differing from upstream for nothing.
+     *
+     * The collision costs one failed install: a corrupt or missing archive fails `tar`,
+     * which throws, which the `find` or `grep` tool reports and a second run fixes.
+     * Nothing lands at the target path except a binary `findBinary()` has already seen.
      */
     private static function extract(string $archive, string $directory, string $binary, string $name): string
     {
-        $temporary = $directory . '/unpack-' . bin2hex(random_bytes(4));
-        mkdir($temporary, 0o755, true);
+        $temporary = $directory . '/extract_tmp';
+
+        // Cleared first, which the random name made unnecessary and the fixed one does
+        // not: the `finally` below removes this, but a killed run leaves it behind, and
+        // `findBinary()` globs `*/fd` — so last week's interrupted v8 download would be
+        // installed as this week's v9. Upstream is spared only because it looks for one
+        // exact path instead of globbing.
+        self::remove($temporary);
+
+        if (!mkdir($temporary, 0o755, true) && !is_dir($temporary)) {
+            throw new AgentError("Could not create {$temporary}");
+        }
 
         try {
             $unpacked = str_ends_with($name, '.zip')

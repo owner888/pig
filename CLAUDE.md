@@ -1081,6 +1081,22 @@ sees is a session that came up wrong, with nothing to read and nothing to search
 complaint naming the file and quoting what it printed. Test:
 `HookLoaderTest::testAFileThatPrintsIsAComplaint`.
 
+### A fixed unpack directory plus a glob installs last week's binary
+
+`ToolInstaller::extract()` unpacks into `<tools>/extract_tmp`, which is upstream's fixed
+name and is kept on purpose — see the note on the method for why a unique name was tried
+and reverted. The fixed name brings one hazard upstream does not have: `finally` removes
+the directory, but a killed run leaves it behind, and `findBinary()` looks for the binary
+with `glob('*/fd')` rather than at one exact path. An interrupted v8 download therefore
+sits in `extract_tmp/fd-v8…/fd` waiting to be installed as v9.
+
+So the directory is removed *before* it is created as well as after. One line, and the
+reason is only visible if you know the discovery globs; a future change back to a unique
+name can drop it, and anything that keeps the fixed name must keep it.
+
+Not covered by a test: reaching it needs a killed process and a real archive, and
+`extract()` is private — the seam would be a public method existing for the test alone.
+
 ### `stream_socket_pair()` with a dropped peer (tests)
 
 `[$a] = stream_socket_pair(...)` garbage-collects the peer, putting `$a` at EOF — permanently
