@@ -8,13 +8,17 @@ use Closure;
 use Pig\Async\Deferred;
 use Pig\CodingAgent\Hooks\HookUi;
 use Pig\CodingAgent\Theme\Palette;
+use Pig\Tui\Components\Editor;
 use Pig\Tui\Components\Input;
 use Pig\Tui\Components\SelectItem;
 use Pig\Tui\Components\SelectList;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
+use Pig\Tui\Component;
 use Pig\Tui\Container;
 use Pig\Tui\Tui;
+use Pig\Tui\TuiError;
+use Throwable;
 
 /**
  * `HookUi`, drawn in the terminal.
@@ -33,8 +37,8 @@ use Pig\Tui\Tui;
  * **What is guarded against.** Two things, both of which park a turn forever:
  *
  * - Every dialog can be escaped. `SelectList` always could; `Input` was given a cancel
- *   handler for this, because an un-cancellable prompt in front of a suspended fiber is a
- *   session that has to be killed.
+ *   handler for this, and the multi-line one gets escape through `CustomEditor` — because an
+ *   un-escapable prompt in front of a suspended fiber is a session that has to be killed.
  * - Only one dialog at a time. A second `confirm()` while the first is open would take
  *   focus from it, leaving the first fiber waiting on a component nobody can reach. The
  *   second is refused with its safe answer instead.
@@ -44,7 +48,11 @@ final class TerminalUi implements HookUi
     /** Set while a dialog is open, so a second one is refused rather than stacked. */
     private bool $busy = false;
 
-    /** @param Closure(): Palette $palette the current one, not the one at startup */
+    /**
+     * @param Closure(): Palette          $palette        the current one, not the one at startup
+     * @param Closure(string): ?string|null $externalEditor `$VISUAL` on some text, for Ctrl+G
+     *        inside the dialog; null when the host cannot hand the terminal over
+     */
     public function __construct(
         private readonly Tui $tui,
         private readonly Container $chat,
@@ -52,6 +60,7 @@ final class TerminalUi implements HookUi
         private readonly CustomEditor $editor,
         private readonly FooterComponent $footer,
         private readonly Closure $palette,
+        private readonly ?Closure $externalEditor = null,
     ) {
     }
 
@@ -115,6 +124,109 @@ final class TerminalUi implements HookUi
         $value = $answer->future->await();
 
         return is_string($value) ? $value : null;
+    }
+
+    /**
+     * A multi-line editor as a dialog.
+     *
+     * A `CustomEditor` rather than a bare `Editor`, which is what gets escape and Ctrl+G:
+     * the bare component treats both as text, and the wrapper is exactly the piece that
+     * turns them into named keys — the same piece the prompt uses, so the keys mean the
+     * same thing in both places.
+     */
+    #[\Override]
+    public function editor(string $title, string $prefill = ''): ?string
+    {
+        if ($this->busy) {
+            return null;
+        }
+
+        $this->busy = true;
+        $answer = new Deferred();
+        $field = new CustomEditor(new Editor($this->palette()->editorTheme()));
+        $field->setText($prefill);
+
+        $field->setSubmitHandler(function (string $value) use ($answer): void {
+            $this->close();
+            $answer->complete($value);
+        });
+
+        $field->on('escape', function () use ($answer): void {
+            $this->close();
+            $answer->complete(null);
+        });
+
+        // Ctrl+G hands the text to `$VISUAL` and puts back whatever comes out. The dialog
+        // stays open and stays focused, because the person is still answering the question.
+        $field->on('ctrl+g', function () use ($field): void {
+            $edited = $this->externalEditor === null ? null : ($this->externalEditor)($field->text());
+
+            if ($edited !== null) {
+                $field->setText($edited);
+            }
+
+            // Forced: the editor drew over the whole screen, so there is no previous frame
+            // to diff against.
+            $this->tui->setFocus($field);
+            $this->tui->requestRender(true);
+        });
+
+        $this->open($title . '  ' . $this->palette()->fg('dim', 'enter to finish · shift+enter for a line'), $field);
+
+        $value = $answer->future->await();
+
+        return is_string($value) ? $value : null;
+    }
+
+    /**
+     * Show whatever a hook built, and wait for it to say it is done.
+     *
+     * `done()` is idempotent and always closes: a component that calls it twice — a select
+     * handler and a cancel handler both firing on the same key, say — resolves once rather
+     * than throwing into the middle of a turn.
+     *
+     * What cannot be guarded from here is a component that never calls it and does not
+     * handle escape. It has the keys, and nothing else can take them back. See the note on
+     * `HookUi::custom()`.
+     */
+    #[\Override]
+    public function custom(Closure $factory): mixed
+    {
+        if ($this->busy) {
+            return null;
+        }
+
+        $this->busy = true;
+        $answer = new Deferred();
+
+        $done = function (mixed $result = null) use ($answer): void {
+            if ($answer->isComplete()) {
+                return;
+            }
+
+            $this->close();
+            $answer->complete($result);
+        };
+
+        try {
+            $component = $factory($this->tui, $this->palette(), $done);
+        } catch (Throwable $error) {
+            // The dialog never opened, so the turn is not parked — but `busy` was set and
+            // has to come back off, or nothing could ever ask anything again.
+            $this->busy = false;
+
+            throw $error;
+        }
+
+        if (!$component instanceof Component) {
+            $this->busy = false;
+
+            throw new TuiError('A custom dialog must return a component, got ' . get_debug_type($component));
+        }
+
+        $this->open('', $component);
+
+        return $answer->future->await();
     }
 
     #[\Override]
@@ -191,7 +303,13 @@ final class TerminalUi implements HookUi
     {
         $this->status->clear();
         $this->status->addChild(new Spacer(1));
-        $this->status->addChild(new Text($this->palette()->fg('muted', $title), 1, 0));
+
+        // An empty title draws nothing rather than a blank line: `custom()` has none, and
+        // a hook that wanted one drew it itself.
+        if ($title !== '') {
+            $this->status->addChild(new Text($this->palette()->fg('muted', $title), 1, 0));
+        }
+
         $this->status->addChild($component);
 
         $this->tui->setFocus($component);

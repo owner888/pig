@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Hooks;
 
+use Closure;
 use Pig\CodingAgent\Theme\Palette;
 
 /**
@@ -20,17 +21,8 @@ use Pig\CodingAgent\Theme\Palette;
  * walks away leaves the turn parked — which is why every one of these can be cancelled,
  * and why `Input` grew an escape handler to make that true.
  *
- * Ported from upstream's `HookUIContext`, minus two members:
- *
- * - `custom()`, which hands a hook the `TUI` and a `done()` callback and lets it draw
- *   whatever it likes. Portable in principle — pig has the components — but it is a
- *   surface that exposes the renderer's internals to code loaded off disk, and nothing
- *   here needs it yet.
- * - `editor()`, a multi-line overlay with `$VISUAL` support. pig's `Editor` is built into
- *   the prompt rather than openable as a dialog, and `$VISUAL` has no counterpart here
- *   at all.
- *
- * `theme` is `palette()` — pig's name for the same thing.
+ * Ported whole from upstream's `HookUIContext`; `theme` is `palette()`, pig's name for the
+ * same thing.
  */
 interface HookUi
 {
@@ -53,6 +45,43 @@ interface HookUi
 
     /** Ask for a line of text. Null when cancelled, or when there is no UI. */
     public function input(string $title, string $placeholder = ''): ?string;
+
+    /**
+     * Ask for something longer, in a real editor.
+     *
+     * Enter finishes, shift+enter adds a line, escape cancels, and Ctrl+G hands the whole
+     * thing to `$VISUAL` — the same key and the same code as Ctrl+G at the prompt.
+     *
+     * @return string|null null when cancelled, or when there is no UI
+     */
+    public function editor(string $title, string $prefill = ''): ?string;
+
+    /**
+     * Draw something pig has no dialog for, and wait for it to finish.
+     *
+     * The escape hatch, for a hook that wants a progress bar, a diff, a two-column picker
+     * — anything the four above are the wrong shape for. `$factory` is given the screen,
+     * the palette, and a `done()` to call with the answer; it returns the component to show.
+     *
+     * ```php
+     * $count = $ctx->ui->custom(function ($tui, $palette, $done) {
+     *     $list = new SelectList([...], 8, $palette->selectListTheme());
+     *     $list->setSelectHandler(fn ($item) => $done((int) $item->value));
+     *     $list->setCancelHandler(fn () => $done(null));
+     *
+     *     return $list;
+     * });
+     * ```
+     *
+     * **A component that never calls `done()` parks the turn.** It has the keys while it is
+     * open, so if it also ignores escape there is no way out and the session has to be
+     * killed. Whatever is returned must have a path to `done()` for a person who has
+     * changed their mind — usually escape, which is what every other dialog here uses.
+     *
+     * @param Closure(\Pig\Tui\Tui, Palette, Closure(mixed): void): \Pig\Tui\Component $factory
+     * @return mixed whatever was passed to `done()`, or null when there is no UI
+     */
+    public function custom(Closure $factory): mixed;
 
     /** Put a line in the transcript. @param 'info'|'warning'|'error' $level */
     public function notify(string $message, string $level = 'info'): void;

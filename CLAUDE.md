@@ -37,6 +37,7 @@ the developer asked for it, it is ported and listed here:
 | Ctrl+V pastes a clipboard image as a temp file, and its path into the prompt | `Pig\Tui\Clipboard`, `Editor::pasteFromClipboard()` | `coding-agent/src/utils/clipboard-image.ts` + `interactive-mode.ts` |
 | A three-line banner with the keys on one line, the rest behind ctrl+o, and a `[Context]` section for what was loaded | `InteractiveMode::banner()` | the startup screen at 0.87 |
 | `!!command` runs without joining the conversation | `AgentSession::executeBash(remember: false)` | `!!` at 0.87; the anchor has `!` only |
+| Ctrl+G opens the prompt in `$VISUAL` | `InteractiveMode::editPromptExternally()`, `Process::interactive()` | `openExternalEditor()` in `interactive-mode.ts` |
 
 The anchor's banner is a column of thirteen keys, which is taller than most of the
 conversations it sits above; HEAD moved the list behind `ctrl+o` and put a one-line
@@ -572,13 +573,20 @@ Three things that keep it from parking a session forever:
   for a guard means a tool nobody could approve does not run. Upstream's choice, and the
   only safe direction.
 
-`select` and `confirm` are `SelectList`, `input` is `Input`, `notify` is the transcript, and
-`setStatus` is a third footer line that appears only when a hook has put something on it.
-`theme` is `palette()`. Not ported: `custom()`, which hands a hook the `TUI` and a `done()`
-callback to draw what it likes — portable in principle, but it exposes the renderer's
-internals to code loaded off disk and nothing needs it yet; and `editor()`, a multi-line
-overlay with `$VISUAL` support, where pig's `Editor` is built into the prompt rather than
-openable as a dialog and `$VISUAL` has no counterpart at all.
+All nine members are ported. `select` and `confirm` are `SelectList`, `input` is `Input`,
+`editor` is a `CustomEditor` — the wrapper, not the bare `Editor`, because that is the piece
+that turns escape and Ctrl+G into named keys, so they mean the same thing in the dialog as at
+the prompt. `notify` is the transcript, `setStatus` is a third footer line that appears only
+when something has put a line on it, and `theme` is `palette()`.
+
+`custom()` hands a hook the `TUI`, the palette and a `done()`, and shows whatever component
+it builds. An earlier note here said it was left out because it exposes the renderer to code
+loaded off disk; that reasoning was wrong and is recorded as wrong — a hook is `require`d
+in-process and can already call `exit()` or reach anything by reflection, so withholding
+`$tui` was a lock on a door in an open field. What it does need is care: `done()` is
+idempotent and always closes, a factory that returns something that is not a `Component` is
+refused *and* releases the one-at-a-time latch, and a component that never calls `done()` and
+ignores escape parks the turn — which nothing here can prevent, because it holds the keys.
 
 Also not ported from the hook API: `sendMessage()`, `appendEntry()` and
 `registerMessageRenderer()`, which need custom message types the session can store and the
@@ -679,8 +687,6 @@ that is not here yet:
 | `modes/rpc/` | a second way in, for editors rather than people |
 | `branch-summarization.ts` | a summary of the branch being left, for `/tree` |
 | `renderCall` / `renderResult` | a renderer lookup in `ToolExecutionComponent` |
-| `HookUi::custom()` | a decision about handing the renderer to code loaded off disk |
-| `HookUi::editor()` | a multi-line dialog, and a `$VISUAL` equivalent |
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 
@@ -1149,6 +1155,31 @@ name can drop it, and anything that keeps the fixed name must keep it.
 Not covered by a test: reaching it needs a killed process and a real archive, and
 `extract()` is private — the seam would be a public method existing for the test alone.
 
+### Ctrl+G was being reported to nobody
+
+`CustomEditor` has recognised Ctrl+G since it was ported — `claimed()` turns it into the
+named key `'ctrl+g'` — and `InteractiveMode` never bound it. Pressing it did nothing at all,
+while the component behaved as though someone were listening. A forwarded key with no handler
+is invisible: there is no error, no warning, and nothing to search for.
+
+It is bound now, to upstream's `openExternalEditor()`: write the prompt to a temp `.md`, stop
+the TUI, hand the terminal to `$VISUAL` or `$EDITOR` through `Process::interactive()`, read it
+back, start the TUI again. Non-zero exit keeps the original, which is what `:cq` means.
+
+Two divergences from upstream, both deliberate:
+
+- **Refused while the agent is working.** Handing the terminal over blocks the event loop for
+  as long as the person takes, and the loop is what reads the model's socket — a turn left
+  streaming into an unread socket while somebody writes a paragraph in vim is not a trade
+  worth making, and escape cannot reach the UI to stop it either. Upstream does not guard
+  this.
+- **`Process::interactive()` has no timeout**, alone among that class's methods. Every other
+  one has one so a hung command cannot hang pig; here a timeout would kill the person's editor
+  mid-sentence. It is also the one method there that blocks the loop, and says so.
+
+Not covered by a test: it needs a controlling terminal and a real editor. `Process` is
+exercised only for the empty-command guard.
+
 ### A dialog opened in front of a suspended fiber has to be escapable
 
 A hook's `tool_call` handler runs inside the agent's fiber. `$ctx->ui->confirm()` parks that
@@ -1160,7 +1191,9 @@ the tool: it looks like the agent went quiet.
 Two things follow, and both are load-bearing rather than tidy:
 
 - `Pig\Tui\Components\Input` got `setCancelHandler()` for this. `SelectList` already had
-  one. Any future dialog in `TerminalUi` needs the same before it is used.
+  one, and the multi-line dialog gets escape through `CustomEditor`. Any future dialog in
+  `TerminalUi` needs the same before it is used — and `custom()` cannot be given it, which is
+  why its docblock says so twice.
 - `TerminalUi` refuses a second dialog while one is open, because opening one would take
   focus from the first and leave *its* fiber unreachable. The refusal answers with the safe
   value — null, or false for `confirm()`.

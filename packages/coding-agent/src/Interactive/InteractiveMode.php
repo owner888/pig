@@ -63,6 +63,7 @@ use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
 use Pig\Tui\Components\TruncatedText;
 use Pig\Tui\Container;
+use Pig\Tui\Process;
 use Pig\Tui\ProcessTerminal;
 use Pig\Tui\Style;
 use Pig\Tui\Terminal;
@@ -198,6 +199,9 @@ final class InteractiveMode
             $this->editor,
             $this->footer,
             fn (): Palette => $this->palette,
+            // The same `$VISUAL` hand-off Ctrl+G at the prompt uses, so the key means one
+            // thing in both places and there is one piece of code to get right.
+            fn (string $text): ?string => $this->externalEditor($text),
         );
 
         $hooks?->initialize(
@@ -471,6 +475,7 @@ final class InteractiveMode
         'ctrl+d' => 'exit from an empty prompt',
         'ctrl+z' => 'suspend',
         'ctrl+v' => 'paste, including an image from the clipboard',
+        'ctrl+g' => 'edit the prompt in $VISUAL or $EDITOR',
         'shift+tab' => 'cycle the thinking level',
         'ctrl+o' => 'show more: tool output, and this list',
         'ctrl+t' => 'show or hide thinking',
@@ -489,6 +494,7 @@ final class InteractiveMode
         $this->editor->on('ctrl+d', $this->stop(...));
         $this->editor->on('ctrl+z', $this->suspend(...));
         $this->editor->on('shift+tab', $this->cycleThinking(...));
+        $this->editor->on('ctrl+g', $this->editPromptExternally(...));
 
         $this->editor->on('ctrl+o', function (): void {
             $this->expanded = !$this->expanded;
@@ -587,6 +593,93 @@ final class InteractiveMode
         });
 
         posix_kill(posix_getpid(), SIGTSTP);
+    }
+
+    /**
+     * Ctrl+G: edit what is in the prompt in a real editor.
+     *
+     * Upstream's `openExternalEditor()`. `CustomEditor` has reported this key since it was
+     * ported and nothing was listening, so pressing it did nothing at all.
+     *
+     * **Refused while the agent is working**, which upstream does not do. Handing the
+     * terminal over blocks the event loop for as long as the person takes, and the loop is
+     * what reads the model's socket — a turn left streaming into an unread socket while
+     * somebody writes a paragraph in vim is not a trade worth making, and escape cannot
+     * reach the UI to stop it either.
+     */
+    private function editPromptExternally(): void
+    {
+        if ($this->session->isStreaming()) {
+            $this->sayWarning('Still working. Press esc first.');
+
+            return;
+        }
+
+        $edited = $this->externalEditor($this->editor->text());
+
+        if ($edited === null) {
+            return;
+        }
+
+        $this->editor->setText($edited);
+        $this->tui->requestRender(true);
+    }
+
+    /**
+     * Write $text to a temp file, open it in the person's editor, read it back.
+     *
+     * Null when there is no editor configured, when it could not be started, or when it
+     * exited non-zero — all three mean "keep what was there", which is what someone who
+     * quit vim with `:cq` meant.
+     *
+     * The `.md` suffix is upstream's, and it is what makes an editor turn on the syntax
+     * highlighting and the soft wrap that a prompt wants.
+     */
+    private function externalEditor(string $text): ?string
+    {
+        $command = getenv('VISUAL') ?: getenv('EDITOR');
+
+        if ($command === false || trim($command) === '') {
+            $this->sayWarning('No editor configured. Set $VISUAL or $EDITOR.');
+
+            return null;
+        }
+
+        $file = sys_get_temp_dir() . '/pig-editor-' . bin2hex(random_bytes(4)) . '.md';
+
+        if (file_put_contents($file, $text) === false) {
+            $this->sayError("Could not write {$file}");
+
+            return null;
+        }
+
+        // Split on spaces so `code --wait` works, which is how a GUI editor has to be
+        // given: without `--wait` it returns immediately and the file is read back unchanged.
+        $argv = [...preg_split('/\s+/', trim($command)), $file];
+
+        $this->tui->stop();
+
+        try {
+            $exit = Process::interactive($argv);
+
+            if ($exit !== 0) {
+                return null;
+            }
+
+            $edited = file_get_contents($file);
+
+            // One trailing newline removed, because every editor adds one and a prompt
+            // that grew a blank line each time it was edited would be a nuisance.
+            return $edited === false ? null : preg_replace('/\n$/', '', $edited);
+        } finally {
+            // Before the TUI comes back, so a failure to delete is not drawn over.
+            if (is_file($file)) {
+                unlink($file);
+            }
+
+            $this->tui->start();
+            $this->tui->requestRender(true);
+        }
     }
 
     private function cycleThinking(): void

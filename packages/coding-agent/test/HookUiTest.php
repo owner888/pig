@@ -26,9 +26,12 @@ use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
 use Pig\Tui\Components\Editor;
+use Pig\Tui\Components\SelectItem;
+use Pig\Tui\Components\SelectList;
 use Pig\Tui\Container;
 use Pig\Tui\Test\FakeTerminal;
 use Pig\Tui\Tui;
+use Pig\Tui\TuiError;
 
 /**
  * Asking the person something from inside a turn.
@@ -320,6 +323,270 @@ final class HookUiTest extends TestCase
         $this->assertStringContainsString('Ticket number? (PIG-123)', $this->screen());
     }
 
+    // ---- editor ------------------------------------------------------------------------
+
+    public function testTheMultiLineEditorComesBackWithWhatWasTyped(): void
+    {
+        $answer = null;
+
+        Async::spawn(function () use (&$answer): void {
+            $answer = $this->ui->editor('What should it say?');
+        });
+
+        $this->settle();
+
+        $this->assertStringContainsString('What should it say?', $this->screen());
+
+        $this->type('a line');
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertSame('a line', $answer);
+    }
+
+    public function testItIsPrefilledAndTheTextCanBeAddedTo(): void
+    {
+        $answer = null;
+
+        Async::spawn(function () use (&$answer): void {
+            $answer = $this->ui->editor('Edit this', 'the first part');
+        });
+
+        $this->settle();
+
+        $this->assertStringContainsString('the first part', $this->screen());
+
+        $this->type(' and the second');
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertSame('the first part and the second', $answer);
+    }
+
+    /** Enter finishes, so a second line needs the other key — and has to actually work. */
+    public function testShiftEnterAddsALineRatherThanFinishing(): void
+    {
+        $answer = null;
+
+        Async::spawn(function () use (&$answer): void {
+            $answer = $this->ui->editor('Edit this');
+        });
+
+        $this->settle();
+        $this->type('first');
+        $this->type("\x1b[13;2u");
+        $this->type('second');
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertSame("first\nsecond", $answer);
+    }
+
+    public function testEscapingTheEditorAnswersWithNothing(): void
+    {
+        $answer = 'not asked yet';
+
+        Async::spawn(function () use (&$answer): void {
+            $answer = $this->ui->editor('Edit this', 'something');
+        });
+
+        $this->settle();
+        $this->type("\x1b");
+        $this->settle();
+
+        $this->assertNull($answer);
+        $this->assertStringNotContainsString('Edit this', $this->screen());
+    }
+
+    /**
+     * Ctrl+G inside the dialog is the same hand-off as Ctrl+G at the prompt.
+     *
+     * The real one stops the TUI and runs `$VISUAL`, which a test cannot do; what is
+     * checked is the seam — the text goes out, what comes back is what is in the editor,
+     * and the dialog is still open and still focused afterwards.
+     */
+    public function testCtrlGHandsTheTextOutAndPutsBackWhatComesIn(): void
+    {
+        $seen = null;
+        $ui = $this->withExternalEditor(function (string $text) use (&$seen): ?string {
+            $seen = $text;
+
+            return 'what the editor saved';
+        });
+
+        $answer = null;
+
+        Async::spawn(function () use ($ui, &$answer): void {
+            $answer = $ui->editor('Edit this', 'before');
+        });
+
+        $this->settle();
+        $this->type("\x07");
+        $this->settle();
+
+        $this->assertSame('before', $seen);
+        $this->assertStringContainsString('what the editor saved', $this->screen());
+
+        // Still the dialog's question, so Enter answers it rather than sending a prompt.
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertSame('what the editor saved', $answer);
+    }
+
+    public function testAnEditorThatCancelledLeavesTheTextAlone(): void
+    {
+        $ui = $this->withExternalEditor(static fn (): ?string => null);
+        $answer = null;
+
+        Async::spawn(function () use ($ui, &$answer): void {
+            $answer = $ui->editor('Edit this', 'before');
+        });
+
+        $this->settle();
+        $this->type("\x07");
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertSame('before', $answer);
+    }
+
+    public function testWithNoHandOffCtrlGDoesNothingRatherThanBreaking(): void
+    {
+        $answer = null;
+
+        Async::spawn(function () use (&$answer): void {
+            $answer = $this->ui->editor('Edit this', 'before');
+        });
+
+        $this->settle();
+        $this->type("\x07");
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertSame('before', $answer);
+    }
+
+    // ---- custom ------------------------------------------------------------------------
+
+    public function testACustomDialogGetsTheScreenAndAnswersThroughDone(): void
+    {
+        $answer = null;
+
+        Async::spawn(function () use (&$answer): void {
+            $answer = $this->ui->custom(function (Tui $tui, Palette $palette, callable $done) {
+                $list = new SelectList(
+                    [new SelectItem('7', 'seven'), new SelectItem('8', 'eight')],
+                    4,
+                    $palette->selectListTheme(),
+                );
+
+                $list->setSelectHandler(static fn (SelectItem $item) => $done((int) $item->value));
+                $list->setCancelHandler(static fn () => $done(null));
+
+                return $list;
+            });
+        });
+
+        $this->settle();
+
+        $this->assertStringContainsString('seven', $this->screen());
+
+        $this->type("\x1b[B");
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertSame(8, $answer);
+    }
+
+    public function testACustomDialogIsTakenDownWhenItIsDone(): void
+    {
+        Async::spawn(function (): void {
+            $this->ui->custom(function (Tui $tui, Palette $palette, callable $done) {
+                $list = new SelectList([new SelectItem('a', 'only')], 2, $palette->selectListTheme());
+                $list->setSelectHandler(static fn () => $done('a'));
+
+                return $list;
+            });
+        });
+
+        $this->settle();
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertStringNotContainsString('only', $this->screen());
+
+        $this->type('back to the prompt');
+        $this->assertSame('back to the prompt', $this->editor->text());
+    }
+
+    /** Two handlers firing on one key is a hook's mistake, not a reason to break the turn. */
+    public function testCallingDoneTwiceResolvesOnce(): void
+    {
+        $answer = 'not asked yet';
+
+        Async::spawn(function () use (&$answer): void {
+            $answer = $this->ui->custom(function (Tui $tui, Palette $palette, callable $done) {
+                $list = new SelectList([new SelectItem('a', 'only')], 2, $palette->selectListTheme());
+                $list->setSelectHandler(static function () use ($done): void {
+                    $done('first');
+                    $done('second');
+                });
+
+                return $list;
+            });
+        });
+
+        $this->settle();
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertSame('first', $answer);
+    }
+
+    public function testAFactoryThatReturnsSomethingElseIsRefused(): void
+    {
+        $thrown = null;
+
+        Async::spawn(function () use (&$thrown): void {
+            try {
+                $this->ui->custom(static fn () => 'not a component');
+            } catch (TuiError $error) {
+                $thrown = $error;
+            }
+        });
+
+        $this->settle();
+
+        $this->assertStringContainsString('must return a component, got string', (string) $thrown?->getMessage());
+    }
+
+    /** And the refusal must not leave the UI thinking a dialog is still open. */
+    public function testARefusedFactoryDoesNotWedgeTheNextQuestion(): void
+    {
+        Async::spawn(function (): void {
+            try {
+                $this->ui->custom(static fn () => 'not a component');
+            } catch (TuiError) {
+                // The point is what happens next.
+            }
+        });
+
+        $this->settle();
+
+        $answer = null;
+
+        Async::spawn(function () use (&$answer): void {
+            $answer = $this->ui->confirm('Still working?', '');
+        });
+
+        $this->settle();
+        $this->type("\r");
+        $this->settle();
+
+        $this->assertFalse($answer);
+    }
+
     // ---- one at a time -----------------------------------------------------------------
 
     /**
@@ -521,6 +788,24 @@ final class HookUiTest extends TestCase
         $this->settle();
 
         $this->assertSame(0, $tool->calls);
+    }
+
+    /** A second UI over the same screen, with a stand-in for the `$VISUAL` hand-off. */
+    private function withExternalEditor(\Closure $externalEditor): TerminalUi
+    {
+        return new TerminalUi(
+            $this->tui,
+            $this->chat,
+            $this->status,
+            $this->editor,
+            new FooterComponent(
+                new AgentSession(new Agent(new AgentOptions()), sys_get_temp_dir()),
+                $this->palette,
+                sys_get_temp_dir(),
+            ),
+            fn (): Palette => $this->palette,
+            $externalEditor,
+        );
     }
 
     /** A hook wrapped around $tool that asks the person before every call. */

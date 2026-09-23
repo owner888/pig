@@ -38,6 +38,9 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 `--read-only` 去掉 edit、write、bash；`--theme light` 给浅色终端用；`--continue` 接着上次聊。
 进去之后 `/help` 列出所有按键。
 
+Ctrl+G 把 prompt 里现在的内容丢进 `$VISUAL` 或 `$EDITOR`，改完再塞回来——给那种写到一半发现要写
+三段的消息用。
+
 `--model` 不用写全 id，写一部分就行——`--model sonnet`、`--model 'opus 4.1'`——`--model sonnet:high`
 还能顺手把思考档位一起设了。`--models` 列出全部。
 
@@ -89,8 +92,8 @@ $pi->on('tool_call', fn ($event, $ctx) => $ctx->ui->confirm('让 bash 跑吗？'
 ```
 
 这次工具调用就停在那儿，屏幕上弹出选择，按下去它接着往下走——handler 拿到的就是一个普通的 `bool`。
-`select`、`input`、`notify`、以及一行带 key 的 footer 状态也都有。Esc 等于「不行」，所以走开不回答
-不会把工具放过去。
+`select`、`input`、多行 `editor`、`notify`、一行带 key 的 footer 状态、以及 `custom`（自己画组件）
+也都有。Esc 等于「不行」，所以走开不回答不会把工具放过去。
 
 `~/.pig/tools/` 或 `.pig/tools/` 下一个带 `index.php` 的**文件夹**就是一个模型能调用的工具——
 之所以是文件夹，因为这个目录里同时还放着 pig 下载来的 `fd` 和 `rg`，直接躺在那儿的文件是那两个。

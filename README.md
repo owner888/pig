@@ -42,6 +42,9 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 `--read-only` takes away edit, write and bash; `--theme light` for a light terminal;
 `--continue` to pick up where you left off. `/help` inside lists the keys.
 
+Ctrl+G opens whatever is in the prompt in `$VISUAL` or `$EDITOR` and puts the result back —
+for the message that turned out to be three paragraphs.
+
 `--model` takes a part of a name rather than a whole id — `--model sonnet`, `--model 'opus 4.1'` —
 and `--model sonnet:high` sets the thinking level at the same time. `--models` lists them.
 
@@ -96,8 +99,9 @@ $pi->on('tool_call', fn ($event, $ctx) => $ctx->ui->confirm('Let bash run?', $ev
 ```
 
 The tool call parks, a picker appears, and the keystroke resumes it — the handler gets a
-plain `bool` back. `select`, `input`, `notify` and a keyed footer line are there too. Escape
-answers no, so walking away from the question does not wave the tool through.
+plain `bool` back. `select`, `input`, a multi-line `editor`, `notify`, a keyed footer line and
+`custom` (draw your own component) are there too. Escape answers no, so walking away from the
+question does not wave the tool through.
 
 A folder with an `index.php` in `~/.pig/tools/` or `.pig/tools/` is a tool the model can
 call — a folder, because that directory also holds the `fd` and `rg` binaries pig may have

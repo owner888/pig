@@ -239,6 +239,74 @@ final class InputTest extends TestCase
         $this->assertStringContainsString("\x1b[7m \x1b[27m", $this->input->render(20)[0]);
     }
 
+    // ---- the way out -------------------------------------------------------------------
+
+    public function testEscapeCancels(): void
+    {
+        $cancelled = 0;
+        $this->input->setCancelHandler(static function () use (&$cancelled): void {
+            $cancelled++;
+        });
+
+        $this->type("\x1b");
+
+        $this->assertSame(1, $cancelled);
+    }
+
+    public function testCtrlCCancelsToo(): void
+    {
+        $cancelled = 0;
+        $this->input->setCancelHandler(static function () use (&$cancelled): void {
+            $cancelled++;
+        });
+
+        $this->type("\x03");
+
+        $this->assertSame(1, $cancelled);
+    }
+
+    /** Cancelling is not submitting: whoever asked gets no value, not an empty one. */
+    public function testCancellingDoesNotSubmit(): void
+    {
+        $submitted = null;
+        $this->input->setCancelHandler(static fn () => null);
+        $this->input->setSubmitHandler(static function (string $value) use (&$submitted): void {
+            $submitted = $value;
+        });
+
+        $this->type(['a', "\x1b"]);
+
+        $this->assertNull($submitted);
+        $this->assertSame('a', $this->input->value());
+    }
+
+    /**
+     * With nobody listening, escape is not text.
+     *
+     * Every input pig opened before this was one somebody had asked for, so there was no
+     * handler and no escape key; what there must not be is an escape character inserted
+     * into the value.
+     */
+    public function testWithNoHandlerEscapeIsIgnoredRatherThanTyped(): void
+    {
+        $this->type(['a', "\x1b", 'b']);
+
+        $this->assertSame('ab', $this->input->value());
+    }
+
+    public function testAnArrowKeyStillMovesRatherThanCancelling(): void
+    {
+        $cancelled = 0;
+        $this->input->setCancelHandler(static function () use (&$cancelled): void {
+            $cancelled++;
+        });
+
+        $this->type(['a', 'b', "\x1b[D"]);
+
+        $this->assertSame(0, $cancelled);
+        $this->assertSame(1, $this->input->cursor());
+    }
+
     public function testAWidthWithNoRoomForTextIsJustThePrompt(): void
     {
         $this->given('hello');

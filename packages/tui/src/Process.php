@@ -195,6 +195,49 @@ final class Process
     }
 
     /**
+     * Hand the terminal to a program and wait for it to give it back.
+     *
+     * For a full-screen program the person is going to use — `vim`, `nano`, `code --wait`.
+     * All three streams go to `/dev/tty` rather than to pipes, because the whole point is
+     * that it talks to the terminal itself; nothing here reads its output.
+     *
+     * **The caller must stop the TUI first**, or two programs draw over each other and
+     * raw mode is left on while the editor is trying to set its own.
+     *
+     * **There is no timeout, and that is deliberate.** Every other method here has one
+     * because a command that hangs must not hang pig. This one is a person editing, and a
+     * timeout would kill their editor mid-sentence. It also blocks the event loop for as
+     * long as they take — so a caller that has a socket to keep alive should not call it.
+     *
+     * @param list<string> $command the program and its arguments, unquoted
+     * @return int the exit code, or STOPPED when it could not be started
+     */
+    public static function interactive(array $command): int
+    {
+        if ($command === []) {
+            throw new TuiError('Process::interactive() needs a command');
+        }
+
+        $descriptors = [
+            0 => ['file', '/dev/tty', 'r'],
+            1 => ['file', '/dev/tty', 'w'],
+            2 => ['file', '/dev/tty', 'w'],
+        ];
+
+        // Caught rather than suppressed, for the same reason as `run()`: a missing program
+        // makes proc_open warn, and the value is what decides.
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $process = proc_open($command, $descriptors, $pipes);
+        } finally {
+            restore_error_handler();
+        }
+
+        return is_resource($process) ? proc_close($process) : self::STOPPED;
+    }
+
+    /**
      * Run a command and hand its output to $onLine as the lines arrive.
      *
      * For a program that can produce far more than is wanted — a search across a large

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Hooks;
 
+use Closure;
 use Pig\CodingAgent\Theme\Palette;
 
 /**
@@ -39,6 +40,19 @@ final readonly class NoUi implements HookUi
 
     #[\Override]
     public function input(string $title, string $placeholder = ''): ?string
+    {
+        return null;
+    }
+
+    #[\Override]
+    public function editor(string $title, string $prefill = ''): ?string
+    {
+        return null;
+    }
+
+    /** The factory is never called: there is no screen to put what it would build on. */
+    #[\Override]
+    public function custom(Closure $factory): mixed
     {
         return null;
     }
