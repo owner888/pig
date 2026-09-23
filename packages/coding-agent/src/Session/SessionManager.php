@@ -769,6 +769,7 @@ final class SessionManager
 
         $opening = '';
         $messages = 0;
+        $said = [];
 
         foreach (array_slice($lines, 1) as $line) {
             $entry = json_decode($line, true);
@@ -778,7 +779,9 @@ final class SessionManager
             }
 
             // Read without decoding: this runs once per file for every session in a list,
-            // and all it needs is a count and the first thing anybody said.
+            // and all it needs is a count, the first thing anybody said, and the words to
+            // search. Decoding every message of thirty conversations to get at their text
+            // would be the slow half of starting with `--resume`.
             if (($entry['type'] ?? null) !== 'message' || !is_array($entry['message'] ?? null)) {
                 continue;
             }
@@ -787,6 +790,17 @@ final class SessionManager
 
             if ($opening === '' && ($entry['message']['role'] ?? null) === 'user') {
                 $opening = self::opening($entry['message']);
+            }
+
+            // Upstream's rule: the two roles somebody would remember a phrase from. A tool
+            // result is usually a file, and a search that matched the contents of every file
+            // ever read would match everything.
+            if (in_array($entry['message']['role'] ?? null, ['user', 'assistant'], true)) {
+                $text = self::said($entry['message']);
+
+                if ($text !== '') {
+                    $said[] = $text;
+                }
             }
         }
 
@@ -797,7 +811,41 @@ final class SessionManager
             SessionEntries::millis($header['timestamp'] ?? null),
             $messages,
             $opening,
+            implode(' ', $said),
         );
+    }
+
+    /**
+     * The text blocks of one message, run together.
+     *
+     * Thinking is left out along with everything else that is not a text block: it is the
+     * model talking to itself, and a search that hit it would find conversations by something
+     * nobody ever read.
+     *
+     * @param array<string, mixed> $message
+     */
+    private static function said(array $message): string
+    {
+        $content = $message['content'] ?? null;
+
+        // pi writes a list of blocks and accepts a bare string, so both arrive here.
+        if (is_string($content)) {
+            return $content;
+        }
+
+        if (!is_array($content)) {
+            return '';
+        }
+
+        $texts = [];
+
+        foreach ($content as $block) {
+            if (is_array($block) && ($block['type'] ?? null) === 'text' && is_string($block['text'] ?? null)) {
+                $texts[] = $block['text'];
+            }
+        }
+
+        return implode(' ', $texts);
     }
 
     /** @param array<string, mixed> $entry */

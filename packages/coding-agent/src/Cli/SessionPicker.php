@@ -9,7 +9,6 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Components\SelectItem;
-use Pig\Tui\Components\SelectList;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
 use Pig\Tui\ProcessTerminal;
@@ -27,10 +26,11 @@ use Pig\Tui\Tui;
  * is started and stopped inside this call, so whatever is chosen is handed back as an ordinary
  * return value and the session is opened by the same code that opens a `--resume <path>`.
  *
- * Ported from upstream's `cli/session-picker.ts` and the list half of its
- * `components/session-selector.ts`. Upstream's has a third key — delete — which is not here:
- * a session file is a record of something that happened, and a list you navigate with the
- * arrow keys is the wrong place to put an irreversible key.
+ * Ported from upstream's `cli/session-picker.ts`; `SessionList` beside it is the component
+ * half, from `components/session-selector.ts`, and is where the searching happens. Upstream's
+ * has a third key — delete — which is not here: a session file is a record of something that
+ * happened, and a list you navigate with the arrow keys is the wrong place to put an
+ * irreversible key.
  */
 final class SessionPicker
 {
@@ -51,15 +51,15 @@ final class SessionPicker
         $tui = new Tui($terminal ?? new ProcessTerminal());
         $chosen = null;
 
-        $list = new SelectList(self::items($sessions), self::VISIBLE, $palette->selectListTheme());
+        $list = new SessionList($sessions, $palette, self::VISIBLE);
 
         // Both handlers stop the *loop* and nothing else. Stopping the terminal here as
         // well would stop it twice — once from the handler and once on the way out — and
         // `ProcessTerminal::stop()` writes its escape sequences and restores `stty` every
         // time it is called. One way out, one stop; the same reason `InteractiveMode` routes
         // its own quit through `stop()` rather than reaching for the terminal.
-        $list->setSelectHandler(static function (SelectItem $item) use ($sessions, &$chosen): void {
-            $chosen = $sessions[(int) $item->value]->path;
+        $list->setSelectHandler(static function (string $path) use (&$chosen): void {
+            $chosen = $path;
             Loop::get()->stop();
         });
 
@@ -68,7 +68,11 @@ final class SessionPicker
         });
 
         $tui->addChild(new Spacer(1));
-        $tui->addChild(new Text($palette->fg('muted', 'Pick a session — enter to open, esc to start a new one'), 1, 0));
+        $tui->addChild(new Text(
+            $palette->fg('muted', 'Pick a session — type to search, enter to open, esc to start a new one'),
+            1,
+            0,
+        ));
         $tui->addChild(new Spacer(1));
         $tui->addChild($list);
         $tui->setFocus($list);

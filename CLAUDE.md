@@ -992,7 +992,7 @@ place that knows how to end the program. `--mode rpc` refuses `@file` and positi
 outright, as upstream does: there the conversation arrives as commands, so a file read here
 would be prepended to a prompt that never comes.
 
-`Cli\SessionPicker` is upstream's `cli/session-picker.ts` plus the list half of its
+`Cli\SessionPicker` is upstream's `cli/session-picker.ts` and `Cli\SessionList` is its
 `components/session-selector.ts`: `bin/pig --resume` with nothing after it shows the earlier
 conversations and opens the one that is chosen. Before it, that flag answered
 `Could not read the session at ` — with nothing after the "at", because the value was the
@@ -1012,6 +1012,66 @@ Three things about it:
 Upstream's selector has a third key, delete. Not ported: a session file is a record of
 something that happened, and a list you move through with the arrow keys is the wrong place
 for an irreversible key.
+
+### Finding the one you want
+
+Thirty conversations under one project, each named by whatever its first line happened to be,
+and the arrow keys as the only way through them. So `Cli\SessionList` has a search box over
+the list, which is upstream's `SessionList` and the half of `session-selector.ts` that pig
+borrowed `SelectList` for instead.
+
+**The keys divide in two and nothing switches between them**: up, down, Enter, Escape and
+Ctrl+C belong to the list, and *everything else is typing*. A search box you have to tab into
+is a search box nobody finds, and there is no focus to lose this way.
+
+What it matches is `SessionInfo::$text` — upstream's `allMessagesText`, every text block of
+every user and assistant message run together, collected by `SessionManager::describe()` while
+it is already walking the file for the count. Three things are left out of it and each matters:
+**thinking**, because it is the model talking to itself and a hit on it finds a conversation by
+something nobody ever read; **tool results**, because they are mostly files and a search across
+every file ever read matches everything; and the **formatting**, because this is a haystack and
+never a thing to show. What anybody remembers about a conversation three days later is a phrase
+from the middle of it, which is the whole reason the field exists — matching the opening alone
+would only find the sessions that are already easy to recognise in the list.
+
+`Utils\Fuzzy` is upstream's `utils/fuzzy.ts`, arithmetic for arithmetic: every character of the
+query in order, somewhere in the text. **The score is a pile of penalties, so lower is better**
+— a run of consecutive characters is rewarded and the reward grows along the run, gaps cost,
+the start of a word is worth a lot, and a late match costs a little. A space-separated query is
+several searches over the same text and all of them have to hit, which is what makes a
+transcript-sized haystack narrowable at all.
+
+Four things about it:
+
+- **The walk is over characters, not bytes** — the one deliberate difference from upstream, and
+  the only one. JavaScript indexes a string by UTF-16 code unit, which for everything either
+  project searches is one per character; `$text[$i]` in PHP is a byte, so a Chinese query would
+  compare thirds of characters and score nonsense: `好` is the second *character* of `你好` and
+  its fourth, fifth and sixth bytes, which a byte walk reads as a three-character run near the
+  end of the string and scores about -13.8 instead of 0.1.
+- **Ties keep the order they arrived in.** `usort` has been stable since PHP 8.0, as
+  `Array.prototype.sort` is in JavaScript. That is load-bearing rather than incidental: the
+  list is sorted newest-first before it gets here, and ties coming back shuffled would look
+  like the list had lost its order. A blank query returns the input untouched for the same
+  reason.
+- **A non-match's score is 0 and means nothing.** Upstream's shape, kept; comparing one against
+  a real score would rank the things that did not match above half the things that did.
+- **The first character is treated as continuing a run**, because `lastMatchIndex` starts at -1
+  and `i - 1` is -1 when `i` is 0. That is upstream's arithmetic and it is not obviously
+  intended, but it is load-bearing for the example in upstream's own comment: without it the
+  two word-boundary rewards inside `f_o_o` beat the run in `foobar`, and `foo` would rank them
+  the wrong way round.
+
+The list component is rebuilt on each keystroke rather than told about the change, because
+`SelectList` takes its items at construction — upstream's does too, which is exactly why
+upstream's session selector draws its own rows instead of using one. Thirty items and one
+object per keystroke is not worth a setter that nothing else would call; the selected index is
+carried across and clamped, so narrowing from the bottom of a long list lands somewhere
+sensible rather than back at the top.
+
+Enter with nothing matching does nothing at all — it does not close the picker. A search that
+found nothing has nothing to choose, and closing on Enter would throw away the query somebody
+is half way through typing.
 
 `FakeTerminal::queue()` was added for its test. A component that starts its own loop and
 blocks until it is answered has no "after the call" to type into, so the keys go in first and
@@ -1108,7 +1168,6 @@ What is left in `coding-agent` is left out on purpose, each for a reason:
 | `components/armin.ts` | an easter egg: 31×36 XBM art, animated |
 | `core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |
 | `core/timings.ts` | startup profiling behind an env var |
-| `utils/fuzzy.ts` | fuzzy matching for the selectors; `ModelResolver` matches by substring |
 
 That table was wrong until this was written. It said "the rest is left out on purpose" while
 `modes/print-mode.ts` and `cli/file-processor.ts` were simply never listed, and `bin/pig`
@@ -1410,9 +1469,18 @@ that path writes from wherever it is.
 A wrapper has to forward `caret()` or the whole thing silently does nothing —
 `Interactive\CustomEditor` wraps the editor, and that is exactly what it did at first.
 
+**`Components\Input` never implemented it at all**, which was missed because the interface was
+added for the prompt and the prompt is an `Editor`. `Input` is the focused component every time
+a hook asks a question and every time the session picker is open, so both of those drew the
+candidate list at the bottom of the frame. It answers now — one row, and the column is the
+prompt's width plus the cursor's own, less however far the line has scrolled. **Adding a
+capability interface leaves every component that does not implement it silently wrong**; the
+list to check is whatever can hold the focus.
+
 Regression tests: `TuiTest::testTheCursorEndsUpAtTheFocusedComponentsCaret`,
-`testTheNextFrameStillCountsRowsFromWhereTheCursorActuallyIs`, and
-`EditorTest::testTheCaretIsMeasuredInColumnsNotCharacters`.
+`testTheNextFrameStillCountsRowsFromWhereTheCursorActuallyIs`,
+`EditorTest::testTheCaretIsMeasuredInColumnsNotCharacters`, and the five
+`InputTest::testTheCaret…` cases.
 
 ### `fwrite()` to a terminal returns short, and STDOUT is non-blocking whether you asked or not
 

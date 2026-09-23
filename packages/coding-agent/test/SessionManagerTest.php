@@ -546,6 +546,45 @@ final class SessionManagerTest extends TestCase
         $this->assertSame(2, $listed[0]->messages);
     }
 
+    public function testEverythingSaidIsCollectedSoASessionCanBeFoundByIt(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('why is the handshake failing'));
+        $session->append($this->answer('because crypto returns zero'));
+        $session->append(new UserMessage('try again'));
+
+        $listed = SessionManager::listFor('/some/project')[0];
+
+        // Not for showing — it is the transcript on one line. `--resume`'s search matches
+        // against this, which is what makes a conversation findable by something from the
+        // middle of it rather than only by how it opened.
+        $this->assertSame('why is the handshake failing because crypto returns zero try again', $listed->text);
+    }
+
+    public function testThinkingAndToolResultsAreNotSearchable(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('have a look'));
+        $session->append(new AssistantMessage(
+            [new ThinkingContent('nobody ever read this', 'sig'), new TextContent('found it')],
+            Api::AnthropicMessages,
+            'anthropic',
+            'claude-x',
+            new Usage(1, 1, 0, 0, 2, new Cost(total: 0.0)),
+            StopReason::Stop,
+        ));
+        $session->append(new ToolResultMessage('c1', 'read', [new TextContent('the whole of some file')], false));
+
+        $text = SessionManager::listFor('/some/project')[0]->text;
+
+        $this->assertSame('have a look found it', $text);
+        // Thinking is the model talking to itself: a hit on it finds a conversation by
+        // something nobody ever saw.
+        $this->assertStringNotContainsString('nobody ever read this', $text);
+        // And a tool result is usually a file, so searching them would match everything.
+        $this->assertStringNotContainsString('the whole of some file', $text);
+    }
+
     public function testEachProjectHasItsOwnDirectory(): void
     {
         $this->assertNotSame(

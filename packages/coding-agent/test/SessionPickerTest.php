@@ -45,9 +45,24 @@ final class SessionPickerTest extends TestCase
         return SessionPicker::ask($sessions, Palette::dark(true), $terminal);
     }
 
-    private static function session(string $path, string $opening, int $messages = 4): SessionInfo
-    {
-        return new SessionInfo($path, basename($path, '.jsonl'), '/somewhere', 1_700_000_000_000, $messages, $opening);
+    private static function session(
+        string $path,
+        string $opening,
+        int $messages = 4,
+        ?string $text = null,
+    ): SessionInfo {
+        return new SessionInfo(
+            $path,
+            basename($path, '.jsonl'),
+            '/somewhere',
+            1_700_000_000_000,
+            $messages,
+            $opening,
+            // Most of these are about the list rather than the search, and a conversation
+            // whose only text is its opening is a real one — the first thing said, before
+            // anything has answered.
+            $text ?? $opening,
+        );
     }
 
     public function testEnterChoosesWhatIsHighlighted(): void
@@ -81,6 +96,82 @@ final class SessionPickerTest extends TestCase
     {
         // Not a screen saying "nothing here" that somebody has to dismiss.
         $this->assertNull(SessionPicker::ask([], Palette::dark(true)));
+    }
+
+    // ---- searching -----------------------------------------------------------------
+
+    public function testTypingNarrowsTheListAndEnterOpensWhatIsLeft(): void
+    {
+        $chosen = $this->pick(
+            [
+                self::session('/lexer.jsonl', 'the markdown lexer'),
+                self::session('/tls.jsonl', 'the tls handshake'),
+            ],
+            // One `type()` per key: a chunk that arrives is a key, so 'tls' in one call
+            // would be a single three-character key that is not any of the ones the list
+            // watches — which is right here, but says nothing about the search.
+            ['t', 'l', 's', self::ENTER],
+        );
+
+        $this->assertSame('/tls.jsonl', $chosen);
+    }
+
+    public function testTheSearchReachesWhatWasSaidInTheMiddle(): void
+    {
+        // The whole reason `SessionInfo::$text` exists. Neither opening mentions TLS.
+        $chosen = $this->pick(
+            [
+                self::session('/a.jsonl', 'hello', 6, 'hello can you look at this'),
+                self::session('/b.jsonl', 'morning', 6, 'morning the tls handshake is failing'),
+            ],
+            ['t', 'l', 's', self::ENTER],
+        );
+
+        $this->assertSame('/b.jsonl', $chosen);
+    }
+
+    public function testEnterWithNothingMatchingOpensNothing(): void
+    {
+        // And does not end the picker either, which is why this has to escape its way out:
+        // a search that found nothing has nothing to choose, and closing the list on Enter
+        // would throw away the query somebody is half way through typing.
+        $chosen = $this->pick(
+            [self::session('/a.jsonl', 'the markdown lexer')],
+            ['z', 'z', 'z', self::ENTER, self::ESC],
+        );
+
+        $this->assertNull($chosen);
+    }
+
+    public function testBackspaceWidensItAgain(): void
+    {
+        $chosen = $this->pick(
+            [
+                self::session('/lexer.jsonl', 'the markdown lexer'),
+                self::session('/tls.jsonl', 'the tls handshake'),
+            ],
+            ['z', "\x7f", 'l', 'e', 'x', self::ENTER],
+        );
+
+        $this->assertSame('/lexer.jsonl', $chosen);
+    }
+
+    public function testTheArrowKeysStillMoveWhileSearching(): void
+    {
+        // The keys divide in two and nothing switches between them, so the arrows have to
+        // keep working with a query in the box — otherwise a search that leaves two
+        // candidates can only ever open the first.
+        // Both score identically — the query sits at the start of each — so the two come
+        // back in the order they went in and the arrow is the only thing deciding.
+        $chosen = $this->pick(
+            [
+                self::session('/one.jsonl', 'tls one'),
+                self::session('/two.jsonl', 'tls two'),
+            ],
+            ['t', 'l', 's', self::DOWN, self::ENTER],
+        );
+
+        $this->assertSame('/two.jsonl', $chosen);
     }
 
     // ---- what the list says --------------------------------------------------------

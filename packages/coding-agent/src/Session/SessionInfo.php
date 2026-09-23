@@ -14,6 +14,17 @@ final readonly class SessionInfo
         public int $timestamp,
         public int $messages,
         public string $opening,
+        /**
+         * Every word said in it, run together, for searching.
+         *
+         * Upstream's `allMessagesText`, and the reason the search in `--resume` is worth
+         * having: what anybody remembers about a conversation three days later is something
+         * from the middle of it, not how it opened. Matching the opening alone would find the
+         * sessions that are easiest to recognise from the list anyway.
+         *
+         * Not for showing. It is the whole transcript on one line with the formatting gone.
+         */
+        public string $text,
     ) {
     }
 

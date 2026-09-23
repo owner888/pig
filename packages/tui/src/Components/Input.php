@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\Tui\Components;
 
 use Closure;
+use Pig\Tui\Caret;
 use Pig\Tui\Chars;
 use Pig\Tui\Component;
 use Pig\Tui\Graphemes;
@@ -21,7 +22,7 @@ use Pig\Tui\Width;
  *
  * Longer text than fits scrolls horizontally, keeping the cursor in view.
  */
-final class Input implements Component, InputHandler
+final class Input implements Caret, Component, InputHandler
 {
     private const string PROMPT = '> ';
 
@@ -281,6 +282,29 @@ final class Input implements Component, InputHandler
         $graphemes = Graphemes::split(substr($this->value, $this->cursor));
 
         return $graphemes === [] ? 0 : strlen($graphemes[0]);
+    }
+
+    /**
+     * Where the terminal's own cursor belongs, so an input method composes in the right place.
+     *
+     * `Editor` has answered this since the trap was found; `Input` never did, and it is the
+     * focused component every time a hook asks a question and every time the session picker
+     * is open. Typing Chinese into either drew the candidate list at the bottom of the frame
+     * — which is where writing a frame leaves the cursor — rather than at the box being typed
+     * into. One line, one row: this component is always exactly one.
+     */
+    #[\Override]
+    public function caret(int $width): ?array
+    {
+        $available = $width - Width::visible(self::PROMPT);
+
+        if ($available <= 0) {
+            return null;
+        }
+
+        $column = Width::visible(substr($this->value, 0, $this->cursor));
+
+        return [0, Width::visible(self::PROMPT) + $column - $this->scrollStart($available)];
     }
 
     #[\Override]

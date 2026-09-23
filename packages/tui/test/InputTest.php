@@ -313,4 +313,51 @@ final class InputTest extends TestCase
 
         $this->assertSame(['> '], $this->input->render(2));
     }
+
+    // ---- where the terminal's own cursor goes -------------------------------------------
+
+    public function testTheCaretIsAfterThePromptWhenNothingHasBeenTyped(): void
+    {
+        // Row 0 always: this component is one line. The column is the prompt's width, which
+        // is where an input method has to draw for the composing text to appear in the box.
+        $this->assertSame([0, 2], $this->input->caret(40));
+    }
+
+    public function testTheCaretFollowsTheText(): void
+    {
+        $this->given('hello');
+
+        $this->assertSame([0, 7], $this->input->caret(40));
+
+        $this->type("\x1b[D");
+
+        $this->assertSame([0, 6], $this->input->caret(40));
+    }
+
+    public function testTheCaretIsMeasuredInColumnsNotCharacters(): void
+    {
+        // Two characters, four columns. Reporting 2 would put the candidate list half way
+        // back along what was already typed — which is the whole bug the interface exists
+        // for, one component over.
+        $this->given('你好');
+
+        $this->assertSame([0, 6], $this->input->caret(40));
+    }
+
+    public function testTheCaretStaysInsideAScrolledWindow(): void
+    {
+        $this->given('0123456789abcdef');
+
+        [$row, $column] = $this->input->caret(10);
+
+        $this->assertSame(0, $row);
+        $this->assertLessThan(10, $column);
+        $this->assertGreaterThanOrEqual(2, $column);
+    }
+
+    public function testThereIsNoCaretWhenThereIsNoRoomForText(): void
+    {
+        // The same width at which `render()` gives up and draws the prompt alone.
+        $this->assertNull($this->input->caret(2));
+    }
 }
