@@ -20,10 +20,9 @@ use Pig\Tui\Width;
  * difference between "ask one more thing" and "start a new session" — so it is the only
  * thing here that takes a colour, and only once it is worth looking at.
  *
- * Ported from upstream's `components/footer.ts`. Not ported: the auto-compaction marker
- * and the hook status line, neither of which has anything to report yet, and the watcher
- * on `.git/HEAD` — the branch is re-read on every invalidate, which is what the watcher
- * was arranging anyway.
+ * Ported from upstream's `components/footer.ts`. Not ported: the auto-compaction marker,
+ * which has nothing to report yet, and the watcher on `.git/HEAD` — the branch is re-read
+ * on every invalidate, which is what the watcher was arranging anyway.
  */
 final class FooterComponent implements Component
 {
@@ -34,6 +33,9 @@ final class FooterComponent implements Component
 
     /** false once looked for and not found, null when it has not been looked for. */
     private string|false|null $branch = null;
+
+    /** @var array<string, string> what hooks and custom tools have to say, by key */
+    private array $statuses = [];
 
     public function __construct(
         private readonly AgentSession $session,
@@ -50,13 +52,47 @@ final class FooterComponent implements Component
         $this->branch = null;
     }
 
+    /**
+     * What a hook or a custom tool wants kept on screen, under a key of its own.
+     *
+     * Keyed rather than appended so a hook that updates its line replaces it instead of
+     * adding another, and null clears it. Newlines and tabs are flattened: this is one
+     * line in a fixed layout, and a hook that sent two would push the editor off screen.
+     */
+    public function setStatus(string $key, ?string $text): void
+    {
+        if ($text === null || trim($text) === '') {
+            unset($this->statuses[$key]);
+
+            return;
+        }
+
+        $this->statuses[$key] = (string) preg_replace('/[\r\n\t]+/', ' ', $text);
+    }
+
     #[\Override]
     public function render(int $width): array
     {
-        return [
+        $lines = [
             $this->palette->fg('dim', $this->where($width)),
             $this->status($width),
         ];
+
+        // A third line only when there is something on it, so a session with no hooks has
+        // the footer it always had.
+        if ($this->statuses !== []) {
+            $lines[] = $this->trim(implode(' · ', $this->statuses), $width);
+        }
+
+        return $lines;
+    }
+
+    /** One line's worth, measured by what is visible rather than by bytes. */
+    private function trim(string $text, int $width): string
+    {
+        return Width::visible($text) <= $width
+            ? $text
+            : substr(Ansi::strip($text), 0, max(0, $width - 3)) . '...';
     }
 
     // ---- the top line ----------------------------------------------------------------

@@ -16,17 +16,21 @@ use Pig\CodingAgent\Session\SessionManager;
  * that is waiting for it. What is here is what can be read at any moment, plus `abort()`,
  * which is safe because stopping is the one thing that is always allowed.
  *
- * Upstream also carries `ui` and `hasUI` — a whole prompting API (`select`, `confirm`,
- * `input`, `editor`) that lets a hook ask the person something mid-turn. Not ported:
- * that needs the interactive mode to be able to open a picker from inside a tool call,
- * which pig cannot do yet. See CLAUDE.md.
+ * `ui` is upstream's, and it is the interesting one: a handler can ask the person a
+ * question and wait for the answer, which is what makes a `tool_call` guard more than a
+ * yes-or-no rule. `hasUI` says whether asking will reach anybody — with no terminal the
+ * answers are `NoUi`'s, and a hook that wants to behave differently rather than take them
+ * can check first.
  */
 final readonly class HookContext
 {
+    public readonly HookUi $ui;
+
     /**
      * @param Closure(): bool|null $isIdle            whether the agent is between runs
      * @param Closure(): void|null $abort             stop whatever is running
      * @param Closure(): bool|null $hasQueuedMessages whether someone typed while it worked
+     * @param HookUi|null          $ui                `NoUi` when there is no terminal
      */
     public function __construct(
         public string $cwd,
@@ -35,7 +39,10 @@ final readonly class HookContext
         private ?Closure $isIdle = null,
         private ?Closure $abort = null,
         private ?Closure $hasQueuedMessages = null,
+        ?HookUi $ui = null,
+        public bool $hasUi = false,
     ) {
+        $this->ui = $ui ?? new NoUi();
     }
 
     public function isIdle(): bool

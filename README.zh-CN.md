@@ -80,6 +80,18 @@ hook 跑在 pig 进程里——所以它能直接返回对象、也能用 pig �
 `exit()` 就能把整个会话带走。写坏了的 hook 会在启动时报到 shell 上而不是直接崩掉；`/hooks` 列出
 加载了哪些，`--no-hooks` 则一个都不加载。
 
+hook 还能在一轮**进行当中**问人，并且等答案：
+
+```php
+$pi->on('tool_call', fn ($event, $ctx) => $ctx->ui->confirm('让 bash 跑吗？', $event->input['command'] ?? '')
+    ? null
+    : new ToolCallEventResult(block: true, reason: '你说了不行。'));
+```
+
+这次工具调用就停在那儿，屏幕上弹出选择，按下去它接着往下走——handler 拿到的就是一个普通的 `bool`。
+`select`、`input`、`notify`、以及一行带 key 的 footer 状态也都有。Esc 等于「不行」，所以走开不回答
+不会把工具放过去。
+
 `~/.pig/tools/` 或 `.pig/tools/` 下一个带 `index.php` 的**文件夹**就是一个模型能调用的工具——
 之所以是文件夹，因为这个目录里同时还放着 pig 下载来的 `fd` 和 `rg`，直接躺在那儿的文件是那两个。
 加载机制和 hooks 完全一样，代价也一样；`/tools` 列出模型手上所有工具各自从哪来，`--no-tools` 一个
@@ -108,8 +120,9 @@ return fn (CustomToolApi $pi) => new CustomTool(
 );
 ```
 
-`$ctx` 就是这次会话：到目前为止的对话、正在回答的是哪个模型、agent 是不是在忙、以及一个能把它停下来
-的口子。工具还能收到「会话开始 / 切换 / 跳转 / 结束」四个时机——自己存着状态的工具靠这个重建或者放手。
+`$ctx` 就是这次会话：到目前为止的对话、正在回答的是哪个模型、agent 是不是在忙、一个能把它停下来的
+口子，以及和 hook 同一个 `ui`。工具还能收到「会话开始 / 切换 / 跳转 / 结束」四个时机——自己存着状态
+的工具靠这个重建或者放手。
 
 skill 就是一个带 `SKILL.md` 的文件夹。pig 读 `~/.pig/skills` 和 `.pig/skills`，同时也读
 `~/.claude/skills`、`.claude/skills` 和 `~/.codex/skills`——给别的 agent 写的 skill 在这儿直接能用。

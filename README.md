@@ -87,6 +87,18 @@ A hook runs inside pig, so it can hand back an object and reach pig's own classe
 hook that loops or calls `exit()` takes the session with it. Broken ones are named on the
 shell at startup rather than crashing; `/hooks` lists what loaded and `--no-hooks` skips them.
 
+A hook can also **ask**, mid-turn, and wait for the answer:
+
+```php
+$pi->on('tool_call', fn ($event, $ctx) => $ctx->ui->confirm('Let bash run?', $event->input['command'] ?? '')
+    ? null
+    : new ToolCallEventResult(block: true, reason: 'You said no.'));
+```
+
+The tool call parks, a picker appears, and the keystroke resumes it — the handler gets a
+plain `bool` back. `select`, `input`, `notify` and a keyed footer line are there too. Escape
+answers no, so walking away from the question does not wave the tool through.
+
 A folder with an `index.php` in `~/.pig/tools/` or `.pig/tools/` is a tool the model can
 call — a folder, because that directory also holds the `fd` and `rg` binaries pig may have
 downloaded, and a file there is one of those. Same loader as hooks, same trade-off; `/tools`
@@ -116,8 +128,9 @@ return fn (CustomToolApi $pi) => new CustomTool(
 ```
 
 `$ctx` is the session: the conversation so far, which model is answering, whether the agent
-is busy, and a way to stop it. A tool can also be told when the session starts, switches,
-jumps or ends, which is how one that keeps state rebuilds or lets go of it.
+is busy, a way to stop it, and the same `ui` a hook gets. A tool can also be told when the
+session starts, switches, jumps or ends, which is how one that keeps state rebuilds or lets
+go of it.
 
 Skills are folders with a `SKILL.md` in them. pig reads `~/.pig/skills` and `.pig/skills`, and
 also `~/.claude/skills`, `.claude/skills` and `~/.codex/skills`, so a skill written for another

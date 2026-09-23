@@ -134,6 +134,9 @@ final class InteractiveMode
 
     private ?CustomToolSet $customTools = null;
 
+    /** How a hook or a custom tool asks the person something. */
+    private readonly TerminalUi $ui;
+
     /** @var array<string, RegisteredCommand> what the hooks added, by name */
     private array $hookCommands = [];
 
@@ -185,6 +188,30 @@ final class InteractiveMode
         $this->status = new Container();
         $this->editor = new CustomEditor(new Editor($palette->editorTheme()));
         $this->footer = new FooterComponent($session, $palette, $cwd);
+
+        // The palette as a closure: `/theme` replaces it, and a dialog opened afterwards
+        // should be drawn in the colour that is on now.
+        $this->ui = new TerminalUi(
+            $this->tui,
+            $this->chat,
+            $this->status,
+            $this->editor,
+            $this->footer,
+            fn (): Palette => $this->palette,
+        );
+
+        $hooks?->initialize(
+            getModel: static fn () => $session->model(),
+            isIdle: static fn (): bool => !$session->isStreaming(),
+            abort: static function () use ($session): void {
+                $session->abort();
+            },
+            hasQueuedMessages: static fn (): bool => $session->queued() !== [],
+            ui: $this->ui,
+        );
+
+        $customTools?->withUi($this->ui);
+        $customTools?->withContext(fn () => $hooks?->context() ?? new HookContext($cwd, ui: $this->ui, hasUi: true));
 
         // Last, because reporting a hook's complaints needs the transcript to report
         // them into, and a name taken twice is a complaint made while reading the hooks.

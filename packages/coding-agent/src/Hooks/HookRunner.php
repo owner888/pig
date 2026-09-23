@@ -62,6 +62,8 @@ final class HookRunner
 
     private ?Closure $hasQueuedMessages = null;
 
+    private ?HookUi $ui = null;
+
     /** @param list<LoadedHook> $hooks in the order they were loaded, which is the order they run */
     public function __construct(
         array $hooks = [],
@@ -83,17 +85,20 @@ final class HookRunner
      * @param Closure(): bool|null    $isIdle
      * @param Closure(): void|null    $abort
      * @param Closure(): bool|null    $hasQueuedMessages
+     * @param HookUi|null             $ui the terminal's, when there is one
      */
     public function initialize(
         Closure $getModel,
         ?Closure $isIdle = null,
         ?Closure $abort = null,
         ?Closure $hasQueuedMessages = null,
+        ?HookUi $ui = null,
     ): void {
         $this->getModel = $getModel;
         $this->isIdle = $isIdle;
         $this->abort = $abort;
         $this->hasQueuedMessages = $hasQueuedMessages;
+        $this->ui = $ui;
     }
 
     /** Where every hook that loaded came from. @return list<string> */
@@ -182,6 +187,8 @@ final class HookRunner
             $this->isIdle,
             $this->abort,
             $this->hasQueuedMessages,
+            $this->ui,
+            $this->ui !== null,
         );
     }
 

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\CustomTools;
 
 use Pig\CodingAgent\Hooks\ExecResult;
+use Pig\CodingAgent\Hooks\HookUi;
+use Pig\CodingAgent\Hooks\NoUi;
 use Pig\Tui\Process;
 
 /**
@@ -18,17 +20,46 @@ use Pig\Tui\Process;
  *
  * The session is *not* here for the same reason it is not in upstream's `CustomToolAPI`:
  * at load time there is no session yet. It arrives as the `HookContext` passed to
- * `execute`, which is built fresh per call.
+ * `execute`, which is built fresh per call — and carries `ui` too, so a tool that wants to
+ * ask the person something has it in both places.
  *
- * Not ported: `ui` and `hasUI`, upstream's mid-run prompting API. See CLAUDE.md.
+ * `ui` here is the one upstream has: it is set once the mode is running rather than at
+ * load, so a factory that grabs it keeps something that works later rather than a no-op
+ * captured too early. Before that it answers as `NoUi` does.
  */
-final readonly class CustomToolApi
+final class CustomToolApi
 {
     /** How long a command a tool runs at load time may take. */
     private const float EXEC_TIMEOUT = 30.0;
 
-    public function __construct(public string $cwd = '.')
+    private ?HookUi $ui = null;
+
+    public function __construct(public readonly string $cwd = '.')
     {
+    }
+
+    /**
+     * Hand the tools the real UI, once a mode has one.
+     *
+     * Upstream's `setUIContext` on the load result, in the place the shared API actually
+     * lives. The object is shared by every tool loaded in this session, which is what
+     * makes one call enough.
+     */
+    public function withUi(HookUi $ui): void
+    {
+        $this->ui = $ui;
+    }
+
+    /** Asking the person something. `NoUi`'s answers until a mode says otherwise. */
+    public function ui(): HookUi
+    {
+        return $this->ui ?? new NoUi();
+    }
+
+    /** Whether asking will reach anybody. */
+    public function hasUi(): bool
+    {
+        return $this->ui !== null;
     }
 
     /**

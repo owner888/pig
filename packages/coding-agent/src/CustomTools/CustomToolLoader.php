@@ -31,8 +31,10 @@ final class CustomToolLoader
     /**
      * Every tool this machine and this project offer.
      *
-     * @param list<string> $builtIn    names already taken; a tool may not shadow one
-     * @param list<string> $configured extra `index.php` paths, from settings
+     * @param list<string>       $builtIn    names already taken; a tool may not shadow one
+     * @param list<string>       $configured extra `index.php` paths, from settings
+     * @param CustomToolApi|null $api        pass one in to keep hold of it: it is what a
+     *        mode later hands the UI to, and the factories close over it
      * @return array{0: list<LoadedCustomTool>, 1: list<ToolProblem>}
      */
     public static function load(
@@ -40,6 +42,7 @@ final class CustomToolLoader
         array $builtIn = [],
         array $configured = [],
         ?string $home = null,
+        ?CustomToolApi $api = null,
     ): array {
         $home ??= Config::home();
         $cwd = rtrim($cwd, '/');
@@ -53,10 +56,10 @@ final class CustomToolLoader
             $paths[] = self::resolve($path, $cwd);
         }
 
-        // The API is shared, as upstream's is: it holds the working directory and nothing
-        // else that could differ between two tools, and one of them is one fewer thing to
-        // keep in step.
-        $api = new CustomToolApi($cwd);
+        // One API for every tool, as upstream has it: what is on it is either the same
+        // for all of them (the working directory) or set once later for all of them (the
+        // UI), and a second copy is a second thing to keep in step.
+        $api ??= new CustomToolApi($cwd);
 
         $tools = [];
         $problems = [];

@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\CustomTools;
 use Closure;
 use Pig\Agent\AgentTool;
 use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Hooks\HookUi;
 use Throwable;
 
 /**
@@ -14,8 +15,8 @@ use Throwable;
  * for itself: being told the session moved.
  *
  * Upstream's `CustomToolsLoadResult` plays this part — the loaded tools plus a way to
- * hand them something that only exists once a mode is running. There it is the UI
- * context; here, which is not ported, it is the session context and the lifecycle events.
+ * hand them what only exists once a mode is running. There that is the UI context; here it
+ * is that, the session context, and the lifecycle events.
  *
  * `notify()` is called from the interactive mode rather than from the session, because
  * all four moments a tool hears about — startup, `/new` and `/resume`, `/tree`, quitting —
@@ -29,10 +30,25 @@ final class CustomToolSet
 
     private ?Closure $context = null;
 
-    /** @param list<LoadedCustomTool> $tools */
-    public function __construct(array $tools = [])
+    /**
+     * @param list<LoadedCustomTool> $tools
+     * @param CustomToolApi|null     $api the one the factories were handed, so `withUi()`
+     *        reaches what they closed over rather than a fresh copy of it
+     */
+    public function __construct(array $tools = [], private readonly ?CustomToolApi $api = null)
     {
         $this->tools = $tools;
+    }
+
+    /**
+     * Hand the tools the terminal's UI, once a mode has one.
+     *
+     * Upstream's `setUIContext`. Called after the mode is up rather than at load, because
+     * at load there is no screen to draw a dialog on.
+     */
+    public function withUi(HookUi $ui): void
+    {
+        $this->api?->withUi($ui);
     }
 
     /**

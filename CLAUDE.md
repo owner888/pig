@@ -261,8 +261,9 @@ components it draws with are `UserMessageComponent`, `AssistantMessageComponent`
 `InteractiveMode` is ~1200 lines against upstream's 2439, and the difference is almost entirely
 selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
 trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
-an agent you can talk to, fourteen slash commands plus whatever the hooks add, and the keys.
-Also not ported: custom-tool rendering and the hook UI context.
+an agent you can talk to, fourteen slash commands plus whatever the hooks add, the keys, and
+the dialogs a hook or a custom tool can open mid-turn (`Interactive\TerminalUi`). Also not
+ported: custom-tool rendering.
 
 `/copy` needed a clipboard *writer*, which nothing had: `SystemClipboard` could only read.
 `Process::feed()` is the piece under it — a command with text on its standard input, which is
@@ -537,12 +538,57 @@ Four things worth keeping straight:
 has `{...tool, execute}`. `Process::run()` grew an optional `$cwd` so `$pi->exec()` can run a
 command where the project is.
 
-Not ported from the hook API: `sendMessage()`, `appendEntry()` and `registerMessageRenderer()`,
-which need custom message types the session can store and the UI can draw; and the whole
-`HookUIContext` — `select`, `confirm`, `input`, `editor` — which needs the interactive mode to
-be able to open a picker from inside a tool call. `BeforeAgentStartEventResult` carries text
-for the same reason: upstream's is a `HookMessage`, and the part that survives is the part
-that reaches the model.
+`HookUi` is upstream's `HookUIContext`, and it is what makes `tool_call` more than a
+yes-or-no rule: a handler can ask the person something and wait for the answer.
+
+```php
+$pi->on('tool_call', function ($event, $ctx) {
+    if ($event->toolName !== 'bash' || !str_contains($event->input['command'] ?? '', 'rm -rf')) {
+        return null;
+    }
+
+    return $ctx->ui->confirm('Let bash run?', $event->input['command'])
+        ? null
+        : new ToolCallEventResult(block: true, reason: 'You said no.');
+});
+```
+
+**It blocks the turn, and that is the whole trick.** A handler runs inside the agent's
+fiber, so awaiting an answer suspends that fiber and nothing else: the loop keeps serving
+the terminal, the keystroke arrives, the deferred completes, the handler carries on where it
+stopped and returns an ordinary value. This is the one thing `pig/async` exists for, and it
+is why upstream can have this feature in JavaScript and a synchronous PHP port could not.
+
+Three things that keep it from parking a session forever:
+
+- **Every dialog can be escaped.** `SelectList` always could. `Input` could not — nothing
+  pig opened had needed it, because every input was one somebody had asked for. An
+  un-escapable prompt in front of a suspended fiber is a session that has to be killed, so
+  `Input::setCancelHandler()` was added for this.
+- **One dialog at a time.** A second `confirm()` while the first is open would take focus
+  from it, leaving the first fiber waiting on a component nobody can reach. The second is
+  refused with its safe answer instead.
+- **Escape is a no, and so is having no terminal.** `NoUi::confirm()` returns false, which
+  for a guard means a tool nobody could approve does not run. Upstream's choice, and the
+  only safe direction.
+
+`select` and `confirm` are `SelectList`, `input` is `Input`, `notify` is the transcript, and
+`setStatus` is a third footer line that appears only when a hook has put something on it.
+`theme` is `palette()`. Not ported: `custom()`, which hands a hook the `TUI` and a `done()`
+callback to draw what it likes — portable in principle, but it exposes the renderer's
+internals to code loaded off disk and nothing needs it yet; and `editor()`, a multi-line
+overlay with `$VISUAL` support, where pig's `Editor` is built into the prompt rather than
+openable as a dialog and `$VISUAL` has no counterpart at all.
+
+Also not ported from the hook API: `sendMessage()`, `appendEntry()` and
+`registerMessageRenderer()`, which need custom message types the session can store and the
+UI can draw. `BeforeAgentStartEventResult` carries text for the same reason: upstream's is a
+`HookMessage`, and the part that survives is the part that reaches the model.
+
+**Each mode wires its own UI**, which is upstream's rule too. `InteractiveMode` builds the
+`TerminalUi` and calls `HookRunner::initialize()` and `CustomToolSet::withUi()` itself;
+`bin/pig` loads and constructs but wires none of it, because it has no screen to draw a
+dialog on and a second mode will have a different one.
 
 `CustomTools\` is upstream's `core/custom-tools/`, on the same loader. A tool lives in a
 folder of its own — `~/.pig/tools/<name>/index.php`, or the same under `<cwd>/.pig/tools`
@@ -598,6 +644,10 @@ Five things worth keeping straight:
 - **The session context is a closure, not a value.** `/model` replaces the model mid-session,
   and a tool that asked which one is answering must not be told about the one that was
   replaced.
+- **The UI arrives after loading, not during it.** A factory runs at startup, before there
+  is a screen; `CustomToolApi::ui()` answers as `NoUi` until the mode calls `withUi()` on the
+  one shared API object every factory closed over. That is why `bin/pig` constructs the API
+  itself and hands it to both the loader and the set.
 - **`onSession` is fired from the interactive mode, not from the session.** All four moments
   a tool hears about — startup, `/new` and `/resume`, `/tree`, quitting — are things someone
   did in the UI, and the UI is the only place with somewhere to report a callback that
@@ -617,8 +667,9 @@ other. Worth knowing before wondering why `ls ~/.pig/tools` shows a mixture.
 
 Not ported: `renderCall` and `renderResult`, which hand back a TUI component for the
 interactive mode to draw in place of the default tool view. pig has the components; what it
-does not have is the lookup in `ToolExecutionComponent` that would reach for them. Nor
-`CustomToolAPI.ui`, which is the hook UI context under another name.
+does not have is the lookup in `ToolExecutionComponent` that would reach for them.
+`CustomToolAPI.ui` *is* ported — it is `HookUi`, in both `$pi->ui()` and the context handed
+to `execute`.
 
 What is left in `coding-agent`, none of it deliberately left out, all of it needing something
 that is not here yet:
@@ -627,8 +678,9 @@ that is not here yet:
 |---|---|
 | `modes/rpc/` | a second way in, for editors rather than people |
 | `branch-summarization.ts` | a summary of the branch being left, for `/tree` |
-| the hook UI context | a picker the interactive mode can open mid-turn |
 | `renderCall` / `renderResult` | a renderer lookup in `ToolExecutionComponent` |
+| `HookUi::custom()` | a decision about handing the renderer to code loaded off disk |
+| `HookUi::editor()` | a multi-line dialog, and a `$VISUAL` equivalent |
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 
@@ -1096,6 +1148,26 @@ name can drop it, and anything that keeps the fixed name must keep it.
 
 Not covered by a test: reaching it needs a killed process and a real archive, and
 `extract()` is private — the seam would be a public method existing for the test alone.
+
+### A dialog opened in front of a suspended fiber has to be escapable
+
+A hook's `tool_call` handler runs inside the agent's fiber. `$ctx->ui->confirm()` parks that
+fiber on a `Deferred` and hands the keys to a component; the answer resumes it. If the
+component has no way to say "no answer", nothing resumes it — the turn is stopped forever,
+the tool never returns, and the only way out is killing pig. It does not look like a hang in
+the tool: it looks like the agent went quiet.
+
+Two things follow, and both are load-bearing rather than tidy:
+
+- `Pig\Tui\Components\Input` got `setCancelHandler()` for this. `SelectList` already had
+  one. Any future dialog in `TerminalUi` needs the same before it is used.
+- `TerminalUi` refuses a second dialog while one is open, because opening one would take
+  focus from the first and leave *its* fiber unreachable. The refusal answers with the safe
+  value — null, or false for `confirm()`.
+
+Tests: `HookUiTest::testEscapingAnInputAnswersWithNothing`,
+`testASecondDialogIsRefusedRatherThanStacked`, and the three
+`testAGuardCanAskBeforeLettingAToolRun` cases that drive the whole chain.
 
 ### `stream_socket_pair()` with a dropped peer (tests)
 

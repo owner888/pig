@@ -256,6 +256,88 @@ final class FooterTest extends TestCase
         $this->assertStringContainsString('no-model', $this->lines(new AgentSession($agent))[1]);
     }
 
+    // ---- what a hook or a tool put there -----------------------------------------------
+
+    public function testThereAreTwoLinesUntilSomethingHasStatusToReport(): void
+    {
+        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+
+        $this->assertCount(2, $footer->render(self::WIDTH));
+    }
+
+    public function testAStatusAddsAThirdLine(): void
+    {
+        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer->setStatus('watcher', '3 files changed');
+
+        $lines = array_map(Ansi::strip(...), $footer->render(self::WIDTH));
+
+        $this->assertCount(3, $lines);
+        $this->assertSame('3 files changed', $lines[2]);
+    }
+
+    /** Keyed, so a hook that updates its line replaces it rather than adding another. */
+    public function testTheSameKeyReplacesRatherThanRepeats(): void
+    {
+        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer->setStatus('watcher', '3 files changed');
+        $footer->setStatus('watcher', '4 files changed');
+
+        $lines = array_map(Ansi::strip(...), $footer->render(self::WIDTH));
+
+        $this->assertCount(3, $lines);
+        $this->assertSame('4 files changed', $lines[2]);
+    }
+
+    public function testTwoKeysShareTheLine(): void
+    {
+        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer->setStatus('watcher', 'watching');
+        $footer->setStatus('deploy', 'idle');
+
+        $this->assertSame('watching · idle', array_map(Ansi::strip(...), $footer->render(self::WIDTH))[2]);
+    }
+
+    public function testClearingTheLastStatusTakesTheLineAway(): void
+    {
+        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer->setStatus('watcher', 'watching');
+        $footer->setStatus('watcher', null);
+
+        $this->assertCount(2, $footer->render(self::WIDTH));
+    }
+
+    public function testAnEmptyStatusClearsItTheSameWay(): void
+    {
+        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer->setStatus('watcher', 'watching');
+        $footer->setStatus('watcher', '   ');
+
+        $this->assertCount(2, $footer->render(self::WIDTH));
+    }
+
+    /** Two lines here would push the editor off the bottom of a fixed layout. */
+    public function testNewlinesAreFlattenedRatherThanDrawn(): void
+    {
+        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer->setStatus('noisy', "first\nsecond\tthird");
+
+        $lines = array_map(Ansi::strip(...), $footer->render(self::WIDTH));
+
+        $this->assertCount(3, $lines);
+        $this->assertSame('first second third', $lines[2]);
+    }
+
+    public function testALongStatusIsCutToTheWidth(): void
+    {
+        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer->setStatus('long', str_repeat('status ', 40));
+
+        foreach ($footer->render(self::WIDTH) as $line) {
+            $this->assertLessThanOrEqual(self::WIDTH, mb_strwidth(Ansi::strip($line)));
+        }
+    }
+
     public function testTheLineNeverOverflowsTheTerminal(): void
     {
         $session = $this->session();

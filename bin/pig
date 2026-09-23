@@ -25,6 +25,7 @@ use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Models;
 use Pig\Async\Async;
 use Pig\CodingAgent\CodingAgent;
+use Pig\CodingAgent\CustomTools\CustomToolApi;
 use Pig\CodingAgent\CustomTools\CustomToolLoader;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Hooks\HookLoader;
@@ -230,15 +231,19 @@ $hooks = new HookRunner($loadedHooks, $cwd, $store);
 // shadow `bash` is named rather than quietly replacing it.
 $builtIn = isset($options['read-only']) ? ToolSet::READ_ONLY : ToolSet::ALL;
 
+// Held onto rather than left to the loader: it is what the mode later hands the UI to,
+// and it is the object every tool factory closed over.
+$toolApi = new CustomToolApi($cwd);
+
 [$loadedTools, $toolProblems] = isset($options['no-tools'])
     ? [[], []]
-    : CustomToolLoader::load($cwd, $builtIn, $settings->customTools());
+    : CustomToolLoader::load($cwd, $builtIn, $settings->customTools(), api: $toolApi);
 
 foreach ($toolProblems as $problem) {
     fwrite(STDERR, Style::yellow("tool {$problem->toText()}\n"));
 }
 
-$customTools = new CustomToolSet($loadedTools);
+$customTools = new CustomToolSet($loadedTools, $toolApi);
 
 try {
     $agent = CodingAgent::create(
@@ -261,20 +266,9 @@ try {
 
 $session = new AgentSession($agent, $cwd, $store, $settings, $hooks);
 
-// Closures rather than values: the model changes with `/model`, and a hook that asked
-// for it at startup should not be told about the one that was replaced.
-$hooks->initialize(
-    getModel: static fn () => $session->model(),
-    isIdle: static fn (): bool => !$session->isStreaming(),
-    abort: static function () use ($session): void {
-        $session->abort();
-    },
-    hasQueuedMessages: static fn (): bool => $session->queued() !== [],
-);
-
-// The same context the hooks get, and for the same reason it is a closure: a tool that
-// asks which model is answering should be told the current one.
-$customTools->withContext(static fn () => $hooks->context());
+// What the hooks and the custom tools are told about the session is wired by the mode,
+// not here: the interactive one is what has a screen to draw a dialog on, and upstream
+// says the same — each mode provides its own UI. A second mode wires its own.
 
 if ($resumed !== null) {
     $session->restore($resumed->messages());

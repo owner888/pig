@@ -40,6 +40,9 @@ final class Input implements Component, InputHandler
     /** @var Closure(string): void|null */
     private ?Closure $onSubmit = null;
 
+    /** @var Closure(): void|null */
+    private ?Closure $onCancel = null;
+
     private bool $pasting = false;
 
     private string $pasteBuffer = '';
@@ -72,6 +75,21 @@ final class Input implements Component, InputHandler
         $this->onSubmit = $handler;
     }
 
+    /**
+     * Escape, and Ctrl+C — the way out without an answer.
+     *
+     * `SelectList` has had this from the start and this had not needed it, because every
+     * input pig opened was one someone had asked for. Something that opens an input
+     * *while the agent is working* is different: with no way to cancel, whoever is waiting
+     * for an answer waits forever, and so does the turn that asked for it.
+     *
+     * @param Closure(): void|null $handler
+     */
+    public function setCancelHandler(?Closure $handler): void
+    {
+        $this->onCancel = $handler;
+    }
+
     #[\Override]
     public function invalidate(): void
     {
@@ -91,6 +109,13 @@ final class Input implements Component, InputHandler
             if ($this->onSubmit !== null) {
                 ($this->onSubmit)($this->value);
             }
+
+            return;
+        }
+
+        // Next to Enter, because it is the other answer: one with a value, one without.
+        if ($this->onCancel !== null && (Keys::isEscape($data) || Keys::isCtrlC($data))) {
+            ($this->onCancel)();
 
             return;
         }
