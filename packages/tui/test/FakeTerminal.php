@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\Tui\Test;
 
 use Closure;
+use Pig\Async\Loop;
 use Pig\Tui\Terminal;
 
 /**
@@ -26,6 +27,9 @@ final class FakeTerminal implements Terminal
 
     private ?Closure $onResize = null;
 
+    /** @var list<string> typed before the screen opened, waiting for it to */
+    private array $queued = [];
+
     public function __construct(private int $columns = 40, private int $rows = 10)
     {
     }
@@ -36,6 +40,35 @@ final class FakeTerminal implements Terminal
         $this->started = true;
         $this->onInput = $onInput;
         $this->onResize = $onResize;
+
+        // Anything queued arrives now, one key per tick, through the loop rather than
+        // straight down the stack. Two reasons, and both matter for a component that runs
+        // its own loop: the first frame is drawn before the first key, as it would be on a
+        // real terminal; and a loop with work queued is not idle, so `Loop::run()` does not
+        // decide there is nothing to do and return before anybody has typed.
+        foreach ($this->queued as $data) {
+            Loop::get()->defer(function () use ($data): void {
+                if ($this->onInput !== null) {
+                    ($this->onInput)($data);
+                }
+            });
+        }
+
+        $this->queued = [];
+    }
+
+    /**
+     * Type before the screen is open.
+     *
+     * For a component that starts its own loop and blocks until it is answered — there is no
+     * "after the call" to type in. A real terminal does the same thing with whatever was in
+     * its buffer when the program took it over.
+     */
+    public function queue(string ...$data): void
+    {
+        foreach ($data as $one) {
+            $this->queued[] = $one;
+        }
     }
 
     #[\Override]

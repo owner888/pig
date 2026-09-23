@@ -26,6 +26,7 @@ use Pig\Ai\Models;
 use Pig\Async\Async;
 use Pig\CodingAgent\Cli\Arguments;
 use Pig\CodingAgent\Cli\FileArguments;
+use Pig\CodingAgent\Cli\SessionPicker;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\CustomTools\CustomToolApi;
 use Pig\CodingAgent\CustomTools\CustomToolLoader;
@@ -64,7 +65,7 @@ if (isset($options['help'])) {
       --read-only       no edit, write or bash
       --cwd <path>      where to work (default: here)
       --continue        pick up the most recent session here
-      --resume <file>   pick up a particular one
+      --resume [file]   pick up a particular one; with no path, choose from a list
       --no-save         do not write this session to disk
       --skills-dir <d>  one more folder of skills, on top of the standard ones
       --no-hooks        start without loading ~/.pig/hooks or .pig/hooks
@@ -204,6 +205,29 @@ $resumed = null;
 
 if (!isset($options['no-save'])) {
     $wanted = $options['resume'] ?? null;
+
+    // `--resume` with nothing after it means "show me the list": a session file is named
+    // after six random bytes under a flattened project path, so a flag that demands the path
+    // is a flag nobody can use from memory. Only with a terminal to draw it on — in
+    // `--mode text|json|rpc` there is nobody to ask, so it stays the error it was.
+    if ($wanted === '' && $interactive) {
+        $sessions = SessionManager::listFor($cwd);
+
+        if ($sessions === []) {
+            fwrite(STDERR, Style::yellow("No earlier sessions in {$cwd}. Starting a new one.\n"));
+        }
+
+        // Escape answers null, which falls through to a new session below — someone who
+        // opened the list and changed their mind still wanted pig, and refusing to start
+        // would only make them type the command again.
+        $wanted = SessionPicker::ask($sessions, Palette::named($theme));
+    }
+
+    if ($wanted === '') {
+        fwrite(STDERR, Style::red("--resume needs the path to a session file.\n"));
+
+        exit(1);
+    }
 
     if ($wanted === null && isset($options['continue'])) {
         $latest = SessionManager::latestFor($cwd);

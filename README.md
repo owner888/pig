@@ -41,7 +41,8 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 ```
 
 `--read-only` takes away edit, write and bash; `--theme light` for a light terminal;
-`--continue` to pick up where you left off. `/help` inside lists the keys.
+`--continue` to pick up where you left off, or `--resume` on its own to choose from a list.
+`/help` inside lists the keys.
 
 Anything that is not an option is a message, and `@some/file` is read in front of it:
 

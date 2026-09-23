@@ -881,6 +881,33 @@ place that knows how to end the program. `--mode rpc` refuses `@file` and positi
 outright, as upstream does: there the conversation arrives as commands, so a file read here
 would be prepended to a prompt that never comes.
 
+`Cli\SessionPicker` is upstream's `cli/session-picker.ts` plus the list half of its
+`components/session-selector.ts`: `bin/pig --resume` with nothing after it shows the earlier
+conversations and opens the one that is chosen. Before it, that flag answered
+`Could not read the session at ` — with nothing after the "at", because the value was the
+empty string. A session file is named after six random bytes under a flattened project path,
+so a flag that demands the path is a flag nobody can use from memory.
+
+Three things about it:
+
+- **It runs before the mode exists**, on a `Tui` it starts and stops inside the call, so what
+  comes back is an ordinary return value and the session is opened by the same code that
+  opens a `--resume <path>`.
+- **Escape means "start a new one", not "stop".** Someone who opened the list and changed
+  their mind still wanted pig; refusing to start would only make them type the command again.
+- **Only with a terminal.** In `--mode text|json|rpc` there is nobody to ask, so a bare
+  `--resume` stays the error it was — a clearer one now, naming what is missing.
+
+Upstream's selector has a third key, delete. Not ported: a session file is a record of
+something that happened, and a list you move through with the arrow keys is the wrong place
+for an irreversible key.
+
+`FakeTerminal::queue()` was added for its test. A component that starts its own loop and
+blocks until it is answered has no "after the call" to type into, so the keys go in first and
+arrive through `Loop::defer()` once the screen is open — which is also what a real terminal
+does with whatever was in its buffer when the program took it over, and it keeps the loop
+from deciding it has nothing to do and returning before anybody has typed.
+
 `Cli\Arguments` is upstream's `cli/args.ts`, and it lives in the package rather than in
 `bin/pig` for one reason: a script that calls `exit()` cannot be called twice by a test, and
 the parser now has something worth testing. See the trap below about the flag that ate the
@@ -952,13 +979,12 @@ What is left in `coding-agent` is left out on purpose, each for a reason:
 | Upstream | Why not |
 |---|---|
 | `auth/` device flows | OAuth for `google-gemini-cli` and GitHub Copilot; an API key reaches every provider pig speaks to |
-| twenty-five selector components | the interactive mode needs six of them |
+| twenty-five selector components | the interactive mode needs seven of them |
 | entry labels in the session tree | `/tree` picks by message, not by name |
 | `migrations.ts` | session-file migrations, and there is one format to migrate from |
 | `utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |
 | `components/armin.ts` | an easter egg: 31×36 XBM art, animated |
 | `core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |
-| `cli/session-picker.ts` | `--resume` shows a list upstream; here it takes a path and `/resume` is the list |
 | `core/timings.ts` | startup profiling behind an env var |
 | `utils/fuzzy.ts` | fuzzy matching for the selectors; `ModelResolver` matches by substring |
 

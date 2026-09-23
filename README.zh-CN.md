@@ -36,8 +36,8 @@ composer install
 ANTHROPIC_API_KEY=sk-ant-... bin/pig
 ```
 
-`--read-only` 去掉 edit、write、bash；`--theme light` 给浅色终端用；`--continue` 接着上次聊。
-进去之后 `/help` 列出所有按键。
+`--read-only` 去掉 edit、write、bash；`--theme light` 给浅色终端用；`--continue` 接着上次聊，
+或者单独写个 `--resume` 从列表里挑一个。进去之后 `/help` 列出所有按键。
 
 不是选项的东西就是要说的话，`@某个文件` 会被读在这句话前面：
 
