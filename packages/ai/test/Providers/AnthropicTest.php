@@ -258,6 +258,55 @@ final class AnthropicTest extends TestCase
         $this->assertSame('ephemeral', $body['messages'][1]['content'][1]['cache_control']['type']);
     }
 
+    public function testASubscriptionTokenGoesOutAsABearerTokenUnderClaudeCodesIdentity(): void
+    {
+        $url = $this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]]);
+
+        Async::run(function () use ($url): void {
+            $stream = $this->anthropic()->stream(
+                $this->model($url),
+                new Context([new UserMessage('hi')], 'be brief'),
+                new AnthropicOptions(apiKey: 'sk-ant-oat01-abc'),
+            );
+
+            foreach ($stream as $ignored) {
+            }
+        });
+
+        $head = $this->server->receivedHead();
+        $body = $this->server->receivedJson();
+
+        // The far end of `Utils\Oauth\Anthropic`: a subscription token is not an API key and
+        // Anthropic refuses it in `x-api-key`.
+        $this->assertStringContainsString('authorization: Bearer sk-ant-oat01-abc', $head);
+        $this->assertStringNotContainsString('x-api-key', $head);
+        $this->assertStringContainsString('anthropic-beta: oauth-2025-04-20', $head);
+
+        // And the identity the token was issued to has to be the first thing in the system
+        // prompt, ahead of whatever this session's own prompt says.
+        $this->assertSame("You are Claude Code, Anthropic's official CLI for Claude.", $body['system'][0]['text']);
+        $this->assertSame('be brief', $body['system'][1]['text']);
+    }
+
+    public function testAnApiKeyDoesNotClaimToBeClaudeCode(): void
+    {
+        $url = $this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]]);
+
+        Async::run(function () use ($url): void {
+            foreach ($this->anthropic()->stream($this->model($url), new Context([new UserMessage('hi')], 'be brief'), $this->options()) as $ignored) {
+            }
+        });
+
+        $head = $this->server->receivedHead();
+
+        $this->assertStringContainsString('x-api-key: test-key', $head);
+        $this->assertStringNotContainsString('authorization:', $head);
+        // Sending the beta without the token would be claiming an identity this request has
+        // no right to, and the system block goes with it.
+        $this->assertStringNotContainsString('oauth-2025-04-20', $head);
+        $this->assertSame('be brief', $this->server->receivedJson()['system'][0]['text']);
+    }
+
     public function testAgainstTheRealApi(): void
     {
         if (getenv('PIG_NETWORK_TESTS') !== '1') {

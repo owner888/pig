@@ -625,6 +625,67 @@ Four of upstream's five protocols are here; the fifth needs an OAuth device flow
 protocol — `google-gemini-cli` is the same Gemini shape behind Google's sign-in, and GitHub
 Copilot is the same again.
 
+### Signing in instead of pasting a key
+
+`Ai\Utils\Oauth\` is upstream's `ai/src/utils/oauth/`, and **one of its four flows is ported**:
+Anthropic's, which is what a Claude Pro or Max subscription is used through. It was first for a
+reason that is not "it was smallest" — it is the only one of the four that needs nothing pig did
+not already have. A URL is shown, the person opens it, approves, and brings back a `code#state`
+string; `exchange()` redeems it. No browser to drive, no loopback server to listen on, no port
+to hope is free.
+
+The far end of it was already written and had been since the provider was ported:
+`Providers\Anthropic` recognises an `sk-ant-oat` key, sends it as a bearer token under the
+`oauth-2025-04-20` beta, and puts Claude Code's identity in front of the system prompt, because
+that is the identity the token is issued to. So what was missing was only the part that
+*obtains* one — which is why the first thing added here was a pair of tests asserting what goes
+on the wire for each kind of key: an untested branch that had never run is not a ported branch.
+
+Five things worth keeping straight:
+
+- **`state` is the verifier**, not a second random string. Upstream's choice and Anthropic's
+  flow: the callback hands back `code#state`, so the state travels home through the person's
+  clipboard and the exchange can tell the code came from the request it made.
+- **Half a paste is refused before anything is sent.** One deliberate difference from upstream,
+  which sends no state and lets Anthropic answer `invalid_grant` — a message that describes six
+  different mistakes equally badly. The callback always hands over both halves, so a string
+  with no `#` is a paste that lost its end, and saying that is an answer somebody can act on.
+  The paste is trimmed for the same reason: a code copied out of a terminal arrives with a
+  newline on it about half the time.
+- **The new refresh token replaces the old one.** Anthropic rotates them, so a session that
+  kept sending the one it signed in with would work exactly once more.
+- **Five minutes is taken off every expiry**, which is upstream's margin. A token that expires
+  in flight fails the request it was attached to rather than the next one, and that request is
+  a whole turn.
+- **`available()` is false for the three that are not ported**, and they are still named.
+  Both halves matter: the credentials file is keyed by these strings and shared with pi, so a
+  name pig cannot sign in with is a name pig still has to *read* — and offering a sign-in that
+  cannot finish is the same mistake as offering a model whose protocol is not ported.
+
+`Pkce` is upstream's `pkce.ts` with two differences, both because PHP has what JavaScript had to
+reach for: it is not asynchronous (`hash()` returns a string where Web Crypto's `digest()`
+returns a promise), and `random_bytes()` *throws* when it cannot be a CSPRNG, where
+`crypto.getRandomValues` has no failure to report. A machine with no entropy source stops the
+sign-in rather than continuing with something guessable.
+
+The client id is written out rather than hidden behind `atob()` of a base64 string as upstream
+has it. It is in a published npm package and in every request this makes, so it is not a secret
+— and a reader who cannot see what it is has to go and decode it to find out.
+
+The token endpoint is a constructor parameter so the flow can be tested against a loopback
+server. That is not a seam existing for the test alone, which this project otherwise refuses:
+every provider in `ai` takes its base URL from outside already, and the alternative here is an
+authentication flow with no coverage at all.
+
+**Not ported yet, and what each is waiting for:** GitHub Copilot's device flow is the next one
+that would work — it needs no browser either — but Copilot's models are not in pig's registry,
+so signing in would unlock nothing to choose; upstream also enables each model by name against
+a policy endpoint after login, which needs that same list. `google-gemini-cli` and
+`google-antigravity` are loopback PKCE flows: they need an HTTP server on `127.0.0.1` and a
+browser opened at it, neither of which pig has. Storage (`core/auth-storage.ts`) and a `/login`
+command (`components/oauth-selector.ts`) are not here either, so what exists is the flow and
+not yet a way to run it from the CLI.
+
 `Hooks\` is upstream's `core/hooks/`, all of it. A hook is a PHP file in `~/.pig/hooks` or
 `.pig/hooks` that returns a callable; the callable is handed a `HookApi` and registers what
 it wants to hear about:
@@ -1161,7 +1222,7 @@ What is left in `coding-agent` is left out on purpose, each for a reason:
 
 | Upstream | Why not |
 |---|---|
-| `auth/` device flows | OAuth for `google-gemini-cli` and GitHub Copilot; an API key reaches every provider pig speaks to |
+| the rest of `ai`'s `utils/oauth/` | Anthropic's flow is ported (see [Signing in instead of pasting a key](#signing-in-instead-of-pasting-a-key)); GitHub Copilot needs its models in the registry, and the two Google flows need a loopback HTTP server and a browser |
 | twenty-five selector components | the interactive mode needs seven of them |
 | `migrations.ts` | session-file migrations; pig writes pi's format and has never shipped another |
 | `utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |
