@@ -37,7 +37,7 @@ the developer asked for it, it is ported and listed here:
 | Ctrl+V pastes a clipboard image as a temp file, and its path into the prompt | `Pig\Tui\Clipboard`, `Editor::pasteFromClipboard()` | `coding-agent/src/utils/clipboard-image.ts` + `interactive-mode.ts` |
 | A three-line banner with the keys on one line, the rest behind ctrl+o, and a `[Context]` section for what was loaded | `InteractiveMode::banner()` | the startup screen at 0.87 |
 | `!!command` runs without joining the conversation | `AgentSession::executeBash(remember: false)` | `!!` at 0.87; the anchor has `!` only |
-| Ctrl+G opens the prompt in `$VISUAL` | `InteractiveMode::editPromptExternally()`, `Process::interactive()` | `openExternalEditor()` in `interactive-mode.ts` |
+| Ctrl+G opens the prompt in `$VISUAL`, without stopping the event loop | `InteractiveMode::editPromptExternally()`, `Process::interactive()` | `openExternalEditor()` in `interactive-mode.ts`, which blocks |
 
 The anchor's banner is a column of thirteen keys, which is taller than most of the
 conversations it sits above; HEAD moved the list behind `ctrl+o` and put a one-line
@@ -1166,19 +1166,45 @@ It is bound now, to upstream's `openExternalEditor()`: write the prompt to a tem
 the TUI, hand the terminal to `$VISUAL` or `$EDITOR` through `Process::interactive()`, read it
 back, start the TUI again. Non-zero exit keeps the original, which is what `:cq` means.
 
-Two divergences from upstream, both deliberate:
+**One difference from upstream, and it is pig doing more rather than less: the loop keeps
+turning while the editor is open.** Upstream blocks on `spawnSync`, which stops libuv for as
+long as the person takes; a model streaming into a socket nobody reads fills the receive
+buffer, goes zero-window, and eventually has its connection reset. So a long edit during a
+turn can cost the turn.
 
-- **Refused while the agent is working.** Handing the terminal over blocks the event loop for
-  as long as the person takes, and the loop is what reads the model's socket — a turn left
-  streaming into an unread socket while somebody writes a paragraph in vim is not a trade
-  worth making, and escape cannot reach the UI to stop it either. Upstream does not guard
-  this.
-- **`Process::interactive()` has no timeout**, alone among that class's methods. Every other
-  one has one so a hung command cannot hang pig; here a timeout would kill the person's editor
-  mid-sentence. It is also the one method there that blocks the loop, and says so.
+The first version here guarded against that by refusing Ctrl+G while the agent was working.
+That was wrong, and it is worth saying why: the case Ctrl+G is *most* wanted for is "the model
+is busy, my next message is three paragraphs" — which is the same thing as typing while it
+streams, pig's own headline feature, only in vim. The guard forbade exactly the best use, and
+upstream not guarding it is very likely because that is how it is used. Upstream does guard
+other things on `isStreaming`, so it is not an oversight of the pattern.
 
-Not covered by a test: it needs a controlling terminal and a real editor. `Process` is
-exercised only for the empty-command guard.
+pig can have both, because it has an event loop where upstream has a blocking call:
+`Process::interactive()` takes a `$yield` closure, polls the child, and yields between looks,
+so the socket is read and the turn is appended exactly as it would have been. The TUI is
+stopped, so none of it is *drawn* until the forced redraw on the way back — nothing can be
+done about that while vim owns the screen, but there is nothing to lose by not reading.
+
+Two things that make it safe, both checked rather than assumed:
+
+- `ProcessTerminal::stop()` cancels the stdin watcher and restores the saved `stty`, so pig
+  and the editor are never both reading the keyboard.
+- A pending timer keeps `Loop::isIdle()` false, so the polling delay is itself what stops
+  `run()` from returning — and the program exiting — while the editor is open.
+
+Both callers must spawn a fiber: the key handlers run inside the loop's input callback, and
+suspending there suspends the loop that called them. Same reason `send()` and
+`startCompaction()` spawn.
+
+`Process::interactive()` has **no timeout**, alone among that class's methods. That is not an
+upstream difference — `spawnSync` takes one and `openExternalEditor()` does not pass it either
+— it is a difference from pig's own convention, where every other method there has one so a
+hung command cannot hang pig. Here a timeout would kill the person's editor mid-sentence.
+
+Barely covered by a test: `interactive()` opens `/dev/tty` for all three streams, and a test
+runner has no tty to open. What is tested is the empty-command guard and that a run with no
+controlling terminal answers STOPPED without polling — which is the branch a session started
+from a script takes.
 
 ### A dialog opened in front of a suspended fiber has to be escapable
 

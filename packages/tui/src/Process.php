@@ -195,24 +195,39 @@ final class Process
     }
 
     /**
+     * How often to look at a program that has the terminal, when asked to wait politely.
+     *
+     * Fifty milliseconds is imperceptible to whoever is typing in it and cheap enough that
+     * the polling does not show up anywhere.
+     */
+    private const float TTY_POLL = 0.05;
+
+    /**
      * Hand the terminal to a program and wait for it to give it back.
      *
      * For a full-screen program the person is going to use — `vim`, `nano`, `code --wait`.
      * All three streams go to `/dev/tty` rather than to pipes, because the whole point is
      * that it talks to the terminal itself; nothing here reads its output.
      *
-     * **The caller must stop the TUI first**, or two programs draw over each other and
-     * raw mode is left on while the editor is trying to set its own.
+     * **The caller must stop the TUI first**, or two programs draw over each other and raw
+     * mode is left on while the editor is trying to set its own.
      *
-     * **There is no timeout, and that is deliberate.** Every other method here has one
-     * because a command that hangs must not hang pig. This one is a person editing, and a
-     * timeout would kill their editor mid-sentence. It also blocks the event loop for as
-     * long as they take — so a caller that has a socket to keep alive should not call it.
+     * **There is no timeout, and that is deliberate** — the one method here without one.
+     * Every other has one because a command that hangs must not hang pig; this one is a
+     * person editing, and a timeout would kill their editor mid-sentence. (Upstream has no
+     * timeout either: `spawnSync` takes one and `openExternalEditor()` does not pass it.)
      *
-     * @param list<string> $command the program and its arguments, unquoted
+     * $yield is how a caller that has an event loop keeps it turning while the person
+     * types: without it this blocks until the program exits, and a model streaming into an
+     * unread socket eventually gives up. It is a closure rather than a call into
+     * `Pig\Async` because that would point this package at one it does not depend on — and
+     * because how to yield is the caller's business, not this method's.
+     *
+     * @param list<string>         $command the program and its arguments, unquoted
+     * @param Closure(): void|null $yield   called repeatedly while the program runs
      * @return int the exit code, or STOPPED when it could not be started
      */
-    public static function interactive(array $command): int
+    public static function interactive(array $command, ?Closure $yield = null): int
     {
         if ($command === []) {
             throw new TuiError('Process::interactive() needs a command');
@@ -234,7 +249,23 @@ final class Process
             restore_error_handler();
         }
 
-        return is_resource($process) ? proc_close($process) : self::STOPPED;
+        if (!is_resource($process)) {
+            return self::STOPPED;
+        }
+
+        // Polled rather than waited on, when there is somewhere to yield to. `proc_close()`
+        // waits, so reaching it once the program has already exited costs nothing.
+        while ($yield !== null && proc_get_status($process)['running']) {
+            $yield();
+        }
+
+        return proc_close($process);
+    }
+
+    /** How long to wait between looks at a program that has the terminal. */
+    public static function ttyPollSeconds(): float
+    {
+        return self::TTY_POLL;
     }
 
     /**

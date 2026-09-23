@@ -43,7 +43,8 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 `--continue` to pick up where you left off. `/help` inside lists the keys.
 
 Ctrl+G opens whatever is in the prompt in `$VISUAL` or `$EDITOR` and puts the result back —
-for the message that turned out to be three paragraphs.
+for the message that turned out to be three paragraphs. It works while the model is still
+answering: the editor gets the terminal, and the answer keeps arriving behind it.
 
 `--model` takes a part of a name rather than a whole id — `--model sonnet`, `--model 'opus 4.1'` —
 and `--model sonnet:high` sets the thinking level at the same time. `--models` lists them.

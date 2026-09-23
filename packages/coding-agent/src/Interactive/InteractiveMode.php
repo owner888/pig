@@ -494,7 +494,11 @@ final class InteractiveMode
         $this->editor->on('ctrl+d', $this->stop(...));
         $this->editor->on('ctrl+z', $this->suspend(...));
         $this->editor->on('shift+tab', $this->cycleThinking(...));
-        $this->editor->on('ctrl+g', $this->editPromptExternally(...));
+        $this->editor->on('ctrl+g', function (): void {
+            // In a fiber of its own, the same reason `send()` is: this runs inside the
+            // input callback, and it suspends — which would suspend the loop that called it.
+            Async::spawn($this->editPromptExternally(...));
+        });
 
         $this->editor->on('ctrl+o', function (): void {
             $this->expanded = !$this->expanded;
@@ -601,20 +605,13 @@ final class InteractiveMode
      * Upstream's `openExternalEditor()`. `CustomEditor` has reported this key since it was
      * ported and nothing was listening, so pressing it did nothing at all.
      *
-     * **Refused while the agent is working**, which upstream does not do. Handing the
-     * terminal over blocks the event loop for as long as the person takes, and the loop is
-     * what reads the model's socket — a turn left streaming into an unread socket while
-     * somebody writes a paragraph in vim is not a trade worth making, and escape cannot
-     * reach the UI to stop it either.
+     * Allowed while the agent is working, which is the case it is most wanted for: the
+     * model is busy and the next message is going to be three paragraphs. That only works
+     * because the loop keeps turning while the editor has the terminal — see
+     * `externalEditor()`.
      */
     private function editPromptExternally(): void
     {
-        if ($this->session->isStreaming()) {
-            $this->sayWarning('Still working. Press esc first.');
-
-            return;
-        }
-
         $edited = $this->externalEditor($this->editor->text());
 
         if ($edited === null) {
@@ -634,6 +631,16 @@ final class InteractiveMode
      *
      * The `.md` suffix is upstream's, and it is what makes an editor turn on the syntax
      * highlighting and the soft wrap that a prompt wants.
+     *
+     * **The loop keeps turning while the editor is open.** Upstream blocks on `spawnSync`,
+     * which stops libuv for as long as the person takes — and a model streaming into a
+     * socket nobody reads eventually has its connection reset. pig polls the child and
+     * yields instead, so the turn in flight is read and appended exactly as it would have
+     * been; the TUI is stopped, so none of it is drawn until the forced redraw on the way
+     * back. Nothing pig can do about a *drawn* frame while vim owns the screen, but there
+     * is nothing to lose by not reading.
+     *
+     * Must be called from a fiber. Both callers spawn one.
      */
     private function externalEditor(string $text): ?string
     {
@@ -660,7 +667,9 @@ final class InteractiveMode
         $this->tui->stop();
 
         try {
-            $exit = Process::interactive($argv);
+            $exit = Process::interactive($argv, static function (): void {
+                Async::delay(Process::ttyPollSeconds());
+            });
 
             if ($exit !== 0) {
                 return null;

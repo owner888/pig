@@ -39,7 +39,7 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 进去之后 `/help` 列出所有按键。
 
 Ctrl+G 把 prompt 里现在的内容丢进 `$VISUAL` 或 `$EDITOR`，改完再塞回来——给那种写到一半发现要写
-三段的消息用。
+三段的消息用。模型还在回答的时候也能用：编辑器拿着终端，回答在它背后继续到。
 
 `--model` 不用写全 id，写一部分就行——`--model sonnet`、`--model 'opus 4.1'`——`--model sonnet:high`
 还能顺手把思考档位一起设了。`--models` 列出全部。

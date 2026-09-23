@@ -10,6 +10,7 @@ use Pig\Tui\Clipboard\ClipboardFile;
 use Pig\Tui\Clipboard\ClipboardImage;
 use Pig\Tui\Components\Editor;
 use Pig\Tui\Process;
+use Pig\Tui\TuiError;
 
 /** A clipboard holding exactly what a test put on it. */
 final class FakeClipboard implements Clipboard
@@ -118,6 +119,56 @@ final class ClipboardTest extends TestCase
         // A paste that never returns would freeze the whole UI.
         $this->assertNull(Process::capture(['sleep', '30'], 0.3));
         $this->assertLessThan(3.0, microtime(true) - $started);
+    }
+
+    // ---- handing the terminal over ----------------------------------------------------
+
+    public function testInteractiveNeedsACommand(): void
+    {
+        try {
+            Process::interactive([]);
+            $this->fail('expected an empty command to be refused');
+        } catch (TuiError $error) {
+            $this->assertStringContainsString('needs a command', $error->getMessage());
+        }
+    }
+
+    /**
+     * With no controlling terminal there is nothing to hand over.
+     *
+     * Which is also why nothing here runs a real editor: `interactive()` opens `/dev/tty`
+     * for all three streams, and a test runner has no tty to open. This is the one branch
+     * reachable without one — and it has to be STOPPED rather than a crash, because a
+     * session started from a script is exactly where it happens.
+     */
+    public function testInteractiveWithNoTerminalIsStoppedRatherThanFatal(): void
+    {
+        // Caught rather than suppressed: `@` is forbidden in this repository and the lint
+        // pass fails the build on it.
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $tty = fopen('/dev/tty', 'r');
+        } finally {
+            restore_error_handler();
+        }
+
+        if (is_resource($tty)) {
+            fclose($tty);
+            $this->markTestSkipped('this run has a controlling terminal');
+        }
+
+        $polled = 0;
+
+        $exit = Process::interactive(['true'], static function () use (&$polled): void {
+            $polled++;
+        });
+
+        $this->assertSame(Process::STOPPED, $exit);
+
+        // Never started, so never polled: a caller yielding into an event loop is not left
+        // yielding forever over a process that does not exist.
+        $this->assertSame(0, $polled);
     }
 
     // ---- giving a program its input --------------------------------------------------

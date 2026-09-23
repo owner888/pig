@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Interactive;
 
 use Closure;
+use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\CodingAgent\Hooks\HookUi;
 use Pig\CodingAgent\Theme\Palette;
@@ -158,17 +159,24 @@ final class TerminalUi implements HookUi
 
         // Ctrl+G hands the text to `$VISUAL` and puts back whatever comes out. The dialog
         // stays open and stays focused, because the person is still answering the question.
+        //
+        // In a fiber of its own: this handler runs inside the loop's input callback, and the
+        // hand-off suspends while the editor is open — which from here would suspend the
+        // loop that called it. The dialog's own fiber is parked on the deferred below and
+        // cannot be borrowed for this.
         $field->on('ctrl+g', function () use ($field): void {
-            $edited = $this->externalEditor === null ? null : ($this->externalEditor)($field->text());
+            Async::spawn(function () use ($field): void {
+                $edited = $this->externalEditor === null ? null : ($this->externalEditor)($field->text());
 
-            if ($edited !== null) {
-                $field->setText($edited);
-            }
+                if ($edited !== null) {
+                    $field->setText($edited);
+                }
 
-            // Forced: the editor drew over the whole screen, so there is no previous frame
-            // to diff against.
-            $this->tui->setFocus($field);
-            $this->tui->requestRender(true);
+                // Forced: the editor drew over the whole screen, so there is no previous
+                // frame to diff against.
+                $this->tui->setFocus($field);
+                $this->tui->requestRender(true);
+            });
         });
 
         $this->open($title . '  ' . $this->palette()->fg('dim', 'enter to finish · shift+enter for a line'), $field);
