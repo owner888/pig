@@ -24,6 +24,38 @@ final class Config
 
         $home = getenv('HOME');
 
-        return ($home === false || $home === '' ? sys_get_temp_dir() : rtrim($home, '/')) . '/.pig';
+        return self::homeDirectory() . '/.pig';
+    }
+
+    /**
+     * Where pi keeps its own things.
+     *
+     * `~/.pi/agent`, and the `agent` is not a typo: upstream's `getAgentDir()` is
+     * `join(homedir(), ".pi", "agent")`, so its sessions are under `~/.pi/agent/sessions/`
+     * rather than `~/.pi/sessions/`. pig reads that directory and never writes to it.
+     *
+     * `PI_HOME` overrides it, for a test and for anyone whose pi lives somewhere else —
+     * upstream's own override is `PI_AGENT_DIR`, which is read first for the same reason
+     * the skills loader reads Claude's and Codex's directories: somebody who already told
+     * one tool where things are should not have to tell the other.
+     */
+    public static function piHome(): string
+    {
+        foreach (['PI_AGENT_DIR', 'PI_HOME'] as $variable) {
+            $override = getenv($variable);
+
+            if ($override !== false && $override !== '') {
+                return rtrim($override, '/');
+            }
+        }
+
+        return self::homeDirectory() . '/.pi/agent';
+    }
+
+    private static function homeDirectory(): string
+    {
+        $home = getenv('HOME');
+
+        return $home === false || $home === '' ? sys_get_temp_dir() : rtrim($home, '/');
     }
 }

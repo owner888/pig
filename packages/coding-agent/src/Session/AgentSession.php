@@ -1051,16 +1051,23 @@ final class AgentSession
             throw new AgentError('A hook stopped the compaction.');
         }
 
+        // Where the kept part starts, as an entry id, which is what the file records and
+        // what replaying it uses. Asked of the store rather than worked out from `$cut`:
+        // the cut is an index into the resolved conversation and the file is a tree of
+        // entries, and those stop being the same numbering the moment one compaction has
+        // already happened.
+        $firstKept = $this->store?->entryAt($cut);
+
         // A hook that supplied its own summary has done the work, so the model is not
-        // asked. Its `replaced` is taken from the cut rather than from the hook: how many
-        // messages this stands in for is what the session file needs to replay correctly,
-        // and it is not the hook's to get wrong.
+        // asked. Where the kept part starts is still the session's, not the hook's: it is
+        // what the file needs to replay correctly, and it is not the hook's to get wrong.
         if ($answer?->compaction !== null) {
             $summary = new CompactionSummary(
                 $answer->compaction->summary,
                 $answer->compaction->readFiles,
                 $answer->compaction->modifiedFiles,
                 $answer->compaction->tokensBefore,
+                $firstKept,
                 $cut,
             );
 
@@ -1077,7 +1084,10 @@ final class AgentSession
             return null;
         }
 
-        $summary = new CompactionSummary($text, $read, $modified, $this->contextTokens(), $cut);
+        // `$cut` twice over, as two different facts: which entry the kept part starts at,
+        // which is what the file stores, and how many messages that came to, which is only
+        // ever a line on a screen. Reading the file back derives the second from the first.
+        $summary = new CompactionSummary($text, $read, $modified, $this->contextTokens(), $firstKept, $cut);
 
         $this->agent->replaceMessages([$summary, ...$kept]);
         $this->store?->append($summary);

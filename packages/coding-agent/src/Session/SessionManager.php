@@ -48,17 +48,6 @@ final class SessionManager
     /** The end of the branch being talked on. Null in an empty session. */
     private ?string $leaf = null;
 
-    /**
-     * @var list<CustomEntry> hook state, in the file and not in the conversation
-     *
-     * Outside `$entries` on purpose: these have no parent, because a note about the session
-     * is not a point in it that anyone could go back to. Read with a flat scan, as upstream
-     * reads them.
-     */
-    private array $custom = [];
-
-    /** @var list<CustomEntry> written down but not yet on disk, because the file has not started */
-    private array $pending = [];
 
     /**
      * Whether the header has been written.
@@ -80,15 +69,36 @@ final class SessionManager
     /** A session that will be written to $cwd's directory once it has something to say. */
     public static function create(string $cwd, ?string $path = null): self
     {
-        $id = bin2hex(random_bytes(8));
+        $id = self::uuid();
         $now = Timestamp::nowMs();
 
+        // pi's name: the ISO timestamp with its colons and dots turned into dashes, an
+        // underscore, then the session id. Same shape so one directory can hold both
+        // tools' files and sort the way either of them expects.
+        $stamp = str_replace([':', '.'], '-', SessionEntries::iso($now));
+
         return new self(
-            $path ?? self::directory($cwd) . '/' . date('Y-m-d-His', intdiv($now, 1000)) . '-' . $id . '.jsonl',
+            $path ?? self::directory($cwd) . '/' . $stamp . '_' . $id . '.jsonl',
             $id,
             $cwd,
             $now,
         );
+    }
+
+    /** A v4 UUID, which is what pi's ids are made of. */
+    private static function uuid(): string
+    {
+        $bytes = random_bytes(16);
+        $bytes[6] = chr(ord($bytes[6]) & 0x0F | 0x40);
+        $bytes[8] = chr(ord($bytes[8]) & 0x3F | 0x80);
+
+        return implode('-', [
+            bin2hex(substr($bytes, 0, 4)),
+            bin2hex(substr($bytes, 4, 2)),
+            bin2hex(substr($bytes, 6, 2)),
+            bin2hex(substr($bytes, 8, 2)),
+            bin2hex(substr($bytes, 10, 6)),
+        ]);
     }
 
     /**
@@ -130,45 +140,29 @@ final class SessionManager
             $path,
             (string) ($header['id'] ?? ''),
             (string) ($header['cwd'] ?? ''),
-            (int) ($header['timestamp'] ?? 0),
+            SessionEntries::millis($header['timestamp'] ?? null),
         );
 
         $session->started = true;
         $previous = null;
 
         foreach (array_slice($lines, 1) as $line) {
-            $entry = json_decode($line, true);
+            $raw = json_decode($line, true);
 
-            if (!is_array($entry)) {
+            if (!is_array($raw)) {
                 continue;
             }
 
-            if (($entry['type'] ?? null) === 'custom') {
-                $session->custom[] = new CustomEntry(
-                    (string) ($entry['customType'] ?? ''),
-                    $entry['data'] ?? null,
-                    isset($entry['timestamp']) ? (int) $entry['timestamp'] : null,
-                );
+            [$item, $parent, $named] = self::read($raw, $session->entries);
 
-                continue;
-            }
-
-            $message = SessionCodec::decode($entry);
-
-            if ($message === null) {
-                continue;
-            }
-
-            // A file written before the tree has no ids. Read linearly, each entry is
-            // the child of the one before it, which is the same conversation the old
-            // format described — so an old session opens as a tree with no branches.
-            $id = (string) ($entry['entryId'] ?? self::newId($session->entries));
-            $parent = array_key_exists('parent', $entry) ? $entry['parent'] : $previous;
-
-            $session->entries[$id] = [
-                'message' => $message,
-                'parent' => is_string($parent) ? $parent : null,
-            ];
+            // A line pig has nothing to do with — `thinking_level_change`, `model_change`,
+            // `label`, all pi's — is kept in the tree as a node with nothing in it rather
+            // than skipped. **Skipping it broke the chain**: the entries after it name it
+            // as their parent, so walking back from the leaf stopped there and a pi
+            // conversation came back as its first message and nothing else. It is walked
+            // past on the way out instead, where it costs nothing.
+            $id = (string) ($raw['id'] ?? $raw['entryId'] ?? self::newId($session->entries));
+            $session->entries[$id] = ['message' => $item, 'parent' => $named ? $parent : $previous];
 
             $previous = $id;
         }
@@ -178,6 +172,27 @@ final class SessionManager
         $session->leaf = $previous;
 
         return $session;
+    }
+
+    /**
+     * One line, whichever format wrote it.
+     *
+     * @param array<string, mixed> $raw
+     * @param array<string, mixed> $taken
+     * @return array{0: mixed, 1: string|null, 2: bool} the item, its parent, and whether
+     *         the line named one
+     */
+    private static function read(array $raw, array $taken): array
+    {
+        if (isset($raw['type'])) {
+            return [
+                SessionEntries::decode($raw),
+                is_string($raw['parentId'] ?? null) ? $raw['parentId'] : null,
+                array_key_exists('parentId', $raw),
+            ];
+        }
+
+        return SessionEntries::readOld($raw) ?? [null, null, false];
     }
 
     /**
@@ -191,14 +206,32 @@ final class SessionManager
     public function messages(): array
     {
         $path = [];
-        $id = $this->leaf;
 
-        while ($id !== null && isset($this->entries[$id])) {
-            array_unshift($path, $this->entries[$id]['message']);
-            $id = $this->entries[$id]['parent'];
+        foreach ($this->pathTo($this->leaf) as $id) {
+            $path[] = [$id, $this->entries[$id]['message']];
         }
 
-        return self::resolve($path);
+        return array_map(static fn (array $one): mixed => $one[1], self::resolve($path));
+    }
+
+    /**
+     * Which entry the message at $index of `messages()` came from.
+     *
+     * The join between the conversation and the file, and the reason it has to exist: a
+     * compaction records where the kept part *starts*, by entry id, and what decides the cut
+     * is an index into the resolved conversation. Those two are not the same numbering as
+     * soon as there has been one compaction already, so the translation is done here, where
+     * the resolution is, rather than guessed at by the caller.
+     */
+    public function entryAt(int $index): ?string
+    {
+        $path = [];
+
+        foreach ($this->pathTo($this->leaf) as $id) {
+            $path[] = [$id, $this->entries[$id]['message']];
+        }
+
+        return self::resolve($path)[$index][0] ?? null;
     }
 
     /**
@@ -211,15 +244,21 @@ final class SessionManager
     public function branch(): array
     {
         $path = [];
-        $id = $this->leaf;
 
-        while ($id !== null && isset($this->entries[$id])) {
-            array_unshift($path, [
+        foreach ($this->pathTo($this->leaf) as $id) {
+            // A hook's note is not a point in the conversation anyone could go back to, and
+            // neither is a line pig cannot read.
+            $item = $this->entries[$id]['message'];
+
+            if ($item === null || $item instanceof CustomEntry) {
+                continue;
+            }
+
+            $path[] = [
                 'id' => $id,
                 'message' => $this->entries[$id]['message'],
                 'branches' => $this->childCount($this->entries[$id]['parent']),
-            ]);
-            $id = $this->entries[$id]['parent'];
+            ];
         }
 
         return $path;
@@ -273,8 +312,12 @@ final class SessionManager
         $left = [];
 
         foreach ($this->pathTo($this->leaf) as $entryId) {
-            if (!isset($target[$entryId])) {
-                $left[] = $this->entries[$entryId]['message'];
+            $item = $this->entries[$entryId]['message'];
+
+            // A hook's note and a line pig cannot read are not things that were said, so
+            // they are not things a summary of what is being left behind should mention.
+            if (!isset($target[$entryId]) && $item !== null && !$item instanceof CustomEntry) {
+                $left[] = $item;
             }
         }
 
@@ -320,24 +363,92 @@ final class SessionManager
      * way out, every time. Doing it once at load would be wrong the moment a branch was
      * taken from before the compaction.
      *
-     * @param list<mixed> $path
-     * @return list<mixed>
+     * @param list<array{0: string, 1: mixed}> $path
+     * @return list<array{0: ?string, 1: mixed}>
      */
     private static function resolve(array $path): array
     {
         $messages = [];
 
-        foreach ($path as $message) {
-            if ($message instanceof CompactionSummary && $message->replaced > 0) {
-                array_splice($messages, 0, $message->replaced, [$message]);
+        foreach ($path as [$id, $item]) {
+            // A hook's private note is in the file and not in the conversation — the whole
+            // point of `appendEntry()` — and a line from pi that pig does not understand is
+            // nothing at all. Both are walked past rather than dropped from the tree,
+            // because the entries after them still hang off them.
+            if ($item === null || $item instanceof CustomEntry) {
+                continue;
+            }
+
+            if ($item instanceof CompactionSummary) {
+                $kept = self::keptFrom($path, $item->firstKeptEntryId, $id);
+
+                // Replaced, not seen: what came before minus what is being kept. Counting
+                // everything before the compaction would say a summary that kept the last
+                // four messages had replaced them too.
+                $messages = [[$id, self::withCount($item, count($messages) - count($kept))], ...$kept];
 
                 continue;
             }
 
-            $messages[] = $message;
+            $messages[] = [$id, $item];
         }
 
         return $messages;
+    }
+
+    /**
+     * What a compaction keeps: everything from `firstKeptEntryId` up to the compaction.
+     *
+     * pi's model, and the reason pig's changed: a count of replaced messages says the same
+     * thing from the other end and is not something pi can read. Null keeps nothing, which
+     * is a summary that stands in for the whole conversation before it.
+     *
+     * @param list<array{0: string, 1: mixed}> $path
+     * @return list<array{0: string, 1: mixed}>
+     */
+    private static function keptFrom(array $path, ?string $firstKept, string $until): array
+    {
+        if ($firstKept === null) {
+            return [];
+        }
+
+        $kept = [];
+        $keeping = false;
+
+        foreach ($path as [$id, $item]) {
+            if ($id === $until) {
+                break;
+            }
+
+            $keeping = $keeping || $id === $firstKept;
+
+            if ($keeping && $item !== null && !$item instanceof CustomEntry && !$item instanceof CompactionSummary) {
+                $kept[] = [$id, $item];
+            }
+        }
+
+        return $kept;
+    }
+
+    /**
+     * The same summary with `replaced` filled in.
+     *
+     * Derived here rather than stored, because the file holds `firstKeptEntryId` and a file
+     * that held both could disagree with itself. It is only ever a line on a screen —
+     * "1,204 earlier messages summarised".
+     *
+     */
+    private static function withCount(CompactionSummary $summary, int $replaced): CompactionSummary
+    {
+        return new CompactionSummary(
+            $summary->summary,
+            $summary->readFiles,
+            $summary->modifiedFiles,
+            $summary->tokensBefore,
+            $summary->firstKeptEntryId,
+            max(0, $replaced),
+            $summary->timestamp,
+        );
     }
 
     /**
@@ -348,15 +459,12 @@ final class SessionManager
      */
     public function append(mixed $message): void
     {
-        $entry = SessionCodec::encode($message);
+        $id = self::newId($this->entries);
+        $entry = SessionEntries::encode($message, $id, $this->leaf);
 
         if ($entry === null) {
             return;
         }
-
-        $id = self::newId($this->entries);
-        $entry['entryId'] = $id;
-        $entry['parent'] = $this->leaf;
 
         $this->entries[$id] = ['message' => $message, 'parent' => $this->leaf];
         $this->leaf = $id;
@@ -383,29 +491,11 @@ final class SessionManager
     public function appendCustomEntry(string $customType, mixed $data = null): void
     {
         $entry = new CustomEntry($customType, $data);
-        $this->custom[] = $entry;
 
-        if (!$this->started) {
-            // Held back with the messages, not dropped. A hook noting something on
-            // `session_start` — which is upstream's own example — happens before the first
-            // answer, so skipping it here would lose exactly the case this is for.
-            $this->pending[] = $entry;
-
-            return;
-        }
-
-        $this->write(self::customLine($entry));
-    }
-
-    /** @return array<string, mixed> */
-    private static function customLine(CustomEntry $entry): array
-    {
-        return [
-            'type' => 'custom',
-            'customType' => $entry->customType,
-            'data' => SessionCodec::plain($entry->data),
-            'timestamp' => $entry->timestamp,
-        ];
+        // In the tree, as pi's is: it has an id and a parent like every other line, and
+        // `messages()` walks past it rather than the tree not knowing about it. pig kept
+        // these outside the tree at first, which wrote a line pi could not place.
+        $this->append($entry);
     }
 
     /**
@@ -415,33 +505,20 @@ final class SessionManager
      */
     public function customEntries(?string $customType = null): array
     {
-        if ($customType === null) {
-            return $this->custom;
+        $found = [];
+
+        // Read off the branch being talked on, not off a list of its own: a note written on
+        // a branch that was abandoned is not a note about this conversation, and a hook
+        // reconstructing its state from it would rebuild something that was undone.
+        foreach ($this->pathTo($this->leaf) as $id) {
+            $entry = $this->entries[$id]['message'];
+
+            if ($entry instanceof CustomEntry && ($customType === null || $entry->customType === $customType)) {
+                $found[] = $entry;
+            }
         }
 
-        return array_values(array_filter(
-            $this->custom,
-            static fn (CustomEntry $entry): bool => $entry->customType === $customType,
-        ));
-    }
-
-    /**
-     * Oldest first, keeping the order of anything that shares a timestamp.
-     *
-     * @param list<array<string, mixed>> $lines
-     * @return list<array<string, mixed>>
-     */
-    private static function byTimestamp(array $lines): array
-    {
-        $keyed = [];
-
-        foreach ($lines as $at => $line) {
-            $keyed[] = [(int) ($line['timestamp'] ?? 0), $at, $line];
-        }
-
-        usort($keyed, static fn (array $a, array $b): int => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
-
-        return array_map(static fn (array $one): array => $one[2], $keyed);
+        return $found;
     }
 
     /**
@@ -449,8 +526,10 @@ final class SessionManager
      */
     private static function newId(array $taken): string
     {
+        // Eight characters off the front of a UUID, as upstream's `generateId()` does.
+        // Short enough to read in a file and long enough that the retry almost never runs.
         do {
-            $id = bin2hex(random_bytes(6));
+            $id = substr(self::uuid(), 0, 8);
         } while (isset($taken[$id]));
 
         return $id;
@@ -485,37 +564,23 @@ final class SessionManager
                 'type' => 'session',
                 'version' => self::VERSION,
                 'id' => $this->id,
+                'timestamp' => SessionEntries::iso($this->createdAt),
                 'cwd' => $this->cwd,
-                'timestamp' => $this->createdAt,
             ]);
 
-            // Everything held back so far, with the ids and parents it was given — so the
-            // tree that is in memory is the tree the file describes — interleaved with any
-            // notes a hook left before the first answer, by time, so the file reads in the
-            // order things happened rather than messages-then-notes.
-            $held = [];
-
+            // Everything held back so far, in the order it was appended and with the ids
+            // and parents it was given — so the tree in memory is the tree the file
+            // describes. In order because that is the order it happened: notes and messages
+            // go through one `append()` now, so there is nothing left to interleave.
             foreach (array_slice($this->entries, 0, -1, true) as $id => $earlier) {
-                $encoded = SessionCodec::encode($earlier['message']);
+                // Cast, because PHP turns an array key that looks like an integer into one:
+                // an id is eight hex characters and about one in forty is all digits, so
+                // `"12345678"` comes back out of this loop as `12345678`. See CLAUDE.md.
+                $encoded = SessionEntries::encode($earlier['message'], (string) $id, $earlier['parent']);
 
                 if ($encoded !== null) {
-                    $held[] = [...$encoded, 'entryId' => $id, 'parent' => $earlier['parent']];
+                    $lines .= self::line($encoded);
                 }
-            }
-
-            foreach ($this->pending as $note) {
-                $held[] = self::customLine($note);
-            }
-
-            $this->pending = [];
-
-            // Stable, so two things written in the same millisecond keep the order they
-            // were written in — `usort` is not, and a message and the note about it very
-            // often share a millisecond.
-            $held = self::byTimestamp($held);
-
-            foreach ($held as $line) {
-                $lines .= self::line($line);
             }
 
             $this->started = true;
@@ -537,13 +602,25 @@ final class SessionManager
     // ---- finding one again --------------------------------------------------------------
 
     /** Where $cwd's sessions live: one directory per project, named after its path. */
-    public static function directory(string $cwd): string
+    public static function directory(string $cwd, ?string $home = null): string
     {
-        // The path is the name, with the separators flattened — so the directory says
-        // which project it belongs to at a glance, which a hash never would.
-        $slug = trim((string) preg_replace('/[^A-Za-z0-9._-]+/', '-', $cwd), '-');
+        return ($home ?? Config::home()) . '/sessions/' . self::slug($cwd);
+    }
 
-        return Config::home() . '/sessions/' . ($slug === '' ? 'root' : $slug);
+    /**
+     * A directory name for a working directory, exactly as pi builds one.
+     *
+     * The leading separator goes, every `/`, `\\` and `:` becomes a dash, and the whole
+     * thing is wrapped in `--`. pig used to squash every run of unusual characters into
+     * one dash and not wrap it, which named the same project two different things — so
+     * pointing pig at pi's directory would have found nothing.
+     */
+    public static function slug(string $cwd): string
+    {
+        $flat = (string) preg_replace('#^[/\\\\]#', '', $cwd);
+        $flat = (string) preg_replace('#[/\\\\:]#', '-', $flat);
+
+        return '--' . $flat . '--';
     }
 
     /**
@@ -553,8 +630,16 @@ final class SessionManager
      */
     public static function listFor(string $cwd): array
     {
-        $paths = glob(self::directory($cwd) . '/*.jsonl') ?: [];
-        rsort($paths);
+        // pi's directory as well as pig's. The file format is the same now, so a
+        // conversation started in one opens in the other — and somebody who has been using
+        // pi should not have to go and find the file by hand. Newest first across both,
+        // which the names sort into by themselves: they begin with an ISO timestamp.
+        $paths = [
+            ...(glob(self::directory($cwd) . '/*.jsonl') ?: []),
+            ...(glob(self::directory($cwd, Config::piHome()) . '/*.jsonl') ?: []),
+        ];
+
+        usort($paths, static fn (string $a, string $b): int => basename($b) <=> basename($a));
 
         $sessions = [];
 
@@ -604,10 +689,19 @@ final class SessionManager
                 continue;
             }
 
+            // The message is inside the line in pi's format and flat on it in the one pig
+            // used to write. Read without decoding either: this runs once per file for
+            // every session in a list, and all it needs is the first thing anybody said.
+            $message = is_array($entry['message'] ?? null) ? $entry['message'] : $entry;
+
+            if (($entry['type'] ?? 'message') !== 'message' && !isset($entry['role'])) {
+                continue;
+            }
+
             $messages++;
 
-            if ($opening === '' && ($entry['role'] ?? null) === 'user') {
-                $opening = self::opening($entry);
+            if ($opening === '' && ($message['role'] ?? null) === 'user') {
+                $opening = self::opening($message);
             }
         }
 
@@ -615,7 +709,7 @@ final class SessionManager
             $path,
             (string) ($header['id'] ?? ''),
             (string) ($header['cwd'] ?? ''),
-            (int) ($header['timestamp'] ?? 0),
+            SessionEntries::millis($header['timestamp'] ?? null),
             $messages,
             $opening,
         );

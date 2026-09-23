@@ -190,11 +190,62 @@ Three things this changed that are worth knowing:
 - **A compaction is resolved on the way out, every time.** It used to be applied once as the
   file was read, which was correct while the log was a line and wrong the moment a branch is
   taken from *before* the compaction — that branch never had it.
-- **Format version 2.** A file with no ids is read linearly, each entry the child of the one
-  before it, which is the same conversation the old format described. So an old session opens
-  as a tree with no branches, and needs no migration step.
+- **Format version 2, and it is pi's version 2.** See below — it was not, for a while, and
+  that was worse than a different number.
 - **The end of the file is the leaf.** A branch is only ever made by appending, so the newest
   entry is always on the branch that was being talked on when the session was last open.
+
+### The session file is pi's file
+
+**It was not, and it said it was.** pig wrote the message flattened onto the line with
+`entryId` and `parent` and an integer millisecond timestamp, under a header saying
+`version: 2` — which is the number pi uses for a different shape. So pi opening a pig file
+would agree about the version and then find no `type` on any line. A different version number
+would have been honest; the same number for a different format is the one thing that cannot be.
+
+It is pi's now, field for field:
+
+| | pi, and now pig | pig, before |
+|---|---|---|
+| project directory | `--Users-kaka-Dev-pig--` | `Users-kaka-Dev-pig` |
+| file | `2026-01-02T21-29-30-123Z_<uuid>.jsonl` | `2026-01-02-212930-<12 hex>.jsonl` |
+| header timestamp | `"2026-01-02T21:29:30.123Z"` | `1735849770123` |
+| a message | `{"type":"message","id","parentId","timestamp","message":{…}}` | the message, flat, plus `entryId` and `parent` |
+| entry id | eight characters off a UUID | twelve hex characters |
+| compaction | `type:"compaction"` with `firstKeptEntryId` | `role:"compactionSummary"` with `replaced` |
+| a hook's message | `type:"custom_message"` | `role:"hookMessage"` |
+| a hook's note | `type:"custom"`, in the tree | `type:"custom"`, outside it |
+
+`Session\SessionEntries` encodes the **line**; `Session\SessionCodec` encodes the **message**
+that sits inside one. Upstream keeps them apart for a reason that only shows up here: not
+every line is a message. A compaction, a branch summary, a hook's message and a hook's private
+note are each a line of their own with its own `type`, and two of them are not part of the
+conversation at all. `RpcEvents` keeps using `SessionCodec`, because a host wants a message.
+
+Three things this changed that are worth knowing:
+
+- **`replaced` became `firstKeptEntryId`.** They say the same thing from opposite ends — "this
+  stands in for the first N messages" against "the kept part starts here" — and only one of
+  them is something pi can read. `replaced` survives as a number on a screen, *derived* when
+  the file is read: a file holding both is a file that can disagree with itself.
+  `SessionManager::entryAt()` is the join, because the cut is an index into the resolved
+  conversation and the file is a tree of entries, and those stop being the same numbering the
+  moment one compaction has already happened.
+- **A line pig does not understand stays in the tree.** `thinking_level_change`, `model_change`
+  and `label` are pi's and pig has nothing that uses them — but skipping them **broke the
+  chain**, because the entries after one name it as their parent. A pi conversation came back
+  as its first message and nothing else. They are kept as nodes holding nothing and walked past
+  on the way out. The general shape: **in a tree read from a file, an entry you cannot use is
+  still an entry other entries point at.**
+- **`~/.pi/agent/sessions/` is read too**, beside pig's own, so `--resume` lists both and
+  opening one appends to it in its own directory in its own format — the conversation stays one
+  conversation. The `agent` in that path is not a typo: upstream's `getAgentDir()` is
+  `join(homedir(), ".pi", "agent")`. `PI_AGENT_DIR` and `PI_HOME` override it.
+
+Old pig files still open. They are told apart by what the line has rather than by the version
+number — pi's carries `type`, pig's old one carries `role` — because both say 2, which is the
+whole reason this was worth fixing. Nothing rewrites a file, so an old session stays old and a
+line pig skipped stays exactly where it was.
 
 Not ported: labels on entries, and branch summarisation (upstream summarises an abandoned
 branch so the model knows what was tried) — the second needs `branch-summarization.ts`, which
@@ -1725,6 +1776,18 @@ with nothing said about it.
 `Cli\Arguments::TAKES_A_VALUE` is the list, and everything not on it is a flag. Upstream's
 `args.ts` spells each option out for the same reason. **A CLI cannot afford a guess about what
 the next word means**, and the failure mode of guessing is silent.
+
+### A hex id used as an array key becomes an integer
+
+An entry id is eight hex characters, and about one in forty-three is all digits. PHP turns an
+array key that looks like an integer into one, so `$entries["12345678"]` comes back out of a
+`foreach ($entries as $id => …)` as the **int** `12345678` — and a function typed `string $id`
+then throws. Intermittently, in about two percent of runs, which is the worst rate there is:
+often enough to happen to a user, rare enough to pass every time you look.
+
+Lookups are safe — PHP normalises the subscript the same way — so only iteration is affected,
+and the fix is `(string) $id` where the key comes out. It has been latent since ids existed;
+pig's twelve-character ids hit it about one run in three hundred.
 
 ### A short option is not automatically a flag
 

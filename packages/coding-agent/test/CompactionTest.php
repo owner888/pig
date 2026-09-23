@@ -74,7 +74,7 @@ final class CompactionTest extends TestCase
     public function testAReadingTakenBeforeACompactionIsNotTrusted(): void
     {
         $messages = [
-            new CompactionSummary('what happened', [], [], 0, 2),
+            new CompactionSummary('what happened', [], [], 0, replaced: 2),
             self::assistant('kept across the cut', 190_000, StopReason::Stop, Timestamp::nowMs() - 1_000),
         ];
 
@@ -86,7 +86,7 @@ final class CompactionTest extends TestCase
     public function testAReadingTakenAfterACompactionIsTheOneThatCounts(): void
     {
         $messages = [
-            new CompactionSummary('what happened', [], [], 0, 2, Timestamp::nowMs() - 1_000),
+            new CompactionSummary('what happened', [], [], 0, null, 2, Timestamp::nowMs() - 1_000),
             self::assistant('answered since', 4_000),
         ];
 

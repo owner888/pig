@@ -35,13 +35,20 @@ final class SessionManagerTest extends TestCase
     {
         $this->home = sys_get_temp_dir() . '/pig-sessions-' . bin2hex(random_bytes(4));
         putenv('PIG_HOME=' . $this->home);
+
+        // `listFor()` reads pi's directory too, and on a real machine that is a real
+        // directory with real conversations in it. Pointed somewhere empty so a test
+        // cannot pass or fail on what the person running it happens to have.
+        putenv('PI_HOME=' . $this->home . '-pi');
     }
 
     #[\Override]
     protected function tearDown(): void
     {
         putenv('PIG_HOME');
+        putenv('PI_HOME');
         self::remove($this->home);
+        self::remove($this->home . '-pi');
     }
 
     private static function remove(string $path): void
@@ -208,13 +215,23 @@ final class SessionManagerTest extends TestCase
         $session->append($this->answer());
         $session->append(new UserMessage('the second thing'));
         $session->append($this->answer('and again'));
-        $session->append(new CompactionSummary('we talked about things', ['a.php'], ['b.php'], 1_000, 3));
+
+        // Where the kept part starts, by entry id — pi's way of saying it, and what the
+        // file records. `entryAt()` is the join: index 3 of the conversation is the
+        // fourth message, which is the one this summary keeps.
+        $session->append(new CompactionSummary(
+            'we talked about things',
+            ['a.php'],
+            ['b.php'],
+            1_000,
+            $session->entryAt(3),
+        ));
 
         $back = SessionManager::open($session->path)->messages();
 
-        // Three messages became one, and the fourth — everything after the cut — is
-        // still there. Replaying the log without the count would hand a resumed session
-        // back the whole conversation that had just been compacted away.
+        // Three messages became one, and the fourth is still there. Replaying the log
+        // without knowing where the kept part starts would hand a resumed session back the
+        // whole conversation that had just been compacted away.
         $this->assertCount(2, $back);
         $this->assertInstanceOf(CompactionSummary::class, $back[0]);
         $this->assertSame('we talked about things', $back[0]->summary);
@@ -222,6 +239,10 @@ final class SessionManagerTest extends TestCase
         $this->assertSame(['b.php'], $back[0]->modifiedFiles);
         $this->assertSame(1_000, $back[0]->tokensBefore);
         $this->assertSame('and again', $back[1]->content[0]->text);
+
+        // Counted back from the file rather than stored in it: two facts about one thing
+        // written down twice is two facts that can disagree.
+        $this->assertSame(3, $back[0]->replaced);
     }
 
     public function testTheMessagesThatWereSummarisedAreStillInTheFile(): void
@@ -229,11 +250,25 @@ final class SessionManagerTest extends TestCase
         $session = SessionManager::create('/some/project');
         $session->append(new UserMessage('the first thing'));
         $session->append($this->answer());
-        $session->append(new CompactionSummary('we talked about things', [], [], 0, 2));
+        $session->append(new CompactionSummary('we talked about things', [], [], 0, null));
 
         // Nothing is ever rewritten: a session log is a record of what happened, and what
         // happened is that these were said and then summarised.
         $this->assertStringContainsString('the first thing', (string) file_get_contents($session->path));
+    }
+
+    public function testASummaryThatKeepsNothingReplacesTheWholeConversation(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer());
+        $session->append(new CompactionSummary('all of it', [], [], 0, null));
+
+        // A null `firstKeptEntryId` is "the kept part starts nowhere", which is a summary
+        // standing in for everything before it.
+        $back = SessionManager::open($session->path)->messages();
+        $this->assertCount(1, $back);
+        $this->assertSame('all of it', $back[0]->summary);
     }
 
     public function testTwoCompactionsInARowLeaveOneSummary(): void
@@ -241,10 +276,10 @@ final class SessionManagerTest extends TestCase
         $session = SessionManager::create('/some/project');
         $session->append(new UserMessage('one'));
         $session->append($this->answer());
-        $session->append(new CompactionSummary('first summary', [], [], 0, 2));
+        $session->append(new CompactionSummary('first summary', [], [], 0, null));
         $session->append(new UserMessage('two'));
         $session->append($this->answer('again'));
-        $session->append(new CompactionSummary('second summary', [], [], 0, 3));
+        $session->append(new CompactionSummary('second summary', [], [], 0, null));
 
         $back = SessionManager::open($session->path)->messages();
 
@@ -468,7 +503,7 @@ final class SessionManagerTest extends TestCase
         $session->append(new UserMessage('one'));
         $session->append($this->answer('first'));
         $target = $session->branch()[0]['id'];
-        $session->append(new CompactionSummary('it was about one thing', replaced: 2));
+        $session->append(new CompactionSummary('it was about one thing'));
 
         $left = $session->abandoning($target);
 
@@ -501,7 +536,7 @@ final class SessionManagerTest extends TestCase
         $session->append(new UserMessage('one'));
         $session->append($this->answer('first'));
         $fork = $session->leaf();
-        $session->append(new CompactionSummary('summarised', [], [], 0, 2));
+        $session->append(new CompactionSummary('summarised', [], [], 0, null));
 
         $session->goTo($fork);
 
@@ -515,7 +550,8 @@ final class SessionManagerTest extends TestCase
     public function testSessionsAreListedNewestFirstAndLabelledByWhatWasAsked(): void
     {
         foreach (['the first thing', 'the second thing'] as $index => $said) {
-            $session = SessionManager::create('/some/project', $this->home . "/sessions/some-project/2026-01-0{$index}-000000-x{$index}.jsonl");
+            $directory = SessionManager::directory('/some/project');
+            $session = SessionManager::create('/some/project', "{$directory}/2026-01-0{$index}T00-00-00-000Z_x{$index}.jsonl");
             $session->append(new UserMessage($said));
             $session->append($this->answer());
         }

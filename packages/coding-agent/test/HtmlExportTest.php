@@ -131,7 +131,7 @@ final class HtmlExportTest extends TestCase
 
     public function testACompactionSaysHowMuchItReplaced(): void
     {
-        $html = $this->html([new CompactionSummary('we talked about things', [], [], 0, 42)]);
+        $html = $this->html([new CompactionSummary('we talked about things', [], [], 0, replaced: 42)]);
 
         $this->assertStringContainsString('42 earlier messages summarised', $html);
         $this->assertStringContainsString('we talked about things', $html);

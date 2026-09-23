@@ -32,7 +32,7 @@ use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\Compaction;
 use Pig\CodingAgent\Session\HookMessage;
-use Pig\CodingAgent\Session\SessionCodec;
+use Pig\CodingAgent\Session\SessionEntries;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\Test\AssertsThrows;
 use RuntimeException;
@@ -135,7 +135,7 @@ final class HookMessagesTest extends TestCase
         $this->assertStringNotContainsString('hunter2', json_encode($llm));
     }
 
-    public function testItRoundTripsThroughTheCodec(): void
+    public function testItRoundTripsThroughTheSessionFilesEntryCodec(): void
     {
         $original = new HookMessage(
             'build',
@@ -144,7 +144,13 @@ final class HookMessagesTest extends TestCase
             details: ['exitCode' => 2],
         );
 
-        $back = SessionCodec::decode(SessionCodec::encode($original) ?? []);
+        // `SessionEntries`, not `SessionCodec`: a hook's message is a line of its own in
+        // the file — pi's `custom_message` — and not a message wrapped in one.
+        $line = SessionEntries::encode($original, 'a1b2c3d4', null);
+        self::assertNotNull($line);
+        $this->assertSame('custom_message', $line['type']);
+
+        $back = SessionEntries::decode($line);
 
         $this->assertInstanceOf(HookMessage::class, $back);
         $this->assertSame('build', $back->customType);

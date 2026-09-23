@@ -17,7 +17,9 @@ use Pig\Ai\Timestamp;
  * The file lists are separate from the prose because they are the part a model needs
  * exactly right — a summary that says "read some files" sends it to read them again.
  *
- * Ported from upstream's `CompactionEntry` and `CompactionDetails`.
+ * Ported from upstream's `CompactionEntry` and `CompactionDetails`, `firstKeptEntryId`
+ * included: pig used to store a count of replaced messages instead, which said the same
+ * thing in a way pi could not read.
  */
 final readonly class CompactionSummary
 {
@@ -27,15 +29,21 @@ final readonly class CompactionSummary
      * @param list<string> $readFiles     looked at and left alone
      * @param list<string> $modifiedFiles written or edited
      * @param int $tokensBefore what the conversation cost before this replaced it
-     * @param int $replaced    how many messages, counting from the start, this stands in
-     *                         for — the one thing a replayed log cannot work out for
-     *                         itself, since the file still holds all of them
+     * @param string|null $firstKeptEntryId the entry the kept part of the conversation
+     *                    starts at. **This is what the file stores and what replaying it
+     *                    uses** — everything on the branch before it is what this summary
+     *                    stands in for. Null means the whole conversation before this one.
+     * @param int $replaced how many messages that worked out to, for a line on the screen.
+     *                      Derived when the file is read, never written: it is the same
+     *                      fact counted from the other end, and a file holding both is a
+     *                      file that can disagree with itself.
      */
     public function __construct(
         public string $summary,
         public array $readFiles = [],
         public array $modifiedFiles = [],
         public int $tokensBefore = 0,
+        public ?string $firstKeptEntryId = null,
         public int $replaced = 0,
         ?int $timestamp = null,
     ) {

@@ -71,6 +71,10 @@ not taken stays in the session file, so going back costs nothing and can be undo
 — and it offers to summarise the branch you are leaving, so an hour of exploring arrives on the
 branch you are joining instead of being left behind.
 
+Sessions are written in **pi's own format**, in pi's own directory layout — so a conversation
+started in one opens in the other, and `--resume` lists what is in `~/.pi/agent/sessions/`
+beside pig's own. Carrying on from a pi session appends to that file, in that format.
+
 `/export` writes the conversation out as one self-contained HTML file — markdown rendered,
 code highlighted, no JavaScript in it at all.
 

@@ -66,7 +66,7 @@ final class SessionCodec
                 'readFiles' => $message->readFiles,
                 'modifiedFiles' => $message->modifiedFiles,
                 'tokensBefore' => $message->tokensBefore,
-                'replaced' => $message->replaced,
+                'firstKeptEntryId' => $message->firstKeptEntryId,
                 'timestamp' => $message->timestamp,
             ],
             $message instanceof BranchSummary => [
@@ -76,16 +76,6 @@ final class SessionCodec
                 'modifiedFiles' => $message->modifiedFiles,
                 'fromId' => $message->fromId,
                 'fromHook' => $message->fromHook,
-                'timestamp' => $message->timestamp,
-            ],
-            $message instanceof HookMessage => [
-                'role' => 'hookMessage',
-                'customType' => $message->customType,
-                'content' => self::encodeContent($message->content),
-                'display' => $message->display,
-                // Whatever a hook put there, as JSON if it can be — same treatment a tool's
-                // `details` gets, and for the same reason: it is `mixed` by design.
-                'details' => self::plain($message->details),
                 'timestamp' => $message->timestamp,
             ],
             $message instanceof BashExecution => [
@@ -135,6 +125,7 @@ final class SessionCodec
                 array_values(array_map(strval(...), (array) ($entry['readFiles'] ?? []))),
                 array_values(array_map(strval(...), (array) ($entry['modifiedFiles'] ?? []))),
                 (int) ($entry['tokensBefore'] ?? 0),
+                isset($entry['firstKeptEntryId']) ? (string) $entry['firstKeptEntryId'] : null,
                 (int) ($entry['replaced'] ?? 0),
                 $timestamp,
             ),
@@ -144,13 +135,6 @@ final class SessionCodec
                 array_values(array_map(strval(...), (array) ($entry['modifiedFiles'] ?? []))),
                 isset($entry['fromId']) ? (string) $entry['fromId'] : null,
                 (bool) ($entry['fromHook'] ?? false),
-                $timestamp,
-            ),
-            'hookMessage' => new HookMessage(
-                (string) ($entry['customType'] ?? ''),
-                self::decodeContent($entry['content'] ?? []),
-                (bool) ($entry['display'] ?? true),
-                $entry['details'] ?? null,
                 $timestamp,
             ),
             'bashExecution' => new BashExecution(
@@ -212,10 +196,16 @@ final class SessionCodec
     }
 
     /**
-     * @param list<array<string, mixed>> $blocks
+     * Content blocks back from JSON.
+     *
+     * Public alongside `encodeContent()`, and for the same reason: `SessionEntries` reads a
+     * hook message's content off a line it owns, and a second decoder for one shape is two
+     * things that can disagree about what a message looks like.
+     *
+     * @param list<mixed> $blocks
      * @return list<mixed>
      */
-    private static function decodeContent(array $blocks): array
+    public static function decodeContent(array $blocks): array
     {
         $content = [];
 
