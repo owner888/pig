@@ -48,6 +48,9 @@ final class SessionManager
     /** The end of the branch being talked on. Null in an empty session. */
     private ?string $leaf = null;
 
+    /** @var array<string, string> what each named point is called, by entry id */
+    private array $labels = [];
+
 
     /**
      * Whether the header has been written.
@@ -161,10 +164,22 @@ final class SessionManager
             // past on the way out instead, where it costs nothing.
             $id = (string) ($raw['id'] ?? self::newId($session->entries));
 
+            $item = SessionEntries::decode($raw);
+
             $session->entries[$id] = [
-                'message' => SessionEntries::decode($raw),
+                'message' => $item,
                 'parent' => is_string($raw['parentId'] ?? null) ? $raw['parentId'] : null,
             ];
+
+            // In file order, so the last thing said about a point is what it is called —
+            // including "nothing", which is how a name is taken off again.
+            if ($item instanceof Label) {
+                if ($item->label === null) {
+                    unset($session->labels[$item->targetId]);
+                } else {
+                    $session->labels[$item->targetId] = $item->label;
+                }
+            }
 
             $previous = $id;
         }
@@ -220,7 +235,7 @@ final class SessionManager
      *
      * The ids as well as the messages, because going back means naming one.
      *
-     * @return list<array{id: string, message: mixed, branches: int}>
+     * @return list<array{id: string, message: mixed, branches: int, label: string|null}>
      */
     public function branch(): array
     {
@@ -237,6 +252,7 @@ final class SessionManager
                 'id' => $id,
                 'message' => $this->entries[$id]['message'],
                 'branches' => $this->childCount($this->entries[$id]['parent']),
+                'label' => $this->labels[$id] ?? null,
             ];
         }
 
@@ -306,8 +322,8 @@ final class SessionManager
     /**
      * Whether this entry is part of the conversation at all.
      *
-     * Four things in a session file are not: a hook's private note, a model change, a
-     * thinking-level change, and a line pig cannot read. They are in the tree because the
+     * Five things in a session file are not: a hook's private note, a model change, a
+     * thinking-level change, a label, and a line pig cannot read. They are in the tree because the
      * entries after them hang off them, and they are walked past everywhere else.
      */
     private static function isSaid(mixed $item): bool
@@ -315,7 +331,8 @@ final class SessionManager
         return $item !== null
             && !$item instanceof CustomEntry
             && !$item instanceof ModelChange
-            && !$item instanceof ThinkingLevelChange;
+            && !$item instanceof ThinkingLevelChange
+            && !$item instanceof Label;
     }
 
     /**
@@ -508,6 +525,45 @@ final class SessionManager
      * into a conversation, and leaving a file behind for it would fill the sessions
      * directory with sessions nobody had.
      */
+    /**
+     * The name somebody put on this point, if there is one.
+     *
+     * Collected in **file order, not branch order**, which is upstream's rule and the right
+     * one: a label names an entry by id, and that entry can be on any branch. Reading them
+     * off the current branch would make a label vanish and come back as you moved around.
+     */
+    public function labelOf(string $entryId): ?string
+    {
+        return $this->labels[$entryId] ?? null;
+    }
+
+    /**
+     * Name a point, or clear its name with null.
+     *
+     * The entry has to exist: a label on an id nothing has is a line nobody will ever read
+     * back, and the mistake is in the caller.
+     *
+     * @throws AgentError when there is no such entry
+     */
+    public function appendLabel(string $entryId, ?string $label): void
+    {
+        if (!isset($this->entries[$entryId])) {
+            throw new AgentError('No such point in this conversation.');
+        }
+
+        $label = $label === null || trim($label) === '' ? null : trim($label);
+
+        $this->append(new Label($entryId, $label));
+
+        if ($label === null) {
+            unset($this->labels[$entryId]);
+
+            return;
+        }
+
+        $this->labels[$entryId] = $label;
+    }
+
     /** Record that the model changed here, so resuming this conversation comes back to it. */
     public function appendModelChange(string $provider, string $modelId): void
     {

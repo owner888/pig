@@ -1463,6 +1463,93 @@ final class InteractiveModeTest extends TestCase
         return new HookRunner([new LoadedHook($path, $path, $api)], $this->cwd);
     }
 
+    // ---- naming a point ----------------------------------------------------------------
+
+    public function testLabelNamesWhereTheConversationIs(): void
+    {
+        $this->start(answers: ['answered'], store: true);
+        $this->type('hi');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/label before the refactor');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // The last thing *said*, which is not the leaf: writing the label advanced it.
+        $store = $this->session->store();
+        self::assertNotNull($store);
+        $points = $store->branch();
+        $named = $points[count($points) - 1]['id'];
+
+        $this->assertSame('before the refactor', $store->labelOf($named));
+        $this->assertStringContainsString('before the refactor', $this->screen());
+    }
+
+    public function testTreeShowsTheNameBesideWhatWasSaid(): void
+    {
+        $this->start(answers: ['answered', 'again'], store: true);
+        $this->type('the first thing');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/label before the refactor');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('the second thing');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/tree');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // Both: the name is what you were thinking, the message is what was actually said,
+        // and a list of "4 back · 7 back" is a list nobody can choose from.
+        $screen = $this->screen();
+        $this->assertStringContainsString('before the refactor', $screen);
+        $this->assertStringContainsString('the first thing', $screen);
+    }
+
+    public function testLabelWithNothingClearsIt(): void
+    {
+        $this->start(answers: ['answered'], store: true);
+        $this->type('hi');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/label a name');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/label');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // Asserted on the point that was named, not on whatever the leaf is now — which
+        // is what made the first version of this test pass without clearing anything.
+        $store = $this->session->store();
+        self::assertNotNull($store);
+        $points = $store->branch();
+        $named = $points[count($points) - 1]['id'];
+
+        $this->assertNull($store->labelOf($named));
+        $this->assertStringContainsString('Name cleared', $this->screen());
+    }
+
+    public function testLabelInAnUnsavedSessionSaysWhyNot(): void
+    {
+        $this->start(answers: ['answered']);
+
+        $this->type('/label a name');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // Not silence: a name that would not survive the session is a name nobody asked for.
+        $this->assertStringContainsString('would not survive', $this->screen());
+    }
+
     // ---- what a hook says -------------------------------------------------------------
 
     public function testAHooksMessageIsDrawnAsItsOwnThingNotAsSomethingYouSaid(): void

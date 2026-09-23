@@ -59,6 +59,15 @@ final class SessionEntries
             ];
         }
 
+        if ($item instanceof Label) {
+            return [
+                'type' => 'label',
+                ...$base,
+                'targetId' => $item->targetId,
+                'label' => $item->label,
+            ];
+        }
+
         if ($item instanceof CustomEntry) {
             return [
                 'type' => 'custom',
@@ -119,9 +128,9 @@ final class SessionEntries
     /**
      * What a line describes, or null for a line nothing here understands.
      *
-     * `label` is pi's and is read as null: pig has nothing that uses it, so it is carried as
-     * a node holding nothing and — because nothing rewrites a session file — left exactly
-     * where it is.
+     * A type neither tool knows is read as null and carried as a node holding nothing, so
+     * the entries hanging off it keep their chain and — because nothing rewrites a session
+     * file — it is left exactly where it is.
      *
      * @param array<string, mixed> $line
      */
@@ -141,6 +150,14 @@ final class SessionEntries
 
             'thinking_level_change' => new ThinkingLevelChange(
                 (string) ($line['thinkingLevel'] ?? ''),
+                $at,
+            ),
+
+            'label' => new Label(
+                (string) ($line['targetId'] ?? ''),
+                // An empty label is how one is cleared, so it and a missing one are the
+                // same thing: no name on that entry any more.
+                ($line['label'] ?? '') === '' ? null : (string) $line['label'],
                 $at,
             ),
 

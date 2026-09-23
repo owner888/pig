@@ -233,11 +233,11 @@ Three things this changed that are worth knowing:
   `SessionManager::entryAt()` is the join, because the cut is an index into the resolved
   conversation and the file is a tree of entries, and those stop being the same numbering the
   moment one compaction has already happened.
-- **A line pig does not understand stays in the tree.** `label` is pi's and pig has nothing
-  that uses it — but skipping it **broke the chain**, because the entries after one name it as
-  their parent. A pi conversation came back as its first message and nothing else. It is kept
-  as a node holding nothing and walked past on the way out. The general shape: **in a tree read
-  from a file, an entry you cannot use is still an entry other entries point at.**
+- **A line neither tool understands stays in the tree.** Skipping one **broke the chain**,
+  because the entries after it name it as their parent — a pi conversation came back as its
+  first message and nothing else. Such a line is kept as a node holding nothing and walked past
+  on the way out. The general shape: **in a tree read from a file, an entry you cannot use is
+  still an entry other entries point at.**
 - **`~/.pi/agent/sessions/` is read too**, beside pig's own, so `--resume` lists both and
   opening one appends to it in its own directory in its own format — the conversation stays one
   conversation. The `agent` in that path is not a typo: upstream's `getAgentDir()` is
@@ -286,9 +286,30 @@ Four things about it:
 Recorded only when something actually changed: `setModel()` is also how the thinking level gets
 clamped, and a line per call would be a file full of a model changing to itself.
 
-Not ported: labels on entries, and branch summarisation (upstream summarises an abandoned
-branch so the model knows what was tried) — the second needs `branch-summarization.ts`, which
-needs the tree that now exists, so it is rows of work rather than a subsystem.
+### Naming a point
+
+`/label before the refactor` names where the conversation is, and `/tree` shows the name beside
+what was said — because a list of "4 back · 7 back · 12 back" is a list nobody can choose from.
+`/label` with nothing clears it. pi's `type: "label"` entry, so a name set in either tool shows
+up in the other.
+
+Four things about it:
+
+- **It names the last thing that was *said*, not the leaf.** Writing a label advances the leaf
+  — the label entry becomes it — so naming the leaf would mean `/label a name` followed by
+  `/label` to clear it named the first label rather than clearing the message's name. The first
+  test of this **passed while doing the wrong thing**, because it asked about the leaf too.
+- **Clearing writes a line rather than removing one.** Nothing in a session file is ever
+  deleted: a name that was taken off is a line saying so, sitting after the line that set it,
+  and reading in file order is what makes the last one win.
+- **Labels are read in file order, not branch order**, which is upstream's rule and the right
+  one: a label names an entry by id and that entry can be on any branch. Read off the current
+  branch, a name would vanish and come back as you moved around.
+- **A label on an id nothing has is refused.** It would be a line nobody ever reads back, and
+  the mistake is in the caller.
+
+The name is shown *beside* the message rather than instead of it: the name is what you were
+thinking and the message is what was actually said, and only one of those is a fact.
 
 `Session\SessionCodec` has no upstream counterpart at all: a message there is a plain
 object and `JSON.stringify` is the whole persistence layer. PHP objects do not survive
@@ -1082,8 +1103,7 @@ What is left in `coding-agent` is left out on purpose, each for a reason:
 |---|---|
 | `auth/` device flows | OAuth for `google-gemini-cli` and GitHub Copilot; an API key reaches every provider pig speaks to |
 | twenty-five selector components | the interactive mode needs seven of them |
-| entry labels in the session tree | `/tree` picks by message, not by name |
-| `migrations.ts` | session-file migrations, and there is one format to migrate from |
+| `migrations.ts` | session-file migrations; pig writes pi's format and has never shipped another |
 | `utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |
 | `components/armin.ts` | an easter egg: 31×36 XBM art, animated |
 | `core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |

@@ -66,6 +66,9 @@ and `--model sonnet:high` sets the thinking level at the same time. `--models` l
 Cerebras, xAI, Zai and Mistral, which all speak OpenAI chat-completions. Set the matching
 `*_API_KEY` and `--model` reaches them.
 
+`/label before the refactor` names where you are, and `/tree` shows the name beside what was
+said — pi's own label entries, so a name set in either tool shows up in the other.
+
 `/tree` goes back to an earlier point in the conversation and carries on from there. The road
 not taken stays in the session file, so going back costs nothing and can be undone the same way
 — and it offers to summarise the branch you are leaving, so an hour of exploring arrives on the

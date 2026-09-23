@@ -60,6 +60,9 @@ Ctrl+G 把 prompt 里现在的内容丢进 `$VISUAL` 或 `$EDITOR`，改完再�
 内置 147 个模型：Anthropic 的、OpenAI 自家走 Responses API 的、Gemini，加上 Groq、Cerebras、xAI、
 Zai、Mistral——这五家说的都是 OpenAI chat-completions。设好对应的 `*_API_KEY`，`--model` 就能指过去。
 
+`/label 重构之前` 给当前这个点起个名字，`/tree` 会把名字连着当时说的话一起显示——用的是 pi 自己的
+label entry，所以在哪边起的名字另一边都看得见。
+
 `/tree` 回到对话里更早的某个点，从那儿接着聊。没走的那条路还留在会话文件里——所以往回走不花什么代价，
 而且随时能再走回来。它还会问要不要把正在离开的那条分支总结一份：这样探索了一小时的东西会跟着你到新分支
 上，而不是被留在原地。

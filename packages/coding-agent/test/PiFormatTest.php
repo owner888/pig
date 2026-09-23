@@ -332,6 +332,126 @@ final class PiFormatTest extends TestCase
         $this->assertSame('claude-test', $session->settings()['model']?->modelId);
     }
 
+    public function testALabelIsItsOwnEntryNamingAnother(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+        $session->append($this->answer());
+        $point = $session->leaf();
+        self::assertNotNull($point);
+
+        $session->appendLabel($point, 'before the refactor');
+        $line = self::linesOf($session->path)[3];
+
+        $this->assertSame('label', $line['type']);
+        $this->assertSame($point, $line['targetId']);
+        $this->assertSame('before the refactor', $line['label']);
+    }
+
+    public function testALabelComesBackWhenTheFileIsReopened(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+        $session->append($this->answer());
+        $point = $session->leaf();
+        self::assertNotNull($point);
+        $session->appendLabel($point, 'before the refactor');
+
+        $this->assertSame('before the refactor', SessionManager::open($session->path)->labelOf($point));
+    }
+
+    public function testClearingANameWritesALineRatherThanRemovingOne(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+        $session->append($this->answer());
+        $point = $session->leaf();
+        self::assertNotNull($point);
+
+        $session->appendLabel($point, 'a name');
+        $session->appendLabel($point, null);
+
+        // Nothing in a session file is ever deleted: the removal is a line after the line
+        // that set it, and reading in file order is what makes the last one win.
+        $back = SessionManager::open($session->path);
+        $this->assertNull($back->labelOf($point));
+        $this->assertCount(5, self::linesOf($session->path));
+    }
+
+    public function testALabelIsNotPartOfTheConversation(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+        $session->append($this->answer());
+        $point = $session->leaf();
+        self::assertNotNull($point);
+        $session->appendLabel($point, 'a name');
+        $session->append(new UserMessage('and again'));
+
+        $back = SessionManager::open($session->path);
+
+        $this->assertCount(3, $back->messages());
+        $this->assertCount(3, $back->branch());
+        $this->assertSame('and again', $back->messages()[2]->content[0]->text);
+    }
+
+    public function testTheBranchCarriesTheNameOfEachPoint(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+        $session->append($this->answer());
+        $point = $session->leaf();
+        self::assertNotNull($point);
+        $session->appendLabel($point, 'before the refactor');
+
+        $named = array_values(array_filter(
+            SessionManager::open($session->path)->branch(),
+            static fn (array $one): bool => $one['label'] !== null,
+        ));
+
+        $this->assertCount(1, $named);
+        $this->assertSame('before the refactor', $named[0]['label']);
+    }
+
+    public function testALabelSetOnAnAbandonedBranchStillApplies(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+        $session->append($this->answer());
+        $fork = $session->leaf();
+        self::assertNotNull($fork);
+
+        $session->append(new UserMessage('down one road'));
+        $road = $session->leaf();
+        self::assertNotNull($road);
+        $session->appendLabel($road, 'the road not taken');
+
+        $session->goTo($fork);
+
+        // Upstream's rule, kept: a label names an entry by id, and that entry can be on any
+        // branch. Read off the current branch instead, a name would vanish and come back as
+        // you moved around.
+        $this->assertSame('the road not taken', $session->labelOf($road));
+    }
+
+    public function testNamingSomethingThatIsNotThereIsRefused(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+
+        $threw = false;
+
+        try {
+            $session->appendLabel('nosuchid', 'a name');
+        } catch (\Pig\Agent\AgentError) {
+            $threw = true;
+        }
+
+        // A label on an id nothing has is a line nobody will ever read back, and the
+        // mistake is in the caller.
+        $this->assertTrue($threw);
+    }
+
     // ---- the names ------------------------------------------------------------------
 
     public function testTheDirectoryIsNamedThePiWay(): void

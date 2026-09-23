@@ -1029,6 +1029,7 @@ final class InteractiveMode
         ['compact', 'Summarise the conversation so far and carry on from the summary'],
         ['resume', 'Pick up an earlier conversation'],
         ['tree', 'Go back to an earlier point and take it somewhere else'],
+        ['label', 'Name this point, so /tree can find it again — /label with nothing clears it'],
         ['theme', 'Switch between dark and light'],
         ['hooks', 'What hooks loaded, and what they added'],
         ['tools', 'What the model can call, built-in and loaded'],
@@ -1050,6 +1051,7 @@ final class InteractiveMode
             'export' => $this->exportSession(trim(substr($text, strlen($name) + 1))),
             'resume' => $this->showSessions(),
             'tree' => $this->showTree(),
+            'label' => $this->label(trim(substr($text, strlen($name) + 1))),
             'theme' => $this->switchTheme(),
             'hooks' => $this->say($this->hookList()),
             'tools' => $this->say($this->toolList()),
@@ -1548,9 +1550,16 @@ final class InteractiveMode
         $items = [];
 
         foreach ($points as $index => $point) {
+            // A name, where somebody gave one: "4 back · 7 back · 12 back" is a list nobody
+            // can choose from, and "before the refactor" is. The message stays beside it
+            // rather than being replaced, because the name is what you were thinking and the
+            // message is what was actually said.
+            $said = self::describe($point['message']);
+            $label = $point['label'];
+
             $items[] = new SelectItem(
                 $point['id'],
-                self::describe($point['message']),
+                $label === null ? $said : $this->palette->fg('accent', $label) . ' · ' . $said,
                 ($index === 0 ? 'where you are' : $index . ' back')
                     . ($point['branches'] > 1 ? ' · ' . $point['branches'] . ' ways from here' : ''),
             );
@@ -1578,6 +1587,49 @@ final class InteractiveMode
 
         $this->tui->setFocus($picker);
         $this->tui->requestRender();
+    }
+
+    /**
+     * Name the point the conversation is at, for `/tree` to find later.
+     *
+     * The last thing that was said — so `/label before the refactor` typed now names the
+     * place you are about to leave, which is when anybody thinks to name one.
+     */
+    private function label(string $name): void
+    {
+        $store = $this->session->store();
+
+        if ($store === null) {
+            $this->sayError('This session is not being saved, so a name would not survive it.');
+
+            return;
+        }
+
+        // The last thing that was *said*, not the last entry. Writing a label advances the
+        // leaf — the label entry becomes it — so `/label a name` followed by `/label` to
+        // clear it would otherwise name the first label rather than clearing the message's.
+        $points = $store->branch();
+        $point = $points === [] ? null : $points[count($points) - 1]['id'];
+
+        if ($point === null) {
+            $this->say('Nothing has happened yet to name.');
+
+            return;
+        }
+
+        $name = trim($name);
+
+        try {
+            $store->appendLabel($point, $name);
+        } catch (Throwable $error) {
+            $this->sayError($error->getMessage());
+
+            return;
+        }
+
+        $this->say($name === ''
+            ? 'Name cleared.'
+            : 'Named this point ' . $this->palette->fg('accent', $name) . '.');
     }
 
     /**

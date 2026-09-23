@@ -572,10 +572,19 @@ final class RpcMode
         }
 
         $this->session->restore($opened->messages());
+
+        // And what it was being had with. A host that switched session and then asked
+        // `get_state` should be told the model that conversation was on, not the one this
+        // process happened to start with.
+        $this->session->restoreSettings();
         $this->hooks?->emit(new SessionSwitchEvent('resume', $previous));
         $this->report($this->customTools?->notify('switch', $previous) ?? []);
 
-        return ['sessionFile' => $this->session->store()?->path, 'messageCount' => count($opened->messages())];
+        return [
+            'sessionFile' => $this->session->store()?->path,
+            'messageCount' => count($opened->messages()),
+            'model' => $this->session->model() === null ? null : self::model($this->session->model()),
+        ];
     }
 
     /** @param array<string, mixed> $command */
