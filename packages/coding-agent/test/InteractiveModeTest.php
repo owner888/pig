@@ -37,11 +37,13 @@ use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Tui\Ansi;
+use Pig\Tui\Components\Text;
 use Pig\Tui\Test\FakeClipboard;
 use Pig\Tui\Test\FakeTerminal;
 use RuntimeException;
@@ -1459,6 +1461,141 @@ final class InteractiveModeTest extends TestCase
     private function runner(HookApi $api, string $path = 'deploy.php'): HookRunner
     {
         return new HookRunner([new LoadedHook($path, $path, $api)], $this->cwd);
+    }
+
+    // ---- what a hook says -------------------------------------------------------------
+
+    public function testAHooksMessageIsDrawnAsItsOwnThingNotAsSomethingYouSaid(): void
+    {
+        $api = new HookApi('.', 'test.php');
+        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
+        $this->start(answers: ['ok'], hooks: $hooks);
+
+        Async::spawn(static function () use ($api): void {
+            $api->sendMessage('build', 'the build is broken');
+        });
+        $this->settle();
+
+        $screen = $this->screen();
+        $this->assertStringContainsString('the build is broken', $screen);
+
+        // Labelled with the hook's own type: it reaches the model as a user message, and
+        // drawing it as one would have someone scroll back and find themselves saying
+        // something they never typed.
+        $this->assertStringContainsString('build', $screen);
+    }
+
+    public function testAMessageMarkedNotToDisplayIsNotDrawn(): void
+    {
+        $api = new HookApi('.', 'test.php');
+        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
+        $this->start(answers: ['ok'], hooks: $hooks);
+
+        Async::spawn(static function () use ($api): void {
+            $api->sendMessage('reminder', 'only for the model', display: false);
+        });
+        $this->settle();
+
+        // It is in the conversation and not on the screen — which is the whole point of the
+        // flag: a reminder injected before every turn would otherwise fill the transcript.
+        $this->assertStringNotContainsString('only for the model', $this->screen());
+        $this->assertCount(1, $this->session->messages());
+    }
+
+    public function testAHookCanDrawItsOwnMessage(): void
+    {
+        $api = new HookApi('.', 'test.php');
+        $api->registerMessageRenderer(
+            'build',
+            static fn (): Text => new Text('drawn by the hook itself', 0, 0),
+        );
+
+        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
+        $this->start(answers: ['ok'], hooks: $hooks);
+
+        Async::spawn(static function () use ($api): void {
+            $api->sendMessage('build', 'the plain version');
+        });
+        $this->settle();
+
+        $screen = $this->screen();
+        $this->assertStringContainsString('drawn by the hook itself', $screen);
+        $this->assertStringNotContainsString('the plain version', $screen);
+    }
+
+    public function testARendererThatReturnsNullGetsTheDefaultWithoutComplaint(): void
+    {
+        $api = new HookApi('.', 'test.php');
+        $api->registerMessageRenderer('build', static fn (): mixed => null);
+
+        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
+        $this->start(answers: ['ok'], hooks: $hooks);
+
+        Async::spawn(static function () use ($api): void {
+            $api->sendMessage('build', 'the plain version');
+        });
+        $this->settle();
+
+        // "Nothing to draw here" is a legitimate answer.
+        $screen = $this->screen();
+        $this->assertStringContainsString('the plain version', $screen);
+        $this->assertStringNotContainsString('Warning:', $screen);
+    }
+
+    public function testARendererThatThrowsFallsBackAndSaysSo(): void
+    {
+        $api = new HookApi('.', 'test.php');
+        $api->registerMessageRenderer('build', static fn (): mixed => throw new RuntimeException('bad renderer'));
+
+        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
+        $this->start(answers: ['ok'], hooks: $hooks);
+
+        Async::spawn(static function () use ($api): void {
+            $api->sendMessage('build', 'the plain version');
+        });
+        $this->settle();
+
+        // Both: the message still gets drawn, and the broken renderer is named. A picture
+        // that quietly turns into plain text is a bug nobody reports.
+        $screen = $this->screen();
+        $this->assertStringContainsString('the plain version', $screen);
+        $this->assertStringContainsString('bad renderer', $screen);
+    }
+
+    public function testARendererThatReturnsSomethingElseIsAComplaint(): void
+    {
+        $api = new HookApi('.', 'test.php');
+        $api->registerMessageRenderer('build', static fn (): string => 'not a component');
+
+        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
+        $this->start(answers: ['ok'], hooks: $hooks);
+
+        Async::spawn(static function () use ($api): void {
+            $api->sendMessage('build', 'the plain version');
+        });
+        $this->settle();
+
+        $screen = $this->screen();
+        $this->assertStringContainsString('not a component', $screen);
+        $this->assertStringContainsString('the plain version', $screen);
+    }
+
+    public function testAHooksMessageComesBackWhenTheSessionIsResumed(): void
+    {
+        $this->start(answers: ['answered'], store: true);
+        $this->type('hi');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $store = $this->session->store();
+        self::assertNotNull($store);
+        $store->append(new HookMessage('build', [new TextContent('remembered across a restart')]));
+
+        $path = $store->path;
+        $this->mode->stop();
+        $this->start(answers: [], resume: $path);
+
+        $this->assertStringContainsString('remembered across a restart', $this->screen());
     }
 
     // ---- custom tools -------------------------------------------------------------------

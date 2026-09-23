@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Interactive;
 
+use Closure;
 use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentStartEvent;
@@ -29,6 +30,7 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\CustomTools\ToolProblem;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
@@ -43,6 +45,7 @@ use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\AutoCompactionEndEvent;
 use Pig\CodingAgent\Session\AutoCompactionStartEvent;
 use Pig\CodingAgent\Session\RetryEndEvent;
@@ -59,6 +62,7 @@ use Pig\CodingAgent\Tools\ExternalTool;
 use Pig\Tui\Autocomplete\CombinedAutocompleteProvider;
 use Pig\Tui\Autocomplete\SlashCommand;
 use Pig\Tui\Clipboard\Clipboard;
+use Pig\Tui\Component;
 use Pig\Tui\Clipboard\SystemClipboard;
 use Pig\Tui\Components\Editor;
 use Pig\Tui\Components\EditorTheme;
@@ -161,6 +165,9 @@ final class InteractiveMode
     /** Injected so a test can see what a copy would have put there. */
     private Clipboard $clipboard;
 
+    /** @var array<string, Closure> what a hook draws its own messages with, by custom type */
+    private array $messageRenderers = [];
+
     /**
      * @param list<string>                $initialMessages said before the first keystroke, in order
      * @param list<\Pig\Ai\ImageContent> $initialImages   attachments for the first of them
@@ -224,6 +231,12 @@ final class InteractiveMode
             },
             hasQueuedMessages: static fn (): bool => $session->queued() !== [],
             ui: $this->ui,
+            send: static function (HookMessage $message, bool $triggerTurn) use ($session): void {
+                $session->sendHookMessage($message, $triggerTurn);
+            },
+            note: static function (string $customType, mixed $data) use ($session): void {
+                $session->appendHookEntry($customType, $data);
+            },
         );
 
         $customTools?->withUi($this->ui);
@@ -233,6 +246,7 @@ final class InteractiveMode
         // them into, and a name taken twice is a complaint made while reading the hooks.
         if ($hooks !== null) {
             $hooks->onError($this->sayHookError(...));
+            $this->messageRenderers = $hooks->renderers();
             [$this->hookCommands, $clashes] = $hooks->commands();
 
             foreach ($clashes as $clash) {
@@ -288,6 +302,12 @@ final class InteractiveMode
 
             if ($message instanceof BashExecution) {
                 $this->replayBash($message);
+
+                continue;
+            }
+
+            if ($message instanceof HookMessage) {
+                $this->showHookMessage($message);
 
                 continue;
             }
@@ -1816,6 +1836,12 @@ final class InteractiveMode
 
     private function onMessageEnd(MessageEndEvent $event): void
     {
+        if ($event->message instanceof HookMessage) {
+            $this->showHookMessage($event->message);
+
+            return;
+        }
+
         if (!$event->message instanceof AssistantMessage) {
             return;
         }
@@ -1944,6 +1970,50 @@ final class InteractiveMode
         }
 
         $this->sayError($event->error ?? 'Could not summarise, so the turn could not be sent again.');
+    }
+
+    /**
+     * Draw a hook's message — its own way if it registered one, otherwise the ordinary way.
+     *
+     * A message with `display: false` is not drawn at all. That is the point of the flag: a
+     * hook that puts a reminder in front of every turn is talking to the model, and a person
+     * who has to scroll past it every time will stop reading the screen.
+     *
+     * A renderer that throws or hands back something that is not a component falls back to
+     * the default **and says so**, the same as a custom tool's does and for the same reason:
+     * a picture that quietly turns into plain text is a bug nobody reports.
+     */
+    private function showHookMessage(HookMessage $message): void
+    {
+        if (!$message->display) {
+            return;
+        }
+
+        $renderer = $this->messageRenderers[$message->customType] ?? null;
+
+        if ($renderer !== null) {
+            try {
+                $drawn = $renderer($message, new RenderOptions($this->expanded), $this->palette);
+            } catch (Throwable $problem) {
+                $this->sayWarning("The renderer for '{$message->customType}' failed: {$problem->getMessage()}");
+                $drawn = null;
+            }
+
+            if ($drawn instanceof Component) {
+                $this->chat->addChild($drawn);
+
+                return;
+            }
+
+            // Null is "draw it normally" and is not a complaint. Anything else is.
+            if ($drawn !== null) {
+                $this->sayWarning(
+                    "The renderer for '{$message->customType}' returned " . get_debug_type($drawn) . ', not a component.',
+                );
+            }
+        }
+
+        $this->chat->addChild(new HookMessageComponent($message, $this->palette));
     }
 
     /** @param array<string, mixed> $arguments */

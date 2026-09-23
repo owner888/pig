@@ -21,6 +21,7 @@ use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeTreeResult;
 use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
 use Pig\CodingAgent\Hooks\Results\ToolResultEventResult;
+use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionManager;
 use Throwable;
 
@@ -85,7 +86,9 @@ final class HookRunner
      * @param Closure(): bool|null    $isIdle
      * @param Closure(): void|null    $abort
      * @param Closure(): bool|null    $hasQueuedMessages
-     * @param HookUi|null             $ui the terminal's, when there is one
+     * @param HookUi|null                     $ui   the terminal's, when there is one
+     * @param Closure(HookMessage, bool): void|null $send `$pi->sendMessage()`
+     * @param Closure(string, mixed): void|null     $note `$pi->appendEntry()`
      */
     public function initialize(
         Closure $getModel,
@@ -93,12 +96,46 @@ final class HookRunner
         ?Closure $abort = null,
         ?Closure $hasQueuedMessages = null,
         ?HookUi $ui = null,
+        ?Closure $send = null,
+        ?Closure $note = null,
     ): void {
         $this->getModel = $getModel;
         $this->isIdle = $isIdle;
         $this->abort = $abort;
         $this->hasQueuedMessages = $hasQueuedMessages;
         $this->ui = $ui;
+
+        // Handed to each hook's own API object rather than kept here, because that is the
+        // object the hook closed over — `$pi->sendMessage()` inside a handler is a call on
+        // the thing the factory was given at load time, long before a session existed.
+        if ($send !== null && $note !== null) {
+            foreach ($this->hooks as $hook) {
+                $hook->api->writesTo($send, $note);
+            }
+        }
+    }
+
+    /**
+     * Every renderer the hooks registered, by the type it draws.
+     *
+     * Later hooks win a clash, which is the same rule `registerMessageRenderer()` applies
+     * within one hook — and unlike a command clash it is not worth complaining about: a
+     * renderer only ever draws its own hook's messages, so two hooks claiming one type
+     * means one of them is drawing messages it did not send and would not recognise.
+     *
+     * @return array<string, Closure>
+     */
+    public function renderers(): array
+    {
+        $renderers = [];
+
+        foreach ($this->hooks as $hook) {
+            foreach ($hook->api->renderers() as $type => $renderer) {
+                $renderers[$type] = $renderer;
+            }
+        }
+
+        return $renderers;
     }
 
     /** Where every hook that loaded came from. @return list<string> */

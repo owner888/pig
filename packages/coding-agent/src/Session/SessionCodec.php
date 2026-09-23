@@ -78,6 +78,16 @@ final class SessionCodec
                 'fromHook' => $message->fromHook,
                 'timestamp' => $message->timestamp,
             ],
+            $message instanceof HookMessage => [
+                'role' => 'hookMessage',
+                'customType' => $message->customType,
+                'content' => self::encodeContent($message->content),
+                'display' => $message->display,
+                // Whatever a hook put there, as JSON if it can be — same treatment a tool's
+                // `details` gets, and for the same reason: it is `mixed` by design.
+                'details' => self::plain($message->details),
+                'timestamp' => $message->timestamp,
+            ],
             $message instanceof BashExecution => [
                 'role' => 'bashExecution',
                 'command' => $message->command,
@@ -136,6 +146,13 @@ final class SessionCodec
                 (bool) ($entry['fromHook'] ?? false),
                 $timestamp,
             ),
+            'hookMessage' => new HookMessage(
+                (string) ($entry['customType'] ?? ''),
+                self::decodeContent($entry['content'] ?? []),
+                (bool) ($entry['display'] ?? true),
+                $entry['details'] ?? null,
+                $timestamp,
+            ),
             'bashExecution' => new BashExecution(
                 (string) ($entry['command'] ?? ''),
                 (string) ($entry['output'] ?? ''),
@@ -150,10 +167,16 @@ final class SessionCodec
     }
 
     /**
+     * Content blocks as JSON.
+     *
+     * Public because RPC mode hands tool results to a host and has to encode them the same
+     * way the session file does. Two encoders for one shape is two things that can disagree
+     * about what a message looks like.
+     *
      * @param list<mixed> $content
      * @return list<array<string, mixed>>
      */
-    private static function encodeContent(array $content): array
+    public static function encodeContent(array $content): array
     {
         $blocks = [];
 
@@ -271,8 +294,10 @@ final class SessionCodec
      * for the ones that truncate. Objects come back as arrays after a resume, because a
      * file cannot hold a PHP object; the one thing anything reads out of `details` is
      * `edit`'s diff, which is strings and integers and survives the trip exactly.
+     *
+     * Public for the same reason as `encodeContent()`: RPC mode needs this shape too.
      */
-    private static function plain(mixed $details): mixed
+    public static function plain(mixed $details): mixed
     {
         if (is_object($details)) {
             return self::plain(get_object_vars($details));

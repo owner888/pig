@@ -18,6 +18,7 @@ use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\SystemPrompt;
@@ -122,6 +123,18 @@ final class CodingAgent
                 || $message instanceof BranchSummary
             ) {
                 $converted[] = new UserMessage($message->toText(), $message->timestamp);
+
+                continue;
+            }
+
+            // A hook's message is the fourth, and the only one whose content may be images
+            // as well as text, so it goes through whole rather than through `toText()`. An
+            // empty one is dropped: a user message with no content is a request every
+            // provider rejects, and a hook that meant to say nothing has said nothing.
+            if ($message instanceof HookMessage) {
+                if (!$message->isEmpty()) {
+                    $converted[] = new UserMessage($message->content, $message->timestamp);
+                }
 
                 continue;
             }

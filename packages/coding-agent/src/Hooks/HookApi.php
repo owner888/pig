@@ -6,6 +6,11 @@ namespace Pig\CodingAgent\Hooks;
 
 use Closure;
 use InvalidArgumentException;
+use Pig\Ai\ImageContent;
+use Pig\Ai\TextContent;
+use Pig\CodingAgent\CustomTools\RenderOptions;
+use Pig\CodingAgent\Session\HookMessage;
+use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Process;
 
 /**
@@ -36,9 +41,7 @@ use Pig\Tui\Process;
  * overloads, so the names live in `EVENTS` and an unknown one is a loading error rather
  * than a subscription that silently never fires — which is what a typo costs upstream.
  *
- * Not ported: `sendMessage()`, `appendEntry()` and `registerMessageRenderer()`, all three
- * of which need custom message types the session can store and the UI can draw. See
- * CLAUDE.md.
+ * Nothing of upstream's `HookAPI` is left out.
  */
 final class HookApi
 {
@@ -83,6 +86,14 @@ final class HookApi
     /** @var array<string, RegisteredCommand> */
     private array $commands = [];
 
+    /** @var array<string, Closure> one renderer per custom message type */
+    private array $renderers = [];
+
+    /** Handed in once the session exists; null while the hook file is being read. */
+    private ?Closure $send = null;
+
+    private ?Closure $note = null;
+
     public function __construct(
         private readonly string $cwd = '.',
         private readonly string $path = '',
@@ -111,6 +122,126 @@ final class HookApi
         }
 
         $this->handlers[$event][] = Closure::fromCallable($handler);
+    }
+
+    /**
+     * Put something in the conversation, from the hook.
+     *
+     * The model sees it, as a user message: this is for telling it something it had no way
+     * to find out — a build that just failed, a file that changed underneath it, a rule
+     * about this repository. `display` decides whether a person sees it too, and `details`
+     * is the hook's own metadata, kept in the session file and never sent to the model.
+     *
+     * `$triggerTurn` starts a turn if the agent is idle. While it is working the message is
+     * queued as a follow-up instead and the flag is ignored — an extra message between a
+     * tool call and its result is a request every provider rejects.
+     *
+     * @param string|list<TextContent|ImageContent> $content
+     * @throws InvalidArgumentException when the type is unusable
+     */
+    public function sendMessage(
+        string $customType,
+        string|array $content,
+        bool $display = true,
+        mixed $details = null,
+        bool $triggerTurn = false,
+    ): void {
+        $message = new HookMessage(
+            self::customType($customType),
+            is_string($content) ? [new TextContent($content)] : array_values($content),
+            $display,
+            $details,
+        );
+
+        // Before the session exists there is nothing to send to: a hook file is read at
+        // startup, and its factory runs before a mode has wired anything up. Saying so
+        // beats a message that silently goes nowhere.
+        if ($this->send === null) {
+            throw new InvalidArgumentException(
+                'sendMessage() needs a session — call it from a handler, not while the hook file is being read.',
+            );
+        }
+
+        ($this->send)($message, $triggerTurn);
+    }
+
+    /**
+     * Write something down that the model will never see.
+     *
+     * For hook state that should survive a restart: "this session was granted full
+     * permissions". It is in the session file and not in the conversation, so it costs no
+     * context — the opposite trade from `sendMessage()`. Read it back on the next
+     * `session_start` from `$ctx->store?->customEntries('your-type')`.
+     *
+     * @throws InvalidArgumentException when the type is unusable
+     */
+    public function appendEntry(string $customType, mixed $data = null): void
+    {
+        $type = self::customType($customType);
+
+        if ($this->note === null) {
+            throw new InvalidArgumentException(
+                'appendEntry() needs a session — call it from a handler, not while the hook file is being read.',
+            );
+        }
+
+        ($this->note)($type, $data);
+    }
+
+    /**
+     * Draw this hook's own messages your own way.
+     *
+     * The renderer is handed the message, whether the transcript is expanded, and the
+     * palette, and returns a `Pig\Tui\Component` — or null for "draw it normally", which
+     * is not a failure. Same shape as a custom tool's `renderResult`, and the same reason:
+     * a message whose content is a table should not be squeezed through formatting meant
+     * for prose.
+     *
+     * One per type, last registration wins, because two renderers for one message is a
+     * question with no answer.
+     *
+     * @param callable(HookMessage, RenderOptions, Palette): mixed $renderer
+     */
+    public function registerMessageRenderer(string $customType, callable $renderer): void
+    {
+        $this->renderers[self::customType($customType)] = Closure::fromCallable($renderer);
+    }
+
+    /** @return array<string, Closure> */
+    public function renderers(): array
+    {
+        return $this->renderers;
+    }
+
+    /**
+     * Wire the two writers, once there is a session to write to.
+     *
+     * @param Closure(HookMessage, bool): void $send
+     * @param Closure(string, mixed): void     $note
+     * @internal called by `HookRunner::initialize()`
+     */
+    public function writesTo(Closure $send, Closure $note): void
+    {
+        $this->send = $send;
+        $this->note = $note;
+    }
+
+    /**
+     * A usable name for a hook's own kind of message.
+     *
+     * The same rule as a command's, because it is used the same way — a hook filters its own
+     * messages out of a resumed session by matching on it, and a type with a quote or a
+     * newline in it is one nobody can match reliably.
+     */
+    private static function customType(string $customType): string
+    {
+        if (preg_match('/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/', $customType) !== 1) {
+            throw new InvalidArgumentException(
+                "'{$customType}' cannot be a custom type: letters, digits, dashes and underscores only.",
+            );
+        }
+
+        return $customType;
     }
 
     /**

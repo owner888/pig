@@ -49,6 +49,18 @@ final class SessionManager
     private ?string $leaf = null;
 
     /**
+     * @var list<CustomEntry> hook state, in the file and not in the conversation
+     *
+     * Outside `$entries` on purpose: these have no parent, because a note about the session
+     * is not a point in it that anyone could go back to. Read with a flat scan, as upstream
+     * reads them.
+     */
+    private array $custom = [];
+
+    /** @var list<CustomEntry> written down but not yet on disk, because the file has not started */
+    private array $pending = [];
+
+    /**
      * Whether the header has been written.
      *
      * Nothing is written until an assistant message arrives. Someone who starts pig,
@@ -126,7 +138,22 @@ final class SessionManager
 
         foreach (array_slice($lines, 1) as $line) {
             $entry = json_decode($line, true);
-            $message = is_array($entry) ? SessionCodec::decode($entry) : null;
+
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            if (($entry['type'] ?? null) === 'custom') {
+                $session->custom[] = new CustomEntry(
+                    (string) ($entry['customType'] ?? ''),
+                    $entry['data'] ?? null,
+                    isset($entry['timestamp']) ? (int) $entry['timestamp'] : null,
+                );
+
+                continue;
+            }
+
+            $message = SessionCodec::decode($entry);
 
             if ($message === null) {
                 continue;
@@ -342,6 +369,82 @@ final class SessionManager
     }
 
     /**
+     * A hook's own note, which is not part of the conversation.
+     *
+     * Written like anything else and read back by `customEntries()`, but kept out of the
+     * tree and out of `messages()`: it costs no context and the model never sees it. What
+     * it is for is state a hook wants to find again after a restart.
+     *
+     * It does not make the session worth keeping on its own. A hook that notes something
+     * before the first answer has not turned "someone opened pig and changed their mind"
+     * into a conversation, and leaving a file behind for it would fill the sessions
+     * directory with sessions nobody had.
+     */
+    public function appendCustomEntry(string $customType, mixed $data = null): void
+    {
+        $entry = new CustomEntry($customType, $data);
+        $this->custom[] = $entry;
+
+        if (!$this->started) {
+            // Held back with the messages, not dropped. A hook noting something on
+            // `session_start` — which is upstream's own example — happens before the first
+            // answer, so skipping it here would lose exactly the case this is for.
+            $this->pending[] = $entry;
+
+            return;
+        }
+
+        $this->write(self::customLine($entry));
+    }
+
+    /** @return array<string, mixed> */
+    private static function customLine(CustomEntry $entry): array
+    {
+        return [
+            'type' => 'custom',
+            'customType' => $entry->customType,
+            'data' => SessionCodec::plain($entry->data),
+            'timestamp' => $entry->timestamp,
+        ];
+    }
+
+    /**
+     * Every note a hook left, oldest first, optionally just one kind.
+     *
+     * @return list<CustomEntry>
+     */
+    public function customEntries(?string $customType = null): array
+    {
+        if ($customType === null) {
+            return $this->custom;
+        }
+
+        return array_values(array_filter(
+            $this->custom,
+            static fn (CustomEntry $entry): bool => $entry->customType === $customType,
+        ));
+    }
+
+    /**
+     * Oldest first, keeping the order of anything that shares a timestamp.
+     *
+     * @param list<array<string, mixed>> $lines
+     * @return list<array<string, mixed>>
+     */
+    private static function byTimestamp(array $lines): array
+    {
+        $keyed = [];
+
+        foreach ($lines as $at => $line) {
+            $keyed[] = [(int) ($line['timestamp'] ?? 0), $at, $line];
+        }
+
+        usort($keyed, static fn (array $a, array $b): int => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
+
+        return array_map(static fn (array $one): array => $one[2], $keyed);
+    }
+
+    /**
      * @param array<string, mixed> $taken
      */
     private static function newId(array $taken): string
@@ -386,15 +489,33 @@ final class SessionManager
                 'timestamp' => $this->createdAt,
             ]);
 
-            // Everything held back so far, in the order it was appended, with the ids
-            // and parents it was given — so the tree that is in memory is the tree the
-            // file describes.
+            // Everything held back so far, with the ids and parents it was given — so the
+            // tree that is in memory is the tree the file describes — interleaved with any
+            // notes a hook left before the first answer, by time, so the file reads in the
+            // order things happened rather than messages-then-notes.
+            $held = [];
+
             foreach (array_slice($this->entries, 0, -1, true) as $id => $earlier) {
                 $encoded = SessionCodec::encode($earlier['message']);
 
                 if ($encoded !== null) {
-                    $lines .= self::line([...$encoded, 'entryId' => $id, 'parent' => $earlier['parent']]);
+                    $held[] = [...$encoded, 'entryId' => $id, 'parent' => $earlier['parent']];
                 }
+            }
+
+            foreach ($this->pending as $note) {
+                $held[] = self::customLine($note);
+            }
+
+            $this->pending = [];
+
+            // Stable, so two things written in the same millisecond keep the order they
+            // were written in — `usort` is not, and a message and the note about it very
+            // often share a millisecond.
+            $held = self::byTimestamp($held);
+
+            foreach ($held as $line) {
+                $lines .= self::line($line);
             }
 
             $this->started = true;

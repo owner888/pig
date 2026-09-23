@@ -108,6 +108,13 @@ return function (HookApi $pi): void {
 };
 ```
 
+A hook can also **say** something — `$pi->sendMessage('build', 'the tests are failing')` puts
+it in the conversation where the model reads it, with `display: false` if it is for the model
+and not for you, and `triggerTurn: true` to have the agent answer it there and then. A hook can
+draw its own messages with `registerMessageRenderer()`. And `$pi->appendEntry('permissions',
+$data)` writes something into the session file that the model never sees — hook state that is
+still there after a restart, costing no context.
+
 A hook runs inside pig, so it can hand back an object and reach pig's own classes — and a
 hook that loops or calls `exit()` takes the session with it. Broken ones are named on the
 shell at startup rather than crashing; `/hooks` lists what loaded and `--no-hooks` skips them.

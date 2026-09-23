@@ -103,6 +103,7 @@ final class Compaction
             $message instanceof ToolResultMessage => self::textLength($message->content),
             $message instanceof BashExecution => strlen($message->command) + strlen($message->output),
             $message instanceof CompactionSummary => strlen($message->toText()),
+            $message instanceof HookMessage => strlen($message->toText()),
             default => 0,
         };
 
@@ -192,6 +193,17 @@ final class Compaction
 
             if ($message instanceof BashExecution) {
                 $parts[] = "[Ran]: {$message->command}";
+
+                continue;
+            }
+
+            if ($message instanceof HookMessage) {
+                // Named by its type rather than shown as a user message, because a summary
+                // that reads "the user said the build is broken" when a hook said it sends
+                // the model looking for a conversation that did not happen.
+                if (!$message->isEmpty()) {
+                    $parts[] = "[Hook {$message->customType}]: {$message->toText()}";
+                }
 
                 continue;
             }

@@ -19,6 +19,7 @@ use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionCodec;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
@@ -137,6 +138,12 @@ final class RpcMode
             },
             hasQueuedMessages: fn (): bool => $this->session->queued() !== [],
             ui: $this->ui,
+            send: function (HookMessage $message, bool $triggerTurn): void {
+                $this->session->sendHookMessage($message, $triggerTurn);
+            },
+            note: function (string $customType, mixed $data): void {
+                $this->session->appendHookEntry($customType, $data);
+            },
         );
 
         $this->hooks?->onError(function (HookError $error): void {

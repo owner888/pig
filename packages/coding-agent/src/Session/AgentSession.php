@@ -360,6 +360,61 @@ final class AgentSession
     }
 
     /**
+     * Put a hook's message in the conversation.
+     *
+     * Three ways it can go, and the agent's state decides which:
+     *
+     * - **Working**: queued as a follow-up. A message between a tool call and its result is
+     *   a request every provider rejects, so it waits — and `$triggerTurn` is beside the
+     *   point, because a turn is already happening.
+     * - **Idle, and asked to trigger a turn**: appended, then the agent runs from it. This
+     *   is a hook driving the agent, which is the interesting case — a `session_start` hook
+     *   that says "carry on where the last session left off" needs the turn as well as the
+     *   message.
+     * - **Idle, not asked**: appended and left there, for the next thing anyone says.
+     *
+     * Ported from upstream's `sendHookMessage()`.
+     */
+    public function sendHookMessage(HookMessage $message, bool $triggerTurn = false): void
+    {
+        if ($this->isStreaming()) {
+            // As a follow-up rather than steering: steering interrupts the tools that are
+            // queued behind the current one, and a hook's note is not a change of mind.
+            $this->followUps[] = $message->toText();
+
+            return;
+        }
+
+        $this->agent->appendMessage($message);
+        $this->store?->append($message);
+
+        foreach ($this->listeners as $listener) {
+            $listener(new MessageEndEvent($message));
+        }
+
+        if (!$triggerTurn || $message->isEmpty()) {
+            return;
+        }
+
+        // Spawned, because this is almost always called from inside a handler that is itself
+        // inside a run's event fan-out — the same reason the retry spawns.
+        $this->inTheBackground(function (): void {
+            $this->agent->continue();
+        });
+    }
+
+    /**
+     * Write a hook's note into the session file, outside the conversation.
+     *
+     * Nothing happens when the session is not being saved: the whole point of one of these
+     * is that it is still there next time, and there is no next time for `--no-save`.
+     */
+    public function appendHookEntry(string $customType, mixed $data = null): void
+    {
+        $this->store?->appendCustomEntry($customType, $data);
+    }
+
+    /**
      * Cut in while the agent is working.
      *
      * Delivered after the tool that is running now, which is what someone means by

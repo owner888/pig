@@ -96,6 +96,11 @@ return function (HookApi $pi): void {
 };
 ```
 
+hook 也能**说话**——`$pi->sendMessage('build', '测试挂了')` 把一条消息放进对话里让模型读到，
+`display: false` 表示这条只给模型看、不占屏幕，`triggerTurn: true` 则让 agent 当场回答它。
+hook 还能用 `registerMessageRenderer()` 自己画自己的消息。另外 `$pi->appendEntry('permissions',
+$data)` 往会话文件里写一条模型永远看不到的东西——重启之后还在的 hook 状态，不占上下文。
+
 hook 跑在 pig 进程里——所以它能直接返回对象、也能用 pig 自己的类；代价是 hook 里一个死循环或者一句
 `exit()` 就能把整个会话带走。写坏了的 hook 会在启动时报到 shell 上而不是直接崩掉；`/hooks` 列出
 加载了哪些，`--no-hooks` 则一个都不加载。

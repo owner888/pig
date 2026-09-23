@@ -16,6 +16,7 @@ use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\NoUi;
 use Pig\CodingAgent\Rpc\RpcEvents;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\HookMessage;
 use Throwable;
 
 /**
@@ -108,6 +109,12 @@ final class PrintMode
             },
             hasQueuedMessages: fn (): bool => $this->session->queued() !== [],
             ui: new NoUi(),
+            send: function (HookMessage $message, bool $triggerTurn): void {
+                $this->session->sendHookMessage($message, $triggerTurn);
+            },
+            note: function (string $customType, mixed $data): void {
+                $this->session->appendHookEntry($customType, $data);
+            },
         );
 
         // Standard output is the answer, so a broken hook goes to standard error. In `json`

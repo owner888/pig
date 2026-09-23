@@ -138,8 +138,9 @@ the agent: OAuth, twenty-five selector components. What is being ported is the p
 that makes it a coding agent: `core/tools/` (done), `core/system-prompt.ts` (done), enough of
 `core/agent-session.ts` to hold a session (done — `Session\AgentSession`), an interactive mode
 built on `pig/tui` (done — `Interactive\`), `core/hooks/` (done — `Hooks\`),
-`core/custom-tools/` (done — `CustomTools\`), `modes/rpc/` (done — `Rpc\`) and
-`modes/print-mode.ts` (done — `PrintMode`). The rest is left out until something needs it.
+`core/custom-tools/` (done — `CustomTools\`), `core/messages.ts` (done — the four app message
+types under `Session\`), `modes/rpc/` (done — `Rpc\`) and `modes/print-mode.ts` (done —
+`PrintMode`). The rest is left out until something needs it.
 
 `AgentSession` is 1901 lines upstream and ~1000 here, because the one thing it coordinates that
 is not ported is not there to coordinate: branching to a second session file.
@@ -513,7 +514,7 @@ Four of upstream's five protocols are here; the fifth needs an OAuth device flow
 protocol — `google-gemini-cli` is the same Gemini shape behind Google's sign-in, and GitHub
 Copilot is the same again.
 
-`Hooks\` is upstream's `core/hooks/`. A hook is a PHP file in `~/.pig/hooks` or
+`Hooks\` is upstream's `core/hooks/`, all of it. A hook is a PHP file in `~/.pig/hooks` or
 `.pig/hooks` that returns a callable; the callable is handed a `HookApi` and registers what
 it wants to hear about:
 
@@ -619,10 +620,63 @@ idempotent and always closes, a factory that returns something that is not a `Co
 refused *and* releases the one-at-a-time latch, and a component that never calls `done()` and
 ignores escape parks the turn — which nothing here can prevent, because it holds the keys.
 
-Also not ported from the hook API: `sendMessage()`, `appendEntry()` and
-`registerMessageRenderer()`, which need custom message types the session can store and the
-UI can draw. `BeforeAgentStartEventResult` carries text for the same reason: upstream's is a
-`HookMessage`, and the part that survives is the part that reaches the model.
+### A hook with something to say
+
+`sendMessage()`, `appendEntry()` and `registerMessageRenderer()` are the rest of upstream's
+hook API, and the first two are opposites that are easy to confuse:
+
+| | Where it goes | Who sees it | What it costs |
+|---|---|---|---|
+| `sendMessage()` | the conversation | the model, and a person unless `display: false` | context, like any message |
+| `appendEntry()` | the session file only | the next run of the same hook | nothing |
+
+`sendMessage()` makes a `Session\HookMessage` — an app message like `BashExecution`, turned
+into a user message by `CodingAgent::toLlm()`. It is what a hook uses to tell the model
+something the model had no way to find out: a build that just failed, a file that changed
+underneath it, a rule about this repository. Its `content` goes to the model **whole** rather
+than through `toText()`, because it is the only one of these whose content may be images —
+which is how a hook gets a screenshot into a conversation.
+
+`appendEntry()` makes a `Session\CustomEntry`, and the interesting thing about it is where it
+is *not*: outside the tree. Every message has a parent, because going back to an earlier point
+is what the tree is for, and a note about the session is not a point in the conversation anyone
+could go back to. Upstream reads these with a flat scan; so does `customEntries()`.
+
+Five things worth keeping straight:
+
+- **A hook's message is not drawn as a user message.** It reaches the model as one, and
+  showing it as one would have someone scroll back and find themselves saying something they
+  never typed. `HookMessageComponent` labels it with the hook's own type instead, and the HTML
+  export does the same.
+- **`display: false` is honoured on screen and in the export**, and nowhere else. A reminder
+  injected before every turn is talking to the model; a person who has to scroll past it every
+  time stops reading the screen.
+- **A note written before the first answer is held back, not dropped.** Nothing is written
+  until the first assistant message, and upstream's own example is a `session_start` hook
+  noting permissions — which happens before that. So the catch-up flushes held-back notes
+  along with the held-back messages, interleaved by timestamp, or the file would read
+  messages-then-notes and the common case would be lost entirely.
+- **`triggerTurn` is a hook driving the agent.** Idle, it appends and runs; working, the
+  message is queued as a follow-up and the flag is ignored, because a message between a tool
+  call and its result is a request every provider rejects.
+- **Calling either before a session exists throws.** A hook file is read at startup, before a
+  mode has wired anything up, and a message that silently goes nowhere is a hook that appears
+  to work.
+
+`registerMessageRenderer()` is the same shape as a custom tool's `renderResult` and behaves the
+same way: null means "draw it normally" and is not a complaint, a throw or a non-component
+falls back **and says so**. One renderer per type, last registration wins, and a later hook
+wins a clash — unlike a command clash, which is worth complaining about, two hooks claiming one
+message type means one of them is drawing messages it did not send.
+
+A compaction names it — `[Hook build]: …` — rather than folding it in as a user message, or a
+summary would read "the user said the build is broken" and send the model looking for a
+conversation that did not happen.
+
+`BeforeAgentStartEventResult` still carries text rather than a `HookMessage`: upstream's is one,
+and the part that survives into the conversation is the part that reaches the model.
+
+**Nothing of upstream's hook API is left out now.**
 
 **Each mode wires its own UI**, which is upstream's rule too. `InteractiveMode` builds the
 `TerminalUi` and calls `HookRunner::initialize()` and `CustomToolSet::withUi()` itself;
@@ -899,11 +953,14 @@ What is left in `coding-agent` is left out on purpose, each for a reason:
 |---|---|
 | `auth/` device flows | OAuth for `google-gemini-cli` and GitHub Copilot; an API key reaches every provider pig speaks to |
 | twenty-five selector components | the interactive mode needs six of them |
-| `sendMessage()`, `appendEntry()`, `registerMessageRenderer()` | custom message types, which nothing here has asked for yet |
 | entry labels in the session tree | `/tree` picks by message, not by name |
 | `migrations.ts` | session-file migrations, and there is one format to migrate from |
 | `utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |
 | `components/armin.ts` | an easter egg: 31×36 XBM art, animated |
+| `core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |
+| `cli/session-picker.ts` | `--resume` shows a list upstream; here it takes a path and `/resume` is the list |
+| `core/timings.ts` | startup profiling behind an env var |
+| `utils/fuzzy.ts` | fuzzy matching for the selectors; `ModelResolver` matches by substring |
 
 That table was wrong until this was written. It said "the rest is left out on purpose" while
 `modes/print-mode.ts` and `cli/file-processor.ts` were simply never listed, and `bin/pig`
@@ -1527,6 +1584,20 @@ The sweep is worth keeping: for every file, collect its `use` statements and the
 writes in `catch (X)`, `instanceof X`, `new X(`, `X::` and typed parameters, and report the
 difference. Run over `packages/*/src` it found this one and nothing else real — three
 docblock mentions and two names that resolve through a sibling file in the same namespace.
+
+**It has happened three times now**, each in a different disguise, which is what makes it
+worth a rule rather than a story:
+
+| Where | What it did |
+|---|---|
+| `catch (Throwable)` with no import | never caught anything; the fiber died silently |
+| `instanceof Component` with no import | would never have matched, so every hook renderer would have fallen back to the default |
+| `new Text(...)` in a test with no import | threw where the code under test catches, so the test failed on the fallback rather than on the missing import |
+
+The third is the one to remember, because it wasted the most time: the error surfaced as a
+*feature* not working, because the thing that threw was inside a `try` belonging to the code
+under test. **Run the sweep after adding an `instanceof` or a `catch` to a file you have not
+touched before** — it is one command, and it is cheaper than reading the screen dump.
 
 Two rules fall out, and the second is the one that generalises:
 
