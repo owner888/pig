@@ -512,6 +512,110 @@ final class InteractiveModeTest extends TestCase
         $this->assertCount(2, $this->session->messages());
     }
 
+    /**
+     * What is said after resuming goes into the file that was resumed.
+     *
+     * It used to go into the file pig created at startup, which ended up holding its own
+     * opening plus the continuation of a different conversation — while the resumed file
+     * stopped growing at the moment it was resumed. Two files, neither of them what
+     * happened.
+     */
+    public function testWhatIsSaidAfterResumingIsWrittenToTheFileThatWasResumed(): void
+    {
+        $this->start(['answer in the old one'], store: true);
+        $this->type('the old question');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $old = $this->session->store()->path;
+        $this->mode->stop();
+
+        // A second pig in the same directory, with its own file, which then resumes the
+        // first one from the picker.
+        $this->start(['answer after resuming'], store: true);
+        $fresh = $this->session->store()->path;
+
+        $this->assertNotSame($old, $fresh);
+
+        $this->type('/resume');
+        $this->type(self::ENTER);
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('said after resuming');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $resumed = array_map(
+            static fn (mixed $m): string => $m->content[0]->text ?? '',
+            SessionManager::open($old)->messages(),
+        );
+
+        // The resumed file carries the whole thing: what was there, and what came after.
+        $this->assertSame(
+            ['the old question', 'answer in the old one', 'said after resuming', 'answer after resuming'],
+            $resumed,
+        );
+
+        // And the file pig started with was never written at all — a session file appears
+        // when something has been answered in it, and nothing ever was.
+        $this->assertFileDoesNotExist($fresh);
+    }
+
+    /**
+     * `/new` starts a new file, not just an empty screen.
+     *
+     * Keeping the old one appended the new conversation onto the last one as though they
+     * were the same, and the new session never appeared in `/resume` at all.
+     */
+    public function testANewSessionGetsAFileOfItsOwn(): void
+    {
+        $this->start(['first answer', 'second answer'], store: true);
+
+        $this->type('the first conversation');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $first = $this->session->store()->path;
+
+        $this->type('/new');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $second = $this->session->store()->path;
+
+        $this->assertNotSame($first, $second);
+
+        $this->type('the second conversation');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertSame(
+            ['the first conversation', 'first answer'],
+            array_map(static fn (mixed $m): string => $m->content[0]->text ?? '', SessionManager::open($first)->messages()),
+        );
+        $this->assertSame(
+            ['the second conversation', 'second answer'],
+            array_map(static fn (mixed $m): string => $m->content[0]->text ?? '', SessionManager::open($second)->messages()),
+        );
+
+        // Two conversations, two sessions to pick from.
+        $this->assertCount(2, SessionManager::listFor($this->cwd));
+    }
+
+    /** `--no-save` means no file, and `/new` does not quietly start one. */
+    public function testANewSessionWritesNothingWhenNothingWasBeingWritten(): void
+    {
+        $this->start(['answered']);
+
+        $this->type('/new');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertNull($this->session->store());
+        $this->assertSame([], SessionManager::listFor($this->cwd));
+    }
+
     public function testResumeOffersTheSessionsInThisDirectory(): void
     {
         $this->start(['answered'], store: true);

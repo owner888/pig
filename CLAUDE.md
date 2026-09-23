@@ -1249,6 +1249,42 @@ runner has no tty to open. What is tested is the empty-command guard and that a 
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
 
+### A session that can change conversations cannot have a `readonly` session file
+
+`AgentSession::$store` was `readonly`, and both `/resume` and `/new` changed which
+conversation was on screen without being able to change where it was written. Two probes,
+not reasoning:
+
+```
+/resume B, then say something:
+  screen:      B's conversation, then the continuation
+  A on disk:   A one / A first / said after resuming B / answered after resuming B
+  B on disk:   B one / B first          ← stopped growing when it was resumed
+
+/new, then say something:
+  one file:    the old conversation / old answer / a brand new conversation / new answer
+  sessions listed for this project: 1   ← the new session never existed as one
+```
+
+So `/resume` produced two files and neither was what happened, and `/new` appended the new
+conversation onto the last one as though they were the same. With the tree it is worse: the
+restored messages are not in the old store's `entries` at all, so the new ones are parented to
+the old store's leaf and the file replays as something nobody saw.
+
+`writeTo(?SessionManager)` is the fix, and it is a missing piece of the port rather than an
+addition — upstream's `AgentSession` owns its `sessionManager` and replaces it in
+`switchSession()` and `newSession()`. `/resume` writes to the file it opened; `/new` creates
+one; `--no-save` stays null and `/new` does not quietly start saving.
+
+**The comment in `newSession()` claimed this was deliberate** — "the same file: `/new` forgets
+the conversation but keeps writing where it was writing" — which is how a bug survives a
+reading. A comment that explains why something surprising is correct is worth exactly as much
+as the reasoning in it, and that one had none.
+
+Regression tests: `InteractiveModeTest::testWhatIsSaidAfterResumingIsWrittenToTheFileThatWasResumed`,
+`testANewSessionGetsAFileOfItsOwn`, `testANewSessionWritesNothingWhenNothingWasBeingWritten`.
+All three were checked against the old code and fail on it.
+
 ### A `before_*` hook result is only heard if the runner thinks it decisive
 
 `HookRunner::ask()` walks the handlers and stops at the first *decisive* answer, which each

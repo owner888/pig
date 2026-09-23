@@ -1250,6 +1250,19 @@ final class InteractiveMode
 
         $previous = $this->session->store()?->path;
 
+        // A new file, not just an empty screen. Keeping the old one would append this
+        // conversation onto the last one as if they were the same, and the new session
+        // would never exist as a session — which is what this used to do.
+        if ($previous !== null) {
+            try {
+                $this->session->writeTo(SessionManager::create($this->cwd));
+            } catch (Throwable $error) {
+                $this->sayError('Could not start a new session file: ' . $error->getMessage());
+
+                return;
+            }
+        }
+
         $this->session->agent->reset();
         $this->chat->clear();
         $this->pending->clear();
@@ -1257,9 +1270,6 @@ final class InteractiveMode
         $this->footer->invalidate();
         $this->say('New session');
 
-        // The same file: `/new` forgets the conversation but keeps writing where it was
-        // writing, so what the hook is handed is where the conversation it just lost is
-        // to be found — which is what a hook asking for it wants.
         $this->hooks?->emit(new SessionSwitchEvent('new', $previous));
         $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
     }
@@ -1644,6 +1654,16 @@ final class InteractiveMode
             $this->sayError($error->getMessage());
 
             return;
+        }
+
+        // The file that was opened is the one written to from here on. Without this the
+        // conversation on screen is the resumed one while everything said next is appended
+        // to the file pig started with — two files, neither of them what happened.
+        //
+        // Only when this session was writing somewhere to begin with: `--no-save` means no
+        // file, and resuming one to read it should not start saving.
+        if ($previous !== null) {
+            $this->session->writeTo($saved);
         }
 
         $this->session->restore($saved->messages());

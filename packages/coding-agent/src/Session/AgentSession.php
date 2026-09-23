@@ -91,7 +91,7 @@ final class AgentSession
     public function __construct(
         public readonly Agent $agent,
         private readonly string $cwd = '.',
-        private readonly ?SessionManager $store = null,
+        private ?SessionManager $store = null,
         private readonly ?Settings $settings = null,
         private readonly ?HookRunner $hooks = null,
     ) {
@@ -108,6 +108,30 @@ final class AgentSession
     public function store(): ?SessionManager
     {
         return $this->store;
+    }
+
+    /**
+     * Write somewhere else from now on.
+     *
+     * Not a setter for its own sake: this was `readonly`, and that was a data-losing bug.
+     * `/resume` opened another session, put its messages into the agent, and then carried
+     * on appending to the file pig had created at startup — so that file ended up holding
+     * its own opening plus the continuation of a different conversation, and the resumed
+     * one stopped growing at the moment it was resumed. `/new` did the same thing in one
+     * file: the fresh conversation was appended as a continuation of the old one, and the
+     * new session never existed as a session at all.
+     *
+     * Upstream's `AgentSession` owns its `sessionManager` and replaces it in
+     * `switchSession()` and `newSession()`, so this is a missing piece of the port rather
+     * than an addition. Null for a session that is not being written down.
+     *
+     * The conversation is not touched: a caller switching files decides separately what
+     * the agent should be holding, because `/new` wants nothing and `/resume` wants
+     * whatever was in the file.
+     */
+    public function writeTo(?SessionManager $store): void
+    {
+        $this->store = $store;
     }
 
     /**
