@@ -75,6 +75,9 @@ Sessions are written in **pi's own format**, in pi's own directory layout — so
 started in one opens in the other, and `--resume` lists what is in `~/.pi/agent/sessions/`
 beside pig's own. Carrying on from a pi session appends to that file, in that format.
 
+Resuming brings back the model and the thinking level that conversation was being had with, not
+whatever a new one would open with. `--model` still wins if you name one.
+
 `/export` writes the conversation out as one self-contained HTML file — markdown rendered,
 code highlighted, no JavaScript in it at all.
 

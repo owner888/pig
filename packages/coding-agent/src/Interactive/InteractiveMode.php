@@ -1723,6 +1723,12 @@ final class InteractiveMode
         }
 
         $this->session->restore($saved->messages());
+
+        // And the model it was being had with. Nothing was typed here — `/resume` takes no
+        // model — so the file wins outright, which is what "resume" means.
+        $was = $this->session->model()?->id;
+        $this->session->restoreSettings();
+
         $this->chat->clear();
         $this->pending->clear();
         $this->replay();
@@ -1731,6 +1737,14 @@ final class InteractiveMode
         // Said after the transcript, so it is the last thing on screen rather than the
         // first thing buried above a conversation.
         $this->say('Resumed ' . count($saved->messages()) . ' messages from ' . $info->when());
+
+        $now = $this->session->model()?->id;
+
+        if ($now !== null && $now !== $was) {
+            // Worth a line: the model changing under someone without being told is how a
+            // surprising answer becomes a puzzle.
+            $this->say($this->palette->fg('muted', "This conversation was on {$now} — switched back to it."));
+        }
         $this->hooks?->emit(new SessionSwitchEvent('resume', $previous));
         $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
     }

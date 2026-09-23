@@ -21,6 +21,7 @@ use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
+use Pig\Ai\Models;
 use Pig\Ai\ReasoningEffort;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StopReason;
@@ -161,6 +162,45 @@ final class AgentSession
         $this->agent->replaceMessages($messages);
     }
 
+    /**
+     * Come back to the model and thinking level this conversation was being had with.
+     *
+     * Called when a session is resumed, after `restore()`. Silent about anything it cannot
+     * honour: a session recorded on a model this machine has no key for, or a thinking level
+     * this pig has no name for, is not a reason to refuse to open the conversation — and the
+     * model it falls back to is said on the footer where anybody can see it.
+     *
+     * A model named on the command line wins, which is why this takes a flag rather than
+     * deciding for itself: `--model sonnet` is someone saying what they want *now*, and the
+     * file is saying what was true last time.
+     */
+    public function restoreSettings(bool $modelWasAskedFor = false): void
+    {
+        $recorded = $this->store?->settings();
+
+        if ($recorded === null) {
+            return;
+        }
+
+        if (!$modelWasAskedFor && $recorded['model'] !== null) {
+            $model = Models::find($recorded['model']->provider, $recorded['model']->modelId)
+                ?? Models::get($recorded['model']->modelId);
+
+            if ($model !== null) {
+                $this->agent->setModel($model);
+            }
+        }
+
+        // After the model, because which levels exist depends on it. Clamped rather than
+        // taken on trust for the same reason `setModel()` clamps: a level the model cannot
+        // do is a request the provider rejects, and the person resuming did not ask for it
+        // — the file did.
+        $levels = $this->availableThinkingLevels();
+        $level = $recorded['thinking']?->known() ?? $this->thinkingLevel();
+
+        $this->agent->setThinkingLevel(in_array($level, $levels, true) ? $level : ThinkingLevel::Off);
+    }
+
     // ---- events ------------------------------------------------------------------
 
     /**
@@ -298,7 +338,17 @@ final class AgentSession
      */
     public function setModel(Model $model, ?ThinkingLevel $thinking = null): void
     {
+        $changed = $this->model()?->id !== $model->id || $this->model()?->provider !== $model->provider;
+
         $this->agent->setModel($model);
+
+        // Written down, so `--continue` comes back to the model this conversation was being
+        // had with rather than to whatever a new one would open with. Only when it actually
+        // changed: `setModel()` is also how the thinking level is clamped, and a line per
+        // clamp would be a file full of a model changing to itself.
+        if ($changed) {
+            $this->store?->appendModelChange($model->provider, $model->id);
+        }
 
         $wanted = $thinking ?? $this->thinkingLevel();
         $levels = $this->availableThinkingLevels();
@@ -1162,7 +1212,13 @@ final class AgentSession
 
     public function setThinkingLevel(ThinkingLevel $level): void
     {
+        $changed = $this->thinkingLevel() !== $level;
+
         $this->agent->setThinkingLevel($level);
+
+        if ($changed) {
+            $this->store?->appendThinkingLevelChange($level->value);
+        }
     }
 
     /**

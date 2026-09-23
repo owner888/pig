@@ -231,6 +231,107 @@ final class PiFormatTest extends TestCase
         $this->assertSame('ls', $line['message']['command']);
     }
 
+    public function testAModelChangeIsItsOwnEntry(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+        $session->append($this->answer());
+        $session->appendModelChange('anthropic', 'claude-opus-4-1');
+
+        $line = self::linesOf($session->path)[3];
+
+        $this->assertSame('model_change', $line['type']);
+        $this->assertSame('anthropic', $line['provider']);
+        $this->assertSame('claude-opus-4-1', $line['modelId']);
+    }
+
+    public function testAThinkingLevelChangeIsItsOwnEntry(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+        $session->append($this->answer());
+        $session->appendThinkingLevelChange('high');
+
+        $line = self::linesOf($session->path)[3];
+
+        $this->assertSame('thinking_level_change', $line['type']);
+        $this->assertSame('high', $line['thinkingLevel']);
+    }
+
+    public function testNeitherIsPartOfTheConversation(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+        $session->append($this->answer());
+        $session->appendModelChange('anthropic', 'claude-opus-4-1');
+        $session->appendThinkingLevelChange('high');
+        $session->append(new UserMessage('and again'));
+
+        $back = SessionManager::open($session->path);
+
+        // Three messages. The model never sees that somebody switched model, and neither
+        // does `/tree` — but the message after them still hangs off them.
+        $this->assertCount(3, $back->messages());
+        $this->assertCount(3, $back->branch());
+        $this->assertSame('and again', $back->messages()[2]->content[0]->text);
+    }
+
+    public function testTheBranchSaysWhatItWasBeingTalkedOn(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+        $session->append($this->answer());
+        $session->appendModelChange('anthropic', 'claude-opus-4-1');
+        $session->appendThinkingLevelChange('high');
+
+        $settings = SessionManager::open($session->path)->settings();
+
+        $this->assertSame('claude-opus-4-1', $settings['model']?->modelId);
+        $this->assertSame('anthropic', $settings['model']?->provider);
+        $this->assertSame('high', $settings['thinking']?->level);
+    }
+
+    public function testTheLastOneOnTheBranchWins(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+        $session->append($this->answer());
+        $session->appendModelChange('anthropic', 'claude-opus-4-1');
+        $session->appendModelChange('openai', 'gpt-5');
+
+        $this->assertSame('gpt-5', SessionManager::open($session->path)->settings()['model']?->modelId);
+    }
+
+    public function testWithNoChangeRecordedTheLastAnswerSaysWhichModel(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+        $session->append($this->answer());
+
+        // pi's fallback, kept: an assistant message carries the provider and model that
+        // produced it, so a conversation records what it was had with even if nobody ever
+        // changed it on purpose.
+        $settings = SessionManager::open($session->path)->settings();
+        $this->assertSame('claude-test', $settings['model']?->modelId);
+        $this->assertNull($settings['thinking']);
+    }
+
+    public function testAChangeOnAnAbandonedBranchDoesNotCount(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('hi'));
+        $session->append($this->answer());
+        $fork = $session->leaf();
+        $session->appendModelChange('openai', 'gpt-5');
+
+        self::assertNotNull($fork);
+        $session->goTo($fork);
+
+        // Switching model on a branch you walked away from is not what this conversation is
+        // being had with — which is why `settings()` walks the branch rather than the file.
+        $this->assertSame('claude-test', $session->settings()['model']?->modelId);
+    }
+
     // ---- the names ------------------------------------------------------------------
 
     public function testTheDirectoryIsNamedThePiWay(): void

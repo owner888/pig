@@ -227,11 +227,9 @@ final class SessionManager
         $path = [];
 
         foreach ($this->pathTo($this->leaf) as $id) {
-            // A hook's note is not a point in the conversation anyone could go back to, and
-            // neither is a line pig cannot read.
             $item = $this->entries[$id]['message'];
 
-            if ($item === null || $item instanceof CustomEntry) {
+            if (!self::isSaid($item)) {
                 continue;
             }
 
@@ -295,14 +293,59 @@ final class SessionManager
         foreach ($this->pathTo($this->leaf) as $entryId) {
             $item = $this->entries[$entryId]['message'];
 
-            // A hook's note and a line pig cannot read are not things that were said, so
-            // they are not things a summary of what is being left behind should mention.
-            if (!isset($target[$entryId]) && $item !== null && !$item instanceof CustomEntry) {
+            // Only what was said: a summary of an abandoned branch should not mention that
+            // somebody switched model on it.
+            if (!isset($target[$entryId]) && self::isSaid($item)) {
                 $left[] = $item;
             }
         }
 
         return $left;
+    }
+
+    /**
+     * Whether this entry is part of the conversation at all.
+     *
+     * Four things in a session file are not: a hook's private note, a model change, a
+     * thinking-level change, and a line pig cannot read. They are in the tree because the
+     * entries after them hang off them, and they are walked past everywhere else.
+     */
+    private static function isSaid(mixed $item): bool
+    {
+        return $item !== null
+            && !$item instanceof CustomEntry
+            && !$item instanceof ModelChange
+            && !$item instanceof ThinkingLevelChange;
+    }
+
+    /**
+     * What this branch was being talked on: the model, and how hard it was thinking.
+     *
+     * Walked from the root down, so the last one said wins. The model falls back to whatever
+     * answered last, exactly as pi's does — an assistant message carries the provider and the
+     * model that produced it, so a conversation records what it was had with even if nobody
+     * ever changed it on purpose.
+     *
+     * @return array{model: ?ModelChange, thinking: ?ThinkingLevelChange}
+     */
+    public function settings(): array
+    {
+        $model = null;
+        $thinking = null;
+
+        foreach ($this->pathTo($this->leaf) as $id) {
+            $item = $this->entries[$id]['message'];
+
+            if ($item instanceof ModelChange) {
+                $model = $item;
+            } elseif ($item instanceof ThinkingLevelChange) {
+                $thinking = $item;
+            } elseif ($item instanceof AssistantMessage && $item->model !== '') {
+                $model = new ModelChange($item->provider, $item->model, $item->timestamp);
+            }
+        }
+
+        return ['model' => $model, 'thinking' => $thinking];
     }
 
     /**
@@ -352,11 +395,7 @@ final class SessionManager
         $messages = [];
 
         foreach ($path as [$id, $item]) {
-            // A hook's private note is in the file and not in the conversation — the whole
-            // point of `appendEntry()` — and a line from pi that pig does not understand is
-            // nothing at all. Both are walked past rather than dropped from the tree,
-            // because the entries after them still hang off them.
-            if ($item === null || $item instanceof CustomEntry) {
+            if (!self::isSaid($item)) {
                 continue;
             }
 
@@ -403,7 +442,7 @@ final class SessionManager
 
             $keeping = $keeping || $id === $firstKept;
 
-            if ($keeping && $item !== null && !$item instanceof CustomEntry && !$item instanceof CompactionSummary) {
+            if ($keeping && self::isSaid($item) && !$item instanceof CompactionSummary) {
                 $kept[] = [$id, $item];
             }
         }
@@ -469,6 +508,18 @@ final class SessionManager
      * into a conversation, and leaving a file behind for it would fill the sessions
      * directory with sessions nobody had.
      */
+    /** Record that the model changed here, so resuming this conversation comes back to it. */
+    public function appendModelChange(string $provider, string $modelId): void
+    {
+        $this->append(new ModelChange($provider, $modelId));
+    }
+
+    /** The same for the thinking level. */
+    public function appendThinkingLevelChange(string $level): void
+    {
+        $this->append(new ThinkingLevelChange($level));
+    }
+
     public function appendCustomEntry(string $customType, mixed $data = null): void
     {
         $entry = new CustomEntry($customType, $data);

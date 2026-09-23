@@ -42,6 +42,23 @@ final class SessionEntries
             'timestamp' => self::iso(self::timestampOf($item)),
         ];
 
+        if ($item instanceof ModelChange) {
+            return [
+                'type' => 'model_change',
+                ...$base,
+                'provider' => $item->provider,
+                'modelId' => $item->modelId,
+            ];
+        }
+
+        if ($item instanceof ThinkingLevelChange) {
+            return [
+                'type' => 'thinking_level_change',
+                ...$base,
+                'thinkingLevel' => $item->level,
+            ];
+        }
+
         if ($item instanceof CustomEntry) {
             return [
                 'type' => 'custom',
@@ -102,9 +119,9 @@ final class SessionEntries
     /**
      * What a line describes, or null for a line nothing here understands.
      *
-     * `thinking_level_change`, `model_change` and `label` are pi's and are read as null:
-     * they are not messages and pig has nothing that uses them, so they are skipped on the
-     * way in and — because nothing rewrites a session file — left exactly where they are.
+     * `label` is pi's and is read as null: pig has nothing that uses it, so it is carried as
+     * a node holding nothing and — because nothing rewrites a session file — left exactly
+     * where it is.
      *
      * @param array<string, mixed> $line
      */
@@ -115,6 +132,17 @@ final class SessionEntries
 
         return match ($line['type'] ?? null) {
             'message' => is_array($line['message'] ?? null) ? SessionCodec::decode($line['message']) : null,
+
+            'model_change' => new ModelChange(
+                (string) ($line['provider'] ?? ''),
+                (string) ($line['modelId'] ?? ''),
+                $at,
+            ),
+
+            'thinking_level_change' => new ThinkingLevelChange(
+                (string) ($line['thinkingLevel'] ?? ''),
+                $at,
+            ),
 
             'custom' => new CustomEntry(
                 (string) ($line['customType'] ?? ''),

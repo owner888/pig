@@ -981,6 +981,123 @@ final class AgentSessionTest extends TestCase
         $this->assertNotNull($ends[0]->error);
     }
 
+    // ---- what the conversation was being had with -------------------------------------
+
+    public function testSwitchingModelIsWrittenDown(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['hello'], store: $store);
+
+        Async::run(static fn () => $session->prompt('hi'));
+        $session->setModel(new Model('other-model', 'Other', Api::AnthropicMessages, 'openai', 'http://127.0.0.1:1', 1_000, 100));
+
+        $this->assertSame('other-model', SessionManager::open($store->path)->settings()['model']?->modelId);
+        $this->assertSame('openai', SessionManager::open($store->path)->settings()['model']?->provider);
+    }
+
+    public function testSettingTheSameModelAgainWritesNothing(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['hello'], store: $store);
+
+        Async::run(static fn () => $session->prompt('hi'));
+        $before = substr_count((string) file_get_contents($store->path), "\n");
+
+        $session->setModel($this->model());
+        $session->setModel($this->model());
+
+        // `setModel()` is also how the thinking level gets clamped, so a line per call would
+        // be a file full of a model changing to itself.
+        $this->assertSame($before, substr_count((string) file_get_contents($store->path), "\n"));
+    }
+
+    public function testResumingComesBackToTheModelTheConversationWasOn(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $first = $this->session(['hello'], store: $store);
+
+        Async::run(static fn () => $first->prompt('hi'));
+
+        // A real model from the registry, not an invented one: restoring means looking the
+        // recorded provider and id back up, and a made-up id is not in there to find. Which
+        // is itself a thing to know — see the test below about a model this machine lacks.
+        $recorded = Models::find('anthropic', 'claude-haiku-4-5');
+        self::assertNotNull($recorded);
+
+        $first->setModel($recorded);
+        $first->setThinkingLevel(ThinkingLevel::High);
+
+        // A second session, as `--continue` builds one: the default model, then the file.
+        $reopened = SessionManager::open($store->path);
+        $second = $this->session([], store: $reopened);
+        $second->restore($reopened->messages());
+        $second->restoreSettings();
+
+        // The whole point of "carry on where I left off": before this, an afternoon on one
+        // model came back on whatever the settings said.
+        $this->assertSame('claude-haiku-4-5', $second->model()?->id);
+        $this->assertSame(ThinkingLevel::High, $second->thinkingLevel());
+    }
+
+    public function testAModelNamedOnTheCommandLineBeatsTheFile(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $first = $this->session(['hello'], store: $store);
+
+        Async::run(static fn () => $first->prompt('hi'));
+
+        $recorded = Models::find('anthropic', 'claude-haiku-4-5');
+        self::assertNotNull($recorded);
+        $first->setModel($recorded);
+
+        $reopened = SessionManager::open($store->path);
+        $second = $this->session([], store: $reopened);
+        $second->restore($reopened->messages());
+        $second->restoreSettings(modelWasAskedFor: true);
+
+        // `--model` is someone saying what they want now; the file says what was true last
+        // time. The thinking level still comes from the file — nothing overrode that.
+        $this->assertSame('test-model', $second->model()?->id);
+    }
+
+    public function testALevelTheRestoredModelCannotDoIsClampedRatherThanSent(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $first = $this->session(['hello'], store: $store, model: $this->thinkingModel());
+
+        Async::run(static fn () => $first->prompt('hi'));
+        $first->setThinkingLevel(ThinkingLevel::High);
+        $first->setModel($this->model());
+
+        $reopened = SessionManager::open($store->path);
+        $second = $this->session([], store: $reopened, model: $this->model());
+        $second->restore($reopened->messages());
+        $second->restoreSettings();
+
+        // `test-model` cannot reason. Asking it to think hard is a request the provider
+        // rejects, and the person resuming did not ask for it — the file did.
+        $this->assertSame(ThinkingLevel::Off, $second->thinkingLevel());
+    }
+
+    public function testAFileNamingAModelThisMachineDoesNotHaveStillOpens(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['hello'], store: $store);
+
+        Async::run(static fn () => $session->prompt('hi'));
+        $store->appendModelChange('some-vendor', 'a-model-nobody-here-has');
+
+        $reopened = SessionManager::open($store->path);
+        $second = $this->session([], store: $reopened);
+        $second->restore($reopened->messages());
+        $second->restoreSettings();
+
+        // Not a reason to refuse to open the conversation: it falls back to what it had,
+        // and the footer says which model is answering.
+        $this->assertSame('test-model', $second->model()?->id);
+        $this->assertCount(2, $second->messages());
+    }
+
     private function session(
         array $answers,
         ?Closure $hook = null,

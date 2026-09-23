@@ -318,6 +318,11 @@ $session = new AgentSession($agent, $cwd, $store, $settings, $hooks);
 
 if ($resumed !== null) {
     $session->restore($resumed->messages());
+
+    // And what it was being talked on. `--model` beats the file: that is someone saying what
+    // they want now, where the file says what was true last time. Everything else about the
+    // order is unchanged — typed, then the environment, then this session, then the settings.
+    $session->restoreSettings(modelWasAskedFor: isset($options['model']));
 }
 
 // Read here rather than in the parser: a missing file should be reported after the cheap

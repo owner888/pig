@@ -233,12 +233,11 @@ Three things this changed that are worth knowing:
   `SessionManager::entryAt()` is the join, because the cut is an index into the resolved
   conversation and the file is a tree of entries, and those stop being the same numbering the
   moment one compaction has already happened.
-- **A line pig does not understand stays in the tree.** `thinking_level_change`, `model_change`
-  and `label` are pi's and pig has nothing that uses them — but skipping them **broke the
-  chain**, because the entries after one name it as their parent. A pi conversation came back
-  as its first message and nothing else. They are kept as nodes holding nothing and walked past
-  on the way out. The general shape: **in a tree read from a file, an entry you cannot use is
-  still an entry other entries point at.**
+- **A line pig does not understand stays in the tree.** `label` is pi's and pig has nothing
+  that uses it — but skipping it **broke the chain**, because the entries after one name it as
+  their parent. A pi conversation came back as its first message and nothing else. It is kept
+  as a node holding nothing and walked past on the way out. The general shape: **in a tree read
+  from a file, an entry you cannot use is still an entry other entries point at.**
 - **`~/.pi/agent/sessions/` is read too**, beside pig's own, so `--resume` lists both and
   opening one appends to it in its own directory in its own format — the conversation stays one
   conversation. The `agent` in that path is not a typo: upstream's `getAgentDir()` is
@@ -254,6 +253,38 @@ a line pi could have written is a line pig has nothing to do with, and takes the
 
 The general rule, for the next time this comes up: **back-compatibility is a debt to real users,
 and there are none until there is a release.** Before that, a format change is a format change.
+
+### What a conversation was being had with
+
+`model_change` and `thinking_level_change` are lines in the file that are not messages: the
+model never sees them and `/tree` does not offer them, but they are what makes resuming mean
+something. Without them `--continue` after an afternoon on opus came back on whatever the
+settings said — which is the wrong answer to "carry on where I left off", and was pig's answer
+until the file format became pi's and there was somewhere standard to put them.
+
+`SessionManager::settings()` walks the branch and takes the last of each. The model falls back
+to **whatever answered last**, exactly as pi's does: an assistant message carries the provider
+and the model that produced it, so a conversation records what it was had with even if nobody
+ever changed it on purpose.
+
+Four things about it:
+
+- **The branch, not the file.** Switching model on a branch you later walked away from is not
+  what this conversation is being had with.
+- **`--model` beats the file**, which is why `restoreSettings()` takes a flag rather than
+  deciding for itself: a model named on the command line is someone saying what they want
+  *now*, and the file is saying what was true last time. The order is otherwise unchanged —
+  typed, then the environment, then this session, then the settings, then the default. This
+  session is new and sits above the settings, because the settings hold what to open a *new*
+  conversation with.
+- **A level the restored model cannot do is clamped**, for the same reason `setModel()` clamps:
+  the person resuming did not ask for it, the file did, and a provider would reject it.
+- **A model this pig has no entry for is not an error.** pig's registry is 147 of pi's models
+  and excludes OpenRouter's 236, so a pi session on one of those restores to whatever pig had.
+  The conversation still opens, and the footer says which model is answering.
+
+Recorded only when something actually changed: `setModel()` is also how the thinking level gets
+clamped, and a line per call would be a file full of a model changing to itself.
 
 Not ported: labels on entries, and branch summarisation (upstream summarises an abandoned
 branch so the model knows what was tried) — the second needs `branch-summarization.ts`, which
