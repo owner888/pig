@@ -31,6 +31,7 @@ use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Hooks\HookLoader;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Interactive\InteractiveMode;
+use Pig\CodingAgent\Rpc\RpcMode;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Prompt\Skills;
@@ -96,6 +97,8 @@ if (isset($options['help'])) {
       --skills-dir <d>  one more folder of skills, on top of the standard ones
       --no-hooks        start without loading ~/.pig/hooks or .pig/hooks
       --no-tools        start without loading ~/.pig/tools or .pig/tools
+      --rpc             no terminal: JSON lines in on stdin, JSON lines out on stdout,
+                        for an editor or anything else driving pig from code
 
     TEXT;
 
@@ -274,24 +277,33 @@ if ($resumed !== null) {
     $session->restore($resumed->messages());
 }
 
-$mode = new InteractiveMode(
-    $session,
-    Palette::named($theme),
-    $cwd,
-    VERSION,
-    $theme,
-    contextFiles: $contextFiles,
-    skills: $skills,
-    fileCommands: $fileCommands,
-    settings: $settings,
-    hooks: $hooks,
-    customTools: $customTools,
-);
+// Standard output belongs to the protocol in `--rpc`, which is why every warning above
+// went to standard error: a host parsing JSON lines must not find a yellow sentence about
+// a broken hook among them.
+$rpc = isset($options['rpc']);
+
+$mode = $rpc
+    ? new RpcMode($session, $cwd, $hooks, $customTools, $settings)
+    : new InteractiveMode(
+        $session,
+        Palette::named($theme),
+        $cwd,
+        VERSION,
+        $theme,
+        contextFiles: $contextFiles,
+        skills: $skills,
+        fileCommands: $fileCommands,
+        settings: $settings,
+        hooks: $hooks,
+        customTools: $customTools,
+    );
 
 // One fiber around the whole program: the prompt suspends on a socket, the terminal
 // wakes on a keystroke, and both need the same loop underneath them.
 Async::run(static fn () => $mode->run());
 
-// The first thing a person sees after quitting is their own shell, so the screen is
-// handed back the way it was found.
-echo "\n";
+if (!$rpc) {
+    // The first thing a person sees after quitting is their own shell, so the screen is
+    // handed back the way it was found.
+    echo "\n";
+}

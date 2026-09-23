@@ -134,11 +134,12 @@ all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439),
 `components/`, `terminal-image.ts` 340, `image.ts` 87). `pig/tui` is done.
 
 `coding-agent` is upstream's biggest package — 23k lines at the anchor, and most of it is not
-the agent: RPC mode, OAuth, twenty-five selector components. What is being ported is the part
+the agent: OAuth, twenty-five selector components. What is being ported is the part
 that makes it a coding agent: `core/tools/` (done), `core/system-prompt.ts` (done), enough of
 `core/agent-session.ts` to hold a session (done — `Session\AgentSession`), an interactive mode
-built on `pig/tui` (done — `Interactive\`), `core/hooks/` (done — `Hooks\`) and
-`core/custom-tools/` (done — `CustomTools\`). The rest is left out until something needs it.
+built on `pig/tui` (done — `Interactive\`), `core/hooks/` (done — `Hooks\`),
+`core/custom-tools/` (done — `CustomTools\`) and `modes/rpc/` (done — `Rpc\`). The rest is
+left out until something needs it.
 
 `AgentSession` is 1901 lines upstream and ~800 here, because everything it coordinates that is
 not ported is not there to coordinate: auto-retry and branching to a second session file.
@@ -724,12 +725,74 @@ things about them:
 `CustomToolAPI.ui` is ported as `HookUi`, in both `$pi->ui()` and the context handed to
 `execute`. Nothing of upstream's custom-tool module is left out.
 
-What is left in `coding-agent`, none of it deliberately left out, all of it needing something
-that is not here yet:
+### RPC mode — the second way in
 
-| Upstream | Needs |
+`Rpc\RpcMode` is `bin/pig --rpc`: JSON lines on standard input, JSON lines on standard
+output, no terminal at all. Three kinds of line come out — a `response` to a command, an
+`event` as the agent works, and a `hook_ui_request` when a hook wants to ask something — and
+`id`, when a command carries one, is echoed on its response so a host can match them up.
+
+**Standard input goes on the same loop as the model's socket**, through `Loop::onReadable()`.
+That is the whole reason this mode could not have been written before the hook dialogs were:
+`RpcUi` is `HookUi` over the wire, and a hook calling `confirm()` parks its fiber on a
+`Deferred` exactly as it does in the terminal — the line that resumes it is a
+`hook_ui_response` instead of a keystroke. `readline()` on standard input would have blocked
+the loop that has to deliver it.
+
+Three things differ from `TerminalUi`, all because the other end is a program:
+
+- **Every question has an id**, because a host may answer three of them in any order.
+- **There is no "one dialog at a time".** The terminal refuses a second one because it would
+  steal the keyboard from the first; a host has no keyboard to steal.
+- **`custom()` returns null and `getEditorText()` returns `''`.** The first builds a
+  `Pig\Tui\Component` and there is nothing to draw it on; the second reads an editor that
+  belongs to the host. Upstream leaves both out of its RPC context for the same reasons.
+
+Messages go out through `SessionCodec`, the encoder the session file already uses, so a host
+reading `get_messages` and a `--continue` reading the file see the same shape. `RpcEvents`
+is the one place the wire shape of an agent event is written down: upstream calls
+`JSON.stringify(event)` and is done, because its events are plain objects, which also means a
+field rename there changes the protocol silently.
+
+`rpc-types.ts` and `rpc-client.ts` have no counterpart. The first is TypeScript types for the
+wire shape, which here is `RpcMode`'s docblock plus `RpcEvents`; the second is a client for
+driving the mode from TypeScript, and a host writes JSON lines in whatever language it is in.
+
+**Eight of upstream's commands are absent**, and the reasons divide in three:
+
+| Upstream command | Why not |
 |---|---|
-| `modes/rpc/` | a second way in, for editors rather than people |
+| `set_auto_retry`, `abort_retry` | auto-retry is not ported, so there is nothing to switch on or stop |
+| `queue_message`, `set_queue_mode` | the anchor commit split the one queue into `steer()` and `followUp()`; `steer` and `follow_up` are the two commands that replace them, rather than guessing which one a `queue_message` meant |
+| `cycle_model` | `get_available_models` and `set_model` are what it is made of |
+| `branch` | upstream forks a conversation into a second session file; pig branches inside one, as `go_to` with `get_branch` for the points to go to |
+| `export_html` | it is `export` here, and it honours `outputPath` |
+
+Twenty commands are there: `prompt`, `steer`, `follow_up`, `abort`, `get_state`,
+`get_messages`, `get_last_assistant_text`, `get_session_stats`, `get_available_models`,
+`set_model`, `set_thinking_level`, `cycle_thinking_level`, `compact`, `set_auto_compaction`,
+`bash`, `abort_bash`, `get_branch`, `go_to`, `new_session`, `switch_session` and `export`.
+
+Every failure is a `success: false` response rather than a disconnection: a host asking for
+something impossible should be told, not dropped. Warnings that the interactive mode would
+draw on screen — a broken hook, a custom tool that failed to start — go out as `hook_error`
+and `tool_error` lines, and everything `bin/pig` prints before a mode starts already went to
+standard error, which is what keeps standard output the protocol's alone.
+
+`SessionCodec::encodeContent()` and `plain()` went from private to public for `RpcEvents`.
+Widening it was the cheaper of two bad options: a second content encoder living in `Rpc\` is
+two things that can disagree about what a message looks like, and they would disagree the
+first time a content type gained a field.
+
+What is left in `coding-agent` is left out on purpose, each for a reason:
+
+| Upstream | Why not |
+|---|---|
+| auto-retry | not ported, so `set_auto_retry` and `abort_retry` have nothing to map to |
+| `auth/` device flows | OAuth for `google-gemini-cli` and GitHub Copilot; an API key reaches every provider pig speaks to |
+| twenty-five selector components | the interactive mode needs six of them |
+| `sendMessage()`, `appendEntry()`, `registerMessageRenderer()` | custom message types, which nothing here has asked for yet |
+| entry labels in the session tree | `/tree` picks by message, not by name |
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 
@@ -1327,6 +1390,35 @@ Tests: `HookUiTest::testEscapingAnInputAnswersWithNothing`,
 
 `[$a] = stream_socket_pair(...)` garbage-collects the peer, putting `$a` at EOF — permanently
 "readable", with `fread()` returning `''`. Keep both ends in scope.
+
+### Validating inside the fiber answers a command twice
+
+`RpcMode::prompt()` read its `message` field inside the `Async::spawn()` that runs the turn.
+A command with no `message` therefore threw in the *fiber*, where the only thing to catch it
+was the fiber's own handler — which sent an id-less failure, **after** `dispatch()` had already
+returned null and the success response had gone out. A host was told both that its prompt was
+accepted and that it was not, in that order, and the second line named no command it had sent.
+
+Whatever a command needs is read before the spawn. The rule generalises: anything spawned
+answers separately from the command that spawned it, so everything that can fail as *the host's
+mistake* has to fail on the near side of the spawn, and only the work itself belongs on the far
+side.
+
+### A loop with one readable watcher blocks forever on a zero-timeout tick (tests)
+
+Driving `RpcMode` from a test means turning the loop by hand, and `isIdle()` is never true while
+the stdin watcher is armed, so the stopping condition has to be a tick count. That much is
+obvious. What is not: `pollTimeout()` returns null — block until a stream is ready — when there
+are watchers and no timers, so a plain `tick()` with nothing to read never comes back.
+
+`Loop::wake()` does not fix it. A tick runs the queue *before* it polls, so by the time
+`pollTimeout()` is consulted the queue is empty again and the answer is still null. An expired
+timer is still there when it is asked: `delay($seconds, fn () => null)` before each tick.
+
+And the timeout has to be nonzero if a subprocess is involved. Forty ticks at a zero timeout are
+over in microseconds — long before `echo hello` has written anything — so a `bash` command over
+the protocol looked like it had produced nothing at all. A millisecond each gives the poll
+something to wait with.
 
 ## Version floor: PHP >= 8.3
 
