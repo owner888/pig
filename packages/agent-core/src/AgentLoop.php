@@ -65,16 +65,23 @@ final class AgentLoop
             $context->tools,
         );
 
+        // The try/catch is the whole reason `fail()` exists: this body runs in a fiber of its
+        // own, so a throw here — a provider that cannot resolve a hostname, a missing key —
+        // does not reach the `foreach` in `Agent`, and the stream would simply never close.
         Async::spawn(static function () use ($prompts, $current, &$newMessages, $config, $signal, $stream, $streamFn): void {
-            $stream->push(new AgentStartEvent());
-            $stream->push(new TurnStartEvent());
+            try {
+                $stream->push(new AgentStartEvent());
+                $stream->push(new TurnStartEvent());
 
-            foreach ($prompts as $prompt) {
-                $stream->push(new MessageStartEvent($prompt));
-                $stream->push(new MessageEndEvent($prompt));
+                foreach ($prompts as $prompt) {
+                    $stream->push(new MessageStartEvent($prompt));
+                    $stream->push(new MessageEndEvent($prompt));
+                }
+
+                self::run($current, $newMessages, $config, $signal, $stream, $streamFn);
+            } catch (Throwable $error) {
+                $stream->fail($error);
             }
-
-            self::run($current, $newMessages, $config, $signal, $stream, $streamFn);
         });
 
         return $stream;
@@ -108,10 +115,14 @@ final class AgentLoop
         $current = new AgentContext($context->messages, $context->systemPrompt, $context->tools);
 
         Async::spawn(static function () use ($current, &$newMessages, $config, $signal, $stream, $streamFn): void {
-            $stream->push(new AgentStartEvent());
-            $stream->push(new TurnStartEvent());
+            try {
+                $stream->push(new AgentStartEvent());
+                $stream->push(new TurnStartEvent());
 
-            self::run($current, $newMessages, $config, $signal, $stream, $streamFn);
+                self::run($current, $newMessages, $config, $signal, $stream, $streamFn);
+            } catch (Throwable $error) {
+                $stream->fail($error);
+            }
         });
 
         return $stream;

@@ -297,6 +297,64 @@ final class AgentLoopTest extends TestCase
         );
     }
 
+    public function testAProviderThatThrowsReachesTheConsumerInsteadOfHangingIt(): void
+    {
+        // The producer runs in a fiber of its own, so before `EventStream::fail()` this throw
+        // escaped that fiber, the stream stayed open, and whoever was iterating it waited
+        // forever — for a reason nobody ever gave them. A dead socket and a missing API key
+        // both arrive here.
+        $caught = Async::run(function (): ?string {
+            $stream = AgentLoop::start(
+                [new UserMessage('hi')],
+                new AgentContext(),
+                $this->config([]),
+                null,
+                static fn (): never => throw new AgentError('DNS is on fire'),
+            );
+
+            try {
+                foreach ($stream as $ignored) {
+                    // nothing after the prompt's own events
+                }
+            } catch (AgentError $error) {
+                return $error->getMessage();
+            }
+
+            return null;
+        });
+
+        $this->assertSame('DNS is on fire', $caught);
+    }
+
+    public function testTheEventsBeforeAProviderThrowsStillArrive(): void
+    {
+        $seen = Async::run(function (): array {
+            $stream = AgentLoop::start(
+                [new UserMessage('hi')],
+                new AgentContext(),
+                $this->config([]),
+                null,
+                static fn (): never => throw new AgentError('DNS is on fire'),
+            );
+
+            $events = [];
+
+            try {
+                foreach ($stream as $event) {
+                    $events[] = (new ReflectionClass($event))->getShortName();
+                }
+            } catch (AgentError) {
+                // the point is what came before it
+            }
+
+            return $events;
+        });
+
+        // The prompt was announced before the provider was ever called, and a UI that drew
+        // the user's message should not have to un-draw it.
+        $this->assertSame(['AgentStartEvent', 'TurnStartEvent', 'MessageStartEvent', 'MessageEndEvent'], $seen);
+    }
+
     public function testContinueCarriesOnWithoutAddingAnything(): void
     {
         [$events, $messages] = Async::run(function (): array {

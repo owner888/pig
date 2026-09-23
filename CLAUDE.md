@@ -138,8 +138,8 @@ the agent: OAuth, twenty-five selector components. What is being ported is the p
 that makes it a coding agent: `core/tools/` (done), `core/system-prompt.ts` (done), enough of
 `core/agent-session.ts` to hold a session (done — `Session\AgentSession`), an interactive mode
 built on `pig/tui` (done — `Interactive\`), `core/hooks/` (done — `Hooks\`),
-`core/custom-tools/` (done — `CustomTools\`) and `modes/rpc/` (done — `Rpc\`). The rest is
-left out until something needs it.
+`core/custom-tools/` (done — `CustomTools\`), `modes/rpc/` (done — `Rpc\`) and
+`modes/print-mode.ts` (done — `PrintMode`). The rest is left out until something needs it.
 
 `AgentSession` is 1901 lines upstream and ~800 here, because everything it coordinates that is
 not ported is not there to coordinate: auto-retry and branching to a second session file.
@@ -725,6 +725,58 @@ things about them:
 `CustomToolAPI.ui` is ported as `HookUi`, in both `$pi->ui()` and the context handed to
 `execute`. Nothing of upstream's custom-tool module is left out.
 
+### Three ways in
+
+`bin/pig` picks one, by upstream's rule: **`--mode` given at all means no terminal, and `-p`
+is the short way of saying `--mode text`.** So the terminal is what you get when neither was
+said, and nothing has to ask for it.
+
+| | What comes out | Ported from |
+|---|---|---|
+| terminal (the default) | a TUI | `modes/interactive/` |
+| `-p` / `--mode text` | the last answer, on stdout | `modes/print-mode.ts` |
+| `--mode json` | every event as a JSON line | the same file, its `"json"` branch |
+| `--mode rpc` | JSON lines out, commands in | `modes/rpc/` |
+
+`PrintMode` is the smallest of the three because `RpcMode` did the work: `RpcEvents` already
+encodes the events, and wiring hooks and custom tools with no UI is already something that
+happens. What is left is deciding what to print — and it prints **only the text blocks of the
+last assistant message**, because thinking is the model talking to itself and a script would
+have to strip it.
+
+Two things about `--mode json` that are not obvious:
+
+- **The exit code stays 0 on a failed turn.** The caller is reading events, and the failing
+  turn arrived as one. `-p` exits 1, because there the failure has nowhere else to go.
+- **Warnings go to standard error** — every one of them, which is why `bin/pig` was already
+  written that way. A yellow sentence about a broken hook among the JSON lines stops whatever
+  is parsing them at that line.
+
+`PrintMode` hands hooks a `NoUi`, so a `confirm()` is false and a `select()` is null without
+anybody being asked. That is the fail-safe direction: a `tool_call` guard that cannot reach a
+person blocks the call. A hook that would rather behave differently checks `$ctx->hasUi`.
+
+Positional arguments are the initial prompt, in every mode but `rpc`. In the terminal they are
+sent before the first keystroke and then it is yours as usual — which is the difference from
+`-p`, and the reason they go through the same path a typed message does rather than a shortcut
+of their own.
+
+`@file` (`Cli\FileArguments`, upstream's `cli/file-processor.ts`) is read in front of the
+first message, wrapped in `<file name="/absolute/path">`. An image becomes an `ImageContent`
+attachment with an empty element beside it naming the file — which is how a screenshot gets
+into a conversation without a tool call. Empty files are skipped; a missing one throws rather
+than calling `exit()`, because a class that exits cannot be tested and `bin/pig` is the one
+place that knows how to end the program. `--mode rpc` refuses `@file` and positional messages
+outright, as upstream does: there the conversation arrives as commands, so a file read here
+would be prepended to a prompt that never comes.
+
+`Cli\Arguments` is upstream's `cli/args.ts`, and it lives in the package rather than in
+`bin/pig` for one reason: a script that calls `exit()` cannot be called twice by a test, and
+the parser now has something worth testing. See the trap below about the flag that ate the
+prompt. `--` ends the options, and everything after it is a message exactly as written — not
+an option for starting with a dash, not a file for starting with an `@`. It is the only way to
+say either, and half an escape hatch is not one.
+
 ### RPC mode — the second way in
 
 `Rpc\RpcMode` is `bin/pig --rpc`: JSON lines on standard input, JSON lines on standard
@@ -793,6 +845,16 @@ What is left in `coding-agent` is left out on purpose, each for a reason:
 | twenty-five selector components | the interactive mode needs six of them |
 | `sendMessage()`, `appendEntry()`, `registerMessageRenderer()` | custom message types, which nothing here has asked for yet |
 | entry labels in the session tree | `/tree` picks by message, not by name |
+| `migrations.ts` | session-file migrations, and there is one format to migrate from |
+| `utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |
+| `components/armin.ts` | an easter egg: 31×36 XBM art, animated |
+
+That table was wrong until this was written. It said "the rest is left out on purpose" while
+`modes/print-mode.ts` and `cli/file-processor.ts` were simply never listed, and `bin/pig`
+parsed positional arguments into a variable it then threw away. **A claim that nothing is
+missing is worth checking against the file list rather than against memory** — the check is
+`find /tmp/pi/packages/coding-agent/src -name '*.ts' -not -name '*.test.ts' | xargs wc -l`
+against pig's own, and it took one command.
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 
@@ -1390,6 +1452,65 @@ Tests: `HookUiTest::testEscapingAnInputAnswersWithNothing`,
 
 `[$a] = stream_socket_pair(...)` garbage-collects the peer, putting `$a` at EOF — permanently
 "readable", with `fread()` returning `''`. Keep both ends in scope.
+
+### A provider that throws hangs the agent, and swallows the reason
+
+`AgentLoop::start()` and `continue()` push events from inside `Async::spawn()`, so the
+producer is a coroutine of its own. A throw there — `Stream::simple()` failing to resolve a
+hostname, a missing key, anything synchronous before the first event — escaped that fiber and
+left the `EventStream` open forever. `Agent` was already written for this: its consumption of
+the stream sits in a `try` whose `catch` calls `recordFailure()`. The throw just never crossed
+the fiber boundary to reach it, so what a caller actually got was
+`AsyncError: The event loop ran out of work while the root coroutine was still suspended` —
+with the real cause gone.
+
+Fixed with `EventStream::fail(Throwable)`: it closes the stream, fails `result()`, and hands
+the throw to every parked consumer, so `foreach ($stream as $event)` rethrows it and `Agent`'s
+existing catch does the rest. `AgentLoop`'s two spawned bodies are wrapped in a try that calls
+it. Events pushed before the throw are still delivered — a producer that pushed three events
+and then failed did three real things, and the prompt has already been announced, so a UI that
+drew the user's message does not have to un-draw it.
+
+`fail()` rather than `end($error)` because **a stream that ended has a result and a stream
+that failed has a reason**, and a consumer that cannot tell them apart reads a dead connection
+as the model having nothing to say.
+
+The general shape, which is the part worth remembering: **anything inside `Async::spawn()` has
+its own stack, so a `try` outside the spawn catches nothing that happens inside it.** Every
+spawned producer needs a way to hand its failure to whoever is waiting.
+
+### `NoUi` was reported as a UI, so `hasUi` lied
+
+`HookContext::$hasUi` answers one question — will asking reach anybody — and `HookRunner`
+computed it as `$this->ui !== null`. That was right for as long as nothing passed a `NoUi`
+deliberately: the default is `null`, and `HookContext` turns null into `NoUi` with `hasUi`
+false. `PrintMode` is the first caller to pass one on purpose, and it was told there was
+somebody there, so a hook that checks before asking asked and heard nothing.
+
+Now `$this->ui !== null && !$this->ui instanceof NoUi`. The predicate belongs with `NoUi`,
+which is by definition nobody; a caller passing `hasUi: true` beside a `NoUi` is making a
+claim that contradicts itself, and `HookContext` still lets one, which is worth revisiting.
+
+### A flag that takes no value eats the argument after it
+
+`bin/pig`'s parser decided whether an option took a value by looking at the next argument: if
+it did not start with `--`, it was the value. That worked for exactly as long as nothing but
+options was ever passed. The moment positional messages meant something,
+`bin/pig --read-only "fix the bug"` set `read-only` to `fix the bug` and had no prompt left,
+with nothing said about it.
+
+`Cli\Arguments::TAKES_A_VALUE` is the list, and everything not on it is a flag. Upstream's
+`args.ts` spells each option out for the same reason. **A CLI cannot afford a guess about what
+the next word means**, and the failure mode of guessing is silent.
+
+### One chunk is one key (tests)
+
+`Keys::isEnter($data)` is `$data === "\r"`, and every other reader is the same shape: the
+chunk that arrives *is* the key. So `type('hello' . ENTER)` in a `FakeTerminal` test delivers a
+single six-character key that is not Enter, and it lands in the editor as text — the
+characters appear, the submit handler never runs, and the test fails on something that looks
+like the submit being broken. One `type()` per key, which is what every test in
+`InteractiveModeTest` already did.
 
 ### Validating inside the fiber answers a command twice
 

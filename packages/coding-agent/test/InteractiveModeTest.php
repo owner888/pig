@@ -13,6 +13,7 @@ use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
+use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StartEvent;
@@ -141,6 +142,8 @@ final class InteractiveModeTest extends TestCase
         ?Settings $settings = null,
         ?HookRunner $hooks = null,
         ?CustomToolSet $customTools = null,
+        array $initialMessages = [],
+        array $initialImages = [],
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->settings = $settings ?? Settings::inMemory();
@@ -187,6 +190,8 @@ final class InteractiveModeTest extends TestCase
             $this->settings,
             $hooks,
             $customTools,
+            $initialMessages,
+            $initialImages,
         );
 
         $this->mode->start();
@@ -1238,6 +1243,72 @@ final class InteractiveModeTest extends TestCase
 
         $held();
         $this->settle();
+    }
+
+    // ---- a prompt from the command line -------------------------------------------------
+
+    public function testAMessageFromTheCommandLineIsSentWithoutAKeystroke(): void
+    {
+        $this->start(answers: ['the answer'], initialMessages: ['what does this do?']);
+        $this->settle();
+
+        // `bin/pig "what does this do?"` asks, and then leaves you in the terminal — which is
+        // the difference from `-p`, and the reason it goes through the same path a typed
+        // message does rather than a shortcut of its own.
+        $screen = $this->screen();
+        $this->assertStringContainsString('what does this do?', $screen);
+        $this->assertStringContainsString('the answer', $screen);
+    }
+
+    public function testSeveralMessagesAreSentInTheOrderTheyWereGiven(): void
+    {
+        $this->start(answers: ['first answer', 'second answer'], initialMessages: ['one', 'two']);
+        $this->settle();
+
+        $messages = $this->session->messages();
+        $this->assertCount(4, $messages);
+        $this->assertSame('one', $messages[0]->content[0]->text);
+        $this->assertSame('first answer', $messages[1]->content[0]->text);
+        $this->assertSame('two', $messages[2]->content[0]->text);
+    }
+
+    public function testTheTerminalIsStillYoursAfterwards(): void
+    {
+        $this->start(answers: ['answered', 'and again'], initialMessages: ['from the shell']);
+        $this->settle();
+
+        // Two calls, because one chunk is one key: `'text' . ENTER` arrives as a
+        // fourteen-character key that is not Enter, and lands in the editor as text.
+        $this->type('typed by hand');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('typed by hand', $this->screen());
+        $this->assertCount(4, $this->session->messages());
+    }
+
+    public function testAnImageRidesOnTheFirstMessageOnly(): void
+    {
+        $image = new ImageContent(base64_encode('bytes'), 'image/png');
+        $this->start(
+            answers: ['ok', 'ok again'],
+            initialMessages: ['look', 'and again'],
+            initialImages: [$image],
+        );
+        $this->settle();
+
+        $messages = $this->session->messages();
+        $this->assertCount(2, $messages[0]->content, 'the text and the image');
+        $this->assertCount(1, $messages[2]->content, 'the text only');
+    }
+
+    public function testNoMessageFromTheCommandLineLeavesTheBannerAlone(): void
+    {
+        $this->start();
+        $this->settle();
+
+        $this->assertSame([], $this->session->messages());
+        $this->assertStringContainsString('pig v0.0.0', $this->screen());
     }
 
     // ---- the queue ------------------------------------------------------------------------------

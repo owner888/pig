@@ -15,8 +15,8 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 > Skills are picked up from `~/.pig/skills` and from Claude's and Codex's folders too, and
 > images a tool returns are drawn in the terminal. Hooks are PHP files that can block a
 > tool, edit what the model is shown, or add commands of their own, and a folder with an
-> `index.php` in it is a tool the model can call. `--rpc` drops the terminal entirely and
-> speaks JSON lines instead, for an editor.
+> `index.php` in it is a tool the model can call. `-p` prints one answer and exits, and
+> `--mode json` or `--mode rpc` drops the terminal for JSON lines, for an editor.
 
 ## Packages
 
@@ -26,7 +26,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 | `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic, OpenAI chat-completions, OpenAI Responses and Gemini all stream end to end** |
 | `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — **done** |
 | `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — **done** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions, compaction, model switching, skills, hooks, custom tools and RPC mode done** |
+| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions, compaction, model switching, skills, hooks, custom tools and all three modes (terminal, print, RPC) done** |
 
 `pig/async` has no counterpart upstream: JavaScript ships an event loop and PHP does not. It
 exists so one `stream_select()` can wait on the model's socket and on the keyboard at the same
@@ -41,8 +41,18 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 ```
 
 `--read-only` takes away edit, write and bash; `--theme light` for a light terminal;
-`--continue` to pick up where you left off; `--rpc` for no terminal at all. `/help` inside
-lists the keys.
+`--continue` to pick up where you left off. `/help` inside lists the keys.
+
+Anything that is not an option is a message, and `@some/file` is read in front of it:
+
+```bash
+bin/pig "what does bin/pig do?"            # ask, then carry on in the terminal
+bin/pig @src/Thing.php "why is this slow?" # the file first, then the question
+bin/pig @screenshot.png "what is wrong here?"
+```
+
+An image goes in as an image, so a screenshot reaches the model without a tool call. `--` ends
+the options, for a message that starts with a dash or an `@`.
 
 Ctrl+G opens whatever is in the prompt in `$VISUAL` or `$EDITOR` and puts the result back —
 for the message that turned out to be three paragraphs. It works while the model is still
@@ -146,11 +156,27 @@ Skills are folders with a `SKILL.md` in them. pig reads `~/.pig/skills` and `.pi
 also `~/.claude/skills`, `.claude/skills` and `~/.codex/skills`, so a skill written for another
 agent works here unchanged. `/skills` lists what was found and where each one came from.
 
-`--rpc` is the other way in: JSON lines on standard input, JSON lines on standard output, no
-terminal at all. For an editor, or anything else driving pig from code.
+There are three ways in, and the terminal is only the default. `-p` says it, prints the
+answer and exits — for a shell script, or a pipe:
 
 ```bash
-echo '{"id":"1","type":"prompt","message":"what does bin/pig do?"}' | bin/pig --rpc
+bin/pig -p "one sentence on what this repo does" | pbcopy
+bin/pig -p @error.log "what went wrong?"
+```
+
+`--mode json` is the same run with every event on standard output instead: the streaming a
+terminal would draw, for something that wants to parse it. Warnings stay on standard error, so
+the lines are all JSON.
+
+```bash
+bin/pig --mode json -p "..." | jq -r 'select(.type=="message_update") | .delta.delta // empty'
+```
+
+`--mode rpc` reads commands as JSON lines and never stops: for an editor, or anything else
+driving pig from code.
+
+```bash
+echo '{"id":"1","type":"prompt","message":"what does bin/pig do?"}' | bin/pig --mode rpc
 ```
 
 Twenty-one commands — prompt, steer, abort, switch models, compact, run a shell command, walk

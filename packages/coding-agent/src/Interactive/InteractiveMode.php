@@ -157,6 +157,10 @@ final class InteractiveMode
     /** Injected so a test can see what a copy would have put there. */
     private Clipboard $clipboard;
 
+    /**
+     * @param list<string>                $initialMessages said before the first keystroke, in order
+     * @param list<\Pig\Ai\ImageContent> $initialImages   attachments for the first of them
+     */
     public function __construct(
         private readonly AgentSession $session,
         private Palette $palette,
@@ -171,6 +175,8 @@ final class InteractiveMode
         ?Settings $settings = null,
         ?HookRunner $hooks = null,
         ?CustomToolSet $customTools = null,
+        private readonly array $initialMessages = [],
+        private readonly array $initialImages = [],
     ) {
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
@@ -244,6 +250,18 @@ final class InteractiveMode
         $this->hooks?->emit(new SessionStartEvent());
         $this->sayToolProblems($this->customTools?->notify('start') ?? []);
         $this->tui->start();
+
+        // After the screen is up, so the first answer streams into a transcript that is
+        // already being drawn rather than appearing all at once when it finishes. In a fiber
+        // because each one is a whole turn, and the loop has to keep running underneath
+        // them — escape has to reach a prompt that came from the command line too.
+        if ($this->initialMessages !== []) {
+            Async::spawn(function (): void {
+                foreach ($this->initialMessages as $at => $message) {
+                    $this->sendAndWait($message, $at === 0 ? $this->initialImages : []);
+                }
+            });
+        }
     }
 
     /**
@@ -880,23 +898,37 @@ final class InteractiveMode
      * middle of; a prompt that ran there would block every keystroke — including the
      * Escape meant to stop it.
      */
-    private function send(string $text): void
+    private function send(string $text, array $images = []): void
     {
-        Async::spawn(function () use ($text): void {
-            try {
-                // Before the turn rather than after the failure: a request that does not
-                // fit comes back as an error from the provider, and by then the person
-                // has already waited for it.
-                if ($this->session->shouldCompact()) {
-                    $this->say($this->palette->fg('muted', 'Context is nearly full — summarising first.'));
-                    $this->compact();
-                }
-
-                $this->session->prompt($text);
-            } catch (Throwable $error) {
-                $this->sayError($error->getMessage());
-            }
+        Async::spawn(function () use ($text, $images): void {
+            $this->sendAndWait($text, $images);
         });
+    }
+
+    /**
+     * The same turn, in the caller's fiber.
+     *
+     * `send()` spawns because it is called from a key handler, and a key handler that
+     * suspends suspends the loop that called it. The queue of command-line messages is
+     * already in a fiber of its own and has to send them *in order*, which means waiting.
+     *
+     * @param list<\Pig\Ai\ImageContent> $images
+     */
+    private function sendAndWait(string $text, array $images = []): void
+    {
+        try {
+            // Before the turn rather than after the failure: a request that does not
+            // fit comes back as an error from the provider, and by then the person
+            // has already waited for it.
+            if ($this->session->shouldCompact()) {
+                $this->say($this->palette->fg('muted', 'Context is nearly full — summarising first.'));
+                $this->compact();
+            }
+
+            $this->session->prompt($text, $images);
+        } catch (Throwable $error) {
+            $this->sayError($error->getMessage());
+        }
     }
 
     /**

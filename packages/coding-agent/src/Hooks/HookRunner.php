@@ -188,7 +188,11 @@ final class HookRunner
             $this->abort,
             $this->hasQueuedMessages,
             $this->ui,
-            $this->ui !== null,
+            // `NoUi` is not a UI. It answers every question without asking anybody, which is
+            // exactly what a hook checking `hasUi` is trying to find out before it asks —
+            // `$this->ui !== null` said yes to it, so a hook in `--mode text` was told there
+            // was somebody there and then heard nothing back.
+            $this->ui !== null && !$this->ui instanceof NoUi,
         );
     }
 

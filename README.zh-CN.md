@@ -12,8 +12,8 @@ amphp、不用 ncurses，只用标准库。
 > 挑。上下文快满了会自我总结之后接着聊，`/compact` 也可以随时手动压一次，`/model` 中途换模型。
 > skills 从 `~/.pig/skills` 读，也顺带读 Claude 和 Codex 的那几个目录；工具返回的图片直接画在终端里。
 > hooks 是 PHP 文件，能拦下一次工具调用、改写模型看到的内容，或者自己加一条斜杠命令；
-> 放一个带 `index.php` 的文件夹进去，就是一个模型能调用的工具。`--rpc` 干脆不要终端，
-> 改说 JSON 行——给编辑器用。
+> 放一个带 `index.php` 的文件夹进去，就是一个模型能调用的工具。`-p` 打一次答案就退出，
+> `--mode json` 和 `--mode rpc` 则干脆不要终端，改说 JSON 行——给编辑器用。
 
 ## 包划分
 
@@ -23,7 +23,7 @@ amphp、不用 ncurses，只用标准库。
 | `pig/ai` | `Pig\Ai\` | 统一 LLM API —— **Anthropic、OpenAI chat-completions、OpenAI Responses、Gemini 四条全链路可用** |
 | `pig/agent-core` | `Pig\Agent\` | 带工具调用和状态管理的 agent 循环 —— **已完成** |
 | `pig/tui` | `Pig\Tui\` | 差分渲染的终端 UI —— **已完成** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **工具、系统提示、交互式 CLI、会话持久化、上下文压缩、模型切换、skills、hooks、自定义工具、RPC 模式已完成** |
+| `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **工具、系统提示、交互式 CLI、会话持久化、上下文压缩、模型切换、skills、hooks、自定义工具、三种模式(终端 / print / RPC)已完成** |
 
 `pig/async` 在上游没有对应物：JavaScript 自带事件循环，PHP 没有。它的存在是为了让**一次
 `stream_select()` 能同时等模型的 socket 和键盘**——这正是「流式输出途中能打断、能继续打字」
@@ -36,8 +36,19 @@ composer install
 ANTHROPIC_API_KEY=sk-ant-... bin/pig
 ```
 
-`--read-only` 去掉 edit、write、bash；`--theme light` 给浅色终端用；`--continue` 接着上次聊；
-`--rpc` 则完全不要终端。进去之后 `/help` 列出所有按键。
+`--read-only` 去掉 edit、write、bash；`--theme light` 给浅色终端用；`--continue` 接着上次聊。
+进去之后 `/help` 列出所有按键。
+
+不是选项的东西就是要说的话，`@某个文件` 会被读在这句话前面：
+
+```bash
+bin/pig "bin/pig 是干什么的？"                # 问一句，然后继续留在终端里
+bin/pig @src/Thing.php "这为什么慢？"         # 先文件，再问题
+bin/pig @screenshot.png "这里哪儿不对？"
+```
+
+图片就当图片传进去，所以一张截图不用经过工具调用就能到模型手上。`--` 结束选项解析——给那种
+开头是横杠或者 `@` 的话用。
 
 Ctrl+G 把 prompt 里现在的内容丢进 `$VISUAL` 或 `$EDITOR`，改完再塞回来——给那种写到一半发现要写
 三段的消息用。模型还在回答的时候也能用：编辑器拿着终端，回答在它背后继续到。
@@ -134,11 +145,24 @@ skill 就是一个带 `SKILL.md` 的文件夹。pig 读 `~/.pig/skills` 和 `.pi
 `~/.claude/skills`、`.claude/skills` 和 `~/.codex/skills`——给别的 agent 写的 skill 在这儿直接能用。
 `/skills` 列出找到了哪些、各自来自哪个目录。
 
-`--rpc` 是另一条进去的路：标准输入进 JSON 行，标准输出出 JSON 行，完全没有终端。给编辑器，
-或者任何从代码里驱动 pig 的东西用。
+一共三条进去的路，终端只是默认那条。`-p` 说一句、打出答案、退出——给 shell 脚本或者管道用：
 
 ```bash
-echo '{"id":"1","type":"prompt","message":"bin/pig 是干什么的？"}' | bin/pig --rpc
+bin/pig -p "一句话说清这个仓库是干什么的" | pbcopy
+bin/pig -p @error.log "出了什么问题？"
+```
+
+`--mode json` 是同一次运行，只是把每个事件打到标准输出：终端会画的那份流式过程，给想解析它的
+东西用。告警一律走标准错误，所以那些行全都是 JSON。
+
+```bash
+bin/pig --mode json -p "..." | jq -r 'select(.type=="message_update") | .delta.delta // empty'
+```
+
+`--mode rpc` 把 JSON 行当命令读，自己不会结束：给编辑器，或者任何从代码里驱动 pig 的东西用。
+
+```bash
+echo '{"id":"1","type":"prompt","message":"bin/pig 是干什么的？"}' | bin/pig --mode rpc
 ```
 
 二十一条命令——prompt、插话、打断、换模型、压缩上下文、跑一条 shell 命令、在对话树上走、导出——

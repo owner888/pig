@@ -24,6 +24,8 @@ foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Models;
 use Pig\Async\Async;
+use Pig\CodingAgent\Cli\Arguments;
+use Pig\CodingAgent\Cli\FileArguments;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\CustomTools\CustomToolApi;
 use Pig\CodingAgent\CustomTools\CustomToolLoader;
@@ -33,6 +35,7 @@ use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Rpc\RpcMode;
 use Pig\CodingAgent\ModelResolver;
+use Pig\CodingAgent\PrintMode;
 use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Prompt\SlashCommands;
@@ -45,39 +48,8 @@ use Pig\Tui\Style;
 
 const VERSION = '0.1.0';
 
-/** @return array{0: array<string, string>, 1: list<string>} options and what was left */
-function options(array $arguments): array
-{
-    $options = [];
-    $rest = [];
-
-    for ($at = 0; $at < count($arguments); $at++) {
-        $argument = $arguments[$at];
-
-        if (!str_starts_with($argument, '--')) {
-            $rest[] = $argument;
-
-            continue;
-        }
-
-        $name = substr($argument, 2);
-
-        if (str_contains($name, '=')) {
-            [$name, $value] = explode('=', $name, 2);
-            $options[$name] = $value;
-
-            continue;
-        }
-
-        // A flag that takes no value, followed by one that does: `--read-only --model x`.
-        $next = $arguments[$at + 1] ?? null;
-        $options[$name] = $next !== null && !str_starts_with($next, '--') ? $arguments[++$at] : '';
-    }
-
-    return [$options, $rest];
-}
-
-[$options, $rest] = options(array_slice($argv, 1));
+$arguments = Arguments::parse(array_slice($argv, 1));
+$options = $arguments->options;
 
 if (isset($options['help'])) {
     echo <<<TEXT
@@ -97,8 +69,18 @@ if (isset($options['help'])) {
       --skills-dir <d>  one more folder of skills, on top of the standard ones
       --no-hooks        start without loading ~/.pig/hooks or .pig/hooks
       --no-tools        start without loading ~/.pig/tools or .pig/tools
-      --rpc             no terminal: JSON lines in on stdin, JSON lines out on stdout,
-                        for an editor or anything else driving pig from code
+      -p, --print       say it, print the answer, exit — the same as --mode text
+      --mode <m>        text, json or rpc. Any of them leaves the terminal behind:
+                        text prints the last answer, json prints every event as it
+                        happens, rpc reads commands as JSON lines on stdin.
+
+    Anything that is not an option is a message, and `@some/file` is read in front of
+    the first one — an image goes in as an image. `--` ends the options, for a message
+    that starts with a dash.
+
+      bin/pig "what does bin/pig do?"          ask, then carry on in the terminal
+      bin/pig -p @src/Thing.php "why so slow?"  ask, print, exit
+      bin/pig --mode json -p "..." | jq        every event, as it happens
 
     TEXT;
 
@@ -109,6 +91,35 @@ $cwd = $options['cwd'] ?? (getcwd() ?: '.');
 
 if (!is_dir($cwd)) {
     fwrite(STDERR, Style::red("No such directory: {$cwd}\n"));
+
+    exit(1);
+}
+
+// Which way in. Upstream's rule, kept: `--mode` given at all means no terminal, and `-p` is
+// the short way of saying `--mode text`. So the terminal is the default and nothing but the
+// absence of both selects it.
+$mode = $arguments->mode();
+
+if (!$arguments->isKnownMode()) {
+    fwrite(STDERR, Style::red("No mode called '{$mode}'. There is " . implode(', ', Arguments::MODES) . ".\n"));
+
+    exit(1);
+}
+
+$interactive = $arguments->isInteractive();
+$messages = $arguments->messages;
+$fileArgs = $arguments->files;
+
+// Refused rather than ignored, as upstream refuses it: in rpc mode the conversation arrives
+// as commands, so a file read here would be prepended to a prompt that never comes.
+if ($mode === 'rpc' && ($fileArgs !== [] || $messages !== [])) {
+    fwrite(STDERR, Style::red("--mode rpc takes its messages as commands, not as arguments.\n"));
+
+    exit(1);
+}
+
+if (!$interactive && $messages === [] && $fileArgs === []) {
+    fwrite(STDERR, Style::red("Nothing to say. Pass a message, or leave off --mode for the terminal.\n"));
 
     exit(1);
 }
@@ -277,14 +288,39 @@ if ($resumed !== null) {
     $session->restore($resumed->messages());
 }
 
-// Standard output belongs to the protocol in `--rpc`, which is why every warning above
-// went to standard error: a host parsing JSON lines must not find a yellow sentence about
-// a broken hook among them.
-$rpc = isset($options['rpc']);
+// Read here rather than in the parser: a missing file should be reported after the cheap
+// mistakes and before the expensive setup, and it is the one positional argument that can
+// fail.
+try {
+    $files = FileArguments::read($fileArgs, $cwd);
+} catch (Throwable $error) {
+    fwrite(STDERR, Style::red($error->getMessage() . "\n"));
 
-$mode = $rpc
-    ? new RpcMode($session, $cwd, $hooks, $customTools, $settings)
-    : new InteractiveMode(
+    exit(1);
+}
+
+// The files go in front of the first message, which is the one place they can go: the model
+// reading `why is this slow?` needs the code above it, not after it.
+if (!$files->isEmpty()) {
+    $messages = $messages === [] ? [$files->text] : [$files->before($messages[0]), ...array_slice($messages, 1)];
+}
+
+// Standard output belongs to the answer in every non-interactive mode, which is why every
+// warning above went to standard error: something parsing JSON lines must not find a yellow
+// sentence about a broken hook among them.
+$exit = 0;
+
+if ($mode === 'rpc') {
+    $running = new RpcMode($session, $cwd, $hooks, $customTools, $settings);
+
+    // One fiber around the whole program: the prompt suspends on a socket, the terminal
+    // wakes on a keystroke, and both need the same loop underneath them.
+    Async::run(static fn () => $running->run());
+} elseif (!$interactive) {
+    $printing = new PrintMode($session, $mode ?? 'text', $hooks, $customTools);
+    $exit = (int) Async::run(static fn (): int => $printing->run($messages, $files->images));
+} else {
+    $running = new InteractiveMode(
         $session,
         Palette::named($theme),
         $cwd,
@@ -296,14 +332,15 @@ $mode = $rpc
         settings: $settings,
         hooks: $hooks,
         customTools: $customTools,
+        initialMessages: $messages,
+        initialImages: $files->images,
     );
 
-// One fiber around the whole program: the prompt suspends on a socket, the terminal
-// wakes on a keystroke, and both need the same loop underneath them.
-Async::run(static fn () => $mode->run());
+    Async::run(static fn () => $running->run());
 
-if (!$rpc) {
     // The first thing a person sees after quitting is their own shell, so the screen is
     // handed back the way it was found.
     echo "\n";
 }
+
+exit($exit);

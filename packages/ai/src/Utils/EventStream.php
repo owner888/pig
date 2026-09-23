@@ -9,6 +9,7 @@ use Generator;
 use IteratorAggregate;
 use Pig\Async\Deferred;
 use Pig\Async\Future;
+use Throwable;
 
 /**
  * A push-driven stream of events that also carries one final result.
@@ -31,6 +32,9 @@ class EventStream implements IteratorAggregate
     private array $waiting = [];
 
     private bool $done = false;
+
+    /** Why the producer stopped, when it stopped by throwing. */
+    private ?Throwable $failure = null;
 
     /** @var Deferred<R> */
     private readonly Deferred $finalResult;
@@ -92,6 +96,39 @@ class EventStream implements IteratorAggregate
     }
 
     /**
+     * Close the stream because the producer threw.
+     *
+     * Producer and consumer are separate coroutines, so a throw on the producing side does
+     * not land in the consumer's `foreach` by itself — it escapes its own fiber and leaves
+     * this stream open forever, which the consumer experiences as a hang with no reason
+     * given. This carries it across: whoever is iterating gets the throw, and whoever is
+     * awaiting `result()` gets it too.
+     *
+     * Not `end()` with an error argument, because those are different things. A stream that
+     * ended has a result; a stream that failed has a reason, and a consumer that cannot tell
+     * them apart will treat a dead connection as an empty answer.
+     */
+    public function fail(Throwable $error): void
+    {
+        if ($this->done) {
+            return;
+        }
+
+        $this->done = true;
+        $this->failure = $error;
+
+        if (!$this->finalResult->isComplete()) {
+            $this->finalResult->error($error);
+        }
+
+        // Every parked consumer, not just the first: they are all waiting on a stream that
+        // is not going to produce anything, and one of them being told is not enough.
+        while ($this->waiting !== []) {
+            array_shift($this->waiting)->error($error);
+        }
+    }
+
+    /**
      * Iterate events until the stream closes.
      *
      * Suspends the consuming coroutine while the queue is empty, so this must run
@@ -110,6 +147,13 @@ class EventStream implements IteratorAggregate
             }
 
             if ($this->done) {
+                // Buffered events first, then the reason: a producer that pushed three
+                // events and then threw pushed three real events, and dropping them would
+                // lose work that did happen.
+                if ($this->failure !== null) {
+                    throw $this->failure;
+                }
+
                 return;
             }
 
