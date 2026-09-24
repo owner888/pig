@@ -277,22 +277,34 @@ final class AuthTest extends TestCase
     {
         $seen = null;
 
-        $this->assertThrows(OauthError::class, function () use (&$seen): void {
-            $this->auth()->login(
-                Provider::Anthropic,
-                static function (string $url) use (&$seen): void {
-                    $seen = $url;
-                },
-                // Escaping the paste box: nothing came back, so nothing is exchanged and
-                // no request is made.
-                static fn (): ?string => null,
-            );
-        });
+        // Escaping the paste box: nothing came back, so nothing is exchanged, no request is
+        // made, and this is a cancellation rather than a failure — which is why it answers
+        // null instead of throwing.
+        $credentials = $this->auth()->login(
+            Provider::Anthropic,
+            static function (string $url, ?string $instructions) use (&$seen): void {
+                $seen = $url;
+            },
+            static fn (string $message, string $placeholder, bool $allowEmpty): ?string => null,
+        );
 
+        $this->assertNull($credentials);
         $this->assertIsString($seen);
         $this->assertStringContainsString('code_challenge=', (string) $seen);
         $this->assertStringContainsString('claude.ai/oauth/authorize', (string) $seen);
         $this->assertSame([], $this->auth()->providers(), 'nothing was stored');
+    }
+
+    public function testAnEmptyPasteIsACancellationToo(): void
+    {
+        $credentials = $this->auth()->login(
+            Provider::Anthropic,
+            static function (string $url, ?string $instructions): void {
+            },
+            static fn (string $message, string $placeholder, bool $allowEmpty): ?string => '   ',
+        );
+
+        $this->assertNull($credentials);
     }
 
     public function testAProviderThatIsNotPortedIsRefusedBeforeAUrlIsShown(): void
@@ -302,15 +314,56 @@ final class AuthTest extends TestCase
         $problem = $this->assertThrows(OauthError::class, function () use (&$shown): void {
             $this->auth()->login(
                 Provider::GoogleGeminiCli,
-                static function (string $url) use (&$shown): void {
+                static function (string $url, ?string $instructions) use (&$shown): void {
                     $shown++;
                 },
-                static fn (): ?string => 'c#s',
+                static fn (string $message, string $placeholder, bool $allowEmpty): ?string => 'c#s',
             );
         });
 
         $this->assertStringContainsString('not ported', $problem->getMessage());
         $this->assertSame(0, $shown, 'nobody was sent anywhere');
+    }
+
+    public function testCopilotIsAskedWhichGitHubBeforeAnythingElse(): void
+    {
+        $asked = [];
+
+        // Escaping the domain prompt ends it before a request is made, which is what makes
+        // this answerable without reaching github.com.
+        $credentials = $this->auth()->login(
+            Provider::GithubCopilot,
+            static function (string $url, ?string $instructions): void {
+            },
+            static function (string $message, string $placeholder, bool $allowEmpty) use (&$asked): ?string {
+                $asked[] = [$message, $allowEmpty];
+
+                return null;
+            },
+        );
+
+        $this->assertNull($credentials);
+        $this->assertCount(1, $asked);
+        $this->assertStringContainsString('Enterprise', $asked[0][0]);
+        // Blank means github.com, so the prompt has to say an empty answer is allowed — the
+        // flow that asked is what enforces that, not the UI.
+        $this->assertTrue($asked[0][1]);
+    }
+
+    public function testSomethingThatIsNotADomainIsRefusedRatherThanReadAsGithubCom(): void
+    {
+        $problem = $this->assertThrows(OauthError::class, function (): void {
+            $this->auth()->login(
+                Provider::GithubCopilot,
+                static function (string $url, ?string $instructions): void {
+                },
+                static fn (string $message, string $placeholder, bool $allowEmpty): ?string => '???',
+            );
+        });
+
+        // Carrying on against github.com would sign somebody in to the wrong GitHub and look
+        // like it had worked.
+        $this->assertStringContainsString('not a GitHub Enterprise domain', $problem->getMessage());
     }
 
     // ---- where the file is ---------------------------------------------------------------

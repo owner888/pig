@@ -45,13 +45,20 @@ use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Timings;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Tui\Style;
 
 const VERSION = '0.1.0';
 
+// The first mark is an anchor and costs nothing; every one after it is the gap since the
+// last. All of them are no-ops unless `PIG_TIMING=1`, which is why they can sit in the flow
+// rather than behind an `if` at each step.
+Timings::mark('start');
+
 $arguments = Arguments::parse(array_slice($argv, 1));
 $options = $arguments->options;
+Timings::mark('parseArgs');
 
 if (isset($options['version'])) {
     echo 'pig ' . VERSION . "\n";
@@ -150,6 +157,8 @@ foreach ($settings->problems() as $problem) {
     fwrite(STDERR, Style::yellow("settings: {$problem}\n"));
 }
 
+Timings::mark('settings');
+
 // Not affected by `--no-save`, which is about not writing this conversation down. A stored
 // sign-in is still the way in, and a token renewed during the run has to be kept or the next
 // run starts by renewing a token that was already replaced.
@@ -158,6 +167,8 @@ $auth = Auth::discover();
 foreach ($auth->problems() as $problem) {
     fwrite(STDERR, Style::yellow("credentials: {$problem}\n"));
 }
+
+Timings::mark('credentials');
 
 $wanted = $options['model'] ?? (getenv('PIG_MODEL') ?: ($settings->defaultModel() ?? 'claude-sonnet-4-5'));
 $choice = ModelResolver::parse($wanted);
@@ -196,6 +207,7 @@ if (!in_array($theme, Palette::names(), true)) {
 // Loaded here rather than left to the prompt builder, so the banner and the system
 // prompt cannot disagree about what was picked up.
 $contextFiles = ContextFiles::load($cwd);
+Timings::mark('contextFiles');
 
 [$skills, $skillWarnings] = $settings->skillsEnabled()
     ? Skills::load(
@@ -205,7 +217,10 @@ $contextFiles = ContextFiles::load($cwd);
         only: $settings->skillList('includeSkills'),
     )
     : [[], []];
+Timings::mark('skills');
+
 $fileCommands = SlashCommands::load($cwd);
+Timings::mark('slashCommands');
 
 // On the shell rather than in the UI: a malformed skill is its author's problem, and the
 // author is whoever just started pig — not the model, and not the transcript.
@@ -270,6 +285,8 @@ if (!isset($options['no-save'])) {
     $resumed = $wanted === null ? null : $store;
 }
 
+Timings::mark('session');
+
 // A hook is a PHP file that runs in this process, so a broken one is reported here, on
 // the shell, next to the malformed skills — and for the same reason: whoever wrote it is
 // whoever just started pig.
@@ -282,6 +299,7 @@ foreach ($hookProblems as $problem) {
 }
 
 $hooks = new HookRunner($loadedHooks, $cwd, $store);
+Timings::mark('hooks');
 
 // The same story, one folder over. The built-in names are handed in so a tool that would
 // shadow `bash` is named rather than quietly replacing it.
@@ -298,6 +316,8 @@ $toolApi = new CustomToolApi($cwd);
 foreach ($toolProblems as $problem) {
     fwrite(STDERR, Style::yellow("tool {$problem->toText()}\n"));
 }
+
+Timings::mark('customTools');
 
 $customTools = new CustomToolSet($loadedTools, $toolApi);
 
@@ -322,6 +342,8 @@ try {
 
     exit(1);
 }
+
+Timings::mark('agent');
 
 $session = new AgentSession($agent, $cwd, $store, $settings, $hooks);
 
@@ -354,6 +376,12 @@ try {
 if (!$files->isEmpty()) {
     $messages = $messages === [] ? [$files->text] : [$files->before($messages[0]), ...array_slice($messages, 1)];
 }
+
+// Here rather than at the end: startup is over the moment a mode takes the screen, and a
+// report printed when pig quits would be one somebody has to scroll back to find — after an
+// hour of conversation, if they are still there at all.
+Timings::mark('files');
+Timings::report();
 
 // Standard output belongs to the answer in every non-interactive mode, which is why every
 // warning above went to standard error: something parsing JSON lines must not find a yellow

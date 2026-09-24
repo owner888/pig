@@ -161,6 +161,9 @@ final class InteractiveMode
     /** The session picker, while it is open. */
     private ?SelectList $picker = null;
 
+    /** Set while a sign-in is waiting on a browser, so escape can end it. */
+    private ?AbortController $signingIn = null;
+
     /** Set while the summariser is running, so escape can call it off. */
     private ?AbortController $compaction = null;
 
@@ -595,6 +598,14 @@ final class InteractiveMode
      */
     private function interrupt(): void
     {
+        // First, because it is the most recent thing the person started and the only one that
+        // can be waiting on somebody else's server for a quarter of an hour.
+        if ($this->signingIn !== null) {
+            $this->signingIn->abort('Cancelled');
+
+            return;
+        }
+
         if ($this->compaction !== null) {
             $this->compaction->abort('Cancelled');
 
@@ -1831,18 +1842,43 @@ final class InteractiveMode
         }
 
         Async::spawn(function () use ($provider): void {
+            // Escape has to be able to end this: Copilot's flow polls GitHub for up to fifteen
+            // minutes, and a fiber waiting that long with nothing able to stop it is a session
+            // that has to be killed. `interrupt()` reaches this controller.
+            $controller = new AbortController();
+            $this->signingIn = $controller;
+
             try {
-                $this->auth?->login(
+                $credentials = $this->auth?->login(
                     $provider,
-                    function (string $url): void {
-                        $this->say("Open this, approve it, and paste what comes back:\n\n{$url}");
+                    function (string $url, ?string $instructions): void {
+                        $this->say(trim(
+                            "Open this and approve it:\n\n" . self::link($url)
+                            . "\n\n" . ($instructions ?? ''),
+                        ));
+
+                        // Said before it is opened, so the URL is on screen whatever the
+                        // browser does — including not existing.
+                        self::openInBrowser($url);
                     },
-                    fn (): ?string => $this->ui->input('Paste the authorization code', 'code#state'),
+                    // `$allowEmpty` is part of upstream's contract and is enforced by the flow
+                    // that asked, not here: an empty answer is `github.com` for Copilot's
+                    // domain prompt and a cancellation for Anthropic's paste box.
+                    fn (string $message, string $placeholder, bool $allowEmpty): ?string
+                        => $this->ui->input($message, $placeholder),
+                    function (string $note): void {
+                        $this->say($note);
+                    },
+                    $controller->signal,
                 );
 
-                $this->say("Signed in with {$provider->label()}.");
+                $this->say($credentials === null
+                    ? 'Signing in was cancelled.'
+                    : "Signed in with {$provider->label()}.");
             } catch (Throwable $problem) {
                 $this->sayError($problem->getMessage());
+            } finally {
+                $this->signingIn = null;
             }
 
             $this->tui->requestRender();
@@ -1857,6 +1893,43 @@ final class InteractiveMode
         } catch (Throwable $problem) {
             $this->sayError($problem->getMessage());
         }
+    }
+
+
+    /**
+     * A URL the terminal can be clicked on, where the terminal allows it.
+     *
+     * OSC 8, which upstream uses for the same thing. The link text is the URL itself rather
+     * than upstream's "Click here to login": a terminal that does not understand the sequence
+     * ignores it and shows the label, and a label is not something anybody can copy.
+     * `Ansi::strip()` already knew about OSC 8, so the width of this line measures correctly.
+     */
+    private static function link(string $url): string
+    {
+        return "\e]8;;{$url}\x07" . $url . "\e]8;;\x07";
+    }
+
+    /**
+     * Open it, if this machine has anything to open it with.
+     *
+     * Best effort on purpose: the URL is on screen, so a headless box or one without
+     * `xdg-open` is not a broken sign-in — it is one extra copy-and-paste. Nothing is thrown
+     * and nothing is swallowed either, because `Process::run()` reports an exit code rather
+     * than raising; ignoring that code is the judgement, and this is where it is written down.
+     *
+     * Two seconds is a ceiling rather than a wait: all three of these commands hand off and
+     * return at once, and anything that does not is not going to.
+     */
+    private static function openInBrowser(string $url): void
+    {
+        $command = match (PHP_OS_FAMILY) {
+            'Darwin' => ['open', $url],
+            // The empty argument is the window title `start` otherwise takes the URL for.
+            'Windows' => ['cmd', '/c', 'start', '', $url],
+            default => ['xdg-open', $url],
+        };
+
+        Process::run($command, 2.0);
     }
 
     private function closePicker(): void

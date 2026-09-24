@@ -50,7 +50,7 @@ enum Provider: string
      */
     public function available(): bool
     {
-        return $this === self::Anthropic;
+        return $this === self::Anthropic || $this === self::GithubCopilot;
     }
 
     /** A new access token, or a refusal naming what is missing. */
@@ -64,7 +64,11 @@ enum Provider: string
         // what makes a fifth provider a compile-time question instead of a silent fall-through.
         return match ($this) {
             self::Anthropic => (new Anthropic($http ?? new HttpClient()))->refresh($credentials->refresh),
-            self::GithubCopilot, self::GoogleGeminiCli, self::GoogleAntigravity
+            // The GitHub token is what was stored, and trading it for a Copilot one is both how
+            // the sign-in ends and how it is renewed — there is no separate refresh endpoint.
+            self::GithubCopilot => (new GithubCopilot($http ?? new HttpClient()))
+                ->refresh($credentials->refresh, $credentials->enterpriseUrl),
+            self::GoogleGeminiCli, self::GoogleAntigravity
                 => throw new OauthError("Signing in with {$this->value} is not ported yet, so its token cannot be renewed here."),
         };
     }
@@ -72,15 +76,16 @@ enum Provider: string
     /**
      * What goes on a request as the key.
      *
-     * For Anthropic that is the access token itself, which `Providers\Anthropic` recognises by
-     * its `sk-ant-oat` prefix and sends as a bearer token. The two Google flows encode the
-     * project id alongside it, which is why this is a method and not a field read.
+     * For Anthropic and Copilot that is the access token itself. The two Google flows encode
+     * the project id alongside it, which is why this is a method and not a field read.
      */
     public function apiKey(Credentials $credentials): string
     {
         return match ($this) {
-            self::Anthropic => $credentials->access,
-            self::GithubCopilot, self::GoogleGeminiCli, self::GoogleAntigravity
+            // Both are the short-lived half. Anthropic's is recognised by its `sk-ant-oat`
+            // prefix and Copilot's by the provider name, and both go out as bearer tokens.
+            self::Anthropic, self::GithubCopilot => $credentials->access,
+            self::GoogleGeminiCli, self::GoogleAntigravity
                 => throw new OauthError("{$this->value} credentials cannot be turned into a key here yet."),
         };
     }

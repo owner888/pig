@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace Pig\CodingAgent;
 
 use Closure;
+use Pig\Ai\Models;
 use Pig\Ai\Stream;
 use Pig\Ai\Utils\Oauth\Anthropic;
 use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Pkce;
 use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Async\AbortSignal;
 use Throwable;
 
 /**
@@ -252,33 +255,102 @@ final class Auth
     }
 
     /**
-     * Sign in, and remember it.
+     * Sign in, and remember it. Null means nobody finished — a cancellation, not a failure.
      *
-     * The two closures are the UI's half: one is handed the URL to open, the other is asked
-     * for what came back and returns null if the person gave up. They are closures rather than
-     * an interface because that is what upstream passes and because the only two callers — a
-     * terminal and a test — have nothing else in common.
+     * The three closures are upstream's `{onAuth, onPrompt, onProgress}`, which is the shape
+     * both flows need between them rather than the shape either one needs alone: Anthropic
+     * shows a URL and then asks for a paste, Copilot asks for a domain and then shows a URL
+     * with a code to type at it. Closures rather than an interface because that is what
+     * upstream passes and because the only two callers — a terminal and a test — have nothing
+     * else in common.
      *
-     * @param Closure(string): void $showUrl
-     * @param Closure(): ?string $askForPaste
+     * @param Closure(string, ?string): void $onAuth where to go, and what to type when there
+     * @param Closure(string, string, bool): ?string $onPrompt message, placeholder, may be
+     *        empty; null when the person escaped
+     * @param Closure(string): void|null $onProgress a line for a step that takes a moment
      */
-    public function login(Provider $provider, Closure $showUrl, Closure $askForPaste): Credentials
-    {
+    public function login(
+        Provider $provider,
+        Closure $onAuth,
+        Closure $onPrompt,
+        ?Closure $onProgress = null,
+        ?AbortSignal $signal = null,
+    ): ?Credentials {
         if (!$provider->available()) {
             throw new OauthError("Signing in with {$provider->label()} is not ported yet.");
         }
 
-        $pkce = Pkce::create();
-        $showUrl(Anthropic::authorizeUrl($pkce));
+        $credentials = match ($provider) {
+            Provider::Anthropic => $this->anthropic($onAuth, $onPrompt),
+            Provider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
+            // `available()` already refused these, so reaching here is a bug in that list
+            // rather than something a person did.
+            Provider::GoogleGeminiCli, Provider::GoogleAntigravity
+                => throw new OauthError("{$provider->label()} has no flow here."),
+        };
 
-        $pasted = $askForPaste();
-
-        if ($pasted === null || trim($pasted) === '') {
-            throw new OauthError('Nothing was pasted, so nobody was signed in.');
+        if ($credentials === null) {
+            return null;
         }
 
-        $credentials = (new Anthropic())->exchange($pasted, $pkce->verifier);
         $this->setCredentials($provider, $credentials);
+
+        return $credentials;
+    }
+
+    /**
+     * @param Closure(string, ?string): void $onAuth
+     * @param Closure(string, string, bool): ?string $onPrompt
+     */
+    private function anthropic(Closure $onAuth, Closure $onPrompt): ?Credentials
+    {
+        $pkce = Pkce::create();
+        $onAuth(Anthropic::authorizeUrl($pkce), null);
+
+        $pasted = $onPrompt('Paste the authorization code', 'code#state', false);
+
+        if ($pasted === null || trim($pasted) === '') {
+            return null;
+        }
+
+        return (new Anthropic())->exchange($pasted, $pkce->verifier);
+    }
+
+    /**
+     * @param Closure(string, ?string): void $onAuth
+     * @param Closure(string, string, bool): ?string $onPrompt
+     * @param Closure(string): void|null $onProgress
+     */
+    private function copilot(
+        Closure $onAuth,
+        Closure $onPrompt,
+        ?Closure $onProgress,
+        ?AbortSignal $signal,
+    ): ?Credentials {
+        $flow = new GithubCopilot();
+        $credentials = $flow->login($onPrompt, $onAuth, $onProgress, $signal);
+
+        if ($credentials === null) {
+            return null;
+        }
+
+        // Claude's and Grok's models are off until the account has accepted them, so a
+        // sign-in that skipped this leaves a third of the list failing on its first turn.
+        // The ids come from the registry rather than from the flow, because which models
+        // exist is the registry's question and the flow should not have a second answer.
+        $ids = [];
+
+        foreach (Models::all() as $model) {
+            if ($model->provider === Models::COPILOT) {
+                $ids[] = $model->id;
+            }
+        }
+
+        if ($onProgress !== null) {
+            $onProgress('Switching on the models this account can use…');
+        }
+
+        $flow->enableModels($credentials->access, $ids, $credentials->enterpriseUrl);
 
         return $credentials;
     }

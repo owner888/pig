@@ -8,9 +8,12 @@ use PHPUnit\Framework\TestCase;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Utils\Oauth\Anthropic;
 use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\DeviceCode;
+use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Pkce;
 use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\AssertsThrows;
@@ -240,13 +243,15 @@ final class OauthTest extends TestCase
         $this->assertTrue($credentials->hasExpired(1_001));
     }
 
-    public function testOnlyAnthropicIsOfferedAsSomethingYouCanSignInWith(): void
+    public function testOnlyTheFlowsThatAreHereAreOffered(): void
     {
         $this->assertTrue(Provider::Anthropic->available());
+        $this->assertTrue(Provider::GithubCopilot->available());
 
-        foreach ([Provider::GithubCopilot, Provider::GoogleGeminiCli, Provider::GoogleAntigravity] as $provider) {
+        foreach ([Provider::GoogleGeminiCli, Provider::GoogleAntigravity] as $provider) {
             // Named so a credentials file written by pi can be read, and not offered, because
-            // offering a sign-in that cannot finish is worse than not having it.
+            // offering a sign-in that cannot finish is worse than not having it. Both need a
+            // loopback HTTP server and a browser opened at it.
             $this->assertFalse($provider->available(), "{$provider->value} is not ported");
         }
     }
@@ -256,6 +261,16 @@ final class OauthTest extends TestCase
         foreach (Provider::cases() as $provider) {
             $this->assertNotSame('', $provider->label());
         }
+    }
+
+    public function testCopilotsKeyIsTheShortLivedHalfToo(): void
+    {
+        // The GitHub token is what lasts and the Copilot token is what a request carries, so
+        // reading `refresh` here would send the wrong one and fail as an auth error.
+        $this->assertSame(
+            'tid=x;proxy-ep=proxy.individual.githubcopilot.com',
+            Provider::GithubCopilot->apiKey(new Credentials('gho_abc', 'tid=x;proxy-ep=proxy.individual.githubcopilot.com', 0)),
+        );
     }
 
     public function testAnthropicsKeyIsTheAccessTokenTheProviderRecognises(): void
@@ -279,7 +294,7 @@ final class OauthTest extends TestCase
 
         $this->assertThrows(
             OauthError::class,
-            static fn (): string => Provider::GithubCopilot->apiKey($credentials),
+            static fn (): string => Provider::GoogleAntigravity->apiKey($credentials),
         );
     }
 
@@ -291,5 +306,222 @@ final class OauthTest extends TestCase
         );
 
         $this->assertStringContainsString('sign in again', $problem->getMessage());
+    }
+
+    // ---- GitHub Copilot: what somebody typed ---------------------------------------------
+
+    public function testADomainIsTakenOutOfWhateverWasTyped(): void
+    {
+        $this->assertSame('company.ghe.com', GithubCopilot::normalizeDomain('company.ghe.com'));
+        $this->assertSame('company.ghe.com', GithubCopilot::normalizeDomain('https://company.ghe.com'));
+        $this->assertSame('company.ghe.com', GithubCopilot::normalizeDomain('https://company.ghe.com/some/path'));
+        $this->assertSame('company.ghe.com', GithubCopilot::normalizeDomain('  company.ghe.com  '));
+    }
+
+    public function testSomethingThatIsNotADomainIsNull(): void
+    {
+        $this->assertNull(GithubCopilot::normalizeDomain(''));
+        $this->assertNull(GithubCopilot::normalizeDomain('   '));
+        $this->assertNull(GithubCopilot::normalizeDomain('???'));
+    }
+
+    // ---- GitHub Copilot: where it answers ------------------------------------------------
+
+    public function testTheTokenSaysWhereCopilotAnswers(): void
+    {
+        $token = 'tid=abc;exp=123;proxy-ep=proxy.business.githubcopilot.com;st=dotcom';
+
+        // `proxy.` becomes `api.` — the same host with a different prefix, which is upstream's
+        // substitution and not a guess. A business or enterprise account says something other
+        // than `individual`, and sending to the registry's default would be a 404.
+        $this->assertSame('https://api.business.githubcopilot.com', GithubCopilot::baseUrl($token));
+    }
+
+    public function testWithNoTokenAnEnterpriseDomainDecides(): void
+    {
+        $this->assertSame('https://copilot-api.company.ghe.com', GithubCopilot::baseUrl(null, 'company.ghe.com'));
+        $this->assertSame(GithubCopilot::DEFAULT_BASE_URL, GithubCopilot::baseUrl(null, null));
+        // A token whose claims say nothing falls through to the same two answers.
+        $this->assertSame(GithubCopilot::DEFAULT_BASE_URL, GithubCopilot::baseUrl('nothing-useful-here'));
+    }
+
+    // ---- GitHub Copilot: the device flow -------------------------------------------------
+
+    private function copilot(string $url): GithubCopilot
+    {
+        return new GithubCopilot(new HttpClient(), $url);
+    }
+
+    public function testAskingForTheCodesSendsTheClientIdAndTheScope(): void
+    {
+        $url = $this->serve([
+            'device_code' => 'dev-1',
+            'user_code' => 'ABCD-1234',
+            'verification_uri' => 'https://github.com/login/device',
+            'interval' => 5,
+            'expires_in' => 900,
+        ]);
+
+        $device = $this->run(fn (): DeviceCode => $this->copilot($url)->start('github.com'));
+
+        $sent = $this->server->receivedJson();
+
+        $this->assertSame(GithubCopilot::CLIENT_ID, $sent['client_id']);
+        $this->assertSame('read:user', $sent['scope']);
+
+        $this->assertSame('dev-1', $device->deviceCode);
+        $this->assertSame('ABCD-1234', $device->userCode);
+        $this->assertSame(5, $device->interval);
+    }
+
+    public function testAnAnswerMissingOneOfTheCodesIsRefused(): void
+    {
+        // A device flow without a `user_code` is a sign-in nobody can complete, and the
+        // mistake belongs where it happened rather than three requests later.
+        $url = $this->serve(['device_code' => 'dev-1', 'verification_uri' => 'x', 'interval' => 5, 'expires_in' => 900]);
+
+        $this->assertThrows(
+            OauthError::class,
+            fn (): mixed => $this->run(fn (): DeviceCode => $this->copilot($url)->start()),
+            'without the codes',
+        );
+    }
+
+    public function testAnApprovedCodeComesBackAsAGitHubToken(): void
+    {
+        $url = $this->serve(['access_token' => 'gho_abc']);
+
+        $token = $this->run(fn (): ?string => $this->copilot($url)
+            ->poll('github.com', new DeviceCode('dev-1', 'ABCD', 'https://x', 1, 900)));
+
+        $this->assertSame('gho_abc', $token);
+
+        $sent = $this->server->receivedJson();
+
+        $this->assertSame('dev-1', $sent['device_code']);
+        $this->assertSame('urn:ietf:params:oauth:grant-type:device_code', $sent['grant_type']);
+    }
+
+    public function testWaitingIsNotAnErrorAndTheCodeCanExpireWhileItGoesOn(): void
+    {
+        $url = $this->serve(['error' => 'authorization_pending']);
+
+        // `authorization_pending` means ask again, so the loop sleeps and comes back; one
+        // second of life on the code means the deadline is what ends it.
+        $problem = $this->assertThrows(
+            OauthError::class,
+            fn (): mixed => $this->run(fn (): ?string => $this->copilot($url)
+                ->poll('github.com', new DeviceCode('dev-1', 'ABCD', 'https://x', 1, 1))),
+        );
+
+        $this->assertStringContainsString('expired before it was entered', $problem->getMessage());
+    }
+
+    public function testARefusalStopsTheWaitingAtOnce(): void
+    {
+        $url = $this->serve(['error' => 'access_denied']);
+
+        // Unlike `authorization_pending`, asking again says the same thing — so a fifteen
+        // minute wait for an answer that has already arrived is the wrong behaviour.
+        $problem = $this->assertThrows(
+            OauthError::class,
+            fn (): mixed => $this->run(fn (): ?string => $this->copilot($url)
+                ->poll('github.com', new DeviceCode('dev-1', 'ABCD', 'https://x', 1, 900))),
+        );
+
+        $this->assertStringContainsString('access_denied', $problem->getMessage());
+    }
+
+    public function testTheWaitingCanBeCalledOff(): void
+    {
+        $url = $this->serve(['error' => 'authorization_pending']);
+
+        $token = $this->run(function () use ($url): ?string {
+            $controller = new AbortController();
+
+            Loop::get()->delay(0.05, static fn () => $controller->abort('Cancelled'));
+
+            // The addition to upstream, and the reason this flow waited for a decision: it
+            // loops for fifteen minutes with nothing able to interrupt it, which in pig is a
+            // fiber parked where nobody can reach it.
+            return $this->copilot($url)->poll(
+                'github.com',
+                new DeviceCode('dev-1', 'ABCD', 'https://x', 1, 900),
+                $controller->signal,
+            );
+        });
+
+        // Null and not an exception: somebody changing their mind is an outcome.
+        $this->assertNull($token);
+    }
+
+    // ---- GitHub Copilot: the token swap --------------------------------------------------
+
+    public function testTheGitHubTokenIsTradedForACopilotOne(): void
+    {
+        $expires = (int) (microtime(true)) + 3600;
+        $url = $this->serve(['token' => 'tid=x;proxy-ep=proxy.individual.githubcopilot.com', 'expires_at' => $expires]);
+
+        $credentials = $this->run(fn (): Credentials => $this->copilot($url)->refresh('gho_abc'));
+
+        $head = $this->server->receivedHead();
+
+        $this->assertStringContainsString('authorization: Bearer gho_abc', $head);
+        // The endpoint is VS Code's and answers a request that does not claim to be VS Code
+        // with a 4xx.
+        // Lowercased on the wire by `HttpClient`, which is what makes a header name
+        // case-insensitive in practice as well as in the spec.
+        $this->assertStringContainsString('copilot-integration-id: vscode-chat', $head);
+
+        // The GitHub token is the lasting half and the Copilot one is what goes on a request,
+        // which is exactly what `refresh` and `access` mean everywhere else here.
+        $this->assertSame('gho_abc', $credentials->refresh);
+        $this->assertStringContainsString('proxy-ep=', $credentials->access);
+        $this->assertSame($expires * 1000 - 5 * 60_000, $credentials->expires);
+    }
+
+    public function testAnEnterpriseSignInRemembersWhichGitHubItWas(): void
+    {
+        $url = $this->serve(['token' => 'tid=x', 'expires_at' => 1_800_000_000]);
+
+        $credentials = $this->run(fn (): Credentials => $this->copilot($url)->refresh('gho_abc', 'company.ghe.com'));
+
+        // Kept, because renewing has to go back to the same GitHub and nothing else in the
+        // file says which one it was.
+        $this->assertSame('company.ghe.com', $credentials->enterpriseUrl);
+    }
+
+    public function testACopilotTokenAnswerWithoutATokenIsRefused(): void
+    {
+        $url = $this->serve(['expires_at' => 1_800_000_000]);
+
+        $this->assertThrows(
+            OauthError::class,
+            fn (): mixed => $this->run(fn (): Credentials => $this->copilot($url)->refresh('gho_abc')),
+            'without a token',
+        );
+    }
+
+    // ---- GitHub Copilot: switching the models on -----------------------------------------
+
+    public function testAModelTheAccountCannotHaveDoesNotStopTheRest(): void
+    {
+        $url = $this->serve(['message' => 'no'], 403, 'Forbidden');
+        $seen = [];
+
+        $this->run(function () use ($url, &$seen): void {
+            $this->copilot($url)->enableModels(
+                'tok',
+                ['claude-sonnet-4.5', 'grok-code-fast-1'],
+                null,
+                static function (string $id, bool $enabled) use (&$seen): void {
+                    $seen[$id] = $enabled;
+                },
+            );
+        });
+
+        // The question asked was "may this account use that model", and "no" is an answer
+        // rather than a failure of a sign-in that is already finished.
+        $this->assertSame(['claude-sonnet-4.5' => false, 'grok-code-fast-1' => false], $seen);
     }
 }

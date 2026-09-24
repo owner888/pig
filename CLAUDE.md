@@ -643,20 +643,23 @@ for a nested `metadata:` block means its key and nothing else — and the key is
 validated anyway. `fnmatch()` is `minimatch` for `--ignore`-style patterns.
 
 Four of upstream's five protocols are here, and the fifth was never a protocol: both remaining
-providers speak a shape that is already ported and are gated on a sign-in instead.
-**GitHub Copilot's nineteen models are in the registry now** and reachable with a Copilot token
-in `COPILOT_GITHUB_TOKEN`; the device flow that obtains one is the part still to come.
+providers speak a shape that is already ported and were gated on a sign-in instead.
+**GitHub Copilot is done** — nineteen models in the registry and the device flow to sign in with.
 `google-gemini-cli` is the same Gemini shape behind Google's sign-in, which needs a loopback
-HTTP server and a browser.
+HTTP server and a browser opened at it.
 
 ### Signing in instead of pasting a key
 
-`Ai\Utils\Oauth\` is upstream's `ai/src/utils/oauth/`, and **one of its four flows is ported**:
-Anthropic's, which is what a Claude Pro or Max subscription is used through. It was first for a
-reason that is not "it was smallest" — it is the only one of the four that needs nothing pig did
-not already have. A URL is shown, the person opens it, approves, and brings back a `code#state`
-string; `exchange()` redeems it. No browser to drive, no loopback server to listen on, no port
-to hope is free.
+`Ai\Utils\Oauth\` is upstream's `ai/src/utils/oauth/`, and **two of its four flows are
+ported**: Anthropic's, which is what a Claude Pro or Max subscription is used through, and
+GitHub Copilot's. Neither needs anything pig did not already have, which is why they went first
+and the two Google ones have not: those are loopback PKCE flows that want an HTTP server on
+`127.0.0.1` and a browser opened at it.
+
+Anthropic's shows a URL, the person opens it, approves, and brings back a `code#state` string;
+`exchange()` redeems it. Copilot's is a **device flow**: pig asks GitHub for a pair of codes,
+shows one, and then asks over and over whether it has been typed in yet. No redirect to catch
+either way, so no server and no port to hope is free.
 
 The far end of it was already written and had been since the provider was ported:
 `Providers\Anthropic` recognises an `sk-ant-oat` key, sends it as a bearer token under the
@@ -701,13 +704,87 @@ server. That is not a seam existing for the test alone, which this project other
 every provider in `ai` takes its base URL from outside already, and the alternative here is an
 authentication flow with no coverage at all.
 
-**Not ported yet, and what each is waiting for:** GitHub Copilot's device flow is next and no
-longer blocked — its nineteen models are in the registry, which is what was missing, and
-upstream's post-login step that enables each model by name against a policy endpoint has that
-same list to walk. What it still needs deciding is how the polling ends: upstream loops for
-fifteen minutes with no way to stop it, and a `/login` that cannot be escaped is a fiber nobody
-can reach. `google-gemini-cli` and `google-antigravity` are loopback PKCE flows: they need an
-HTTP server on `127.0.0.1` and a browser opened at it, neither of which pig has.
+### The device flow
+
+`Oauth\GithubCopilot` is upstream's `github-copilot.ts`. It ends with a swap that is easy to
+miss: what the device flow produces is a **GitHub** token, and Copilot's API does not accept one.
+`refresh()` trades it at `copilot_internal/v2/token` for a short-lived Copilot token — so the
+GitHub token is stored as the `refresh` half and the Copilot token as the `access` half, which is
+exactly what those two fields mean everywhere else here, and it is also why there is no separate
+renewal endpoint: renewing *is* the swap, done again.
+
+Four things about it:
+
+- **The polling can be stopped.** The one addition to upstream, and the reason this flow waited
+  for a decision: upstream loops for fifteen minutes with nothing able to interrupt it, which in
+  pig is a fiber parked where nobody can reach it — the failure the hook dialogs already have a
+  rule about. An `AbortSignal` ends it, escape raises one through `interrupt()`, and a
+  cancellation comes back as **null rather than an exception**, because somebody changing their
+  mind is an outcome.
+- **Where Copilot answers is in the token.** Its claims carry
+  `proxy-ep=proxy.individual.githubcopilot.com`, which becomes `api.individual.…`; a business
+  account says something else and an enterprise install answers at `copilot-api.<domain>`. So
+  the `api.individual…` in `Ai\Models` is a default and never the answer once there is a token —
+  `Providers\OpenAiCompletions` and `OpenAiResponses` both ask `GithubCopilot::baseUrl()`
+  instead, which is where the token and the request meet. Upstream rewrites it in its model
+  registry, which pig has no equivalent of because pig's registry knows nothing about
+  credentials.
+- **Some models are off until the account accepts them**, Claude's and Grok's among them, so
+  `enableModels()` POSTs a policy for each one after signing in. A refusal for one model is
+  reported and does not stop the rest — the question asked was "may this account use that
+  model", and no is an answer rather than a failure of a sign-in that is already finished. It is
+  the one swallowed exception in this module and the docblock says why. The ids come from
+  `Ai\Models` rather than from the flow: which models exist is the registry's question and the
+  flow should not have a second answer to it.
+- **`authorization_pending` is not an error and everything else is.** `slow_down` adds five
+  seconds to the interval, as upstream does; anything else — `access_denied`, `expired_token` —
+  ends the wait at once, because asking again says the same thing and a quarter of an hour spent
+  on an answer that has already arrived is the wrong behaviour.
+
+Something typed at the enterprise prompt that is not a host is **refused**, as upstream refuses
+it: carrying on against github.com would sign somebody in to the wrong GitHub and look like it
+had worked. Blank means github.com, which is what `allowEmpty` on the prompt is for.
+
+### The loopback the browser comes back to
+
+Google's flow has no device code and no paste: it redirects to
+`http://localhost:8085/oauth2callback?code=…&state=…`, so something on this machine has to be
+listening. Upstream reaches for Node's `http.createServer`; PHP has no HTTP server, so
+`Oauth\CallbackServer` is one — deliberately the narrowest one that answers the question. One
+path, three query parameters, one page written back, stop.
+
+Five things about it:
+
+- **The port is not negotiable.** `8085` is part of the redirect URI registered with Google, so
+  a flow that picked a free port instead would be refused by Google rather than by the socket.
+  `listen()` is therefore a separate step from `await()`: a port that cannot be taken has to be
+  reported *before* anybody is sent to a browser, and it is reported by name.
+- **`listen()` first, then open the browser.** The order matters and the split is what allows
+  it — a browser that arrives before the socket exists gets a connection refused, and the
+  sign-in is over with nothing to show for it.
+- **It is on the loop.** `await()` parks the fiber on a `Deferred` while the loop keeps serving
+  the terminal. A blocking accept would stop the UI for as long as the person took to sign in.
+- **A browser opens more than one connection.** The callback, and usually a favicon request
+  behind it. Each is read separately and only the one asking for the callback path answers the
+  question; everything else gets a 404.
+- **Cancel on Google's screen is a refusal, not a cancellation.** An `error=` in the callback
+  throws, where escape returns null — something was said and it was no, which is different from
+  walking away.
+
+`stream_socket_server()` both warns and returns false, so the warning is caught with a handler
+rather than suppressed: it is the only place the reason appears, and `@` is not allowed here.
+
+`InteractiveMode`'s `onAuth` now **opens the browser** and prints the URL as an OSC 8 hyperlink,
+which is upstream's behaviour and helps the two flows that were already here. The link text is
+the URL itself rather than upstream's "Click here to login": a terminal that does not understand
+the sequence shows the label, and a label is not something anybody can copy. `Ansi::strip()`
+already knew about OSC 8, so the line measures correctly. Opening is best effort — the URL is on
+screen, so a headless box or one without `xdg-open` is one extra copy-and-paste rather than a
+broken sign-in.
+
+**Still not ported:** the two Google flows themselves. `google-gemini-cli` is next — the
+developer's call was to do that one and leave `google-antigravity`, which is the same shape with
+a different client, until the ground under it has been proven by a flow that works.
 
 ### Where the keys live
 
@@ -1092,6 +1169,31 @@ Five things that are load-bearing rather than tidy:
 Settings are upstream's keys: `retry.enabled` (on unless turned off, like compaction),
 `retry.maxAttempts`, `retry.baseDelayMs`.
 
+### Where the startup time went
+
+`Timings` is upstream's `core/timings.ts`, behind `PIG_TIMING=1` as upstream's is behind
+`PI_TIMING=1`. Twelve marks in `bin/pig` — arguments, settings, credentials, context files,
+skills, slash commands, the session, hooks, custom tools, the agent, the `@file` reads — and a
+table on **standard error** at the point a mode takes over.
+
+Four things about it:
+
+- **Gaps, not moments.** Each mark records the time since the last, so what comes out is a list
+  of steps and what each cost. A list of timestamps needs subtracting by whoever reads it, and
+  that is the part nobody does. The first mark is an anchor and reads 0.
+- **The marks are unconditional**, and `mark()` is a comparison and a return when the variable
+  is unset. An `if` at each of twelve steps would be the same thing written twelve times.
+- **Standard error, and before the mode starts**, not at the end. Standard output belongs to
+  `--mode json` and `-p`, and a report printed when pig quits is one somebody has to scroll back
+  an hour to find.
+- **`table()` is separate from `report()`** because `report()` writes to standard error, which
+  `ob_start()` does not capture — a test against it would pass whatever the table said. That is
+  the same failure as the `/label` test that passed while doing the wrong thing, caught this
+  time by noticing the assertion could not fail.
+
+Exactly `1`, as upstream tests it: `PIG_TIMING=0` meaning "on" would be a variable that cannot
+be turned off the obvious way.
+
 ### Three ways in
 
 `bin/pig` picks one, by upstream's rule: **`--mode` given at all means no terminal, and `-p`
@@ -1306,13 +1408,12 @@ What is left in `coding-agent` is left out on purpose, each for a reason:
 
 | Upstream | Why not |
 |---|---|
-| the rest of `ai`'s `utils/oauth/` | Anthropic's flow, its storage and `/login` are ported (see [Signing in instead of pasting a key](#signing-in-instead-of-pasting-a-key)); GitHub Copilot's models are in the registry now, so its device flow is what is next; the two Google flows need a loopback HTTP server and a browser |
+| the two Google flows in `ai`'s `utils/oauth/` | Anthropic's and GitHub Copilot's are ported, with storage and `/login` (see [Signing in instead of pasting a key](#signing-in-instead-of-pasting-a-key)); `google-gemini-cli` and `google-antigravity` are loopback PKCE flows and need an HTTP server on `127.0.0.1` and a browser opened at it |
 | twenty-five selector components | the interactive mode needs seven of them |
 | `migrations.ts` | session-file migrations; pig writes pi's format and has never shipped another |
 | `utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |
 | `components/armin.ts` | an easter egg: 31×36 XBM art, animated |
 | `core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |
-| `core/timings.ts` | startup profiling behind an env var |
 
 That table was wrong until this was written. It said "the rest is left out on purpose" while
 `modes/print-mode.ts` and `cli/file-processor.ts` were simply never listed, and `bin/pig`
@@ -1921,6 +2022,18 @@ Two things follow, and both are load-bearing rather than tidy:
 Tests: `HookUiTest::testEscapingAnInputAnswersWithNothing`,
 `testASecondDialogIsRefusedRatherThanStacked`, and the three
 `testAGuardCanAskBeforeLettingAToolRun` cases that drive the whole chain.
+
+### An arrow function whose body returns nothing is a fatal error
+
+`fn (): void => $this->say($note)` does not compile: an arrow function always returns its
+expression, and returning the result of a `void` method is `A void method must not return a
+value` — at parse time, so `php -l` catches it, but only after it has been written. A closure
+with a body is the fix. Hit twice in two days, in `Cli\SessionList`'s submit handler and in
+`InteractiveMode`'s sign-in progress callback: **a one-line callback that calls a `void` method
+has to be a block.**
+
+The same family: `$closure?->($argument)` is not syntax either. Nullsafe applies to `->method()`
+and `->property`, never to invoking a variable, so a nullable callback needs an `if`.
 
 ### `stream_socket_pair()` with a dropped peer (tests)
 

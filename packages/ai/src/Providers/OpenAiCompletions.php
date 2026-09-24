@@ -13,6 +13,7 @@ use Pig\Ai\Http\Request;
 use Pig\Ai\Http\SseParser;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
+use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\OpenAiCompat;
 use Pig\Ai\ProviderError;
 use Pig\Ai\StartEvent;
@@ -340,7 +341,7 @@ final class OpenAiCompletions
 
         return new Request(
             'POST',
-            rtrim($model->baseUrl, '/') . '/chat/completions',
+            $this->endpoint($model, $options?->apiKey, '/chat/completions'),
             $headers,
             $this->encode($this->body($model, $context, $options)),
         );
@@ -666,5 +667,23 @@ final class OpenAiCompletions
         return strlen($clean) >= self::MISTRAL_ID_LENGTH
             ? substr($clean, 0, self::MISTRAL_ID_LENGTH)
             : $clean . substr(self::MISTRAL_PADDING, 0, self::MISTRAL_ID_LENGTH - strlen($clean));
+    }
+
+    /**
+     * Where to send it, which for Copilot the token decides.
+     *
+     * A Copilot token's claims carry `proxy-ep=proxy.individual.githubcopilot.com` — or a
+     * business account's host, or an enterprise one's — and the registry's
+     * `api.individual.githubcopilot.com` is only the default for an account that has said
+     * nothing. Sending to the default anyway is a 404 on somebody else's plan, so the token is
+     * asked. Every other provider's base URL is a fact about the provider and is used as it is.
+     */
+    private function endpoint(Model $model, ?string $apiKey, string $path): string
+    {
+        $base = $model->provider === 'github-copilot' && $apiKey !== null && $apiKey !== ''
+            ? GithubCopilot::baseUrl($apiKey)
+            : $model->baseUrl;
+
+        return rtrim($base, '/') . $path;
     }
 }

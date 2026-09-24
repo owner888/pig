@@ -47,8 +47,10 @@ conversation, not just the line it opened with. `-h` for the flags, `-v` for the
 `/help` inside lists the keys.
 
 With a Claude Pro or Max subscription there is no key to set: `/login` gives you a URL to open
-and takes the code that comes back, and the token is kept in `~/.pi/agent/auth.json` — pi's own
-file, when pi has one, so signing in once is signing in once. `/logout` forgets it.
+and takes the code that comes back. A GitHub Copilot subscription works the same way — it shows
+a code to type at github.com and waits, and escape stops the waiting. Either way the token is
+kept in `~/.pi/agent/auth.json` — pi's own file, when pi has one, so signing in once is signing
+in once. `/logout` forgets it.
 
 Anything that is not an option is a message, and `@some/file` is read in front of it:
 
@@ -249,6 +251,9 @@ vendor/bin/phpunit
 
 Verify against the floor, not just your PHP: 8.3 rejects 8.4-only syntax at parse time, and it is
 easy to reach for a feature the declared floor does not have.
+
+`PIG_TIMING=1 bin/pig` prints what each part of starting up cost, on standard error, before the
+terminal takes over.
 
 See [CLAUDE.md](CLAUDE.md) for the porting rules, the decisions on record, and the traps found so far.
 

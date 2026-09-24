@@ -41,8 +41,9 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 说过的话，不只是开头那一句。`-h` 看所有旗标，`-v` 看版本。进去之后 `/help` 列出所有按键。
 
 有 Claude Pro 或 Max 订阅的话不用配 key：`/login` 给你一个网址，打开点同意，把回来的 code 粘回来
-就行，token 存在 `~/.pi/agent/auth.json`——pi 有这个文件就用它，所以登录一次就是登录一次。
-`/logout` 忘掉它。
+就行。GitHub Copilot 的订阅也一样走 `/login`——它给你一个码，去 github.com 输进去，pig 这边等着，
+按 esc 可以不等了。两种情况 token 都存在 `~/.pi/agent/auth.json`——pi 有这个文件就用它，所以登录
+一次就是登录一次。`/logout` 忘掉它。
 
 不是选项的东西就是要说的话，`@某个文件` 会被读在这句话前面：
 
@@ -224,6 +225,8 @@ vendor/bin/phpunit
 
 验证要对着**下限版本**跑，而不是只对着你本机的 PHP：8.3 会在解析期就拒绝 8.4-only 语法，
 而顺手用上一个下限没有的特性太容易了。
+
+`PIG_TIMING=1 bin/pig` 会把启动每一步各花了多少时间打到 stderr 上，在终端界面接管之前。
 
 移植规则、已定下的决策、以及目前踩到的坑，见 [CLAUDE.md](CLAUDE.md)。
 
