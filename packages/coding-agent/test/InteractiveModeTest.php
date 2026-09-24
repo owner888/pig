@@ -1817,7 +1817,7 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('Anthropic (Claude Pro/Max)', $screen);
         $this->assertStringContainsString('GitHub Copilot', $screen);
         // Greyed and labelled, rather than quietly absent: a list that hides what somebody
-        // came looking for teaches nothing. The two Google flows are the ones still labelled.
+        // came looking for teaches nothing. Antigravity is the only one still labelled.
         $this->assertStringContainsString('not ported yet', $screen);
         $this->assertStringContainsString('Google Cloud Code Assist', $screen);
     }
@@ -1828,8 +1828,9 @@ final class InteractiveModeTest extends TestCase
 
         $this->type('/login');
         $this->type(self::ENTER);
-        // Twice: Anthropic and Copilot both work now, so the first provider that cannot
-        // finish is the third one down.
+        // Three times: Anthropic, Copilot and Gemini CLI all work now, so the only one that
+        // cannot finish is the last.
+        $this->type(self::DOWN);
         $this->type(self::DOWN);
         $this->type(self::DOWN);
         $this->type(self::ENTER);

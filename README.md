@@ -48,9 +48,13 @@ conversation, not just the line it opened with. `-h` for the flags, `-v` for the
 
 With a Claude Pro or Max subscription there is no key to set: `/login` gives you a URL to open
 and takes the code that comes back. A GitHub Copilot subscription works the same way — it shows
-a code to type at github.com and waits, and escape stops the waiting. Either way the token is
-kept in `~/.pi/agent/auth.json` — pi's own file, when pi has one, so signing in once is signing
-in once. `/logout` forgets it.
+a code to type at github.com and waits, and escape stops the waiting. Gemini CLI (Google Cloud
+Code Assist) opens a browser and catches the redirect on `localhost:8085`, so port 8085 has to be
+free; it needs Google's own client id and secret, which pig does not ship — set
+`GEMINI_CLI_CLIENT_ID` and `GEMINI_CLI_CLIENT_SECRET`, or `geminiCli.clientId` and
+`geminiCli.clientSecret` in `~/.pig/settings.json`. Either way the token is kept in
+`~/.pi/agent/auth.json` — pi's own file, when pi has one, so signing in once is signing in once.
+`/logout` forgets it.
 
 Anything that is not an option is a message, and `@some/file` is read in front of it:
 
@@ -70,13 +74,14 @@ answering: the editor gets the terminal, and the answer keeps arriving behind it
 `--model` takes a part of a name rather than a whole id — `--model sonnet`, `--model 'opus 4.1'` —
 and `--model sonnet:high` sets the thinking level at the same time. `--models` lists them.
 
-166 models are known: Anthropic's, OpenAI's own on the Responses API, Gemini, and Groq,
+171 models are known: Anthropic's, OpenAI's own on the Responses API, Gemini, and Groq,
 Cerebras, xAI, Zai and Mistral, which all speak OpenAI chat-completions. Set the matching
 `*_API_KEY` and `--model` reaches them.
 
-GitHub Copilot's nineteen are there too, and they are the models its subscription serves — so
-`gpt-5` and `gemini-2.5-pro` are now two models each. A bare name means the direct provider;
-Copilot's is `--model github-copilot/gpt-5`.
+GitHub Copilot's nineteen are there too, and Google Cloud Code Assist's five — the models those
+subscriptions serve, under the same ids their own providers use. So `gpt-5` and `gemini-2.5-pro`
+name two models each: a bare name means the direct provider, and a subscription's is
+`--model github-copilot/gpt-5` or `--model google-gemini-cli/gemini-2.5-pro`.
 
 `/label before the refactor` names where you are, and `/tree` shows the name beside what was
 said — pi's own label entries, so a name set in either tool shows up in the other.

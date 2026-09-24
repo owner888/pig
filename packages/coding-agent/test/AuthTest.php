@@ -314,7 +314,7 @@ final class AuthTest extends TestCase
 
         $problem = $this->assertThrows(OauthError::class, function () use (&$shown): void {
             $this->auth()->login(
-                Provider::GoogleGeminiCli,
+                Provider::GoogleAntigravity,
                 static function (string $url, ?string $instructions) use (&$shown): void {
                     $shown++;
                 },

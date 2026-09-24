@@ -7,6 +7,7 @@ namespace Pig\Ai;
 use Pig\Ai\Providers\Anthropic;
 use Pig\Ai\Providers\AnthropicOptions;
 use Pig\Ai\Providers\Google;
+use Pig\Ai\Providers\GoogleGeminiCli;
 use Pig\Ai\Providers\GoogleOptions;
 use Pig\Ai\Providers\OpenAiCompletions;
 use Pig\Ai\Providers\OpenAiOptions;
@@ -60,7 +61,9 @@ final class Stream
             Api::OpenAiCompletions => (new OpenAiCompletions())->stream($model, $context, self::openAi($options, $apiKey)),
             Api::OpenAiResponses => (new OpenAiResponses())->stream($model, $context, self::openAi($options, $apiKey)),
             Api::GoogleGenerativeAi => (new Google())->stream($model, $context, self::google($options, $apiKey)),
-            default => throw new ProviderError("No provider for {$model->api->value} has been ported yet"),
+            // The same options: Code Assist is a different envelope around the same request, so
+            // temperature, thinking and tool choice mean exactly what they mean for Gemini.
+            Api::GoogleGeminiCli => (new GoogleGeminiCli())->stream($model, $context, self::google($options, $apiKey)),
         };
     }
 

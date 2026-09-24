@@ -666,16 +666,16 @@ all scalars and pig has no YAML parser to reach for; what this cannot read stays
 for a nested `metadata:` block means its key and nothing else — and the key is all that is
 validated anyway. `fnmatch()` is `minimatch` for `--ignore`-style patterns.
 
-**Four of upstream's five protocols are here, and the fifth is a real one.** This used to say
-the fifth "was never a protocol" — that `google-gemini-cli` was Gemini behind a sign-in. It is
-not: its models carry `api: "google-gemini-cli"` and upstream has a **603-line provider** for it,
+**All five of upstream's protocols are here.** The fifth took a correction on the way: this
+used to say it "was never a protocol" — that `google-gemini-cli` was Gemini behind a sign-in. It
+is not. Its models carry `api: "google-gemini-cli"` and upstream has a 603-line provider for it,
 because Code Assist has its own endpoint and wraps a Gemini request inside a Cloud-project
 envelope. The claim was wrong and is recorded as wrong; checking it took one grep of
 `models.generated.ts` for the `api` field.
 
-**GitHub Copilot is done** — nineteen models in the registry and the device flow to sign in with,
-and it needed no new protocol because it serves everything through the two OpenAI shapes.
-`google-gemini-cli` has its flow (see below) and still needs that provider and its five models.
+`Providers\GoogleGeminiCli` is 250 lines against upstream's 603, because upstream re-implements
+the chunk walk and this shares it — see `GoogleShared`. **GitHub Copilot is done** too, and needed
+no new protocol at all: it serves everything through the two OpenAI shapes.
 
 ### Signing in instead of pasting a key
 
@@ -855,18 +855,37 @@ browser and then fails is worse than one that never starts, and the caller is wh
 look. Two pushes were refused before this was the answer — see the trap below, which is about what
 scanners do rather than about what is secret.
 
-Nothing about this is in the READMEs yet, on purpose: `available()` is false, so `/login` does not
-offer Gemini CLI and there is nothing for a reader to act on. It goes in with the provider.
+Both READMEs say so now, because `/login` offers Gemini CLI and a reader who picks it needs to
+know that two values have to come from somewhere else — and that port 8085 has to be free.
 
-**`available()` is still false for it**, deliberately. The flow works and `refresh()` and
-`apiKey()` work, but Code Assist's protocol and its five models are not here, so offering the
-sign-in would unlock nothing to choose — the same mistake as offering a model whose protocol is
-not ported, from the other end. It flips when the provider lands.
+`available()` is true for it now. It was false for two turns while the protocol and the models
+were missing, because a sign-in that unlocks nothing to choose is the same mistake as a model
+whose protocol is not ported, from the other end.
 
-**Still not ported:** Code Assist's provider (upstream's `providers/google-gemini-cli.ts`, 603
-lines) and its five models; and `google-antigravity`, which speaks that same protocol with a
-different client and seven models of its own, and which the developer's call was to leave until
-the ground under it has been proven by a flow that works end to end.
+`Providers\GoogleGeminiCli` is the protocol, and three things are its own:
+
+- **The request is wrapped**: `{project, model, request: {…a Gemini request…}, userAgent,
+  requestId}`, posted to `v1internal:streamGenerateContent?alt=sse`.
+- **The answer is wrapped too**, one key deeper, so it unwraps and hands `GoogleShared::onChunk()`
+  the same thing `Google` hands it. A chunk with no `response` in it is skipped rather than read as
+  an empty candidate.
+- **Thinking is only mentioned when it was asked for.** The one place the body differs from the
+  public endpoint's: there, a turn that wants none has to say `thinkingBudget: 0`; here a
+  `thinkingConfig` on a model that cannot think is rejected.
+
+And the key is two things in one string — `Provider::apiKey()` encodes `{token, projectId}` —
+which is taken apart in `credentials()`. **An ordinary Gemini API key arriving there is refused by
+name**, because that is the likely mistake and a 401 three layers later names nothing.
+
+**Upstream's in-provider retry is not ported**: three attempts with exponential backoff honouring
+a server-suggested `retryDelay`, because Code Assist's free tier rate-limits hard. `Session\Retry`
+already waits out a 429 one level up, and that one can be turned off with `retry.enabled`, counts
+down on screen and stops on escape. Two retry mechanisms means neither is the one somebody is
+looking at. If Code Assist turns out to need a tighter loop than a session-level wait, it belongs
+in the provider and its docblock says so.
+
+**Still not ported:** `google-antigravity` — the same protocol with a different client, a sandbox
+endpoint and its own seven models.
 
 ### Where the keys live
 
@@ -1490,7 +1509,7 @@ What is left in `coding-agent` is left out on purpose, each for a reason:
 
 | Upstream | Why not |
 |---|---|
-| Code Assist's provider, and `google-antigravity` | Anthropic's, Copilot's and Gemini CLI's flows are ported, with storage and `/login` (see [Signing in instead of pasting a key](#signing-in-instead-of-pasting-a-key)). What Gemini CLI still needs is upstream's `providers/google-gemini-cli.ts` (603 lines — Code Assist is a protocol of its own) and its five models; `google-antigravity` speaks that same protocol with seven models of its own |
+| `google-antigravity` | Anthropic's, Copilot's and Gemini CLI's sign-ins are all ported, with storage, `/login` and their models. Antigravity speaks Code Assist's protocol, which *is* ported now — what it needs is its own loopback flow (a different client and a sandbox endpoint) and its seven models |
 | twenty-five selector components | the interactive mode needs seven of them |
 | `migrations.ts` | session-file migrations; pig writes pi's format and has never shipped another |
 | `utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |

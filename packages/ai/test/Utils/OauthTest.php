@@ -249,13 +249,12 @@ final class OauthTest extends TestCase
     {
         $this->assertTrue(Provider::Anthropic->available());
         $this->assertTrue(Provider::GithubCopilot->available());
+        $this->assertTrue(Provider::GoogleGeminiCli->available());
 
-        foreach ([Provider::GoogleGeminiCli, Provider::GoogleAntigravity] as $provider) {
-            // Named so a credentials file written by pi can be read, and not offered, because
-            // offering a sign-in that cannot finish is worse than not having it. Both need a
-            // loopback HTTP server and a browser opened at it.
-            $this->assertFalse($provider->available(), "{$provider->value} is not ported");
-        }
+        // Named so a credentials file written by pi can be read, and not offered, because
+        // offering a sign-in that cannot finish is worse than not having it. Antigravity speaks
+        // Code Assist's protocol, which is ported — its own flow and its seven models are not.
+        $this->assertFalse(Provider::GoogleAntigravity->available());
     }
 
     public function testEveryProviderHasAName(): void
@@ -767,11 +766,11 @@ final class OauthTest extends TestCase
 
     // ---- Gemini CLI: the provider entry ---------------------------------------------------
 
-    public function testGeminiCliCanBeRenewedButNotSignedInToYet(): void
+    public function testGeminiCliIsOfferedNowThatThereAreModelsToChoose(): void
     {
-        // The flow is here; Code Assist's protocol and its five models are not, so offering the
-        // sign-in would unlock nothing to choose.
-        $this->assertFalse(Provider::GoogleGeminiCli->available());
+        // It was false while the protocol and the models were missing: a sign-in that unlocks
+        // nothing to choose is the same mistake as a model whose protocol is not ported.
+        $this->assertTrue(Provider::GoogleGeminiCli->available());
     }
 
     public function testGeminiClisKeyCarriesTheProjectAlongsideTheToken(): void

@@ -42,8 +42,11 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 
 有 Claude Pro 或 Max 订阅的话不用配 key：`/login` 给你一个网址，打开点同意，把回来的 code 粘回来
 就行。GitHub Copilot 的订阅也一样走 `/login`——它给你一个码，去 github.com 输进去，pig 这边等着，
-按 esc 可以不等了。两种情况 token 都存在 `~/.pi/agent/auth.json`——pi 有这个文件就用它，所以登录
-一次就是登录一次。`/logout` 忘掉它。
+按 esc 可以不等了。Gemini CLI（Google Cloud Code Assist）会开浏览器、在 `localhost:8085` 接回跳，
+所以 8085 端口得空着；它还需要 Google 自己的 client id 和 secret，这两个 pig 不附带——设
+`GEMINI_CLI_CLIENT_ID` 和 `GEMINI_CLI_CLIENT_SECRET`，或者在 `~/.pig/settings.json` 里写
+`geminiCli.clientId` 和 `geminiCli.clientSecret`。三种情况 token 都存在 `~/.pi/agent/auth.json`
+——pi 有这个文件就用它，所以登录一次就是登录一次。`/logout` 忘掉它。
 
 不是选项的东西就是要说的话，`@某个文件` 会被读在这句话前面：
 
@@ -62,11 +65,12 @@ Ctrl+G 把 prompt 里现在的内容丢进 `$VISUAL` 或 `$EDITOR`，改完再�
 `--model` 不用写全 id，写一部分就行——`--model sonnet`、`--model 'opus 4.1'`——`--model sonnet:high`
 还能顺手把思考档位一起设了。`--models` 列出全部。
 
-内置 166 个模型：Anthropic 的、OpenAI 自家走 Responses API 的、Gemini，加上 Groq、Cerebras、xAI、
+内置 171 个模型：Anthropic 的、OpenAI 自家走 Responses API 的、Gemini，加上 Groq、Cerebras、xAI、
 Zai、Mistral——这五家说的都是 OpenAI chat-completions。设好对应的 `*_API_KEY`，`--model` 就能指过去。
 
-GitHub Copilot 的十九个也在里面，那是它的订阅提供的那些模型——所以 `gpt-5`、`gemini-2.5-pro` 现在
-一个名字对两个模型。裸写名字指的是原厂那个；Copilot 的要写 `--model github-copilot/gpt-5`。
+GitHub Copilot 的十九个、Google Cloud Code Assist 的五个也在里面——都是订阅提供的模型，用的还是
+原厂那些 id。所以 `gpt-5`、`gemini-2.5-pro` 一个名字对两个模型：裸写指的是原厂那个，订阅那边要写
+`--model github-copilot/gpt-5` 或 `--model google-gemini-cli/gemini-2.5-pro`。
 
 `/label 重构之前` 给当前这个点起个名字，`/tree` 会把名字连着当时说的话一起显示——用的是 pi 自己的
 label entry，所以在哪边起的名字另一边都看得见。

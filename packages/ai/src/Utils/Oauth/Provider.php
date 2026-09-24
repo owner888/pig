@@ -50,8 +50,9 @@ enum Provider: string
      */
     public function available(): bool
     {
-        // Not `GoogleGeminiCli`, even though its flow is here — see the note above.
-        return $this === self::Anthropic || $this === self::GithubCopilot;
+        // Not `GoogleAntigravity`: it speaks Code Assist's protocol, which is ported, but its
+        // own flow and its seven models are not.
+        return $this !== self::GoogleAntigravity;
     }
 
     /**

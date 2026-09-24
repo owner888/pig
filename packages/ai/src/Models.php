@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace Pig\Ai;
 
+use Pig\Ai\Providers\GoogleGeminiCli;
+
 /**
  * Every model this can talk to, by provider and id.
  *
  * Upstream generates `models.generated.ts` from models.dev: 7105 lines, 414 models,
  * twelve providers. Here are the ones whose protocol is ported — Anthropic's 21, OpenAI's
  * own 33 on the Responses API, Google's 21, the 72 across five providers that speak
- * `openai-completions`, and GitHub Copilot's 19. A model that could be selected and then not
+ * `openai-completions`, GitHub Copilot's 19 and Code Assist's 5. A model that could be selected and then not
  * talked to is a worse answer than "no such model". What is left out: OpenRouter's 236,
  * because that list is a directory of everyone else's models and goes stale fastest, and the
  * two Gemini CLI providers, which need a loopback OAuth flow that is not ported.
@@ -27,6 +29,8 @@ final class Models
     public const string ANTHROPIC = 'anthropic';
 
     public const string COPILOT = 'github-copilot';
+
+    public const string GEMINI_CLI = 'google-gemini-cli';
 
     private const string ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 
@@ -66,7 +70,28 @@ final class Models
      *
      * OpenRouter is the next one to belong here, whenever its 236 arrive.
      */
-    private const array RESOLD = [self::COPILOT];
+    private const array RESOLD = [self::COPILOT, self::GEMINI_CLI];
+
+    /**
+     * id => [name, context window, max tokens, reasoning]
+     *
+     * Google Cloud Code Assist — Gemini through a subscription. All five take images, all five
+     * answer at the one endpoint, and the pricing is zeroes across the board because a
+     * subscription is not metered per token. `Providers\GoogleGeminiCli` is the protocol.
+     *
+     * Their ids are Gemini's own, which is why this provider is in `RESOLD`: a bare
+     * `gemini-2.5-pro` means Google's public endpoint, and Code Assist's is
+     * `google-gemini-cli/gemini-2.5-pro`.
+     *
+     * @var array<string, array{0: string, 1: int, 2: int, 3: bool}>
+     */
+    private const array GEMINI_CLI_MODELS = [
+        'gemini-2.0-flash' => ['Gemini 2.0 Flash (Cloud Code Assist)', 1_048_576, 8_192, false],
+        'gemini-2.5-flash' => ['Gemini 2.5 Flash (Cloud Code Assist)', 1_048_576, 65_535, true],
+        'gemini-2.5-pro' => ['Gemini 2.5 Pro (Cloud Code Assist)', 1_048_576, 65_535, true],
+        'gemini-3-flash-preview' => ['Gemini 3 Flash Preview (Cloud Code Assist)', 1_048_576, 65_535, true],
+        'gemini-3-pro-preview' => ['Gemini 3 Pro Preview (Cloud Code Assist)', 1_048_576, 65_535, true],
+    ];
 
     /** provider => where its OpenAI-compatible endpoint lives. */
     private const array OPENAI_COMPATIBLE = [
@@ -497,6 +522,21 @@ final class Models
                 new Pricing(),
                 self::COPILOT_HEADERS,
                 $api === Api::OpenAiCompletions ? self::copilotCompat() : null,
+            );
+        }
+
+        foreach (self::GEMINI_CLI_MODELS as $id => [$name, $window, $maxTokens, $reasoning]) {
+            $models[self::GEMINI_CLI . '/' . $id] = new Model(
+                $id,
+                $name,
+                Api::GoogleGeminiCli,
+                self::GEMINI_CLI,
+                GoogleGeminiCli::ENDPOINT,
+                $window,
+                $maxTokens,
+                $reasoning,
+                ['text', 'image'],
+                new Pricing(),
             );
         }
 
