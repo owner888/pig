@@ -490,9 +490,9 @@ no counterpart anywhere else:
 `# Juice: 0 !important` is not a joke: gpt-5 has no documented way to turn reasoning off, and
 that developer message is what upstream found works.
 
-`Providers\Google` is upstream's `google.ts` plus `google-shared.ts` — Gemini, and the shape
-furthest from the other three. A chunk carries a list of *parts*, and a part is text, or
-thinking (text with `thought: true` on it), or a whole function call. Which means:
+`Providers\Google` is upstream's `google.ts` — Gemini, and the shape furthest from the other
+three. A chunk carries a list of *parts*, and a part is text, or thinking (text with
+`thought: true` on it), or a whole function call. Which means:
 
 - **A tool call arrives complete**, arguments and all, in one part — so it is opened,
   delivered and closed in the same breath. There is nothing to stream.
@@ -511,6 +511,30 @@ thinking (text with `thought: true` on it), or a whole function call. Which mean
 Upstream hands this to `@google/genai`; the REST endpoint is called directly here —
 `:streamGenerateContent?alt=sse`, which is what that package does underneath. Without `alt=sse`
 the response is one enormous JSON array rather than a stream.
+
+`Providers\GoogleShared` is upstream's `google-shared.ts`, and it exists now for the reason it
+exists there: **two providers speak this shape.** Google Cloud Code Assist wraps the same request
+in a project envelope and answers with the same chunk one key deeper, so what a Gemini request
+and a Gemini chunk look like is not `Google`'s private business any more. All of it used to sit
+in `Google` as private methods — 609 lines — because there was one caller; the extraction moved
+about 400 of them out and `Google` is 207. The developer's call, with the alternative being a
+second copy of the conversion and CLAUDE.md's own rule against two implementations that can
+disagree about what a request looks like.
+
+Three things about the split:
+
+- **The caller unwraps.** Code Assist's chunks arrive under a `response` key, and
+  `GoogleShared::onChunk()` is handed the candidate rather than being told which provider it is
+  speaking for.
+- **pig shares more than upstream does.** Upstream keeps the chunk walk in each provider and
+  shares only the request conversion; the chunk is the same shape one key deeper, and two walks
+  over it are two things that can come to disagree about what a Gemini answer is.
+- **Each provider keeps its own business**: where it sends, how it authenticates, how it words a
+  failure, and the body it assembles around the shared pieces. `explain()` stayed behind in both
+  for that last reason — the message names the provider.
+
+It was an extraction and nothing else, which is what `GoogleTest`'s thirty-one cases passing
+unchanged is the evidence for. A move that needed a test changed would have been a rewrite.
 
 `ModelResolver` is upstream's `model-resolver.ts`: `sonnet` finds the model, `sonnet:high`
 finds it and sets the thinking level. When several match, the alias beats the dated build
@@ -822,9 +846,17 @@ Six things worth keeping straight:
   place in the module where swallowing an error is right: it is a label on the credential and
   nothing downstream reads it.
 
-The client id and secret are written out rather than hidden behind `atob()`. A "secret" shipped in
-a published npm package and sent on every one of these requests is not one — it is how Google's
-installed-application flow works, and PKCE is what actually protects the exchange.
+**Google's client id and secret are not in this repository**, which is the one real difference
+from upstream. They are constructor arguments, and `Auth::googleClient()` finds them — the
+environment (`GEMINI_CLI_CLIENT_ID`, `GEMINI_CLI_CLIENT_SECRET`) and then the settings file
+(`geminiCli.clientId`, `geminiCli.clientSecret`), which is pig's usual order. A flow built without
+them is refused **in the constructor**, not at the first request: a flow that sends somebody to a
+browser and then fails is worse than one that never starts, and the caller is what knows where to
+look. Two pushes were refused before this was the answer — see the trap below, which is about what
+scanners do rather than about what is secret.
+
+Nothing about this is in the READMEs yet, on purpose: `available()` is false, so `/login` does not
+offer Gemini CLI and there is nothing for a reader to act on. It goes in with the provider.
 
 **`available()` is still false for it**, deliberately. The flow works and `refresh()` and
 `apiKey()` work, but Code Assist's protocol and its five models are not here, so offering the
@@ -2072,6 +2104,37 @@ Two things follow, and both are load-bearing rather than tidy:
 Tests: `HookUiTest::testEscapingAnInputAnswersWithNothing`,
 `testASecondDialogIsRefusedRatherThanStacked`, and the three
 `testAGuardCanAskBeforeLettingAToolRun` cases that drive the whole chain.
+
+### A credential a scanner knows cannot live in the repository, encoded or not
+
+`Oauth\GeminiCli` needs Google's client id and secret for the Gemini CLI. It carried them three
+ways before it stopped carrying them at all, and each step is worth keeping:
+
+1. **Written out**, with a comment arguing that neither is really secret — both ship in every
+   Gemini CLI install and in a published npm package, and PKCE is what protects the exchange. All
+   true. GitHub's push protection refused the push: it has patterns for exactly "Google OAuth
+   Client ID" and "Google OAuth Client Secret".
+2. **base64, as upstream's `atob()` wrappers have them.** Refused again, at the new line numbers:
+   **the scanner decodes base64.** So upstream's encoding is not what gets past a scanner, and
+   assuming it was is what cost the second push.
+3. **Not in the repository.** They are handed to the constructor, and `CodingAgent\Auth`
+   finds them: `GEMINI_CLI_CLIENT_ID` / `GEMINI_CLI_CLIENT_SECRET`, then `geminiCli.clientId` /
+   `geminiCli.clientSecret` in the settings file — pig's usual order. Absent, `/login` refuses
+   with a message naming both places and saying plainly that pig does not ship them.
+
+Two rules out of it, and the second is the one that generalises:
+
+- **Before writing any real credential into a file, assume the host scans for its provider's
+  pattern — and that it decodes.** Obfuscating harder is an arms race against a control whose
+  job is to protect that credential, and it fails on the day the scanner learns the trick.
+- **A scanner that detects a credential also reports it to the issuer**, and Google revokes what
+  is reported. So a plaintext copy in a public repository is a good way to break a sign-in for
+  everyone using it, upstream included — which makes this a correctness argument and not only a
+  policy one.
+
+`Anthropic`'s and `GithubCopilot`'s client ids stay written out, because nothing objects to them:
+one is a bare UUID, the other a GitHub OAuth *client* id, which is not a secret and is not what
+GitHub looks for. The asymmetry is the scanners' and not a choice.
 
 ### An arrow function whose body returns nothing is a fatal error
 

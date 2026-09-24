@@ -102,7 +102,7 @@ final class SystemPromptTest extends ToolTestCase
     {
         $full = $this->prompt(ToolSet::CODING);
 
-        $this->assertStringContainsString('Read a file before editing it', $full);
+        $this->assertStringContainsString('Use read to examine files before editing', $full);
         $this->assertStringContainsString('Use write only for new files', $full);
 
         $readOnly = $this->prompt(ToolSet::READ_ONLY);
@@ -129,7 +129,7 @@ final class SystemPromptTest extends ToolTestCase
     public function testWithSearchToolsTheyArePreferredOverBash(): void
     {
         $this->assertStringContainsString(
-            'Prefer grep, find and ls over bash',
+            'Prefer grep/find/ls tools over bash',
             $this->prompt(['read', 'bash', 'grep', 'find']),
         );
     }
@@ -178,7 +178,7 @@ final class SystemPromptTest extends ToolTestCase
 
         $prompt = $this->prompt();
 
-        $this->assertStringContainsString('# Project context', $prompt);
+        $this->assertStringContainsString('# Project Context', $prompt);
         $this->assertStringContainsString('Run the tests with make check.', $prompt);
         // The path is given because the model is often asked to update these files.
         $this->assertStringContainsString($this->cwd . '/AGENTS.md', $prompt);
@@ -240,7 +240,7 @@ final class SystemPromptTest extends ToolTestCase
 
     public function testNoContextFilesMeansNoSection(): void
     {
-        $this->assertStringNotContainsString('# Project context', $this->prompt());
+        $this->assertStringNotContainsString('# Project Context', $this->prompt());
     }
 
     // ---- skills ------------------------------------------------------------------------
@@ -278,7 +278,7 @@ final class SystemPromptTest extends ToolTestCase
         // whichever one is reached for, so they are not read past to get to it.
         $this->assertLessThan(
             strpos($prompt, '<available_skills>'),
-            strpos($prompt, '# Project context'),
+            strpos($prompt, '# Project Context'),
         );
     }
 

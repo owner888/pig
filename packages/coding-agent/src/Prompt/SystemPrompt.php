@@ -17,8 +17,8 @@ use Pig\CodingAgent\Tools\ToolSet;
  */
 final class SystemPrompt
 {
-    private const string ROLE = 'You are an expert coding assistant. You help with coding tasks by reading '
-        . 'files, running commands, editing code, and writing new files.';
+    private const string ROLE = 'You are an expert coding assistant. You help users with coding tasks by reading '
+        . 'files, executing commands, editing code, and writing new files.';
 
     /**
      * @param list<string>           $tools        tool names, as ToolSet knows them
@@ -113,32 +113,32 @@ final class SystemPrompt
         // bash with nothing to write with is still a way to change things, so say which
         // half of it is meant.
         if ($has('bash') && !$has('edit') && !$has('write')) {
-            $guidelines[] = 'Use bash for read-only work only (git log, curl, and so on) — do not change any files';
+            $guidelines[] = 'Use bash ONLY for read-only operations (git log, gh issue view, curl, etc.) - do NOT modify any files';
         }
 
         if ($has('bash') && !$has('grep') && !$has('find') && !$has('ls')) {
-            $guidelines[] = 'Use bash for file work: ls, grep, find';
+            $guidelines[] = 'Use bash for file operations like ls, grep, find';
         } elseif ($has('bash') && ($has('grep') || $has('find') || $has('ls'))) {
-            $guidelines[] = 'Prefer grep, find and ls over bash for looking around: they are faster and respect .gitignore';
+            $guidelines[] = 'Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore)';
         }
 
         if ($has('read') && $has('edit')) {
-            $guidelines[] = 'Read a file before editing it, with read rather than cat or sed';
+            $guidelines[] = 'Use read to examine files before editing. You must use this tool instead of cat or sed.';
         }
 
         if ($has('edit')) {
-            $guidelines[] = 'Use edit for precise changes: oldText must match the file exactly and appear once';
+            $guidelines[] = 'Use edit for precise changes (old text must match exactly)';
         }
 
         if ($has('write')) {
-            $guidelines[] = 'Use write only for new files or a complete rewrite';
+            $guidelines[] = 'Use write only for new files or complete rewrites';
         }
 
         if ($has('edit') || $has('write')) {
-            $guidelines[] = 'Say what you did in plain text — do not run cat or bash to show it back';
+            $guidelines[] = 'When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did';
         }
 
-        $guidelines[] = 'Be concise';
+        $guidelines[] = 'Be concise in your responses';
         $guidelines[] = 'Show file paths clearly when working with files';
 
         return $guidelines;
@@ -151,7 +151,7 @@ final class SystemPrompt
             return '';
         }
 
-        $section = "\n\n# Project context\n\nThese files were loaded from the project:\n\n";
+        $section = "\n\n# Project Context\n\nThese files were loaded from the project:\n\n";
 
         foreach ($files as $file) {
             // The path is given because the model is often asked to update these files,
