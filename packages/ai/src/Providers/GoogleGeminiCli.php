@@ -11,6 +11,7 @@ use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\SseParser;
 use Pig\Ai\Model;
+use Pig\Ai\Models;
 use Pig\Ai\ProviderError;
 use Pig\Ai\StartEvent;
 use Pig\Ai\Timestamp;
@@ -50,19 +51,58 @@ use Throwable;
  */
 final class GoogleGeminiCli
 {
-    /** Where Code Assist answers. Antigravity's sandbox endpoint is not ported. */
+    /** Where Code Assist answers for Gemini CLI. */
     public const string ENDPOINT = 'https://cloudcode-pa.googleapis.com';
 
-    /**
-     * Who Code Assist is told it is talking to, copied from upstream.
-     *
-     * `Client-Metadata` is JSON inside a header, which is Google's doing and not a mistake here.
-     */
+    /** Where it answers for Antigravity, which is a different deployment of the same thing. */
+    public const string SANDBOX_ENDPOINT = 'https://daily-cloudcode-pa.sandbox.googleapis.com';
+
+    /** JSON inside a header, which is Google's doing and not a mistake here. Both sets carry it. */
+    private const string CLIENT_METADATA =
+        '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}';
+
+    /** Who Code Assist is told it is talking to, copied from upstream. */
     private const array HEADERS = [
         'user-agent' => 'google-cloud-sdk vscode_cloudshelleditor/0.1',
         'x-goog-api-client' => 'gl-node/22.17.0',
-        'client-metadata' => '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}',
+        'client-metadata' => self::CLIENT_METADATA,
     ];
+
+    /**
+     * Antigravity's, which are **not** the same two strings in a different order.
+     *
+     * The sandbox deployment checks the `User-Agent` and answers 403 to Gemini CLI's, so this is
+     * load-bearing rather than cosmetic: `antigravity/1.11.5 darwin/arm64` — a version and a
+     * platform that have nothing to do with the machine this is running on, which is upstream's
+     * literal string and is kept literal for that reason. What the sandbox wants is to be talking
+     * to Antigravity, and pretending otherwise is the whole of how this works.
+     */
+    private const array SANDBOX_HEADERS = [
+        'user-agent' => 'antigravity/1.11.5 darwin/arm64',
+        'x-goog-api-client' => 'google-cloud-sdk vscode_cloudshelleditor/0.1',
+        'client-metadata' => self::CLIENT_METADATA,
+    ];
+
+    /**
+     * Which set a model gets, decided by the provider it belongs to.
+     *
+     * **A deliberate difference from upstream**, which asks
+     * `endpoint.includes("sandbox.googleapis.com")`. That is the right question *there*: its
+     * endpoint is a variable built per request, so the string is what it has. Here the two
+     * deployments are two providers in the registry with two fixed base URLs, so the provider
+     * name is the thing actually being asked and the host is a proxy for it.
+     *
+     * The difference is not academic — it is what makes this testable at all. A test cannot
+     * point a model at `daily-cloudcode-pa.sandbox.googleapis.com` and also have the request
+     * arrive at a local canned server, so under the host rule the one header set that is
+     * load-bearing was the one no test could see.
+     *
+     * @return array<string, string>
+     */
+    private static function headersFor(Model $model): array
+    {
+        return $model->provider === Models::ANTIGRAVITY ? self::SANDBOX_HEADERS : self::HEADERS;
+    }
 
     public function __construct(private readonly HttpClient $http = new HttpClient())
     {
@@ -136,7 +176,7 @@ final class GoogleGeminiCli
             'accept' => 'text/event-stream',
             'content-type' => 'application/json',
             'authorization' => "Bearer {$token}",
-            ...self::HEADERS,
+            ...self::headersFor($model),
             ...$model->headers,
         ];
 

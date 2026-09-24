@@ -50,17 +50,18 @@ enum Provider: string
      */
     public function available(): bool
     {
-        // Not `GoogleAntigravity`: it speaks Code Assist's protocol, which is ported, but its
-        // own flow and its seven models are not.
-        return $this !== self::GoogleAntigravity;
+        // All four now. This answered false for `GoogleAntigravity` until its flow and its
+        // seven models arrived; the method stays because the reason it exists has not changed —
+        // a fifth provider ported halfway needs somewhere to say so.
+        return true;
     }
 
     /**
      * A new access token, or a refusal naming what is missing.
      *
-     * @param string|null $clientId Gemini CLI's alone: Google's renewal grant carries the client
-     *        id and secret, and this repository does not hold them — `CodingAgent\Auth` finds
-     *        them and passes them in. The other three need nothing here.
+     * @param string|null $clientId the two Google flows only: Google's renewal grant carries the
+     *        client id and secret, and this repository holds neither pair — `CodingAgent\Auth`
+     *        finds them and passes them in. Anthropic's and Copilot's need nothing here.
      */
     public function refresh(
         Credentials $credentials,
@@ -92,8 +93,20 @@ enum Provider: string
                     'The stored Gemini CLI credentials have no Cloud project id, so there is nothing to spend the token against.',
                 ),
             ),
-            self::GoogleAntigravity
-                => throw new OauthError("Signing in with {$this->value} is not ported yet, so its token cannot be renewed here."),
+            self::GoogleAntigravity => (new Antigravity(
+                $clientId ?? throw new OauthError('Renewing an Antigravity token needs its client id and secret.'),
+                $clientSecret ?? throw new OauthError('Renewing an Antigravity token needs its client secret.'),
+                $http ?? new HttpClient(),
+            ))->refresh(
+                $credentials->refresh,
+                // Unlike Gemini CLI's, this one always has a project — `Antigravity::project()`
+                // falls back to a constant rather than failing — so a stored credential without
+                // one was written by something else, and guessing which project it meant is not
+                // something to do with somebody's quota.
+                $credentials->projectId ?? throw new OauthError(
+                    'The stored Antigravity credentials have no Cloud project id, so there is nothing to spend the token against.',
+                ),
+            ),
         };
     }
 
@@ -110,12 +123,10 @@ enum Provider: string
             // prefix and Copilot's by the provider name, and both go out as bearer tokens.
             self::Anthropic, self::GithubCopilot => $credentials->access,
             // Upstream's shape: Code Assist needs a Cloud project as well as a token, and the
-            // two travel as one string because that is all an api key field can carry. Nothing
-            // reads this yet — the provider that parses it is not ported — and no model of this
-            // provider is in the registry, so the path is unreachable rather than broken.
-            self::GoogleGeminiCli => self::projectKey($credentials),
-            self::GoogleAntigravity
-                => throw new OauthError("{$this->value} credentials cannot be turned into a key here yet."),
+            // two travel as one string because that is all an api key field can carry.
+            // `Providers\GoogleGeminiCli` is what parses it back, for both of these — they are
+            // the same protocol against two deployments.
+            self::GoogleGeminiCli, self::GoogleAntigravity => self::projectKey($credentials),
         };
     }
 

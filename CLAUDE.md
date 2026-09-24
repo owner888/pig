@@ -753,11 +753,12 @@ no new protocol at all: it serves everything through the two OpenAI shapes.
 
 ### Signing in instead of pasting a key
 
-`Ai\Utils\Oauth\` is upstream's `ai/src/utils/oauth/`, and **two of its four flows are
-ported**: Anthropic's, which is what a Claude Pro or Max subscription is used through, and
-GitHub Copilot's. Neither needs anything pig did not already have, which is why they went first
-and the two Google ones have not: those are loopback PKCE flows that want an HTTP server on
-`127.0.0.1` and a browser opened at it.
+`Ai\Utils\Oauth\` is upstream's `ai/src/utils/oauth/`, and **all four flows are ported now**.
+They arrived in that order and the order is the story: Anthropic's, which is what a Claude Pro or
+Max subscription is used through, and GitHub Copilot's went first because neither needed anything
+pig did not already have. The two Google ones waited on a piece that did not exist — they are
+loopback PKCE flows that want an HTTP server on `127.0.0.1` and a browser opened at it, so
+`CallbackServer` had to be written before either could work.
 
 Anthropic's shows a URL, the person opens it, approves, and brings back a `code#state` string;
 `exchange()` redeems it. Copilot's is a **device flow**: pig asks GitHub for a pair of codes,
@@ -958,8 +959,61 @@ down on screen and stops on escape. Two retry mechanisms means neither is the on
 looking at. If Code Assist turns out to need a tighter loop than a session-level wait, it belongs
 in the provider and its docblock says so.
 
-**Still not ported:** `google-antigravity` — the same protocol with a different client, a sandbox
-endpoint and its own seven models.
+### Antigravity, which is the same protocol against a different deployment
+
+`Utils\Oauth\Antigravity` and the seven models in `Models::ANTIGRAVITY_MODELS`. Upstream's
+`google-antigravity.ts`, and the last of its four sign-ins to arrive. What it buys is models
+Gemini CLI does not offer at all: two of Anthropic's, three Geminis and an open-weights one, all
+on a subscription rather than per token.
+
+**A separate class, not a base one shared with `GeminiCli`.** Upstream has two files and so does
+this. The overlap is real — both are Google's PKCE loopback flow against the same token
+endpoint — but the two differ in exactly the part that matters, which is what happens *after* the
+tokens arrive: `GeminiCli` provisions a Cloud project and polls until it exists; this one asks two
+endpoints and gives up into a constant. A shared parent would have to hold both shapes, and the
+seam would fall where they are least alike.
+
+Four things that are its own, each of which breaks it if guessed:
+
+- **Its own OAuth client**, not Gemini CLI's — and therefore its own pair of settings keys and
+  environment variables (`ANTIGRAVITY_CLIENT_ID`, `antigravity.clientId`). Not in this
+  repository, for the reason in the credentials trap.
+- **Five scopes where Gemini CLI asks three.** `cclog` and `experimentsandconfigs` are the extra
+  two, and the sandbox checks for them: a token minted with Gemini CLI's scopes reaches the same
+  endpoint and is refused.
+- **Port 51121 and `/oauth-callback`**, both registered with Google against that client id. A
+  redirect Google has not been told about is refused before anybody sees a consent screen, so
+  neither is a preference.
+- **`user-agent: antigravity/1.11.5 darwin/arm64`.** The sandbox answers 403 to Gemini CLI's, so
+  this is load-bearing. The version and the platform in it have nothing to do with the machine
+  it runs on; it is upstream's literal string and stays literal, because what the sandbox wants
+  is to be talking to Antigravity.
+
+**Which header set a request gets is decided by the provider name, not by the host** — a
+deliberate difference from upstream, which asks `endpoint.includes("sandbox.googleapis.com")`.
+That is the right question there, where the endpoint is a variable built per request; here the
+two deployments are two registry providers with two fixed base URLs, so the name is the thing
+actually being asked. And it is what makes this testable: a test cannot point a model at the real
+sandbox host *and* have the request arrive at a local canned server, so under the host rule the
+one header set that is load-bearing was the one no test could see.
+
+Two more things worth knowing:
+
+- **`google-antigravity` is in `RESOLD`, and it matters more here than for the other two.**
+  `claude-sonnet-4-5` is Anthropic's own id. A bare one has to keep meaning Anthropic's, or
+  somebody with an Antigravity sign-in would find `--model sonnet` quietly going through Google.
+  Regression test: `testAntigravityDoesNotStealAnthropicsOwnId`.
+- **The fallback project is somebody else's.** `rising-fact-p41fc` is upstream's constant, used
+  when neither discovery endpoint names a project, and it is not pig's and not a secret — it is
+  what Antigravity itself falls back to. Requests that land on it are attributed to it, which is
+  worth knowing rather than discovering. Discovery swallows every failure on purpose: a 403 from
+  the production endpoint is the normal case for an account that was always going to use the
+  sandbox.
+
+`available()` is true for all four now, so nothing in `/login` is greyed and the "not ported yet"
+label has no case left to describe. The method stays — the reason it exists has not changed, and a
+fifth provider ported halfway needs somewhere to say so — but its false branch is now unreachable
+and therefore untested, in `showSignIns()`, `signIn()` and `Auth::login()`.
 
 ### Where the keys live
 
@@ -1690,7 +1744,6 @@ What is left unported, across every package, each for a reason:
 
 | Upstream | Why not |
 |---|---|
-| `ai/utils/oauth/google-antigravity.ts` | Anthropic's, Copilot's and Gemini CLI's sign-ins are all ported, with storage, `/login` and their models. Antigravity speaks Code Assist's protocol, which *is* ported now — what it needs is its own loopback flow (a different client, a sandbox endpoint and its own headers) and its seven models |
 | seventeen of the twenty-five selector components | the interactive mode needs eight; `/model`, `/resume`, `/tree`, `/login` and `/logout` are the same `SelectList` in the same place instead, and `settings-selector.ts` is `showSettings()` plus `Interactive\SettingsSubmenu` |
 | `tui/components/bordered-loader.ts` (41), `dynamic-border.ts` (25) | chrome: a loader with a rule around it and an `esc cancel` hint, and the rule itself. `CancellableLoader` is the substance and is ported; `TerminalUi::open()` draws a title and the component with no rules around them |
 | `components/queue-mode-selector.ts` (56) | a picker for `all` vs `one-at-a-time`. `QueueMode` works and is fixed when the agent is built; a row in `/settings` would need a setter invented for it, which `showSettings()` says in full |

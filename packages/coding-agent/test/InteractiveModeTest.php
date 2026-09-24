@@ -1848,7 +1848,7 @@ final class InteractiveModeTest extends TestCase
 
     private const string DOWN = "\e[B";
 
-    public function testSlashLoginListsTheProvidersAndSaysWhichOnesAreNotPorted(): void
+    public function testSlashLoginListsEveryProvider(): void
     {
         $this->start(auth: Auth::inMemory());
 
@@ -1857,30 +1857,35 @@ final class InteractiveModeTest extends TestCase
 
         $screen = $this->screen();
 
+        // All four flows are here now, so none of them is greyed and none carries a label.
+        // This used to assert "not ported yet" on Antigravity, which was the last one.
         $this->assertStringContainsString('Anthropic (Claude Pro/Max)', $screen);
         $this->assertStringContainsString('GitHub Copilot', $screen);
-        // Greyed and labelled, rather than quietly absent: a list that hides what somebody
-        // came looking for teaches nothing. Antigravity is the only one still labelled.
-        $this->assertStringContainsString('not ported yet', $screen);
         $this->assertStringContainsString('Google Cloud Code Assist', $screen);
+        $this->assertStringContainsString('Antigravity', $screen);
+        $this->assertStringNotContainsString('not ported yet', $screen);
     }
 
-    public function testChoosingSomethingNotPortedSaysWhyRatherThanDoingNothing(): void
+    public function testChoosingAFlowWithNoClientCredentialsSaysWhatIsMissing(): void
     {
         $this->start(auth: Auth::inMemory());
 
         $this->type('/login');
         $this->type(self::ENTER);
-        // Three times: Anthropic, Copilot and Gemini CLI all work now, so the only one that
-        // cannot finish is the last.
+        // Down to the last one, Antigravity, whose client id and secret pig does not ship and
+        // which are not set here.
         $this->type(self::DOWN);
         $this->type(self::DOWN);
         $this->type(self::DOWN);
         $this->type(self::ENTER);
         $this->settle();
 
-        // Upstream ignores the key here, which reads as the list being broken.
-        $this->assertStringContainsString('is not ported yet', $this->screen());
+        $screen = $this->screen();
+
+        // Named, and named before a browser is opened. Upstream ignores a missing client here,
+        // which reads as the list being broken.
+        $this->assertStringContainsString('ANTIGRAVITY_CLIENT_ID', $screen);
+        $this->assertStringNotContainsString('Open this and approve it', $screen);
     }
 
     public function testSlashLogoutWithNothingSignedInSaysSo(): void

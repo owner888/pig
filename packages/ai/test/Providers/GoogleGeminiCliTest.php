@@ -92,6 +92,51 @@ final class GoogleGeminiCliTest extends TestCase
         $this->assertStringContainsString('client-metadata: {"ideType":"IDE_UNSPECIFIED"', $head);
     }
 
+    public function testAntigravityGetsItsOwnUserAgentBecauseTheSandboxChecksIt(): void
+    {
+        $url = $this->serve([['response' => ['candidates' => [['content' => ['parts' => [['text' => 'ok']]]]]]]]);
+
+        // The same provider class against the other deployment. The sandbox answers 403 to
+        // Gemini CLI's `User-Agent`, so this is load-bearing rather than cosmetic — and the
+        // version and platform in it are upstream's literal string, nothing to do with the
+        // machine this runs on.
+        $this->send($url, new Context([new UserMessage('hi')]), sandbox: true);
+
+        $head = $this->server->receivedHead();
+
+        $this->assertStringContainsString('user-agent: antigravity/1.11.5 darwin/arm64', $head);
+        $this->assertStringContainsString('x-goog-api-client: google-cloud-sdk vscode_cloudshelleditor/0.1', $head);
+        $this->assertStringNotContainsString('gl-node/22.17.0', $head);
+    }
+
+    public function testTheRegistrysAntigravityModelsAllPointAtTheSandbox(): void
+    {
+        $listed = array_values(array_filter(
+            Models::all(),
+            static fn (Model $m): bool => $m->provider === 'google-antigravity',
+        ));
+
+        $this->assertCount(7, $listed);
+
+        foreach ($listed as $model) {
+            $this->assertSame(Api::GoogleGeminiCli, $model->api, $model->id);
+            $this->assertSame(GoogleGeminiCli::SANDBOX_ENDPOINT, $model->baseUrl, $model->id);
+            $this->assertSame(0.0, $model->pricing->input, $model->id);
+        }
+    }
+
+    public function testAntigravityDoesNotStealAnthropicsOwnId(): void
+    {
+        // `claude-sonnet-4-5` is Anthropic's id, and Antigravity resells it. A bare one has to
+        // keep meaning Anthropic's, or somebody with an Antigravity sign-in would find their
+        // `--model sonnet` quietly going through Google.
+        $this->assertSame('anthropic', Models::get('claude-sonnet-4-5')?->provider);
+        $this->assertSame(
+            'google-antigravity',
+            Models::find('google-antigravity', 'claude-sonnet-4-5')?->provider,
+        );
+    }
+
     public function testThinkingIsOnlyMentionedWhenItWasAskedFor(): void
     {
         $url = $this->serve([['response' => ['candidates' => [['content' => ['parts' => [['text' => 'ok']]]]]]]]);
@@ -252,11 +297,16 @@ final class GoogleGeminiCliTest extends TestCase
         });
     }
 
-    private function send(string $url, Context $context, ?GoogleOptions $options = null, bool $reasoning = false): void
-    {
-        Async::run(function () use ($url, $context, $options, $reasoning): void {
+    private function send(
+        string $url,
+        Context $context,
+        ?GoogleOptions $options = null,
+        bool $reasoning = false,
+        bool $sandbox = false,
+    ): void {
+        Async::run(function () use ($url, $context, $options, $reasoning, $sandbox): void {
             $stream = (new GoogleGeminiCli())->stream(
-                $this->model($url, $reasoning),
+                $this->model($url, $reasoning, $sandbox),
                 $context,
                 $options ?? new GoogleOptions(apiKey: self::key()),
             );
@@ -269,13 +319,19 @@ final class GoogleGeminiCliTest extends TestCase
         });
     }
 
-    private function model(string $baseUrl = 'http://127.0.0.1:1', bool $reasoning = false): Model
-    {
+    private function model(
+        string $baseUrl = 'http://127.0.0.1:1',
+        bool $reasoning = false,
+        bool $sandbox = false,
+    ): Model {
         return new Model(
             'test-model',
             'Test Model',
             Api::GoogleGeminiCli,
-            'google-gemini-cli',
+            // The provider name is what picks the header set, so this stays a local URL and the
+            // request still arrives — which is the whole reason the rule is the name and not the
+            // host. See `GoogleGeminiCli::headersFor()`.
+            $sandbox ? Models::ANTIGRAVITY : 'google-gemini-cli',
             rtrim($baseUrl, '/'),
             1_000_000,
             8_192,

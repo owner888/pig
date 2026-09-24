@@ -53,9 +53,12 @@ a code to type at github.com and waits, and escape stops the waiting. Gemini CLI
 Code Assist) opens a browser and catches the redirect on `localhost:8085`, so port 8085 has to be
 free; it needs Google's own client id and secret, which pig does not ship — set
 `GEMINI_CLI_CLIENT_ID` and `GEMINI_CLI_CLIENT_SECRET`, or `geminiCli.clientId` and
-`geminiCli.clientSecret` in `~/.pig/settings.json`. Either way the token is kept in
-`~/.pi/agent/auth.json` — pi's own file, when pi has one, so signing in once is signing in once.
-`/logout` forgets it.
+`geminiCli.clientSecret` in `~/.pig/settings.json`. Antigravity is the fourth and works the same
+way on port 51121, with a client id and secret of its own (`ANTIGRAVITY_CLIENT_ID` and
+`ANTIGRAVITY_CLIENT_SECRET`, or `antigravity.clientId` and `antigravity.clientSecret`) — it is
+what gets you Gemini 3, Claude and GPT-OSS through a Google subscription. Whichever you use, the
+token is kept in `~/.pi/agent/auth.json` — pi's own file, when pi has one, so signing in once is
+signing in once. `/logout` forgets it.
 
 Anything that is not an option is a message, and `@some/file` is read in front of it:
 

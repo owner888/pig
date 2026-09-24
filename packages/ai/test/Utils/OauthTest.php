@@ -10,6 +10,7 @@ use Pig\Ai\Utils\Oauth\Anthropic;
 use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\CallbackServer;
 use Pig\Ai\Utils\Oauth\DeviceCode;
+use Pig\Ai\Utils\Oauth\Antigravity;
 use Pig\Ai\Utils\Oauth\GeminiCli;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
@@ -245,16 +246,14 @@ final class OauthTest extends TestCase
         $this->assertTrue($credentials->hasExpired(1_001));
     }
 
-    public function testOnlyTheFlowsThatAreHereAreOffered(): void
+    public function testEveryFlowIsOfferedNowThatEveryFlowIsHere(): void
     {
-        $this->assertTrue(Provider::Anthropic->available());
-        $this->assertTrue(Provider::GithubCopilot->available());
-        $this->assertTrue(Provider::GoogleGeminiCli->available());
-
-        // Named so a credentials file written by pi can be read, and not offered, because
-        // offering a sign-in that cannot finish is worse than not having it. Antigravity speaks
-        // Code Assist's protocol, which is ported — its own flow and its seven models are not.
-        $this->assertFalse(Provider::GoogleAntigravity->available());
+        // All four. `available()` stays because the reason it exists has not changed: offering a
+        // sign-in that cannot finish is worse than not having it, and a fifth provider ported
+        // halfway needs somewhere to say so. Antigravity was the last one it answered false for.
+        foreach (Provider::cases() as $provider) {
+            $this->assertTrue($provider->available(), $provider->value);
+        }
     }
 
     public function testEveryProviderHasAName(): void
@@ -789,5 +788,134 @@ final class OauthTest extends TestCase
             static fn (): string => Provider::GoogleGeminiCli->apiKey(new Credentials('r', 'a', 0)),
             'no Cloud project id',
         );
+    }
+
+    // ---- Antigravity ----------------------------------------------------------------------
+
+    /** Made-up credentials: this repository does not hold Antigravity's, and does not need to. */
+    private function antigravity(string $url, ?CallbackServer $server = null): Antigravity
+    {
+        return new Antigravity('ag-client-id', 'ag-client-secret', new HttpClient(), $server, $url);
+    }
+
+    public function testAntigravityWithNoClientCredentialsIsRefusedAtOnce(): void
+    {
+        $this->assertThrows(
+            OauthError::class,
+            static fn (): Antigravity => new Antigravity('', ''),
+            'client id and secret',
+        );
+    }
+
+    public function testAntigravityAsksForItsOwnFiveScopes(): void
+    {
+        $pkce = Pkce::create();
+        $url = $this->antigravity('http://unused')
+            ->authorizeUrl($pkce, 'http://localhost:51121/oauth-callback');
+
+        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+
+        $scopes = explode(' ', $query['scope']);
+
+        // Five, not Gemini CLI's three. `cclog` and `experimentsandconfigs` are the two extra
+        // and they are what the sandbox deployment checks for — a token minted with Gemini
+        // CLI's scopes reaches the same endpoint and is refused there.
+        $this->assertCount(5, $scopes);
+        $this->assertContains('https://www.googleapis.com/auth/cclog', $scopes);
+        $this->assertContains('https://www.googleapis.com/auth/experimentsandconfigs', $scopes);
+        $this->assertSame('ag-client-id', $query['client_id']);
+        $this->assertSame('http://localhost:51121/oauth-callback', $query['redirect_uri']);
+        $this->assertSame('offline', $query['access_type']);
+        $this->assertSame('consent', $query['prompt']);
+    }
+
+    public function testAntigravityComesBackToItsOwnRegisteredPort(): void
+    {
+        // Registered with Google against that client id, so neither the port nor the path is a
+        // preference — a redirect Google has not been told about is refused before anybody sees
+        // a consent screen.
+        $this->assertSame(51121, Antigravity::PORT);
+        $this->assertSame('/oauth-callback', Antigravity::CALLBACK_PATH);
+        $this->assertSame(
+            'http://localhost:51121/oauth-callback',
+            (new CallbackServer(Antigravity::PORT, Antigravity::CALLBACK_PATH))->redirectUri(),
+        );
+    }
+
+    public function testAntigravityRefusesAnExchangeWithNoRefreshTokenInIt(): void
+    {
+        $url = $this->serve(['access_token' => 'ya29.a', 'expires_in' => 3599]);
+
+        // Without one the sign-in lasts an hour and then silently is not one, which is what
+        // `prompt=consent` is there to stop happening in the first place.
+        $this->assertThrows(
+            OauthError::class,
+            fn (): mixed => $this->run(fn (): array => $this->antigravity($url)->exchange('c', 'v', 'http://x/cb')),
+            'no refresh token',
+        );
+    }
+
+    public function testAntigravityCarriesItsOwnClientThroughARenewal(): void
+    {
+        $url = $this->serve(['access_token' => 'ya29.new', 'expires_in' => 3599]);
+
+        $renewed = $this->run(fn (): Credentials => $this->antigravity($url)->refresh('1//r', 'proj-1'));
+
+        $sent = $this->server->received();
+
+        // Its own pair, not Gemini CLI's: two OAuth clients, and a renewal carries the one the
+        // token was minted by.
+        $this->assertStringContainsString('client_id=ag-client-id', $sent);
+        $this->assertStringContainsString('grant_type=refresh_token', $sent);
+        $this->assertSame('ya29.new', $renewed->access);
+        $this->assertSame('1//r', $renewed->refresh, 'Google sends nothing rather than the same value again');
+        $this->assertSame('proj-1', $renewed->projectId);
+    }
+
+    public function testAntigravityTakesTheProjectTheFirstEndpointNames(): void
+    {
+        $url = $this->serve(['cloudaicompanionProject' => 'somebody-elses-project']);
+
+        $this->assertSame(
+            'somebody-elses-project',
+            $this->run(fn (): string => $this->antigravity($url)->project('ya29.a')),
+        );
+
+        // Not Gemini CLI's headers: the sandbox checks who is asking.
+        $this->assertStringContainsString('v1internal:loadCodeAssist', $this->server->received());
+    }
+
+    public function testAntigravityReadsTheProjectWhenItComesBackAsAnObject(): void
+    {
+        $url = $this->serve(['cloudaicompanionProject' => ['id' => 'proj-from-object']]);
+
+        // A string on one endpoint and an object with an `id` on the other, which is Google's
+        // inconsistency rather than a guess about the shape.
+        $this->assertSame(
+            'proj-from-object',
+            $this->run(fn (): string => $this->antigravity($url)->project('ya29.a')),
+        );
+    }
+
+    public function testAntigravityFallsBackToItsConstantRatherThanFailing(): void
+    {
+        $url = $this->serve('nope', status: 403, reason: 'Forbidden');
+
+        // Every discovery failure is swallowed on purpose — a 403 on the production endpoint is
+        // the normal case for an account that was always going to use the sandbox. Unlike
+        // Gemini CLI's, nothing is provisioned and nothing is waited for.
+        $this->assertSame(
+            Antigravity::FALLBACK_PROJECT,
+            $this->run(fn (): string => $this->antigravity($url)->project('ya29.a')),
+        );
+    }
+
+    public function testAntigravitysKeyCarriesTheProjectAlongsideTheToken(): void
+    {
+        $key = Provider::GoogleAntigravity->apiKey(new Credentials('r', 'ya29.a', 0, projectId: 'proj-1'));
+
+        // The same shape Gemini CLI's uses, because it is the same protocol — two deployments,
+        // one provider class parsing the key back.
+        $this->assertSame(['token' => 'ya29.a', 'projectId' => 'proj-1'], json_decode($key, true));
     }
 }

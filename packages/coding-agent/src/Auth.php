@@ -9,6 +9,7 @@ use Pig\Ai\Models;
 use Pig\Ai\Stream;
 use Pig\Ai\Utils\Oauth\Anthropic;
 use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\Antigravity;
 use Pig\Ai\Utils\Oauth\GeminiCli;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
@@ -317,14 +318,11 @@ final class Auth
         $credentials = match ($provider) {
             Provider::Anthropic => $this->anthropic($onAuth, $onPrompt),
             Provider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
-            // Its flow is here, and `available()` is what decides whether it is offered — so
-            // this arm is reachable the moment that flips, and reaching it now means somebody
-            // called `login()` past the check.
+            // Two deployments of Code Assist behind two OAuth clients, so two arms rather than
+            // one with a flag: the scopes, the port and the client differ, and the only thing
+            // they share is the protocol the tokens are later spent on.
             Provider::GoogleGeminiCli => $this->geminiCli($onAuth, $onProgress, $signal),
-            // `available()` already refused this one, so reaching here is a bug in that list
-            // rather than something a person did.
-            Provider::GoogleAntigravity
-                => throw new OauthError("{$provider->label()} has no flow here."),
+            Provider::GoogleAntigravity => $this->antigravity($onAuth, $onProgress, $signal),
         };
 
         if ($credentials === null) {
@@ -405,6 +403,17 @@ final class Auth
     }
 
     /**
+     * @param Closure(string, ?string): void $onAuth
+     * @param Closure(string): void|null $onProgress
+     */
+    private function antigravity(Closure $onAuth, ?Closure $onProgress, ?AbortSignal $signal): ?Credentials
+    {
+        [$id, $secret] = $this->antigravityClient();
+
+        return (new Antigravity($id, $secret))->login($onAuth, $onProgress, $signal);
+    }
+
+    /**
      * Google's client id and secret for the Gemini CLI, which this repository does not hold.
      *
      * Upstream embeds them behind `atob()`, and for a Google installed-application client that is
@@ -439,6 +448,36 @@ final class Auth
         return [$id, $secret];
     }
 
+    /**
+     * Antigravity's own client id and secret, which are **not** Gemini CLI's.
+     *
+     * A different OAuth client with different scopes — a Gemini CLI token reaches Antigravity's
+     * endpoint and is refused there — so this is a second pair and not a second reader of the
+     * first. Same rule and the same reason as `googleClient()`: upstream base64's them, which
+     * the scanners decode, so they are configuration here.
+     *
+     * @return array{0: string, 1: string}
+     */
+    public function antigravityClient(): array
+    {
+        $id = getenv('ANTIGRAVITY_CLIENT_ID');
+        $secret = getenv('ANTIGRAVITY_CLIENT_SECRET');
+
+        $id = is_string($id) && $id !== '' ? $id : $this->setting('antigravity.clientId');
+        $secret = is_string($secret) && $secret !== '' ? $secret : $this->setting('antigravity.clientSecret');
+
+        if ($id === null || $secret === null) {
+            throw new OauthError(
+                'Signing in to Antigravity needs its own client id and secret, which pig does not ship. '
+                . 'Set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET, or put antigravity.clientId and '
+                . 'antigravity.clientSecret in ~/.pig/settings.json. They are the ones in the published '
+                . 'Antigravity client, and they are not the same pair as Gemini CLI\'s.',
+            );
+        }
+
+        return [$id, $secret];
+    }
+
     private function setting(string $key): ?string
     {
         $value = $this->settings?->get($key);
@@ -454,7 +493,13 @@ final class Auth
         }
 
         try {
-            [$id, $secret] = $provider === Provider::GoogleGeminiCli ? $this->googleClient() : [null, null];
+            // Each Google flow's own pair, because they are two OAuth clients and a renewal
+            // carries the one the token was minted by. The other two providers need neither.
+            [$id, $secret] = match ($provider) {
+                Provider::GoogleGeminiCli => $this->googleClient(),
+                Provider::GoogleAntigravity => $this->antigravityClient(),
+                default => [null, null],
+            };
             $renewed = $provider->refresh($credentials, null, $id, $secret);
         } catch (Throwable $problem) {
             throw new OauthError(

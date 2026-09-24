@@ -31,6 +31,7 @@ final class Models
     public const string COPILOT = 'github-copilot';
 
     public const string GEMINI_CLI = 'google-gemini-cli';
+    public const string ANTIGRAVITY = 'google-antigravity';
 
     private const string ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 
@@ -70,7 +71,7 @@ final class Models
      *
      * OpenRouter is the next one to belong here, whenever its 236 arrive.
      */
-    private const array RESOLD = [self::COPILOT, self::GEMINI_CLI];
+    private const array RESOLD = [self::COPILOT, self::GEMINI_CLI, self::ANTIGRAVITY];
 
     /**
      * id => [name, context window, max tokens, reasoning]
@@ -91,6 +92,31 @@ final class Models
         'gemini-2.5-pro' => ['Gemini 2.5 Pro (Cloud Code Assist)', 1_048_576, 65_535, true],
         'gemini-3-flash-preview' => ['Gemini 3 Flash Preview (Cloud Code Assist)', 1_048_576, 65_535, true],
         'gemini-3-pro-preview' => ['Gemini 3 Pro Preview (Cloud Code Assist)', 1_048_576, 65_535, true],
+    ];
+
+    /**
+     * Antigravity's seven, which are the reason it exists: not Google's models.
+     *
+     * Two of Anthropic's, three Geminis and an open-weights one, all behind Google's sandbox
+     * deployment of Code Assist and all billed to a subscription rather than per token. The
+     * thinking variants are **separate ids** rather than a level on one model — `-thinking` is
+     * how Antigravity spells it and there is no flag that turns it on, so a model here either
+     * reasons or does not.
+     *
+     * In `RESOLD`, and it matters more here than anywhere: `claude-sonnet-4-5` is Anthropic's
+     * own id. A bare one has to keep meaning Anthropic's, or somebody with an Antigravity
+     * sign-in would find their `--model sonnet` quietly going through Google.
+     *
+     * [name, context window, max output, reasoning, accepts images]
+     */
+    private const array ANTIGRAVITY_MODELS = [
+        'claude-opus-4-5-thinking' => ['Claude Opus 4.5 Thinking (Antigravity)', 200_000, 64_000, true, true],
+        'claude-sonnet-4-5' => ['Claude Sonnet 4.5 (Antigravity)', 200_000, 64_000, false, true],
+        'claude-sonnet-4-5-thinking' => ['Claude Sonnet 4.5 Thinking (Antigravity)', 200_000, 64_000, true, true],
+        'gemini-3-flash' => ['Gemini 3 Flash (Antigravity)', 1_048_576, 65_535, true, true],
+        'gemini-3-pro-high' => ['Gemini 3 Pro High (Antigravity)', 1_048_576, 65_535, true, true],
+        'gemini-3-pro-low' => ['Gemini 3 Pro Low (Antigravity)', 1_048_576, 65_535, true, true],
+        'gpt-oss-120b-medium' => ['GPT-OSS 120B Medium (Antigravity)', 131_072, 32_768, false, false],
     ];
 
     /** provider => where its OpenAI-compatible endpoint lives. */
@@ -573,6 +599,25 @@ final class Models
                 $maxTokens,
                 $reasoning,
                 ['text', 'image'],
+                new Pricing(),
+            );
+        }
+
+        foreach (self::ANTIGRAVITY_MODELS as $id => [$name, $window, $maxTokens, $reasoning, $images]) {
+            $models[self::ANTIGRAVITY . '/' . $id] = new Model(
+                $id,
+                $name,
+                // The same protocol as Gemini CLI — the envelope, the endpoint path and the
+                // chunk shape are identical. What differs is the deployment it is sent to and
+                // the `User-Agent` that deployment insists on, both of which travel with the
+                // model rather than with the code.
+                Api::GoogleGeminiCli,
+                self::ANTIGRAVITY,
+                GoogleGeminiCli::SANDBOX_ENDPOINT,
+                $window,
+                $maxTokens,
+                $reasoning,
+                $images ? ['text', 'image'] : ['text'],
                 new Pricing(),
             );
         }

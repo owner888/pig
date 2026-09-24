@@ -17,7 +17,7 @@ final class ModelsTest extends TestCase
     {
         $models = Models::all();
 
-        $this->assertCount(171, $models);
+        $this->assertCount(178, $models);
 
         foreach ($models as $model) {
             $this->assertNotSame('', $model->id, 'a model with no id cannot be selected');
@@ -138,6 +138,7 @@ final class ModelsTest extends TestCase
                 'zai',
                 'github-copilot',
                 'google-gemini-cli',
+                'google-antigravity',
             ],
             Models::providers(),
         );

@@ -46,8 +46,11 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 按 esc 可以不等了。Gemini CLI（Google Cloud Code Assist）会开浏览器、在 `localhost:8085` 接回跳，
 所以 8085 端口得空着；它还需要 Google 自己的 client id 和 secret，这两个 pig 不附带——设
 `GEMINI_CLI_CLIENT_ID` 和 `GEMINI_CLI_CLIENT_SECRET`，或者在 `~/.pig/settings.json` 里写
-`geminiCli.clientId` 和 `geminiCli.clientSecret`。三种情况 token 都存在 `~/.pi/agent/auth.json`
-——pi 有这个文件就用它，所以登录一次就是登录一次。`/logout` 忘掉它。
+`geminiCli.clientId` 和 `geminiCli.clientSecret`。第四个是 Antigravity，同样的走法但端口是
+51121，也有自己一套 client id 和 secret（`ANTIGRAVITY_CLIENT_ID`、`ANTIGRAVITY_CLIENT_SECRET`，
+或者 `antigravity.clientId`、`antigravity.clientSecret`）——它给你的是走 Google 订阅的 Gemini 3、
+Claude 和 GPT-OSS。四种情况 token 都存在 `~/.pi/agent/auth.json`——pi 有这个文件就用它，所以登录
+一次就是登录一次。`/logout` 忘掉它。
 
 不是选项的东西就是要说的话，`@某个文件` 会被读在这句话前面：
 

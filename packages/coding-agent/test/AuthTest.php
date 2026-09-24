@@ -308,10 +308,12 @@ final class AuthTest extends TestCase
         $this->assertNull($credentials);
     }
 
-    public function testAProviderThatIsNotPortedIsRefusedBeforeAUrlIsShown(): void
+    public function testAFlowWithNoClientCredentialsIsRefusedBeforeAUrlIsShown(): void
     {
         $shown = 0;
 
+        // Antigravity, whose client id and secret are not in this repository and are not set
+        // here either. Gemini CLI's is the same shape for the same reason.
         $problem = $this->assertThrows(OauthError::class, function () use (&$shown): void {
             $this->auth()->login(
                 Provider::GoogleAntigravity,
@@ -322,7 +324,11 @@ final class AuthTest extends TestCase
             );
         });
 
-        $this->assertStringContainsString('not ported', $problem->getMessage());
+        // Refused up front, and the message names both variables and both settings keys: sending
+        // somebody to a browser and failing after they have consented is the thing to avoid, and
+        // "it did not work" without saying what is missing is the other one.
+        $this->assertStringContainsString('ANTIGRAVITY_CLIENT_ID', $problem->getMessage());
+        $this->assertStringContainsString('antigravity.clientId', $problem->getMessage());
         $this->assertSame(0, $shown, 'nobody was sent anywhere');
     }
 
