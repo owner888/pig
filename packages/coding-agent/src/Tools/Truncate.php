@@ -17,7 +17,7 @@ namespace Pig\CodingAgent\Tools;
 final class Truncate
 {
     public const int MAX_LINES = 2000;
-    public const int MAX_BYTES = 50 * 1024;
+    public const int MAX_BYTES = 50 * 1024; // 50KB
 
     /** Widest a single grep match is shown before it is cut. */
     public const int MAX_MATCH_CHARS = 500;
