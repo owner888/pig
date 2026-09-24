@@ -24,6 +24,7 @@ use Pig\CodingAgent\Interactive\FooterComponent;
 use Pig\CodingAgent\Interactive\TerminalUi;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Interactive\BorderedLoader;
 use Pig\Tui\Ansi;
 use Pig\Tui\Components\Editor;
 use Pig\Tui\Components\SelectItem;
@@ -878,5 +879,76 @@ final class HookUiTest extends TestCase
         $runner->initialize(getModel: static fn () => null, ui: $this->ui);
 
         return new HookedTool($tool, $runner);
+    }
+
+    // ---- a loader a hook can put up ------------------------------------------------------
+
+    public function testABorderedLoaderDrawsItsRulesAroundTheSpinner(): void
+    {
+        $loader = new BorderedLoader($this->tui, $this->palette, 'Fetching the thing…');
+
+        try {
+            $lines = array_map(Ansi::strip(...), $loader->render(30));
+            $drawn = implode("\n", $lines);
+
+            $this->assertStringStartsWith('─', $lines[0]);
+            $this->assertStringStartsWith('─', $lines[count($lines) - 1]);
+            $this->assertStringContainsString('Fetching the thing…', $drawn);
+            // What the rules are for: this is a wait, and a wait with nothing around it reads
+            // as output that stopped.
+            $this->assertStringContainsString('esc cancel', $drawn);
+        } finally {
+            $loader->dispose();
+        }
+    }
+
+    public function testEscapeOnABorderedLoaderAbortsWhatItIsWaitingOn(): void
+    {
+        $loader = new BorderedLoader($this->tui, $this->palette, 'Waiting…');
+
+        try {
+            $signal = $loader->signal();
+            $this->assertFalse($signal->aborted());
+
+            $loader->handleInput("\x1b");
+
+            // The lesson from `SettingsSubmenu`: a `Container` forwards drawing and nothing
+            // else, so one given the focus eats every key — and here the key it would eat is
+            // the only one that stops the wait.
+            $this->assertTrue($signal->aborted());
+        } finally {
+            $loader->dispose();
+        }
+    }
+
+    public function testARunningBorderedLoaderNeverLetsTheLoopSettleAndADisposedOneDoes(): void
+    {
+        $loader = new BorderedLoader($this->tui, $this->palette, 'Waiting…');
+
+        // The spinner reschedules itself, so there is always another timer pending — the loop
+        // can be ticked forever and never run out of work. A loader nobody disposed of is a
+        // `bin/pig` that never exits, which is why `dispose()` is not a nicety.
+        $this->assertFalse($this->settles(), 'still ticking');
+
+        $loader->dispose();
+
+        $this->assertTrue($this->settles(), 'and now there is nothing left to do');
+    }
+
+    /**
+     * Whether the loop runs out of work if left to itself.
+     *
+     * Not `isIdle()` on its own, which was the first version of this and was wrong: a pending
+     * render counts as work, so the answer is false for a moment after anything asks to be
+     * drawn — including a loader that has just been disposed of. The question worth asking is
+     * whether the work *ends*.
+     */
+    private function settles(int $ticks = 40): bool
+    {
+        for ($tick = 0; $tick < $ticks && !Loop::get()->isIdle(); $tick++) {
+            Loop::get()->tick();
+        }
+
+        return Loop::get()->isIdle();
     }
 }

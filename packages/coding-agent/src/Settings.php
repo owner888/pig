@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
+use Pig\Agent\QueueMode;
 use Pig\Agent\ThinkingLevel;
 
 /**
@@ -128,6 +129,25 @@ final class Settings
     public function setHideThinking(bool $hide): void
     {
         $this->set('hideThinkingBlock', $hide);
+    }
+
+    /**
+     * How queued messages are handed over. Upstream's key and upstream's default.
+     *
+     * `one-at-a-time` unless the file says otherwise, which is the answer somebody typing three
+     * separate thoughts usually means — an unknown value falls back to it rather than to `all`,
+     * because getting all three at once is the surprising half of the choice.
+     */
+    public function queueMode(): QueueMode
+    {
+        $mode = $this->get('queueMode');
+
+        return is_string($mode) ? QueueMode::tryFrom($mode) ?? QueueMode::OneAtATime : QueueMode::OneAtATime;
+    }
+
+    public function setQueueMode(QueueMode $mode): void
+    {
+        $this->set('queueMode', $mode->value);
     }
 
     public function showImages(): bool

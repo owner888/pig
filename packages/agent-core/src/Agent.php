@@ -53,11 +53,24 @@ final class Agent
 
     private ?Deferred $running = null;
 
+    /**
+     * How each queue is handed over, copied out of the options because it can change.
+     *
+     * `AgentOptions` is readonly and stays that way: it is what this agent was *set up* with,
+     * and a settings screen changing a field on it would make the record of the setup a record
+     * of the present instead.
+     */
+    private QueueMode $steeringMode;
+
+    private QueueMode $followUpMode;
+
     public function __construct(private readonly AgentOptions $options = new AgentOptions())
     {
         $this->state = $options->initialState ?? new AgentState();
         $this->convertToLlm = $options->convertToLlm ?? self::defaultConvertToLlm(...);
         $this->transformContext = $options->transformContext;
+        $this->steeringMode = $options->steeringMode;
+        $this->followUpMode = $options->followUpMode;
     }
 
     /**
@@ -278,6 +291,27 @@ final class Agent
         }
     }
 
+    /**
+     * How the follow-up queue is handed over, which is what "queue mode" means to a person.
+     *
+     * **Upstream has one `setQueueMode()` and pig has two queues**, which is the anchor commit's
+     * own break: `d0a4c37` split the single queue into `steer()` and `followUp()` and changed
+     * `packages/agent` only, so `agent-session.ts` at that same commit still calls a method that
+     * no longer exists. There is no working original to copy, so this picks the queue the setting
+     * is about: a message typed while the agent is working is a **follow-up** — that is where
+     * `InteractiveMode`'s submit handler puts it — and steering is a different act with a
+     * different key. `setSteeringMode()` arrives if something ever wants it separately.
+     */
+    public function setQueueMode(QueueMode $mode): void
+    {
+        $this->followUpMode = $mode;
+    }
+
+    public function queueMode(): QueueMode
+    {
+        return $this->followUpMode;
+    }
+
     private function config(Model $model): AgentLoopConfig
     {
         return new AgentLoopConfig(
@@ -285,8 +319,8 @@ final class Agent
             convertToLlm: $this->convertToLlm,
             reasoning: $this->state->thinkingLevel->toReasoning(),
             transformContext: $this->transformContext,
-            getSteeringMessages: fn (): array => $this->take($this->steeringQueue, $this->options->steeringMode),
-            getFollowUpMessages: fn (): array => $this->take($this->followUpQueue, $this->options->followUpMode),
+            getSteeringMessages: fn (): array => $this->take($this->steeringQueue, $this->steeringMode),
+            getFollowUpMessages: fn (): array => $this->take($this->followUpQueue, $this->followUpMode),
             getApiKey: $this->options->getApiKey,
             apiKey: $this->options->apiKey,
         );

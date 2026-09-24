@@ -14,6 +14,7 @@ use Pig\Agent\AgentState;
 use Pig\Agent\AgentToolResult;
 use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
+use Pig\Agent\QueueMode;
 use Pig\Agent\ThinkingLevel;
 use Pig\Agent\TurnEndEvent;
 use Pig\Agent\TurnStartEvent;
@@ -111,6 +112,15 @@ final class AgentSession
         private readonly ?HookRunner $hooks = null,
     ) {
         $this->unsubscribeAgent = $this->agent->subscribe($this->onAgentEvent(...));
+
+        // What was chosen last time, applied here rather than by whoever built the agent: this
+        // is the class that holds both the agent and the settings, and `setQueueMode()` right
+        // below writes the setting through the same pair. A caller passing it into
+        // `AgentOptions` instead would mean two routes for one fact, and the one route that
+        // every mode and every test already goes through is this constructor.
+        if ($settings !== null) {
+            $this->agent->setQueueMode($settings->queueMode());
+        }
     }
 
     /** The hooks this session fires at, if any. */
@@ -474,6 +484,24 @@ final class AgentSession
     {
         $this->steering[] = $text;
         $this->agent->steer(new UserMessage($text));
+    }
+
+    /**
+     * Whether queued messages go over one at a time or all together.
+     *
+     * Upstream's pair, and the settings write is upstream's too: `agent-session.ts` tells the
+     * agent and the settings manager in the same method, so the choice survives the session it
+     * was made in.
+     */
+    public function queueMode(): QueueMode
+    {
+        return $this->agent->queueMode();
+    }
+
+    public function setQueueMode(QueueMode $mode): void
+    {
+        $this->agent->setQueueMode($mode);
+        $this->settings?->setQueueMode($mode);
     }
 
     /** Queue something for after the agent has finished the request it is on. */

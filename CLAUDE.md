@@ -416,6 +416,30 @@ difference has a reason worth keeping — a `!` command is the thing the person 
 is looking at, where a model's is one step inside something else. pig reuses one component for
 both, so the number is a constructor argument rather than a second class.
 
+`Components\Rule` is upstream's `DynamicBorder`, renamed: "dynamic" there means "asks the width
+at render time", which is what every component in `pig/tui` does — there is no static kind for it
+to be the opposite of, and what it is is a rule. The colour is a closure taken at construction,
+which upstream's own note argues for in the hardest way available: its `theme` is a module-level
+global, and a hook loaded through jiti gets a second module cache where that global is
+`undefined`, so a border drawn from inside a hook crashed on a theme present everywhere else. pig
+has no module caches, but the shape is right for a second reason — `/theme` replaces the palette,
+and a component holding a closure it was given cannot hold a stale colour table.
+
+`Interactive\BorderedLoader` is upstream's, and it is for hooks: a hook that goes away for a while
+hands one to `HookUi::custom()`, and the rules are what separate it from the transcript above and
+the prompt below. `TerminalUi`'s own dialogs draw no rules, because a question reads as one thing;
+this is a **wait**, and a wait with nothing around it reads as output that stopped. It is a
+`Container` **and** an `InputHandler`, which is the trap on `SettingsSubmenu` again — and here the
+key a container would eat is the only one that cancels.
+
+Its `dispose()` is not a nicety: the spinner reschedules itself, so a loader nobody disposed of is
+a loop that never runs out of work and a `bin/pig` that never exits.
+`testARunningBorderedLoaderNeverLetsTheLoopSettleAndADisposedOneDoes` is the test, and its name is
+long because the first version of it was wrong: it asserted `isIdle()` immediately after
+`dispose()`, which is false for a moment because **a pending render counts as work**. That looked
+like a bug in `dispose()` and was a bug in the test. The question worth asking is not whether the
+loop is idle now but whether its work *ends*.
+
 `CustomEditor` wraps `Pig\Tui\Components\Editor` rather than extending it — the editor is
 `final`, and wrapping keeps the list of keys an application may steal explicit. `Editor` grew
 one method for this: `setTheme()`, so the border can change colour with the thinking level.
@@ -633,7 +657,7 @@ Two decisions of pig's own:
   2 where the terminal gives it 4, which pushes every value column after it out of line. Same
   deviation, same reason, as `SelectList`'s description column.
 
-**The list only offers things that take effect**, which is what decided its six rows:
+**The list only offers things that take effect**, which is what decided its seven rows:
 
 | Row | Reaches |
 |---|---|
@@ -641,8 +665,35 @@ Two decisions of pig's own:
 | Thinking | a submenu of the levels *this model* offers, so a model that cannot reason gets no row at all rather than six ways to change nothing |
 | Thinking blocks | `useHideThinking()`, split out of the ctrl+t handler |
 | Pictures | `useShowImages()`, and its reader — see below |
+| Queued messages | `AgentSession::setQueueMode()`, which tells the agent and writes the setting |
 | Auto-compact | `compaction.enabled`, read again on every turn |
 | Auto-retry | `retry.enabled`, read again on every failure |
+
+**Queue mode is a row now, and getting there meant the anchor commit's own break.** Upstream has
+one `setQueueMode()`; pig has two queues, because `d0a4c37` is the commit that split the single
+queue into `steer()` and `followUp()` and it changed `packages/agent` only — `agent-session.ts` at
+that same commit still calls a method that no longer exists there. So there is no working original
+to copy, and `Agent::setQueueMode()` picks the queue the *setting* is about: a message typed while
+the agent is working is a **follow-up**, which is where the submit handler puts it, and steering is
+a different act with a different key. `setSteeringMode()` arrives if something ever wants it apart.
+
+Three smaller decisions fell out of it:
+
+- **The modes are copied out of `AgentOptions` into fields on `Agent`.** `AgentOptions` is readonly
+  and stays that way: it records what an agent was *set up* with, and a settings screen writing a
+  field on it would turn that record into a record of the present.
+- **`AgentSession`'s constructor applies the stored mode**, not whoever built the agent. It is the
+  class holding both the agent and the settings, and `setQueueMode()` writes through the same
+  pair — a caller passing it into `AgentOptions` instead would be a second route for one fact.
+- **Upstream's `queue-mode-selector.ts` has no consumer.** Checked before deciding not to port the
+  component: the only `QueueModeSelectorComponent` in upstream's tree is its own definition, and
+  the live path is a row in its settings screen. So the row is the port and the standalone
+  component is dead code there.
+
+Writing the test for it found a gap in the test harness rather than in the code:
+`InteractiveModeTest` was passing **null settings to `AgentSession`** while giving the same
+settings to `InteractiveMode`, which `bin/pig` does not do. Three settings the session reads — the
+queue mode, auto-compaction and auto-retry — were live in production and inert in every test.
 
 **`terminal.showImages` was a setting pig stored and nothing read.** Building the screen is what
 surfaced that, and the choice was between leaving the row off and giving the setting its reader.
@@ -651,9 +702,7 @@ Upstream has a real one — `tool-execution.ts` takes `showImages`, checks
 already on screen — so pig now has the same: `ToolExecutionComponent` takes the flag and
 `setShowImages()` redraws. Off draws the label `TerminalImage::fallback()` already produces for a
 terminal that cannot draw pictures, from the same function, so "turned off" and "cannot" look
-alike and neither pretends no picture came back. **Queue mode** is still off the list: it is fixed
-when the agent is built and has no setter to reach, so offering it would mean inventing one for
-the benefit of a screen.
+alike and neither pretends no picture came back. Queue mode is on the list now and has its own note above.
 
 `useTheme()`, `useHideThinking()` and `useShowImages()` being split out is the part that matters
 most and is the least visible: ctrl+t writes the setting *and* tells every
@@ -1753,8 +1802,6 @@ What is left unported, across every package, each for a reason:
 | Upstream | Why not |
 |---|---|
 | seventeen of the twenty-five selector components | the interactive mode needs eight; `/model`, `/resume`, `/tree`, `/login` and `/logout` are the same `SelectList` in the same place instead, and `settings-selector.ts` is `showSettings()` plus `Interactive\SettingsSubmenu` |
-| `tui/components/bordered-loader.ts` (41), `dynamic-border.ts` (25) | chrome: a loader with a rule around it and an `esc cancel` hint, and the rule itself. `CancellableLoader` is the substance and is ported; `TerminalUi::open()` draws a title and the component with no rules around them |
-| `components/queue-mode-selector.ts` (56) | a picker for `all` vs `one-at-a-time`. `QueueMode` works and is fixed when the agent is built; a row in `/settings` would need a setter invented for it, which `showSettings()` says in full |
 | `agent/proxy.ts` (340) | a stream function that routes LLM calls through somebody's server, so the server holds the keys. pig talks to providers directly; this arrives if something ever wants a proxy |
 | `ai/cli.ts` (173) | a standalone `pi-ai` command whose only job is the OAuth logins. `/login` is where pig does that, and a second entry point would be a second thing to keep working |
 | `ai/utils/validation.ts` + `typebox-helpers.ts` (104) | AJV and TypeBox, for checking a tool call against its schema. `Agent\ToolArguments` is pig's answer and its docblock states the trade: the two mistakes a model actually makes, and everything else through |

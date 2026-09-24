@@ -11,6 +11,7 @@ use Pig\Tui\Components\CancellableLoader;
 use Pig\Tui\Components\Loader;
 use Pig\Tui\Components\SelectItem;
 use Pig\Tui\Components\SelectList;
+use Pig\Tui\Components\Rule;
 use Pig\Tui\Components\SelectListTheme;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
@@ -26,6 +27,27 @@ final class ComponentsTest extends TestCase
     protected function setUp(): void
     {
         Loop::reset();
+    }
+
+    public function testARuleFillsTheWidthItIsGiven(): void
+    {
+        $lines = (new Rule(static fn (string $text): string => $text))->render(12);
+
+        $this->assertSame([str_repeat('─', 12)], $lines);
+    }
+
+    public function testARuleIsStillOneRowAtZeroWidth(): void
+    {
+        // An empty array would make the component occupy no row while the frame above it counts
+        // one, which is how a differential renderer starts drawing from the wrong line.
+        $this->assertCount(1, (new Rule())->render(0));
+    }
+
+    public function testARuleIsMeasuredInColumnsNotBytes(): void
+    {
+        // `─` is three bytes and one column, so a `str_repeat` counted in bytes would make this
+        // rule a third of the width it was asked for.
+        $this->assertSame(20, Width::visible((new Rule())->render(20)[0]));
     }
 
     public function testTextPadsEveryLineToTheFullWidth(): void

@@ -137,8 +137,8 @@ has none.
 Settings live in `~/.pig/settings.json`, and a project can override them in
 `.pig/settings.json`. The theme, model and thinking level you pick are remembered.
 `/settings` shows what can be changed from inside a session — theme, thinking, whether
-reasoning is drawn, whether pictures are drawn, auto-compact, auto-retry — with what each one
-is set to now. Enter changes
+reasoning is drawn, whether pictures are drawn, whether messages you type mid-run go over one at
+a time or together, auto-compact, auto-retry — with what each one is set to now. Enter changes
 the row you are on and the list stays open; escape closes it.
 
 A markdown file in `~/.pig/commands/` or `.pig/commands/` becomes a slash command: `review.md`

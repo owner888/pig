@@ -12,6 +12,7 @@ use Pig\Agent\AgentToolResult;
 use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\MessageUpdateEvent;
+use Pig\Agent\QueueMode;
 use Pig\Agent\ThinkingLevel;
 use Pig\Agent\ToolExecutionEndEvent;
 use Pig\Agent\ToolExecutionStartEvent;
@@ -2147,9 +2148,10 @@ final class InteractiveMode
      * **Only things that take effect.** Every row here is read again after it is changed, so
      * pressing Enter on it does something. `terminal.showImages` was nearly left off for
      * failing that — pig stored it and nothing read it — and the answer was to give it its
-     * reader rather than a row that saves a value nobody looks at. Queue mode is still off
-     * the list: it is fixed when the agent is built and has no setter to reach, so offering
-     * it would mean inventing one for the benefit of a screen.
+     * reader rather than a row that saves a value nobody looks at. Queue mode needed the same
+     * kind of work and got it: `Agent` had no setter, because the anchor commit's queue split
+     * removed upstream's — `Agent::setQueueMode()` says which of the two queues it picks and
+     * why.
      *
      * Escape closes it. There is no cancel, because each change has already happened by
      * then — the same as upstream, and the same as every other toggle here.
@@ -2193,6 +2195,13 @@ final class InteractiveMode
             $this->showImages ? 'drawn' : 'named',
             'Whether a picture in a tool result is drawn, on terminals that can.',
             values: ['drawn', 'named'],
+        );
+        $rows[] = new SettingItem(
+            'queueMode',
+            'Queued messages',
+            $this->session->queueMode()->value,
+            'Whether what you type while it works goes over one at a time or together.',
+            values: ['one-at-a-time', 'all'],
         );
         $rows[] = new SettingItem(
             'autoCompact',
@@ -2285,6 +2294,11 @@ final class InteractiveMode
             'thinking' => $this->useThinkingLevel($value),
             'hideThinking' => $this->useHideThinking($value === 'hidden'),
             'showImages' => $this->useShowImages($value === 'drawn'),
+            // Takes effect on the next queued message, which is the only time it is read —
+            // nothing about the ones already waiting changes, and nothing should.
+            'queueMode' => $this->session->setQueueMode(
+                QueueMode::tryFrom($value) ?? QueueMode::OneAtATime,
+            ),
             'autoCompact' => $this->settings->setCompactionEnabled($value === 'on'),
             'autoRetry' => $this->settings->setRetryEnabled($value === 'on'),
             default => null,

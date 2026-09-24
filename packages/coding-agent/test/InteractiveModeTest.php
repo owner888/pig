@@ -8,6 +8,7 @@ use Closure;
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentOptions;
+use Pig\Agent\QueueMode;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
@@ -177,7 +178,11 @@ final class InteractiveModeTest extends TestCase
             default => null,
         };
 
-        $this->session = new AgentSession($agent, $this->cwd, $saved, null, $hooks);
+        // The settings go to the session as well as to the mode, because that is what `bin/pig`
+        // does — and the session reads them for the queue mode, auto-compaction and auto-retry.
+        // Passing null here meant three settings that were live in production and inert in
+        // every test.
+        $this->session = new AgentSession($agent, $this->cwd, $saved, $this->settings, $hooks);
 
         if ($resume !== null && $saved !== null) {
             $this->session->restore($saved->messages());
@@ -1982,8 +1987,9 @@ final class InteractiveModeTest extends TestCase
         $this->start();
         $this->openSettings();
 
-        // Down past Thinking blocks and Pictures to Auto-compact. No thinking row: the test
-        // model does not reason, which is the case the row is left out for.
+        // Down past Thinking blocks, Pictures and Queued messages to Auto-compact. No thinking
+        // row: the test model does not reason, which is the case the row is left out for.
+        $this->type(self::DOWN);
         $this->type(self::DOWN);
         $this->type(self::DOWN);
         $this->type(self::DOWN);
@@ -2016,6 +2022,32 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
 
         $this->assertFalse($this->settings->showImages());
+    }
+
+    public function testChangingHowQueuedMessagesAreHandedOverIsRemembered(): void
+    {
+        $this->start();
+        $this->openSettings();
+
+        // Theme, Thinking blocks, Pictures, then this one.
+        $this->type(self::DOWN);
+        $this->type(self::DOWN);
+        $this->type(self::DOWN);
+        $this->type(self::ENTER);
+
+        // Both halves, which is the whole point of the pair: the agent is told so this run
+        // behaves, and the file is written so the next one does.
+        $this->assertSame(QueueMode::All, $this->session->queueMode());
+        $this->assertSame(QueueMode::All, $this->settings->queueMode());
+    }
+
+    public function testQueueModeChosenLastTimeIsWhatTheAgentStartsOn(): void
+    {
+        $this->start(settings: Settings::inMemory(['queueMode' => 'all']));
+
+        // Read out of the settings and into `AgentOptions` at construction — a row that only
+        // took effect for the session it was changed in would be a setting in name only.
+        $this->assertSame(QueueMode::All, $this->session->queueMode());
     }
 
     public function testAModelThatCannotThinkIsNotOfferedAThinkingRow(): void
