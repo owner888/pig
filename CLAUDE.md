@@ -642,11 +642,16 @@ all scalars and pig has no YAML parser to reach for; what this cannot read stays
 for a nested `metadata:` block means its key and nothing else — and the key is all that is
 validated anyway. `fnmatch()` is `minimatch` for `--ignore`-style patterns.
 
-Four of upstream's five protocols are here, and the fifth was never a protocol: both remaining
-providers speak a shape that is already ported and were gated on a sign-in instead.
-**GitHub Copilot is done** — nineteen models in the registry and the device flow to sign in with.
-`google-gemini-cli` is the same Gemini shape behind Google's sign-in, which needs a loopback
-HTTP server and a browser opened at it.
+**Four of upstream's five protocols are here, and the fifth is a real one.** This used to say
+the fifth "was never a protocol" — that `google-gemini-cli` was Gemini behind a sign-in. It is
+not: its models carry `api: "google-gemini-cli"` and upstream has a **603-line provider** for it,
+because Code Assist has its own endpoint and wraps a Gemini request inside a Cloud-project
+envelope. The claim was wrong and is recorded as wrong; checking it took one grep of
+`models.generated.ts` for the `api` field.
+
+**GitHub Copilot is done** — nineteen models in the registry and the device flow to sign in with,
+and it needed no new protocol because it serves everything through the two OpenAI shapes.
+`google-gemini-cli` has its flow (see below) and still needs that provider and its five models.
 
 ### Signing in instead of pasting a key
 
@@ -782,9 +787,54 @@ already knew about OSC 8, so the line measures correctly. Opening is best effort
 screen, so a headless box or one without `xdg-open` is one extra copy-and-paste rather than a
 broken sign-in.
 
-**Still not ported:** the two Google flows themselves. `google-gemini-cli` is next — the
-developer's call was to do that one and leave `google-antigravity`, which is the same shape with
-a different client, until the ground under it has been proven by a flow that works.
+### Google's sign-in
+
+`Oauth\GeminiCli` is upstream's `google-gemini-cli.ts`, and the third shape of sign-in in three
+flows: Anthropic's shows a URL and takes a paste, Copilot's shows a code and polls, and this one
+**redirects to this machine** — `CallbackServer` listens, the browser goes to Google, and the code
+arrives on a socket rather than through a person.
+
+It is also the only one that does not finish when the tokens arrive. A Code Assist token is
+useless without a Cloud project to spend it against and most accounts have none, so `project()`
+asks for one and provisions a free-tier one when there is none — an API call that answers "not
+yet" and has to be asked again. That is what `projectId` on `Credentials` is for, and why
+`Provider::apiKey()` encodes it alongside the token: an api key field carries one string, and
+Code Assist needs two things.
+
+Six things worth keeping straight:
+
+- **The state is checked and a mismatch is refused.** It is the verifier, so a code that came back
+  with a different state came from a request this process never made. Upstream calls it a possible
+  CSRF attack; this is the one check in the module that is about somebody else rather than about a
+  mistake, and it has a test that drives a real socket to reach it.
+- **`listen()` before the browser is sent anywhere**, which is the whole reason `CallbackServer`
+  is two steps.
+- **There has to be a refresh token**, and its absence gets its own complaint rather than being
+  folded into "no tokens". Google only sends one for `access_type=offline` with `prompt=consent`,
+  both of which are in the URL — so a sign-in that came back without one is worth saying plainly,
+  because the fix is to try again.
+- **A half-built project is not a finished one.** `onboardUser` answers with an id while it is
+  still working, so `done` is checked as well: taking that id would name something nothing can be
+  spent against.
+- **Provisioning can be given up on**, which upstream cannot. Ten attempts three seconds apart is
+  half a minute of a fiber nobody can reach.
+- **The email is optional and its failure is ignored**, which is upstream's rule and the only
+  place in the module where swallowing an error is right: it is a label on the credential and
+  nothing downstream reads it.
+
+The client id and secret are written out rather than hidden behind `atob()`. A "secret" shipped in
+a published npm package and sent on every one of these requests is not one — it is how Google's
+installed-application flow works, and PKCE is what actually protects the exchange.
+
+**`available()` is still false for it**, deliberately. The flow works and `refresh()` and
+`apiKey()` work, but Code Assist's protocol and its five models are not here, so offering the
+sign-in would unlock nothing to choose — the same mistake as offering a model whose protocol is
+not ported, from the other end. It flips when the provider lands.
+
+**Still not ported:** Code Assist's provider (upstream's `providers/google-gemini-cli.ts`, 603
+lines) and its five models; and `google-antigravity`, which speaks that same protocol with a
+different client and seven models of its own, and which the developer's call was to leave until
+the ground under it has been proven by a flow that works end to end.
 
 ### Where the keys live
 
@@ -1408,7 +1458,7 @@ What is left in `coding-agent` is left out on purpose, each for a reason:
 
 | Upstream | Why not |
 |---|---|
-| the two Google flows in `ai`'s `utils/oauth/` | Anthropic's and GitHub Copilot's are ported, with storage and `/login` (see [Signing in instead of pasting a key](#signing-in-instead-of-pasting-a-key)); `google-gemini-cli` and `google-antigravity` are loopback PKCE flows and need an HTTP server on `127.0.0.1` and a browser opened at it |
+| Code Assist's provider, and `google-antigravity` | Anthropic's, Copilot's and Gemini CLI's flows are ported, with storage and `/login` (see [Signing in instead of pasting a key](#signing-in-instead-of-pasting-a-key)). What Gemini CLI still needs is upstream's `providers/google-gemini-cli.ts` (603 lines — Code Assist is a protocol of its own) and its five models; `google-antigravity` speaks that same protocol with seven models of its own |
 | twenty-five selector components | the interactive mode needs seven of them |
 | `migrations.ts` | session-file migrations; pig writes pi's format and has never shipped another |
 | `utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |

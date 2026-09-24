@@ -50,12 +50,23 @@ enum Provider: string
      */
     public function available(): bool
     {
+        // Not `GoogleGeminiCli`, even though its flow is here — see the note above.
         return $this === self::Anthropic || $this === self::GithubCopilot;
     }
 
-    /** A new access token, or a refusal naming what is missing. */
-    public function refresh(Credentials $credentials, ?HttpClient $http = null): Credentials
-    {
+    /**
+     * A new access token, or a refusal naming what is missing.
+     *
+     * @param string|null $clientId Gemini CLI's alone: Google's renewal grant carries the client
+     *        id and secret, and this repository does not hold them — `CodingAgent\Auth` finds
+     *        them and passes them in. The other three need nothing here.
+     */
+    public function refresh(
+        Credentials $credentials,
+        ?HttpClient $http = null,
+        ?string $clientId = null,
+        ?string $clientSecret = null,
+    ): Credentials {
         if ($credentials->refresh === '') {
             throw new OauthError("The stored {$this->value} credentials have no refresh token — sign in again.");
         }
@@ -68,7 +79,19 @@ enum Provider: string
             // the sign-in ends and how it is renewed — there is no separate refresh endpoint.
             self::GithubCopilot => (new GithubCopilot($http ?? new HttpClient()))
                 ->refresh($credentials->refresh, $credentials->enterpriseUrl),
-            self::GoogleGeminiCli, self::GoogleAntigravity
+            // Renewable even though `available()` refuses a fresh sign-in: a credentials file
+            // written by pi can hold these, and a token that can be renewed should be.
+            self::GoogleGeminiCli => (new GeminiCli(
+                $clientId ?? throw new OauthError('Renewing a Gemini CLI token needs Google\'s client id and secret.'),
+                $clientSecret ?? throw new OauthError('Renewing a Gemini CLI token needs Google\'s client secret.'),
+                $http ?? new HttpClient(),
+            ))->refresh(
+                $credentials->refresh,
+                $credentials->projectId ?? throw new OauthError(
+                    'The stored Gemini CLI credentials have no Cloud project id, so there is nothing to spend the token against.',
+                ),
+            ),
+            self::GoogleAntigravity
                 => throw new OauthError("Signing in with {$this->value} is not ported yet, so its token cannot be renewed here."),
         };
     }
@@ -85,8 +108,30 @@ enum Provider: string
             // Both are the short-lived half. Anthropic's is recognised by its `sk-ant-oat`
             // prefix and Copilot's by the provider name, and both go out as bearer tokens.
             self::Anthropic, self::GithubCopilot => $credentials->access,
-            self::GoogleGeminiCli, self::GoogleAntigravity
+            // Upstream's shape: Code Assist needs a Cloud project as well as a token, and the
+            // two travel as one string because that is all an api key field can carry. Nothing
+            // reads this yet — the provider that parses it is not ported — and no model of this
+            // provider is in the registry, so the path is unreachable rather than broken.
+            self::GoogleGeminiCli => self::projectKey($credentials),
+            self::GoogleAntigravity
                 => throw new OauthError("{$this->value} credentials cannot be turned into a key here yet."),
         };
+    }
+
+    private static function projectKey(Credentials $credentials): string
+    {
+        $project = $credentials->projectId;
+
+        if ($project === null || $project === '') {
+            throw new OauthError('The stored Gemini CLI credentials have no Cloud project id.');
+        }
+
+        $json = json_encode(['token' => $credentials->access, 'projectId' => $project]);
+
+        if ($json === false) {
+            throw new OauthError('Could not encode the Gemini CLI key.');
+        }
+
+        return $json;
     }
 }

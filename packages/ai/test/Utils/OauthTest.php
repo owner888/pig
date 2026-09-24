@@ -8,7 +8,9 @@ use PHPUnit\Framework\TestCase;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Utils\Oauth\Anthropic;
 use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\CallbackServer;
 use Pig\Ai\Utils\Oauth\DeviceCode;
+use Pig\Ai\Utils\Oauth\GeminiCli;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Pkce;
@@ -290,6 +292,7 @@ final class OauthTest extends TestCase
         $this->assertThrows(
             OauthError::class,
             static fn (): Credentials => Provider::GoogleGeminiCli->refresh($credentials),
+            'client id and secret',
         );
 
         $this->assertThrows(
@@ -523,5 +526,269 @@ final class OauthTest extends TestCase
         // The question asked was "may this account use that model", and "no" is an answer
         // rather than a failure of a sign-in that is already finished.
         $this->assertSame(['claude-sonnet-4.5' => false, 'grok-code-fast-1' => false], $seen);
+    }
+
+    // ---- Gemini CLI: the URL somebody opens ----------------------------------------------
+
+    /** Made-up credentials: this repository does not hold Google's, and does not need to. */
+    private function gemini(string $url, ?CallbackServer $server = null): GeminiCli
+    {
+        return new GeminiCli('test-client-id', 'test-client-secret', new HttpClient(), $server, $url);
+    }
+
+    public function testAFlowWithNoClientCredentialsIsRefusedAtOnce(): void
+    {
+        // At construction, not at the first request: a flow built without them would send
+        // somebody to a browser and then fail, and the caller is what knows where to look.
+        $this->assertThrows(
+            OauthError::class,
+            static fn (): GeminiCli => new GeminiCli('', ''),
+            'client id and secret',
+        );
+    }
+
+    public function testTheGoogleUrlAsksForARefreshTokenAndMeansIt(): void
+    {
+        $pkce = Pkce::create();
+        $url = $this->gemini('http://unused')->authorizeUrl($pkce, 'http://localhost:8085/oauth2callback');
+
+        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+
+        $this->assertSame($pkce->challenge, $query['code_challenge']);
+        $this->assertSame($pkce->verifier, $query['state']);
+        $this->assertSame('http://localhost:8085/oauth2callback', $query['redirect_uri']);
+        // Both, and both are load-bearing: offline asks for a refresh token and consent stops
+        // Google skipping the screen — and skipping the screen skips the token.
+        $this->assertSame('offline', $query['access_type']);
+        $this->assertSame('consent', $query['prompt']);
+        $this->assertSame('test-client-id', $query['client_id']);
+        // Space-separated, which is what OAuth says and what `http_build_query` encodes as `+`.
+        $this->assertStringContainsString('auth/cloud-platform', $query['scope']);
+        $this->assertStringContainsString(' ', $query['scope']);
+    }
+
+    // ---- Gemini CLI: the exchange ---------------------------------------------------------
+
+    public function testTheCodeIsExchangedAsAForm(): void
+    {
+        $url = $this->serve(['access_token' => 'ya29.a', 'refresh_token' => '1//r', 'expires_in' => 3599]);
+
+        $tokens = $this->run(fn (): array => $this->gemini($url)
+            ->exchange('the-code', 'the-verifier', 'http://localhost:8085/oauth2callback'));
+
+        $sent = $this->server->received();
+
+        // Form-encoded, not JSON: Google's token endpoint takes the other one.
+        $this->assertStringContainsString('content-type: application/x-www-form-urlencoded', $sent);
+        $this->assertStringContainsString('grant_type=authorization_code', $sent);
+        $this->assertStringContainsString('code=the-code', $sent);
+        $this->assertStringContainsString('code_verifier=the-verifier', $sent);
+        // Handed in rather than held here: Google's renewal and exchange both carry them, and
+        // this repository does not ship them.
+        $this->assertStringContainsString('client_id=test-client-id', $sent);
+        $this->assertStringContainsString('client_secret=test-client-secret', $sent);
+
+        $this->assertSame('ya29.a', $tokens['access']);
+        $this->assertSame('1//r', $tokens['refresh']);
+    }
+
+    public function testNoRefreshTokenIsItsOwnComplaint(): void
+    {
+        $url = $this->serve(['access_token' => 'ya29.a', 'expires_in' => 3599]);
+
+        $problem = $this->assertThrows(
+            OauthError::class,
+            fn (): mixed => $this->run(fn (): array => $this->gemini($url)->exchange('c', 'v', 'http://x/cb')),
+        );
+
+        // Named separately from a missing access token because it has a cause somebody can act
+        // on: Google only sends it when the consent screen was actually shown.
+        $this->assertStringContainsString('expire in an hour', $problem->getMessage());
+    }
+
+    public function testRenewingKeepsTheRefreshTokenGoogleDidNotResend(): void
+    {
+        $url = $this->serve(['access_token' => 'ya29.b', 'expires_in' => 3599]);
+
+        $credentials = $this->run(fn (): Credentials => $this->gemini($url)->refresh('1//keep-me', 'proj-1'));
+
+        $this->assertStringContainsString('grant_type=refresh_token', $this->server->received());
+
+        // Google usually does not rotate this one and sends nothing rather than the same value
+        // again, so a missing field means "keep the one you have" and not "lost it".
+        $this->assertSame('1//keep-me', $credentials->refresh);
+        $this->assertSame('ya29.b', $credentials->access);
+        // Carried through rather than looked up again: it belongs to the account, not the token.
+        $this->assertSame('proj-1', $credentials->projectId);
+    }
+
+    // ---- Gemini CLI: the Cloud project ----------------------------------------------------
+
+    public function testAnAccountThatAlreadyHasAProjectIsNotOnboarded(): void
+    {
+        $url = $this->serve(['cloudaicompanionProject' => 'existing-project']);
+
+        $project = $this->run(fn (): ?string => $this->gemini($url)->project('ya29.a'));
+
+        $this->assertSame('existing-project', $project);
+        // One request: asking to be onboarded when there is already a project is how you end up
+        // with two.
+        $this->assertStringContainsString('loadCodeAssist', $this->server->received());
+        $this->assertStringNotContainsString('onboardUser', $this->server->received());
+    }
+
+    public function testAnAccountWithNoProjectIsOnboardedIntoOne(): void
+    {
+        // No `cloudaicompanionProject` at the top, so the same answer serves as the onboarding
+        // reply: done, with an id.
+        $url = $this->serve([
+            'allowedTiers' => [['id' => 'LEGACY'], ['id' => 'FREE', 'isDefault' => true]],
+            'done' => true,
+            'response' => ['cloudaicompanionProject' => ['id' => 'made-one']],
+        ]);
+
+        $project = $this->run(fn (): ?string => $this->gemini($url)->project('ya29.a'));
+
+        $this->assertSame('made-one', $project);
+        // The tier Google marked default, not the first one in the list.
+        $this->assertStringContainsString('"tierId":"FREE"', $this->server->received());
+    }
+
+    public function testAHalfBuiltProjectIsNotTakenAsFinished(): void
+    {
+        // An id but no `done`: the call answers with a project that is still being made, and
+        // taking that id would name something nothing can be spent against yet. Two attempts
+        // in, the wait is what this ends on.
+        $url = $this->serve(['response' => ['cloudaicompanionProject' => ['id' => 'not-yet']]]);
+
+        $project = $this->run(function () use ($url): ?string {
+            $controller = new AbortController();
+            Loop::get()->delay(0.05, static fn () => $controller->abort('Cancelled'));
+
+            return $this->gemini($url)->project('ya29.a', null, $controller->signal);
+        });
+
+        // Null and not `not-yet`: giving up is an outcome, and a wrong id is not.
+        $this->assertNull($project);
+    }
+
+    public function testProvisioningSaysWhatItIsDoing(): void
+    {
+        $url = $this->serve(['response' => ['cloudaicompanionProject' => ['id' => 'x']]]);
+        $said = [];
+
+        $this->run(function () use ($url, &$said): void {
+            $controller = new AbortController();
+            Loop::get()->delay(0.05, static fn () => $controller->abort('Cancelled'));
+
+            $this->gemini($url)->project(
+                'ya29.a',
+                static function (string $note) use (&$said): void {
+                    $said[] = $note;
+                },
+                $controller->signal,
+            );
+        });
+
+        // Half a minute of silence is how a person concludes it has hung.
+        $this->assertNotSame([], $said);
+        $this->assertStringContainsString('Provisioning', $said[0]);
+    }
+
+    // ---- Gemini CLI: the email ------------------------------------------------------------
+
+    public function testTheEmailIsReadWhenGoogleWillSayIt(): void
+    {
+        $url = $this->serve(['email' => 'me@example.com']);
+
+        $this->assertSame('me@example.com', $this->run(fn (): ?string => $this->gemini($url)->email('ya29.a')));
+    }
+
+    public function testAnEmailGoogleWillNotSayIsNotAFailure(): void
+    {
+        $url = $this->serve(['error' => 'nope'], 403, 'Forbidden');
+
+        // Upstream ignores every failure here and so does this: it is a label on the credential,
+        // and an account that will not answer this is not one that cannot use Gemini.
+        $this->assertNull($this->run(fn (): ?string => $this->gemini($url)->email('ya29.a')));
+    }
+
+    // ---- Gemini CLI: the state check ------------------------------------------------------
+
+    public function testACodeThatCameBackWithTheWrongStateIsRefused(): void
+    {
+        $port = self::freePort();
+        $server = new CallbackServer($port);
+        $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 60]);
+
+        $problem = $this->assertThrows(OauthError::class, function () use ($url, $server, $port): void {
+            $this->run(function () use ($url, $server, $port): void {
+                Loop::get()->defer(function () use ($port): void {
+                    self::pretendBrowser($port, '/oauth2callback?code=c&state=not-the-verifier');
+                });
+
+                $this->gemini($url, $server)->login(static function (string $u, ?string $i): void {
+                });
+            });
+        });
+
+        // The state is the verifier, so a code that came back with a different one came from a
+        // request this process never made. Upstream calls it a possible CSRF attack.
+        $this->assertStringContainsString('wrong state', $problem->getMessage());
+        $server->close();
+    }
+
+    private static function freePort(): int
+    {
+        $probe = stream_socket_server('tcp://127.0.0.1:0');
+
+        if ($probe === false) {
+            self::fail('cannot open a probe socket');
+        }
+
+        $name = (string) stream_socket_get_name($probe, false);
+        fclose($probe);
+
+        return (int) substr($name, (int) strrpos($name, ':') + 1);
+    }
+
+    /** Write the callback and walk away — the reply is not what this test is about. */
+    private static function pretendBrowser(int $port, string $target): void
+    {
+        $client = stream_socket_client("tcp://127.0.0.1:{$port}", $errno, $errstr, 2.0);
+
+        if ($client === false) {
+            self::fail("cannot reach the callback server: {$errstr}");
+        }
+
+        stream_set_blocking($client, false);
+        fwrite($client, "GET {$target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    }
+
+    // ---- Gemini CLI: the provider entry ---------------------------------------------------
+
+    public function testGeminiCliCanBeRenewedButNotSignedInToYet(): void
+    {
+        // The flow is here; Code Assist's protocol and its five models are not, so offering the
+        // sign-in would unlock nothing to choose.
+        $this->assertFalse(Provider::GoogleGeminiCli->available());
+    }
+
+    public function testGeminiClisKeyCarriesTheProjectAlongsideTheToken(): void
+    {
+        $key = Provider::GoogleGeminiCli->apiKey(new Credentials('r', 'ya29.a', 0, projectId: 'proj-1'));
+
+        // Upstream's shape: Code Assist needs both, and an api key field can only carry one
+        // string.
+        $this->assertSame(['token' => 'ya29.a', 'projectId' => 'proj-1'], json_decode($key, true));
+    }
+
+    public function testGeminiCliCredentialsWithNoProjectAreRefused(): void
+    {
+        $this->assertThrows(
+            OauthError::class,
+            static fn (): string => Provider::GoogleGeminiCli->apiKey(new Credentials('r', 'a', 0)),
+            'no Cloud project id',
+        );
     }
 }

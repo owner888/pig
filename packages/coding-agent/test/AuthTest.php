@@ -9,6 +9,7 @@ use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\Settings;
 use Pig\Test\AssertsThrows;
 
 /**
@@ -32,7 +33,7 @@ final class AuthTest extends TestCase
 
         // `apiKey()` falls through to the environment, and a real key in the shell running
         // the suite would answer some of these for the wrong reason.
-        foreach (['ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN', 'PIG_HOME', 'PI_HOME', 'PI_AGENT_DIR'] as $variable) {
+        foreach (['ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN', 'PIG_HOME', 'PI_HOME', 'PI_AGENT_DIR', 'GEMINI_CLI_CLIENT_ID', 'GEMINI_CLI_CLIENT_SECRET'] as $variable) {
             putenv($variable);
         }
     }
@@ -40,7 +41,7 @@ final class AuthTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
-        foreach (['ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN', 'PIG_HOME', 'PI_HOME', 'PI_AGENT_DIR'] as $variable) {
+        foreach (['ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN', 'PIG_HOME', 'PI_HOME', 'PI_AGENT_DIR', 'GEMINI_CLI_CLIENT_ID', 'GEMINI_CLI_CLIENT_SECRET'] as $variable) {
             putenv($variable);
         }
 
@@ -386,5 +387,51 @@ final class AuthTest extends TestCase
         putenv('PIG_HOME=' . $this->home . '/pig');
 
         $this->assertSame($this->home . '/pig/auth.json', Auth::discover()->path());
+    }
+
+    // ---- Google's client credentials, which pig does not ship -----------------------------
+
+    public function testTheEnvironmentIsAskedForGooglesClientCredentialsFirst(): void
+    {
+        putenv('GEMINI_CLI_CLIENT_ID=from-the-shell');
+        putenv('GEMINI_CLI_CLIENT_SECRET=secret-from-the-shell');
+
+        $this->assertSame(['from-the-shell', 'secret-from-the-shell'], $this->auth()->googleClient());
+    }
+
+    public function testTheSettingsFileIsTheOtherPlaceTheyCanLive(): void
+    {
+        $settings = Settings::inMemory([
+            'geminiCli' => ['clientId' => 'from-settings', 'clientSecret' => 'secret-from-settings'],
+        ]);
+
+        $auth = new Auth($this->home . '/auth.json', $settings);
+
+        $this->assertSame(['from-settings', 'secret-from-settings'], $auth->googleClient());
+    }
+
+    public function testTheEnvironmentBeatsTheSettingsFile(): void
+    {
+        putenv('GEMINI_CLI_CLIENT_ID=from-the-shell');
+        putenv('GEMINI_CLI_CLIENT_SECRET=secret-from-the-shell');
+
+        $settings = Settings::inMemory([
+            'geminiCli' => ['clientId' => 'from-settings', 'clientSecret' => 'secret-from-settings'],
+        ]);
+
+        // The order everything else in pig uses: what was typed, then the environment, then what
+        // was chosen last time.
+        $this->assertSame(['from-the-shell', 'secret-from-the-shell'], (new Auth(null, $settings))->googleClient());
+    }
+
+    public function testWithoutThemTheRefusalSaysWhereTheyGoAndThatPigHasNone(): void
+    {
+        $problem = $this->assertThrows(OauthError::class, fn (): array => $this->auth()->googleClient());
+
+        // Somebody who has not got them needs both halves: where they go, and that this is not
+        // something pig can supply.
+        $this->assertStringContainsString('GEMINI_CLI_CLIENT_ID', $problem->getMessage());
+        $this->assertStringContainsString('geminiCli.clientId', $problem->getMessage());
+        $this->assertStringContainsString('does not ship', $problem->getMessage());
     }
 }

@@ -9,6 +9,7 @@ use Pig\Ai\Models;
 use Pig\Ai\Stream;
 use Pig\Ai\Utils\Oauth\Anthropic;
 use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\GeminiCli;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Pkce;
@@ -54,8 +55,14 @@ final class Auth
     /** @var list<string> what could not be read, for the caller to complain about */
     private array $problems = [];
 
-    public function __construct(private readonly ?string $path)
-    {
+    /**
+     * @param Settings|null $settings where Gemini CLI's client id and secret may be kept. Only
+     *        that one flow needs them, and they are not in this repository — see `googleClient()`.
+     */
+    public function __construct(
+        private readonly ?string $path,
+        private readonly ?Settings $settings = null,
+    ) {
         $this->reload();
     }
 
@@ -64,21 +71,21 @@ final class Auth
      *
      * @param string|null $path a file to use instead, which is how a test gets its own
      */
-    public static function discover(?string $path = null): self
+    public static function discover(?string $path = null, ?Settings $settings = null): self
     {
         if ($path !== null) {
-            return new self($path);
+            return new self($path, $settings);
         }
 
         $theirs = Config::piHome() . '/' . self::FILE;
 
-        return new self(is_file($theirs) ? $theirs : Config::home() . '/' . self::FILE);
+        return new self(is_file($theirs) ? $theirs : Config::home() . '/' . self::FILE, $settings);
     }
 
     /** Credentials that are never written anywhere, for tests and for `--no-save`. */
-    public static function inMemory(): self
+    public static function inMemory(?Settings $settings = null): self
     {
-        return new self(null);
+        return new self(null, $settings);
     }
 
     public function path(): ?string
@@ -283,9 +290,13 @@ final class Auth
         $credentials = match ($provider) {
             Provider::Anthropic => $this->anthropic($onAuth, $onPrompt),
             Provider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
-            // `available()` already refused these, so reaching here is a bug in that list
+            // Its flow is here, and `available()` is what decides whether it is offered — so
+            // this arm is reachable the moment that flips, and reaching it now means somebody
+            // called `login()` past the check.
+            Provider::GoogleGeminiCli => $this->geminiCli($onAuth, $onProgress, $signal),
+            // `available()` already refused this one, so reaching here is a bug in that list
             // rather than something a person did.
-            Provider::GoogleGeminiCli, Provider::GoogleAntigravity
+            Provider::GoogleAntigravity
                 => throw new OauthError("{$provider->label()} has no flow here."),
         };
 
@@ -355,6 +366,59 @@ final class Auth
         return $credentials;
     }
 
+    /**
+     * @param Closure(string, ?string): void $onAuth
+     * @param Closure(string): void|null $onProgress
+     */
+    private function geminiCli(Closure $onAuth, ?Closure $onProgress, ?AbortSignal $signal): ?Credentials
+    {
+        [$id, $secret] = $this->googleClient();
+
+        return (new GeminiCli($id, $secret))->login($onAuth, $onProgress, $signal);
+    }
+
+    /**
+     * Google's client id and secret for the Gemini CLI, which this repository does not hold.
+     *
+     * Upstream embeds them behind `atob()`, and for a Google installed-application client that is
+     * defensible — the secret is not confidential by design, it ships in every Gemini CLI install
+     * and in a published npm package, and PKCE is what protects the exchange. It is still not
+     * something a repository can carry: GitHub's push protection matches them plain **and**
+     * base64-decoded, and the scanners that report a credential get it revoked. So they are
+     * configuration, in the order everything else in pig is: the environment, then the settings
+     * file.
+     *
+     * @return array{0: string, 1: string}
+     */
+    public function googleClient(): array
+    {
+        $id = getenv('GEMINI_CLI_CLIENT_ID');
+        $secret = getenv('GEMINI_CLI_CLIENT_SECRET');
+
+        $id = is_string($id) && $id !== '' ? $id : $this->setting('geminiCli.clientId');
+        $secret = is_string($secret) && $secret !== '' ? $secret : $this->setting('geminiCli.clientSecret');
+
+        if ($id === null || $secret === null) {
+            // Named in full, because somebody who has not got them needs to know both where they
+            // go and that they are not something pig can supply.
+            throw new OauthError(
+                'Signing in to Gemini CLI needs Google\'s own client id and secret, which pig does not ship. '
+                . 'Set GEMINI_CLI_CLIENT_ID and GEMINI_CLI_CLIENT_SECRET, or put geminiCli.clientId and '
+                . 'geminiCli.clientSecret in ~/.pig/settings.json. They are the ones in the published '
+                . 'gemini-cli package.',
+            );
+        }
+
+        return [$id, $secret];
+    }
+
+    private function setting(string $key): ?string
+    {
+        $value = $this->settings?->get($key);
+
+        return is_string($value) && $value !== '' ? $value : null;
+    }
+
     /** The token, renewed first if it is due. A renewal is written down, or it happens every turn. */
     private function fresh(Provider $provider, Credentials $credentials): Credentials
     {
@@ -363,7 +427,8 @@ final class Auth
         }
 
         try {
-            $renewed = $provider->refresh($credentials);
+            [$id, $secret] = $provider === Provider::GoogleGeminiCli ? $this->googleClient() : [null, null];
+            $renewed = $provider->refresh($credentials, null, $id, $secret);
         } catch (Throwable $problem) {
             throw new OauthError(
                 "Could not renew the {$provider->value} token: {$problem->getMessage()}",

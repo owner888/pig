@@ -162,7 +162,7 @@ Timings::mark('settings');
 // Not affected by `--no-save`, which is about not writing this conversation down. A stored
 // sign-in is still the way in, and a token renewed during the run has to be kept or the next
 // run starts by renewing a token that was already replaced.
-$auth = Auth::discover();
+$auth = Auth::discover(settings: $settings);
 
 foreach ($auth->problems() as $problem) {
     fwrite(STDERR, Style::yellow("credentials: {$problem}\n"));
