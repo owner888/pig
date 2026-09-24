@@ -37,7 +37,7 @@ final class ChangelogTest extends TestCase
     /** @param list<Changelog> $entries */
     private static function versions(array $entries): array
     {
-        return array_map(static fn (Changelog $e): string => "{$e->major}.{$e->minor}.{$e->patch}", $entries);
+        return array_map(static fn (Changelog $e): string => $e->version, $entries);
     }
 
     public function testEachVersionHeadingStartsAnEntryAndKeepsWhatFollowsIt(): void
@@ -94,14 +94,26 @@ final class ChangelogTest extends TestCase
 
     // ---- what is new ----------------------------------------------------------------------
 
-    public function testVersionsAreComparedAsNumbersAndNotAsText(): void
+    public function testVersionsAreComparedAsVersionsAndNotAsText(): void
     {
         $entries = $this->parse("## 0.10.0\n\nx\n\n## 0.9.0\n\ny\n");
 
-        // The whole reason the parts are ints: `"0.10.0" > "0.9.0"` is false as strings, so a
-        // text comparison would decide the newest release is older than the one before it.
+        // `"0.10.0" > "0.9.0"` is false as strings, so a text comparison decides the newest
+        // release is older than the one before it. `version_compare()` is what answers this.
         $this->assertSame(['0.10.0'], self::versions(Changelog::newerThan($entries, '0.9.0')));
         $this->assertSame([], self::versions(Changelog::newerThan($entries, '0.10.0')), 'not newer than itself');
+    }
+
+    public function testAShortOrPreReleaseVersionIsNotTreatedAsTheReleaseItResembles(): void
+    {
+        $entries = $this->parse("## 0.2.0\n\nx\n");
+
+        // Both of these are what the hand-rolled comparison got wrong before `version_compare()`
+        // replaced it: splitting on dots and reading each part with `intval` made `0.2` and
+        // `0.2.0-beta` both *equal* to `0.2.0`, so somebody on a pre-release saw nothing after
+        // upgrading to the release it preceded.
+        $this->assertCount(1, Changelog::newerThan($entries, '0.2'));
+        $this->assertCount(1, Changelog::newerThan($entries, '0.2.0-beta'));
     }
 
     public function testEveryPartOfTheVersionIsCompared(): void
@@ -115,8 +127,9 @@ final class ChangelogTest extends TestCase
     {
         $entries = $this->parse("## 0.2.0\n\na\n\n## 0.1.0\n\nb\n");
 
-        // Upstream's `Number()` of a missing part, kept: showing the whole file once beats
-        // silently showing nothing because a settings file had a typo in it.
+        // A string that is no kind of version sorts below every release. Same end as upstream's
+        // `Number()` of a missing part, and the right way round: showing the whole file once
+        // beats silently showing nothing because a settings file had a typo in it.
         $this->assertCount(2, Changelog::newerThan($entries, 'nonsense'));
         $this->assertCount(2, Changelog::newerThan($entries, ''));
     }

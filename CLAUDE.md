@@ -72,6 +72,13 @@ Both were chosen explicitly, not by default:
 
 `Pig\Async` has no upstream counterpart at all — JS ships an event loop, PHP does not.
 
+**The rule has a second edge, and it is the one that gets missed:** where upstream is *working
+around* something JavaScript does not have, the port is the PHP call, not the workaround.
+`Changelog` was written with upstream's split-into-three-and-subtract version comparison before
+`version_compare()` replaced it, and the hand-rolled one was wrong about `0.2` and `0.2.0-beta`.
+Copying the arithmetic is not the same as porting the behaviour. Same story as `Graphemes::split()`
+being one `preg_match_all` where upstream needs `Intl.Segmenter` and a package.
+
 ### Extensions
 
 `ext-mbstring`, `ext-json`, `ext-openssl` and `ext-pcre` are required and are in every build worth
@@ -719,15 +726,20 @@ whose greeting you stop reading.
 
 Four things in it, three of which are upstream's and one of which is arithmetic:
 
-- **The parts are integers, not a string.** `"0.10.0" > "0.9.0"` is false as text, so a string
-  comparison decides the newest release is older than the one before it.
-  `testVersionsAreComparedAsNumbersAndNotAsText` is the guard.
+- **`version_compare()` does the comparing.** Upstream splits the number into three and
+  subtracts, because JavaScript has nothing else; the first version here copied that and was
+  worse than the platform call in two ways that only showed up against real input — `0.2` read
+  as `0.2.0` and `0.2.0-beta` read as `0.2.0`, so both compared *equal* to a release they are
+  not, and somebody on a pre-release saw nothing after upgrading to the release it preceded.
+  `version_compare` gets those right and `0.10.0 > 0.9.0` too, which is the one the hand-rolled
+  version existed for. **Copying upstream's arithmetic is not the same as porting it** — where
+  JavaScript is working around a missing library call, the port is the call.
 - **A `##` with no version in it ends the entry and starts nothing**, discarding what it had
   collected. Right for a file people edit by hand: folding an `## Unreleased` section into the
   release above would file unreleased notes under a released number.
-- **A version string that is not three numbers means everything is new.** Upstream's `Number()`
-  of a missing part, kept: showing the whole file once beats silently showing nothing because a
-  settings file had a typo in it.
+- **A string that is no kind of version means everything is new**, because it sorts below every
+  release. Same end as upstream's `Number()` of a missing part: showing the whole file once beats
+  silently showing nothing because a settings file had a typo in it.
 - **The version is written down when the notes are shown**, not when pig starts, so a run that
   showed nothing does not mark them as seen. `-c` and `-r` skip it: somebody picking a
   conversation back up is in the middle of something.

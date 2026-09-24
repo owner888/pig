@@ -25,13 +25,11 @@ namespace Pig\CodingAgent;
 final readonly class Changelog
 {
     /**
-     * @param int $major version, split, because the comparison is numeric and a string one
-     *        puts 0.10.0 before 0.9.0
+     * @param string $version as the heading wrote it, `0.10.0` — compared with
+     *        `version_compare()`, never as text
      */
     private function __construct(
-        public int $major,
-        public int $minor,
-        public int $patch,
+        public string $version,
         public string $content,
     ) {
     }
@@ -90,24 +88,33 @@ final readonly class Changelog
     /**
      * The entries newer than a version, which is what a startup banner is allowed to say.
      *
-     * A version string that is not three numbers reads as `0.0.0` and everything is newer, the
-     * same as upstream's `Number()` of a missing part. That is the right way round: showing the
-     * whole file once beats silently showing nothing because a settings file had a typo in it.
+     * **`version_compare()` does the comparing**, which is the platform answering a question this
+     * file has no business answering itself. Upstream splits the number into three and subtracts,
+     * because JavaScript has nothing else; the first version here copied that and was worse than
+     * the platform call in two ways that only showed up against real input — `0.2` read as
+     * `0.2.0` and `0.2.0-beta` read as `0.2.0`, so both compared *equal* to a release they are
+     * not. `version_compare` gets those right and `0.10.0 > 0.9.0` too, which is the one the
+     * hand-rolled version existed for.
+     *
+     * A string that is no kind of version — an empty setting, a typo — comes out below every
+     * release, so everything is new. That is the same end as upstream's `Number()` of a missing
+     * part and it is the right way round: showing the whole file once beats silently showing
+     * nothing because a settings file had a typo in it.
      *
      * @param list<self> $entries
      * @return list<self>
      */
     public static function newerThan(array $entries, string $version): array
     {
-        $parts = array_map(intval(...), explode('.', $version));
-        $last = new self($parts[0] ?? 0, $parts[1] ?? 0, $parts[2] ?? 0, '');
-
-        return array_values(array_filter($entries, static fn (self $entry): bool => $entry->isNewerThan($last)));
+        return array_values(array_filter(
+            $entries,
+            static fn (self $entry): bool => $entry->isNewerThan($version),
+        ));
     }
 
-    public function isNewerThan(self $other): bool
+    public function isNewerThan(string $version): bool
     {
-        return [$this->major, $this->minor, $this->patch] > [$other->major, $other->minor, $other->patch];
+        return version_compare($this->version, $version, '>');
     }
 
     /**
@@ -130,11 +137,11 @@ final readonly class Changelog
      */
     private static function heading(string $line): array
     {
-        if (preg_match('/##\s+\[?(\d+)\.(\d+)\.(\d+)\]?/', $line, $match) !== 1) {
+        if (preg_match('/##\s+\[?(\d+\.\d+\.\d+)\]?/', $line, $match) !== 1) {
             return [null, []];
         }
 
-        return [new self((int) $match[1], (int) $match[2], (int) $match[3], ''), [$line]];
+        return [new self($match[1], ''), [$line]];
     }
 
     /**
@@ -148,12 +155,7 @@ final readonly class Changelog
             return $entries;
         }
 
-        $entries[] = new self(
-            $version->major,
-            $version->minor,
-            $version->patch,
-            trim(implode("\n", $collected)),
-        );
+        $entries[] = new self($version->version, trim(implode("\n", $collected)));
 
         return $entries;
     }
