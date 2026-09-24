@@ -28,6 +28,7 @@ use Pig\Tui\Ansi;
 use Pig\Tui\Components\Editor;
 use Pig\Tui\Components\SelectItem;
 use Pig\Tui\Components\SelectList;
+use Pig\Tui\Components\Text;
 use Pig\Tui\Container;
 use Pig\Tui\Test\FakeTerminal;
 use Pig\Tui\Tui;
@@ -49,7 +50,7 @@ final class HookUiTest extends TestCase
 
     private Container $chat;
 
-    private Container $status;
+    private Container $overlay;
 
     private CustomEditor $editor;
 
@@ -65,18 +66,18 @@ final class HookUiTest extends TestCase
         $this->terminal = new FakeTerminal(80, 24);
         $this->tui = new Tui($this->terminal);
         $this->chat = new Container();
-        $this->status = new Container();
+        $this->overlay = new Container();
         $this->editor = new CustomEditor(new Editor($this->palette->editorTheme()));
 
         $this->tui->addChild($this->chat);
-        $this->tui->addChild($this->status);
+        $this->tui->addChild($this->overlay);
         $this->tui->addChild($this->editor);
         $this->tui->setFocus($this->editor);
 
         $this->ui = new TerminalUi(
             $this->tui,
             $this->chat,
-            $this->status,
+            $this->overlay,
             $this->editor,
             // A footer needs a session, and nothing here draws one: the keyed status is
             // what the UI writes into it, and `FooterTest` covers how that renders.
@@ -633,6 +634,61 @@ final class HookUiTest extends TestCase
         $this->assertFalse($second);
     }
 
+    public function testADialogIsRefusedWhileSomethingElseHoldsTheOverlay(): void
+    {
+        // What `/settings` and the pickers put there. `TerminalUi` cannot tell what it is and
+        // does not need to: something with the focus is in the way.
+        $this->overlay->addChild(new Text('Settings — enter to change, esc when done'));
+
+        $answered = 'not asked yet';
+
+        Async::spawn(function () use (&$answered): void {
+            $answered = $this->ui->select('Which one?', ['a', 'b']);
+        });
+
+        $this->settle();
+
+        // Refused, not stacked: opening on top used to clear the container and take the
+        // person's screen away under them. Null is what escape answers, so the turn carries
+        // on as if they had declined.
+        $this->assertNull($answered);
+        $this->assertStringContainsString('Settings —', $this->screen());
+        $this->assertStringNotContainsString('Which one?', $this->screen());
+    }
+
+    public function testARefusedDialogSaysWhyRatherThanFailingQuietly(): void
+    {
+        $this->overlay->addChild(new Text('Pick a model — enter to switch, esc to cancel'));
+
+        Async::spawn(function (): void {
+            $this->ui->confirm('Force push?', '');
+        });
+
+        $this->settle();
+
+        // A tool that was denied with nothing on screen about it is a tool that looks broken.
+        $this->assertStringContainsString('Something is open on screen', $this->screen());
+    }
+
+    public function testTheOverlayBeingFreeAgainLetsTheNextOneThrough(): void
+    {
+        $this->overlay->addChild(new Text('in the way'));
+        $this->overlay->clear();
+
+        $answered = 'not asked yet';
+
+        Async::spawn(function () use (&$answered): void {
+            $answered = $this->ui->select('Which one?', ['a', 'b']);
+        });
+
+        $this->settle();
+
+        // The refusal must not be sticky: the overlay is the state, so nothing has to be
+        // reset for this to work.
+        $this->assertSame('not asked yet', $answered, 'still waiting on an answer');
+        $this->assertStringContainsString('Which one?', $this->screen());
+    }
+
     public function testAnotherDialogCanBeOpenedOnceTheFirstIsAnswered(): void
     {
         $answers = [];
@@ -796,7 +852,7 @@ final class HookUiTest extends TestCase
         return new TerminalUi(
             $this->tui,
             $this->chat,
-            $this->status,
+            $this->overlay,
             $this->editor,
             new FooterComponent(
                 new AgentSession(new Agent(new AgentOptions()), sys_get_temp_dir()),

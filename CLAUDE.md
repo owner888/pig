@@ -365,7 +365,15 @@ smaller summary when the cut falls inside a turn, which needs turn boundaries th
 linear log here does not mark.
 
 `Interactive\` is the terminal front end. `InteractiveMode` is the arrangement — which event
-becomes which component, which key means what — and `bin/pig` is the entry point. The
+becomes which component, which key means what — and `bin/pig` is the entry point.
+
+The screen is five containers between the banner and the footer: `$chat` (the transcript),
+`$pending` (what is queued), `$status` (what is *happening* — the working loader, a retry
+countdown), `$overlay` (what is being *asked* — a picker, `/settings`, a hook's dialog), then the
+editor. `$status` and `$overlay` are separate on purpose and the trap below says why in full: the
+overlay holds whatever has the focus, and only the thing that gave it the focus ever clears it.
+
+The
 components it draws with are `UserMessageComponent`, `AssistantMessageComponent`,
 `ToolExecutionComponent`, `FooterComponent`, `DiffView`, `BashOutputComponent`,
 `CompactionComponent` and `CustomEditor`. They keep upstream's `…Component` names rather than `pig/tui`'s suffix-free
@@ -1552,8 +1560,9 @@ the loop that has to deliver it.
 Three things differ from `TerminalUi`, all because the other end is a program:
 
 - **Every question has an id**, because a host may answer three of them in any order.
-- **There is no "one dialog at a time".** The terminal refuses a second one because it would
-  steal the keyboard from the first; a host has no keyboard to steal.
+- **There is no "one thing in the overlay at a time".** The terminal refuses a second question
+  because it would steal the keyboard from the first, and refuses one arriving while a picker
+  is open for the same reason; a host has no keyboard to steal and no screen to lose.
 - **`custom()` returns null and `getEditorText()` returns `''`.** The first builds a
   `Pig\Tui\Component` and there is nothing to draw it on; the second reads an editor that
   belongs to the host. Upstream leaves both out of its RPC context for the same reasons.
@@ -1951,6 +1960,79 @@ Regression tests: `TuiTest::testTheCursorEndsUpAtTheFocusedComponentsCaret`,
 `testTheNextFrameStillCountsRowsFromWhereTheCursorActuallyIs`,
 `EditorTest::testTheCaretIsMeasuredInColumnsNotCharacters`, and the five
 `InputTest::testTheCaret…` cases.
+
+### Whatever holds the focus must be in a container only its own opener clears
+
+Found by being asked the right question about a field I had just deleted. `InteractiveMode` had
+a `private ?SelectList $picker` written by four callers and read by none, and "written and never
+read" looked like a complete answer: the object is kept alive by the container that draws it, so
+the field could go. It was the wrong answer. **The field was a missing reader, not a redundant
+write** — and what was missing was reachable in three keystrokes.
+
+`$this->status` had three kinds of writer. The pickers and `/settings` put a focused component
+in it. The progress loaders — `onStart()`, `onEnd()`, `onRetryStart()`, `onOverflow()` — clear it
+and put a `Loader` in, and those run from **agent events, which arrive without anybody pressing a
+key**. `TerminalUi` puts a hook's dialog there as a third. So:
+
+```
+/settings while a turn is running   → the screen is drawn, focus is on it
+the turn ends, onEnd() clears       → the screen is gone
+                                    → THE FOCUS IS STILL ON IT
+next keystroke                      → goes to an invisible list
+```
+
+Reproduced before it was fixed, and the second half is the part worth remembering: after the
+screen vanished, Down and Enter still changed a setting. Somebody typing what they thought was a
+message into the editor was walking down an invisible list changing things, with nothing on
+screen to say so. `/settings`, `/login` and `/logout` reach it directly — the three pickers that
+refuse while streaming refuse for a different reason (they would change the conversation
+underneath it) and are covered by accident.
+
+The fix is a second container, `$overlay`, drawn between `$status` and the editor: what is
+*happening* and what is being *asked* have different writers, and the writers do not know about
+each other. Upstream never had this bug because its arrangement already separates them — a
+selector replaces the **editor** (`editorContainer`) while progress lives elsewhere.
+
+**Not a flag.** Restoring `$picker` as something the loaders check was the cheaper option and the
+wrong one twice over: it makes every *other* writer responsible for remembering, which is the
+arrangement that just failed, and the only behaviour it can offer is hiding the retry countdown
+while a picker is open — a countdown that exists so eight silent seconds do not look like a hang.
+Two containers means both are drawn, which is the honest answer, because both are true.
+
+The rule, and it generalises past this screen: **the two halves of closing something — the
+container letting go and the focus moving — have to happen in the same place.** Every clear of a
+container that can hold the focus sits next to a `setFocus()`: `closePicker()` and
+`TerminalUi::close()` are the only two, and that is the invariant.
+
+Splitting the containers left one writer still able to collide, from the other side: a hook's
+dialog and a picker both belong in the overlay, so a tool call arriving while `/settings` was
+open cleared it. Milder — the dialog *takes* the focus and hands it back to the editor, so
+nothing is invisible-and-focused — but the person's screen still vanished without a word.
+
+`TerminalUi` already had the answer for its own half of this and it generalised: **a second
+dialog is refused with its safe answer rather than stacked**, because taking focus from the
+first would park that fiber forever. So the guard now asks two questions rather than one —
+`$busy` for a dialog of its own (which covers the moment a `custom()` factory is still
+building, when nothing is drawn yet and the overlay looks free), and `$overlay->children()`
+for anything else holding the focus. A refusal answers `false` from `confirm()` and `null`
+from the rest, which is exactly what escape answers, so it travels as an answer somebody
+could have given and no turn is parked.
+
+And it is **said**. `notify()` puts a line in the transcript naming why the question was not
+asked, because a tool quietly denied is a tool that looks broken — the same rule as no silent
+fallback, applied to a UI.
+
+The overlay's contents are the state here, not a flag: `canAsk()` asks the container what is
+in it. A flag would be a second copy of the same fact, and a second copy that can disagree is
+the shape of the bug this whole entry is about.
+
+Regression tests: `InteractiveModeTest::testATurnEndingDoesNotEraseAnOpenScreenFromUnderTheCursor`
+(fails if `showSettings()` is pointed back at `$status`),
+`testAWorkingLoaderAndAnOpenScreenBothFitOnTheScreen`, and
+`HookUiTest::testADialogIsRefusedWhileSomethingElseHoldsTheOverlay`,
+`testARefusedDialogSaysWhyRatherThanFailingQuietly`,
+`testTheOverlayBeingFreeAgainLetsTheNextOneThrough` (all three fail with the overlay half of
+`canAsk()` removed).
 
 ### `Container` is a `Component` and not an `InputHandler`, so a container given the focus eats every key
 

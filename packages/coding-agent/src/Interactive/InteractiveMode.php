@@ -108,7 +108,31 @@ final class InteractiveMode
 
     private readonly Container $pending;
 
+    /**
+     * What is *happening*: the working loader, a retry countdown, a summary in progress.
+     *
+     * Written from agent events, which arrive without anybody pressing a key.
+     */
     private readonly Container $status;
+
+    /**
+     * What is being *asked*: a picker, a settings screen, a hook's dialog.
+     *
+     * Separate from `$status` because the two have different writers and the writers do not
+     * know about each other. They shared one container once, and the bug that came out of it
+     * is worth stating in full, because nothing about it looked wrong: a picker opened while
+     * a turn was running, the turn ended, `onEnd()` cleared the container the picker was
+     * in — and the picker vanished from the screen **with the focus still on it**. The next
+     * keystroke went to an invisible list. Somebody typing what they thought was a message
+     * into the editor was changing settings, one row at a time, with nothing on screen to
+     * say so.
+     *
+     * Whatever holds the focus has to be in a container that only the thing that gave it the
+     * focus ever clears. That is the whole of it, and it is why this field exists rather
+     * than a flag saying a picker is open: a flag makes every *other* writer responsible for
+     * checking it, which is the arrangement that failed.
+     */
+    private readonly Container $overlay;
 
     private readonly CustomEditor $editor;
 
@@ -218,6 +242,7 @@ final class InteractiveMode
         $this->chat = new Container();
         $this->pending = new Container();
         $this->status = new Container();
+        $this->overlay = new Container();
         $this->editor = new CustomEditor(new Editor($palette->editorTheme()));
         $this->footer = new FooterComponent($session, $palette, $cwd);
 
@@ -226,7 +251,9 @@ final class InteractiveMode
         $this->ui = new TerminalUi(
             $this->tui,
             $this->chat,
-            $this->status,
+            // The overlay, not the status area: a dialog holds the focus, so it belongs
+            // where only the thing that opened it clears.
+            $this->overlay,
             $this->editor,
             $this->footer,
             fn (): Palette => $this->palette,
@@ -442,6 +469,9 @@ final class InteractiveMode
         $this->tui->addChild($this->chat);
         $this->tui->addChild($this->pending);
         $this->tui->addChild($this->status);
+        // Below what is happening and directly above the editor, because it is the thing
+        // being answered and the editor is where the eyes already are.
+        $this->tui->addChild($this->overlay);
         $this->tui->addChild(new Spacer(1));
         $this->tui->addChild($this->editor);
         $this->tui->addChild($this->footer);
@@ -1472,10 +1502,10 @@ final class InteractiveMode
         });
         $picker->setCancelHandler($this->closePicker(...));
 
-        $this->status->clear();
-        $this->status->addChild(new Spacer(1));
-        $this->status->addChild(new Text($this->palette->fg('muted', 'Pick a session — enter to open, esc to cancel'), 1, 0));
-        $this->status->addChild($picker);
+        $this->overlay->clear();
+        $this->overlay->addChild(new Spacer(1));
+        $this->overlay->addChild(new Text($this->palette->fg('muted', 'Pick a session — enter to open, esc to cancel'), 1, 0));
+        $this->overlay->addChild($picker);
 
         // Focus moves to the list, so arrow keys reach it rather than the editor.
         $this->tui->setFocus($picker);
@@ -1531,10 +1561,10 @@ final class InteractiveMode
         });
         $picker->setCancelHandler($this->closePicker(...));
 
-        $this->status->clear();
-        $this->status->addChild(new Spacer(1));
-        $this->status->addChild(new Text($this->palette->fg('muted', 'Pick a model — enter to switch, esc to cancel'), 1, 0));
-        $this->status->addChild($picker);
+        $this->overlay->clear();
+        $this->overlay->addChild(new Spacer(1));
+        $this->overlay->addChild(new Text($this->palette->fg('muted', 'Pick a model — enter to switch, esc to cancel'), 1, 0));
+        $this->overlay->addChild($picker);
 
         $this->tui->setFocus($picker);
         $this->tui->requestRender();
@@ -1640,14 +1670,14 @@ final class InteractiveMode
         });
         $picker->setCancelHandler($this->closePicker(...));
 
-        $this->status->clear();
-        $this->status->addChild(new Spacer(1));
-        $this->status->addChild(new Text(
+        $this->overlay->clear();
+        $this->overlay->addChild(new Spacer(1));
+        $this->overlay->addChild(new Text(
             $this->palette->fg('muted', 'Go back to — enter to pick, esc to cancel'),
             1,
             0,
         ));
-        $this->status->addChild($picker);
+        $this->overlay->addChild($picker);
 
         $this->tui->setFocus($picker);
         $this->tui->requestRender();
@@ -1856,13 +1886,13 @@ final class InteractiveMode
         });
         $picker->setCancelHandler($this->closePicker(...));
 
-        $this->status->clear();
-        $this->status->addChild(new Spacer(1));
-        $this->status->addChild(new Text($this->palette->fg(
+        $this->overlay->clear();
+        $this->overlay->addChild(new Spacer(1));
+        $this->overlay->addChild(new Text($this->palette->fg(
             'muted',
             $signingIn ? 'Sign in with — enter to choose, esc to cancel' : 'Forget which sign-in — enter to choose, esc to cancel',
         ), 1, 0));
-        $this->status->addChild($picker);
+        $this->overlay->addChild($picker);
 
         $this->tui->setFocus($picker);
         $this->tui->requestRender();
@@ -1975,16 +2005,17 @@ final class InteractiveMode
     }
 
     /**
-     * Put the status area away and give the editor the keys back.
+     * Put the overlay away and give the editor the keys back.
      *
-     * What closes a picker is that the status area stops holding it and the focus moves —
-     * there is nothing else to undo. There used to be a `$picker` field set by all four
-     * callers and read by none: the object is kept alive by `$this->status`, so the field
-     * answered no question anybody asked.
+     * The two halves of closing a picker are that the overlay stops holding it and the focus
+     * moves, and **they have to happen together** — the bug `$overlay` exists for was one
+     * half happening on its own, from somewhere that had no idea a picker was open. Clearing
+     * the overlay here is the only place either half happens without the other being right
+     * beside it.
      */
     private function closePicker(): void
     {
-        $this->status->clear();
+        $this->overlay->clear();
         $this->tui->setFocus($this->editor);
         $this->tui->requestRender();
     }
@@ -2128,10 +2159,10 @@ final class InteractiveMode
         });
         $list->setCloseHandler($this->closePicker(...));
 
-        $this->status->clear();
-        $this->status->addChild(new Spacer(1));
-        $this->status->addChild(new Text($this->palette->fg('muted', 'Settings — enter to change, esc when done'), 1, 0));
-        $this->status->addChild($list);
+        $this->overlay->clear();
+        $this->overlay->addChild(new Spacer(1));
+        $this->overlay->addChild(new Text($this->palette->fg('muted', 'Settings — enter to change, esc when done'), 1, 0));
+        $this->overlay->addChild($list);
 
         $this->tui->setFocus($list);
         $this->tui->requestRender();

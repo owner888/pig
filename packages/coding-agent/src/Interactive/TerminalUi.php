@@ -25,9 +25,10 @@ use Throwable;
  * `HookUi`, drawn in the terminal.
  *
  * Upstream builds this as an object literal closing over the interactive mode's
- * internals. Here it takes them: the screen to focus, the two containers it draws into,
- * the editor it can read and write, and a closure for the current palette — a closure
- * because `/theme` replaces it and a dialog opened afterwards should be the new colour.
+ * internals. Here it takes them: the screen to focus, the two containers it draws into (the
+ * transcript, and the overlay that every focused component shares), the editor it can read
+ * and write, and a closure for the current palette — a closure because `/theme` replaces it
+ * and a dialog opened afterwards should be the new colour.
  *
  * **How blocking works.** A hook's handler runs inside the agent's fiber. `select()`
  * draws a list, gives it focus, and awaits a `Deferred`; the fiber suspends there and the
@@ -35,19 +36,64 @@ use Throwable;
  * deferred, the fiber resumes, and the handler gets its answer as an ordinary return
  * value. Nothing about the call site has to know any of that happened.
  *
- * **What is guarded against.** Two things, both of which park a turn forever:
+ * **What is guarded against.** Two things, the first of which parks a turn forever:
  *
  * - Every dialog can be escaped. `SelectList` always could; `Input` was given a cancel
  *   handler for this, and the multi-line one gets escape through `CustomEditor` — because an
  *   un-escapable prompt in front of a suspended fiber is a session that has to be killed.
- * - Only one dialog at a time. A second `confirm()` while the first is open would take
- *   focus from it, leaving the first fiber waiting on a component nobody can reach. The
- *   second is refused with its safe answer instead.
+ * - Only one thing in the overlay at a time. A second `confirm()` while the first is open
+ *   would take focus from it, leaving the first fiber waiting on a component nobody can
+ *   reach. The second is refused with its safe answer instead — and so is a dialog that
+ *   arrives while a **picker** is open, which is the same collision from the other side:
+ *   there the fiber is fine and it is the person who loses the screen they were on. See
+ *   `canAsk()`.
  */
 final class TerminalUi implements HookUi
 {
-    /** Set while a dialog is open, so a second one is refused rather than stacked. */
+    /**
+     * Set while a dialog of this object's own is in flight.
+     *
+     * Not the same question as "is the overlay occupied", which is why both are asked. This
+     * one covers the moment a `custom()` factory is still building its component: nothing is
+     * drawn yet, so the overlay looks free, and a factory that asks something re-entrantly
+     * would park a fiber inside itself.
+     */
     private bool $busy = false;
+
+    /**
+     * Whether there is room to ask something — and a word about it when there is not.
+     *
+     * Two things can be in the way, and they are found two different ways. A dialog of this
+     * object's own shows up in `$busy`. **Anything else holding the focus shows up in the
+     * overlay**, and that is the half that was missing: a picker or `/settings` is in the
+     * same container a dialog goes into, so opening one on top used to clear it — the person
+     * lost the screen they were on, silently, because a tool call happened to reach this.
+     *
+     * Refusing is what the callers already expect. `confirm()` answers false, which is a
+     * deny; `select()`, `input()`, `editor()` and `custom()` answer null, which is what
+     * escape answers. So a refusal travels as an answer somebody could have given, and the
+     * turn is never parked. It is **said**, because a tool that was quietly denied is a tool
+     * that looks broken.
+     */
+    private function canAsk(): bool
+    {
+        if ($this->busy) {
+            $this->notify('A question is already waiting for an answer, so that one was not asked.', 'warning');
+
+            return false;
+        }
+
+        if ($this->overlay->children() !== []) {
+            $this->notify(
+                'Something is open on screen, so that question was not asked. Close it and it can be asked again.',
+                'warning',
+            );
+
+            return false;
+        }
+
+        return true;
+    }
 
     /**
      * @param Closure(): Palette          $palette        the current one, not the one at startup
@@ -57,7 +103,7 @@ final class TerminalUi implements HookUi
     public function __construct(
         private readonly Tui $tui,
         private readonly Container $chat,
-        private readonly Container $status,
+        private readonly Container $overlay,
         private readonly CustomEditor $editor,
         private readonly FooterComponent $footer,
         private readonly Closure $palette,
@@ -68,7 +114,9 @@ final class TerminalUi implements HookUi
     #[\Override]
     public function select(string $title, array $options): ?string
     {
-        if ($this->busy || $options === []) {
+        // The empty check first: a hook offering nothing to choose from is its own mistake
+        // and does not need a line about the screen being busy.
+        if ($options === [] || !$this->canAsk()) {
             return null;
         }
 
@@ -86,7 +134,7 @@ final class TerminalUi implements HookUi
     #[\Override]
     public function confirm(string $title, string $message): bool
     {
-        if ($this->busy) {
+        if (!$this->canAsk()) {
             return false;
         }
 
@@ -102,7 +150,7 @@ final class TerminalUi implements HookUi
     #[\Override]
     public function input(string $title, string $placeholder = ''): ?string
     {
-        if ($this->busy) {
+        if (!$this->canAsk()) {
             return null;
         }
 
@@ -138,7 +186,7 @@ final class TerminalUi implements HookUi
     #[\Override]
     public function editor(string $title, string $prefill = ''): ?string
     {
-        if ($this->busy) {
+        if (!$this->canAsk()) {
             return null;
         }
 
@@ -200,7 +248,7 @@ final class TerminalUi implements HookUi
     #[\Override]
     public function custom(Closure $factory): mixed
     {
-        if ($this->busy) {
+        if (!$this->canAsk()) {
             return null;
         }
 
@@ -306,19 +354,19 @@ final class TerminalUi implements HookUi
         return is_string($value) ? $value : null;
     }
 
-    /** Put $component in the status area, with the title above it, and give it the keys. */
+    /** Put $component in the overlay, with the title above it, and give it the keys. */
     private function open(string $title, object $component): void
     {
-        $this->status->clear();
-        $this->status->addChild(new Spacer(1));
+        $this->overlay->clear();
+        $this->overlay->addChild(new Spacer(1));
 
         // An empty title draws nothing rather than a blank line: `custom()` has none, and
         // a hook that wanted one drew it itself.
         if ($title !== '') {
-            $this->status->addChild(new Text($this->palette()->fg('muted', $title), 1, 0));
+            $this->overlay->addChild(new Text($this->palette()->fg('muted', $title), 1, 0));
         }
 
-        $this->status->addChild($component);
+        $this->overlay->addChild($component);
 
         $this->tui->setFocus($component);
         $this->tui->requestRender();
@@ -328,7 +376,7 @@ final class TerminalUi implements HookUi
     private function close(): void
     {
         $this->busy = false;
-        $this->status->clear();
+        $this->overlay->clear();
         $this->tui->setFocus($this->editor);
         $this->tui->requestRender();
     }

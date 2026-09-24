@@ -2011,6 +2011,54 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('minimal', $this->screen(), 'and the row says so');
     }
 
+    public function testATurnEndingDoesNotEraseAnOpenScreenFromUnderTheCursor(): void
+    {
+        $this->start(['done']);
+        $held = $this->holdTheAgent();
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // Opened while the agent is working, which `/settings` allows on purpose — the two
+        // pickers that refuse are the ones that would change the conversation underneath it.
+        $this->openSettings();
+        $this->settle();
+        $this->assertStringContainsString('esc when done', $this->screen());
+
+        $held();
+        $this->settle();
+
+        // The bug: `onEnd()` cleared the container the picker was in, so the screen went
+        // away **with the focus still on it** — and the next keystroke went to an invisible
+        // list. Somebody typing what they thought was a message was changing settings, one
+        // row at a time, with nothing on screen to say so.
+        $this->assertStringContainsString('esc when done', $this->screen(), 'still on screen');
+        $this->assertStringContainsString('held', $this->screen(), 'and the answer arrived too');
+    }
+
+    public function testAWorkingLoaderAndAnOpenScreenBothFitOnTheScreen(): void
+    {
+        $this->start(['done']);
+        $held = $this->holdTheAgent();
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->openSettings();
+        $this->settle();
+
+        $screen = $this->screen();
+
+        // Which is the honest answer: both are true at once, so both are drawn. Sharing one
+        // container meant whichever wrote last was the only one you could see.
+        $this->assertStringContainsString('Working...', $screen);
+        $this->assertStringContainsString('Auto-retry', $screen);
+
+        $held();
+        $this->settle();
+    }
+
     public function testEscapeClosesTheScreenAndGivesTheEditorBackTheKeys(): void
     {
         $this->start();
