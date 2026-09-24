@@ -61,8 +61,11 @@ Ctrl+G 把 prompt 里现在的内容丢进 `$VISUAL` 或 `$EDITOR`，改完再�
 `--model` 不用写全 id，写一部分就行——`--model sonnet`、`--model 'opus 4.1'`——`--model sonnet:high`
 还能顺手把思考档位一起设了。`--models` 列出全部。
 
-内置 147 个模型：Anthropic 的、OpenAI 自家走 Responses API 的、Gemini，加上 Groq、Cerebras、xAI、
+内置 166 个模型：Anthropic 的、OpenAI 自家走 Responses API 的、Gemini，加上 Groq、Cerebras、xAI、
 Zai、Mistral——这五家说的都是 OpenAI chat-completions。设好对应的 `*_API_KEY`，`--model` 就能指过去。
+
+GitHub Copilot 的十九个也在里面，那是它的订阅提供的那些模型——所以 `gpt-5`、`gemini-2.5-pro` 现在
+一个名字对两个模型。裸写名字指的是原厂那个；Copilot 的要写 `--model github-copilot/gpt-5`。
 
 `/label 重构之前` 给当前这个点起个名字，`/tree` 会把名字连着当时说的话一起显示——用的是 pi 自己的
 label entry，所以在哪边起的名字另一边都看得见。

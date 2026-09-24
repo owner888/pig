@@ -100,10 +100,25 @@ final class ModelResolver
             }
         }
 
+        // An exact id, and `RESOLD` decides which of two providers claiming it is meant:
+        // `gpt-5` is OpenAI's, and Copilot's is `github-copilot/gpt-5` above. A resold match
+        // is kept rather than skipped, because some of Copilot's ids are only Copilot's.
+        $resold = null;
+
         foreach ($available as $model) {
-            if (strtolower($model->id) === $wanted) {
+            if (strtolower($model->id) !== $wanted) {
+                continue;
+            }
+
+            if (!Models::isResold($model->provider)) {
                 return $model;
             }
+
+            $resold ??= $model;
+        }
+
+        if ($resold !== null) {
+            return $resold;
         }
 
         $aliases = $dated = [];
@@ -126,7 +141,13 @@ final class ModelResolver
             return null;
         }
 
-        usort($candidates, static fn (Model $a, Model $b): int => strcmp($b->id, $a->id));
+        // Direct before resold first, for the same reason the exact pass prefers it: `codex`
+        // matching both OpenAI's and Copilot's should mean the one an API key reaches.
+        usort($candidates, static function (Model $a, Model $b): int {
+            $resold = (int) Models::isResold($a->provider) <=> (int) Models::isResold($b->provider);
+
+            return $resold !== 0 ? $resold : strcmp($b->id, $a->id);
+        });
 
         return $candidates[0];
     }

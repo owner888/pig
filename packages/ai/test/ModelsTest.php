@@ -17,7 +17,7 @@ final class ModelsTest extends TestCase
     {
         $models = Models::all();
 
-        $this->assertCount(147, $models);
+        $this->assertCount(166, $models);
 
         foreach ($models as $model) {
             $this->assertNotSame('', $model->id, 'a model with no id cannot be selected');
@@ -57,13 +57,46 @@ final class ModelsTest extends TestCase
         }
     }
 
-    public function testNoIdIsClaimedByTwoProviders(): void
+    public function testAnIdTwoProvidersClaimMeansTheDirectOne(): void
     {
-        // `get()` takes an id alone, which is only honest while they are unique. A new
-        // provider's table is where that stops being true.
-        $ids = array_map(static fn ($m): string => $m->id, Models::all());
+        // Unique ids were what made `get()` honest, and Copilot's table is where that stopped
+        // being true: it serves OpenAI's and Google's models under their own names. So the
+        // rule is written down instead — `Models::RESOLD` — and this is what it buys.
+        $this->assertSame('openai', Models::get('gpt-5')?->provider);
+        $this->assertSame('google', Models::get('gemini-2.5-pro')?->provider);
+        $this->assertSame('github-copilot', Models::find('github-copilot', 'gpt-5')?->provider);
+    }
 
-        $this->assertSame(array_values(array_unique($ids)), $ids);
+    public function testEveryDuplicatedIdIsOneOfTheResoldOnes(): void
+    {
+        $seen = [];
+
+        foreach (Models::all() as $model) {
+            $other = $seen[$model->id] ?? null;
+
+            // The claim this replaces the uniqueness check with: two providers may share an
+            // id only when one of them is reselling. Any other collision is a typo in a table
+            // and would make `get()` answer with whichever was written first.
+            if ($other !== null) {
+                $this->assertTrue(
+                    Models::isResold($model->provider) || Models::isResold($other),
+                    "{$model->id} is claimed by {$other} and {$model->provider}, neither reselling",
+                );
+            }
+
+            $seen[$model->id] = $model->provider;
+        }
+    }
+
+    public function testAnIdOnlyTheResellerHasIsStillFound(): void
+    {
+        // Copilot's alone — it is VS Code's own preview model and no direct provider carries
+        // it. A resold id is never the first answer, but it is still an answer.
+        $this->assertSame('github-copilot', Models::get('oswe-vscode-prime')?->provider);
+
+        // And one that looked Copilot-only and is not: `grok-code-fast-1` is in xAI's table
+        // too, so a bare id means xAI's.
+        $this->assertSame('xai', Models::get('grok-code-fast-1')?->provider);
     }
 
     public function testTheFiguresAreTheModelsOwnAndNotOneSetForAll(): void
@@ -88,7 +121,7 @@ final class ModelsTest extends TestCase
         // Every provider here speaks a protocol that is ported. Google's and OpenAI's own
         // arrive with theirs.
         $this->assertSame(
-            ['anthropic', 'openai', 'google', 'cerebras', 'groq', 'mistral', 'xai', 'zai'],
+            ['anthropic', 'openai', 'google', 'cerebras', 'groq', 'mistral', 'xai', 'zai', 'github-copilot'],
             Models::providers(),
         );
     }
@@ -141,5 +174,76 @@ final class ModelsTest extends TestCase
         // Upstream's `calculateCost()` mutates its argument. A function that quietly
         // rewrites what it was given is how a total ends up counted twice.
         $this->assertSame(0.0, $usage->cost->total);
+    }
+
+    // ---- GitHub Copilot ------------------------------------------------------------------
+
+    public function testCopilotsModelsAreUpstreamsNineteen(): void
+    {
+        $copilot = array_values(array_filter(
+            Models::all(),
+            static fn ($m): bool => $m->provider === 'github-copilot',
+        ));
+
+        $this->assertCount(19, $copilot);
+    }
+
+    public function testEveryCopilotModelCarriesTheHeadersTheEndpointDemands(): void
+    {
+        foreach (Models::all() as $model) {
+            if ($model->provider !== 'github-copilot') {
+                continue;
+            }
+
+            // The endpoint is VS Code's and answers a request that does not claim to be
+            // VS Code with a 4xx. A model missing these is a model that cannot be used.
+            $this->assertSame('vscode-chat', $model->headers['Copilot-Integration-Id'] ?? null, $model->id);
+            $this->assertStringStartsWith('GitHubCopilotChat/', $model->headers['User-Agent'] ?? '', $model->id);
+        }
+    }
+
+    public function testCopilotSpeaksBothOpenAiShapes(): void
+    {
+        $apis = [];
+
+        foreach (Models::all() as $model) {
+            if ($model->provider === 'github-copilot') {
+                $apis[$model->api->value] = ($apis[$model->api->value] ?? 0) + 1;
+            }
+        }
+
+        // Ten through completions and nine through Responses, which is why that table has an
+        // API column and none of the others does.
+        $this->assertSame(10, $apis['openai-completions'] ?? 0);
+        $this->assertSame(9, $apis['openai-responses'] ?? 0);
+    }
+
+    public function testCopilotsCompletionsModelsSayWhatCopilotRejects(): void
+    {
+        $model = Models::find('github-copilot', 'claude-sonnet-4.5');
+
+        $this->assertNotNull($model);
+        $this->assertNotNull($model->compat);
+        // Attached to the model rather than detected from the host, because the base URL is
+        // whatever the token says: an enterprise install answers at `copilot-api.<domain>`.
+        $this->assertFalse($model->compat->store);
+        $this->assertFalse($model->compat->developerRole);
+        $this->assertFalse($model->compat->reasoningEffort);
+    }
+
+    public function testCopilotsResponsesModelsHaveNoCompatBecauseItWouldMeanNothing(): void
+    {
+        $this->assertNull(Models::find('github-copilot', 'gpt-5')?->compat);
+    }
+
+    public function testACopilotConversationCostsNothingToReport(): void
+    {
+        $model = Models::find('github-copilot', 'gpt-5');
+
+        $this->assertNotNull($model);
+        // A subscription, so upstream's table is zeroes across the board. `/session` saying
+        // $0.00 is the truth and not a column nobody filled in.
+        $this->assertSame(0.0, $model->pricing->input);
+        $this->assertSame(0.0, $model->pricing->output);
     }
 }

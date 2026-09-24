@@ -9,11 +9,11 @@ namespace Pig\Ai;
  *
  * Upstream generates `models.generated.ts` from models.dev: 7105 lines, 414 models,
  * twelve providers. Here are the ones whose protocol is ported — Anthropic's 21, OpenAI's
- * own 33 on the Responses API, Google's 21, and the 72 across five providers that speak
- * `openai-completions`. A model that could be selected and then not talked to is a worse
- * answer than "no such model". What is left out: OpenRouter's 236, because that list is a
- * directory of everyone else's models and goes stale fastest; and GitHub Copilot's 19 and
- * the two Gemini CLI providers, which need OAuth device flows that are not ported.
+ * own 33 on the Responses API, Google's 21, the 72 across five providers that speak
+ * `openai-completions`, and GitHub Copilot's 19. A model that could be selected and then not
+ * talked to is a worse answer than "no such model". What is left out: OpenRouter's 236,
+ * because that list is a directory of everyone else's models and goes stale fastest, and the
+ * two Gemini CLI providers, which need a loopback OAuth flow that is not ported.
  *
  * The figures are upstream's at the anchor commit, which is the source a port should
  * agree with rather than whatever models.dev says today.
@@ -26,7 +26,47 @@ final class Models
 {
     public const string ANTHROPIC = 'anthropic';
 
+    public const string COPILOT = 'github-copilot';
+
     private const string ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
+
+    /**
+     * Where Copilot answers for an ordinary account.
+     *
+     * A token carries the real one: `proxy-ep=proxy.individual.githubcopilot.com` in its
+     * claims becomes `api.individual.…`, and an enterprise install answers at
+     * `copilot-api.<domain>` instead. So this is the default and not the truth — which is
+     * also why Copilot's models carry their `compat` explicitly rather than letting
+     * `OpenAiCompat::detect()` work it out from the host: two of the three URLs it can end
+     * up with contain no `githubcopilot.com` at all.
+     */
+    private const string COPILOT_BASE_URL = 'https://api.individual.githubcopilot.com';
+
+    /**
+     * Who Copilot is told it is talking to.
+     *
+     * Upstream's four headers, copied. They are not decoration: the endpoint is VS Code's,
+     * and it answers a request that does not claim to be VS Code with a 4xx.
+     */
+    private const array COPILOT_HEADERS = [
+        'User-Agent' => 'GitHubCopilotChat/0.35.0',
+        'Editor-Version' => 'vscode/1.107.0',
+        'Editor-Plugin-Version' => 'copilot-chat/0.35.0',
+        'Copilot-Integration-Id' => 'vscode-chat',
+    ];
+
+    /**
+     * Providers that answer with somebody else's models, under somebody else's ids.
+     *
+     * Copilot serves OpenAI's, Anthropic's and Google's models at their own ids, so `gpt-5`
+     * now names two things. **A bare id means the direct provider**; Copilot's is reached as
+     * `github-copilot/gpt-5`. Written down as a rule rather than left to the order the tables
+     * happen to be built in — that gave the same answer and would have stopped doing so the
+     * first time somebody moved a `foreach`.
+     *
+     * OpenRouter is the next one to belong here, whenever its 236 arrive.
+     */
+    private const array RESOLD = [self::COPILOT];
 
     /** provider => where its OpenAI-compatible endpoint lives. */
     private const array OPENAI_COMPATIBLE = [
@@ -241,25 +281,83 @@ final class Models
         'gemini-live-2.5-flash-preview-native-audio' => ['Gemini Live 2.5 Flash Preview Native Audio', 131_072, 65_536, true, false, 0.5, 2.0, 0.0, 0.0],
     ];
 
+    /**
+     * id => [name, which API it speaks, context window, max tokens, reasoning, images]
+     *
+     * A column for the API, which none of the other tables needs: Copilot serves ten of these
+     * through the completions shape and nine through the Responses one, and which it is is a
+     * fact about the model rather than about the provider.
+     *
+     * **No pricing column.** Copilot is a subscription, so upstream's table is zeroes all the
+     * way across and so is this — `/session` says $0.00 for a Copilot conversation, which is
+     * the truth and not a number nobody filled in.
+     *
+     * @var array<string, array{0: string, 1: Api, 2: int, 3: int, 4: bool, 5: bool}>
+     */
+    private const array COPILOT_MODELS = [
+        'claude-haiku-4.5'       => ['Claude Haiku 4.5', Api::OpenAiCompletions, 128_000, 16_000, true, true],
+        'claude-opus-4.5'        => ['Claude Opus 4.5', Api::OpenAiCompletions, 128_000, 16_000, true, true],
+        'claude-sonnet-4'        => ['Claude Sonnet 4', Api::OpenAiCompletions, 128_000, 16_000, true, true],
+        'claude-sonnet-4.5'      => ['Claude Sonnet 4.5', Api::OpenAiCompletions, 128_000, 16_000, true, true],
+        'gemini-2.5-pro'         => ['Gemini 2.5 Pro', Api::OpenAiCompletions, 128_000, 64_000, false, true],
+        'gemini-3-flash-preview' => ['Gemini 3 Flash', Api::OpenAiCompletions, 128_000, 64_000, true, true],
+        'gemini-3-pro-preview'   => ['Gemini 3 Pro Preview', Api::OpenAiCompletions, 128_000, 64_000, true, true],
+        'gpt-4.1'                => ['GPT-4.1', Api::OpenAiCompletions, 128_000, 16_384, false, true],
+        'gpt-4o'                 => ['GPT-4o', Api::OpenAiCompletions, 64_000, 16_384, false, true],
+        'gpt-5'                  => ['GPT-5', Api::OpenAiResponses, 128_000, 128_000, true, true],
+        'gpt-5-codex'            => ['GPT-5-Codex', Api::OpenAiResponses, 128_000, 128_000, true, true],
+        'gpt-5-mini'             => ['GPT-5-mini', Api::OpenAiResponses, 128_000, 64_000, true, true],
+        'gpt-5.1'                => ['GPT-5.1', Api::OpenAiResponses, 128_000, 128_000, true, true],
+        'gpt-5.1-codex'          => ['GPT-5.1-Codex', Api::OpenAiResponses, 128_000, 128_000, true, true],
+        'gpt-5.1-codex-max'      => ['GPT-5.1-Codex-max', Api::OpenAiResponses, 128_000, 128_000, true, true],
+        'gpt-5.1-codex-mini'     => ['GPT-5.1-Codex-mini', Api::OpenAiResponses, 128_000, 100_000, true, true],
+        'gpt-5.2'                => ['GPT-5.2', Api::OpenAiResponses, 128_000, 64_000, true, true],
+        'grok-code-fast-1'       => ['Grok Code Fast 1', Api::OpenAiCompletions, 128_000, 64_000, true, false],
+        'oswe-vscode-prime'      => ['Raptor Mini (Preview)', Api::OpenAiResponses, 200_000, 64_000, true, true],
+    ];
+
     /** @var array<string, Model>|null built once, on the first lookup that needs it */
     private static ?array $models = null;
 
     /**
      * One model by id, or null when there is no such model.
      *
-     * Ids are unique across the providers here, checked when each table was added, so an
-     * id alone is enough to name a model. `find()` is the one to use when it might not
-     * be — after another provider's table lands, say.
+     * Ids were unique across the providers here until Copilot's table landed; it serves
+     * `gpt-5` and `gemini-2.5-pro` under the same names their own providers use. **A bare id
+     * means the direct provider**, and Copilot's is reached through `find()` or through
+     * `github-copilot/gpt-5` on the command line. See `RESOLD`.
      */
     public static function get(string $id): ?Model
     {
+        $resold = null;
+
         foreach (self::table() as $model) {
-            if ($model->id === $id) {
+            if ($model->id !== $id) {
+                continue;
+            }
+
+            if (!self::isResold($model->provider)) {
                 return $model;
             }
+
+            $resold ??= $model;
         }
 
-        return null;
+        // Only when nobody sells it directly. `grok-code-fast-1` is Copilot's alone here,
+        // because xAI's own table does not carry it — so a resold id is still an answer, it
+        // is just never the first one.
+        return $resold;
+    }
+
+    /**
+     * Whether a provider answers with somebody else's models under their own ids.
+     *
+     * Public because `ModelResolver` needs the same rule and two copies of it would disagree
+     * the first time one of them was edited.
+     */
+    public static function isResold(string $provider): bool
+    {
+        return in_array($provider, self::RESOLD, true);
     }
 
     public static function find(string $provider, string $id): ?Model
@@ -383,6 +481,39 @@ final class Models
             }
         }
 
+        // Last, so the table reads direct providers first — which is not what decides a bare
+        // id (`RESOLD` is), but does decide the order `--models` and `/model` list them in.
+        foreach (self::COPILOT_MODELS as $id => [$name, $api, $window, $maxTokens, $reasoning, $images]) {
+            $models[self::COPILOT . '/' . $id] = new Model(
+                $id,
+                $name,
+                $api,
+                self::COPILOT,
+                self::COPILOT_BASE_URL,
+                $window,
+                $maxTokens,
+                $reasoning,
+                $images ? ['text', 'image'] : ['text'],
+                new Pricing(),
+                self::COPILOT_HEADERS,
+                $api === Api::OpenAiCompletions ? self::copilotCompat() : null,
+            );
+        }
+
         return self::$models = $models;
+    }
+
+    /**
+     * What Copilot rejects, attached to the model rather than guessed from the host.
+     *
+     * `store`, the `developer` role and `reasoning_effort` are all refused. A method and not a
+     * constant because `new` is not allowed in a class constant, and explicit rather than
+     * `OpenAiCompat::detect()` because Copilot's base URL is whatever the token says it is —
+     * an enterprise install answers at `copilot-api.<domain>`, which contains no
+     * `githubcopilot.com` for a host check to find.
+     */
+    private static function copilotCompat(): OpenAiCompat
+    {
+        return new OpenAiCompat(store: false, developerRole: false, reasoningEffort: false);
     }
 }

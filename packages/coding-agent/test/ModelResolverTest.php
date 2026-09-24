@@ -102,4 +102,41 @@ final class ModelResolverTest extends TestCase
     {
         $this->assertNull(ModelResolver::parse('llama-9:high'));
     }
+
+    // ---- an id two providers claim ------------------------------------------------------
+
+    public function testABareIdMeansTheDirectProviderNotTheReseller(): void
+    {
+        // Copilot serves `gpt-5` under OpenAI's own name, so this had one answer and now has
+        // two. The rule is `Models::RESOLD` and it lives in one place for both readers.
+        $this->assertSame('openai', ModelResolver::parse('gpt-5')?->model->provider);
+        $this->assertSame('google', ModelResolver::parse('gemini-2.5-pro')?->model->provider);
+    }
+
+    public function testTheResellerIsReachedByNamingIt(): void
+    {
+        $choice = ModelResolver::parse('github-copilot/gpt-5');
+
+        $this->assertSame('github-copilot', $choice?->model->provider);
+        $this->assertSame('gpt-5', $choice?->model->id);
+    }
+
+    public function testNamingTheResellerStillTakesAThinkingLevel(): void
+    {
+        $choice = ModelResolver::parse('github-copilot/gpt-5:high');
+
+        $this->assertSame('github-copilot', $choice?->model->provider);
+        $this->assertSame(ThinkingLevel::High, $choice?->thinking);
+    }
+
+    public function testAnIdOnlyTheResellerHasStillResolves(): void
+    {
+        $this->assertSame('github-copilot', ModelResolver::parse('oswe-vscode-prime')?->model->provider);
+    }
+
+    public function testASubstringMatchingBothPrefersTheDirectProvider(): void
+    {
+        // `codex` is in OpenAI's ids and in Copilot's. The one an API key reaches wins.
+        $this->assertSame('openai', ModelResolver::parse('codex')?->model->provider);
+    }
 }

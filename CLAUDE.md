@@ -279,7 +279,7 @@ Four things about it:
   conversation with.
 - **A level the restored model cannot do is clamped**, for the same reason `setModel()` clamps:
   the person resuming did not ask for it, the file did, and a provider would reject it.
-- **A model this pig has no entry for is not an error.** pig's registry is 147 of pi's models
+- **A model this pig has no entry for is not an error.** pig's registry is 166 of pi's models
   and excludes OpenRouter's 236, so a pi session on one of those restores to whatever pig had.
   The conversation still opens, and the footer says which model is answering.
 
@@ -412,16 +412,37 @@ snaps to a pure grey and the theme loses its tint.
 
 `Ai\Models` is the registry. Upstream generates `models.generated.ts` from models.dev — 7105
 lines, 414 models, twelve providers — and what is here is the models whose *protocol* is
-ported: Anthropic's 21, and the 72 across Cerebras, Groq, Mistral, xAI and Zai that speak
-`openai-completions`. Offering a model and then failing to send the request is a worse answer
-than "no such model", so the rest arrive with their protocols. OpenRouter's 236 speak a ported
-protocol and are still left out: that list is a directory of everyone else's models and goes
-stale fastest. The figures are upstream's *at the anchor commit*, not whatever models.dev says
+ported: Anthropic's 21, OpenAI's own 33 on the Responses API, Google's 21, the 72 across
+Cerebras, Groq, Mistral, xAI and Zai that speak `openai-completions`, and GitHub Copilot's 19.
+Offering a model and then failing to send the request is a worse answer than "no such model",
+so the rest arrive with their protocols. OpenRouter's 236 speak a ported protocol and are still
+left out: that list is a directory of everyone else's models and goes stale fastest. The figures are upstream's *at the anchor commit*, not whatever models.dev says
 today: a port should agree with the thing it was ported from.
 
-The table is keyed `provider/id`, and `get()` takes an id alone only because no two providers
-here claim the same one — `ModelsTest::testNoIdIsClaimedByTwoProviders` is what keeps that
-true, and the first table that breaks it is where `get()` has to go.
+The table is keyed `provider/id`, and `get()` used to take an id alone because no two
+providers claimed the same one. **Copilot's table is the one that broke that**, exactly where
+this said it would: it serves OpenAI's, Anthropic's and Google's models under their own ids, so
+`gpt-5` now names two things.
+
+The rule is `Models::RESOLD`, and it is one line of data rather than an ordering: **a bare id
+means the direct provider**, and Copilot's is `github-copilot/gpt-5`. Writing it down mattered
+more than it looks — building Copilot's table last already gave the right answer, and would
+have stopped doing so the first time somebody moved a `foreach`. `Models::isResold()` is public
+so `ModelResolver` asks the same question rather than keeping its own copy, in both the
+exact-id pass and the sort over substring matches.
+
+Two things about it that are easy to get backwards:
+
+- **A resold id is still an answer**, just never the first one. `oswe-vscode-prime` is VS Code's
+  own preview model and no direct provider carries it, so `get()` falls back to the reseller
+  rather than answering null.
+- **`grok-code-fast-1` looked Copilot-only and is not** — xAI's table carries it too, so a bare
+  id means xAI's. That was a wrong guess in a test, not in the code, and the test now asserts
+  both halves.
+
+`ModelsTest::testEveryDuplicatedIdIsOneOfTheResoldOnes` replaced the uniqueness check: two
+providers may share an id only when one of them is reselling, and any other collision is a typo
+in a table that would make `get()` answer with whichever was written first.
 
 It replaced a `CodingAgent::model()` that invented the figures around an id — 200k of context,
 64k of output, reasoning on. Right for one model and wrong for most: `claude-3-haiku` caps
@@ -621,9 +642,12 @@ all scalars and pig has no YAML parser to reach for; what this cannot read stays
 for a nested `metadata:` block means its key and nothing else — and the key is all that is
 validated anyway. `fnmatch()` is `minimatch` for `--ignore`-style patterns.
 
-Four of upstream's five protocols are here; the fifth needs an OAuth device flow rather than a
-protocol — `google-gemini-cli` is the same Gemini shape behind Google's sign-in, and GitHub
-Copilot is the same again.
+Four of upstream's five protocols are here, and the fifth was never a protocol: both remaining
+providers speak a shape that is already ported and are gated on a sign-in instead.
+**GitHub Copilot's nineteen models are in the registry now** and reachable with a Copilot token
+in `COPILOT_GITHUB_TOKEN`; the device flow that obtains one is the part still to come.
+`google-gemini-cli` is the same Gemini shape behind Google's sign-in, which needs a loopback
+HTTP server and a browser.
 
 ### Signing in instead of pasting a key
 
@@ -677,12 +701,13 @@ server. That is not a seam existing for the test alone, which this project other
 every provider in `ai` takes its base URL from outside already, and the alternative here is an
 authentication flow with no coverage at all.
 
-**Not ported yet, and what each is waiting for:** GitHub Copilot's device flow is the next one
-that would work — it needs no browser either — but Copilot's models are not in pig's registry,
-so signing in would unlock nothing to choose; upstream also enables each model by name against
-a policy endpoint after login, which needs that same list. `google-gemini-cli` and
-`google-antigravity` are loopback PKCE flows: they need an HTTP server on `127.0.0.1` and a
-browser opened at it, neither of which pig has.
+**Not ported yet, and what each is waiting for:** GitHub Copilot's device flow is next and no
+longer blocked — its nineteen models are in the registry, which is what was missing, and
+upstream's post-login step that enables each model by name against a policy endpoint has that
+same list to walk. What it still needs deciding is how the polling ends: upstream loops for
+fifteen minutes with no way to stop it, and a `/login` that cannot be escaped is a fiber nobody
+can reach. `google-gemini-cli` and `google-antigravity` are loopback PKCE flows: they need an
+HTTP server on `127.0.0.1` and a browser opened at it, neither of which pig has.
 
 ### Where the keys live
 
@@ -1281,7 +1306,7 @@ What is left in `coding-agent` is left out on purpose, each for a reason:
 
 | Upstream | Why not |
 |---|---|
-| the rest of `ai`'s `utils/oauth/` | Anthropic's flow, its storage and `/login` are ported (see [Signing in instead of pasting a key](#signing-in-instead-of-pasting-a-key)); GitHub Copilot needs its models in the registry, and the two Google flows need a loopback HTTP server and a browser |
+| the rest of `ai`'s `utils/oauth/` | Anthropic's flow, its storage and `/login` are ported (see [Signing in instead of pasting a key](#signing-in-instead-of-pasting-a-key)); GitHub Copilot's models are in the registry now, so its device flow is what is next; the two Google flows need a loopback HTTP server and a browser |
 | twenty-five selector components | the interactive mode needs seven of them |
 | `migrations.ts` | session-file migrations; pig writes pi's format and has never shipped another |
 | `utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |

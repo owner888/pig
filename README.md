@@ -68,9 +68,13 @@ answering: the editor gets the terminal, and the answer keeps arriving behind it
 `--model` takes a part of a name rather than a whole id — `--model sonnet`, `--model 'opus 4.1'` —
 and `--model sonnet:high` sets the thinking level at the same time. `--models` lists them.
 
-147 models are known: Anthropic's, OpenAI's own on the Responses API, Gemini, and Groq,
+166 models are known: Anthropic's, OpenAI's own on the Responses API, Gemini, and Groq,
 Cerebras, xAI, Zai and Mistral, which all speak OpenAI chat-completions. Set the matching
 `*_API_KEY` and `--model` reaches them.
+
+GitHub Copilot's nineteen are there too, and they are the models its subscription serves — so
+`gpt-5` and `gemini-2.5-pro` are now two models each. A bare name means the direct provider;
+Copilot's is `--model github-copilot/gpt-5`.
 
 `/label before the refactor` names where you are, and `/tree` shows the name beside what was
 said — pi's own label entries, so a name set in either tool shows up in the other.
