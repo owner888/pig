@@ -74,7 +74,7 @@ final class GithubCopilot
     ];
 
     /** Five minutes, which is upstream's margin: a token is treated as dead before it is. */
-    private const int MARGIN_MS = 5 * 60 * 1000;
+    private const int MARGIN_MS = 5 * 60 * 1000; // 5 minutes
 
     /** However eager the server says it is, it is asked no more than once a second. */
     private const float MIN_INTERVAL = 1.0;

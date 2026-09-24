@@ -41,7 +41,7 @@ final class Anthropic
     public const string CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 
     /** Five minutes, which is upstream's margin: a token is treated as dead before it is. */
-    private const int MARGIN_MS = 5 * 60 * 1000;
+    private const int MARGIN_MS = 5 * 60 * 1000; // 5 minutes
 
     /**
      * @param string $tokenUrl the endpoint, so a test can point it at a loopback server. Not a

@@ -73,7 +73,7 @@ final class GeminiCli
     ];
 
     /** Five minutes, which is upstream's margin: a token is treated as dead before it is. */
-    private const int MARGIN_MS = 5 * 60 * 1000;
+    private const int MARGIN_MS = 5 * 60 * 1000; // 5 minutes
 
     /** Upstream's ten tries, three seconds apart. Provisioning is not instant and is not slow. */
     private const int ONBOARD_ATTEMPTS = 10;
