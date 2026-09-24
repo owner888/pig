@@ -138,6 +138,23 @@ final class Settings
      * separate thoughts usually means — an unknown value falls back to it rather than to `all`,
      * because getting all three at once is the surprising half of the choice.
      */
+    /**
+     * The version whose changelog this person has already been shown.
+     *
+     * Null means never — a first run, which upstream shows the whole file to once.
+     */
+    public function lastChangelogVersion(): ?string
+    {
+        $version = $this->get('lastChangelogVersion');
+
+        return is_string($version) && $version !== '' ? $version : null;
+    }
+
+    public function setLastChangelogVersion(string $version): void
+    {
+        $this->set('lastChangelogVersion', $version);
+    }
+
     public function queueMode(): QueueMode
     {
         $mode = $this->get('queueMode');

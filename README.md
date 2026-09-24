@@ -104,6 +104,9 @@ beside pig's own. Carrying on from a pi session appends to that file, in that fo
 Resuming brings back the model and the thinking level that conversation was being had with, not
 whatever a new one would open with. `--model` still wins if you name one.
 
+`/changelog` shows what changed release by release, and new entries are shown once after an
+upgrade (not when you resume a conversation).
+
 `/export` writes the conversation out as one self-contained HTML file — markdown rendered,
 code highlighted, no JavaScript in it at all.
 

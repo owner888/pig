@@ -30,6 +30,7 @@ use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
@@ -70,6 +71,8 @@ use Pig\Tui\Clipboard\SystemClipboard;
 use Pig\Tui\Components\Editor;
 use Pig\Tui\Components\EditorTheme;
 use Pig\Tui\Components\Loader;
+use Pig\Tui\Components\Markdown;
+use Pig\Tui\Components\Rule;
 use Pig\Tui\Components\SelectItem;
 use Pig\Tui\Components\SelectList;
 use Pig\Tui\Components\SettingItem;
@@ -224,6 +227,7 @@ final class InteractiveMode
         // `bin/pig`, and a parameter inserted in the middle of that is fifteen silent
         // off-by-ones.
         private readonly ?Auth $auth = null,
+        private readonly ?string $changelog = null,
     ) {
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
@@ -304,6 +308,15 @@ final class InteractiveMode
         $this->session->subscribe($this->onEvent(...));
 
         $this->replay();
+
+        // After the replay, so an upgrade note sits under the conversation it is about rather
+        // than above it. `bin/pig` is what decides there is one: it knows the version, holds the
+        // settings the last-seen number is written to, and knows whether this is a resumed
+        // session — where a release note nobody asked for is an interruption.
+        if ($this->changelog !== null && $this->changelog !== '') {
+            $this->sayChangelog($this->changelog);
+        }
+
         $this->running = true;
         $this->hooks?->emit(new SessionStartEvent());
         $this->sayToolProblems($this->customTools?->notify('start') ?? []);
@@ -1130,6 +1143,7 @@ final class InteractiveMode
         ['logout', 'Forget a sign-in'],
         ['theme', 'Switch between dark and light'],
         ['settings', 'Change what is switchable, and see what it is set to'],
+        ['changelog', 'What changed, release by release'],
         ['hooks', 'What hooks loaded, and what they added'],
         ['tools', 'What the model can call, built-in and loaded'],
         ['exit', 'Quit'],
@@ -1209,6 +1223,7 @@ final class InteractiveMode
             'logout' => $this->showSignIns('logout'),
             'theme' => $this->switchTheme(),
             'settings' => $this->showSettings(),
+            'changelog' => $this->showChangelog(),
             'hooks' => $this->say($this->hookList()),
             'tools' => $this->say($this->toolList()),
             'exit', 'quit' => $this->stop(),
@@ -2135,6 +2150,41 @@ final class InteractiveMode
         }
         $this->hooks?->emit(new SessionSwitchEvent('resume', $previous));
         $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
+    }
+
+    /**
+     * `/changelog` — the whole file, newest last, between two rules.
+     *
+     * Reversed, as upstream reverses it: the file is written newest first and `parse()` hands it
+     * back in that order, but this is appended to the bottom of a transcript somebody then reads
+     * downwards. Rules around it because it is a block of somebody else's prose dropped into a
+     * conversation, and markdown rather than text because that is what it is written in.
+     */
+    private function showChangelog(): void
+    {
+        $entries = Changelog::parse();
+
+        $this->sayChangelog(
+            $entries === [] ? 'No changelog entries found.' : Changelog::join(array_reverse($entries)),
+        );
+    }
+
+    /**
+     * A block of release notes in the transcript, titled and ruled off.
+     *
+     * Rules around it because it is a block of somebody else's prose dropped into a
+     * conversation, and markdown rather than text because that is what it is written in. Both
+     * callers — `/changelog` and the line `bin/pig` shows once after an upgrade — draw it the
+     * same way, because they are the same thing arriving for two reasons.
+     */
+    private function sayChangelog(string $markdown): void
+    {
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild(new Rule($this->palette->of('border')));
+        $this->chat->addChild(new Text($this->palette->fg('accent', Style::bold('What\'s New')), 1, 0));
+        $this->chat->addChild(new Markdown($markdown, 1, 1, $this->palette->markdownTheme()));
+        $this->chat->addChild(new Rule($this->palette->of('border')));
+        $this->tui->requestRender();
     }
 
     private function switchTheme(): void

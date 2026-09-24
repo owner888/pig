@@ -712,6 +712,30 @@ paths go through the one method. The theme is the exception and says so: the lis
 palette's closures, so new colours arrive the next time it is opened, which is the same thing
 `/theme` already says about the transcript.
 
+`Changelog` is upstream's `utils/changelog.ts`, with two readers: `/changelog` shows the whole
+file and startup shows only what is newer than the version this person last saw. The second is the
+one that has to be right — a tool that greets you with its whole history every morning is a tool
+whose greeting you stop reading.
+
+Four things in it, three of which are upstream's and one of which is arithmetic:
+
+- **The parts are integers, not a string.** `"0.10.0" > "0.9.0"` is false as text, so a string
+  comparison decides the newest release is older than the one before it.
+  `testVersionsAreComparedAsNumbersAndNotAsText` is the guard.
+- **A `##` with no version in it ends the entry and starts nothing**, discarding what it had
+  collected. Right for a file people edit by hand: folding an `## Unreleased` section into the
+  release above would file unreleased notes under a released number.
+- **A version string that is not three numbers means everything is new.** Upstream's `Number()`
+  of a missing part, kept: showing the whole file once beats silently showing nothing because a
+  settings file had a typo in it.
+- **The version is written down when the notes are shown**, not when pig starts, so a run that
+  showed nothing does not mark them as seen. `-c` and `-r` skip it: somebody picking a
+  conversation back up is in the middle of something.
+
+**pig has no `CHANGELOG.md`**, so all of this answers nothing today — which was the reason it went
+unported, and is the wrong reason: it is the same answer somebody who deleted theirs gets, and the
+machinery is worth having working before the file exists rather than written the day it appears.
+
 `Session\BranchSummarization` is upstream's `core/compaction/branch-summarization.ts`, and
 `Session\BranchSummary` is the message it produces. `/tree` goes back to an earlier point and
 carries on from there; the branch that was left is still in the file, but the model no longer
@@ -1806,7 +1830,6 @@ What is left unported, across every package, each for a reason:
 | `ai/cli.ts` (173) | a standalone `pi-ai` command whose only job is the OAuth logins. `/login` is where pig does that, and a second entry point would be a second thing to keep working |
 | `ai/utils/validation.ts` + `typebox-helpers.ts` (104) | AJV and TypeBox, for checking a tool call against its schema. `Agent\ToolArguments` is pig's answer and its docblock states the trade: the two mistakes a model actually makes, and everything else through |
 | `coding-agent/migrations.ts` | session-file migrations; pig writes pi's format and has never shipped another |
-| `coding-agent/utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |
 | `coding-agent/modes/interactive/components/armin.ts` | an easter egg: 31×36 XBM art, animated |
 | `coding-agent/core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |
 | `coding-agent/modes/rpc/rpc-types.ts`, `rpc-client.ts` | TypeScript types for the wire shape, and a client for driving the mode from TypeScript. `RpcMode`'s docblock plus `RpcEvents` is the first; a host writes JSON lines in whatever language it is in |

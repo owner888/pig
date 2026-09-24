@@ -151,6 +151,7 @@ final class InteractiveModeTest extends TestCase
         array $initialMessages = [],
         array $initialImages = [],
         ?Auth $auth = null,
+        ?string $changelog = null,
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->settings = $settings ?? Settings::inMemory();
@@ -204,6 +205,7 @@ final class InteractiveModeTest extends TestCase
             $initialMessages,
             $initialImages,
             $auth,
+            $changelog,
         );
 
         $this->mode->start();
@@ -1945,6 +1947,40 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
 
         $this->assertStringContainsString('nowhere to keep a sign-in', $this->screen());
+    }
+
+    // ---- /changelog ------------------------------------------------------------------
+
+    public function testSlashChangelogSaysSoWhenThereIsNoChangelog(): void
+    {
+        $this->start();
+
+        $this->type('/changelog');
+        $this->type(self::ENTER);
+
+        // pig has no `CHANGELOG.md`, so this is the answer today — and it is the same answer
+        // somebody who deleted theirs gets.
+        $this->assertStringContainsString('No changelog entries found.', $this->screen());
+        $this->assertStringContainsString("What's New", $this->screen());
+    }
+
+    public function testAnUpgradeNoteIsDrawnUnderTheConversationItIsAbout(): void
+    {
+        $this->start(changelog: "## 0.2.0\n\n- Something changed.");
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString("What's New", $screen);
+        $this->assertStringContainsString('Something changed.', $screen);
+    }
+
+    public function testNothingIsDrawnWhenThereIsNoUpgradeNote(): void
+    {
+        $this->start();
+
+        // The common case by far, and a title with nothing under it would be worse than
+        // nothing at all.
+        $this->assertStringNotContainsString("What's New", $this->screen());
     }
 
     // ---- /settings -------------------------------------------------------------------

@@ -27,6 +27,7 @@ use Pig\CodingAgent\Cli\Arguments;
 use Pig\CodingAgent\Cli\FileArguments;
 use Pig\CodingAgent\Cli\ModelList;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\Cli\SessionPicker;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\CustomModels;
@@ -435,6 +436,26 @@ if ($mode === 'rpc') {
     $printing = new PrintMode($session, $mode ?? 'text', $hooks, $customTools);
     $exit = (int) Async::run(static fn (): int => $printing->run($messages, $files->images));
 } else {
+    // What changed since this person last looked, shown once. Not on `-c` or `-r`: somebody
+    // picking a conversation back up is in the middle of something, and upstream skips it for
+    // the same reason. The version is written down *when it is shown*, so a run that showed
+    // nothing does not mark the notes as seen.
+    $changelog = null;
+
+    if (!isset($options['continue']) && !isset($options['resume'])) {
+        $seen = $settings->lastChangelogVersion();
+        $entries = Changelog::parse();
+        // No record at all means a first run, which gets the whole file rather than nothing —
+        // upstream's shape, and the alternative is that the first upgrade after installing is
+        // the first one anybody hears about.
+        $unseen = $seen === null ? $entries : Changelog::newerThan($entries, $seen);
+
+        if ($unseen !== []) {
+            $changelog = Changelog::join($unseen);
+            $settings->setLastChangelogVersion(VERSION);
+        }
+    }
+
     $running = new InteractiveMode(
         $session,
         Palette::named($theme),
@@ -450,6 +471,7 @@ if ($mode === 'rpc') {
         auth: $auth,
         initialMessages: $messages,
         initialImages: $files->images,
+        changelog: $changelog,
     );
 
     Async::run(static fn () => $running->run());
