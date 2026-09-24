@@ -161,10 +161,16 @@ Timings::mark('settings');
 // keeps its credentials in an `oauth.json` nothing here reads, and its conversations in files
 // `--resume` cannot see. Not affected by `--no-save` for the same reason `Auth` is not — the flag
 // is about not writing *this conversation* down.
-foreach (Migrations::run() as $moved) {
-    // Said, because pig has just written in pi's directory and that is not something to do
-    // quietly. One line per provider whose credentials moved.
-    fwrite(STDERR, Style::yellow("credentials: moved {$moved} from pi's old oauth.json into auth.json\n"));
+$movedCredentials = Migrations::run();
+
+if ($movedCredentials !== []) {
+    // Upstream's line, word for word — `main.ts` shows it as a warning and this is where pig puts
+    // the warnings that happen before the UI exists, beside the settings and credential ones.
+    // Said at all because pig has just written in pi's directory, which is not something to do
+    // quietly; one line rather than one per provider, because it is one thing that happened.
+    fwrite(STDERR, Style::yellow(
+        'Migrated credentials to auth.json: ' . implode(', ', $movedCredentials) . "\n",
+    ));
 }
 
 Timings::mark('migrations');

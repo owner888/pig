@@ -95,7 +95,8 @@ final class Migrations
             }
 
             unset($settings['apiKeys']);
-            // No mode: this is pi's settings file and it was not pig's to tighten. It stops
+            // No mode, which is upstream's plain `writeFileSync` and is also the only defensible
+            // thing: this is pi's settings file and tightening it was never pig's to do. It stops
             // holding keys, which is the point; what it stops holding them *at* is pi's business.
             self::write($settingsPath, $settings);
         }
@@ -128,9 +129,26 @@ final class Migrations
     public static function sessionsFromAgentRoot(?string $directory = null): void
     {
         $directory ??= Config::piHome();
-        $stray = glob($directory . '/*.jsonl');
+        $entries = is_dir($directory) ? scandir($directory) : false;
 
-        foreach ($stray === false ? [] : $stray as $path) {
+        if ($entries === false) {
+            return;
+        }
+
+        foreach ($entries as $entry) {
+            // A scan rather than `glob('*.jsonl')`, which skips a name beginning with a dot —
+            // upstream reads the directory, so a `.something.jsonl` is a stray session there and
+            // would have been invisible here.
+            if (!str_ends_with($entry, '.jsonl')) {
+                continue;
+            }
+
+            $path = $directory . '/' . $entry;
+
+            if (!is_file($path)) {
+                continue;
+            }
+
             $cwd = self::recordedCwd($path);
 
             if ($cwd === null) {
@@ -139,6 +157,9 @@ final class Migrations
 
             $target = $directory . '/sessions/' . SessionManager::slug($cwd);
 
+            // `0700`, which is what `SessionManager` and `Auth` create directories with — not
+            // upstream's default umask. pig creates this exact directory itself in ordinary use,
+            // so matching pig is what keeps one project's sessions from living under two modes.
             if (!is_dir($target) && !mkdir($target, 0o700, true) && !is_dir($target)) {
                 continue;
             }
@@ -207,6 +228,14 @@ final class Migrations
     }
 
     /**
+     * Written the way pig writes these files, not the way upstream does.
+     *
+     * Upstream's `JSON.stringify(x, null, 2)` indents by two and ends without a newline;
+     * `Auth::save()` and `Settings::save()` both use `JSON_PRETTY_PRINT` — four — and end with
+     * one. **`auth.json` is a file pig itself writes**, so matching pig is what keeps the next
+     * ordinary save from reformatting the whole file; matching upstream here would mean the
+     * migration produced a shape pig never produces.
+     *
      * @param array<string, mixed> $data
      * @param int|null $mode for a file being created here; null leaves an existing file's alone
      */
@@ -218,10 +247,10 @@ final class Migrations
             return;
         }
 
-        if ($mode !== null) {
-            // Before the content, not after: a chmod that follows the write leaves the file
-            // world-readable for as long as those two calls take, which is long enough. The same
-            // order `Auth::save()` uses and for the same reason.
+        // Only when creating, and narrowed before there is anything in it to read — `Auth::save()`'s
+        // exact condition. A chmod that follows the write leaves the file world-readable for as
+        // long as the two calls take, and that is long enough.
+        if ($mode !== null && !is_file($path)) {
             touch($path);
             chmod($path, $mode);
         }

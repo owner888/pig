@@ -1129,16 +1129,20 @@ So a pi install left mid-upgrade has credentials and conversations pi can see an
 rather than assuming. What happens here is exactly what pi itself would do on its next start, so
 running it converges rather than diverges. Nothing is deleted: `oauth.json` is renamed, a session
 is moved, a file that already exists at the destination wins. Every step is skipped on the first
-sign of trouble, because a half-migration of somebody else's data is worse than none. And two
-deviations from upstream in the same direction:
+sign of trouble, because a half-migration of somebody else's data is worse than none.
 
-- **pi's `settings.json` keeps its own permissions.** Upstream writes it with a plain
-  `writeFileSync`; the first version here passed `0600` to the same helper that writes `auth.json`,
-  which would have tightened a file that is not pig's to tighten. It stops holding keys, which is
-  the point; what it stops holding them *at* is pi's business.
-- **Each provider that moved is named on stderr.** Upstream returns the list and its `main.ts` has
-  it; here it is printed, because pig has just written in another tool's directory and that is not
-  something to do quietly.
+**Which is the argument for auditing every difference rather than only the ones that felt like
+decisions** — "worse than none" is exactly what a near-miss produces. The audit found two real
+gaps and one thing that had been written down as a deviation and is not one:
+
+| Difference | Verdict |
+|---|---|
+| `glob('*.jsonl')` | **A gap.** A glob does not match a leading dot and upstream's `readdirSync` does, so `.something.jsonl` was a stray session this could not see. Now a scan. The test helper in `MigrationsTest` had the same bug a few lines later, which is how thoroughly the habit travels |
+| the message | **A gap.** Upstream shows one warning with the providers joined; this printed one stderr line per provider in its own words. Now upstream's line, once. stderr because that is where pig puts warnings from before the UI exists, beside the settings and credential ones |
+| pi's `settings.json` keeps its own permissions | **Not a deviation at all** — upstream's plain `writeFileSync` does the same, and this entry used to claim otherwise. It was a deviation from the *first draft here*, which passed `0600` and would have tightened a file that was never pig's to tighten |
+| `auth.json` written with 4-space JSON and a trailing newline | Deliberate: upstream's is `JSON.stringify(x, null, 2)` with no newline, but **`auth.json` is a file pig itself writes**, and `Auth::save()` writes it this way. Matching upstream would make the migration produce a shape pig never produces, so the next ordinary save reformats the whole file |
+| the session directory created `0700` | Deliberate: `SessionManager` and `Auth` create directories with `0700` and pig creates this exact one in ordinary use. Upstream's default umask would put one project's sessions under two modes |
+| only the first line of a session file is read | Deliberate: upstream reads the whole file to split off line one, and a session file is a conversation long. The header is line one either way |
 
 ### Where the keys live
 
@@ -1899,6 +1903,13 @@ actually for. The file *has* a counterpart: the built-in registry, key resolutio
 "`model-registry.ts` → `Ai\Models` + `ModelResolver`" and stopping there is how 180 lines of it
 stayed invisible. **A name with a counterpart is not a file that is ported; it is a file worth
 reading to the end.**
+
+**And a ported file is worth a difference-by-difference audit, not only a look at the parts that
+felt like decisions.** `Migrations` was reviewed that way after the fact and it found two real
+gaps — a `glob` that skipped dotfiles where upstream scans, and a message in pig's own words where
+upstream has one — plus an entry in this file claiming a deviation from upstream that was only a
+deviation from the first draft. Every difference either has a reason written next to it or is a
+bug; there is no third category, and the ones without a reason are the ones nobody looked at.
 
 So the sweep below finds names, and **a missing name is a question, not an answer.** A behaviour
 can be ported into a file called something else — pig's is a component rather than a function,

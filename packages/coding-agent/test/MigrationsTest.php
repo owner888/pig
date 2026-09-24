@@ -33,7 +33,11 @@ final class MigrationsTest extends TestCase
 
     private function remove(string $path): void
     {
-        foreach (glob($path . '/*') ?: [] as $entry) {
+        // `scandir`, not `glob('*')`, for exactly the reason the code under test uses one: a glob
+        // does not match a leading dot, so the dotfile case left its file behind and three
+        // `rmdir`s failed. The bug was fixed in `Migrations` and then written again here.
+        foreach (array_diff(scandir($path) ?: [], ['.', '..']) as $name) {
+            $entry = $path . '/' . $name;
             is_dir($entry) ? $this->remove($entry) : unlink($entry);
         }
 
@@ -208,10 +212,45 @@ final class MigrationsTest extends TestCase
         $this->assertFileExists($this->directory . '/clash.jsonl', 'and the other is not thrown away');
     }
 
+    public function testAStraySessionWhoseNameStartsWithADotIsFiledToo(): void
+    {
+        $this->write(
+            '.hidden-session.jsonl',
+            "{\"type\":\"session\",\"cwd\":\"/Users/kaka/Dev/pig\",\"version\":2}\n",
+        );
+
+        Migrations::sessionsFromAgentRoot($this->directory);
+
+        // `glob('*.jsonl')` does not match a leading dot and upstream's `readdirSync` does, so
+        // this one was invisible until the scan replaced the glob.
+        $this->assertFileExists($this->directory . '/sessions/--Users-kaka-Dev-pig--/.hidden-session.jsonl');
+    }
+
+    public function testTheSessionDirectoryIsCreatedTheWayPigCreatesThem(): void
+    {
+        $this->write('s.jsonl', "{\"type\":\"session\",\"cwd\":\"/Users/kaka/Dev/pig\",\"version\":2}\n");
+
+        Migrations::sessionsFromAgentRoot($this->directory);
+
+        // `0700`, like `SessionManager` and `Auth` — not upstream's default umask. pig creates
+        // this exact directory itself in ordinary use.
+        $mode = fileperms($this->directory . '/sessions/--Users-kaka-Dev-pig--');
+
+        $this->assertSame('0700', substr(sprintf('%o', $mode), -4));
+    }
+
     public function testADirectoryWithNothingStrayInItIsUntouched(): void
     {
         Migrations::sessionsFromAgentRoot($this->directory);
 
         $this->assertSame([], glob($this->directory . '/*') ?: []);
+    }
+
+    public function testAMissingDirectoryIsNotAProblem(): void
+    {
+        // Nobody has ever run pi on this machine, which is most machines.
+        Migrations::sessionsFromAgentRoot($this->directory . '/never-existed');
+
+        $this->assertSame([], Migrations::authToAuthJson($this->directory . '/never-existed'));
     }
 }
