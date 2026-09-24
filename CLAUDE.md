@@ -1108,6 +1108,38 @@ Its false branch is unreachable today, and therefore untested, in three places: 
 greys the row, `signIn()` refuses before spawning, and `Auth::login()` refuses again. That is
 known rather than overlooked.
 
+### Tidying pi's directory, which is pig's problem
+
+`Migrations` is upstream's `migrations.ts`, two one-time tidies run before `Auth::discover()`.
+Neither is about pig's own history, and that is why the old reason for skipping them — "pig writes
+pi's format and has never shipped another" — was answering the wrong question. **They migrate
+pi's** old shapes, and pig lives in pi's house: it reads pi's sessions and shares pi's `auth.json`.
+So a pi install left mid-upgrade has credentials and conversations pi can see and pig cannot.
+
+- **`oauth.json` and `settings.json`'s `apiKeys` into `auth.json`.** Nothing happens at all if
+  `auth.json` is already there, which is upstream's first line and the whole safety of it: a file
+  that exists is the current shape. An OAuth credential beats an api key for the same provider,
+  because signing in is what replaced pasting a key.
+- **Session files pi 0.30.0 left at the root of its own directory** instead of under
+  `sessions/<the project's path, flattened>/`. Where each belongs is read from the `cwd` on its own
+  header line, and filed with `SessionManager::slug()` — the same slug, or this would move a file
+  out of pi's sight without bringing it into pig's. Upstream's issue #320.
+
+**pig writing in pi's directory is a real thing to be uneasy about**, so the bound is worth stating
+rather than assuming. What happens here is exactly what pi itself would do on its next start, so
+running it converges rather than diverges. Nothing is deleted: `oauth.json` is renamed, a session
+is moved, a file that already exists at the destination wins. Every step is skipped on the first
+sign of trouble, because a half-migration of somebody else's data is worse than none. And two
+deviations from upstream in the same direction:
+
+- **pi's `settings.json` keeps its own permissions.** Upstream writes it with a plain
+  `writeFileSync`; the first version here passed `0600` to the same helper that writes `auth.json`,
+  which would have tightened a file that is not pig's to tighten. It stops holding keys, which is
+  the point; what it stops holding them *at* is pi's business.
+- **Each provider that moved is named on stderr.** Upstream returns the list and its `main.ts` has
+  it; here it is printed, because pig has just written in another tool's directory and that is not
+  something to do quietly.
+
 ### Where the keys live
 
 `Auth` is upstream's `core/auth-storage.ts`, named after `Settings` rather than after upstream's
@@ -1841,7 +1873,6 @@ What is left unported, across every package, each for a reason:
 | `agent/proxy.ts` (340) | a stream function that routes LLM calls through somebody's server, so the server holds the keys. pig talks to providers directly; this arrives if something ever wants a proxy |
 | `ai/cli.ts` (173) | a standalone `pi-ai` command whose only job is the OAuth logins. `/login` is where pig does that, and a second entry point would be a second thing to keep working |
 | `ai/utils/validation.ts` + `typebox-helpers.ts` (104) | AJV and TypeBox, for checking a tool call against its schema. `Agent\ToolArguments` is pig's answer and its docblock states the trade: the two mistakes a model actually makes, and everything else through |
-| `coding-agent/migrations.ts` | session-file migrations; pig writes pi's format and has never shipped another |
 | `coding-agent/modes/interactive/components/armin.ts` | an easter egg: 31×36 XBM art, animated |
 | `coding-agent/core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |
 | `coding-agent/modes/rpc/rpc-types.ts`, `rpc-client.ts` | TypeScript types for the wire shape, and a client for driving the mode from TypeScript. `RpcMode`'s docblock plus `RpcEvents` is the first; a host writes JSON lines in whatever language it is in |

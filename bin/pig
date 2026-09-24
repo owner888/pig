@@ -38,6 +38,7 @@ use Pig\CodingAgent\Hooks\HookLoader;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Rpc\RpcMode;
+use Pig\CodingAgent\Migrations;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\PrintMode;
 use Pig\CodingAgent\Prompt\ContextFiles;
@@ -155,6 +156,18 @@ foreach ($settings->problems() as $problem) {
 }
 
 Timings::mark('settings');
+
+// Before `Auth::discover()`, because that is what these are for: a pi install left mid-upgrade
+// keeps its credentials in an `oauth.json` nothing here reads, and its conversations in files
+// `--resume` cannot see. Not affected by `--no-save` for the same reason `Auth` is not — the flag
+// is about not writing *this conversation* down.
+foreach (Migrations::run() as $moved) {
+    // Said, because pig has just written in pi's directory and that is not something to do
+    // quietly. One line per provider whose credentials moved.
+    fwrite(STDERR, Style::yellow("credentials: moved {$moved} from pi's old oauth.json into auth.json\n"));
+}
+
+Timings::mark('migrations');
 
 // Not affected by `--no-save`, which is about not writing this conversation down. A stored
 // sign-in is still the way in, and a token renewed during the run has to be kept or the next

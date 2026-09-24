@@ -58,7 +58,9 @@ way on port 51121, with a client id and secret of its own (`ANTIGRAVITY_CLIENT_I
 `ANTIGRAVITY_CLIENT_SECRET`, or `antigravity.clientId` and `antigravity.clientSecret`) — it is
 what gets you Gemini 3, Claude and GPT-OSS through a Google subscription. Whichever you use, the
 token is kept in `~/.pi/agent/auth.json` — pi's own file, when pi has one, so signing in once is
-signing in once. `/logout` forgets it.
+signing in once. `/logout` forgets it. If that directory still has an old pi's `oauth.json` in it,
+pig moves it across on the first run and says which providers it moved — the old file is renamed,
+not deleted.
 
 Anything that is not an option is a message, and `@some/file` is read in front of it:
 
