@@ -1518,6 +1518,31 @@ Enter with nothing matching does nothing at all — it does not close the picker
 found nothing has nothing to choose, and closing on Enter would throw away the query somebody
 is half way through typing.
 
+`Cli\ModelList` is `Fuzzy`'s second reader and upstream's `cli/list-models.ts`: `--models`
+lists the registry, `--models gem pro` narrows it, fuzzily, over `"{provider} {id}"` as one
+string — which is what makes naming the provider the way to narrow an id several of them
+resell. Two things it does *not* do, both upstream's:
+
+- **The rows come back sorted by provider and id, not by score.** Best-match-first is right for
+  a picker somebody is arrowing through and wrong for a table somebody scans.
+- **The match is a subsequence, so a search finds more than a substring would.** `haiku` also
+  matches `moonshotai/kimi-k2-instruct`, because h·a·i·k·u are all in there in order. That is
+  the algorithm, not a bug in the query, and upstream's listing behaves the same way.
+
+Six columns rather than pig's old three, because the questions asked straight after finding an
+id are how much it holds, how much it can say, and whether it can think. The human name went
+with them: `Claude Sonnet 4.5` beside `claude-sonnet-4-5` is the same string twice, and the one
+thing it said that the id did not — a model resold under somebody else's id — is what the
+provider column already answers. Widths are measured from the values, so `google-generative-ai`
+does not push every row after it out of line, and the last column is trimmed so no row ends in
+spaces.
+
+`--models` became a value-taking option to get there, which is the thing `Arguments`' docblock
+warns about — an option that eats the next word. It is safe here for a reason worth writing
+down rather than assuming: `--models` prints and exits, so there is no prompt left for it to
+eat. `--resume` is the same shape and was the precedent: a value opens that one, nothing opens
+the list.
+
 `FakeTerminal::queue()` was added for its test. A component that starts its own loop and
 blocks until it is answered has no "after the call" to type into, so the keys go in first and
 arrive through `Loop::defer()` once the screen is open — which is also what a real terminal
@@ -1609,10 +1634,12 @@ What is left unported, across every package, each for a reason:
 |---|---|
 | `ai/utils/oauth/google-antigravity.ts` | Anthropic's, Copilot's and Gemini CLI's sign-ins are all ported, with storage, `/login` and their models. Antigravity speaks Code Assist's protocol, which *is* ported now — what it needs is its own loopback flow (a different client, a sandbox endpoint and its own headers) and its seven models |
 | seventeen of the twenty-five selector components | the interactive mode needs eight; `/model`, `/resume`, `/tree`, `/login` and `/logout` are the same `SelectList` in the same place instead, and `settings-selector.ts` is `showSettings()` plus `Interactive\SettingsSubmenu` |
+| the `models.json` half of `coding-agent/core/model-registry.ts` (~180 of 315) | custom providers declared in a file: a schema, an `authHeader` that turns a resolved key into `Authorization: Bearer`, and a `models.json error:` surface. The built-in registry, key resolution and lookup are all here (`Ai\Models`, `Auth`, `ModelResolver`); what is missing is somebody else's endpoint being addable without a release. **This row was the fourth time the table was wrong**, in the first way again — simply never listed |
+| `tui/components/bordered-loader.ts` (41), `dynamic-border.ts` (25) | chrome: a loader with a rule around it and an `esc cancel` hint, and the rule itself. `CancellableLoader` is the substance and is ported; `TerminalUi::open()` draws a title and the component with no rules around them |
+| `components/queue-mode-selector.ts` (56) | a picker for `all` vs `one-at-a-time`. `QueueMode` works and is fixed when the agent is built; a row in `/settings` would need a setter invented for it, which `showSettings()` says in full |
 | `agent/proxy.ts` (340) | a stream function that routes LLM calls through somebody's server, so the server holds the keys. pig talks to providers directly; this arrives if something ever wants a proxy |
 | `ai/cli.ts` (173) | a standalone `pi-ai` command whose only job is the OAuth logins. `/login` is where pig does that, and a second entry point would be a second thing to keep working |
 | `ai/utils/validation.ts` + `typebox-helpers.ts` (104) | AJV and TypeBox, for checking a tool call against its schema. `Agent\ToolArguments` is pig's answer and its docblock states the trade: the two mistakes a model actually makes, and everything else through |
-| the fuzzy half of `cli/list-models.ts` | `--models` lists them; upstream's takes a search pattern. `Utils\Fuzzy` is ported and the filter is one call — what it needs is `--models` becoming a value-taking option, which is a decision about pig's command line |
 | `coding-agent/migrations.ts` | session-file migrations; pig writes pi's format and has never shipped another |
 | `coding-agent/utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |
 | `coding-agent/modes/interactive/components/armin.ts` | an easter egg: 31×36 XBM art, animated |
@@ -1620,7 +1647,7 @@ What is left unported, across every package, each for a reason:
 | `coding-agent/modes/rpc/rpc-types.ts`, `rpc-client.ts` | TypeScript types for the wire shape, and a client for driving the mode from TypeScript. `RpcMode`'s docblock plus `RpcEvents` is the first; a host writes JSON lines in whatever language it is in |
 | every `index.ts` | barrel re-exports, which is what an autoloader does here |
 
-**This table has now been wrong three times.** Twice in the same way: the first time it said "the
+**This table has now been wrong four times.** Twice in the same way: the first time it said "the
 rest is left out on purpose" while `modes/print-mode.ts` and `cli/file-processor.ts` were simply
 never listed, and the second time it covered `coding-agent` only, while `agent/proxy.ts`,
 `ai/cli.ts`, `ai/utils/validation.ts` and `tui/components/settings-list.ts` were unported and
@@ -1634,6 +1661,13 @@ before the row was written.** The mistake was comparing upstream's bash branch a
 is `lines.slice(0, maxLines)` — logical and head-first, which is exactly what
 `ToolExecutionComponent::cut()` does. Both halves already matched; the row compared the wrong
 halves.
+
+The fourth was the first kind again — `model-registry.ts`'s `models.json` half simply never
+listed — and it is the one that shows what the sweep is actually for. The file *has* a
+counterpart: the built-in registry, key resolution and lookup are all in pig. Reading the row
+"`model-registry.ts` → `Ai\Models` + `ModelResolver`" and stopping there is how 180 lines of it
+stayed invisible. **A name with a counterpart is not a file that is ported; it is a file worth
+reading to the end.**
 
 So the sweep below finds names, and **a missing name is a question, not an answer.** A behaviour
 can be ported into a file called something else — pig's is a component rather than a function,

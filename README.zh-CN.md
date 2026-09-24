@@ -64,7 +64,8 @@ Ctrl+G 把 prompt 里现在的内容丢进 `$VISUAL` 或 `$EDITOR`，改完再�
 三段的消息用。模型还在回答的时候也能用：编辑器拿着终端，回答在它背后继续到。
 
 `--model` 不用写全 id，写一部分就行——`--model sonnet`、`--model 'opus 4.1'`——`--model sonnet:high`
-还能顺手把思考档位一起设了。`--models` 列出全部。
+还能顺手把思考档位一起设了。`--models` 把全部列出来，带上下文窗口和输出上限；`--models gem pro`
+再筛一遍，模糊匹配，provider 和 id 当一整串来搜。
 
 内置 171 个模型：Anthropic 的、OpenAI 自家走 Responses API 的、Gemini，加上 Groq、Cerebras、xAI、
 Zai、Mistral——这五家说的都是 OpenAI chat-completions。设好对应的 `*_API_KEY`，`--model` 就能指过去。

@@ -23,7 +23,7 @@ namespace Pig\CodingAgent\Cli;
 final readonly class Arguments
 {
     /** Every option that is followed by its value. Everything else is a flag. */
-    public const array TAKES_A_VALUE = ['model', 'theme', 'thinking', 'cwd', 'resume', 'skills-dir', 'mode', 'api-key'];
+    public const array TAKES_A_VALUE = ['model', 'theme', 'thinking', 'cwd', 'resume', 'skills-dir', 'mode', 'api-key', 'models'];
 
     /**
      * The short ones, and the long option each stands for.

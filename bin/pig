@@ -22,10 +22,10 @@ foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php
 }
 
 use Pig\Agent\ThinkingLevel;
-use Pig\Ai\Models;
 use Pig\Async\Async;
 use Pig\CodingAgent\Cli\Arguments;
 use Pig\CodingAgent\Cli\FileArguments;
+use Pig\CodingAgent\Cli\ModelList;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Cli\SessionPicker;
 use Pig\CodingAgent\CodingAgent;
@@ -73,7 +73,8 @@ if (isset($options['help'])) {
       --model <id>      which model to talk to (default: claude-sonnet-4-5).
                         A part of the name will do: `sonnet`, `haiku`, `opus 4.1`.
                         Add a thinking level with a colon: `sonnet:high`.
-      --models          list the models there are, and stop
+      --models [search] list the models there are, and stop. With a search it is
+                        fuzzy over provider and id: `--models gem pro`
       --api-key <key>   use this key for the model's provider, this run only.
                         Not saved; beats the environment and any stored sign-in.
       -v, --version     print the version, and stop
@@ -144,9 +145,7 @@ if (!$interactive && $messages === [] && $fileArgs === []) {
 }
 
 if (isset($options['models'])) {
-    foreach (Models::all() as $listed) {
-        printf("  %-18s %-46s %s\n", $listed->provider, $listed->id, $listed->name);
-    }
+    echo ModelList::render($options['models']), "\n";
 
     exit(0);
 }

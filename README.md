@@ -73,7 +73,9 @@ for the message that turned out to be three paragraphs. It works while the model
 answering: the editor gets the terminal, and the answer keeps arriving behind it.
 
 `--model` takes a part of a name rather than a whole id — `--model sonnet`, `--model 'opus 4.1'` —
-and `--model sonnet:high` sets the thinking level at the same time. `--models` lists them.
+and `--model sonnet:high` sets the thinking level at the same time. `--models` lists them all
+with their context and output limits; `--models gem pro` narrows that, fuzzily, over the
+provider and the id together.
 
 171 models are known: Anthropic's, OpenAI's own on the Responses API, Gemini, and Groq,
 Cerebras, xAI, Zai and Mistral, which all speak OpenAI chat-completions. Set the matching
