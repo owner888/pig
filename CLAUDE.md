@@ -392,10 +392,21 @@ so a session that could paste but not copy would be a puzzle with nothing on scr
 it.
 
 An image in a tool result is **drawn**, on terminals that can draw one. `pig/tui`'s `Image`
-falls back to a label by itself, so `ToolExecutionComponent` does not choose — it adds the
+falls back to a label by itself, so `ToolExecutionComponent` does not choose *that* — it adds the
 component and lets it decide, and the text half stopped naming the image so it is not named
-twice. The images are rebuilt on every `draw()` rather than appended to, because a running
-tool reports its result again on each update.
+twice. What it does choose is whether to add the component at all: `terminal.showImages` off
+adds `TerminalImage::fallback()`'s label instead, which is the same string from the same
+function, so a picture turned off and a picture that cannot be drawn read the same. The images
+are rebuilt on every `draw()` rather than appended to, because a running tool reports its result
+again on each update — and `setShowImages()` rebuilds them for the same reason `setExpanded()`
+does, since the setting is changed while a transcript is already on screen.
+
+**Two preview sizes for command output**, both upstream's, in one component where upstream has
+two: `BASH_LINES = 5` for a command the model ran, `TYPED_BASH_LINES = 20` for one typed with
+`!`. Upstream's numbers live in `tool-execution.ts` and `bash-execution.ts` respectively, and the
+difference has a reason worth keeping — a `!` command is the thing the person just asked for and
+is looking at, where a model's is one step inside something else. pig reuses one component for
+both, so the number is a constructor argument rather than a second class.
 
 `CustomEditor` wraps `Pig\Tui\Components\Editor` rather than extending it — the editor is
 `final`, and wrapping keeps the list of keys an application may steal explicit. `Editor` grew
@@ -570,8 +581,8 @@ preferences, and a `/theme` typed in that repository still saves to the person's
 still loses to the project's answer while they are in it.
 
 Upstream is 374 lines, most of it forty getter/setter pairs. The pairs here are only for the
-settings something actually reads — theme, model, thinking level, hidden thinking, the three
-compaction numbers, the skill filters — and everything else is reachable through `get()` under
+settings something actually reads — theme, model, thinking level, hidden thinking, pictures, the
+three compaction numbers, the skill filters — and everything else is reachable through `get()` under
 upstream's own key names, so a settings file written by either project is read by both. A key
 gains a typed accessor when something needs one, not before.
 
@@ -614,29 +625,35 @@ Two decisions of pig's own:
   2 where the terminal gives it 4, which pushes every value column after it out of line. Same
   deviation, same reason, as `SelectList`'s description column.
 
-**The list only offers things that take effect**, which is why it is five rows where upstream
-has eight:
+**The list only offers things that take effect**, which is what decided its six rows:
 
 | Row | Reaches |
 |---|---|
 | Theme | `useTheme()`, split out of `switchTheme()` so a row can name a theme rather than toggle |
 | Thinking | a submenu of the levels *this model* offers, so a model that cannot reason gets no row at all rather than six ways to change nothing |
 | Thinking blocks | `useHideThinking()`, split out of the ctrl+t handler |
+| Pictures | `useShowImages()`, and its reader — see below |
 | Auto-compact | `compaction.enabled`, read again on every turn |
 | Auto-retry | `retry.enabled`, read again on every failure |
 
-Two of upstream's are deliberately absent. **`terminal.showImages` is a setting pig stores and
-nothing reads** — a row for it would save a value nobody looks at, which is a screen that lies;
-it gains a row when something reads it. **Queue mode** is fixed when the agent is built and has
-no setter to reach, so offering it would mean inventing one for the benefit of a screen.
+**`terminal.showImages` was a setting pig stored and nothing read.** Building the screen is what
+surfaced that, and the choice was between leaving the row off and giving the setting its reader.
+Upstream has a real one — `tool-execution.ts` takes `showImages`, checks
+`caps.images && this.showImages` before drawing, and has a `setShowImages()` for the transcript
+already on screen — so pig now has the same: `ToolExecutionComponent` takes the flag and
+`setShowImages()` redraws. Off draws the label `TerminalImage::fallback()` already produces for a
+terminal that cannot draw pictures, from the same function, so "turned off" and "cannot" look
+alike and neither pretends no picture came back. **Queue mode** is still off the list: it is fixed
+when the agent is built and has no setter to reach, so offering it would mean inventing one for
+the benefit of a screen.
 
-`useTheme()` and `useHideThinking()` being split out is the part that matters most and is the
-least visible: ctrl+t writes the setting *and* tells every `AssistantMessageComponent` already
-on screen. A second place writing only the setting is a toggle that half works — the file says
-hidden and the transcript still shows thinking — so both paths go through the one method. The
-theme is the exception and says so: the list holds the old palette's closures, so new colours
-arrive the next time it is opened, which is the same thing `/theme` already says about the
-transcript.
+`useTheme()`, `useHideThinking()` and `useShowImages()` being split out is the part that matters
+most and is the least visible: ctrl+t writes the setting *and* tells every
+`AssistantMessageComponent` already on screen. A second place writing only the setting is a
+toggle that half works — the file says hidden and the transcript still shows thinking — so both
+paths go through the one method. The theme is the exception and says so: the list holds the old
+palette's closures, so new colours arrive the next time it is opened, which is the same thing
+`/theme` already says about the transcript.
 
 `Session\BranchSummarization` is upstream's `core/compaction/branch-summarization.ts`, and
 `Session\BranchSummary` is the message it produces. `/tree` goes back to an earlier point and

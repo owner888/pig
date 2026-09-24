@@ -17,6 +17,8 @@ use Pig\Tui\Components\Image;
 use Pig\Tui\Components\ImageTheme;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
+use Pig\Tui\Images\ImageDimensions;
+use Pig\Tui\Images\TerminalImage;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\Tui\Component;
@@ -54,8 +56,17 @@ final class ToolExecutionComponent extends Container
 
     private const int MATCH_LINES = 15;
 
-    /** A command says what happened at the end, so only the end is kept. */
+    /**
+     * A command says what happened at the end, so only the end is kept.
+     *
+     * Upstream has two numbers here, in two components this one stands in for both of:
+     * `tool-execution.ts`'s `BASH_PREVIEW_LINES = 5` for a command the *model* ran, and
+     * `bash-execution.ts`'s `PREVIEW_LINES = 20` for one typed with `!`. The difference has
+     * a reason — a `!` command is the thing the person just asked for and is looking at,
+     * where a model's is one step of something else — so both numbers are here.
+     */
     private const int BASH_LINES = 5;
+    public const int TYPED_BASH_LINES = 20;
 
     /** Tabs are three spaces here: a diff or a listing is narrow enough already. */
     private const string TAB = '   ';
@@ -85,6 +96,10 @@ final class ToolExecutionComponent extends Container
      * @param CustomTool|null               $custom    the declaration, when this is a tool
      *        somebody wrote — for `renderCall` and `renderResult`
      * @param Closure(string): void|null    $onError   told once when a renderer throws
+     * @param int  $bashLines  how much command output to keep unexpanded — `TYPED_BASH_LINES`
+     *        for a `!` command, the default for one the model ran
+     * @param bool $showImages the person's `terminal.showImages`. Off draws the same label a
+     *        terminal that cannot draw pictures gets, so the two look alike
      */
     public function __construct(
         private readonly string $tool,
@@ -92,13 +107,18 @@ final class ToolExecutionComponent extends Container
         private readonly Palette $palette,
         private readonly ?CustomTool $custom = null,
         private readonly ?Closure $onError = null,
+        // Trailing, and they stay trailing: everything before them is passed positionally
+        // from three call sites and a test, and a parameter inserted above this line is a
+        // handful of silent off-by-ones.
+        private readonly int $bashLines = self::BASH_LINES,
+        private bool $showImages = true,
     ) {
         $this->addChild(new Spacer(1));
 
         $this->box = new Box(1, 1, $palette->of('toolPendingBg'));
         $this->body = new Text('', 1, 1, $palette->of('toolPendingBg'));
         $this->bash = new BashOutputComponent(
-            self::BASH_LINES,
+            $bashLines,
             fn (int $dropped): string => $palette->fg('toolOutput', "... ({$dropped} earlier lines)"),
         );
 
@@ -181,14 +201,51 @@ final class ToolExecutionComponent extends Container
         $this->images->clear();
 
         foreach ($this->result?->content ?? [] as $block) {
-            if ($block instanceof ImageContent) {
-                $this->images->addChild(new Image(
-                    $block->data,
-                    $block->mimeType,
-                    new ImageTheme(fn (string $text): string => $this->palette->fg('toolOutput', $text)),
-                ));
+            if (!$block instanceof ImageContent) {
+                continue;
             }
+
+            if (!$this->showImages) {
+                // The same label a terminal that cannot draw pictures gets, from the same
+                // function, so turning pictures off and not being able to draw them look
+                // alike — and the result still says an image came back rather than
+                // pretending none did.
+                $this->images->addChild(new Text(
+                    $this->palette->fg('toolOutput', TerminalImage::fallback(
+                        $block->mimeType,
+                        ImageDimensions::of($block->data, $block->mimeType),
+                    )),
+                    1,
+                    0,
+                ));
+
+                continue;
+            }
+
+            $this->images->addChild(new Image(
+                $block->data,
+                $block->mimeType,
+                new ImageTheme(fn (string $text): string => $this->palette->fg('toolOutput', $text)),
+            ));
         }
+    }
+
+    /**
+     * Draw pictures, or name them.
+     *
+     * Upstream's `setShowImages`, and it exists for the same reason `setExpanded` does: the
+     * setting is changed from `/settings` while a transcript is already on screen, and a
+     * transcript that keeps the answer from when it was drawn is a setting that only applies
+     * to what happens next.
+     */
+    public function setShowImages(bool $show): void
+    {
+        if ($show === $this->showImages) {
+            return;
+        }
+
+        $this->showImages = $show;
+        $this->drawImages();
     }
 
     /** Whether this tool brought at least one renderer of its own. */
@@ -308,7 +365,7 @@ final class ToolExecutionComponent extends Container
             return;
         }
 
-        $this->bash->setRows($this->expanded ? PHP_INT_MAX : self::BASH_LINES);
+        $this->bash->setRows($this->expanded ? PHP_INT_MAX : $this->bashLines);
         $this->bash->setText(implode("\n", array_map(
             fn (string $line): string => $this->palette->fg('toolOutput', self::tabs($line)),
             explode("\n", $output),

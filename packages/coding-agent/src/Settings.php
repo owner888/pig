@@ -135,6 +135,11 @@ final class Settings
         return $this->get('terminal.showImages') !== false;
     }
 
+    public function setShowImages(bool $show): void
+    {
+        $this->set('terminal.showImages', $show);
+    }
+
     public function compactionEnabled(): bool
     {
         return $this->get('compaction.enabled') !== false;

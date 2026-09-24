@@ -88,6 +88,36 @@ final class ToolExecutionTest extends TestCase
         $this->assertSame(1, substr_count($this->text($tool), 'image'));
     }
 
+    public function testWithPicturesTurnedOffAnImageIsNamedInstead(): void
+    {
+        $tool = new ToolExecutionComponent('screenshot', [], $this->palette, showImages: false);
+        $tool->updateResult(new AgentToolResult([
+            new TextContent('captured the window'),
+            new ImageContent(self::PNG, 'image/png'),
+        ]));
+
+        $shown = $this->text($tool);
+
+        // Named, not dropped: a result that came back with a picture in it still says so.
+        // And named once, the same as when the terminal cannot draw it — the label comes
+        // from the same function, with the size read from the same header.
+        $this->assertStringContainsString('captured the window', $shown);
+        $this->assertStringContainsString('[Image: [image/png] 1x1]', $shown);
+        $this->assertSame(1, substr_count($shown, 'image/png'));
+    }
+
+    public function testTurningPicturesOffRedrawsWhatIsAlreadyOnScreen(): void
+    {
+        $tool = $this->tool('screenshot', []);
+        $tool->updateResult(new AgentToolResult([new ImageContent(self::PNG, 'image/png')]));
+
+        $tool->setShowImages(false);
+
+        // The setting is changed from `/settings` while a transcript is already drawn, so a
+        // component that kept the answer from construction would apply it to nothing.
+        $this->assertStringContainsString('[Image: [image/png] 1x1]', $this->text($tool));
+    }
+
     public function testAResultWithNoImageDrawsNothingExtra(): void
     {
         $tool = $this->tool('ls', ['path' => '.']);
@@ -307,6 +337,27 @@ final class ToolExecutionTest extends TestCase
     public function testACommandStillArrivingShowsAPlaceholder(): void
     {
         $this->assertStringContainsString('$ ...', $this->text($this->tool('bash')));
+    }
+
+    public function testACommandTypedWithABangKeepsFourTimesAsMuch(): void
+    {
+        $output = implode("\n", array_map(static fn (int $i): string => "line {$i}", range(1, 30)));
+
+        $model = $this->tool('bash', ['command' => 'make test']);
+        $model->updateResult($this->said($output));
+
+        $typed = new ToolExecutionComponent(
+            'bash',
+            ['command' => 'make test'],
+            $this->palette,
+            bashLines: ToolExecutionComponent::TYPED_BASH_LINES,
+        );
+        $typed->updateResult($this->said($output));
+
+        // Upstream's two components, upstream's two numbers: 5 for a command the model ran,
+        // 20 for one the person typed and is looking at.
+        $this->assertStringContainsString('... (25 earlier lines)', $this->text($model));
+        $this->assertStringContainsString('... (10 earlier lines)', $this->text($typed));
     }
 
     // ---- a tool that draws itself ------------------------------------------------------

@@ -1934,8 +1934,9 @@ final class InteractiveModeTest extends TestCase
         $this->start();
         $this->openSettings();
 
-        // Down past Thinking blocks to Auto-compact. No thinking row: the test model does
-        // not reason, which is the case the row is left out for.
+        // Down past Thinking blocks and Pictures to Auto-compact. No thinking row: the test
+        // model does not reason, which is the case the row is left out for.
+        $this->type(self::DOWN);
         $this->type(self::DOWN);
         $this->type(self::DOWN);
         $this->type(self::ENTER);
@@ -1955,6 +1956,18 @@ final class InteractiveModeTest extends TestCase
         // The reason ctrl+t and this row go through the same method: writing the setting
         // without telling the components already on screen is a toggle that half works.
         $this->assertTrue($this->settings->hideThinking());
+    }
+
+    public function testTurningPicturesOffIsRememberedAndReachesTheTranscript(): void
+    {
+        $this->start();
+        $this->openSettings();
+
+        $this->type(self::DOWN);
+        $this->type(self::DOWN);
+        $this->type(self::ENTER);
+
+        $this->assertFalse($this->settings->showImages());
     }
 
     public function testAModelThatCannotThinkIsNotOfferedAThinkingRow(): void

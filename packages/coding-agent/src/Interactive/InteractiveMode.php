@@ -126,6 +126,9 @@ final class InteractiveMode
 
     private bool $hideThinking = false;
 
+    /** `terminal.showImages` — off names a picture rather than drawing it. */
+    private bool $showImages = true;
+
     /** The editor's text starts with `!`, so it is a command and not a prompt. */
     private bool $bashMode = false;
 
@@ -159,9 +162,6 @@ final class InteractiveMode
     private readonly Settings $settings;
 
     private ?Text $banner = null;
-
-    /** The session picker, while it is open. */
-    private ?SelectList $picker = null;
 
     /** Set while a sign-in is waiting on a browser, so escape can end it. */
     private ?AbortController $signingIn = null;
@@ -208,6 +208,7 @@ final class InteractiveMode
         $this->customTools = $customTools;
         $this->settings = $settings ?? Settings::inMemory();
         $this->hideThinking = $this->settings->hideThinking();
+        $this->showImages = $this->settings->showImages();
         $this->clipboard = $clipboard ?? new SystemClipboard();
 
         // Injected so a test can drive this without a terminal, the same way the editor
@@ -362,7 +363,13 @@ final class InteractiveMode
 
     private function replayBash(BashExecution $execution): void
     {
-        $shown = new ToolExecutionComponent('bash', ['command' => $execution->command], $this->palette);
+        $shown = new ToolExecutionComponent(
+            'bash',
+            ['command' => $execution->command],
+            $this->palette,
+            bashLines: ToolExecutionComponent::TYPED_BASH_LINES,
+            showImages: $this->showImages,
+        );
         $shown->setExpanded($this->expanded);
         $shown->updateResult(
             new AgentToolResult([new TextContent($execution->output)]),
@@ -598,6 +605,24 @@ final class InteractiveMode
         foreach ($this->chat->children() as $child) {
             if ($child instanceof AssistantMessageComponent) {
                 $child->setHideThinking($hide);
+            }
+        }
+    }
+
+    /**
+     * Draw pictures, or name them — here and in everything already on screen.
+     *
+     * Same shape and same reason as `useHideThinking()`: the setting is one a transcript
+     * already drawn has an opinion about, so every `ToolExecutionComponent` in it is told.
+     */
+    private function useShowImages(bool $show): void
+    {
+        $this->showImages = $show;
+        $this->settings->setShowImages($show);
+
+        foreach ($this->chat->children() as $child) {
+            if ($child instanceof ToolExecutionComponent) {
+                $child->setShowImages($show);
             }
         }
     }
@@ -901,7 +926,13 @@ final class InteractiveMode
             return;
         }
 
-        $shown = new ToolExecutionComponent('bash', ['command' => $command], $this->palette);
+        $shown = new ToolExecutionComponent(
+            'bash',
+            ['command' => $command],
+            $this->palette,
+            bashLines: ToolExecutionComponent::TYPED_BASH_LINES,
+            showImages: $this->showImages,
+        );
         $shown->setExpanded($this->expanded);
         $this->chat->addChild($shown);
         $this->tui->requestRender();
@@ -1441,7 +1472,6 @@ final class InteractiveMode
         });
         $picker->setCancelHandler($this->closePicker(...));
 
-        $this->picker = $picker;
         $this->status->clear();
         $this->status->addChild(new Spacer(1));
         $this->status->addChild(new Text($this->palette->fg('muted', 'Pick a session — enter to open, esc to cancel'), 1, 0));
@@ -1501,7 +1531,6 @@ final class InteractiveMode
         });
         $picker->setCancelHandler($this->closePicker(...));
 
-        $this->picker = $picker;
         $this->status->clear();
         $this->status->addChild(new Spacer(1));
         $this->status->addChild(new Text($this->palette->fg('muted', 'Pick a model — enter to switch, esc to cancel'), 1, 0));
@@ -1611,7 +1640,6 @@ final class InteractiveMode
         });
         $picker->setCancelHandler($this->closePicker(...));
 
-        $this->picker = $picker;
         $this->status->clear();
         $this->status->addChild(new Spacer(1));
         $this->status->addChild(new Text(
@@ -1828,7 +1856,6 @@ final class InteractiveMode
         });
         $picker->setCancelHandler($this->closePicker(...));
 
-        $this->picker = $picker;
         $this->status->clear();
         $this->status->addChild(new Spacer(1));
         $this->status->addChild(new Text($this->palette->fg(
@@ -1947,9 +1974,16 @@ final class InteractiveMode
         Process::run($command, 2.0);
     }
 
+    /**
+     * Put the status area away and give the editor the keys back.
+     *
+     * What closes a picker is that the status area stops holding it and the focus moves —
+     * there is nothing else to undo. There used to be a `$picker` field set by all four
+     * callers and read by none: the object is kept alive by `$this->status`, so the field
+     * answered no question anybody asked.
+     */
     private function closePicker(): void
     {
-        $this->picker = null;
         $this->status->clear();
         $this->tui->setFocus($this->editor);
         $this->tui->requestRender();
@@ -2017,12 +2051,12 @@ final class InteractiveMode
     /**
      * `/settings` — everything that can be changed from inside a session, in one screen.
      *
-     * **Only things that take effect.** The list is deliberately shorter than upstream's:
-     * every row here is read again after it is changed, so pressing Enter on it does
-     * something. `terminal.showImages` is a setting pig stores and nothing reads, so it is
-     * not offered — a row that saves a value nobody looks at is a screen that lies. Queue
-     * mode is not offered either: it is fixed when the agent is built and there is no
-     * setter to reach, so offering it would mean inventing one for a screen.
+     * **Only things that take effect.** Every row here is read again after it is changed, so
+     * pressing Enter on it does something. `terminal.showImages` was nearly left off for
+     * failing that — pig stored it and nothing read it — and the answer was to give it its
+     * reader rather than a row that saves a value nobody looks at. Queue mode is still off
+     * the list: it is fixed when the agent is built and has no setter to reach, so offering
+     * it would mean inventing one for the benefit of a screen.
      *
      * Escape closes it. There is no cancel, because each change has already happened by
      * then — the same as upstream, and the same as every other toggle here.
@@ -2059,6 +2093,13 @@ final class InteractiveMode
             $this->hideThinking ? 'hidden' : 'shown',
             'Whether reasoning is drawn in the transcript. ctrl+t does this too.',
             values: ['shown', 'hidden'],
+        );
+        $rows[] = new SettingItem(
+            'showImages',
+            'Pictures',
+            $this->showImages ? 'drawn' : 'named',
+            'Whether a picture in a tool result is drawn, on terminals that can.',
+            values: ['drawn', 'named'],
         );
         $rows[] = new SettingItem(
             'autoCompact',
@@ -2150,6 +2191,7 @@ final class InteractiveMode
             'theme' => $this->useTheme($value),
             'thinking' => $this->useThinkingLevel($value),
             'hideThinking' => $this->useHideThinking($value === 'hidden'),
+            'showImages' => $this->useShowImages($value === 'drawn'),
             'autoCompact' => $this->settings->setCompactionEnabled($value === 'on'),
             'autoRetry' => $this->settings->setRetryEnabled($value === 'on'),
             default => null,
@@ -2464,6 +2506,7 @@ final class InteractiveMode
             function (string $problem) use ($name): void {
                 $this->sayWarning("tool {$name}: {$problem}");
             },
+            showImages: $this->showImages,
         );
         $tool->setExpanded($this->expanded);
         $this->chat->addChild($tool);
