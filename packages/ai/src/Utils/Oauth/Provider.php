@@ -44,16 +44,29 @@ enum Provider: string
     /**
      * Whether pig can actually sign in with this one.
      *
-     * Upstream answers true for all four. Offering one pig cannot finish would be the same
-     * mistake as offering a model whose protocol is not ported — a list entry that fails
-     * after the person has committed to it, rather than one that says so up front.
+     * Offering one pig cannot finish would be the same mistake as offering a model whose
+     * protocol is not ported — a list entry that fails after the person has committed to it,
+     * rather than one that says so up front. `GoogleAntigravity` answered false here until its
+     * flow and its seven models arrived.
+     *
+     * **A table, not a computed answer**, which is upstream's shape: `getOAuthProviders()`
+     * carries `available` as a literal field on each of its four entries and this is that list,
+     * beside `label()` and matching it line for line. `return true` would read as a condition
+     * that cannot be false, which is a claim the code would be making and not keeping; four
+     * lines that each say `true` are a table whose rows currently agree, and a fifth provider
+     * ported halfway has somewhere to say so without anybody inventing a condition for it.
+     *
+     * No `default`, like `refresh()` and `apiKey()`: an enum is closed, so a new case is a
+     * `match` that stops rather than a silent `true`.
      */
     public function available(): bool
     {
-        // All four now. This answered false for `GoogleAntigravity` until its flow and its
-        // seven models arrived; the method stays because the reason it exists has not changed —
-        // a fifth provider ported halfway needs somewhere to say so.
-        return true;
+        return match ($this) {
+            self::Anthropic => true,
+            self::GithubCopilot => true,
+            self::GoogleGeminiCli => true,
+            self::GoogleAntigravity => true,
+        };
     }
 
     /**

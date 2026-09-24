@@ -248,9 +248,10 @@ final class OauthTest extends TestCase
 
     public function testEveryFlowIsOfferedNowThatEveryFlowIsHere(): void
     {
-        // All four. `available()` stays because the reason it exists has not changed: offering a
-        // sign-in that cannot finish is worse than not having it, and a fifth provider ported
-        // halfway needs somewhere to say so. Antigravity was the last one it answered false for.
+        // All four, and `available()` is a table with one row each rather than a `return true` —
+        // upstream's shape, where it is a literal field on each of four entries. Antigravity was
+        // the last row to turn true. A fifth provider would be an unhandled `match`, which is
+        // the point of there being no `default`.
         foreach (Provider::cases() as $provider) {
             $this->assertTrue($provider->available(), $provider->value);
         }

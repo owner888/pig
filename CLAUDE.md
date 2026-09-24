@@ -1011,9 +1011,17 @@ Two more things worth knowing:
   sandbox.
 
 `available()` is true for all four now, so nothing in `/login` is greyed and the "not ported yet"
-label has no case left to describe. The method stays — the reason it exists has not changed, and a
-fifth provider ported halfway needs somewhere to say so — but its false branch is now unreachable
-and therefore untested, in `showSignIns()`, `signIn()` and `Auth::login()`.
+label has no case left to describe. The method stays, **as a table and not as a computed answer**:
+upstream's `getOAuthProviders()` carries `available` as a literal field on each of its four
+entries, so here it is a `match` with one line per provider beside `label()`, matching it line for
+line. `return true` would read as a condition that cannot be false — a claim the code makes and
+does not keep — where four lines that each say `true` are a table whose rows currently agree, and a
+fifth provider ported halfway has somewhere to say so without anybody inventing a condition for
+it. No `default`, so a new case stops the `match` instead of defaulting to available.
+
+Its false branch is unreachable today, and therefore untested, in three places: `showSignIns()`
+greys the row, `signIn()` refuses before spawning, and `Auth::login()` refuses again. That is
+known rather than overlooked.
 
 ### Where the keys live
 
