@@ -911,9 +911,13 @@ final class InteractiveMode
                 return;
             }
 
-            if (str_starts_with($text, '/')) {
+            // A name this session knows, or nothing. Never "starts with a slash", which is
+            // what this used to be and what read a pasted picture's path as a command.
+            $command = $this->commandName($text);
+
+            if ($command !== null) {
                 $this->editor->setText('');
-                $this->command($text);
+                $this->command($text, $command);
 
                 return;
             }
@@ -1130,10 +1134,64 @@ final class InteractiveMode
         ['exit', 'Quit'],
     ];
 
-    private function command(string $text): void
+    /**
+     * The command this line names, or null — in which case it is a message.
+     *
+     * **Exact, against the names that exist.** Not "the line starts with a slash", and not
+     * "the first word looks like a name": pasting a picture writes it to a temp file and puts
+     * the *path* in the editor, so a line beginning with `/` is as likely to be
+     * `/var/folders/…/pig-clipboard-x.png` as it is to be `/compact`. Both looser rules read
+     * that path as a command, reported it as unknown, and swallowed the question typed after
+     * it. Upstream's rule is this one, spelled out eighteen times (`text === "/settings"`); it
+     * is spelled once here because the hooks' and the file commands' names are only known at
+     * runtime.
+     *
+     * What follows from being exact: `/setings` is **not** a command, so it goes to the model
+     * as the text it is. There is no "did you mean" and no error, because deciding that a typo
+     * is a typo means guessing, and guessing is what this method exists to stop doing.
+     */
+    private function commandName(string $text): ?string
     {
-        $name = ltrim(strtok($text, " \t") ?: '', '/');
+        if (!str_starts_with($text, '/')) {
+            return null;
+        }
 
+        $name = strtok(substr($text, 1), " \t") ?: '';
+
+        return $this->knowsCommand($name) ? $name : null;
+    }
+
+    /** Whether anything answers to this name: a built-in, a hook's, or one kept as a file. */
+    private function knowsCommand(string $name): bool
+    {
+        // `quit` is the one alias, and it is in the `match` below rather than in `COMMANDS`
+        // because that list is also what `/help` prints.
+        if ($name === 'quit') {
+            return true;
+        }
+
+        foreach (self::COMMANDS as [$builtIn]) {
+            if ($builtIn === $name) {
+                return true;
+            }
+        }
+
+        if (isset($this->hookCommands[$name])) {
+            return true;
+        }
+
+        foreach ($this->fileCommands as $command) {
+            if ($command->name === $name) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param string $name already resolved by `commandName()`, so this does not parse it again */
+    private function command(string $text, string $name): void
+    {
         match ($name) {
             'help' => $this->say($this->commandHelp()),
             'new' => $this->newSession(),
@@ -1153,8 +1211,9 @@ final class InteractiveMode
             'hooks' => $this->say($this->hookList()),
             'tools' => $this->say($this->toolList()),
             'exit', 'quit' => $this->stop(),
-            // A command from a hook or kept as a file is tried last, so a built-in can
-            // never be shadowed by something someone forgot they wrote.
+            // A hook's or a file's, which is all that is left: `commandName()` only hands
+            // over names something answers to, and the built-ins are above, so a built-in
+            // can never be shadowed by something someone forgot they wrote.
             default => $this->runAddedCommand($text, $name),
         };
     }
@@ -1268,7 +1327,10 @@ final class InteractiveMode
         $expanded = SlashCommands::expand($text, $this->fileCommands);
 
         if ($expanded === null) {
-            $this->sayError("No command called /{$name}. Try /help.");
+            // Unreachable: `commandName()` resolved this name against the same list. Said
+            // rather than thrown, because a session is worth more than a stack trace — and
+            // said as the bug it would be rather than as something the person did wrong.
+            $this->sayError("/{$name} is in the command list but has no prompt behind it.");
 
             return;
         }

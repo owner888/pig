@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Tui\Test;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Tui\Autocomplete\AutocompleteItem;
 use Pig\Tui\Autocomplete\CombinedAutocompleteProvider;
@@ -73,6 +74,19 @@ final class AutocompleteTest extends TestCase
         // The next thing typed after a command is its argument, so the space is there.
         $this->assertSame(['/model '], $completion->lines);
         $this->assertSame(7, $completion->cursorCol);
+    }
+
+    public function testCompletingFromABareSlashKeepsTheSlash(): void
+    {
+        $provider = $this->provider([new SlashCommand('compact')]);
+
+        $completion = $provider->apply(['/'], 0, 1, new AutocompleteItem('compact'), '/');
+
+        // A bare `/` is the prefix every command completion starts from, so it has to count
+        // as naming one. Requiring a non-empty name here — which is tempting, because a
+        // *submitted* `/` names nothing — turned `/` plus a pick into `compact`, with the
+        // slash eaten and no space after it.
+        $this->assertSame(['/compact '], $completion->lines);
     }
 
     public function testACommandCompletesItsOwnArguments(): void
@@ -147,6 +161,18 @@ final class AutocompleteTest extends TestCase
         $this->assertTrue($provider->shouldCompleteFiles(['/model src/'], 0, 11));
     }
 
+    public function testTabCompletesAnAbsolutePathTypedAtTheStartOfTheLine(): void
+    {
+        $provider = $this->provider([new SlashCommand('model')]);
+
+        // "Starts with a slash" also describes a path, so Tab used to refuse to complete one
+        // here while completing the same path fine one space to the right — a difference
+        // nobody could have guessed at. The first word has a second `/` in it, so it is not a
+        // name being typed.
+        $this->assertTrue($provider->shouldCompleteFiles(['/usr/bi'], 0, 7));
+        $this->assertTrue($provider->shouldCompleteFiles(['/var/folders/mk/T/x'], 0, 19));
+    }
+
     public function testAPathCompletionAddsNoTrailingSpace(): void
     {
         $provider = $this->provider();
@@ -204,6 +230,41 @@ final class AutocompleteTest extends TestCase
             // The value replaces what was typed, so it has to read as a continuation of it.
             $this->assertStringStartsWith('~/', $value);
         }
+    }
+
+    // ---- a command name, or a path -----------------------------------------------------
+
+    /**
+     * @return list<array{0: string, 1: bool, 2: string}>
+     */
+    public static function lines(): array
+    {
+        return [
+            ['/compact', true, 'a name'],
+            ['/mod', true, 'half of one, which is when completion matters most'],
+            ['/', true, 'the start of one — the prefix every command completion begins at'],
+            ['/setings', true, 'a name nothing answers to is still being typed as a name'],
+
+            ['/var/folders/mk/T/pig-clipboard-bf66.png', false, 'what pasting a picture leaves'],
+            ['/Users/kaka/Development/owner/pig', false, 'any absolute path'],
+            ['/usr/bin', false, 'two segments is enough'],
+            ['hello', false, 'no slash at all'],
+        ];
+    }
+
+    /**
+     * Tab means "complete a command" or "complete a path", and a second `/` in the first word
+     * is what decides. Driven through `apply()` rather than the predicate, which is private:
+     * a command name gets its slash and a trailing space, a path gets neither.
+     */
+    #[DataProvider('lines')]
+    public function testACommandNameIsToldFromAPathWhileTyping(string $line, bool $isName, string $why): void
+    {
+        $provider = $this->provider([new SlashCommand('compact')]);
+
+        $completion = $provider->apply([$line], 0, strlen($line), new AutocompleteItem('compact'), $line);
+
+        $this->assertSame($isName ? '/compact ' : 'compact', $completion->lines[0], $why);
     }
 
     #[\Override]

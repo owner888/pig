@@ -355,15 +355,53 @@ final class InteractiveModeTest extends TestCase
 
     // ---- commands ------------------------------------------------------------------------
 
-    public function testAnUnknownCommandSaysSoRatherThanBeingSent(): void
+    public function testALineThatNamesNoCommandIsSentAsTheTextItIs(): void
     {
-        $this->start();
+        $this->start(['ok']);
 
         $this->type('/nonsense');
         $this->type(self::ENTER);
+        $this->settle();
 
-        $this->assertStringContainsString('Error: No command called /nonsense', $this->screen());
-        $this->assertSame([], $this->session->messages());
+        // Upstream's rule, and the one pig follows: a command is a name something answers
+        // to, matched exactly. Everything else is a message — including a typo, because
+        // deciding that `/setings` *meant* `/settings` is a guess, and guessing is what read
+        // a pasted picture's path as a command in the first place.
+        $this->assertStringNotContainsString('No command called', $this->screen());
+        $this->assertSame(2, count($this->session->messages()), 'sent, and answered');
+    }
+
+    public function testAPastedPathIsAMessageAndNotABadCommand(): void
+    {
+        $this->start(['ok']);
+
+        // What pasting a picture leaves in the editor: `ClipboardFile` writes it to a temp
+        // file and puts the path in, so the line begins with a slash.
+        $this->type('/var/folders/mk/T/pig-clipboard-bf66.png what changed here?');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        // It used to be read as a command — "No command called /var/folders/…" — and the
+        // question after it was swallowed along with the path.
+        $this->assertStringNotContainsString('No command called', $screen);
+        $this->assertStringContainsString('what changed here?', $screen, 'the whole line, not just the path');
+        $this->assertStringContainsString('ok', $screen, 'and the model answered it');
+    }
+
+    public function testANearMissIsNotTreatedAsTheCommandItResembles(): void
+    {
+        $this->start(['ok']);
+
+        $this->type('/setings');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // The thing that must not happen is `/settings` opening. Matching is exact, so a
+        // near miss is text, and it reaches the model as text.
+        $this->assertStringNotContainsString('esc when done', $this->screen(), 'no settings screen');
+        $this->assertStringContainsString('/setings', $this->screen());
     }
 
     public function testHelpListsTheKeysAndTheCommands(): void
@@ -959,15 +997,20 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringNotContainsString('send me instead', $this->screen());
     }
 
-    public function testAnUnknownCommandIsStillUnknownWhenThereAreFileCommands(): void
+    public function testAFileCommandsNameIsMatchedExactlyLikeAnyOther(): void
     {
-        $this->start(fileCommands: [new FileCommand('review', 'd', 'x', '(user)')]);
+        $this->start(['ok'], fileCommands: [new FileCommand('review', 'd', 'the stored prompt', '(user)')]);
 
-        $this->type('/nonsense');
+        // One character off the name of a command that does exist, which is the case the
+        // exact match is for: it is not `/review`, so it is not expanded into the prompt.
+        $this->type('/reviews');
         $this->type(self::ENTER);
         $this->settle();
 
-        $this->assertStringContainsString('Error: No command called /nonsense', $this->screen());
+        $screen = $this->screen();
+
+        $this->assertStringNotContainsString('the stored prompt', $screen);
+        $this->assertStringContainsString('/reviews', $screen);
     }
 
     // ---- copying ----------------------------------------------------------------------------

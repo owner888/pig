@@ -76,8 +76,16 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
     /**
      * Whether Tab here means "complete a path".
      *
-     * It does not while a bare `/command` is being typed — there Tab belongs to the
-     * command list, and a path completion would replace the command with a file.
+     * It does not while a command's **name** is being typed — there Tab belongs to the command
+     * list, and a path completion would replace the command with a file. Two things have to be
+     * true for that: the cursor is still in the first word, and that word could still become a
+     * name. Past the first space Tab is a path again, which is what `/export ~/out.html` and
+     * `/compact src/Parser.php` need.
+     *
+     * The second half was missing, and it was the same mistake as everywhere else this rule
+     * got spelled by hand: "starts with a slash" also describes `/var/folders/…/x.png`, so Tab
+     * refused to complete an absolute path typed at the start of a line. With a space in front
+     * of it — `read /var/fol` — it worked, which is a difference nobody could have guessed at.
      *
      * @param list<string> $lines
      */
@@ -85,7 +93,7 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
     {
         $trimmed = trim(substr($lines[$cursorLine] ?? '', 0, $cursorCol));
 
-        return !(str_starts_with($trimmed, '/') && !str_contains($trimmed, ' '));
+        return str_contains($trimmed, ' ') || !self::couldBeACommandName($trimmed);
     }
 
     #[\Override]
@@ -117,10 +125,38 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
         );
     }
 
+    /**
+     * Whether what has been typed so far could still become a command name.
+     *
+     * `/` at the start and **no second `/` in the first word**, which is the one thing that
+     * tells `/compact` from `/var/folders/…/pig-clipboard-x.png`. It is a question about
+     * *typing*, not about dispatch: a bare `/` counts, because that is the prefix every
+     * command completion starts from, and so does a half-typed `/mod`.
+     *
+     * Which is why `InteractiveMode` does not use it and must not. Deciding that a submitted
+     * line *is* a command is an exact match against the names that exist — this rule would
+     * say yes to `/setings`, and a rule that says yes to a name nothing answers to is the
+     * guess that read a pasted path as a command.
+     */
+    private static function couldBeACommandName(string $text): bool
+    {
+        $trimmed = ltrim($text);
+
+        if (!str_starts_with($trimmed, '/')) {
+            return false;
+        }
+
+        // A bare `/` counts: it is the start of a name, which is what the list is for. The
+        // requirement is only that the first word have no `/` of its own.
+        $name = strtok(substr($trimmed, 1), " \t\n") ?: '';
+
+        return !str_contains($name, '/');
+    }
+
     /** A `/name` at the start of the line, with no path separator inside it. */
     private static function isCommandName(string $before, string $prefix): bool
     {
-        return str_starts_with($prefix, '/') && trim($before) === '' && !str_contains(substr($prefix, 1), '/');
+        return trim($before) === '' && self::couldBeACommandName($prefix);
     }
 
     private function slashSuggestions(string $before): ?Suggestions

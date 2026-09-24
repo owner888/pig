@@ -1961,6 +1961,70 @@ Regression tests: `TuiTest::testTheCursorEndsUpAtTheFocusedComponentsCaret`,
 `EditorTest::testTheCaretIsMeasuredInColumnsNotCharacters`, and the five
 `InputTest::testTheCaret…` cases.
 
+### A line starting with `/` is not a command, and neither is one that merely looks like a name
+
+Reported from a real session, and the screen said the whole story:
+
+```
+Error: No command called /var/folders/mk/…/T/pig-clipboard-bf6615a630ccc5f2.png. Try /help.
+```
+
+Pasting a picture at the prompt writes it to a temp file and puts **the path** in the editor —
+that is `Clipboard\ClipboardFile`, and it is deliberate, because a path works with every tool
+that already takes one. So the line the person sends begins with `/`, and the submit handler
+tested exactly that: `str_starts_with($text, '/')` → treat as a command. The path was reported
+as an unknown command, and **the question typed after it was swallowed with it** — the model
+never saw either half.
+
+**The first fix was still a guess, and that was the real lesson.** It borrowed the
+autocomplete's rule — a `/` at the start with no second `/` in the first word — which does tell
+a path from a name, and kept pig's "No command called /setings" for the typo case. But "looks
+like a name" is not "is a name": it is a second, looser notion of what a command is, living
+beside the real one, which is the shape of the original bug rather than a fix for it.
+
+So dispatch is **exact, against the names that exist** — `COMMANDS`, the hooks' registered
+commands, and the ones kept as files, matched on the first word. `InteractiveMode::commandName()`
+answers with a name or null, and null means the line is a message. Upstream's rule, which it
+spells eighteen times (`text === "/settings"`); once here, because the hook and file names are
+only known at runtime.
+
+What follows, and is the price: **`/setings` goes to the model as text.** There is no error and
+no "did you mean", because deciding a typo is a typo means guessing at what somebody meant, and
+that is the thing being removed. `/nonsense` is a message too.
+
+**The same rule was spelled by hand in three places**, and each hand-spelling was wrong in its
+own way:
+
+| Where | Question it is really asking | Was |
+|---|---|---|
+| the submit handler | is this line a command? | `str_starts_with($text, '/')` → read a path as one |
+| `apply()` | should the completion insert `/name ` or a path? | right already — `couldBeACommandName()` |
+| `shouldCompleteFiles()` | does Tab mean "complete a path"? | `starts with / and has no space` → **would not complete an absolute path typed at the start of a line**, while completing the same path fine one space to the right |
+
+The third was found by asking the other two's question of it, and it is fixed the same way:
+Tab belongs to the command list only while the cursor is still in the first word *and* that word
+could still become a name. Past the first space Tab is a path again, which is what
+`/export ~/out.html` needs.
+
+**Two callers, two questions.** `couldBeACommandName()` is about *typing* and is private to the
+autocomplete: a bare `/` counts, and so does a half-typed `/mod`, because that is what a
+completion list is for. Dispatch is about *a finished line* and is exact. Sharing one predicate
+between them is what made the first fix wrong, and there is a smaller version of the same trap
+inside the autocomplete: requiring the name to be non-empty — correct for a submitted `/`, which
+names nothing — silently broke command completion, because a bare `/` is the prefix every
+command completion starts from, so picking `compact` off the list inserted `compact` with the
+slash eaten. **A predicate two callers share is answering two questions, and the stricter caller
+does not get to tighten it for the other.**
+
+Regression tests: `InteractiveModeTest::testAPastedPathIsAMessageAndNotABadCommand`,
+`testALineThatNamesNoCommandIsSentAsTheTextItIs`,
+`testANearMissIsNotTreatedAsTheCommandItResembles`,
+`testAFileCommandsNameIsMatchedExactlyLikeAnyOther`; and in `AutocompleteTest`, the eight
+`testACommandNameIsToldFromAPathWhileTyping` rows,
+`testTabCompletesAnAbsolutePathTypedAtTheStartOfTheLine`, and
+`testCompletingFromABareSlashKeepsTheSlash` — the last being the one that fails if the
+non-empty check goes back in.
+
 ### Whatever holds the focus must be in a container only its own opener clears
 
 Found by being asked the right question about a field I had just deleted. `InteractiveMode` had
