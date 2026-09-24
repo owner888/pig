@@ -29,6 +29,7 @@ use Pig\CodingAgent\Cli\ModelList;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Cli\SessionPicker;
 use Pig\CodingAgent\CodingAgent;
+use Pig\CodingAgent\CustomModels;
 use Pig\CodingAgent\CustomTools\CustomToolApi;
 use Pig\CodingAgent\CustomTools\CustomToolLoader;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
@@ -144,12 +145,6 @@ if (!$interactive && $messages === [] && $fileArgs === []) {
     exit(1);
 }
 
-if (isset($options['models'])) {
-    echo ModelList::render($options['models']), "\n";
-
-    exit(0);
-}
-
 // The order everywhere below: what was typed, then the environment, then what was chosen
 // last time, then the built-in default.
 $settings = isset($options['no-save']) ? Settings::inMemory() : Settings::load($cwd);
@@ -170,6 +165,30 @@ foreach ($auth->problems() as $problem) {
 }
 
 Timings::mark('credentials');
+
+// Before the model is resolved, because `--model my-box/qwen3-coder` has to be able to find
+// one of these. `--no-save` gets none of it: that flag means this run touches nothing of the
+// person's, and a declared provider is one more thing read off their disk.
+$custom = isset($options['no-save']) ? CustomModels::none() : CustomModels::discover();
+$custom->install($auth);
+
+foreach ($custom->problems as $problem) {
+    // Named and carried on, like a settings file that is not JSON: the built-in models are
+    // still there and the session still starts. A bad line loses only itself.
+    fwrite(STDERR, Style::yellow("models.json: {$problem}\n"));
+}
+
+Timings::mark('customModels');
+
+// After the declared providers, not before: a listing that cannot show the model somebody
+// just added to `models.json` is a listing they will not trust about the rest either. It
+// costs a settings read and a file read to get here, which nobody notices on a command that
+// prints and exits.
+if (isset($options['models'])) {
+    echo ModelList::render($options['models']), "\n";
+
+    exit(0);
+}
 
 $wanted = $options['model'] ?? (getenv('PIG_MODEL') ?: ($settings->defaultModel() ?? 'claude-sonnet-4-5'));
 $choice = ModelResolver::parse($wanted);

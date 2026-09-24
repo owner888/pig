@@ -1017,8 +1017,12 @@ deliver the keystrokes. Same reason `send()` and `startCompaction()` spawn.
 a stored sign-in is still the way in, and a token renewed during the run has to be kept or the
 next run begins by renewing one that was already replaced.
 
-Not ported from `auth-storage.ts`: `setFallbackResolver`, which resolves keys for custom
-providers declared in a `models.json` pig does not have.
+`setFallbackResolver` is here as `setCustomProviderKeys()`, narrowed: upstream takes a closure
+and the one thing the closure ever did was look a provider up in a map, so pig takes the map.
+The indirection bought a second place to look when a key does not resolve. It sits **after** the
+stored answers and **before** `Stream::envApiKey()`, which is the only order that works —
+`envApiKey()` has a fixed table of variable names and answers null for a provider it has never
+heard of, which is every provider this is for.
 
 `setRuntimeApiKey` has its caller now: **`--api-key <key>`**, for this run and this provider
 only, never written to `auth.json`. Three things about it, the first two being differences from
@@ -1044,6 +1048,60 @@ one won depended on which door you came in by. Its `default => strtoupper($provi
 a name a shell can even export. `create()` now passes a null key straight through and `Stream`
 is the only thing that reads the environment. `examples/agent.php` is the one caller affected,
 and the change is that it gains upstream's precedence.
+
+### Somebody else's endpoint, declared in a file
+
+`CustomModels` is upstream's `core/model-registry.ts` — the half of it that reads `models.json`.
+The other half was already here under other names (`Ai\Models`, `Auth`, `ModelResolver`), which
+is exactly how this one stayed invisible long enough to be the fourth thing the left-out table
+got wrong.
+
+`~/.pig/models.json`, or pi's `~/.pi/agent/models.json` when pig has none — a fallback rather
+than a merge, because one file is what upstream has and somebody who already told pi about
+their box should not have to say it twice. Neither is ever written to. `--no-save` reads
+neither: that flag means the run touches nothing of the person's.
+
+Every key is upstream's, so a file written for pi works here unchanged:
+
+```json
+{ "providers": { "my-box": {
+  "baseUrl": "http://192.168.1.9:8080/v1", "apiKey": "MY_BOX_KEY",
+  "api": "openai-completions", "authHeader": true, "headers": { "X-Tenant": "kaka" },
+  "models": [{ "id": "qwen3-coder", "name": "Qwen3 Coder", "reasoning": false,
+               "input": ["text"], "contextWindow": 262144, "maxTokens": 32768 }] } } }
+```
+
+Five things decided here:
+
+- **`apiKey` names an environment variable before it is a key.** Upstream's
+  `resolveApiKeyConfig`, and it earns its keep: this is the one config file in pig whose
+  natural contents are a credential, and a file in a repository is a credential in a
+  repository. `authHeader: true` resolves it before putting it in `Authorization: Bearer …`,
+  because a proxy handed the literal string `MY_BOX_KEY` answers 401 and explains nothing.
+- **A built-in always wins a collision.** The table and `find()` are both keyed `provider/id`,
+  so `Models::register()` fills gaps rather than overwriting — a config file able to quietly
+  redefine a shipped model is a bug report nobody could read. A provider with a name of its own
+  collides with nothing, which is the normal case.
+- **`Models::register()` is static, because `Models` is.** Upstream threads a `ModelRegistry`
+  instance through everything; here `--model`, `/model`, restoring a session and `RpcMode` all
+  ask `Models` by id, and a model only some of them could see is a model that works until you
+  save the conversation. The price is `forgetRegistered()`, which every test that registers has
+  to call.
+- **Nothing throws and nothing is all-or-nothing.** A bad line loses only itself: the good
+  models in the same file still load, the built-ins are untouched, pig still starts, and every
+  problem names the file, the provider and the model. That is `Settings`' rule — a file that is
+  not JSON is named, not ignored — applied to a file with far more ways to be wrong. There is no
+  AJV and no TypeBox; the checks are written out, which is `Agent\ToolArguments`' trade again.
+- **No `compat` block means null**, so `OpenAiCompat::detect()` still works it out from the URL.
+  That is a better default than any set of flags: a local llama.cpp gets what it needs with
+  nothing written. A block uses upstream's four key names (`supportsStore`,
+  `supportsDeveloperRole`, `supportsReasoningEffort`, `maxTokensField`) so files stay portable,
+  and pig's four extra flags are accepted too — a file using those is a pig file, which is the
+  trade and it is stated.
+
+`--models` moved to **after** this loads, which it had to: a listing that cannot show the model
+somebody just declared is a listing they will not trust about the rest either. It costs a
+settings read on a command that prints and exits.
 
 `Hooks\` is upstream's `core/hooks/`, all of it. A hook is a PHP file in `~/.pig/hooks` or
 `.pig/hooks` that returns a callable; the callable is handed a `HookApi` and registers what
@@ -1634,7 +1692,6 @@ What is left unported, across every package, each for a reason:
 |---|---|
 | `ai/utils/oauth/google-antigravity.ts` | Anthropic's, Copilot's and Gemini CLI's sign-ins are all ported, with storage, `/login` and their models. Antigravity speaks Code Assist's protocol, which *is* ported now — what it needs is its own loopback flow (a different client, a sandbox endpoint and its own headers) and its seven models |
 | seventeen of the twenty-five selector components | the interactive mode needs eight; `/model`, `/resume`, `/tree`, `/login` and `/logout` are the same `SelectList` in the same place instead, and `settings-selector.ts` is `showSettings()` plus `Interactive\SettingsSubmenu` |
-| the `models.json` half of `coding-agent/core/model-registry.ts` (~180 of 315) | custom providers declared in a file: a schema, an `authHeader` that turns a resolved key into `Authorization: Bearer`, and a `models.json error:` surface. The built-in registry, key resolution and lookup are all here (`Ai\Models`, `Auth`, `ModelResolver`); what is missing is somebody else's endpoint being addable without a release. **This row was the fourth time the table was wrong**, in the first way again — simply never listed |
 | `tui/components/bordered-loader.ts` (41), `dynamic-border.ts` (25) | chrome: a loader with a rule around it and an `esc cancel` hint, and the rule itself. `CancellableLoader` is the substance and is ported; `TerminalUi::open()` draws a title and the component with no rules around them |
 | `components/queue-mode-selector.ts` (56) | a picker for `all` vs `one-at-a-time`. `QueueMode` works and is fixed when the agent is built; a row in `/settings` would need a setter invented for it, which `showSettings()` says in full |
 | `agent/proxy.ts` (340) | a stream function that routes LLM calls through somebody's server, so the server holds the keys. pig talks to providers directly; this arrives if something ever wants a proxy |
@@ -1663,8 +1720,8 @@ is `lines.slice(0, maxLines)` — logical and head-first, which is exactly what
 halves.
 
 The fourth was the first kind again — `model-registry.ts`'s `models.json` half simply never
-listed — and it is the one that shows what the sweep is actually for. The file *has* a
-counterpart: the built-in registry, key resolution and lookup are all in pig. Reading the row
+listed, and now ported rather than listed — and it is the one that shows what the sweep is
+actually for. The file *has* a counterpart: the built-in registry, key resolution and lookup are all in pig. Reading the row
 "`model-registry.ts` → `Ai\Models` + `ModelResolver`" and stopping there is how 180 lines of it
 stayed invisible. **A name with a counterpart is not a file that is ported; it is a file worth
 reading to the end.**

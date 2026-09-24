@@ -52,6 +52,9 @@ final class Auth
     /** @var array<string, string> keys given on the command line, which are never written down */
     private array $runtime = [];
 
+    /** @var array<string, string> what a `models.json` provider's `apiKey` said — see `setCustomProviderKeys()` */
+    private array $customKeys = [];
+
     /** @var list<string> what could not be read, for the caller to complain about */
     private array $problems = [];
 
@@ -258,7 +261,31 @@ final class Auth
             return $named->apiKey($this->fresh($named, $credentials));
         }
 
+        // A provider nothing here has heard of — declared in `models.json` — after the
+        // stored answers and before the environment's table, because `Stream::envApiKey()`
+        // knows nothing about it and would answer null for every one of them.
+        if (isset($this->customKeys[$provider])) {
+            return CustomModels::resolve($this->customKeys[$provider]);
+        }
+
         return Stream::envApiKey($provider);
+    }
+
+    /**
+     * What a `models.json` provider said its key is, by provider name.
+     *
+     * Upstream's `setFallbackResolver`, narrowed to the one thing it was used for. A closure
+     * would be upstream's shape; a map is what the only caller has, and the indirection bought
+     * nothing but a second place to look when a key does not resolve.
+     *
+     * The value is a variable name before it is a key — `CustomModels::resolve()` is what
+     * decides, and it looks at the environment first so the file can stay free of secrets.
+     *
+     * @param array<string, string> $keys
+     */
+    public function setCustomProviderKeys(array $keys): void
+    {
+        $this->customKeys = [...$this->customKeys, ...$keys];
     }
 
     /**

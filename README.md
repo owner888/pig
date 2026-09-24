@@ -111,6 +111,26 @@ conversation outgrew the model's window is a different thing and is treated as o
 summarised first, then sent again, because the same request would be exactly as long in four
 seconds. `retry.enabled: false` in the settings turns the first off.
 
+A provider pig has never heard of goes in `~/.pig/models.json` — your own box, a proxy, a
+local server — and its models then work everywhere a built-in one does, including `--model`,
+`/model` and `--models`:
+
+```json
+{ "providers": { "my-box": {
+  "baseUrl": "http://192.168.1.9:8080/v1", "apiKey": "MY_BOX_KEY",
+  "api": "openai-completions",
+  "models": [{ "id": "qwen3-coder", "name": "Qwen3 Coder", "reasoning": false,
+               "input": ["text"], "contextWindow": 262144, "maxTokens": 32768 }] } } }
+```
+
+`apiKey` is the **name of an environment variable** if one answers to it, so the key itself
+need not be in the file. `api` is one of `openai-completions`, `openai-responses`,
+`anthropic-messages` or `google-generative-ai`, and can be set on the provider or per model;
+`authHeader: true` sends the key as `Authorization: Bearer …` for a proxy that wants it there.
+Anything wrong with the file is printed and skipped — the rest of it, and every built-in
+model, still work. It is pi's format, and pi's own `~/.pi/agent/models.json` is read when pig
+has none.
+
 Settings live in `~/.pig/settings.json`, and a project can override them in
 `.pig/settings.json`. The theme, model and thinking level you pick are remembered.
 `/settings` shows what can be changed from inside a session — theme, thinking, whether

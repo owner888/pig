@@ -94,6 +94,24 @@ label entry，所以在哪边起的名字另一边都看得见。
 最多三次，屏幕上写着服务端说了什么、还剩几秒、按 esc 停。因为对话超出模型上下文窗口而失败是另一回事，
 也按另一回事处理：先总结再重发，因为同样那个请求四秒后一样长。设置里 `retry.enabled: false` 关掉前者。
 
+pig 不认识的 provider 写在 `~/.pig/models.json` 里——自己的机器、代理、本地服务——之后它的模型
+在所有用得到内置模型的地方都能用，`--model`、`/model`、`--models` 都算：
+
+```json
+{ "providers": { "my-box": {
+  "baseUrl": "http://192.168.1.9:8080/v1", "apiKey": "MY_BOX_KEY",
+  "api": "openai-completions",
+  "models": [{ "id": "qwen3-coder", "name": "Qwen3 Coder", "reasoning": false,
+               "input": ["text"], "contextWindow": 262144, "maxTokens": 32768 }] } } }
+```
+
+`apiKey` 如果有同名环境变量，那它就是**变量名**，key 本身不用写进文件。`api` 是
+`openai-completions`、`openai-responses`、`anthropic-messages`、`google-generative-ai` 之一，
+写在 provider 上或每个模型上都行；`authHeader: true` 会把 key 以 `Authorization: Bearer …`
+发出去，给需要这样的代理用。文件里有问题的地方会打印出来然后跳过——同一个文件里没问题的部分、
+以及所有内置模型，照常可用。格式就是 pi 的，pig 自己没有这个文件时会读 pi 的
+`~/.pi/agent/models.json`。
+
 设置放在 `~/.pig/settings.json`，项目可以用 `.pig/settings.json` 覆盖。主题、模型、思考档位选过一次
 就记住了。`/settings` 把会话里能改的都列出来——主题、思考档位、要不要画出思考过程、要不要画出图片、
 自动压缩、自动重试——每一项后面写着现在是什么。回车改光标那一行，列表不关；改完按 esc。

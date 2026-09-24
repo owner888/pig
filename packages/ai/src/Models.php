@@ -345,6 +345,43 @@ final class Models
     private static ?array $models = null;
 
     /**
+     * @var list<Model> declared somewhere else and handed over — see `register()`
+     */
+    private static array $registered = [];
+
+    /**
+     * Add models the table does not know about.
+     *
+     * For `models.json`: somebody's own endpoint, or a local server, declared in a file rather
+     * than waiting for a release. `CodingAgent\CustomModels` is what reads that file; this end
+     * knows nothing about files and only takes finished `Model` objects.
+     *
+     * **They go in at the end, so a built-in always wins a collision.** Both `find()` and the
+     * table are keyed `provider/id`, so a file declaring `anthropic/claude-sonnet-4-5` would
+     * otherwise quietly replace the real one — a config file being able to redefine a shipped
+     * model is a bug report nobody could read. A custom provider with a name of its own
+     * collides with nothing and is the normal case.
+     *
+     * Static because `Models` is: everything downstream — `--model`, `/model`, restoring a
+     * session, `RpcMode` — asks this class by id, and a model that only some of them could see
+     * would be a model that works until you save the conversation.
+     *
+     * @param list<Model> $models
+     */
+    public static function register(array $models): void
+    {
+        self::$registered = [...self::$registered, ...$models];
+        self::$models = null;
+    }
+
+    /** Forget what `register()` added. For tests, which must not leak models into each other. */
+    public static function forgetRegistered(): void
+    {
+        self::$registered = [];
+        self::$models = null;
+    }
+
+    /**
      * One model by id, or null when there is no such model.
      *
      * Ids were unique across the providers here until Copilot's table landed; it serves
@@ -538,6 +575,11 @@ final class Models
                 ['text', 'image'],
                 new Pricing(),
             );
+        }
+
+        // Last, and only where nothing is already: see `register()`. A built-in wins.
+        foreach (self::$registered as $model) {
+            $models[$model->provider . '/' . $model->id] ??= $model;
         }
 
         return self::$models = $models;
