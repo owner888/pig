@@ -213,4 +213,26 @@ final class ArgumentsTest extends TestCase
         $this->assertFalse($parsed->isKnownMode());
         $this->assertSame('interactive', $parsed->mode(), 'as it was written, so the error can quote it');
     }
+
+    // ---- the key ------------------------------------------------------------------------
+
+    public function testTheApiKeyFlagTakesItsValueAndNotTheMessage(): void
+    {
+        $parsed = $this->parse('--api-key', 'sk-ant-abc', 'fix the bug');
+
+        // The reason `api-key` had to be added to `TAKES_A_VALUE` rather than left to the
+        // general rule: a key is exactly the kind of thing that does not start with a dash.
+        $this->assertSame('sk-ant-abc', $parsed->value('api-key'));
+        $this->assertSame(['fix the bug'], $parsed->messages);
+    }
+
+    public function testTheApiKeyFlagWithNothingAfterItIsPresentAndEmpty(): void
+    {
+        $parsed = $this->parse('--api-key');
+
+        // Present-but-empty rather than absent, because `bin/pig` refuses it by name — an
+        // empty runtime key would beat the environment and then fail as a missing one.
+        $this->assertTrue($parsed->has('api-key'));
+        $this->assertSame('', $parsed->value('api-key'));
+    }
 }

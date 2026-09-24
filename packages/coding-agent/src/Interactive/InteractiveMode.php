@@ -71,6 +71,8 @@ use Pig\Tui\Components\EditorTheme;
 use Pig\Tui\Components\Loader;
 use Pig\Tui\Components\SelectItem;
 use Pig\Tui\Components\SelectList;
+use Pig\Tui\Components\SettingItem;
+use Pig\Tui\Components\SettingsList;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
 use Pig\Tui\Components\TruncatedText;
@@ -576,17 +578,28 @@ final class InteractiveMode
         });
 
         $this->editor->on('ctrl+t', function (): void {
-            $this->hideThinking = !$this->hideThinking;
-            $this->settings->setHideThinking($this->hideThinking);
-
-            foreach ($this->chat->children() as $child) {
-                if ($child instanceof AssistantMessageComponent) {
-                    $child->setHideThinking($this->hideThinking);
-                }
-            }
-
+            $this->useHideThinking(!$this->hideThinking);
             $this->say($this->hideThinking ? 'Thinking hidden' : 'Thinking shown');
         });
+    }
+
+    /**
+     * Show or hide thinking, everywhere it is already drawn as well as from here on.
+     *
+     * Split out of the ctrl+t handler so `/settings` sets the same thing the same way —
+     * two places writing the setting and only one of them telling the components on
+     * screen is how a toggle comes to half work.
+     */
+    private function useHideThinking(bool $hide): void
+    {
+        $this->hideThinking = $hide;
+        $this->settings->setHideThinking($hide);
+
+        foreach ($this->chat->children() as $child) {
+            if ($child instanceof AssistantMessageComponent) {
+                $child->setHideThinking($hide);
+            }
+        }
     }
 
     /**
@@ -1050,6 +1063,7 @@ final class InteractiveMode
         ['login', 'Sign in with a subscription instead of an API key'],
         ['logout', 'Forget a sign-in'],
         ['theme', 'Switch between dark and light'],
+        ['settings', 'Change what is switchable, and see what it is set to'],
         ['hooks', 'What hooks loaded, and what they added'],
         ['tools', 'What the model can call, built-in and loaded'],
         ['exit', 'Quit'],
@@ -1074,6 +1088,7 @@ final class InteractiveMode
             'login' => $this->showSignIns('login'),
             'logout' => $this->showSignIns('logout'),
             'theme' => $this->switchTheme(),
+            'settings' => $this->showSettings(),
             'hooks' => $this->say($this->hookList()),
             'tools' => $this->say($this->toolList()),
             'exit', 'quit' => $this->stop(),
@@ -1996,8 +2011,168 @@ final class InteractiveMode
 
     private function switchTheme(): void
     {
-        $this->theme = $this->theme === 'dark' ? 'light' : 'dark';
-        $wanted = $this->theme;
+        $this->useTheme($this->theme === 'dark' ? 'light' : 'dark');
+    }
+
+    /**
+     * `/settings` — everything that can be changed from inside a session, in one screen.
+     *
+     * **Only things that take effect.** The list is deliberately shorter than upstream's:
+     * every row here is read again after it is changed, so pressing Enter on it does
+     * something. `terminal.showImages` is a setting pig stores and nothing reads, so it is
+     * not offered — a row that saves a value nobody looks at is a screen that lies. Queue
+     * mode is not offered either: it is fixed when the agent is built and there is no
+     * setter to reach, so offering it would mean inventing one for a screen.
+     *
+     * Escape closes it. There is no cancel, because each change has already happened by
+     * then — the same as upstream, and the same as every other toggle here.
+     */
+    private function showSettings(): void
+    {
+        $levels = $this->session->availableThinkingLevels();
+        $rows = [
+            new SettingItem(
+                'theme',
+                'Theme',
+                $this->theme,
+                'Already-drawn output keeps the colours it was drawn with.',
+                values: ['dark', 'light'],
+            ),
+        ];
+
+        // Only when the model can think at all: on a model that cannot, the level is
+        // forced off and a row offering six of them would be six ways to change nothing.
+        if ($levels !== []) {
+            $rows[] = new SettingItem(
+                'thinking',
+                'Thinking',
+                $this->session->thinkingLevel()->value,
+                'How hard the model works before it answers. Costs tokens.',
+                submenu: fn (string $current, Closure $done): Component
+                    => $this->thinkingSubmenu($levels, $current, $done),
+            );
+        }
+
+        $rows[] = new SettingItem(
+            'hideThinking',
+            'Thinking blocks',
+            $this->hideThinking ? 'hidden' : 'shown',
+            'Whether reasoning is drawn in the transcript. ctrl+t does this too.',
+            values: ['shown', 'hidden'],
+        );
+        $rows[] = new SettingItem(
+            'autoCompact',
+            'Auto-compact',
+            $this->settings->compactionEnabled() ? 'on' : 'off',
+            'Summarise the conversation when the context window is nearly full.',
+            values: ['on', 'off'],
+        );
+        $rows[] = new SettingItem(
+            'autoRetry',
+            'Auto-retry',
+            $this->settings->retryEnabled() ? 'on' : 'off',
+            'Wait out a provider that is briefly busy instead of losing the turn.',
+            values: ['on', 'off'],
+        );
+
+        $list = new SettingsList($rows, 8, $this->palette->settingsListTheme());
+        $list->setChangeHandler(function (string $id, string $value) use ($list): void {
+            $this->applySetting($id, $value);
+
+            // The theme is the one that changes how this very screen is painted, and the
+            // list holds the old palette's closures. Redrawing it from here would mean
+            // rebuilding it mid-keystroke, so the new colours arrive the next time it is
+            // opened — which is what `/theme` already says about the transcript.
+            $list->setValue($id, $value);
+        });
+        $list->setCloseHandler($this->closePicker(...));
+
+        $this->status->clear();
+        $this->status->addChild(new Spacer(1));
+        $this->status->addChild(new Text($this->palette->fg('muted', 'Settings — enter to change, esc when done'), 1, 0));
+        $this->status->addChild($list);
+
+        $this->tui->setFocus($list);
+        $this->tui->requestRender();
+    }
+
+    /**
+     * The thinking row's submenu: the levels this model offers, with what each one costs.
+     *
+     * A `SelectList`, which is what a submenu being "any component" is for — six options
+     * with an explanation each is a list, not something to press Enter through.
+     *
+     * @param list<ThinkingLevel>     $levels
+     * @param Closure(?string): void  $done   the chosen level, or null for escape
+     */
+    private function thinkingSubmenu(array $levels, string $current, Closure $done): Component
+    {
+        $descriptions = [
+            'off' => 'No reasoning',
+            'minimal' => 'Very brief reasoning (~1k tokens)',
+            'low' => 'Light reasoning (~2k tokens)',
+            'medium' => 'Moderate reasoning (~8k tokens)',
+            'high' => 'Deep reasoning (~16k tokens)',
+            'xhigh' => 'Maximum reasoning (~32k tokens)',
+        ];
+
+        $items = [];
+        $at = 0;
+
+        foreach ($levels as $index => $level) {
+            $items[] = new SelectItem($level->value, $level->value, $descriptions[$level->value] ?? null);
+
+            if ($level->value === $current) {
+                $at = $index;
+            }
+        }
+
+        $list = new SelectList($items, count($items), $this->palette->selectListTheme());
+        $list->setSelectedIndex($at);
+        $list->setSelectHandler(static function (SelectItem $item) use ($done): void {
+            $done($item->value);
+        });
+        $list->setCancelHandler(static function () use ($done): void {
+            $done(null);
+        });
+
+        return new SettingsSubmenu(
+            $list,
+            $this->palette->fg('accent', 'Thinking'),
+            $this->palette->fg('muted', '  Enter to select · Esc to go back'),
+        );
+    }
+
+    /** One row of `/settings`, applied. Unknown ids are impossible: this list built them. */
+    private function applySetting(string $id, string $value): void
+    {
+        match ($id) {
+            'theme' => $this->useTheme($value),
+            'thinking' => $this->useThinkingLevel($value),
+            'hideThinking' => $this->useHideThinking($value === 'hidden'),
+            'autoCompact' => $this->settings->setCompactionEnabled($value === 'on'),
+            'autoRetry' => $this->settings->setRetryEnabled($value === 'on'),
+            default => null,
+        };
+    }
+
+    private function useThinkingLevel(string $value): void
+    {
+        $level = ThinkingLevel::tryFrom($value);
+
+        if ($level === null) {
+            return;
+        }
+
+        $this->session->setThinkingLevel($level);
+        $this->settings->setDefaultThinkingLevel($level);
+        $this->footer->invalidate();
+    }
+
+    /** Split out of `switchTheme()` so `/settings` can name a theme rather than toggle. */
+    private function useTheme(string $wanted): void
+    {
+        $this->theme = $wanted;
         $this->palette = Palette::named($wanted);
         $this->settings->setTheme($wanted);
 

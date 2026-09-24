@@ -22,8 +22,6 @@ final class Config
             return rtrim($override, '/');
         }
 
-        $home = getenv('HOME');
-
         return self::homeDirectory() . '/.pig';
     }
 

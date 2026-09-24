@@ -133,7 +133,7 @@ bin/pig                                     the entry point
 Ported so far: all of `ai` (`types.ts`, `utils/event-stream.ts`, `stream.ts`, the Anthropic provider),
 all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439), and `tui`'s foundation
 (`utils.ts` 712 → `terminal.ts` 138 → `tui.ts` 351 → `keys.ts` 547 → `autocomplete.ts` 576 →
-`components/`, `terminal-image.ts` 340, `image.ts` 87). `pig/tui` is done.
+`components/`, `terminal-image.ts` 340, `image.ts` 87). **`pig/tui` is now done**: `components/settings-list.ts` was the last file, and it arrived with the `/settings` screen that is its only consumer — a component with no consumer is dead code, which is why it waited. This paragraph said "done" for months while that file was missing; the file-list check below is what caught it, and the claim is only worth as much as the last time that check was run.
 
 `coding-agent` is upstream's biggest package — 23k lines at the anchor, and most of it is not
 the agent: OAuth, twenty-five selector components. What is being ported is the part
@@ -589,6 +589,55 @@ Order for anything with more than one source: what was typed, then the environme
 was chosen last time, then the built-in default. `--no-save` gets `Settings::inMemory()`, so a
 session that is not written down does not write anything else down either.
 
+### `/settings`, and why its list is shorter than upstream's
+
+`Components\SettingsList` is upstream's `tui/components/settings-list.ts` and `/settings` —
+`InteractiveMode::showSettings()` — is upstream's `settings-selector.ts`. It was the last
+unported file in `pig/tui`, and it waited this long for a good reason: a component whose only
+consumer is unported is dead code, so the two only make sense together.
+
+It is not a `SelectList` with two columns, and the difference is worth naming. A select list is
+*answered* — one question, Enter means "this one", and it closes. A settings list is **lived
+in**: several things are changed in one visit, so Enter changes the row under the cursor and
+leaves the list open, Escape means "done" rather than "cancelled", and the screen has to keep
+saying what each row is set to now. Space does what Enter does, as upstream allows, because a
+two-value row reads like a checkbox.
+
+Two decisions of pig's own:
+
+- **`SettingItem` is readonly and the values live in the list.** Upstream writes the new value
+  back into the item it was given. Here `SettingsList` holds an `id => value` map, so a
+  declaration built in one place stays a declaration, and `setValue()` exists for the setting
+  that moves on its own — the thinking level changes when a model that cannot reason is chosen,
+  and the screen should agree with the truth rather than with what was last pressed on it.
+- **The label column is measured in columns, not characters.** Upstream's `.length` puts 主题 at
+  2 where the terminal gives it 4, which pushes every value column after it out of line. Same
+  deviation, same reason, as `SelectList`'s description column.
+
+**The list only offers things that take effect**, which is why it is five rows where upstream
+has eight:
+
+| Row | Reaches |
+|---|---|
+| Theme | `useTheme()`, split out of `switchTheme()` so a row can name a theme rather than toggle |
+| Thinking | a submenu of the levels *this model* offers, so a model that cannot reason gets no row at all rather than six ways to change nothing |
+| Thinking blocks | `useHideThinking()`, split out of the ctrl+t handler |
+| Auto-compact | `compaction.enabled`, read again on every turn |
+| Auto-retry | `retry.enabled`, read again on every failure |
+
+Two of upstream's are deliberately absent. **`terminal.showImages` is a setting pig stores and
+nothing reads** — a row for it would save a value nobody looks at, which is a screen that lies;
+it gains a row when something reads it. **Queue mode** is fixed when the agent is built and has
+no setter to reach, so offering it would mean inventing one for the benefit of a screen.
+
+`useTheme()` and `useHideThinking()` being split out is the part that matters most and is the
+least visible: ctrl+t writes the setting *and* tells every `AssistantMessageComponent` already
+on screen. A second place writing only the setting is a toggle that half works — the file says
+hidden and the transcript still shows thinking — so both paths go through the one method. The
+theme is the exception and says so: the list holds the old palette's closures, so new colours
+arrive the next time it is opened, which is the same thing `/theme` already says about the
+transcript.
+
 `Session\BranchSummarization` is upstream's `core/compaction/branch-summarization.ts`, and
 `Session\BranchSummary` is the message it produces. `/tree` goes back to an earlier point and
 carries on from there; the branch that was left is still in the file, but the model no longer
@@ -944,9 +993,32 @@ a stored sign-in is still the way in, and a token renewed during the run has to 
 next run begins by renewing one that was already replaced.
 
 Not ported from `auth-storage.ts`: `setFallbackResolver`, which resolves keys for custom
-providers declared in a `models.json` pig does not have. `setRuntimeApiKey` **is** here and has
-no caller yet — upstream's `--api-key` flag is what calls it, and adding a flag is a decision
-about pig's command line rather than a port.
+providers declared in a `models.json` pig does not have.
+
+`setRuntimeApiKey` has its caller now: **`--api-key <key>`**, for this run and this provider
+only, never written to `auth.json`. Three things about it, the first two being differences from
+upstream:
+
+- **It is applied after the model is resolved**, because the provider it belongs to is that
+  model's. Upstream refuses the flag unless a model was named explicitly; pig always resolves
+  one (`--model`, then `PIG_MODEL`, then the settings, then `claude-sonnet-4-5`), so there is
+  nothing to refuse.
+- **An empty value is refused by name.** `api-key` had to go in `Arguments::TAKES_A_VALUE` — a
+  key is exactly the kind of thing that does not start with a dash — and an option at the end
+  of the line with nothing after it gets `''`. Storing that would put an empty string at the
+  top of the precedence order, where it beats the environment and then fails as a missing key
+  three layers away.
+- It beats everything else, including a stored sign-in, because it is the most recent thing
+  anybody said.
+
+**`CodingAgent::apiKey()` is gone**, and this is the other half of the same story. It read the
+environment itself, naming `ANTHROPIC_API_KEY` where `Stream::envApiKey()` prefers
+`ANTHROPIC_OAUTH_TOKEN` — so for `CodingAgent::create()` callers with both variables set, which
+one won depended on which door you came in by. Its `default => strtoupper($provider) .
+'_API_KEY'` arm was worse: `github-copilot` came out as `GITHUB-COPILOT_API_KEY`, which is not
+a name a shell can even export. `create()` now passes a null key straight through and `Stream`
+is the only thing that reads the environment. `examples/agent.php` is the one caller affected,
+and the change is that it gains upstream's precedence.
 
 `Hooks\` is upstream's `core/hooks/`, all of it. A hook is a PHP file in `~/.pig/hooks` or
 `.pig/hooks` that returns a callable; the callable is handed a `HookApi` and registers what
@@ -1505,23 +1577,57 @@ Widening it was the cheaper of two bad options: a second content encoder living 
 two things that can disagree about what a message looks like, and they would disagree the
 first time a content type gained a field.
 
-What is left in `coding-agent` is left out on purpose, each for a reason:
+What is left unported, across every package, each for a reason:
 
 | Upstream | Why not |
 |---|---|
-| `google-antigravity` | Anthropic's, Copilot's and Gemini CLI's sign-ins are all ported, with storage, `/login` and their models. Antigravity speaks Code Assist's protocol, which *is* ported now — what it needs is its own loopback flow (a different client and a sandbox endpoint) and its seven models |
-| twenty-five selector components | the interactive mode needs seven of them |
-| `migrations.ts` | session-file migrations; pig writes pi's format and has never shipped another |
-| `utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |
-| `components/armin.ts` | an easter egg: 31×36 XBM art, animated |
-| `core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |
+| `ai/utils/oauth/google-antigravity.ts` | Anthropic's, Copilot's and Gemini CLI's sign-ins are all ported, with storage, `/login` and their models. Antigravity speaks Code Assist's protocol, which *is* ported now — what it needs is its own loopback flow (a different client, a sandbox endpoint and its own headers) and its seven models |
+| seventeen of the twenty-five selector components | the interactive mode needs eight; `/model`, `/resume`, `/tree`, `/login` and `/logout` are the same `SelectList` in the same place instead, and `settings-selector.ts` is `showSettings()` plus `Interactive\SettingsSubmenu` |
+| `agent/proxy.ts` (340) | a stream function that routes LLM calls through somebody's server, so the server holds the keys. pig talks to providers directly; this arrives if something ever wants a proxy |
+| `ai/cli.ts` (173) | a standalone `pi-ai` command whose only job is the OAuth logins. `/login` is where pig does that, and a second entry point would be a second thing to keep working |
+| `ai/utils/validation.ts` + `typebox-helpers.ts` (104) | AJV and TypeBox, for checking a tool call against its schema. `Agent\ToolArguments` is pig's answer and its docblock states the trade: the two mistakes a model actually makes, and everything else through |
+| the fuzzy half of `cli/list-models.ts` | `--models` lists them; upstream's takes a search pattern. `Utils\Fuzzy` is ported and the filter is one call — what it needs is `--models` becoming a value-taking option, which is a decision about pig's command line |
+| `coding-agent/migrations.ts` | session-file migrations; pig writes pi's format and has never shipped another |
+| `coding-agent/utils/changelog.ts` | shows a changelog on a version bump; pig has no releases |
+| `coding-agent/modes/interactive/components/armin.ts` | an easter egg: 31×36 XBM art, animated |
+| `coding-agent/core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |
+| `coding-agent/modes/rpc/rpc-types.ts`, `rpc-client.ts` | TypeScript types for the wire shape, and a client for driving the mode from TypeScript. `RpcMode`'s docblock plus `RpcEvents` is the first; a host writes JSON lines in whatever language it is in |
+| every `index.ts` | barrel re-exports, which is what an autoloader does here |
 
-That table was wrong until this was written. It said "the rest is left out on purpose" while
-`modes/print-mode.ts` and `cli/file-processor.ts` were simply never listed, and `bin/pig`
-parsed positional arguments into a variable it then threw away. **A claim that nothing is
-missing is worth checking against the file list rather than against memory** — the check is
-`find /tmp/pi/packages/coding-agent/src -name '*.ts' -not -name '*.test.ts' | xargs wc -l`
-against pig's own, and it took one command.
+**This table has now been wrong three times.** Twice in the same way: the first time it said "the
+rest is left out on purpose" while `modes/print-mode.ts` and `cli/file-processor.ts` were simply
+never listed, and the second time it covered `coding-agent` only, while `agent/proxy.ts`,
+`ai/cli.ts`, `ai/utils/validation.ts` and `tui/components/settings-list.ts` were unported and
+unmentioned — and the `pig/tui` paragraph said "done" with a file missing.
+
+The third was the other direction, and is the more interesting one: the table claimed
+`visual-truncate.ts` was unported, with a confident paragraph about pig slicing logical lines
+where upstream counts wrapped rows. **It was ported, as `Interactive\BashOutputComponent`,
+before the row was written.** The mistake was comparing upstream's bash branch against pig's
+*generic* branch: upstream truncates visually for bash output only, and its generic tool output
+is `lines.slice(0, maxLines)` — logical and head-first, which is exactly what
+`ToolExecutionComponent::cut()` does. Both halves already matched; the row compared the wrong
+halves.
+
+So the sweep below finds names, and **a missing name is a question, not an answer.** A behaviour
+can be ported into a file called something else — pig's is a component rather than a function,
+because only `render()` knows the terminal's width. Before writing "not ported", read what the
+upstream file does and grep pig for the behaviour, which is the same evidence a "done" claim
+needs.
+
+So the rule, which is the same rule and a wider sweep: **a claim that nothing is missing is worth
+checking against the file list rather than against memory, in every package and not just the one
+being worked on.** One command does it:
+
+```bash
+for p in ai agent tui coding-agent; do
+  find /tmp/pi/packages/$p/src -name '*.ts' -not -name '*.test.ts' | sort
+done
+```
+
+Read it against pig's own tree, and anything with no counterpart belongs in this table or in the
+code. It is worth running after a run of porting, not during one — during one, every second file
+is legitimately absent.
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 
@@ -1828,6 +1934,32 @@ Regression tests: `TuiTest::testTheCursorEndsUpAtTheFocusedComponentsCaret`,
 `testTheNextFrameStillCountsRowsFromWhereTheCursorActuallyIs`,
 `EditorTest::testTheCaretIsMeasuredInColumnsNotCharacters`, and the five
 `InputTest::testTheCaret…` cases.
+
+### `Container` is a `Component` and not an `InputHandler`, so a container given the focus eats every key
+
+The same family as the one above, and it bit in the opposite direction: not a component that
+should have implemented an interface, but a component that looked complete because the
+interface it was missing is optional.
+
+`/settings`' thinking row opens a submenu, and a submenu wants a title and a hint above and
+below the list — so it was a `Container` with a `Text`, the `SelectList` and another `Text`
+in it. That compiles, `setFocus()` takes it (focus is typed `Component`), and it draws
+correctly. Then every key went nowhere: `Container` forwards drawing to its children and
+forwards nothing else, so the arrows, Enter and Escape all landed on an object with no
+`handleInput()`. The screen opened and could not be navigated *or closed*.
+
+`Interactive\SettingsSubmenu` is that container with the keys wired through — upstream's
+`SelectSubmenu`, which exists for exactly this reason and says so in one line.
+
+**Anything that can hold the focus has to be asked whether it handles input, and a container
+never does.** `SettingsList::handleInput()` checks `instanceof InputHandler` before
+forwarding to a submenu, which is what keeps this a screen with nothing to press rather than
+a crash — and is why the bug was silent.
+
+Regression tests: `InteractiveModeTest::testAThinkingModelGetsARowThatOpensTheLevels` and
+`testChoosingALevelSetsItOnTheSessionAndRemembersIt` navigate *inside* the submenu, which is
+what a test asserting only that it opened would have missed;
+`SettingsListTest::testASubmenuThatCannotTakeKeysIsDrawnRatherThanCrashedOn` holds the guard.
 
 ### `fwrite()` to a terminal returns short, and STDOUT is non-blocking whether you asked or not
 

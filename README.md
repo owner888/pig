@@ -41,6 +41,7 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 ```
 
 `--read-only` takes away edit, write and bash; `--theme light` for a light terminal;
+`--api-key <key>` uses a key for this run only, without saving it;
 `-c`/`--continue` to pick up where you left off, or `-r`/`--resume` on its own to choose from
 a list — type in that list to search it, and the search matches anything said in the
 conversation, not just the line it opened with. `-h` for the flags, `-v` for the version.
@@ -110,6 +111,9 @@ seconds. `retry.enabled: false` in the settings turns the first off.
 
 Settings live in `~/.pig/settings.json`, and a project can override them in
 `.pig/settings.json`. The theme, model and thinking level you pick are remembered.
+`/settings` shows what can be changed from inside a session — theme, thinking, whether
+reasoning is drawn, auto-compact, auto-retry — with what each one is set to now. Enter changes
+the row you are on and the list stays open; escape closes it.
 
 A markdown file in `~/.pig/commands/` or `.pig/commands/` becomes a slash command: `review.md`
 is `/review`, its body is the prompt, and `$1` and `$@` are filled from what follows.

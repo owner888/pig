@@ -64,7 +64,12 @@ final class CodingAgent
         ?CustomToolSet $customTools = null,
     ): Agent {
         $agent = new Agent(new AgentOptions(
-            apiKey: $apiKey ?? self::apiKey($model),
+            // Nothing passed means nothing decided here: a null key reaches `Stream`, which
+            // reads the environment itself. There used to be a second reader of the
+            // environment in this file, and having two was the whole problem — it named
+            // `ANTHROPIC_API_KEY` where `Stream::envApiKey()` prefers `ANTHROPIC_OAUTH_TOKEN`,
+            // so which of the two variables won depended on which door you came in by.
+            apiKey: $apiKey,
             // Asked again on every turn, because a token expires mid-conversation and the
             // one that answers is not always the one this started with. `Auth::apiKey()` is
             // what `bin/pig` passes; nothing passed means the key is whatever it was.
@@ -173,18 +178,5 @@ final class CodingAgent
         return Models::get($id) ?? throw new \InvalidArgumentException(
             "No model called '{$id}'. Only Anthropic's models are in the registry so far.",
         );
-    }
-
-    /** The key for this model's provider, from the environment. */
-    private static function apiKey(Model $model): ?string
-    {
-        $name = match ($model->provider) {
-            'anthropic' => 'ANTHROPIC_API_KEY',
-            default => strtoupper($model->provider) . '_API_KEY',
-        };
-
-        $key = getenv($name);
-
-        return $key === false || $key === '' ? null : $key;
     }
 }

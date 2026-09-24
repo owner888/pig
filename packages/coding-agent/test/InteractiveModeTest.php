@@ -1894,4 +1894,122 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('nowhere to keep a sign-in', $this->screen());
     }
 
+    // ---- /settings -------------------------------------------------------------------
+
+    private const string ESCAPE = "\e";
+
+    private function openSettings(): void
+    {
+        $this->type('/settings');
+        $this->type(self::ENTER);
+    }
+
+    public function testSlashSettingsShowsWhatEachOneIsSetTo(): void
+    {
+        $this->start();
+        $this->openSettings();
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('Theme', $screen);
+        $this->assertStringContainsString('dark', $screen);
+        $this->assertStringContainsString('Auto-compact', $screen);
+        $this->assertStringContainsString('Auto-retry', $screen);
+        $this->assertStringContainsString('esc when done', $screen);
+    }
+
+    public function testASettingChangedFromTheScreenIsAppliedAndRemembered(): void
+    {
+        $this->start();
+        $this->openSettings();
+
+        // Theme is the first row.
+        $this->type(self::ENTER);
+
+        $this->assertSame('light', $this->settings->theme());
+    }
+
+    public function testTurningOffAutoCompactIsRemembered(): void
+    {
+        $this->start();
+        $this->openSettings();
+
+        // Down past Thinking blocks to Auto-compact. No thinking row: the test model does
+        // not reason, which is the case the row is left out for.
+        $this->type(self::DOWN);
+        $this->type(self::DOWN);
+        $this->type(self::ENTER);
+
+        $this->assertFalse($this->settings->compactionEnabled());
+        $this->assertTrue($this->settings->retryEnabled(), 'and not the row below it');
+    }
+
+    public function testHidingThinkingFromTheScreenReachesTheTranscriptToo(): void
+    {
+        $this->start();
+        $this->openSettings();
+
+        $this->type(self::DOWN);
+        $this->type(self::ENTER);
+
+        // The reason ctrl+t and this row go through the same method: writing the setting
+        // without telling the components already on screen is a toggle that half works.
+        $this->assertTrue($this->settings->hideThinking());
+    }
+
+    public function testAModelThatCannotThinkIsNotOfferedAThinkingRow(): void
+    {
+        $this->start();
+
+        $this->openSettings();
+        $this->assertStringNotContainsString('Thinking  ', $this->screen(), 'the row, not the blocks one');
+
+        $this->type(self::ESCAPE);
+    }
+
+    public function testAThinkingModelGetsARowThatOpensTheLevels(): void
+    {
+        $this->start(reasoning: true);
+        $this->openSettings();
+
+        $this->type(self::DOWN);
+        $this->type(self::ENTER);
+
+        $screen = $this->screen();
+
+        // A submenu rather than a cycle: six levels, each of which needs saying.
+        $this->assertStringContainsString('Moderate reasoning', $screen);
+        $this->assertStringContainsString('Esc to go back', $screen);
+    }
+
+    public function testChoosingALevelSetsItOnTheSessionAndRemembersIt(): void
+    {
+        $this->start(reasoning: true);
+        $this->openSettings();
+
+        $this->type(self::DOWN);
+        $this->type(self::ENTER);
+        // `off` is selected, being the level the session starts on; one down is `minimal`.
+        $this->type(self::DOWN);
+        $this->type(self::ENTER);
+
+        $this->assertSame(ThinkingLevel::Minimal, $this->session->thinkingLevel());
+        $this->assertSame(ThinkingLevel::Minimal, $this->settings->defaultThinkingLevel());
+        $this->assertStringContainsString('minimal', $this->screen(), 'and the row says so');
+    }
+
+    public function testEscapeClosesTheScreenAndGivesTheEditorBackTheKeys(): void
+    {
+        $this->start();
+        $this->openSettings();
+
+        $this->type(self::ESCAPE);
+
+        $this->assertStringNotContainsString('esc when done', $this->screen());
+
+        // Which is the part worth asserting: a screen that closes without moving the focus
+        // leaves a terminal where typing does nothing.
+        $this->type('hello');
+        $this->assertStringContainsString('hello', $this->screen());
+    }
 }

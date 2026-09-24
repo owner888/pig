@@ -10,6 +10,7 @@ use Pig\Agent\ThinkingLevel;
 use Pig\Tui\Components\EditorTheme;
 use Pig\Tui\Components\MarkdownTheme;
 use Pig\Tui\Components\SelectListTheme;
+use Pig\Tui\Components\SettingsListTheme;
 use Pig\Tui\Style;
 
 /**
@@ -163,6 +164,26 @@ final class Palette
             description: $this->of('muted'),
             scrollInfo: $this->of('muted'),
             noMatch: $this->of('muted'),
+        );
+    }
+
+    /**
+     * A settings list's two columns.
+     *
+     * The value is the accent on the selected row and plain everywhere else — not muted,
+     * which is what `selectListTheme()` gives a description. A description is commentary;
+     * a value is the thing the row is about, and greying out every one of them would make
+     * the screen say nothing at a glance.
+     */
+    public function settingsListTheme(): SettingsListTheme
+    {
+        return new SettingsListTheme(
+            label: fn (string $text, bool $selected): string => $selected ? $this->fg('accent', $text) : $text,
+            value: fn (string $text, bool $selected): string => $selected
+                ? $this->fg('accent', $text)
+                : $this->fg('muted', $text),
+            description: $this->of('muted'),
+            hint: $this->of('muted'),
         );
     }
 

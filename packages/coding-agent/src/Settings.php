@@ -140,6 +140,11 @@ final class Settings
         return $this->get('compaction.enabled') !== false;
     }
 
+    public function setCompactionEnabled(bool $enabled): void
+    {
+        $this->set('compaction.enabled', $enabled);
+    }
+
     public function compactionReserveTokens(int $fallback): int
     {
         $value = $this->get('compaction.reserveTokens');

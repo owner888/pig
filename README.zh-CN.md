@@ -36,7 +36,8 @@ composer install
 ANTHROPIC_API_KEY=sk-ant-... bin/pig
 ```
 
-`--read-only` 去掉 edit、write、bash；`--theme light` 给浅色终端用；`-c`/`--continue` 接着上次聊，
+`--read-only` 去掉 edit、write、bash；`--theme light` 给浅色终端用；`--api-key <key>` 只对这一次
+运行生效、不存盘；`-c`/`--continue` 接着上次聊，
 或者单独写个 `-r`/`--resume` 从列表里挑一个——在那个列表里直接打字就是搜索，搜的是整段对话里
 说过的话，不只是开头那一句。`-h` 看所有旗标，`-v` 看版本。进去之后 `/help` 列出所有按键。
 
@@ -93,7 +94,8 @@ label entry，所以在哪边起的名字另一边都看得见。
 也按另一回事处理：先总结再重发，因为同样那个请求四秒后一样长。设置里 `retry.enabled: false` 关掉前者。
 
 设置放在 `~/.pig/settings.json`，项目可以用 `.pig/settings.json` 覆盖。主题、模型、思考档位选过一次
-就记住了。
+就记住了。`/settings` 把会话里能改的都列出来——主题、思考档位、要不要画出思考过程、自动压缩、
+自动重试——每一项后面写着现在是什么。回车改光标那一行，列表不关；改完按 esc。
 
 `~/.pig/commands/` 或 `.pig/commands/` 下的一个 md 文件就是一条斜杠命令：`review.md` 就是
 `/review`，正文就是 prompt，`$1`、`$@` 由后面跟的参数填进去。
