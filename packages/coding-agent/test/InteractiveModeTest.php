@@ -1949,6 +1949,29 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('nowhere to keep a sign-in', $this->screen());
     }
 
+    // ---- the easter egg --------------------------------------------------------------
+
+    public function testTheEasterEggIsReachableButNotAdvertised(): void
+    {
+        $this->start();
+
+        $this->type('/help');
+        $this->type(self::ENTER);
+
+        // Known and not listed, like `quit`: something you have to already know about is the
+        // whole idea, and upstream leaves it out of its own command list too.
+        $this->assertStringNotContainsString('arminsayshi', $this->screen());
+
+        $this->type('/arminsayshi');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('ARMIN SAYS HI', $screen);
+        $this->assertStringNotContainsString('No command called', $screen);
+    }
+
     // ---- /changelog ------------------------------------------------------------------
 
     public function testSlashChangelogSaysSoWhenThereIsNoChangelog(): void

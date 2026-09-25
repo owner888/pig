@@ -157,6 +157,9 @@ final class InteractiveMode
     /** `terminal.showImages` — off names a picture rather than drawing it. */
     private bool $showImages = true;
 
+    /** The easter egg, while it is animating, so its frame timer can be stopped. */
+    private ?ArminComponent $armin = null;
+
     /** The editor's text starts with `!`, so it is a command and not a prompt. */
     private bool $bashMode = false;
 
@@ -449,6 +452,8 @@ final class InteractiveMode
 
         $this->running = false;
         $this->working?->stop();
+        // A frame timer outliving the screen it drew on keeps the loop from ever going idle.
+        $this->armin?->dispose();
 
         // Before the session is let go of, so a hook that wants to write something down
         // still has a session to read. Nothing after this point is drawn — the terminal
@@ -1179,9 +1184,11 @@ final class InteractiveMode
     /** Whether anything answers to this name: a built-in, a hook's, or one kept as a file. */
     private function knowsCommand(string $name): bool
     {
-        // `quit` is the one alias, and it is in the `match` below rather than in `COMMANDS`
-        // because that list is also what `/help` prints.
-        if ($name === 'quit') {
+        // Two that are known and not listed, because `COMMANDS` is also what `/help` prints and
+        // what the autocomplete offers: `quit` is an alias for one that is listed, and
+        // `arminsayshi` is an easter egg — upstream leaves it out of its own command list too,
+        // and something you have to already know about is the whole idea.
+        if ($name === 'quit' || $name === 'arminsayshi') {
             return true;
         }
 
@@ -1224,6 +1231,7 @@ final class InteractiveMode
             'theme' => $this->switchTheme(),
             'settings' => $this->showSettings(),
             'changelog' => $this->showChangelog(),
+            'arminsayshi' => $this->sayHi(),
             'hooks' => $this->say($this->hookList()),
             'tools' => $this->say($this->toolList()),
             'exit', 'quit' => $this->stop(),
@@ -2150,6 +2158,23 @@ final class InteractiveMode
         }
         $this->hooks?->emit(new SessionSwitchEvent('resume', $previous));
         $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
+    }
+
+    /**
+     * `/arminsayshi` — the easter egg, animated into the transcript.
+     *
+     * Held onto so it can be stopped: every effect ends on its own now, but a session that is
+     * quit or cleared mid-animation would otherwise leave a frame timer behind, and pi's own
+     * never calls `dispose()` at all.
+     */
+    private function sayHi(): void
+    {
+        $this->armin?->dispose();
+        $this->armin = new ArminComponent($this->tui, $this->palette);
+
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild($this->armin);
+        $this->tui->requestRender();
     }
 
     /**

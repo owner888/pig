@@ -447,6 +447,42 @@ long because the first version of it was wrong: it asserted `isIdle()` immediate
 like a bug in `dispose()` and was a bug in the test. The question worth asking is not whether the
 loop is idle now but whether its work *ends*.
 
+`Interactive\ArminComponent` is upstream's easter egg, reached by typing `/arminsayshi` — known
+and not listed, like `quit`, because `COMMANDS` is also what `/help` prints and the autocomplete
+offers, and something you have to already know about is the whole idea. Upstream leaves it out of
+its own command list for the same reason.
+
+It earns a place in a port for something other than the joke: it is the only thing in either tree
+that draws a **bitmap with half-block characters**, two pixel rows to a cell — `█` for both, `▀`
+and `▄` for one. The 144 bytes are upstream's, LSB first, and **a zero bit is foreground**, which
+is an XBM convention and the one detail that turns the picture into a photographic negative if it
+is guessed at.
+
+**One of the seven effects never ends, in pi and in the first version here.** `rain` finishes a
+column when `settled >= height`, and `settled` is `height - target` — so it only reaches `height`
+for a column with ink in row 0. Four of these 31 columns have that and two have no ink at all, so
+27 can never satisfy it: `allSettled` is never true, the effect never reports done, and because pi
+creates this component and **never calls `dispose()`**, a one-in-seven roll leaves a 30fps redraw
+running for the rest of the session.
+
+It was found by driving each effect to its end in a test and watching one of them pass 100,000
+frames, then by printing the topmost ink row of all 31 columns rather than reasoning about it. The
+fix is the condition `settled >= height` was reaching for: a column is done when there is nothing
+left above what has landed. Nothing about the finished picture changes — every effect was already
+verified to end on the byte-identical grid — and all seven now stop between 8 and 186 frames.
+
+Three smaller notes:
+
+- **`shuffle()`, not upstream's hand-written Fisher-Yates**, which is what `shuffle()` already is.
+  The same rule as `version_compare()`: where upstream is working around a missing library call,
+  the port is the call.
+- **Three of the seven effects are one function.** typewriter, fade and dissolve are "reveal N
+  cells per frame in a given order"; upstream has three copies because the order lives in three
+  differently-named state bags. Written once here as `reveal()`.
+- **The effect can be named in the constructor.** A seam that upstream has no equivalent of,
+  because seven effects cannot be tested by starting this seven times and hoping — and it is what
+  found the one that never ended.
+
 `CustomEditor` wraps `Pig\Tui\Components\Editor` rather than extending it — the editor is
 `final`, and wrapping keeps the list of keys an application may steal explicit. `Editor` grew
 one method for this: `setTheme()`, so the border can change colour with the thinking level.
@@ -1877,7 +1913,6 @@ What is left unported, across every package, each for a reason:
 | `agent/proxy.ts` (340) | a stream function that routes LLM calls through somebody's server, so the server holds the keys. pig talks to providers directly; this arrives if something ever wants a proxy |
 | `ai/cli.ts` (173) | a standalone `pi-ai` command whose only job is the OAuth logins. `/login` is where pig does that, and a second entry point would be a second thing to keep working |
 | `ai/utils/validation.ts` + `typebox-helpers.ts` (104) | AJV and TypeBox, for checking a tool call against its schema. `Agent\ToolArguments` is pig's answer and its docblock states the trade: the two mistakes a model actually makes, and everything else through |
-| `coding-agent/modes/interactive/components/armin.ts` | an easter egg: 31×36 XBM art, animated |
 | `coding-agent/core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |
 | `coding-agent/modes/rpc/rpc-types.ts`, `rpc-client.ts` | TypeScript types for the wire shape, and a client for driving the mode from TypeScript. `RpcMode`'s docblock plus `RpcEvents` is the first; a host writes JSON lines in whatever language it is in |
 | every `index.ts` | barrel re-exports, which is what an autoloader does here |
