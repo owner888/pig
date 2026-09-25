@@ -21,7 +21,6 @@ foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php
     }
 }
 
-use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\HttpError;
 use Pig\Ai\Http\Proxy;
@@ -33,26 +32,16 @@ use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\Cli\SessionPicker;
 use Pig\CodingAgent\CodingAgent;
+use Pig\CodingAgent\CodingAgentError;
 use Pig\CodingAgent\CustomModels;
-use Pig\CodingAgent\CustomTools\CustomToolApi;
-use Pig\CodingAgent\CustomTools\CustomToolLoader;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
-use Pig\CodingAgent\Hooks\HookLoader;
-use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Rpc\RpcMode;
 use Pig\CodingAgent\Migrations;
-use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\PrintMode;
-use Pig\CodingAgent\Prompt\ContextFiles;
-use Pig\CodingAgent\Prompt\Skills;
-use Pig\CodingAgent\Prompt\SlashCommands;
-use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Timings;
-use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Tui\Style;
 
 const VERSION = '0.1.0';
@@ -246,50 +235,7 @@ if (isset($options['models'])) {
     exit(0);
 }
 
-$wanted = $options['model'] ?? (getenv('PIG_MODEL') ?: ($settings->defaultModel() ?? 'claude-sonnet-4-5'));
-$choice = ModelResolver::parse($wanted);
-
-if ($choice === null) {
-    fwrite(STDERR, Style::red("No model matches '{$wanted}'. Try --models for the list.\n"));
-
-    exit(1);
-}
-
-if ($choice->warning !== null) {
-    fwrite(STDERR, Style::yellow($choice->warning . "\n"));
-}
-
-$model = $choice->model;
-
-// A key typed on the command line is for this run only and is never written to `auth.json`.
-// It goes in here, after the model is resolved, because the provider it belongs to is that
-// model's — upstream refuses the flag unless a model was named explicitly; pig always has
-// one, so there is nothing to refuse. An empty value is refused rather than stored: an empty
-// runtime key would beat the environment and then fail as a missing key, which is the least
-// informative way this could go wrong.
-if (isset($options['api-key'])) {
-    if ($options['api-key'] === '') {
-        fwrite(STDERR, Style::red("--api-key needs a key after it.\n"));
-
-        exit(1);
-    }
-
-    $auth->setRuntimeApiKey($model->provider, $options['api-key']);
-}
-
 $theme = $options['theme'] ?? (getenv('PIG_THEME') ?: ($settings->theme() ?? 'dark'));
-
-// `--thinking` is the explicit one, so it wins over a `:level` suffix on the model, which
-// in turn wins over the level chosen last time.
-$level = isset($options['thinking'])
-    ? ThinkingLevel::tryFrom($options['thinking']) ?? ThinkingLevel::Off
-    : ($choice->thinking === ThinkingLevel::Off
-        ? ($settings->defaultThinkingLevel() ?? ThinkingLevel::Off)
-        : $choice->thinking);
-
-if (!$model->reasoning) {
-    $level = ThinkingLevel::Off;
-}
 
 if (!in_array($theme, Palette::names(), true)) {
     fwrite(STDERR, Style::red("No theme called '{$theme}'. There is " . implode(' and ', Palette::names()) . ".\n"));
@@ -297,161 +243,76 @@ if (!in_array($theme, Palette::names(), true)) {
     exit(1);
 }
 
-// Loaded here rather than left to the prompt builder, so the banner and the system
-// prompt cannot disagree about what was picked up.
-$contextFiles = ContextFiles::load($cwd);
-Timings::mark('contextFiles');
+// Resolved here rather than inside the assembly, because choosing one draws a list on the
+// terminal and `CodingAgent::session()` has no screen: it takes a path, or nothing.
+$resumePath = $options['resume'] ?? null;
 
-[$skills, $skillWarnings] = $settings->skillsEnabled()
-    ? Skills::load(
-        $cwd,
-        extraDirs: array_filter([$options['skills-dir'] ?? null, ...$settings->skillList('customDirectories')]),
-        ignored: $settings->skillList('ignoredSkills'),
-        only: $settings->skillList('includeSkills'),
-    )
-    : [[], []];
-Timings::mark('skills');
-
-$fileCommands = SlashCommands::load($cwd);
-Timings::mark('slashCommands');
-
-// On the shell rather than in the UI: a malformed skill is its author's problem, and the
-// author is whoever just started pig — not the model, and not the transcript.
-foreach ($skillWarnings as $warning) {
-    fwrite(STDERR, Style::yellow("skill {$warning->path}: {$warning->message}\n"));
-}
-
-// Resolved before the UI starts, so a bad --resume is a line on the shell rather than
-// an error inside a screen that has just been taken over.
-//
-// Before the agent as well as before the UI, because the hooks are handed the session
-// file and the agent is handed the hooks.
-$store = null;
-$resumed = null;
-
-if (!isset($options['no-save'])) {
-    $wanted = $options['resume'] ?? null;
-
-    // `--resume` with nothing after it means "show me the list": a session file is named
-    // after six random bytes under a flattened project path, so a flag that demands the path
-    // is a flag nobody can use from memory. Only with a terminal to draw it on — in
-    // `--mode text|json|rpc` there is nobody to ask, so it stays the error it was.
-    if ($wanted === '' && $interactive) {
-        $sessions = SessionManager::listFor($cwd);
-
-        if ($sessions === []) {
-            fwrite(STDERR, Style::yellow("No earlier sessions in {$cwd}. Starting a new one.\n"));
-        }
-
-        // Escape answers null, which falls through to a new session below — someone who
-        // opened the list and changed their mind still wanted pig, and refusing to start
-        // would only make them type the command again.
-        $wanted = SessionPicker::ask($sessions, Palette::named($theme));
-    }
-
-    if ($wanted === '') {
+if ($resumePath === '' && !isset($options['no-save'])) {
+    // `--resume` with nothing after it means "show me the list": a session file is named after six
+    // random bytes under a flattened project path, so a flag that demands the path is a flag nobody
+    // can use from memory. Only with a terminal to draw it on — in `--mode text|json|rpc` there is
+    // nobody to ask, so it stays the error it was.
+    if (!$interactive) {
         fwrite(STDERR, Style::red("--resume needs the path to a session file.\n"));
 
         exit(1);
     }
 
-    if ($wanted === null && isset($options['continue'])) {
-        $latest = SessionManager::latestFor($cwd);
+    $sessions = SessionManager::listFor($cwd);
 
-        if ($latest === null) {
-            fwrite(STDERR, Style::red("No earlier session in {$cwd}.\n"));
-
-            exit(1);
-        }
-
-        $wanted = $latest->path;
+    if ($sessions === []) {
+        fwrite(STDERR, Style::yellow("No earlier sessions in {$cwd}. Starting a new one.\n"));
     }
 
-    try {
-        $store = $wanted === null ? SessionManager::create($cwd) : SessionManager::open($wanted);
-    } catch (Throwable $error) {
-        fwrite(STDERR, Style::red($error->getMessage() . "\n"));
-
-        exit(1);
-    }
-
-    $resumed = $wanted === null ? null : $store;
+    // Escape answers null, which starts a new session — someone who opened the list and changed
+    // their mind still wanted pig, and refusing to start would only make them type the command
+    // again.
+    $resumePath = SessionPicker::ask($sessions, Palette::named($theme));
 }
 
-Timings::mark('session');
-
-// A hook is a PHP file that runs in this process, so a broken one is reported here, on
-// the shell, next to the malformed skills — and for the same reason: whoever wrote it is
-// whoever just started pig.
-[$loadedHooks, $hookProblems] = isset($options['no-hooks'])
-    ? [[], []]
-    : HookLoader::load($cwd, $settings->hooks());
-
-foreach ($hookProblems as $problem) {
-    fwrite(STDERR, Style::yellow("hook {$problem->toText()}\n"));
-}
-
-$hooks = new HookRunner($loadedHooks, $cwd, $store);
-Timings::mark('hooks');
-
-// The same story, one folder over. The built-in names are handed in so a tool that would
-// shadow `bash` is named rather than quietly replacing it.
-$builtIn = isset($options['read-only']) ? ToolSet::READ_ONLY : ToolSet::ALL;
-
-// Held onto rather than left to the loader: it is what the mode later hands the UI to,
-// and it is the object every tool factory closed over.
-$toolApi = new CustomToolApi($cwd);
-
-[$loadedTools, $toolProblems] = isset($options['no-tools'])
-    ? [[], []]
-    : CustomToolLoader::load($cwd, $builtIn, $settings->customTools(), api: $toolApi);
-
-foreach ($toolProblems as $problem) {
-    fwrite(STDERR, Style::yellow("tool {$problem->toText()}\n"));
-}
-
-Timings::mark('customTools');
-
-$customTools = new CustomToolSet($loadedTools, $toolApi);
-
+// Everything from the model to the restored conversation. It lives in `CodingAgent::session()`
+// rather than here for the reason `Cli\Arguments` and `Cli\SignIn` are classes: a script ending in
+// `exit()` cannot be called twice, so two hundred lines of resolution order had no test.
 try {
-    $agent = CodingAgent::create(
-        $model,
+    $started = CodingAgent::session(
         $cwd,
-        $builtIn,
-        // Asked per turn rather than resolved once, because an OAuth token expires
-        // mid-conversation and `Auth` renews it on the way past.
-        getApiKey: $auth->apiKey(...),
-        contextFiles: $contextFiles,
-        thinking: $level,
-        skills: $skills,
-        hooks: $hooks,
-        customTools: $customTools,
+        $settings,
+        $auth,
+        environment: getenv(),
+        model: $options['model'] ?? null,
+        thinking: $options['thinking'] ?? null,
+        apiKey: $options['api-key'] ?? null,
+        resume: $resumePath === '' ? null : $resumePath,
+        continue: isset($options['continue']),
+        save: !isset($options['no-save']),
+        readOnly: isset($options['read-only']),
+        withHooks: !isset($options['no-hooks']),
+        withTools: !isset($options['no-tools']),
+        skillsDir: $options['skills-dir'] ?? null,
     );
-} catch (Throwable $error) {
-    // Almost always a missing API key, which is worth saying plainly rather than as a
-    // stack trace on a screen that was about to become a UI.
+} catch (CodingAgentError $error) {
+    // Almost always a model name that matches nothing or a missing API key, both worth saying
+    // plainly rather than as a stack trace on a screen that was about to become a UI.
     fwrite(STDERR, Style::red($error->getMessage() . "\n"));
 
     exit(1);
 }
 
-Timings::mark('agent');
-
-$session = new AgentSession($agent, $cwd, $store, $settings, $hooks);
-
-// What the hooks and the custom tools are told about the session is wired by the mode,
-// not here: the interactive one is what has a screen to draw a dialog on, and upstream
-// says the same — each mode provides its own UI. A second mode wires its own.
-
-if ($resumed !== null) {
-    $session->restore($resumed->messages());
-
-    // And what it was being talked on. `--model` beats the file: that is someone saying what
-    // they want now, where the file says what was true last time. Everything else about the
-    // order is unchanged — typed, then the environment, then this session, then the settings.
-    $session->restoreSettings(modelWasAskedFor: isset($options['model']));
+// On the shell rather than in the UI, and all together: a malformed skill, a broken hook and a
+// shadowed tool are their author's problem, and the author is whoever just started pig — not the
+// model, and not the transcript.
+foreach ($started->warnings as $warning) {
+    fwrite(STDERR, Style::yellow($warning . "\n"));
 }
+
+$session = $started->session;
+$contextFiles = $started->contextFiles;
+$skills = $started->skills;
+$fileCommands = $started->fileCommands;
+$hooks = $started->hooks;
+$customTools = $started->customTools;
+
+Timings::mark('assembled');
 
 // Read here rather than in the parser: a missing file should be reported after the cheap
 // mistakes and before the expensive setup, and it is the one positional argument that can

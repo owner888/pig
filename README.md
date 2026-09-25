@@ -46,6 +46,11 @@ read none of them; a hostname is handed to the proxy to resolve, because a local
 the other thing that does not work. Loopback always goes direct, `no_proxy` and `proxy.bypass` add
 to that, and `--no-proxy` turns the lot off.
 
+`CodingAgent::session()` is the whole of startup as a call: it resolves the model and the thinking
+level, loads the skills, context files, hooks and custom tools, opens or creates the session file,
+and hands back a session plus a list of warnings. `bin/pig` is a caller of it rather than the place
+it lives, so the resolution order can be tested instead of run and looked at.
+
 A different thing with the same name: `Agent\StreamProxy` sends the conversation to a **gateway
 server** that holds the provider keys and makes the call, speaking upstream's `/api/stream` wire
 format so a gateway written for pi works unchanged. Nothing turns it on — it is a `streamFn` you

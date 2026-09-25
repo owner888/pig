@@ -1535,6 +1535,40 @@ Upstream has the same gap. Not ported: `validateToolCall(tools, call)`, which ha
 either, and `ProxyAssistantMessageEvent`, which is a TypeScript type whose counterpart is the event
 classes in `pig/ai`.
 
+### Starting up, and why it had to stop living in `bin/pig`
+
+`CodingAgent::session()` is upstream's `createAgentSession()`. The rest of `sdk.ts`'s 673 lines has
+no counterpart and needs none: about 35 are re-exports, which an autoloader does, and about 155 are
+`discoverHooks()`, `discoverSkills()`, `loadSettings()` and four more like them — thin wrappers so
+an SDK user need not import from `./internal/…`. pig's loaders were public from the start, so
+`ContextFiles::load()`, `Skills::load()`, `SlashCommands::load()`, `HookLoader::load()`,
+`CustomToolLoader::load()`, `Auth::discover()`, `CustomModels::discover()`, `Settings::load()` and
+`SystemPrompt::build()` are already the things to call.
+
+**The remaining ~235 lines were the ones that mattered, and until this they were `bin/pig`'s
+middle.** `create()` above builds the `Agent`; nothing built everything around it. So the resolution
+order — which of `--model`, `PIG_MODEL`, the settings and the built-in default wins, when a thinking
+level is clamped, which file `--continue` picks, what a broken hook does — existed only as top-level
+script statements, and *a script that ends in `exit()` cannot be called twice*. That is the same
+sentence that made `Cli\Arguments`, `Cli\ModelList` and `Cli\SignIn` classes; this is the fourth
+time, and the largest.
+
+Three rules make it testable, and they are worth keeping when it grows:
+
+- **Nothing writes to a stream.** Warnings come back as `StartedSession::$warnings`, already worded,
+  in the order they were found; whoever asked prints them. There is a test whose whole assertion is
+  that a startup with a broken hook *and* a malformed skill prints nothing at all.
+- **Anything fatal throws `CodingAgentError`** with a sentence worth showing as it is. `bin/pig`
+  catches it, prints it red and exits 1 — the same refusal reads the same to a terminal, a
+  JSON-lines host and a test.
+- **What needs a screen stays with the caller.** `--resume` with no value draws a list, so
+  `bin/pig` resolves that to a path first; `session()` takes a path or nothing. The theme is the
+  caller's too, and so are `Auth` and the custom models — because `--models` prints the registry and
+  exits, and it has to see a model somebody just declared without a session file being created on
+  the way past.
+
+`bin/pig` went from 539 lines to 411.
+
 `Hooks\` is upstream's `core/hooks/`, all of it. A hook is a PHP file in `~/.pig/hooks` or
 `.pig/hooks` that returns a callable; the callable is handed a `HookApi` and registers what
 it wants to hear about:
@@ -2124,7 +2158,6 @@ What is left unported, across every package, each for a reason:
 |---|---|
 | seventeen of the twenty-five selector components | the interactive mode needs eight; `/model`, `/resume`, `/tree`, `/login` and `/logout` are the same `SelectList` in the same place instead, and `settings-selector.ts` is `showSettings()` plus `Interactive\SettingsSubmenu` |
 | `ai/utils/typebox-helpers.ts` (24) | `StringEnum`, a TypeBox helper that emits `{type:"string", enum:[…]}` because TypeBox's own `Type.Enum` emits `anyOf`/`const` and Google's API rejects that. In PHP a schema **is** an array, so there is nothing to help with — you write the array, and `JsonSchemaTest` says so where the enum is tested |
-| `coding-agent/core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |
 | `coding-agent/modes/rpc/rpc-types.ts`, `rpc-client.ts` | TypeScript types for the wire shape, and a client for driving the mode from TypeScript. `RpcMode`'s docblock plus `RpcEvents` is the first; a host writes JSON lines in whatever language it is in |
 | every `index.ts` | barrel re-exports, which is what an autoloader does here |
 
@@ -2915,6 +2948,51 @@ Barely covered by a test: `interactive()` opens `/dev/tty` for all three streams
 runner has no tty to open. What is tested is the empty-command guard and that a run with no
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
+
+### A new session recorded no thinking level, so `--continue` came back on `off`
+
+Found by extracting `bin/pig`'s startup into `CodingAgent::session()` and then writing the first test
+for it. Upstream ends `createAgentSession()` with two lines pig had never ported:
+
+```js
+// Save initial model and thinking level for new sessions so they can be restored on resume
+if (model) sessionManager.appendModelChange(model.provider, model.id);
+sessionManager.appendThinkingLevelChange(thinkingLevel);
+```
+
+**The model survived without them by luck.** `SessionManager::settings()` walks the branch and takes
+a `ModelChange` if it finds one — and falls back to the provider and model on the last
+`AssistantMessage`, which every answered conversation has. **The thinking level has no such
+fallback**: an assistant message does not carry one, and nothing else wrote one, because
+`AgentSession::setModel()` only records a change *when it changes*. So a conversation started with
+`--thinking high`, answered, and picked up with `--continue` came back with thinking **off** — no
+warning, no line in the file, and on a reasoning model a visibly different answer to the same
+question.
+
+Reproduced before it was fixed, which is the only reason the shape above is stated rather than
+guessed:
+
+```
+run 1 model=claude-opus-4-1 thinking=high
+settings recorded in the file: {"model":{…,"modelId":"claude-opus-4-1"},"thinking":null}
+run 2 model=claude-opus-4-1 thinking=off
+```
+
+The fix is upstream's two lines, in upstream's place — the `else` of "was this resumed". Two things
+about it are worth knowing:
+
+- **It costs no file for a session nobody had.** `SessionManager::append()` holds everything before
+  the first assistant message in memory and flushes it in front once the conversation is worth
+  keeping. pig already had the mechanism that makes recording this up front safe; it just never made
+  the record.
+- **The model is recorded explicitly now too**, even though the fallback would usually cover it. The
+  fallback reads the model the last *answer* came from, which is not the model the next turn will
+  use if `--model` said otherwise — so the file said one thing and the run meant another.
+
+The general rule this is the second instance of: **where pig gets the right answer through a
+fallback rather than a record, check what happens to the fact that has no fallback.** The first was
+`version_compare` — a flattened `0.2.0` compared equal to `0.2.0-beta`, and the pre-release case was
+the one nobody could see.
 
 ### A session that can change conversations cannot have a `readonly` session file
 
