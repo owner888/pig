@@ -188,7 +188,7 @@ final class RpcClientTest extends TestCase
     }
 
     /** @param list<string> $arguments */
-    private function client(array $arguments = []): RpcClient
+    private function client(array $arguments = [], bool $withHooks = false): RpcClient
     {
         $binary = RpcClient::defaultBinary();
 
@@ -204,7 +204,9 @@ final class RpcClientTest extends TestCase
 
         return $this->client = new RpcClient(
             cwd: $this->cwd,
-            arguments: ['--no-hooks', '--no-tools', ...$arguments],
+            // Hooks off by default: every case but one is about the protocol, and a hook folder on
+            // the machine running the tests is not this file's business.
+            arguments: [...($withHooks ? [] : ['--no-hooks']), '--no-tools', ...$arguments],
             environment: [
                 'PIG_HOME' => $this->home . '/.pig',
                 'PI_HOME' => $this->root . '/pi',
@@ -468,4 +470,85 @@ final class RpcClientTest extends TestCase
         $this->assertGreaterThan(0, $first);
         $this->assertSame(0, $second, 'and an unsubscribed one hears nothing');
     }
+
+    // ---- switching conversations ---------------------------------------------------------------
+
+    public function testAHookCanRefuseASessionSwitchOverRpcToo(): void
+    {
+        // It could not before: the terminal asked the hooks through `mayLeave()` and the RPC path
+        // did not, so a hook that refuses to leave a conversation worked in one mode and was
+        // silently ignored in the other. `HookRunner::emitBeforeSwitch()` existed the whole time.
+        mkdir($this->home . '/.pig/hooks', 0o755, true);
+        file_put_contents($this->home . '/.pig/hooks/no-leaving.php', <<<'PHP'
+        <?php
+
+        use Pig\CodingAgent\Hooks\HookApi;
+        use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
+
+        return function (HookApi $pi): void {
+            $pi->on('session_before_switch', static fn (): SessionBeforeSwitchResult
+                => new SessionBeforeSwitchResult(cancel: true));
+        };
+        PHP);
+
+        $this->serveOneTurn('unused');
+        // Hooks on, which the other cases in this file turn off.
+        $client = $this->client(['--model', 'stand-in'], withHooks: true);
+        $elsewhere = $this->root . '/elsewhere.jsonl';
+        file_put_contents($elsewhere, json_encode(['type' => 'session', 'version' => 1, 'id' => 'x', 'cwd' => $this->cwd]) . "\n");
+
+        [$answer, $state] = Async::run(static function () use ($client, $elsewhere): array {
+            $client->start();
+            $answer = $client->switchSession($elsewhere);
+            $state = $client->state();
+            $client->stop();
+
+            return [$answer, $state];
+        });
+
+        $this->assertTrue($answer['cancelled'] ?? null, 'the hook said no');
+        $this->assertStringNotContainsString('elsewhere.jsonl', (string) ($state['sessionFile'] ?? ''));
+    }
+
+    public function testASwitchThatIsAllowedReportsItWasNotCancelled(): void
+    {
+        $this->serveOneTurn('unused');
+        $client = $this->client(['--model', 'stand-in']);
+        $elsewhere = $this->root . '/elsewhere.jsonl';
+        file_put_contents($elsewhere, json_encode(['type' => 'session', 'version' => 1, 'id' => 'x', 'cwd' => $this->cwd]) . "\n");
+
+        $answer = Async::run(static function () use ($client, $elsewhere): array {
+            $client->start();
+            $answer = $client->switchSession($elsewhere);
+            $client->stop();
+
+            return $answer;
+        });
+
+        $this->assertFalse($answer['cancelled'] ?? null);
+        $this->assertSame(0, $answer['messageCount'] ?? null);
+    }
+
+    public function testSwitchingEmptiesTheQueueOfTheConversationBeingLeft(): void
+    {
+        // What was queued was typed into the conversation being left. Sending it into the next one
+        // is the same crossing as appending to the wrong file.
+        $this->serveOneTurn('unused');
+        $client = $this->client(['--model', 'stand-in']);
+        $elsewhere = $this->root . '/elsewhere.jsonl';
+        file_put_contents($elsewhere, json_encode(['type' => 'session', 'version' => 1, 'id' => 'x', 'cwd' => $this->cwd]) . "\n");
+
+        $state = Async::run(static function () use ($client, $elsewhere): array {
+            $client->start();
+            $client->followUp('meant for the old conversation');
+            $client->switchSession($elsewhere);
+            $state = $client->state();
+            $client->stop();
+
+            return $state;
+        });
+
+        $this->assertSame(0, $state['queuedMessageCount'] ?? null);
+    }
+
 }

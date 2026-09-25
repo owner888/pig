@@ -13,6 +13,7 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
+use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
 use Pig\CodingAgent\Hooks\Events\SessionSwitchEvent;
 use Pig\CodingAgent\Hooks\HookContext;
@@ -564,11 +565,43 @@ final class RpcMode
         return ['sessionFile' => $this->session->store()?->path];
     }
 
-    /** @param array<string, mixed> $command */
+    /**
+     * Open another conversation and carry on in it.
+     *
+     * The three lines before the switch were missing, and each of them exists elsewhere: the
+     * terminal asks the hooks first through `mayLeave()`, and upstream's `switchSession()` aborts
+     * the turn in flight and empties the queue. Over RPC none of that happened — a hook that
+     * refuses to leave a conversation worked in the terminal and was ignored here, and a switch
+     * during a turn left that turn writing into the conversation it had just left. The terminal is
+     * only safe from the last two because `/resume` is unreachable while streaming; a host has no
+     * such guard. See CLAUDE.md.
+     *
+     * @param array<string, mixed> $command
+     */
     private function switchSession(array $command): array
     {
+        $path = self::text($command, 'sessionPath');
         $previous = $this->session->store()?->path;
-        $opened = SessionManager::open(self::text($command, 'sessionPath'));
+
+        $refusal = $this->hooks?->emitBeforeSwitch(new SessionBeforeSwitchEvent('resume', $path));
+
+        if ($refusal !== null && $refusal->cancel) {
+            // `cancelled` rather than an error: a hook saying no is an answer, not a failure, and
+            // upstream returns `false` from the same place.
+            return ['cancelled' => true];
+        }
+
+        $opened = SessionManager::open($path);
+
+        // Whatever was in flight belongs to the conversation being left. Aborted rather than
+        // refused, which is upstream's choice: a host that asks to switch has decided.
+        if ($this->session->isStreaming()) {
+            $this->session->abort()->await();
+        }
+
+        // And whatever was queued was typed into that conversation too. Sending it into this one
+        // is the same crossing as writing to the wrong file.
+        $this->session->clearQueue();
 
         if ($previous !== null) {
             $this->session->writeTo($opened);
@@ -584,6 +617,7 @@ final class RpcMode
         $this->report($this->customTools?->notify('switch', $previous) ?? []);
 
         return [
+            'cancelled' => false,
             'sessionFile' => $this->session->store()?->path,
             'messageCount' => count($opened->messages()),
             'model' => $this->session->model() === null ? null : self::model($this->session->model()),

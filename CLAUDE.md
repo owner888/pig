@@ -3039,6 +3039,32 @@ runner has no tty to open. What is tested is the empty-command guard and that a 
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
 
+### RPC's session switch skipped the three checks the terminal's has
+
+Fourth find, and the clearest instance of the pattern the others taught: **the same operation in two
+modes, with the checks on only one of them.**
+
+`InteractiveMode` asks the hooks before leaving a conversation (`mayLeave()` →
+`HookRunner::emitBeforeSwitch()`), and `/resume` is unreachable while a turn is streaming because
+`showSessions()` guards on `isStreaming()`. `RpcMode::switchSession()` did none of it:
+
+- **The cancellable `session_before_switch` hook was never fired.** A hook that refuses to leave a
+  conversation worked in the terminal and was ignored over RPC. `emitBeforeSwitch()` and
+  `SessionBeforeSwitchEvent` both existed — one of two callers used them.
+- **A turn in flight was not aborted.** Upstream's `switchSession()` awaits `abort()` first. Without
+  it the turn belonging to the conversation being left carries on writing into the one just opened.
+  The terminal is safe from this by accident, not by rule: the command cannot be reached mid-turn.
+- **The queue was not emptied.** Upstream sets `_queuedMessages = []`. What was queued was typed into
+  the conversation being left, and sending it into the next one is the same crossing as appending to
+  the wrong file — which is the bug `writeTo()`'s docblock was written for.
+
+All three are now done in upstream's order, and the answer gained `cancelled`, which is what
+upstream's client reads from the same place.
+
+The tests go through `bin/pig --mode rpc` with a real hook file in a temporary home — the first use
+of `RpcClient` for something other than testing itself, and the reason a client was worth porting:
+**a mode nothing drives the way a host drives it is a mode whose checks nobody misses.**
+
 ### One settings key out of seventeen was not upstream's
 
 Third find from the audit, and the cheapest one to have prevented: **`retry.maxAttempts` where
