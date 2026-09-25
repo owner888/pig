@@ -167,8 +167,8 @@ final class RpcModeTest extends TestCase
             $hooks,
             $customTools,
             $settings ?? Settings::inMemory(),
-            $this->in,
-            $this->out,
+            in: $this->in,
+            out: $this->out,
         );
 
         $this->mode->start();

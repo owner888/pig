@@ -1599,9 +1599,18 @@ final class InteractiveMode
             return;
         }
 
-        $models = Models::all();
+        // The models there is a key for, which is upstream's `getAvailable()` and what the word
+        // "available" means everywhere else in pig now. A picker that offers a model whose every
+        // turn will fail is a picker that teaches people not to read it.
+        $models = $this->auth?->availableModels() ?? Models::all();
         $current = $this->session->model();
         $items = [];
+
+        if ($models === []) {
+            $this->sayError('No model has a key here. /login, or set a provider key in the environment.');
+
+            return;
+        }
 
         foreach ($models as $index => $model) {
             $items[] = new SelectItem(
@@ -1637,7 +1646,10 @@ final class InteractiveMode
     /** `/model sonnet:high` — resolve it and switch, or say why not. */
     private function pickModel(string $pattern): void
     {
-        $choice = ModelResolver::parse($pattern);
+        // Over the models there is a key for, as upstream's model selector resolves: `/model
+        // gemini` with no Google key should say there is no such model here rather than switch to
+        // one and fail on the next turn.
+        $choice = ModelResolver::parse($pattern, $this->auth?->availableModels());
 
         if ($choice === null) {
             $this->sayError("No model matches \"{$pattern}\". Try /model on its own for the list.");
@@ -1654,7 +1666,17 @@ final class InteractiveMode
 
     private function useModel(Model $model, ?ThinkingLevel $thinking = null): void
     {
-        $this->session->setModel($model, $thinking);
+        // `setModel()` refuses a model there is no key for. The lists above are filtered, so this
+        // is the case they cannot cover: a `models.json` provider whose key variable is empty, or
+        // a sign-out in another window between drawing the picker and choosing from it.
+        try {
+            $this->session->setModel($model, $thinking);
+        } catch (Throwable $error) {
+            $this->sayError($error->getMessage());
+
+            return;
+        }
+
         $this->settings->setDefaultModel($model->id, $model->provider);
         $this->settings->setDefaultThinkingLevel($this->session->thinkingLevel());
         $this->footer->invalidate();

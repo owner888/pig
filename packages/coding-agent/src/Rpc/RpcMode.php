@@ -10,6 +10,7 @@ use Pig\Ai\ImageContent;
 use Pig\Ai\Models;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
@@ -95,6 +96,7 @@ final class RpcMode
         private readonly ?HookRunner $hooks = null,
         private readonly ?CustomToolSet $customTools = null,
         private readonly ?Settings $settings = null,
+        private readonly ?Auth $auth = null,
         $in = null,
         $out = null,
     ) {
@@ -285,7 +287,13 @@ final class RpcMode
             'get_last_assistant_text' => ['text' => $this->session->lastAssistantText()],
             'get_session_stats' => $this->stats(),
 
-            'get_available_models' => ['models' => array_map(self::model(...), Models::all())],
+            // "Available" is upstream's word for "there is a key for it", not "pig knows of it":
+            // a host drawing a model menu from this list would otherwise offer twenty models and
+            // have nineteen of them fail. Without an `Auth` — which only a test builds this
+            // without — every model there is, as before.
+            'get_available_models' => [
+                'models' => array_map(self::model(...), $this->auth?->availableModels() ?? Models::all()),
+            ],
             'set_model' => $this->setModel($command),
 
             'set_thinking_level' => $this->setThinking($command),

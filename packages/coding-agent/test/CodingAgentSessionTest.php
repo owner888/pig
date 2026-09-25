@@ -23,6 +23,7 @@ use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\StartedSession;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Test\AssertsThrows;
+use Pig\Test\WithoutProviderKeys;
 
 /**
  * `CodingAgent::session()` — the startup, minus the terminal.
@@ -36,6 +37,7 @@ use Pig\Test\AssertsThrows;
 final class CodingAgentSessionTest extends TestCase
 {
     use AssertsThrows;
+    use WithoutProviderKeys;
 
     private string $root;
 
@@ -64,6 +66,11 @@ final class CodingAgentSessionTest extends TestCase
         // or fails on what the person running it happens to have installed.
         $this->realHome = getenv('HOME');
         putenv('HOME=' . $this->root . '/user');
+
+        // For the same reason: coming back to the model a conversation was on needs a key for it,
+        // and `Auth` reads the environment last. Whether the machine running these tests happens
+        // to have a provider key set is not something an assertion should turn on.
+        $this->forgetProviderKeys();
     }
 
     #[\Override]
@@ -72,6 +79,8 @@ final class CodingAgentSessionTest extends TestCase
         putenv('PIG_HOME');
         putenv('PI_HOME');
         putenv($this->realHome === false ? 'HOME' : 'HOME=' . $this->realHome);
+
+        $this->restoreProviderKeys();
         self::remove($this->root);
     }
 
@@ -289,10 +298,29 @@ final class CodingAgentSessionTest extends TestCase
         $first = $this->start([], ['model' => 'opus 4.1:high']);
         self::converse($first, 'earlier');
 
-        $again = $this->start([], ['continue' => true]);
+        // A key, because coming back to the model a conversation was on now needs one: without it
+        // the file would be describing a model whose every turn fails, and `restoreSettings()`
+        // falls back instead. The test below is that fallback.
+        $again = $this->start([], ['continue' => true, 'apiKey' => 'not-called-here']);
 
         $this->assertSame('claude-opus-4-1', $again->session->agent->state->model?->id);
         $this->assertSame(ThinkingLevel::High, $again->session->agent->state->thinkingLevel);
+    }
+
+    public function testAConversationWhoseModelHasNoKeyComesBackOnOneThatWorks(): void
+    {
+        // A key for the run that had the conversation, and none for the run that reopens it: an
+        // afternoon on somebody's borrowed `--api-key`, picked up the next morning.
+        $first = $this->start([], ['model' => 'opus 4.1', 'apiKey' => 'not-called-here']);
+        self::converse($first, 'earlier');
+
+        $again = $this->start([], ['continue' => true]);
+
+        // Upstream's `restoreModelFromSession()` checks the key as well as the model and falls
+        // back on either. Restoring it would mean a conversation that reopens onto a model whose
+        // every turn fails — from inside the turn, where it looks like the provider's fault.
+        $this->assertSame('claude-sonnet-4-5', $again->session->agent->state->model?->id);
+        $this->assertCount(2, $again->session->messages(), 'and the conversation itself still came back');
     }
 
     /** Enough of a conversation to be worth keeping: a question and an answer. */

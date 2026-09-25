@@ -68,8 +68,8 @@ if (isset($options['help'])) {
       --model <id>      which model to talk to (default: claude-sonnet-4-5).
                         A part of the name will do: `sonnet`, `haiku`, `opus 4.1`.
                         Add a thinking level with a colon: `sonnet:high`.
-      --models [search] list the models there are, and stop. With a search it is
-                        fuzzy over provider and id: `--models gem pro`
+      --models [search] list the models there is a key for, and stop. With a search
+                        it is fuzzy over provider and id: `--models gem pro`
       --api-key <key>   use this key for the model's provider, this run only.
                         Not saved; beats the environment and any stored sign-in.
       --proxy <url>     reach providers through this proxy, this run only:
@@ -233,7 +233,7 @@ Timings::mark('customModels');
 // costs a settings read and a file read to get here, which nobody notices on a command that
 // prints and exits.
 if (isset($options['models'])) {
-    echo ModelList::render($options['models']), "\n";
+    echo ModelList::render($options['models'], $auth), "\n";
 
     exit(0);
 }
@@ -346,7 +346,7 @@ Timings::report();
 $exit = 0;
 
 if ($mode === 'rpc') {
-    $running = new RpcMode($session, $cwd, $hooks, $customTools, $settings);
+    $running = new RpcMode($session, $cwd, $hooks, $customTools, $settings, $auth);
 
     // One fiber around the whole program: the prompt suspends on a socket, the terminal
     // wakes on a keystroke, and both need the same loop underneath them.

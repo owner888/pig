@@ -3039,6 +3039,50 @@ runner has no tty to open. What is tested is the empty-command guard and that a 
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
 
+### A model with no API key could be switched to, listed, and resumed onto
+
+Fifth find, and the pattern from the fourth one again with a different word in the middle: upstream
+asks its model registry one question — *is there a key for this?* — in five places, and pig asked it
+in none of them. Everything still worked, because `Stream` throws `No API key for provider: x` when
+the turn goes out. That is the wrong place for it:
+
+- **`AgentSession::setModel()`** switched to a model this machine cannot talk to, wrote a
+  `model_change` into the session file recording the conversation as being on it, and failed on the
+  *next* turn from inside `Stream` — where it reads as the provider's fault. Upstream's first two
+  lines are the key check and the throw; pig's are now the same, before anything is applied.
+- **`restoreSettings()`** restored such a model from the file, so `--continue` on an afternoon spent
+  under a borrowed `--api-key` reopened onto a model whose every turn fails. Upstream's
+  `restoreModelFromSession()` checks the key as well as the model and falls back on either.
+- **Three listings** — `--models`, `/model`, and RPC's `get_available_models` — showed every model
+  pig knows of. Upstream's word for all three is `getAvailable()`, and it means *there is a key*: a
+  host drawing a menu from that list offered twenty models with nineteen of them broken, and
+  `/model gemini` with no Google key switched to Gemini instead of saying there is no such model
+  here.
+
+`Auth::hasKeyFor()` and `Auth::availableModels()` are the one home for the question — `Auth` is
+what pig has instead of upstream's `ModelRegistry`, and three lists filtered three ways is the
+shape this whole audit keeps finding. `hasKeyFor()` deliberately does **not** ask `apiKey()`:
+that renews an expiring OAuth token on the way past, which is right for a turn and wrong for a
+list — drawing `/model` would refresh every signed-in provider, and one unreachable network
+would empty a listing of twenty usable models. So an expired stored token counts as a key here,
+where upstream (which does refresh) would drop the provider until the refresh succeeded. The
+one-per-provider question is asked once, not once per model: twenty-one models share five
+providers and the answer cannot change mid-list.
+
+`setModel()` throwing is why `InteractiveMode::useModel()` now catches: the lists are filtered, so
+what is left is a `models.json` provider whose key variable is empty and a sign-out in another
+window between drawing the picker and choosing from it.
+
+**Three tests were passing because the checks were missing**, which is the fourth time this audit
+has found that: `CodingAgentSessionTest`'s resumed-thinking-level case restored a model it had no
+key for, and two `RpcClientTest` cases switched to `anthropic/claude-3-5-haiku-latest` and expected
+`claude-sonnet-4-5` in the model list from a home with no Anthropic key at all. And the
+environment they run in was part of the problem: this container exports `GITHUB_TOKEN`, which is a
+key for github-copilot and therefore nineteen models, so "no keys anywhere" quietly meant
+"nineteen models". `Pig\Test\WithoutProviderKeys` takes all thirteen provider variables out for the
+length of a test and puts them back — because `putenv()` is process-wide and `RpcClientTest`
+spawns `bin/pig` with this process's environment on top of its own.
+
 ### RPC's session switch and new-session skipped the three checks the terminal's have
 
 Fourth find, and the clearest instance of the pattern the others taught: **the same operation in two
@@ -3145,6 +3189,16 @@ rule for it, and what a file written before this existed actually means.
 **The pattern worth taking from this one:** the same rule existing on one of two sibling arms is a
 stronger signal than either arm on its own. The author knew the rule when writing `BranchSummary`;
 the compaction arm could not follow it because the field was not there, and nothing failed.
+
+**And it turned out to be the whole audit.** All five finds so far are one shape — *a rule present
+in one place and absent in its sibling* — and none of them is a mistranslation of upstream: a
+`match` arm missing a type (`BranchSummary`, `ImageContent`), a field one arm checks and the other
+has not got (`fromHook`), one settings key out of three (`retry.maxRetries`), two session-leaving
+recipes with different ideas about them (`RpcMode` vs `InteractiveMode`), and one question — *is
+there a key for this model?* — that upstream asks in five places and pig asked in none. So the
+first tool to reach for is not "read this file against upstream" but **"who else does this, and do
+they agree?"** — and the fix that sticks is one implementation rather than the missing lines added
+twice, which is why `startNew()`/`switchTo()` and `Auth::availableModels()` exist.
 
 ### Compaction counted an image as nothing, so a conversation of screenshots could not be compacted
 

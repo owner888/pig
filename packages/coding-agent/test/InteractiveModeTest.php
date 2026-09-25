@@ -46,6 +46,7 @@ use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ToolSet;
+use Pig\Test\WithoutProviderKeys;
 use Pig\Tui\Ansi;
 use Pig\Tui\Components\Text;
 use Pig\Tui\Test\FakeClipboard;
@@ -61,6 +62,8 @@ use RuntimeException;
  */
 final class InteractiveModeTest extends TestCase
 {
+    use WithoutProviderKeys;
+
     private const string ESC = "\e";
 
     private const string ENTER = "\r";
@@ -98,6 +101,10 @@ final class InteractiveModeTest extends TestCase
         $this->home = $this->cwd . '-home';
         mkdir($this->cwd, 0o755, true);
         putenv('PIG_HOME=' . $this->home);
+
+        // `/model` lists the models there is a key for when this mode is given an `Auth`, and what
+        // the shell running the suite exports is not something an assertion should turn on.
+        $this->forgetProviderKeys();
     }
 
     #[\Override]
@@ -105,6 +112,7 @@ final class InteractiveModeTest extends TestCase
     {
         $this->mode->stop();
         putenv('PIG_HOME');
+        $this->restoreProviderKeys();
         self::remove($this->home);
         self::remove($this->cwd);
     }
@@ -1211,6 +1219,41 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
 
         $this->assertStringContainsString('Error: No model matches "llama-9"', $this->screen());
+        $this->assertSame($before, $this->session->model()?->id);
+    }
+
+    public function testTheListIsTheModelsThereIsAKeyFor(): void
+    {
+        // A key for openai and nothing else, because the registry starts with twenty-one anthropic
+        // models: a picker that was not filtered would show eight of those and this case would
+        // pass on a screen that never mentions the provider it is about.
+        $auth = Auth::inMemory();
+        $auth->setRuntimeApiKey('openai', 'for-this-run');
+        $this->start(auth: $auth);
+
+        $this->type('/model');
+        $this->type(self::ENTER);
+
+        $screen = $this->screen();
+
+        // Upstream's model selector lists `getAvailable()`. A picker that offers a model whose
+        // every turn will fail is a picker that teaches people not to read it.
+        $this->assertStringContainsString('openai', $screen);
+        $this->assertStringNotContainsString('anthropic', $screen);
+    }
+
+    public function testAPatternForAProviderWithNoKeyMatchesNothing(): void
+    {
+        $auth = Auth::inMemory();
+        $auth->setRuntimeApiKey('anthropic', 'for-this-run');
+        $this->start(auth: $auth);
+        $before = $this->session->model()?->id;
+
+        $this->type('/model gpt-5');
+        $this->type(self::ENTER);
+
+        // Rather than switching to it and failing on the next turn, from inside the turn.
+        $this->assertStringContainsString('No model matches "gpt-5"', $this->screen());
         $this->assertSame($before, $this->session->model()?->id);
     }
 

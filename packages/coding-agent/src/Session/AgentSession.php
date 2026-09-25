@@ -198,7 +198,11 @@ final class AgentSession
             $model = Models::find($recorded['model']->provider, $recorded['model']->modelId)
                 ?? Models::get($recorded['model']->modelId);
 
-            if ($model !== null) {
+            // A key as well as a model. Upstream's `restoreModelFromSession()` checks both and
+            // falls back on either — an afternoon on a borrowed `--api-key` comes back tomorrow
+            // with no key for that provider, and restoring it would mean a conversation that
+            // reopens onto a model whose every turn fails.
+            if ($model !== null && $this->keyFor($model) !== null) {
                 $this->agent->setModel($model);
             }
         }
@@ -350,6 +354,15 @@ final class AgentSession
      */
     public function setModel(Model $model, ?ThinkingLevel $thinking = null): void
     {
+        // Upstream's first two lines, and they were missing: switching to a model this machine
+        // has no key for used to succeed, be written into the session file as the model this
+        // conversation is on, and then fail on the next turn with `Stream`'s "No API key for
+        // provider" — from inside a turn, where it looks like the provider's fault. Refused here
+        // instead, before anything is recorded.
+        if ($this->keyFor($model) === null) {
+            throw new AgentError("No API key for {$model->provider}/{$model->id}");
+        }
+
         $changed = $this->model()?->id !== $model->id || $this->model()?->provider !== $model->provider;
 
         $this->agent->setModel($model);
@@ -366,6 +379,24 @@ final class AgentSession
         $levels = $this->availableThinkingLevels();
 
         $this->setThinkingLevel(in_array($wanted, $levels, true) ? $wanted : ThinkingLevel::Off);
+    }
+
+    /**
+     * The key this model would be used with, or null when there is none.
+     *
+     * The agent's own answer, asked the way a turn asks it: the closure `CodingAgent` wires to
+     * `Auth::apiKey()`, then the one key a caller handed in. Upstream asks its model registry
+     * here; pig's `AgentSession` is given a closure instead, which is the same fact from the
+     * same place — and asking it means an expiring token is renewed rather than pronounced
+     * missing.
+     */
+    private function keyFor(Model $model): ?string
+    {
+        $options = $this->agent->options();
+
+        return $options->getApiKey !== null
+            ? ($options->getApiKey)($model->provider) ?? $options->apiKey
+            : $options->apiKey;
     }
 
     public function isStreaming(): bool
@@ -1299,9 +1330,7 @@ final class AgentSession
         $stream = new SimpleStreamOptions(
             maxTokens: $maxTokens ?? (int) (0.8 * $this->reserveTokens()),
             signal: $signal,
-            apiKey: $options->getApiKey !== null
-                ? ($options->getApiKey)($model->provider) ?? $options->apiKey
-                : $options->apiKey,
+            apiKey: $this->keyFor($model),
             reasoning: ReasoningEffort::High,
         );
 

@@ -6,11 +6,29 @@ namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Cli\ModelList;
+use Pig\Test\WithoutProviderKeys;
 
 /** `--models`, and `--models <search>`. */
 final class ModelListTest extends TestCase
 {
+    use WithoutProviderKeys;
+
+    #[\Override]
+    protected function setUp(): void
+    {
+        // The two cases that hand `render()` an `Auth` are about which providers have a key, and
+        // the machine running the suite has opinions about that.
+        $this->forgetProviderKeys();
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        $this->restoreProviderKeys();
+    }
+
     /** @return list<string> */
     private function lines(string $search = ''): array
     {
@@ -112,6 +130,30 @@ final class ModelListTest extends TestCase
     public function testAnEmptySearchIsNotASearch(): void
     {
         $this->assertSame(ModelList::render(), ModelList::render(''));
+    }
+
+    // ---- with the keys in hand ---------------------------------------------------------------
+
+    public function testGivenTheKeysItListsTheModelsThoseKeysReach(): void
+    {
+        $auth = Auth::inMemory();
+        $auth->setRuntimeApiKey('anthropic', 'a-key');
+
+        $table = ModelList::render('', $auth);
+
+        // Upstream's `listModels()` lists `getAvailable()`, and the point of the table is to find
+        // an id for `--model`: a row for a provider this machine cannot reach is a row that sends
+        // somebody to a failing turn.
+        $this->assertStringContainsString('claude-sonnet-4-5', $table);
+        $this->assertStringNotContainsString('openai', $table);
+    }
+
+    public function testGivenTheKeysAndNoneOfThemItSaysWhatToDo(): void
+    {
+        $this->assertSame(
+            'No model has a key here. Sign in with `pig-ai login`, or set a provider key in the environment.',
+            ModelList::render('', Auth::inMemory()),
+        );
     }
 
     // ---- the token column ------------------------------------------------------------------

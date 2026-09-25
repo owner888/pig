@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent;
 
 use Closure;
+use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\Stream;
 use Pig\Ai\Utils\Oauth\Anthropic;
@@ -151,6 +152,68 @@ final class Auth
     public function has(string $provider): bool
     {
         return isset($this->data[$provider]);
+    }
+
+    /**
+     * Whether there is a key for this provider *without going and getting one*.
+     *
+     * `apiKey()` renews an expiring OAuth token on the way past, which is right for a turn and
+     * wrong for a list: drawing `/model` would refresh every signed-in provider, and a provider
+     * whose refresh fails throws — so one unreachable network would empty a listing that has
+     * twenty usable models in it. This asks the cheap question instead, in `apiKey()`'s own
+     * order: a key given on the command line, then a stored credential of either kind, then a
+     * `models.json` provider's variable, then the environment.
+     *
+     * A stored OAuth credential counts as a key even when its access token has expired, because
+     * that is a refresh away and the refresh happens when a turn needs it. Upstream, which does
+     * refresh here, would leave such a provider out of the list until it succeeded.
+     */
+    public function hasKeyFor(string $provider): bool
+    {
+        if (isset($this->runtime[$provider]) || isset($this->data[$provider])) {
+            return true;
+        }
+
+        if (isset($this->customKeys[$provider])) {
+            // `resolve()` hands back the variable's name when the environment has no such
+            // variable, which is the right answer for a provider that takes a literal key in the
+            // file and a wrong one here only if the file left it empty.
+            return CustomModels::resolve($this->customKeys[$provider]) !== '';
+        }
+
+        return Stream::envApiKey($provider) !== null;
+    }
+
+    /**
+     * The models there is a key for.
+     *
+     * Upstream's `ModelRegistry::getAvailable()`, and `Auth` is what pig has instead of a
+     * registry: the credentials are here, and the models are a static list in `Pig\Ai`. Every
+     * listing goes through this one method — `--models`, `/model`, and RPC's
+     * `get_available_models` — because the audit's recurring find is a rule that lives in one
+     * place and is absent in its sibling, and three lists filtered three ways is that shape
+     * waiting to happen.
+     *
+     * Asked once per provider rather than once per model: twenty-one models share five
+     * providers, and the answer cannot change mid-list.
+     *
+     * @param list<Model>|null $models defaults to every model there is
+     * @return list<Model>
+     */
+    public function availableModels(?array $models = null): array
+    {
+        $answers = [];
+        $available = [];
+
+        foreach ($models ?? Models::all() as $model) {
+            $answers[$model->provider] ??= $this->hasKeyFor($model->provider);
+
+            if ($answers[$model->provider]) {
+                $available[] = $model;
+            }
+        }
+
+        return $available;
     }
 
     /** `api_key`, `oauth`, or null for a provider nothing is stored for. */

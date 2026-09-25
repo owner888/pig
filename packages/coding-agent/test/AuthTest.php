@@ -11,6 +11,7 @@ use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
 use Pig\Test\AssertsThrows;
+use Pig\Test\WithoutProviderKeys;
 
 /**
  * The keys and the tokens on disk.
@@ -23,8 +24,16 @@ use Pig\Test\AssertsThrows;
 final class AuthTest extends TestCase
 {
     use AssertsThrows;
+    use WithoutProviderKeys;
 
     private string $home;
+
+    /** Where this class writes, and what would otherwise answer for it. */
+    private const array CLEARED = [
+        'PIG_HOME', 'PI_HOME', 'PI_AGENT_DIR',
+        'GEMINI_CLI_CLIENT_ID', 'GEMINI_CLI_CLIENT_SECRET',
+        'KEY_FOR_A_DECLARED_PROVIDER',
+    ];
 
     #[\Override]
     protected function setUp(): void
@@ -33,17 +42,13 @@ final class AuthTest extends TestCase
 
         // `apiKey()` falls through to the environment, and a real key in the shell running
         // the suite would answer some of these for the wrong reason.
-        foreach (['ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN', 'PIG_HOME', 'PI_HOME', 'PI_AGENT_DIR', 'GEMINI_CLI_CLIENT_ID', 'GEMINI_CLI_CLIENT_SECRET'] as $variable) {
-            putenv($variable);
-        }
+        $this->forgetProviderKeys(self::CLEARED);
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        foreach (['ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN', 'PIG_HOME', 'PI_HOME', 'PI_AGENT_DIR', 'GEMINI_CLI_CLIENT_ID', 'GEMINI_CLI_CLIENT_SECRET'] as $variable) {
-            putenv($variable);
-        }
+        $this->restoreProviderKeys();
 
         self::remove($this->home);
     }
@@ -238,6 +243,61 @@ final class AuthTest extends TestCase
         putenv('ANTHROPIC_API_KEY=from-the-shell');
 
         $this->assertSame('from-the-shell', $this->auth()->apiKey('anthropic'));
+    }
+
+    // ---- which models can be talked to -------------------------------------------------------
+
+    public function testAModelIsAvailableWhenItsProviderHasAKeyAnywhere(): void
+    {
+        putenv('ANTHROPIC_API_KEY=from-the-shell');
+        $auth = $this->auth();
+
+        $providers = [];
+
+        foreach ($auth->availableModels() as $model) {
+            $providers[$model->provider] = true;
+        }
+
+        // Anthropic's models and nobody else's: this container has no other provider key, and the
+        // point of the list is that a picker drawn from it cannot offer a model whose every turn
+        // would fail.
+        $this->assertSame(['anthropic'], array_keys($providers));
+        $this->assertTrue($auth->hasKeyFor('anthropic'));
+        $this->assertFalse($auth->hasKeyFor('openai'));
+    }
+
+    public function testNoKeysAnywhereMeansNoModels(): void
+    {
+        $this->assertSame([], $this->auth()->availableModels());
+    }
+
+    public function testAnExpiredOauthTokenStillCountsAsAKey(): void
+    {
+        // Expired an hour ago. A refresh away, and the refresh happens when a turn needs one:
+        // asking `apiKey()` here would renew every signed-in provider just to draw a list, and a
+        // provider whose refresh fails throws — so one unreachable network would empty the list.
+        $past = (int) (microtime(true) * 1000) - 3600_000;
+        $auth = $this->given('{"anthropic": {"type": "oauth", "refresh": "r", "access": "old", "expires": ' . $past . '}}');
+
+        $this->assertTrue($auth->hasKeyFor('anthropic'));
+        $this->assertNotSame([], $auth->availableModels());
+    }
+
+    public function testADeclaredProvidersKeyVariableIsEnoughToBeAvailable(): void
+    {
+        putenv('KEY_FOR_A_DECLARED_PROVIDER=a-key');
+        $auth = $this->auth();
+        $auth->setCustomProviderKeys(['my-box' => 'KEY_FOR_A_DECLARED_PROVIDER']);
+
+        $this->assertTrue($auth->hasKeyFor('my-box'));
+    }
+
+    public function testAKeyGivenOnTheCommandLineMakesItsProviderAvailable(): void
+    {
+        $auth = $this->auth();
+        $auth->setRuntimeApiKey('openai', 'for-this-run-only');
+
+        $this->assertTrue($auth->hasKeyFor('openai'));
     }
 
     public function testAnOauthTokenInTheEnvironmentBeatsAnApiKeyThere(): void

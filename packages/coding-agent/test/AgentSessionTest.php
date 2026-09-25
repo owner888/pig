@@ -1098,6 +1098,40 @@ final class AgentSessionTest extends TestCase
         $this->assertCount(2, $second->messages());
     }
 
+    // ---- which model -------------------------------------------------------------------
+
+    public function testAModelWithNoKeyIsRefusedAndNotWrittenDown(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['hello'], store: $store, getApiKey: static fn (string $provider): ?string
+            => $provider === 'anthropic' ? 'a-key' : null);
+
+        Async::run(static fn () => $session->prompt('hi'));
+        $before = (string) file_get_contents($store->path);
+
+        $openai = new Model('other-model', 'Other', Api::AnthropicMessages, 'openai', 'http://127.0.0.1:1', 1_000, 100);
+        $error = $this->assertThrows(AgentError::class, static fn () => $session->setModel($openai));
+
+        // Upstream's message, and upstream's order: the key is checked before anything is applied.
+        // It used to switch, write a `model_change` into the file, and fail on the next turn from
+        // inside `Stream` — where a conversation recorded as being on a model nobody can talk to
+        // is left in the file for `--continue` to find.
+        $this->assertStringContainsString('No API key for openai/other-model', $error->getMessage());
+        $this->assertSame('test-model', $session->model()?->id);
+        $this->assertSame($before, (string) file_get_contents($store->path), 'and the file says nothing about it');
+    }
+
+    public function testAModelWithAKeyIsSetAsBefore(): void
+    {
+        $session = $this->session([], getApiKey: static fn (string $provider): ?string
+            => $provider === 'anthropic' ? 'a-key' : null);
+
+        $session->setModel(Models::find('anthropic', 'claude-haiku-4-5') ?? throw new RuntimeException('no model'));
+
+        // The other half, so the test above cannot pass by `setModel()` refusing everything.
+        $this->assertSame('claude-haiku-4-5', $session->model()?->id);
+    }
+
     // ---- leaving this conversation ------------------------------------------------------
 
     public function testANewSessionIsANewFileAndTheOldOneStopsWhereItStopped(): void
@@ -1209,10 +1243,14 @@ final class AgentSessionTest extends TestCase
         ?Closure $streamFn = null,
         ?SessionManager $store = null,
         ?Settings $settings = null,
+        ?Closure $getApiKey = null,
     ): AgentSession {
         $agent = new Agent(new AgentOptions(
             streamFn: $streamFn ?? $this->provider($answers, $hook),
-            apiKey: 'test-key',
+            // One key for every provider unless a test says otherwise, which is what the cases
+            // about a model there is no key for hand in instead.
+            apiKey: $getApiKey === null ? 'test-key' : null,
+            getApiKey: $getApiKey,
         ));
 
         $agent->setModel($model ?? $this->model());

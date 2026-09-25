@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Cli;
 
 use Pig\Ai\Model;
 use Pig\Ai\Models;
+use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Utils\Fuzzy;
 
 /**
@@ -31,13 +32,19 @@ final class ModelList
      * The table, or a line saying why there is none.
      *
      * @param string $search fuzzy, over "provider id" — empty lists everything
+     * @param Auth|null $auth the keys, so the listing is of models that can actually be talked
+     *                        to — upstream's `listModels()` lists `getAvailable()`, and the point
+     *                        of the table is to find an id to pass to `--model`. Null lists every
+     *                        model there is, which is what a test wants and nothing else does.
      */
-    public static function render(string $search = ''): string
+    public static function render(string $search = '', ?Auth $auth = null): string
     {
-        $models = Models::all();
+        $models = $auth?->availableModels() ?? Models::all();
 
         if ($models === []) {
-            return 'No models in the registry.';
+            return $auth === null
+                ? 'No models in the registry.'
+                : 'No model has a key here. Sign in with `pig-ai login`, or set a provider key in the environment.';
         }
 
         $matched = $search === ''

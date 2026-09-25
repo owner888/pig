@@ -240,8 +240,12 @@ final class RpcClientTest extends TestCase
         $this->assertSame(0, $state['messageCount'] ?? null);
     }
 
-    /** @param list<string> $arguments */
-    private function client(array $arguments = [], bool $withHooks = false): RpcClient
+    /**
+     * @param list<string> $arguments
+     * @param array<string, string> $environment on top of the four below — a provider key, for the
+     *                                           cases about which models this machine can talk to
+     */
+    private function client(array $arguments = [], bool $withHooks = false, array $environment = []): RpcClient
     {
         $binary = RpcClient::defaultBinary();
 
@@ -265,11 +269,18 @@ final class RpcClientTest extends TestCase
                 'PI_HOME' => $this->root . '/pi',
                 'HOME' => $this->home,
                 'KEY_FOR_THE_STAND_IN' => 'not-checked-by-the-stand-in',
+                // Blanked rather than left alone: the model list and `set_model` now go by which
+                // providers have a key, and the machine running the tests may well have an
+                // Anthropic one in its environment — `RpcClient` hands the child this on top of
+                // its own. The two cases that want that key set it back through `$environment`.
+                'ANTHROPIC_API_KEY' => '',
+                'ANTHROPIC_OAUTH_TOKEN' => '',
                 // The container this was written in has a proxy in its environment, and a tunnel to
                 // reach 127.0.0.1 cannot work. `Proxy::bypasses()` says the same, but saying it
                 // twice costs nothing and a proxy that refuses is a confusing way to fail.
                 'https_proxy' => '',
                 'HTTPS_PROXY' => '',
+                ...$environment,
             ],
             timeout: 20.0,
         );
@@ -359,7 +370,10 @@ final class RpcClientTest extends TestCase
     public function testTheModelCanBeChangedAndTheStateSaysSo(): void
     {
         $this->serveOneTurn('unused');
-        $client = $this->client(['--model', 'stand-in']);
+
+        // With a key for it, because `set_model` refuses a model this machine cannot talk to —
+        // the test below is that refusal.
+        $client = $this->client(['--model', 'stand-in'], environment: ['ANTHROPIC_API_KEY' => 'not-called-here']);
 
         [$set, $state] = Async::run(static function () use ($client): array {
             $client->start();
@@ -374,7 +388,28 @@ final class RpcClientTest extends TestCase
         $this->assertSame('claude-3-5-haiku-latest', $state['model']['id'] ?? null);
     }
 
-    public function testTheModelListIncludesTheOneFromModelsJson(): void
+    public function testAModelWithNoKeyIsRefusedByNameRatherThanFailingOnTheNextTurn(): void
+    {
+        $this->serveOneTurn('unused');
+        $client = $this->client(['--model', 'stand-in']);
+
+        $error = $this->assertThrows(RpcError::class, static fn () => Async::run(static function () use ($client): void {
+            $client->start();
+
+            try {
+                $client->setModel('anthropic', 'claude-3-5-haiku-latest');
+            } finally {
+                $client->stop();
+            }
+        }));
+
+        // There is no anthropic key in this home. Before, the switch succeeded, was written into
+        // the session file as the model this conversation is on, and failed on the next turn from
+        // inside `Stream` — where it reads as the provider's fault.
+        $this->assertStringContainsString('No API key for anthropic/claude-3-5-haiku-latest', $error->getMessage());
+    }
+
+    public function testTheModelListIsTheModelsThereIsAKeyFor(): void
     {
         $this->serveOneTurn('unused');
         $client = $this->client(['--model', 'stand-in']);
@@ -389,8 +424,32 @@ final class RpcClientTest extends TestCase
 
         $ids = array_map(static fn (array $m): string => (string) ($m['id'] ?? ''), $models);
 
+        // `KEY_FOR_THE_STAND_IN` is in this environment and no anthropic key is, so upstream's
+        // word for this list — "available" — is the whole of it: a host drawing a menu from it
+        // would otherwise offer twenty models and have nineteen of them fail.
         $this->assertContains('stand-in', $ids, 'a model declared in a file is on the wire too');
+        $this->assertNotContains('claude-sonnet-4-5', $ids, 'and a model with no key is not');
+    }
+
+    public function testAProviderKeyInTheEnvironmentIsEnoughToBeOnTheList(): void
+    {
+        $this->serveOneTurn('unused');
+        $client = $this->client(['--model', 'stand-in'], environment: ['ANTHROPIC_API_KEY' => 'not-called-here']);
+
+        $models = Async::run(static function () use ($client): array {
+            $client->start();
+            $models = $client->availableModels();
+            $client->stop();
+
+            return $models;
+        });
+
+        $ids = array_map(static fn (array $m): string => (string) ($m['id'] ?? ''), $models);
+
+        // The other half of the same rule, so neither test can pass by the list being empty or
+        // by it being everything.
         $this->assertContains('claude-sonnet-4-5', $ids);
+        $this->assertContains('stand-in', $ids);
     }
 
     public function testAThinkingLevelThatIsNotOneIsRefusedByName(): void
