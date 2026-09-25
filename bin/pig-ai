@@ -22,15 +22,36 @@ foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php
     }
 }
 
+use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpError;
+use Pig\Ai\Http\Proxy;
 use Pig\Async\Async;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Cli\SignIn;
 use Pig\CodingAgent\Settings;
 use Pig\Tui\Style;
 
-// The settings are read for one thing: the two Google flows need a client id and secret that this
-// repository does not hold, and `~/.pig/settings.json` is one of the two places they can be.
-$auth = Auth::discover(settings: Settings::load(getcwd() ?: '.'));
+// The settings are read for two things: the two Google flows need a client id and secret that this
+// repository does not hold, and `~/.pig/settings.json` is one of the two places they can be — and
+// a sign-in is the *first* thing that needs the network, so it needs the proxy as much as a turn
+// does. Signing in and then failing to reach the provider would be a confusing way to find out.
+$settings = Settings::load(getcwd() ?: '.');
+
+try {
+    $proxy = Proxy::fromEnvironment(getenv())?->bypassing($settings->proxyBypass());
+
+    if ($proxy === null && $settings->proxyUrl() !== null) {
+        $proxy = Proxy::parse($settings->proxyUrl(), $settings->proxyBypass());
+    }
+
+    HttpClient::useProxy($proxy);
+} catch (HttpError $error) {
+    fwrite(STDERR, Style::red('proxy: ' . $error->getMessage() . "\n"));
+
+    exit(1);
+}
+
+$auth = Auth::discover(settings: $settings);
 
 foreach ($auth->problems() as $problem) {
     fwrite(STDERR, Style::yellow("credentials: {$problem}\n"));

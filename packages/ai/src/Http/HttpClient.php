@@ -25,8 +25,35 @@ final class HttpClient
     /** Enough for any sane chain; more than this is a loop somebody wrote by accident. */
     private const int MAX_REDIRECTS = 5;
 
-    public function __construct(private readonly float $timeout = 60.0)
+    /**
+     * The proxy every client without one of its own uses.
+     *
+     * Process-wide state, which `Models::register()` already established the shape of, and for the
+     * same reason: `new HttpClient()` appears in thirteen places — five providers and four OAuth
+     * flows among them — none of which is handed one, and a provider that reached the network
+     * directly while the rest tunnelled would be a provider that works until somebody switches to
+     * it. Nothing reads the environment on its own: `bin/pig` does that once, so a test suite run
+     * in a shell that has `HTTPS_PROXY` set still talks to its own loopback servers.
+     */
+    private static ?Proxy $default = null;
+
+    private readonly ?Proxy $proxy;
+
+    public function __construct(private readonly float $timeout = 60.0, ?Proxy $proxy = null)
     {
+        $this->proxy = $proxy ?? self::$default;
+    }
+
+    /** Route every client built from here on through $proxy; null goes back to direct. */
+    public static function useProxy(?Proxy $proxy): void
+    {
+        self::$default = $proxy;
+    }
+
+    /** What `useProxy()` last set, for a status line — and for a test to put back. */
+    public static function proxy(): ?Proxy
+    {
+        return self::$default;
     }
 
     /**
@@ -95,7 +122,9 @@ final class HttpClient
     public function send(Request $request, ?AbortSignal $signal = null): Response
     {
         [$host, $port, $tls, $target] = $this->resolve($request->url);
-        $socket = Socket::connect($host, $port, $tls, $this->timeout, $signal);
+        $socket = $this->proxy !== null && !$this->proxy->bypasses($host)
+            ? $this->proxy->open($host, $port, $tls, $this->timeout, $signal)
+            : Socket::connect($host, $port, $tls, $this->timeout, $signal);
 
         try {
             $socket->write($this->serialize($request, $host, $port, $tls, $target), $this->timeout, $signal);

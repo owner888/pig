@@ -29,6 +29,18 @@ amphp、不用 ncurses，只用标准库。
 `stream_select()` 能同时等模型的 socket 和键盘**——这正是「流式输出途中能打断、能继续打字」
 所依赖的前提。
 
+**走代理**——有些网络不走代理根本连不上 provider：
+
+```bash
+bin/pig --proxy socks5://127.0.0.1:7891      # 或者 http://127.0.0.1:7890
+https_proxy=http://127.0.0.1:7890 bin/pig    # 或者 all_proxy，或者 settings 里的 proxy.url
+```
+
+支持 HTTP CONNECT 和 SOCKS5，代理要求账号密码也能带。**TLS 是在隧道打通之后才开始的**，校验的是
+provider 的证书，所以代理只负责搬字节、读不到内容；域名是交给代理去解析的，因为需要代理的网络里
+本地 DNS 往往也是坏的。回环地址永远直连，`no_proxy` 和 `proxy.bypass` 可以再加，`--no-proxy` 全部
+关掉。
+
 工具调用在执行前会按工具自己的 JSON Schema 校验一遍：`Ai\Utils\JsonSchema` 是 draft-07 的一个
 子集，错误信息沿用 AJV 的措辞——因为读这条报错的是**模型**，它要靠这句话自我纠正。遇到没实现的
 关键字是忽略而不是判失败，所以给工具 schema 加一个关键字永远不会把工具搞坏。

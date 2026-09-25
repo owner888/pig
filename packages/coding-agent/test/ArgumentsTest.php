@@ -235,4 +235,24 @@ final class ArgumentsTest extends TestCase
         $this->assertTrue($parsed->has('api-key'));
         $this->assertSame('', $parsed->value('api-key'));
     }
+
+    // ---- the proxy ----------------------------------------------------------------------
+
+    public function testTheProxyFlagTakesItsValueAndNotTheMessage(): void
+    {
+        $parsed = $this->parse('--proxy', 'socks5://127.0.0.1:7891', 'fix the bug');
+
+        $this->assertSame('socks5://127.0.0.1:7891', $parsed->value('proxy'));
+        $this->assertSame(['fix the bug'], $parsed->messages);
+    }
+
+    public function testNoProxyIsAFlagAndNotAnOptionWithAValue(): void
+    {
+        $parsed = $this->parse('--no-proxy', 'fix the bug');
+
+        // The mistake this rules out is the one the whole `TAKES_A_VALUE` list exists for:
+        // `--no-proxy "fix the bug"` reading the prompt as a proxy URL and then having no prompt.
+        $this->assertTrue($parsed->has('no-proxy'));
+        $this->assertSame(['fix the bug'], $parsed->messages);
+    }
 }

@@ -126,6 +126,66 @@ The download goes through `pig/ai`'s own HTTP client, which grew `HttpClient::fo
 a release URL is answered with a 302 to GitHub's object store, and a streaming API never
 redirects, so `send()` keeps its single-request behaviour and only downloads pay for the loop.
 
+### Reaching the provider through a proxy
+
+`Ai\Http\Proxy` has **no upstream counterpart, and is not optional** where pig runs. Node's
+`fetch()` is undici, which reads `HTTPS_PROXY` through an agent somebody else wrote; PHP's streams
+connect to the address they are handed and to nothing else. On a network where
+`api.anthropic.com` is unreachable directly — the developer's, among others — pig without this does
+not talk to a provider at all, so "direct" is not a worse route, it is no route.
+
+Two protocols, because a local Clash or v2ray offers both and people use whichever port they
+remember: **HTTP CONNECT** (RFC 9110 §9.3.6) and **SOCKS5** (RFC 1928, with RFC 1929 for a
+password). `--proxy <url>`, then `https_proxy`/`all_proxy`, then `proxy.url` in the settings — the
+order stated at the top of `bin/pig`, and `--no-proxy` ignores all three.
+
+**The order inside `Proxy::open()` is the security property, not an implementation detail.** The
+TCP connection goes to the proxy with TLS *off*; TLS starts only after the proxy has said the far
+end is open, and it verifies the **provider's** certificate. That is why `Socket::enableTls()` had
+to become public, and why it sets `peer_name` itself: a tunnelled socket was dialled to the proxy
+and would otherwise be checked against the proxy's name. The proxy carries pig's bytes and can read
+none of them.
+
+Eight decisions worth the words:
+
+- **A hostname is sent as a hostname**, so the *proxy* resolves it — `socks5h` behaviour for the
+  `socks5` spelling too, deliberately. In the network that makes a proxy necessary, the local
+  resolver is the other thing that does not work, and a name resolved here would already be the
+  wrong address by the time the proxy saw it. `ProxyTest` asks for `provider.invalid` throughout:
+  by RFC 2606 it cannot resolve, so a version of this that resolved locally fails the test rather
+  than passing for the wrong reason.
+- **Loopback is always direct, and that is not a convenience.** pig's own OAuth callback listens on
+  `127.0.0.1:8085`; a tunnel through a proxy to reach the machine pig is on cannot work. It also
+  means the whole test suite keeps talking to its own servers.
+- **Nothing reads the environment on its own.** `bin/pig` and `bin/pig-ai` each do it once. The
+  first draft had `HttpClient` do it in its constructor, and every test in this container — which
+  has `HTTPS_PROXY` set — would then have tunnelled through the container's own agent proxy.
+- **The default is process-wide**, which is `Models::register()`'s shape and for the same reason:
+  `new HttpClient()` appears in thirteen places — five providers and four OAuth flows among them —
+  and none of them is handed one. A provider that reached the network directly while the rest
+  tunnelled would work right up until somebody switched to it.
+- **A bad proxy URL is fatal at startup.** Falling back to a direct connection would report the
+  *provider* as unreachable and send somebody looking at the wrong machine.
+- **An unreachable proxy says it was the proxy.** The first version's message was `Cannot connect to
+  127.0.0.1:7890`, which never says whose address that is; it now reads `Cannot reach the proxy
+  socks5://127.0.0.1:7890: … (asked for api.anthropic.com:443)`.
+- **`describe()` never prints the password**, and it is what every error message above uses.
+- **`https://` as the proxy's own scheme is refused by name.** TLS to the proxy with TLS to the
+  provider inside it is two crypto layers on one stream and
+  `stream_socket_enable_crypto()` does one. Every proxy that speaks `https://` also speaks
+  `http://` or `socks5://` on another port, so naming it *is* the fix. SOCKS4 is refused too: it
+  cannot carry a hostname, which is the one thing that matters here.
+
+`http_proxy` is not read, and an `http://` target is tunnelled with CONNECT rather than sent in
+absolute form. Both follow from the same fact: every provider pig talks to is `https://`, and a
+plain-HTTP endpoint in `models.json` is a local or self-hosted server that goes direct anyway.
+
+The tests forward for real, through `test/TunnelServer.php` — a loopback proxy that speaks both
+protocols — because a handshake can be byte-perfect and still leave one byte unread on the socket.
+That was not hypothetical: deleting the read of SOCKS5's bound address makes four tests fail with
+`Malformed status line: "  8HTTP/1.1 200 OK"`, which is the bound address arriving where the
+response was meant to be. Asserting only on the bytes pig *sends* would have passed.
+
 ## Layout
 
 ```
@@ -1988,7 +2048,6 @@ What is left unported, across every package, each for a reason:
 | Upstream | Why not |
 |---|---|
 | seventeen of the twenty-five selector components | the interactive mode needs eight; `/model`, `/resume`, `/tree`, `/login` and `/logout` are the same `SelectList` in the same place instead, and `settings-selector.ts` is `showSettings()` plus `Interactive\SettingsSubmenu` |
-| `agent/proxy.ts` (340) | a stream function that routes LLM calls through somebody's server, so the server holds the keys. pig talks to providers directly; this arrives if something ever wants a proxy |
 | `ai/utils/typebox-helpers.ts` (24) | `StringEnum`, a TypeBox helper that emits `{type:"string", enum:[…]}` because TypeBox's own `Type.Enum` emits `anyOf`/`const` and Google's API rejects that. In PHP a schema **is** an array, so there is nothing to help with — you write the array, and `JsonSchemaTest` says so where the enum is tested |
 | `coding-agent/core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |
 | `coding-agent/modes/rpc/rpc-types.ts`, `rpc-client.ts` | TypeScript types for the wire shape, and a client for driving the mode from TypeScript. `RpcMode`'s docblock plus `RpcEvents` is the first; a host writes JSON lines in whatever language it is in |

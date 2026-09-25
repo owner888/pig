@@ -33,6 +33,19 @@ exists so one `stream_select()` can wait on the model's socket and on the keyboa
 time, which is what makes interrupting a running turn — and typing while the model streams —
 possible at all.
 
+**Behind a proxy**, which some networks require to reach a provider at all:
+
+```bash
+bin/pig --proxy socks5://127.0.0.1:7891      # or http://127.0.0.1:7890
+https_proxy=http://127.0.0.1:7890 bin/pig    # or all_proxy, or proxy.url in the settings
+```
+
+HTTP CONNECT and SOCKS5, with a username and password if the proxy wants one. TLS starts *after*
+the tunnel is open and verifies the provider's certificate, so the proxy carries the bytes and can
+read none of them; a hostname is handed to the proxy to resolve, because a local resolver is often
+the other thing that does not work. Loopback always goes direct, `no_proxy` and `proxy.bypass` add
+to that, and `--no-proxy` turns the lot off.
+
 A tool call is checked against the tool's own JSON Schema before it runs — `Ai\Utils\JsonSchema`
 is a draft-07 subset with AJV's wording, because the reader of a validation failure is the model
 that has to correct itself from it. An unknown keyword is ignored rather than failed, so adding a

@@ -167,6 +167,44 @@ final class Settings
         $this->set('queueMode', $mode->value);
     }
 
+    /**
+     * The proxy URL to reach providers through, or null for direct.
+     *
+     * A settings entry as well as an environment variable because the environment belongs to a
+     * shell: pig started from a launcher, a desktop entry or another program has none, and the
+     * network that needs a proxy needs it every time.
+     */
+    public function proxyUrl(): ?string
+    {
+        $url = $this->get('proxy.url');
+
+        return is_string($url) && trim($url) !== '' ? trim($url) : null;
+    }
+
+    public function setProxyUrl(?string $url): void
+    {
+        $this->set('proxy.url', $url === null || trim($url) === '' ? null : trim($url));
+    }
+
+    /**
+     * Hosts to reach directly anyway, the `no_proxy` list as an array.
+     *
+     * @return list<string>
+     */
+    public function proxyBypass(): array
+    {
+        $value = $this->get('proxy.bypass');
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            array_map(static fn (mixed $entry): string => is_string($entry) ? trim($entry) : '', $value),
+            static fn (string $entry): bool => $entry !== '',
+        ));
+    }
+
     public function showImages(): bool
     {
         return $this->get('terminal.showImages') !== false;

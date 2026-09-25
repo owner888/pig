@@ -158,8 +158,22 @@ final class Socket
         fclose($stream);
     }
 
-    private function enableTls(string $host, float $timeout, ?AbortSignal $signal): void
+    /**
+     * Negotiate TLS on an already-connected socket, verifying the certificate against $host.
+     *
+     * Public because a tunnelled connection has to do this in two steps: the TCP connection
+     * goes to the proxy, and the certificate that matters belongs to the host on the far side
+     * of it. `connect()` cannot do that itself — it only knows the address it dialled — so the
+     * tunnel is built with `$tls` false and this is called afterwards with the real host.
+     */
+    public function enableTls(string $host, float $timeout = 30.0, ?AbortSignal $signal = null): void
     {
+        $this->assertOpen();
+
+        // The name to verify against, set here rather than only in `connect()`'s context: a
+        // tunnelled socket was dialled to the proxy and would otherwise be checked against it.
+        stream_context_set_option($this->stream, 'ssl', 'peer_name', $host);
+
         while (true) {
             [$done, $warning] = self::capturingWarnings(
                 fn () => stream_socket_enable_crypto($this->stream, true, STREAM_CRYPTO_METHOD_TLS_CLIENT),

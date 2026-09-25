@@ -106,6 +106,46 @@ final class SettingsTest extends TestCase
         $this->assertTrue($this->load()->showImages());
     }
 
+    public function testTheProxyIsReadAndWritten(): void
+    {
+        $this->writeGlobal(['proxy' => ['url' => '  socks5://127.0.0.1:7891  ']]);
+
+        // Trimmed, because this one gets pasted out of a Clash or v2ray window.
+        $this->assertSame('socks5://127.0.0.1:7891', $this->load()->proxyUrl());
+
+        $settings = $this->load();
+        $settings->setProxyUrl('http://127.0.0.1:7890');
+
+        $this->assertSame('http://127.0.0.1:7890', $this->load()->proxyUrl());
+
+        $settings->setProxyUrl(null);
+
+        $this->assertNull($this->load()->proxyUrl(), 'and turning it off is not an empty string');
+    }
+
+    public function testAnEmptyProxyUrlIsNoProxyRatherThanAnErrorLater(): void
+    {
+        $this->writeGlobal(['proxy' => ['url' => '   ']]);
+
+        // `Proxy::parse('')` throws, and it should; a half-deleted line in a settings file is not
+        // a reason to refuse to start.
+        $this->assertNull($this->load()->proxyUrl());
+    }
+
+    public function testTheBypassListKeepsOnlyStrings(): void
+    {
+        $this->writeGlobal(['proxy' => ['bypass' => [' example.com ', '', 42, null, 'api.test']]]);
+
+        $this->assertSame(['example.com', 'api.test'], $this->load()->proxyBypass());
+    }
+
+    public function testABypassThatIsNotAListIsEmptyRatherThanFatal(): void
+    {
+        $this->writeGlobal(['proxy' => ['bypass' => 'example.com']]);
+
+        $this->assertSame([], $this->load()->proxyBypass());
+    }
+
     public function testAFileThatIsNotJsonIsNamedRatherThanIgnored(): void
     {
         file_put_contents($this->home . '/settings.json', '{ oops');

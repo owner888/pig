@@ -22,6 +22,9 @@ foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php
 }
 
 use Pig\Agent\ThinkingLevel;
+use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpError;
+use Pig\Ai\Http\Proxy;
 use Pig\Async\Async;
 use Pig\CodingAgent\Cli\Arguments;
 use Pig\CodingAgent\Cli\FileArguments;
@@ -80,6 +83,12 @@ if (isset($options['help'])) {
                         fuzzy over provider and id: `--models gem pro`
       --api-key <key>   use this key for the model's provider, this run only.
                         Not saved; beats the environment and any stored sign-in.
+      --proxy <url>     reach providers through this proxy, this run only:
+                        `http://127.0.0.1:7890` or `socks5://127.0.0.1:7891`.
+                        Otherwise `https_proxy`/`all_proxy`, then `proxy.url` in
+                        the settings. `no_proxy` and `proxy.bypass` list the hosts
+                        to reach directly; loopback always is.
+      --no-proxy        ignore all of that and connect directly
       -v, --version     print the version, and stop
       -h, --help        this
       --theme <name>    dark or light (default: dark)
@@ -156,6 +165,33 @@ foreach ($settings->problems() as $problem) {
 }
 
 Timings::mark('settings');
+
+// Before anything opens a socket, which the first token refresh in `Auth::discover()` already
+// does. `--proxy`, then the environment, then the settings file — the order stated above.
+if (isset($options['no-proxy'])) {
+    HttpClient::useProxy(null);
+} else {
+    try {
+        $proxy = isset($options['proxy']) && $options['proxy'] !== ''
+            ? Proxy::parse($options['proxy'], $settings->proxyBypass())
+            : Proxy::fromEnvironment(getenv())?->bypassing($settings->proxyBypass());
+
+        if ($proxy === null && $settings->proxyUrl() !== null) {
+            $proxy = Proxy::parse($settings->proxyUrl(), $settings->proxyBypass());
+        }
+
+        HttpClient::useProxy($proxy);
+    } catch (HttpError $error) {
+        // Named and fatal rather than falling back to a direct connection: in the network a proxy
+        // is for, "direct" is not a worse route, it is no route, and a run that quietly tried it
+        // would report the provider as unreachable and send somebody looking at the wrong thing.
+        fwrite(STDERR, Style::red('proxy: ' . $error->getMessage() . "\n"));
+
+        exit(1);
+    }
+}
+
+Timings::mark('proxy');
 
 // Before `Auth::discover()`, because that is what these are for: a pi install left mid-upgrade
 // keeps its credentials in an `oauth.json` nothing here reads, and its conversations in files
