@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Session;
 
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\StopReason;
+use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\Ai\ThinkingContent;
 use Pig\Ai\ToolCall;
@@ -32,6 +33,17 @@ final class Compaction
 
     /** Four characters a token: conservative, which is the safe direction to be wrong in. */
     private const int CHARS_PER_TOKEN = 4;
+
+    /**
+     * What one image is worth, as characters, so the same `/ 4` turns it into 1200 tokens.
+     *
+     * Upstream's number, from the one of its two arms that counts images at all: its `toolResult`
+     * arm adds 4800 and its `user` arm adds nothing, which makes a screenshot free if somebody
+     * pasted it and expensive if a tool returned it. The same image costs the same either way here.
+     * (Its comment says "4000 chars, or 1200 tokens"; the code says 4800, and 4800 is what makes
+     * 1200 tokens, so the code is the part that was meant.)
+     */
+    private const int CHARS_PER_IMAGE = 4_800;
 
     /**
      * What the next request would carry.
@@ -102,7 +114,14 @@ final class Compaction
             $message instanceof AssistantMessage => self::assistantLength($message),
             $message instanceof ToolResultMessage => self::textLength($message->content),
             $message instanceof BashExecution => strlen($message->command) + strlen($message->output),
+            // Both summaries, and by what they *become*: `CodingAgent::toLlm()` turns each into a
+            // user message built from `toText()`, so that is the string the request will carry.
+            // Upstream measures `.summary` alone, which is a little short of what it sends.
+            //
+            // `BranchSummary` was missing from this list, and a summary of an abandoned branch is
+            // long — a 3,900-character one estimated as **zero tokens**. See CLAUDE.md.
             $message instanceof CompactionSummary => strlen($message->toText()),
+            $message instanceof BranchSummary => strlen($message->toText()),
             $message instanceof HookMessage => strlen($message->toText()),
             default => 0,
         };
@@ -410,15 +429,26 @@ final class Compaction
         return trim($text);
     }
 
-    /** @param list<mixed> $content */
+    /**
+     * How much of a request one content list is worth, as characters.
+     *
+     * An image counts as `CHARS_PER_IMAGE` rather than as nothing. Counting it as nothing is what
+     * made a conversation of screenshots impossible to compact: twelve turns of images asked to be
+     * cut down to 2,000 tokens dropped **nothing at all**, because the walk back never reached the
+     * budget — so compaction ran, paid for a summarisation, and freed no context. See CLAUDE.md.
+     *
+     * @param list<mixed> $content
+     */
     private static function textLength(array $content): int
     {
         $length = 0;
 
         foreach ($content as $block) {
-            if ($block instanceof TextContent) {
-                $length += strlen($block->text);
-            }
+            $length += match (true) {
+                $block instanceof TextContent => strlen($block->text),
+                $block instanceof ImageContent => self::CHARS_PER_IMAGE,
+                default => 0,
+            };
         }
 
         return $length;

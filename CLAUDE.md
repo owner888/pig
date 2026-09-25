@@ -2145,9 +2145,40 @@ is the one place the wire shape of an agent event is written down: upstream call
 `JSON.stringify(event)` and is done, because its events are plain objects, which also means a
 field rename there changes the protocol silently.
 
-`rpc-types.ts` and `rpc-client.ts` have no counterpart. The first is TypeScript types for the
-wire shape, which here is `RpcMode`'s docblock plus `RpcEvents`; the second is a client for
-driving the mode from TypeScript, and a host writes JSON lines in whatever language it is in.
+`rpc-client.ts` **is** ported, as `Rpc\RpcClient`. `rpc-types.ts` is not, and the reason is worth
+more than one line because "PHP has no named union type" is the weakest of the reasons and the one
+that comes to mind first.
+
+Its 203 lines are `RpcCommand` (24 object shapes discriminated on `type`), `RpcSessionState` (one
+interface of ten fields), `RpcResponse` (24 more shapes plus an error arm), the two hook-UI unions,
+and `RpcCommandType = RpcCommand["type"]`. In PHP that is about sixty readonly classes, a
+`@phpstan-type` alias for each union — the trick `Context` already uses for the Message union — and
+one string-backed enum.
+
+**The hard reason is that all of it describes JSON that arrived from outside the process.** A static
+type cannot check a byte that came over a pipe, and the host at the other end is deliberately not
+PHP — that is what the mode is for. So the runtime checks stay either way: `RpcMode::text()` throws
+`'message' is required and must be a string.` today, and a class per command would need that same
+check to construct itself before `dispatch()` could switch on a class instead of a string. Same
+checks, sixty more classes. Upstream gets value from the union because **its host is TypeScript too**,
+so the union is a contract both ends share at compile time; pig's host shares nothing but the bytes.
+
+Two things would be real, and neither is a port of this file:
+
+- **`RpcCommandType` as a string enum** would be *better* than the TypeScript it came from, because a
+  PHP enum exists at runtime: `tryFrom()` replaces a `match` arm that throws. What it buys is one
+  list of command names instead of two — `RpcMode`'s `match` and `RpcClient`'s methods. What it does
+  **not** buy is catching the mistake that actually happened: `RpcClient` sent `path` where the wire
+  wants `sessionPath`, and that is a *field* name, which no command enum touches.
+- **Typing `RpcClient`'s eleven `array<string, mixed>` returns** — `state()`, `bash()`,
+  `sessionStats()`, `compact()` — would help a PHP host, at a real boundary, with types that can
+  actually be guaranteed because the client is the one decoding.
+
+Neither is done, and the reason is the standard the rest of this document is held to: **no defect has
+been traced to either.** Every other item ported late in this port was justified by a reproduced
+failure. The only caller of those eleven methods today is `RpcClientTest`; designing types for a PHP
+host that does not exist yet is the work this project keeps declining to do. When there is one, its
+needs decide the shapes.
 
 **Six of upstream's commands are absent**, and the reasons divide in three:
 
@@ -2181,7 +2212,7 @@ What is left unported, across every package, each for a reason:
 |---|---|
 | nine of the selector components, as files | every one of them is here as something else, and the audit that checked it is below: `hook-selector`, `hook-editor` and `hook-input` are `TerminalUi::select()`, `editor()` and `input()`; `queue-mode`, `show-images`, `thinking` and `settings-selector` are `/settings`' rows plus `thinkingSubmenu()`; `theme-selector` is that list's theme row; `oauth-selector` is `showSignIns()`; `session-selector` is `Cli\SessionPicker`; `model-selector` is `showModels()`. **`tree-selector.ts` is no longer among them** — it is `Interactive\TreeList` |
 | `ai/utils/typebox-helpers.ts` (24) | `StringEnum`, a TypeBox helper that emits `{type:"string", enum:[…]}` because TypeBox's own `Type.Enum` emits `anyOf`/`const` and Google's API rejects that. In PHP a schema **is** an array, so there is nothing to help with — you write the array, and `JsonSchemaTest` says so where the enum is tested |
-| `coding-agent/modes/rpc/rpc-types.ts` | TypeScript types for the wire shape. `RpcMode`'s docblock plus `RpcEvents` is the counterpart; a host reading JSON lines writes its own in whatever language it is in. Its `rpc-client.ts` **is** ported, as `Rpc\RpcClient` |
+| `coding-agent/modes/rpc/rpc-types.ts` | 203 lines of types for JSON that arrives from outside the process, where a static type guarantees nothing and the runtime checks are the contract — the long version is in the RPC section, including the two things that *would* be worth typing and why neither is done yet. `RpcMode`'s docblock plus `RpcEvents` is where the wire shape is written down. Its `rpc-client.ts` **is** ported, as `Rpc\RpcClient` |
 | every `index.ts` | barrel re-exports, which is what an autoloader does here |
 
 **This table has now been wrong four times.** Twice in the same way: the first time it said "the
@@ -2971,6 +3002,47 @@ Barely covered by a test: `interactive()` opens `/dev/tty` for all three streams
 runner has no tty to open. What is tested is the empty-command guard and that a run with no
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
+
+### Compaction counted an image as nothing, so a conversation of screenshots could not be compacted
+
+The first find from auditing an already-ported file difference by difference, rather than from
+anybody hitting it. `Compaction::estimateTokens()` had two holes, both under-counting, and
+under-counting is the dangerous direction: the walk back through the conversation never reaches its
+budget, so the cut point stays at the beginning and **compaction runs, pays for a summarisation call
+and frees nothing**.
+
+```
+BranchSummary    (3900 chars) estimates as 0 tokens
+CompactionSummary(3900 chars) estimates as 985 tokens
+a tool result with one image estimates as 3 tokens (upstream: 1203)
+cutPoint over 12 turns of images, keepRecent=2000: 0 of 24 messages dropped
+```
+
+After:
+
+```
+BranchSummary    (3900 chars) estimates as 1001 tokens
+a tool result with one image estimates as 1203 tokens
+cutPoint over 12 turns of images, keepRecent=2000: 22 of 24 messages dropped
+```
+
+**`BranchSummary` was simply missing from the `match`.** Every other message type was there,
+including `CompactionSummary` right beside it, and the `default => 0` arm meant the omission was
+silent — which is the cost of a `match` over types with a default: adding a type is not a compile
+error, it is a zero.
+
+**The image is the more interesting one, because upstream contradicts itself.** Its `toolResult` arm
+adds 4800 characters per image; its `user` arm counts only text and adds nothing. So the same
+screenshot is worth 1200 tokens if a tool returned it and nothing if somebody pasted it. pig counts
+4800 in both, which is the second time this port has taken the right one of upstream's two answers
+to the same question — the first was the `data:` prefix in `StreamProxy`. (Upstream's comment there
+says "4000 chars, or 1200 tokens" while the code says 4800; 4800 is what divides into 1200, so the
+code is the half that was meant.)
+
+Worth keeping in mind for the rest of the audit: **no test failed when either hole was open**, and
+the existing `testEveryKindOfMessageHasASize` walked five message types and asserted `> 0` on each —
+it just never listed the sixth. A test that enumerates cases by hand goes stale exactly where a new
+case was added.
 
 ### An abandoned branch was in the file and unreachable
 

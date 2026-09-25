@@ -9,6 +9,7 @@ use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Cost;
 use Pig\Ai\StopReason;
+use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\Ai\ThinkingContent;
 use Pig\Ai\Timestamp;
@@ -183,6 +184,53 @@ final class CompactionTest extends TestCase
         );
         $this->assertGreaterThan(0, Compaction::estimateTokens(new BashExecution('ls', 'a b c', 0)));
         $this->assertGreaterThan(0, Compaction::estimateTokens(new CompactionSummary('what happened')));
+
+        // `BranchSummary` was the one kind missing from the list, and it is not a small one: a
+        // summary of a whole abandoned branch estimated as **zero tokens**.
+        $this->assertGreaterThan(
+            0,
+            Compaction::estimateTokens(new BranchSummary(str_repeat('a summary of the branch. ', 100), [], [])),
+        );
+    }
+
+    public function testAnImageCostsWhatAnImageCosts(): void
+    {
+        // Counting it as nothing is what made a conversation of screenshots impossible to compact.
+        // 4,800 characters, which is upstream's number from the one of its two arms that counts
+        // images at all — and 1,200 tokens after the divide.
+        $image = new ImageContent(str_repeat('x', 200_000), 'image/png');
+
+        $this->assertSame(1_200, Compaction::estimateTokens(new ToolResultMessage('c', 'read', [$image])));
+        // The same image in a user message, which upstream counts as nothing: a pasted screenshot
+        // and a returned one cost the same.
+        $this->assertSame(1_200, Compaction::estimateTokens(new UserMessage([$image])));
+        $this->assertSame(
+            1_200 + 25,
+            Compaction::estimateTokens(new UserMessage([$image, new TextContent(str_repeat('x', 100))])),
+        );
+    }
+
+    public function testAConversationOfImagesCanActuallyBeCutDown(): void
+    {
+        // The failure this rules out: twelve turns of images asked to fit in 2,000 tokens dropped
+        // nothing at all, so compaction ran, paid for a summarisation and freed no context.
+        $messages = [];
+
+        for ($turn = 0; $turn < 12; $turn++) {
+            $messages[] = new UserMessage([new TextContent("turn {$turn}")]);
+            $messages[] = new ToolResultMessage(
+                "c{$turn}",
+                'read',
+                [new ImageContent(str_repeat('x', 200_000), 'image/png')],
+            );
+        }
+
+        $cut = Compaction::cutPoint($messages, 2_000);
+
+        $this->assertGreaterThan(0, $cut, 'something is dropped');
+        $this->assertLessThan(count($messages), $cut);
+        // And the cut is never on a tool result, whose call would be left behind.
+        $this->assertFalse($messages[$cut] instanceof ToolResultMessage);
     }
 
     public function testThinkingAndToolArgumentsCountToo(): void
