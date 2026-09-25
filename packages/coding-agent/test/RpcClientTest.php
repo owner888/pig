@@ -187,6 +187,59 @@ final class RpcClientTest extends TestCase
         return (string) json_encode($text);
     }
 
+    public function testAHookCanRefuseANewSessionToo(): void
+    {
+        // The same three checks as `switch_session`, on its sibling — which is the whole value of
+        // having found them once.
+        mkdir($this->home . '/.pig/hooks', 0o755, true);
+        file_put_contents($this->home . '/.pig/hooks/no-leaving.php', <<<'PHP'
+        <?php
+
+        use Pig\CodingAgent\Hooks\HookApi;
+        use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
+
+        return function (HookApi $pi): void {
+            $pi->on('session_before_switch', static fn (object $event): SessionBeforeSwitchResult
+                => new SessionBeforeSwitchResult(cancel: $event->reason === 'new'));
+        };
+        PHP);
+
+        $this->serveOneTurn('unused');
+        $client = $this->client(['--model', 'stand-in'], withHooks: true);
+
+        [$answer, $messages] = Async::run(static function () use ($client): array {
+            $client->start();
+            $client->promptAndWait('say something');
+            $answer = $client->newSession();
+            $messages = $client->messages();
+            $client->stop();
+
+            return [$answer, $messages];
+        });
+
+        $this->assertTrue($answer['cancelled'] ?? null, 'the hook said no');
+        $this->assertNotSame([], $messages, 'and the conversation is still here');
+    }
+
+    public function testANewSessionEmptiesTheQueueOfTheOneBeingThrownAway(): void
+    {
+        $this->serveOneTurn('unused');
+        $client = $this->client(['--model', 'stand-in']);
+
+        $state = Async::run(static function () use ($client): array {
+            $client->start();
+            $client->followUp('meant for the conversation being discarded');
+            $client->newSession();
+            $state = $client->state();
+            $client->stop();
+
+            return $state;
+        });
+
+        $this->assertSame(0, $state['queuedMessageCount'] ?? null);
+        $this->assertSame(0, $state['messageCount'] ?? null);
+    }
+
     /** @param list<string> $arguments */
     private function client(array $arguments = [], bool $withHooks = false): RpcClient
     {

@@ -550,9 +550,32 @@ final class RpcMode
         ];
     }
 
+    /**
+     * Throw this conversation away and start another.
+     *
+     * The same three checks `switch_session` was missing, missing here too — which is what finding
+     * them on one sibling is worth: `/new` in the terminal goes through `mayLeave('new')`, and
+     * upstream's `newSession()` fires the cancellable hook, awaits `abort()` and empties the queue
+     * before resetting. Over RPC the agent was reset out from under a turn in flight, and whatever
+     * was queued for the conversation being thrown away was still queued for the new one.
+     */
     private function newSession(): array
     {
         $previous = $this->session->store()?->path;
+
+        // `'new'` rather than `'resume'`: a hook that refuses to leave a conversation usually cares
+        // *why* it is being left, and upstream passes the same two words.
+        $refusal = $this->hooks?->emitBeforeSwitch(new SessionBeforeSwitchEvent('new'));
+
+        if ($refusal !== null && $refusal->cancel) {
+            return ['cancelled' => true];
+        }
+
+        if ($this->session->isStreaming()) {
+            $this->session->abort()->await();
+        }
+
+        $this->session->clearQueue();
 
         if ($previous !== null) {
             $this->session->writeTo(SessionManager::create($this->cwd));
@@ -562,7 +585,7 @@ final class RpcMode
         $this->hooks?->emit(new SessionSwitchEvent('new', $previous));
         $this->report($this->customTools?->notify('switch', $previous) ?? []);
 
-        return ['sessionFile' => $this->session->store()?->path];
+        return ['cancelled' => false, 'sessionFile' => $this->session->store()?->path];
     }
 
     /**

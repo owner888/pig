@@ -3039,7 +3039,7 @@ runner has no tty to open. What is tested is the empty-command guard and that a 
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
 
-### RPC's session switch skipped the three checks the terminal's has
+### RPC's session switch and new-session skipped the three checks the terminal's have
 
 Fourth find, and the clearest instance of the pattern the others taught: **the same operation in two
 modes, with the checks on only one of them.**
@@ -3060,6 +3060,13 @@ modes, with the checks on only one of them.**
 
 All three are now done in upstream's order, and the answer gained `cancelled`, which is what
 upstream's client reads from the same place.
+
+**`new_session` had all three too, and that is the payoff of the pattern rather than a second
+coincidence.** Having found the shape once, its sibling was the next thing to read: `/new` in the
+terminal goes through `mayLeave('new')`, upstream's `newSession()` fires the same cancellable hook
+with reason `'new'`, awaits `abort()` and empties the queue before `reset()`. Over RPC the agent was
+reset out from under a turn in flight, and what had been queued for the conversation being thrown
+away was still queued for its replacement. Both commands now answer with `cancelled`.
 
 The tests go through `bin/pig --mode rpc` with a real hook file in a temporary home — the first use
 of `RpcClient` for something other than testing itself, and the reason a client was worth porting:
