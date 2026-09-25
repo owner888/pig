@@ -36,10 +36,8 @@ use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\CustomTools\ToolProblem;
-use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
 use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Hooks\Events\SessionSwitchEvent;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
@@ -1486,55 +1484,34 @@ final class InteractiveMode
             return;
         }
 
-        if (!$this->mayLeave('new')) {
+        // The hook, the new file and the emptied queue are `startNew()`'s: /new here and
+        // `new_session` over RPC had different ideas about all three, and one method is how
+        // they stop having them.
+        try {
+            $switch = $this->session->startNew();
+        } catch (Throwable $error) {
+            $this->sayError('Could not start a new session file: ' . $error->getMessage());
+
             return;
         }
 
-        $previous = $this->session->store()?->path;
+        if (!$switch->switched) {
+            $this->say('A hook stopped that.');
 
-        // A new file, not just an empty screen. Keeping the old one would append this
-        // conversation onto the last one as if they were the same, and the new session
-        // would never exist as a session — which is what this used to do.
-        if ($previous !== null) {
-            try {
-                $this->session->writeTo(SessionManager::create($this->cwd));
-            } catch (Throwable $error) {
-                $this->sayError('Could not start a new session file: ' . $error->getMessage());
-
-                return;
-            }
+            return;
         }
 
-        $this->session->agent->reset();
+        $previous = $switch->previous;
+
         $this->chat->clear();
         $this->pending->clear();
         $this->status->clear();
         $this->footer->invalidate();
         $this->say('New session');
 
-        $this->hooks?->emit(new SessionSwitchEvent('new', $previous));
+        // The `session_switch` hook fired inside `startNew()`, where every mode gets it. What
+        // is left here is the custom tools, which this mode holds and the session does not.
         $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
-    }
-
-    /**
-     * Ask the hooks whether this conversation may be left.
-     *
-     * `/new` throws the conversation away and `/resume` replaces it, and both are one
-     * keystroke — which is exactly the kind of thing a hook is for.
-     *
-     * @param 'new'|'resume' $reason
-     */
-    private function mayLeave(string $reason, ?string $target = null): bool
-    {
-        $refusal = $this->hooks?->emitBeforeSwitch(new SessionBeforeSwitchEvent($reason, $target));
-
-        if ($refusal === null || !$refusal->cancel) {
-            return true;
-        }
-
-        $this->say('A hook stopped that.');
-
-        return false;
     }
 
     private function sessionSummary(): string
@@ -2114,36 +2091,25 @@ final class InteractiveMode
     /** Replace this conversation with a saved one, and redraw it. */
     private function resume(SessionInfo $info): void
     {
-        if (!$this->mayLeave('resume', $info->path)) {
-            return;
-        }
+        $was = $this->session->model()?->id;
 
-        $previous = $this->session->store()?->path;
-
+        // Asking the hooks, opening the file and restoring the model are `switchTo()`'s, so
+        // that a host switching session over RPC gets the same three and not two of them.
         try {
-            $saved = SessionManager::open($info->path);
+            $switch = $this->session->switchTo($info->path);
         } catch (Throwable $error) {
             $this->sayError($error->getMessage());
 
             return;
         }
 
-        // The file that was opened is the one written to from here on. Without this the
-        // conversation on screen is the resumed one while everything said next is appended
-        // to the file pig started with — two files, neither of them what happened.
-        //
-        // Only when this session was writing somewhere to begin with: `--no-save` means no
-        // file, and resuming one to read it should not start saving.
-        if ($previous !== null) {
-            $this->session->writeTo($saved);
+        if (!$switch->switched) {
+            $this->say('A hook stopped that.');
+
+            return;
         }
 
-        $this->session->restore($saved->messages());
-
-        // And the model it was being had with. Nothing was typed here — `/resume` takes no
-        // model — so the file wins outright, which is what "resume" means.
-        $was = $this->session->model()?->id;
-        $this->session->restoreSettings();
+        $previous = $switch->previous;
 
         $this->chat->clear();
         $this->pending->clear();
@@ -2152,7 +2118,7 @@ final class InteractiveMode
 
         // Said after the transcript, so it is the last thing on screen rather than the
         // first thing buried above a conversation.
-        $this->say('Resumed ' . count($saved->messages()) . ' messages from ' . $info->when());
+        $this->say('Resumed ' . $switch->messages . ' messages from ' . $info->when());
 
         $now = $this->session->model()?->id;
 
@@ -2161,7 +2127,7 @@ final class InteractiveMode
             // surprising answer becomes a puzzle.
             $this->say($this->palette->fg('muted', "This conversation was on {$now} — switched back to it."));
         }
-        $this->hooks?->emit(new SessionSwitchEvent('resume', $previous));
+
         $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
     }
 

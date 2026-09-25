@@ -1098,6 +1098,110 @@ final class AgentSessionTest extends TestCase
         $this->assertCount(2, $second->messages());
     }
 
+    // ---- leaving this conversation ------------------------------------------------------
+
+    public function testANewSessionIsANewFileAndTheOldOneStopsWhereItStopped(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['hello', 'hello again'], store: $store);
+
+        Async::run(static fn () => $session->prompt('the first conversation'));
+        $first = $store->path;
+        $lines = substr_count((string) file_get_contents($first), "\n");
+
+        $switch = $session->startNew();
+
+        $this->assertTrue($switch->switched);
+        $this->assertSame($first, $switch->previous);
+        $this->assertNotSame($first, $session->store()?->path);
+        $this->assertSame([], $session->messages());
+
+        Async::run(static fn () => $session->prompt('and the second'));
+
+        // The two halves of the bug `writeTo()` was added for, asserted from the one place
+        // that now decides it: the old file did not grow, and the new one is not a
+        // continuation of it.
+        $this->assertSame($lines, substr_count((string) file_get_contents($first), "\n"));
+
+        $written = (string) file_get_contents((string) $session->store()?->path);
+        $this->assertStringContainsString('and the second', $written);
+        $this->assertStringNotContainsString('the first conversation', $written);
+    }
+
+    public function testANewSessionOnOneThatIsNotBeingSavedStartsNoFile(): void
+    {
+        $session = $this->session(['hello']);
+
+        Async::run(static fn () => $session->prompt('hi'));
+        $switch = $session->startNew();
+
+        // `--no-save` means no file, and `/new` is not a reason to start keeping one.
+        $this->assertTrue($switch->switched);
+        $this->assertNull($switch->previous);
+        $this->assertNull($session->store());
+        $this->assertSame([], $session->messages());
+    }
+
+    public function testLeavingAConversationLeavesWhatWasTypedIntoIt(): void
+    {
+        $session = $this->session([], store: SessionManager::create(sys_get_temp_dir()));
+        $session->followUp('meant for the conversation being thrown away');
+
+        $session->startNew();
+
+        // Sending it into the next conversation is the same crossing as writing to the
+        // wrong file, and neither mode remembered to stop it.
+        $this->assertSame([], $session->queued());
+    }
+
+    public function testSwitchingCarriesOnInTheFileThatWasOpened(): void
+    {
+        $mine = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['hello', 'hello again'], store: $mine);
+        Async::run(static fn () => $session->prompt('the conversation I am in'));
+
+        $other = $this->session(['hi there'], store: SessionManager::create(sys_get_temp_dir()));
+        Async::run(static fn () => $other->prompt('the conversation I am switching to'));
+        $elsewhere = (string) $other->store()?->path;
+
+        $switch = $session->switchTo($elsewhere);
+
+        $this->assertTrue($switch->switched);
+        $this->assertSame($mine->path, $switch->previous);
+        $this->assertSame(2, $switch->messages);
+        $this->assertSame($elsewhere, $session->store()?->path);
+        $this->assertCount(2, $session->messages());
+
+        Async::run(static fn () => $session->prompt('carrying on'));
+
+        // What is on screen and what is being written are the same conversation — before
+        // `writeTo()` they were two files, neither of them what happened.
+        $this->assertStringContainsString('carrying on', (string) file_get_contents($elsewhere));
+        $this->assertStringNotContainsString('carrying on', (string) file_get_contents($mine->path));
+    }
+
+    public function testAPathThatIsNotASessionCostsTheConversationNothing(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['hello'], store: $store);
+
+        Async::run(static fn () => $session->prompt('hi'));
+        $session->followUp('still waiting to be sent');
+
+        $this->assertThrows(
+            AgentError::class,
+            static fn () => $session->switchTo(sys_get_temp_dir() . '/not-a-session-' . bin2hex(random_bytes(4)) . '.jsonl'),
+            'Could not read the session',
+        );
+
+        // The file is opened before anything is thrown away, so a bad path is a message
+        // rather than a session left aborted, emptied, and writing to the file it was
+        // about to leave.
+        $this->assertSame($store->path, $session->store()?->path);
+        $this->assertCount(2, $session->messages());
+        $this->assertSame(['still waiting to be sent'], $session->queued());
+    }
+
     private function session(
         array $answers,
         ?Closure $hook = null,

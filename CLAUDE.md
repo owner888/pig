@@ -3072,6 +3072,30 @@ The tests go through `bin/pig --mode rpc` with a real hook file in a temporary h
 of `RpcClient` for something other than testing itself, and the reason a client was worth porting:
 **a mode nothing drives the way a host drives it is a mode whose checks nobody misses.**
 
+**Then the checks moved to where the operation lives, which is the actual fix.** Adding the three
+lines to `RpcMode` made the two modes agree today; it left the next mode — the SDK, a web UI — free
+to disagree, because nothing about `writeTo()` and `agent->reset()` says that a hook has to be asked
+first. `AgentSession::startNew()` and `AgentSession::switchTo()` now hold the whole recipe (the
+cancellable hook, the abort, the emptied queue, the new or opened file, `restore()` +
+`restoreSettings()`, the `session_switch` emit), the way `goTo()` already held its own guards inside.
+Both modes call them and keep only what is theirs: the screen, and `customTools->notify('switch', …)`
+— `AgentSession` has no custom tools, and upstream's equivalent call from inside is the one piece not
+followed. `InteractiveMode::mayLeave()` is gone with them; a hook refusal comes back as
+`SessionSwitch(switched: false)` — a returned answer, like `TreeJump`, because a hook saying no is not
+a failure, while a path that is not a session still throws.
+
+One improvement on upstream's order while moving it: the new file is created, and the file being
+switched to is opened, **before** the turn in flight is aborted and the queue emptied. Upstream
+aborts first, so a session directory that cannot be written leaves the conversation aborted, emptied,
+and still writing to the file it was about to leave. Now the throw costs nothing —
+`testAPathThatIsNotASessionCostsTheConversationNothing` asserts the file, the messages and the queue
+are all still there, and it fails if the two lines are put back in upstream's order.
+
+**And the terminal gained the check it was missing in return.** `/new` never emptied the queue: text
+typed during a turn and then thrown away with the conversation was still waiting to be sent in its
+replacement. Reading two callers finds which one is wrong; giving them one implementation is what
+stops the question coming back.
+
 ### One settings key out of seventeen was not upstream's
 
 Third find from the audit, and the cheapest one to have prevented: **`retry.maxAttempts` where
@@ -3294,7 +3318,9 @@ the old store's leaf and the file replays as something nobody saw.
 `writeTo(?SessionManager)` is the fix, and it is a missing piece of the port rather than an
 addition — upstream's `AgentSession` owns its `sessionManager` and replaces it in
 `switchSession()` and `newSession()`. `/resume` writes to the file it opened; `/new` creates
-one; `--no-save` stays null and `/new` does not quietly start saving.
+one; `--no-save` stays null and `/new` does not quietly start saving. Which of the three
+happens is `AgentSession::switchTo()`/`startNew()`'s to decide now, not each mode's — the audit
+find below ("RPC's session switch and new-session skipped the three checks") says why.
 
 **The comment in `newSession()` claimed this was deliberate** — "the same file: `/new` forgets
 the conversation but keeps writing where it was writing" — which is how a bug survives a

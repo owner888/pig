@@ -13,16 +13,13 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
-use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Hooks\Events\SessionSwitchEvent;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionCodec;
-use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Throwable;
@@ -553,37 +550,20 @@ final class RpcMode
     /**
      * Throw this conversation away and start another.
      *
-     * The same three checks `switch_session` was missing, missing here too — which is what finding
-     * them on one sibling is worth: `/new` in the terminal goes through `mayLeave('new')`, and
-     * upstream's `newSession()` fires the cancellable hook, awaits `abort()` and empties the queue
-     * before resetting. Over RPC the agent was reset out from under a turn in flight, and whatever
-     * was queued for the conversation being thrown away was still queued for the new one.
+     * The hook, the abort and the emptied queue are `AgentSession::startNew()`'s, not this
+     * file's: they were missing here and present in the terminal, and one of the two having
+     * them is how they went missing. What is left is this mode's own share — telling the host
+     * which file it is writing now, and telling the custom tools.
      */
     private function newSession(): array
     {
-        $previous = $this->session->store()?->path;
+        $switch = $this->session->startNew();
 
-        // `'new'` rather than `'resume'`: a hook that refuses to leave a conversation usually cares
-        // *why* it is being left, and upstream passes the same two words.
-        $refusal = $this->hooks?->emitBeforeSwitch(new SessionBeforeSwitchEvent('new'));
-
-        if ($refusal !== null && $refusal->cancel) {
+        if (!$switch->switched) {
             return ['cancelled' => true];
         }
 
-        if ($this->session->isStreaming()) {
-            $this->session->abort()->await();
-        }
-
-        $this->session->clearQueue();
-
-        if ($previous !== null) {
-            $this->session->writeTo(SessionManager::create($this->cwd));
-        }
-
-        $this->session->agent->reset();
-        $this->hooks?->emit(new SessionSwitchEvent('new', $previous));
-        $this->report($this->customTools?->notify('switch', $previous) ?? []);
+        $this->report($this->customTools?->notify('switch', $switch->previous) ?? []);
 
         return ['cancelled' => false, 'sessionFile' => $this->session->store()?->path];
     }
@@ -591,58 +571,33 @@ final class RpcMode
     /**
      * Open another conversation and carry on in it.
      *
-     * The three lines before the switch were missing, and each of them exists elsewhere: the
-     * terminal asks the hooks first through `mayLeave()`, and upstream's `switchSession()` aborts
-     * the turn in flight and empties the queue. Over RPC none of that happened — a hook that
-     * refuses to leave a conversation worked in the terminal and was ignored here, and a switch
-     * during a turn left that turn writing into the conversation it had just left. The terminal is
-     * only safe from the last two because `/resume` is unreachable while streaming; a host has no
-     * such guard. See CLAUDE.md.
+     * Three checks were missing here and present in the terminal — the hooks are asked
+     * through `mayLeave()` there, and upstream aborts the turn in flight and empties the
+     * queue. Over RPC none of that happened: a hook that refused to leave a conversation
+     * worked for a person and was ignored for a host, and a switch during a turn left that
+     * turn writing into the conversation it had just left. They live in
+     * `AgentSession::switchTo()` now, which is what makes them true for both. See CLAUDE.md.
      *
      * @param array<string, mixed> $command
      */
     private function switchSession(array $command): array
     {
-        $path = self::text($command, 'sessionPath');
-        $previous = $this->session->store()?->path;
+        $switch = $this->session->switchTo(self::text($command, 'sessionPath'));
 
-        $refusal = $this->hooks?->emitBeforeSwitch(new SessionBeforeSwitchEvent('resume', $path));
-
-        if ($refusal !== null && $refusal->cancel) {
+        if (!$switch->switched) {
             // `cancelled` rather than an error: a hook saying no is an answer, not a failure, and
             // upstream returns `false` from the same place.
             return ['cancelled' => true];
         }
 
-        $opened = SessionManager::open($path);
-
-        // Whatever was in flight belongs to the conversation being left. Aborted rather than
-        // refused, which is upstream's choice: a host that asks to switch has decided.
-        if ($this->session->isStreaming()) {
-            $this->session->abort()->await();
-        }
-
-        // And whatever was queued was typed into that conversation too. Sending it into this one
-        // is the same crossing as writing to the wrong file.
-        $this->session->clearQueue();
-
-        if ($previous !== null) {
-            $this->session->writeTo($opened);
-        }
-
-        $this->session->restore($opened->messages());
-
-        // And what it was being had with. A host that switched session and then asked
-        // `get_state` should be told the model that conversation was on, not the one this
-        // process happened to start with.
-        $this->session->restoreSettings();
-        $this->hooks?->emit(new SessionSwitchEvent('resume', $previous));
-        $this->report($this->customTools?->notify('switch', $previous) ?? []);
+        $this->report($this->customTools?->notify('switch', $switch->previous) ?? []);
 
         return [
             'cancelled' => false,
             'sessionFile' => $this->session->store()?->path,
-            'messageCount' => count($opened->messages()),
+            'messageCount' => $switch->messages,
+            // The model that conversation was on, not the one this process happened to start
+            // with: `switchTo()` restored it, and a host asking `get_state` next should agree.
             'model' => $this->session->model() === null ? null : self::model($this->session->model()),
         ];
     }

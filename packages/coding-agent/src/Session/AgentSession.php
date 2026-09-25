@@ -41,8 +41,10 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\Hooks\Events\AgentEndEvent as HookAgentEnd;
 use Pig\CodingAgent\Hooks\Events\AgentStartEvent as HookAgentStart;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
+use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeTreeEvent;
 use Pig\CodingAgent\Hooks\Events\SessionCompactEvent;
+use Pig\CodingAgent\Hooks\Events\SessionSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionTreeEvent;
 use Pig\CodingAgent\Hooks\Events\TurnEndEvent as HookTurnEnd;
 use Pig\CodingAgent\Hooks\Events\TurnStartEvent as HookTurnStart;
@@ -659,6 +661,113 @@ final class AgentSession
         }
 
         return $held;
+    }
+
+    // ---- leaving this conversation ----------------------------------------------------
+
+    /**
+     * Throw this conversation away and start another.
+     *
+     * The checks live here rather than in the modes because that is what having them in one
+     * mode and not the other cost: `/new` in the terminal asked the hooks first, and RPC's
+     * `new_session` did not, so a hook that refused to leave a conversation worked for a
+     * person and was ignored by a host. Neither of them emptied the queue, so text typed
+     * into the conversation being thrown away was still waiting to be sent in the one that
+     * replaced it. `goTo()` below already put its guards inside for the same reason: a rule
+     * a caller has to remember is a rule the next caller will not.
+     *
+     * The new file is created before anything is thrown away, which upstream does the other
+     * way round. If the directory is unwritable, the throw leaves this session exactly as it
+     * was rather than aborted, emptied and still writing to the old file.
+     *
+     * Not the UI's share of the work: clearing the screen, saying "New session", and telling
+     * the custom tools stay with the caller, which is where the screen and the tools are.
+     *
+     * @throws \Throwable when a new session file cannot be created
+     */
+    public function startNew(): SessionSwitch
+    {
+        $previous = $this->store?->path;
+
+        // `'new'` rather than `'resume'`: a hook that refuses to leave a conversation usually
+        // cares *why* it is being left, and upstream passes the same two words.
+        $refusal = $this->hooks?->emitBeforeSwitch(new SessionBeforeSwitchEvent('new'));
+
+        if ($refusal !== null && $refusal->cancel) {
+            return new SessionSwitch(switched: false, previous: $previous);
+        }
+
+        // A new file, not just an empty screen. Keeping the old one would append this
+        // conversation onto the last one as if they were the same, and the new session would
+        // never exist as a session — which is what this used to do. Only when this session
+        // was being written at all: `--no-save` means no file, and `/new` should not start
+        // saving.
+        $fresh = $previous === null ? null : SessionManager::create($this->cwd);
+
+        if ($this->isStreaming()) {
+            $this->abort()->await();
+        }
+
+        $this->clearQueue();
+
+        if ($fresh !== null) {
+            $this->writeTo($fresh);
+        }
+
+        $this->agent->reset();
+        $this->hooks?->emit(new SessionSwitchEvent('new', $previous));
+
+        return new SessionSwitch(switched: true, previous: $previous);
+    }
+
+    /**
+     * Open another conversation and carry on in it.
+     *
+     * The file is opened before the turn in flight is stopped, so a path that is not a
+     * session costs nothing: nothing has moved when it throws. After that the order is
+     * upstream's — whatever was in flight belongs to the conversation being left, and so
+     * does whatever was queued, so both end here rather than crossing over.
+     *
+     * Aborted rather than refused, which is also upstream's choice: someone who asks to
+     * switch has decided. The terminal never had to abort because `/resume` is unreachable
+     * while streaming; a host has no such guard, and that asymmetry is exactly why this is
+     * one method now.
+     *
+     * @throws \Throwable when there is no such session file
+     */
+    public function switchTo(string $path): SessionSwitch
+    {
+        $previous = $this->store?->path;
+
+        $refusal = $this->hooks?->emitBeforeSwitch(new SessionBeforeSwitchEvent('resume', $path));
+
+        if ($refusal !== null && $refusal->cancel) {
+            return new SessionSwitch(switched: false, previous: $previous);
+        }
+
+        $opened = SessionManager::open($path);
+
+        if ($this->isStreaming()) {
+            $this->abort()->await();
+        }
+
+        $this->clearQueue();
+
+        // The file that was opened is the one written to from here on. Without this the
+        // conversation on screen is the resumed one while everything said next is appended
+        // to the file pig started with — two files, neither of them what happened.
+        if ($previous !== null) {
+            $this->writeTo($opened);
+        }
+
+        $this->restore($opened->messages());
+
+        // And what it was being had with. Nothing was typed here — resuming takes no model —
+        // so the file wins outright, which is what "resume" means.
+        $this->restoreSettings();
+        $this->hooks?->emit(new SessionSwitchEvent('resume', $previous));
+
+        return new SessionSwitch(switched: true, previous: $previous, messages: count($opened->messages()));
     }
 
     /**
