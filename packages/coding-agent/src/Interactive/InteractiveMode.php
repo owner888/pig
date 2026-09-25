@@ -1444,7 +1444,8 @@ final class InteractiveMode
     {
         if ($this->skills === []) {
             return 'No skills found. A skill is a folder with a SKILL.md in '
-                . '~/.pig/skills, .pig/skills, ~/.claude/skills, .claude/skills or ~/.codex/skills.';
+                . '~/.pig/skills, .pig/skills, ~/.claude/skills, .claude/skills, ~/.codex/skills, '
+                . '~/.pi/agent/skills or .pi/skills.';
         }
 
         $lines = [];

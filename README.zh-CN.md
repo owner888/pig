@@ -231,8 +231,9 @@ return fn (CustomToolApi $pi) => new CustomTool(
 被塞进给文件设计的那套排版里。
 
 skill 就是一个带 `SKILL.md` 的文件夹。pig 读 `~/.pig/skills` 和 `.pig/skills`，同时也读
-`~/.claude/skills`、`.claude/skills` 和 `~/.codex/skills`——给别的 agent 写的 skill 在这儿直接能用。
-`/skills` 列出找到了哪些、各自来自哪个目录。
+`~/.claude/skills`、`.claude/skills`、`~/.codex/skills`、`~/.pi/agent/skills` 和 `.pi/skills`——给别的
+agent 写的、或者迁过来之前给 pi 写的 skill，在这儿都直接能用。`/skills` 列出找到了哪些、各自来自
+哪个目录。
 
 一共三条进去的路，终端只是默认那条。`-p` 说一句、打出答案、退出——给 shell 脚本或者管道用：
 

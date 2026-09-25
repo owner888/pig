@@ -18,6 +18,13 @@ use Pig\CodingAgent\Config;
  * and `~/.codex/skills` are read exactly as `~/.pig/skills` is, because a person who has
  * written a skill once should not have to write it again per agent.
  *
+ * **pi's own two are read as well, which upstream has no reason to do** — it *is* pi, so its
+ * `~/.pi/agent/skills` is the root pig renamed to `~/.pig/skills`. Reading pi's as well follows from
+ * what pig already does everywhere else: it opens pi's sessions, its `auth.json` and its
+ * `models.json`. Keeping somebody's conversations and credentials across the move while silently
+ * dropping their skills is the half-migration that is worse than none — and the reason stated above
+ * for reading Claude's and Codex's directories applies most of all to the tool pig is a port of.
+ *
  * Ported from upstream's `core/skills.ts`. Not ported: the settings file that turns
  * individual roots off (`SkillsSettings`, which needs a settings manager that is not
  * here) — the roots are arguments instead, so `--skills-dir` and a settings file are
@@ -53,6 +60,7 @@ final class Skills
      * @param list<string> $extraDirs  scanned after the standard roots, recursively
      * @param list<string> $ignored    fnmatch patterns; a skill whose name matches is left out
      * @param list<string> $only       fnmatch patterns; when given, nothing else is loaded
+     * @param string|null  $piHome     pi's agent directory, `~/.pi/agent` unless told otherwise
      * @return array{0: list<Skill>, 1: list<SkillWarning>}
      */
     public static function load(
@@ -61,15 +69,27 @@ final class Skills
         array $extraDirs = [],
         array $ignored = [],
         array $only = [],
+        ?string $piHome = null,
     ): array {
         $home ??= Config::home();
+        $piHome ??= Config::piHome();
         $user = self::userHome();
         $cwd = rtrim($cwd, '/');
 
+        // Order is precedence: the first root to define a name keeps it, and a later one with the
+        // same name is a warning naming both paths. Other tools come first and pig's own last,
+        // which is upstream's order — pi's two go with the other tools, because that is what they
+        // are here.
+        //
+        // `$piHome` is `~/.pi/agent`, not `~/.pi`: upstream's `getAgentDir()` is
+        // `join(homedir(), ".pi", "agent")`, so its skills are one level deeper than the folder
+        // name suggests. The project one is `<cwd>/.pi/skills`, pi's own `CONFIG_DIR_NAME`.
         $roots = [
             [$user . '/.codex/skills', 'codex-user', self::RECURSIVE],
             [$user . '/.claude/skills', 'claude-user', self::ONE_LEVEL],
             [$cwd . '/.claude/skills', 'claude-project', self::ONE_LEVEL],
+            [$piHome . '/skills', 'pi-user', self::RECURSIVE],
+            [$cwd . '/.pi/skills', 'pi-project', self::RECURSIVE],
             [$home . '/skills', 'user', self::RECURSIVE],
             [$cwd . '/.pig/skills', 'project', self::RECURSIVE],
         ];

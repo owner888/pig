@@ -894,12 +894,24 @@ frontmatter says what it is for; only the name and description reach the prompt,
 instructions are a file the model reads when a task matches. That is what makes many skills
 affordable — a hundred of them cost a hundred lines, not a hundred documents.
 
-Five roots, and they are upstream's, which means other tools' as well as pig's:
-`~/.codex/skills`, `~/.claude/skills`, `.claude/skills`, `~/.pig/skills`, `.pig/skills`, plus
-whatever `--skills-dir` adds. Someone who wrote a skill once should not have to write it again
-per agent. The `~/.claude` roots are scanned **one level deep** and the others recursively,
-because a folder per skill is the layout there and descending further finds a skill's own
-examples rather than more skills.
+Seven roots, in this order: `~/.codex/skills`, `~/.claude/skills`, `.claude/skills`,
+`~/.pi/agent/skills`, `.pi/skills`, `~/.pig/skills`, `.pig/skills`, plus whatever `--skills-dir`
+adds. Someone who wrote a skill once should not have to write it again per agent. The `~/.claude`
+roots are scanned **one level deep** and the others recursively, because a folder per skill is the
+layout there and descending further finds a skill's own examples rather than more skills.
+
+Five of the seven are upstream's. **pi's two are pig's own addition**, and upstream has no reason to
+have them — it *is* pi, so `~/.pi/agent/skills` is the root pig renamed to `~/.pig/skills`. Reading
+pi's as well follows from what pig already does everywhere else: it opens pi's sessions, its
+`auth.json` and its `models.json`. Keeping somebody's conversations and credentials across the move
+and silently dropping their skills is the half-migration that is worse than none. Note the depth:
+`getAgentDir()` upstream is `join(homedir(), ".pi", "agent")`, so a root pointed at `~/.pi/skills`
+would find nothing — there is a test whose only job is to say so.
+
+**Order is precedence**: the first root to define a name keeps it, and a later one with the same name
+is a warning naming both files. Other tools come first and pig's own last, which is upstream's order,
+so `~/.pi/agent/skills/review` shadows `~/.pig/skills/review` — nothing silent about it, the warning
+says which file took the name.
 
 Three things it does that are easy to get wrong:
 
