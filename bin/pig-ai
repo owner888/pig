@@ -1,0 +1,58 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * pig-ai — sign in to a provider, and nothing else.
+ *
+ *   bin/pig-ai list
+ *   bin/pig-ai login
+ *   bin/pig-ai login anthropic
+ *
+ * Upstream's `ai/cli.ts`. Everything it does is `Cli\SignIn`, which is where it can be tested;
+ * this is the terminal it reads and writes through, and the fiber the two loopback flows need.
+ */
+
+foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php'] as $autoload) {
+    if (is_file($autoload)) {
+        require $autoload;
+
+        break;
+    }
+}
+
+use Pig\Async\Async;
+use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\Cli\SignIn;
+use Pig\CodingAgent\Settings;
+use Pig\Tui\Style;
+
+// The settings are read for one thing: the two Google flows need a client id and secret that this
+// repository does not hold, and `~/.pig/settings.json` is one of the two places they can be.
+$auth = Auth::discover(settings: Settings::load(getcwd() ?: '.'));
+
+foreach ($auth->problems() as $problem) {
+    fwrite(STDERR, Style::yellow("credentials: {$problem}\n"));
+}
+
+$signIn = new SignIn(
+    $auth,
+    static function (string $question): ?string {
+        fwrite(STDOUT, $question . ' ');
+        $answer = fgets(STDIN);
+
+        return $answer === false ? null : trim($answer);
+    },
+    static function (string $line): void {
+        fwrite(STDOUT, $line . "\n");
+    },
+    static function (string $line): void {
+        fwrite(STDERR, Style::red($line . "\n"));
+    },
+);
+
+// In a fiber, because two of the four flows park one: Gemini CLI and Antigravity listen on a
+// socket for the browser to come back, and Copilot's device flow sleeps between polls. The loop
+// has to keep running underneath all of that, which is what it does inside `run()`.
+exit((int) Async::run(static fn (): int => $signIn->run(array_slice($argv, 1))));

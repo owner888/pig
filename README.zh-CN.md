@@ -50,7 +50,12 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 51121，也有自己一套 client id 和 secret（`ANTIGRAVITY_CLIENT_ID`、`ANTIGRAVITY_CLIENT_SECRET`，
 或者 `antigravity.clientId`、`antigravity.clientSecret`）——它给你的是走 Google 订阅的 Gemini 3、
 Claude 和 GPT-OSS。四种情况 token 都存在 `~/.pi/agent/auth.json`——pi 有这个文件就用它，所以登录
-一次就是登录一次。`/logout` 忘掉它。那个目录里如果还留着老版本 pi 的 `oauth.json`，pig 第一次跑的
+一次就是登录一次。`/logout` 忘掉它。
+
+另外还有 `bin/pig-ai login`——同样这四种登录，但走纯命令行，给那种 ssh 上去装机的场合用；
+`bin/pig-ai list` 列出它们。
+
+那个目录里如果还留着老版本 pi 的 `oauth.json`，pig 第一次跑的
 时候会把它搬过来，并且说清搬了哪几个 provider——旧文件是改名，不是删掉。
 
 不是选项的东西就是要说的话，`@某个文件` 会被读在这句话前面：

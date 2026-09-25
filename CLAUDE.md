@@ -1144,6 +1144,30 @@ Its false branch is unreachable today, and therefore untested, in three places: 
 greys the row, `signIn()` refuses before spawning, and `Auth::login()` refuses again. That is
 known rather than overlooked.
 
+### `pig-ai`, the second entry point
+
+`Cli\SignIn` is upstream's `ai/cli.ts` and `bin/pig-ai` is nine lines over it: `list`, `login`,
+`login <provider>`, `help`. `/login` does the same thing inside pig, so this is for the times there
+is no terminal UI to be inside — a machine being set up over ssh, a container being built, or a
+flow that has to be watched because it is not working.
+
+Two things about it, and the first is the reason the logic is in `Cli\` rather than in the script:
+
+- **The first version was inline in `bin/pig-ai`, and its `$onPrompt` was a `static function`
+  with no `use ($ask)`** — so the moment Anthropic's flow asked for the pasted code, it called
+  null. Nothing catches that except *reaching the prompt*, and a script that ends in `exit()`
+  cannot be reached twice by a test. `Arguments` already says this about itself and the lesson did
+  not travel; it has now. `SignInTest` reaches all four flows by escaping each at its first
+  question.
+- **It writes where pig reads.** Upstream's `AUTH_FILE` is the string `"auth.json"` — a relative
+  path, so a login run inside a checkout leaves a file full of refresh tokens next to the code,
+  and nothing reads it there afterwards either. Here it goes through `Auth`, into the one file
+  `pig` and `pi` both read, with the mode that file gets. The usage text says which file, because
+  that is the one thing somebody on a fresh machine needs to know.
+
+Not added: a `bin` key in `composer.json`. `bin/pig` has never had one either — pig has never
+shipped — and declaring executables is a packaging decision rather than part of this port.
+
 ### Tidying pi's directory, which is pig's problem
 
 `Migrations` is upstream's `migrations.ts`, two one-time tidies run before `Auth::discover()`.
@@ -1911,7 +1935,6 @@ What is left unported, across every package, each for a reason:
 |---|---|
 | seventeen of the twenty-five selector components | the interactive mode needs eight; `/model`, `/resume`, `/tree`, `/login` and `/logout` are the same `SelectList` in the same place instead, and `settings-selector.ts` is `showSettings()` plus `Interactive\SettingsSubmenu` |
 | `agent/proxy.ts` (340) | a stream function that routes LLM calls through somebody's server, so the server holds the keys. pig talks to providers directly; this arrives if something ever wants a proxy |
-| `ai/cli.ts` (173) | a standalone `pi-ai` command whose only job is the OAuth logins. `/login` is where pig does that, and a second entry point would be a second thing to keep working |
 | `ai/utils/validation.ts` + `typebox-helpers.ts` (104) | AJV and TypeBox, for checking a tool call against its schema. `Agent\ToolArguments` is pig's answer and its docblock states the trade: the two mistakes a model actually makes, and everything else through |
 | `coding-agent/core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |
 | `coding-agent/modes/rpc/rpc-types.ts`, `rpc-client.ts` | TypeScript types for the wire shape, and a client for driving the mode from TypeScript. `RpcMode`'s docblock plus `RpcEvents` is the first; a host writes JSON lines in whatever language it is in |
