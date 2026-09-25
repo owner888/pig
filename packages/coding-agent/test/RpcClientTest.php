@@ -409,6 +409,30 @@ final class RpcClientTest extends TestCase
         $this->assertStringContainsString('No API key for anthropic/claude-3-5-haiku-latest', $error->getMessage());
     }
 
+    public function testCyclingTheModelWalksTheListAHostCanSee(): void
+    {
+        $this->serveOneTurn('unused');
+        $client = $this->client(['--model', 'stand-in'], environment: ['ANTHROPIC_API_KEY' => 'not-called-here']);
+
+        [$first, $second, $back] = Async::run(static function () use ($client): array {
+            $client->start();
+            $first = $client->cycleModel();
+            $second = $client->cycleModel();
+            $back = $client->cycleModel(backward: true);
+            $client->stop();
+
+            return [$first, $second, $back];
+        });
+
+        // Through the real binary, because that is where the list and the keys actually come
+        // from: `cycle_model` was the one command this file's docblock said a host could do
+        // itself, until pig turned out to need the same rotation for ctrl+p.
+        $this->assertNotNull($first['model']['id'] ?? null);
+        $this->assertNotSame($first['model']['id'], $second['model']['id'] ?? null);
+        $this->assertSame($first['model']['id'], $back['model']['id'] ?? null);
+        $this->assertArrayHasKey('thinkingLevel', $first);
+    }
+
     public function testTheModelListIsTheModelsThereIsAKeyFor(): void
     {
         $this->serveOneTurn('unused');

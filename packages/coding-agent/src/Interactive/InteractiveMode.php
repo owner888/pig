@@ -592,6 +592,7 @@ final class InteractiveMode
         'ctrl+v' => 'paste, including an image from the clipboard',
         'ctrl+g' => 'edit the prompt in $VISUAL or $EDITOR',
         'shift+tab' => 'cycle the thinking level',
+        'ctrl+p' => 'next model, shift+ctrl+p for the previous one',
         'ctrl+o' => 'show more: tool output, and this list',
         'ctrl+t' => 'show or hide thinking',
         '/' => 'commands',
@@ -609,6 +610,13 @@ final class InteractiveMode
         $this->editor->on('ctrl+d', $this->stop(...));
         $this->editor->on('ctrl+z', $this->suspend(...));
         $this->editor->on('shift+tab', $this->cycleThinking(...));
+
+        // `CustomEditor` has always claimed these two — taken them off the text field — and
+        // nothing was listening: upstream binds them to cycling the model, and pig had the keys
+        // reserved for a method it never ported. A key that is taken away and then does nothing
+        // is worse than either.
+        $this->editor->on('ctrl+p', fn () => $this->cycleModel());
+        $this->editor->on('shift+ctrl+p', fn () => $this->cycleModel(backward: true));
         $this->editor->on('ctrl+g', function (): void {
             // In a fiber of its own, the same reason `send()` is: this runs inside the
             // input callback, and it suspends — which would suspend the loop that called it.
@@ -846,6 +854,22 @@ final class InteractiveMode
         }
     }
 
+    /** ctrl+p, and shift+ctrl+p the other way: the next model along, without opening the list. */
+    private function cycleModel(bool $backward = false): void
+    {
+        $next = ModelResolver::next($this->auth?->availableModels() ?? Models::all(), $this->session->model(), $backward);
+
+        if ($next === null) {
+            // Which is a real state on a machine with one key: a keystroke that does nothing
+            // needs to say why, or it reads as pig having missed it.
+            $this->say('Only one model has a key here.');
+
+            return;
+        }
+
+        $this->useModel($next);
+    }
+
     private function cycleThinking(): void
     {
         $level = $this->session->cycleThinkingLevel();
@@ -856,7 +880,6 @@ final class InteractiveMode
             return;
         }
 
-        $this->settings->setDefaultThinkingLevel($level);
         $this->paintBorder();
         $this->footer->invalidate();
         $this->say('Thinking: ' . $level->value);
@@ -1677,8 +1700,6 @@ final class InteractiveMode
             return;
         }
 
-        $this->settings->setDefaultModel($model->id, $model->provider);
-        $this->settings->setDefaultThinkingLevel($this->session->thinkingLevel());
         $this->footer->invalidate();
         $this->paintBorder();
 
@@ -1838,6 +1859,14 @@ final class InteractiveMode
             return;
         }
 
+        if (!$jump->moved && !$jump->aborted) {
+            // Already there. Not a cancellation and not a failure, so it says so and stops: the
+            // fourth answer `TreeJump` had to be able to give.
+            $this->say('Already at that point.');
+
+            return;
+        }
+
         if (!$jump->moved) {
             // Called off part-way: nothing moved, so the list comes back rather than the
             // person being left wondering which branch they are on.
@@ -1855,6 +1884,13 @@ final class InteractiveMode
 
         if ($jump->summary !== null) {
             $this->chat->addChild(new BranchSummaryComponent($jump->summary, $this->palette, $this->expanded));
+        }
+
+        // Back in the prompt, to be asked differently — which is what going back to something you
+        // said is for. Whatever was half-typed is replaced, because this is a deliberate choice
+        // from a list and the text that was there is the text of the message being taken back.
+        if ($jump->editorText !== null) {
+            $this->editor->setText($jump->editorText);
         }
 
         $this->sayToolProblems($this->customTools?->notify('tree') ?? []);
@@ -2382,7 +2418,6 @@ final class InteractiveMode
         }
 
         $this->session->setThinkingLevel($level);
-        $this->settings->setDefaultThinkingLevel($level);
         $this->footer->invalidate();
     }
 

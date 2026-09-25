@@ -8,6 +8,7 @@ use Closure;
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentOptions;
+use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
@@ -155,7 +156,9 @@ final class RpcModeTest extends TestCase
             default => null,
         };
 
-        $this->session = new AgentSession($agent, $this->cwd, $saved, null, $hooks);
+        // With the settings, as `CodingAgent::session()` builds it: the session is what writes
+        // the chosen model and thinking level down for next time.
+        $this->session = new AgentSession($agent, $this->cwd, $saved, $settings, $hooks);
 
         if ($resume !== null && $saved !== null) {
             $this->session->restore($saved->messages());
@@ -590,6 +593,45 @@ final class RpcModeTest extends TestCase
             'modelId' => 'claude-sonnet-4-5',
             'provider' => 'anthropic',
         ])['provider']);
+    }
+
+    public function testAModelAHostChoosesIsRememberedForNextTime(): void
+    {
+        $settings = Settings::inMemory();
+        $this->start(settings: $settings);
+
+        $this->data(['type' => 'set_model', 'modelId' => 'claude-sonnet-4-5']);
+
+        // `/model haiku` in the terminal was remembered and `set_model` over RPC was forgotten,
+        // because the settings write sat in the terminal rather than in `setModel()`. Upstream
+        // writes it from the session, where both modes get it.
+        $this->assertSame('claude-sonnet-4-5', $settings->defaultModel());
+    }
+
+    public function testAThinkingLevelAHostChoosesIsRememberedToo(): void
+    {
+        $settings = Settings::inMemory();
+        $this->start(reasoning: true, settings: $settings);
+
+        $this->assertTrue($this->response(['type' => 'set_thinking_level', 'level' => 'high'])['success']);
+
+        $this->assertSame(ThinkingLevel::High, $settings->defaultThinkingLevel());
+    }
+
+    public function testCycleModelMovesAlongTheListAndBackAgain(): void
+    {
+        $this->start();
+
+        $first = $this->data(['type' => 'cycle_model'])['model']['id'] ?? null;
+        $second = $this->data(['type' => 'cycle_model'])['model']['id'] ?? null;
+
+        $this->assertNotNull($first);
+        $this->assertNotSame($first, $second);
+
+        $back = $this->data(['type' => 'cycle_model', 'direction' => 'backward'])['model']['id'] ?? null;
+
+        $this->assertSame($first, $back);
+        $this->assertSame($first, $this->data(['type' => 'get_state'])['model']['id'], 'and the session is on it');
     }
 
     public function testAModelThatDoesNotExistIsAnErrorNotASilentNoChange(): void

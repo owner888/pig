@@ -299,6 +299,18 @@ final class RpcClient
         return $this->send(['type' => 'set_model', 'provider' => $provider, 'modelId' => $modelId]) ?? [];
     }
 
+    /**
+     * The next model along, or null when only one has a key here.
+     *
+     * @return array<string, mixed>|null `{model, thinkingLevel}`
+     */
+    public function cycleModel(bool $backward = false): ?array
+    {
+        $data = $this->send(['type' => 'cycle_model', 'direction' => $backward ? 'backward' : 'forward']);
+
+        return is_array($data['model'] ?? null) ? $data : null;
+    }
+
     public function setThinkingLevel(string $level): void
     {
         $this->send(['type' => 'set_thinking_level', 'level' => $level]);

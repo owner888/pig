@@ -231,6 +231,23 @@ final class SessionManager
     }
 
     /**
+     * One entry: what it holds, and what it came after.
+     *
+     * Needed because going back to something somebody *said* means going back to before it —
+     * the leaf lands on its parent and the words go into the editor to be asked differently —
+     * and that is two facts about one entry rather than a message on a path.
+     *
+     * A parent of the entry's own id is how a root is written in a pi file; it is handed back as
+     * written, and the caller reads it as a root the way `tree()` does.
+     *
+     * @return array{message: mixed, parent: string|null}|null null for an id this file has not got
+     */
+    public function entry(string $id): ?array
+    {
+        return $this->entries[$id] ?? null;
+    }
+
+    /**
      * Every point on this branch that could be gone back to, oldest first.
      *
      * The ids as well as the messages, because going back means naming one.

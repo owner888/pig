@@ -115,7 +115,8 @@ answering: the editor gets the terminal, and the answer keeps arriving behind it
 and `--model sonnet:high` sets the thinking level at the same time. `--models` lists the ones
 you have a key for, with their context and output limits; `--models gem pro` narrows that,
 fuzzily, over the provider and the id together. `/model` offers the same list, and switching to
-a model with no key is refused by name rather than failing on the next turn.
+a model with no key is refused by name rather than failing on the next turn. Ctrl+P steps to the
+next model on that list without opening it, Shift+Ctrl+P back to the previous one.
 
 171 models are known: Anthropic's, OpenAI's own on the Responses API, Gemini, and Groq,
 Cerebras, xAI, Zai and Mistral, which all speak OpenAI chat-completions. Set the matching
@@ -145,7 +146,8 @@ cursor onto rather than something the file merely still contains:
 `•` marks the path you are on. Ctrl+O cycles five filters (everything, no tool results, only what
 you said, only what you named, absolutely everything), typing searches, and `l` names the row under
 the cursor. Going back offers to summarise the branch you are leaving, so an hour of exploring
-arrives on the branch you are joining instead of being left behind.
+arrives on the branch you are joining instead of being left behind. Going back to something *you*
+said takes it out of the conversation and puts it back in the prompt, to be asked differently.
 
 Sessions are written in **pi's own format**, in pi's own directory layout — so a conversation
 started in one opens in the other, and `--resume` lists what is in `~/.pi/agent/sessions/`

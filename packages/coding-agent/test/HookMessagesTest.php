@@ -234,6 +234,36 @@ final class HookMessagesTest extends TestCase
         $this->assertSame('I see, I will fix it', $messages[1]->content[0]->text);
     }
 
+    public function testAMessageSentWhileTheAgentIsWorkingStillArrives(): void
+    {
+        $api = $this->api();
+        $hooks = $this->runner($api);
+        $this->start($hooks, ['working on it', 'noted']);
+
+        // Which is when a hook sends one: something it is watching happened during a turn. The
+        // message cannot go in mid-turn — a user message between a tool call and its result is a
+        // request every provider rejects — so it is queued, and being queued means the agent has
+        // to have it. It used to go into this session's own list of what is waiting and nowhere
+        // else: the model never saw it, and the footer counted it as pending for ever.
+        $this->duringTurn = static function () use ($api): void {
+            $api->sendMessage('build', 'the build just broke');
+        };
+
+        Async::run(fn () => $this->session->prompt('hi'));
+        $this->settle();
+
+        $messages = $this->session->messages();
+        $hookMessages = array_values(array_filter($messages, static fn (mixed $m): bool => $m instanceof HookMessage));
+
+        $this->assertCount(1, $hookMessages);
+        $this->assertSame('the build just broke', $hookMessages[0]->toText());
+        $this->assertSame([], $this->session->queued(), 'and nothing is left waiting');
+
+        $last = $messages[count($messages) - 1];
+        $this->assertInstanceOf(AssistantMessage::class, $last);
+        $this->assertSame('noted', $last->content[0]->text, 'the agent answered it, as a follow-up does');
+    }
+
     public function testWithoutTriggeringTheAgentStaysPut(): void
     {
         $api = $this->api();
@@ -440,6 +470,9 @@ final class HookMessagesTest extends TestCase
 
     // ---- the fixtures ----------------------------------------------------------------
 
+    /** Called from inside the first turn, for the cases about sending mid-run. */
+    private ?Closure $duringTurn = null;
+
     private function api(): HookApi
     {
         return new HookApi($this->cwd, 'test.php');
@@ -484,6 +517,15 @@ final class HookMessagesTest extends TestCase
 
     private function provider(Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream
     {
+        // Once, at the top of the first turn: the only moment `isStreaming()` is true and a test
+        // still has control.
+        $during = $this->duringTurn;
+        $this->duringTurn = null;
+
+        if ($during !== null) {
+            $during();
+        }
+
         $text = array_shift($this->answers) ?? throw new RuntimeException('out of scripted answers');
         $stream = new AssistantMessageEventStream();
         $message = new AssistantMessage(

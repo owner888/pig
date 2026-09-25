@@ -375,6 +375,13 @@ final class AgentSession
             $this->store?->appendModelChange($model->provider, $model->id);
         }
 
+        // And remembered for the next run, which upstream does from here for the reason
+        // `setQueueMode()` gives: this is the class that holds both the session and the
+        // settings. It used to be the terminal's line, so `/model haiku` was remembered and a
+        // host's `set_model` was forgotten — the same operation in two modes with the rule on
+        // only one of them, which is this audit's recurring find.
+        $this->settings?->setDefaultModel($model->id, $model->provider);
+
         $wanted = $thinking ?? $this->thinkingLevel();
         $levels = $this->availableThinkingLevels();
 
@@ -471,9 +478,18 @@ final class AgentSession
     public function sendHookMessage(HookMessage $message, bool $triggerTurn = false): void
     {
         if ($this->isStreaming()) {
+            // Handed to the agent, which is the whole of what queuing means. This used to add the
+            // text to `$this->followUps` and stop there — this session's own list of what is
+            // waiting, which the agent never reads: the model never saw the message, and the
+            // footer counted it as pending until somebody pressed escape.
+            //
             // As a follow-up rather than steering: steering interrupts the tools that are
             // queued behind the current one, and a hook's note is not a change of mind.
-            $this->followUps[] = $message->toText();
+            //
+            // And *not* added to `$this->followUps`, which is upstream's choice too: that list is
+            // what a person typed, it is what `clearQueue()` hands back to the editor, and
+            // handing somebody a hook's sentence to re-send is not putting their text back.
+            $this->agent->followUp($message);
 
             return;
         }
@@ -807,7 +823,16 @@ final class AgentSession
      * The session file keeps every branch, so this is a move rather than a deletion: the
      * road not taken is still there, and going back to it is the same call again.
      *
-     * @throws AgentError when there is no session on disk, or no such point
+     * **Going back to something somebody said goes back to before it.** The leaf lands on that
+     * message's parent, so the message leaves the conversation, and its words come back in
+     * `TreeJump::$editorText` for the caller to put in the prompt — which is what going back to a
+     * question is for: asking it differently. Upstream's `navigateTree()` does this and pig did
+     * not: it moved the leaf *onto* the message, so the old wording stayed in the conversation and
+     * the only way to re-ask was to type it again. Any other point — an answer, a summary, a
+     * command's output — is where the leaf lands, as before.
+     *
+     * @throws AgentError when there is no session on disk, no such point, or a summary was asked
+     *                    for with no model to write it
      */
     public function goTo(
         ?string $entryId,
@@ -824,6 +849,21 @@ final class AgentSession
         }
 
         $oldLeaf = $this->store->leaf();
+
+        [$target, $editorText] = $this->target($entryId);
+
+        // Already here: nothing to leave behind, nothing to summarise, and no hook to bother with
+        // it. Upstream's first guard, and `moved: false` with `aborted: false` is the answer that
+        // says so — a caller must not read it as the summary having been called off.
+        if ($target === $oldLeaf && $editorText === null) {
+            return new TreeJump(moved: false);
+        }
+
+        // Refused rather than moved without one: somebody who asked for the branch to be written
+        // down and got the move without the summary has lost the branch. Upstream throws here too.
+        if ($summarise && $this->model() === null) {
+            throw new AgentError('No model to write the summary with.');
+        }
 
         // Read before the move, obviously, and read even when nothing asked for a summary:
         // a hook is told what is being left behind whether or not anyone is writing it down.
@@ -845,7 +885,7 @@ final class AgentSession
             return new TreeJump(moved: false, aborted: true);
         }
 
-        $this->store->goTo($entryId);
+        $this->store->goTo($target);
         $this->restore($this->store->messages());
 
         // After the move, so it lands on the branch being joined — which is the whole
@@ -857,7 +897,45 @@ final class AgentSession
 
         $this->hooks?->emit(new SessionTreeEvent($this->store->leaf(), $oldLeaf, $summary));
 
-        return new TreeJump(moved: true, summary: $summary);
+        return new TreeJump(moved: true, summary: $summary, editorText: $editorText);
+    }
+
+    /**
+     * Where the leaf lands for a chosen point, and what goes back into the prompt.
+     *
+     * A message somebody said — theirs, or a hook's — resolves to the point *before* it, because
+     * going back to a question means being able to ask it differently: the message leaves the
+     * conversation and its words are handed back. Everything else resolves to itself.
+     *
+     * A hook's message is treated as upstream treats it, which is the same way: nothing is sent
+     * from here, so the text is offered for editing rather than re-sent as the person's own — and
+     * dropping the message while keeping nothing of it would lose it for no reason.
+     *
+     * An id this file has not got is passed through untouched, so `SessionManager::goTo()` is the
+     * one place that refuses it by name.
+     *
+     * @return array{0: string|null, 1: string|null}
+     */
+    private function target(?string $entryId): array
+    {
+        $entry = $entryId === null ? null : $this->store?->entry($entryId);
+
+        if ($entry === null) {
+            return [$entryId, null];
+        }
+
+        $message = $entry['message'];
+
+        if (!$message instanceof UserMessage && !$message instanceof HookMessage) {
+            return [$entryId, null];
+        }
+
+        return [
+            // A root's parent is written as its own id in a pi file, and the point before a root
+            // is the empty conversation.
+            $entry['parent'] === $entryId ? null : $entry['parent'],
+            $message instanceof UserMessage ? self::textOf($message) : $message->toText(),
+        ];
     }
 
     /**
@@ -877,7 +955,12 @@ final class AgentSession
         // A hook that wrote one has done the work, and the model is not asked. Its file
         // lists are pig's own reading of the branch rather than the hook's claim about it:
         // the prose is the hook's, the facts are not its to get wrong.
-        if ($fromHook !== null) {
+        //
+        // Only when a summary was asked for, which is upstream's condition and was missing here:
+        // the hook is *told* whether anyone wants one (`SessionBeforeTreeEvent`'s last argument),
+        // so one that answers with prose anyway has misread the event, and writing that prose into
+        // the conversation is a branch summary nobody asked for.
+        if ($fromHook !== null && $summarise) {
             [$read, $modified] = Compaction::files($leaving);
 
             return new BranchSummary($fromHook, $read, $modified, $oldLeaf, fromHook: true);
@@ -1389,6 +1472,11 @@ final class AgentSession
         if ($changed) {
             $this->store?->appendThinkingLevelChange($level->value);
         }
+
+        // Remembered for the next run, here rather than in each mode — see `setModel()`. Written
+        // even when the level did not change, as upstream does: a level the settings have never
+        // heard of is the case this is for, and it is not a change.
+        $this->settings?->setDefaultThinkingLevel($level);
     }
 
     /**

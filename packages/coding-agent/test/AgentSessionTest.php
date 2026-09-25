@@ -1132,6 +1132,100 @@ final class AgentSessionTest extends TestCase
         $this->assertSame('claude-haiku-4-5', $session->model()?->id);
     }
 
+    // ---- going back ---------------------------------------------------------------------
+
+    /** @return array{0: AgentSession, 1: SessionManager, 2: list<array{id: string, message: mixed, branches: int, label: string|null}>} */
+    private function twoExchanges(): array
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['first answer', 'second answer'], store: $store);
+
+        Async::run(static fn () => $session->prompt('the first question'));
+        Async::run(static fn () => $session->prompt('the second question'));
+
+        return [$session, $store, $store->branch()];
+    }
+
+    public function testGoingBackToSomethingYouSaidTakesItBackAndHandsItToTheEditor(): void
+    {
+        [$session, $store, $points] = $this->twoExchanges();
+
+        $jump = Async::run(static fn () => $session->goTo($points[2]['id']));
+
+        // The whole point of going back to a question: it leaves the conversation and comes back
+        // in the prompt to be asked differently. pig used to land the leaf *on* the message, so
+        // the old wording stayed and re-asking meant retyping it.
+        $this->assertTrue($jump->moved);
+        $this->assertSame('the second question', $jump->editorText);
+        $this->assertCount(2, $session->messages(), 'back to the first exchange, question included');
+        $this->assertCount(2, $store->branch());
+    }
+
+    public function testGoingBackToAnAnswerKeepsIt(): void
+    {
+        [$session, , $points] = $this->twoExchanges();
+
+        $jump = Async::run(static fn () => $session->goTo($points[1]['id']));
+
+        // The other half, so the case above cannot pass by every jump moving to a parent: an
+        // answer is a place to carry on from, not something to take back.
+        $this->assertTrue($jump->moved);
+        $this->assertNull($jump->editorText);
+        $this->assertCount(2, $session->messages());
+    }
+
+    public function testGoingBackToTheFirstThingSaidLeavesAnEmptyConversation(): void
+    {
+        [$session, , $points] = $this->twoExchanges();
+
+        $jump = Async::run(static fn () => $session->goTo($points[0]['id']));
+
+        // A root's parent is the root's own id in the file; the point before a root is nothing.
+        $this->assertSame([], $session->messages());
+        $this->assertSame('the first question', $jump->editorText);
+    }
+
+    public function testGoingToWhereYouAlreadyAreIsNotACancellation(): void
+    {
+        [$session, $store, ] = $this->twoExchanges();
+
+        $jump = Async::run(static fn () => $session->goTo($store->leaf()));
+
+        // `moved: false, aborted: false` — the fourth answer. Read as a cancellation it would say
+        // "branch summary cancelled" to somebody who asked for no summary.
+        $this->assertFalse($jump->moved);
+        $this->assertFalse($jump->aborted);
+        $this->assertCount(4, $session->messages());
+    }
+
+    public function testASummaryAskedForWithNoModelIsRefusedRatherThanSkipped(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $store->append(new UserMessage('a question'));
+        $store->append(new AssistantMessage(
+            [new TextContent('an answer')],
+            Api::AnthropicMessages,
+            'anthropic',
+            'test-model',
+            new Usage(),
+            StopReason::Stop,
+        ));
+
+        $agent = new Agent(new AgentOptions(streamFn: $this->provider([], null), apiKey: 'test-key'));
+        $session = new AgentSession($agent, sys_get_temp_dir(), $store);
+        $session->restore($store->messages());
+
+        $error = $this->assertThrows(
+            AgentError::class,
+            static fn () => $session->goTo($store->branch()[0]['id'], summarise: true),
+        );
+
+        // It used to move and quietly write no summary: somebody who asked for the branch to be
+        // written down and got the move without it has lost the branch.
+        $this->assertStringContainsString('No model', $error->getMessage());
+        $this->assertCount(2, $session->messages(), 'and it did not move');
+    }
+
     // ---- leaving this conversation ------------------------------------------------------
 
     public function testANewSessionIsANewFileAndTheOldOneStopsWhereItStopped(): void

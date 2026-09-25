@@ -18,6 +18,7 @@ use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionCodec;
@@ -56,14 +57,12 @@ use Throwable;
  * class two streams, so nothing checked the binary starting, a line crossing a pipe, or a field
  * name. The first thing `RpcClient` found was that `bin/pig --mode rpc` could not start at all.
  *
- * **Six of upstream's commands are not here**, and the reasons divide in two:
+ * **Four of upstream's commands are not here**, and the reasons divide in two:
  *
  * - `queue_message` and `set_queue_mode`: the anchor commit split the agent's one queue into
  *   `steer()` and `followUp()`, so there is no single queue to add to or set a mode on.
  *   `steer` and `follow_up` are the two commands that replace them, which is honest rather
  *   than guessing which one a `queue_message` meant.
- * - `cycle_model`: `get_available_models` and `set_model` are what it is made of, and a host
- *   that wants a cycle has the list.
  * - `branch`: upstream forks a conversation into a second session file. pig branches inside
  *   one — `go_to`, with `get_branch` for the points to go to.
  * - `export_html`'s `outputPath` is honoured, but the command is `export` here.
@@ -295,6 +294,7 @@ final class RpcMode
                 'models' => array_map(self::model(...), $this->auth?->availableModels() ?? Models::all()),
             ],
             'set_model' => $this->setModel($command),
+            'cycle_model' => $this->cycleModel($command),
 
             'set_thinking_level' => $this->setThinking($command),
             'cycle_thinking_level' => ['level' => $this->session->cycleThinkingLevel()?->value],
@@ -436,6 +436,37 @@ final class RpcMode
         return self::model($model);
     }
 
+    /**
+     * The next model along, which is ctrl+p in the terminal.
+     *
+     * Ported after all: the docblock at the top of this file said `get_available_models` and
+     * `set_model` were what it is made of, and that was true for a host — but not for pig, which
+     * had the keys reserved in the editor and no method behind them. Now that
+     * `ModelResolver::next()` exists for those keys, a host doing it by hand would be a second
+     * implementation of a rotation, and this audit's whole subject is what that costs.
+     *
+     * `null` for a machine with one usable model, as upstream answers.
+     *
+     * @param array<string, mixed> $command
+     * @return array<string, mixed>|null
+     */
+    private function cycleModel(array $command): ?array
+    {
+        $next = ModelResolver::next(
+            $this->auth?->availableModels() ?? Models::all(),
+            $this->session->model(),
+            isset($command['direction']) && $command['direction'] === 'backward',
+        );
+
+        if ($next === null) {
+            return null;
+        }
+
+        $this->session->setModel($next);
+
+        return ['model' => self::model($next), 'thinkingLevel' => $this->session->thinkingLevel()->value];
+    }
+
     /** @param array<string, mixed> $command */
     private function setThinking(array $command): ?array
     {
@@ -552,6 +583,10 @@ final class RpcMode
             'moved' => $jump->moved,
             'aborted' => $jump->aborted,
             'summary' => $jump->summary === null ? null : SessionCodec::encode($jump->summary),
+            // What was said at the point gone back to, when that point is something somebody said:
+            // upstream's `editorText`, and a host with an input box wants it there for the same
+            // reason the terminal puts it in the prompt.
+            'editorText' => $jump->editorText,
         ];
     }
 

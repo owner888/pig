@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\ThinkingLevel;
+use Pig\Ai\Models;
 use Pig\CodingAgent\ModelResolver;
 
 /** Turning what someone typed into a model. */
@@ -138,5 +139,54 @@ final class ModelResolverTest extends TestCase
     {
         // `codex` is in OpenAI's ids and in Copilot's. The one an API key reaches wins.
         $this->assertSame('openai', ModelResolver::parse('codex')?->model->provider);
+    }
+    // ---- the next one along -------------------------------------------------------------
+
+    /** @return list<\Pig\Ai\Model> three models, in a known order */
+    private static function three(): array
+    {
+        return [
+            Models::get('claude-sonnet-4-5') ?? self::fail('no sonnet'),
+            Models::get('claude-haiku-4-5') ?? self::fail('no haiku'),
+            Models::get('claude-opus-4-1') ?? self::fail('no opus'),
+        ];
+    }
+
+    public function testTheNextOneAlongWrapsRoundAtTheEnd(): void
+    {
+        [$sonnet, $haiku, $opus] = self::three();
+        $list = [$sonnet, $haiku, $opus];
+
+        $this->assertSame($haiku, ModelResolver::next($list, $sonnet));
+        $this->assertSame($opus, ModelResolver::next($list, $haiku));
+        $this->assertSame($sonnet, ModelResolver::next($list, $opus), 'round the end');
+    }
+
+    public function testBackwardsWrapsRoundAtTheStart(): void
+    {
+        [$sonnet, $haiku, $opus] = self::three();
+        $list = [$sonnet, $haiku, $opus];
+
+        $this->assertSame($sonnet, ModelResolver::next($list, $haiku, backward: true));
+        $this->assertSame($opus, ModelResolver::next($list, $sonnet, backward: true), 'round the start');
+    }
+
+    public function testOneModelHasNowhereToGoAndNeitherHasNone(): void
+    {
+        [$sonnet] = self::three();
+
+        // Which is a real state, not a guard against nothing: a machine with one provider key.
+        $this->assertNull(ModelResolver::next([$sonnet], $sonnet));
+        $this->assertNull(ModelResolver::next([], null));
+    }
+
+    public function testAModelThatIsNotOnTheListCountsAsBeingAtTheStart(): void
+    {
+        [$sonnet, $haiku, $opus] = self::three();
+
+        // Upstream's rule, quirk included: `indexOf` returning -1 becomes 0, so the next one
+        // along is the *second* in the list rather than the first. Pinned with `--model` for a
+        // provider whose key has since gone is how somebody gets here.
+        $this->assertSame($haiku, ModelResolver::next([$sonnet, $haiku, $opus], null));
     }
 }

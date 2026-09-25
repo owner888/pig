@@ -3039,6 +3039,97 @@ runner has no tty to open. What is tested is the empty-command guard and that a 
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
 
+### A hook's message sent mid-turn was queued where nothing reads it
+
+Sixth find, from auditing `agent-session.ts`' queues. `sendHookMessage()` while the agent is
+working did this:
+
+```php
+$this->followUps[] = $message->toText();   // and nothing else
+```
+
+`$this->followUps` is **this session's own record of what a person typed**, kept so the footer can
+count it and `clearQueue()` can hand it back to the editor. The agent has its own queues and reads
+neither of pig's lists. So a hook that noticed something during a turn — the case the method exists
+for — had its message counted as pending for ever, never delivered to the model, and handed to the
+person as their own text the next time they pressed escape. Upstream's line is
+`await this.agent.queueMessage(appMessage)`: the message goes to the agent and **not** into the
+queued-text list, which is the pair of decisions pig had exactly inverted.
+
+`$this->agent->followUp($message)` is the fix — a follow-up rather than steering, because steering
+interrupts the tools queued behind the current one and a hook's note is not a change of mind. It
+stays out of `$this->followUps` for the reason upstream keeps it out: handing somebody a hook's
+sentence to re-send is not putting their text back.
+
+`HookMessagesTest::testAMessageSentWhileTheAgentIsWorkingStillArrives` sends one from inside the
+first turn — the harness gained a `duringTurn` closure for it, since that is the only moment
+`isStreaming()` is true and a test still has control. **Nothing covered this branch at all**, which
+is why three lines of bookkeeping could stand in for the delivery.
+
+### Ctrl+P was taken off the editor and bound to nothing
+
+Seventh find, and the cheapest kind to have: `CustomEditor::claimed()` has always answered
+`'ctrl+p'` and `'shift+ctrl+p'` — taking both keys away from the text field — and
+`InteractiveMode::bindKeys()` never registered a handler for either. Upstream binds them to
+`cycleModel("forward")` and `cycleModel("backward")`, which pig never ported. So the keys did
+nothing, and a key that is claimed and then does nothing is worse than either half.
+
+Ported as `ModelResolver::next()` — a rotation over a list, which is all that was left once
+`setModel()` gained the key check, the file write and the settings write. It lives beside `parse()`
+rather than on `AgentSession` because two callers need the same arithmetic: ctrl+p, and RPC's
+`cycle_model`. **That command is now here too**, and the docblock that said it was not needed
+("`get_available_models` and `set_model` are what it is made of") had to go: it was true for a host
+until pig needed the same rotation itself, and then leaving it out would have meant two
+implementations of one list walk — this audit's subject exactly.
+
+One quirk kept on purpose: a current model that is not in the list counts as being at position 0,
+so ctrl+p from there lands on the *second* model. That is upstream's `indexOf` returning -1, and
+`--model` pinned to a provider whose key has since gone is how somebody gets there.
+
+### The terminal remembered the model for next time and a host did not
+
+Same shape as the four before it, on two fields at once. Upstream's `AgentSession.setModel()` and
+`setThinkingLevel()` each write the choice to the settings manager; pig's wrote only the session
+file, and `InteractiveMode` added the settings line in three places of its own —
+`useModel()`, `cycleThinking()`, `useThinkingLevel()`. RPC's `set_model`, `set_thinking_level` and
+`cycle_thinking_level` had no such line, so a host's choice was forgotten by the next run while the
+same choice made in the terminal was remembered.
+
+Both writes are in `AgentSession` now, which is where `setQueueMode()` already put its own — *"this
+is the class that holds both the agent and the settings"* — and the three lines in the terminal are
+gone. `RpcModeTest` asserts the two new cases; the harness had to start passing its `Settings` into
+the `AgentSession` it builds, as `CodingAgent::session()` does, because it had been handing it only
+to `RpcMode` and no test had needed otherwise.
+
+### Going back to a question kept the question
+
+Eighth find, and the biggest behavioural one in `agent-session.ts`. Upstream's `navigateTree()`
+resolves the chosen point before moving: **a message somebody said resolves to the point before
+it**, so the leaf lands on its parent, the message leaves the conversation, and its text is handed
+back as `editorText` for the prompt. pig moved the leaf *onto* the message. The difference is the
+whole "go back and ask it differently" flow: in pig the old wording stayed in the conversation and
+the only way to re-ask was to type it again.
+
+`TreeJump` gained `editorText`, `SessionManager::entry()` exists so the parent and the message can
+be read as one fact about one entry, and both modes use it — the terminal fills the prompt, RPC
+returns it. A hook's message is treated the same way, as upstream treats it: nothing is *sent* from
+there, so offering the text for editing is not re-sending a hook's sentence as the person's, and
+dropping the message while keeping nothing of it would lose it for no reason.
+
+Three smaller parity gaps came out of the same read:
+
+- **Going to where you already are** ran the whole recipe — hook, summary, replay. Upstream's first
+  guard returns early, so `TreeJump` gained a fourth answer: `moved: false` with `aborted: false`,
+  which the terminal must not report as "branch summary cancelled". A fourth state in a result
+  object is cheaper than a caller guessing.
+- **`summarise: true` with no model** moved without a summary. Upstream throws, and so does pig now:
+  somebody who asked for the branch to be written down and got the move without it has lost the
+  branch. Unreachable from the terminal (`goBackTo()` only offers the summary when there is a
+  model), reachable over RPC.
+- **A hook's summary was taken even when nobody asked for one.** The hook is *told* whether anyone
+  wants a summary — it is the last argument of `SessionBeforeTreeEvent` — so prose returned anyway
+  has misread the event, and upstream ignores it.
+
 ### A model with no API key could be switched to, listed, and resumed onto
 
 Fifth find, and the pattern from the fourth one again with a different word in the middle: upstream
@@ -3190,15 +3281,24 @@ rule for it, and what a file written before this existed actually means.
 stronger signal than either arm on its own. The author knew the rule when writing `BranchSummary`;
 the compaction arm could not follow it because the field was not there, and nothing failed.
 
-**And it turned out to be the whole audit.** All five finds so far are one shape — *a rule present
-in one place and absent in its sibling* — and none of them is a mistranslation of upstream: a
-`match` arm missing a type (`BranchSummary`, `ImageContent`), a field one arm checks and the other
-has not got (`fromHook`), one settings key out of three (`retry.maxRetries`), two session-leaving
-recipes with different ideas about them (`RpcMode` vs `InteractiveMode`), and one question — *is
-there a key for this model?* — that upstream asks in five places and pig asked in none. So the
-first tool to reach for is not "read this file against upstream" but **"who else does this, and do
-they agree?"** — and the fix that sticks is one implementation rather than the missing lines added
-twice, which is why `startNew()`/`switchTo()` and `Auth::availableModels()` exist.
+**And it turned out to be the whole audit.** Most finds are one shape — *a rule present in one
+place and absent in its sibling* — and none of them is a mistranslation of upstream: a `match` arm
+missing a type (`BranchSummary`, `ImageContent`), a field one arm checks and the other has not got
+(`fromHook`), one settings key out of three (`retry.maxRetries`), two session-leaving recipes with
+different ideas about them (`RpcMode` vs `InteractiveMode`), one question — *is there a key for this
+model?* — that upstream asks in five places and pig asked in none, and a settings write the terminal
+did three times and RPC never. So the first tool to reach for is not "read this file against
+upstream" but **"who else does this, and do they agree?"** — and the fix that sticks is one
+implementation rather than the missing lines added twice, which is why `startNew()`/`switchTo()`,
+`Auth::availableModels()`, `ModelResolver::next()` and the settings writes inside `setModel()` all
+exist.
+
+**The second shape, from the same sweep: a thing wired up at one end only.** A hook message pushed
+onto a list the agent never reads; ctrl+p taken off the editor and bound to nothing; `TreeJump`
+carrying no editor text because `goTo()` never worked out that a question is something you go back
+to *before*. None of the three failed a test, because each was internally consistent — the wiring
+was missing, not wrong. What finds them is reading the *other* end: who consumes this list, who
+handles this key, what does the caller do with what it gets back.
 
 ### Compaction counted an image as nothing, so a conversation of screenshots could not be compacted
 

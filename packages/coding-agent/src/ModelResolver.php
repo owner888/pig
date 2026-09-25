@@ -74,6 +74,44 @@ final class ModelResolver
     }
 
     /**
+     * The next model along, wrapping round at either end.
+     *
+     * Upstream's `cycleModel()` is what ctrl+p and shift+ctrl+p do, and it is the model half of
+     * `cycleThinkingLevel()`: a keystroke to move along the list rather than a picker to open.
+     * Here rather than on `AgentSession` because everything else it needs is already done for it
+     * — `setModel()` checks the key, writes the file and remembers the choice — so what is left
+     * is which model comes next, and that is arithmetic over a list that both the terminal and
+     * RPC have to do the same way.
+     *
+     * Null when there is nowhere to go: one model, or none. A current model that is not in the
+     * list at all — pinned with `--model` for a provider whose key has since gone — counts as
+     * being at the start, which is upstream's rule and means ctrl+p from there lands on the
+     * *second* model in the list.
+     *
+     * @param list<Model> $available in the registry's order, which is what the list shows
+     */
+    public static function next(array $available, ?Model $current, bool $backward = false): ?Model
+    {
+        $count = count($available);
+
+        if ($count <= 1) {
+            return null;
+        }
+
+        $at = 0;
+
+        foreach ($available as $index => $model) {
+            if ($current !== null && $model->is($current)) {
+                $at = $index;
+
+                break;
+            }
+        }
+
+        return $available[($at + ($backward ? -1 : 1) + $count) % $count];
+    }
+
+    /**
      * The best model for a pattern.
      *
      * @param list<Model> $available

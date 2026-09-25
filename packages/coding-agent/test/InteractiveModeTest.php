@@ -916,6 +916,35 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringNotContainsString('second answer', $this->screen());
     }
 
+    public function testGoingBackToSomethingYouSaidPutsItBackInThePrompt(): void
+    {
+        $this->start(['first answer'], store: true);
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // Two rows, and the cursor opens on the leaf — the answer — so one press up is the
+        // question. The list wraps, which is what makes one press enough.
+        $this->type('/tree');
+        $this->type(self::ENTER);
+        $this->type("\e[A");
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // "Summarise the branch you are leaving?" — No is the default.
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        // The conversation is empty now, so "hello" on screen is the prompt and nothing else: the
+        // question came back to be asked differently, which is what going back to it is for.
+        $this->assertStringNotContainsString('first answer', $screen);
+        $this->assertStringContainsString('hello', $screen);
+        $this->assertSame([], $this->session->messages());
+    }
+
     public function testWithNothingSaidYetThereIsNowhereToGoBackTo(): void
     {
         $this->start(store: true);
@@ -1255,6 +1284,30 @@ final class InteractiveModeTest extends TestCase
         // Rather than switching to it and failing on the next turn, from inside the turn.
         $this->assertStringContainsString('No model matches "gpt-5"', $this->screen());
         $this->assertSame($before, $this->session->model()?->id);
+    }
+
+    public function testCtrlPMovesToTheNextModelAndBackAgain(): void
+    {
+        $auth = Auth::inMemory();
+        $auth->setRuntimeApiKey('anthropic', 'for-this-run');
+        $this->start(auth: $auth);
+
+        // `CustomEditor` claimed both keys from the start and nothing was listening: upstream
+        // binds them to cycling the model, so pressing them did nothing at all.
+        $this->type("\x10");
+        $first = $this->session->model()?->id;
+
+        $this->type("\x10");
+        $second = $this->session->model()?->id;
+
+        $this->assertNotSame($first, $second);
+        $this->assertStringContainsString('Model: ' . $second, $this->screen());
+
+        $this->type("\e[112;6u");
+
+        // Which is the point of having both: overshooting by one keystroke is the normal way to
+        // use this, and the way back has to be a keystroke too.
+        $this->assertSame($first, $this->session->model()?->id, 'shift+ctrl+p goes back');
     }
 
     public function testPickingFromTheListSwitches(): void
