@@ -21,13 +21,17 @@ amphp、不用 ncurses，只用标准库。
 |---|---|---|
 | `pig/async` | `Pig\Async\` | 事件循环、Future、协程 —— **已完成** |
 | `pig/ai` | `Pig\Ai\` | 统一 LLM API —— **Anthropic、OpenAI chat-completions、OpenAI Responses、Gemini 四条全链路可用** |
-| `pig/agent-core` | `Pig\Agent\` | 带工具调用和状态管理的 agent 循环 —— **已完成** |
+| `pig/agent-core` | `Pig\Agent\` | 带工具调用、工具入参 JSON Schema 校验和状态管理的 agent 循环 —— **已完成** |
 | `pig/tui` | `Pig\Tui\` | 差分渲染的终端 UI —— **已完成** |
 | `pig/coding-agent` | `Pig\CodingAgent\` | coding agent —— **工具、系统提示、交互式 CLI、会话持久化、上下文压缩、模型切换、skills、hooks、自定义工具、三种模式(终端 / print / RPC)已完成** |
 
 `pig/async` 在上游没有对应物：JavaScript 自带事件循环，PHP 没有。它的存在是为了让**一次
 `stream_select()` 能同时等模型的 socket 和键盘**——这正是「流式输出途中能打断、能继续打字」
 所依赖的前提。
+
+工具调用在执行前会按工具自己的 JSON Schema 校验一遍：`Ai\Utils\JsonSchema` 是 draft-07 的一个
+子集，错误信息沿用 AJV 的措辞——因为读这条报错的是**模型**，它要靠这句话自我纠正。遇到没实现的
+关键字是忽略而不是判失败，所以给工具 schema 加一个关键字永远不会把工具搞坏。
 
 ## 跑一下
 

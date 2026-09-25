@@ -24,7 +24,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 |---|---|---|
 | `pig/async` | `Pig\Async\` | Event loop, futures, coroutines — **done** |
 | `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic, OpenAI chat-completions, OpenAI Responses and Gemini all stream end to end** |
-| `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling and state — **done** |
+| `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling, JSON Schema validation of tool arguments, and state — **done** |
 | `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — **done** |
 | `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions, compaction, model switching, skills, hooks, custom tools and all three modes (terminal, print, RPC) done** |
 
@@ -32,6 +32,11 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 exists so one `stream_select()` can wait on the model's socket and on the keyboard at the same
 time, which is what makes interrupting a running turn — and typing while the model streams —
 possible at all.
+
+A tool call is checked against the tool's own JSON Schema before it runs — `Ai\Utils\JsonSchema`
+is a draft-07 subset with AJV's wording, because the reader of a validation failure is the model
+that has to correct itself from it. An unknown keyword is ignored rather than failed, so adding a
+keyword to a tool's schema can never break the tool.
 
 ## Try it
 

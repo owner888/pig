@@ -1346,6 +1346,60 @@ Five things decided here:
 somebody just declared is a listing they will not trust about the rest either. It costs a
 settings read on a command that prints and exits.
 
+### Checking a tool call against its schema
+
+`Ai\Utils\JsonSchema` is upstream's `utils/validation.ts` — the AJV part, written out. `ToolArguments`
+is still what `AgentLoop` calls and still owns the **message**, which is upstream's format down to
+the blank line before the arguments; what moved out is the deciding.
+
+**It replaced a two-rule checker, and the reason is the reason it was written that way.**
+`ToolArguments` used to look for a missing required property and a wrong primitive type and pass
+everything else through, because nothing was bundled that could read a schema. That was defensible
+until there *was* something, and then it was two notions of what a tool's schema means — the shape
+that goes wrong quietly, and the narrower one is the one nobody would have thought to look at.
+
+The subset is `type` (one or several), `enum`, `const`, `required`, `properties`,
+`additionalProperties`, `items` (single and tuple), the number bounds, `multipleOf`, the string
+lengths, `pattern`, the item and property counts, `uniqueItems`, and `anyOf`/`oneOf`/`allOf`/`not`.
+Left out with reasons in the docblock: `format` (an annotation in draft-07; `ajv-formats` makes it
+an assertion and a tool has a better place to check an email), `$ref` (needs a resolver and a cycle
+guard, and a tool's parameters are self-contained everywhere in either tree), and
+`if`/`then`/`else`, `dependencies`, `patternProperties`, `propertyNames`, `contains` (nothing uses
+them).
+
+**An unknown keyword is ignored, never a failure.** That is the most important line in the file: a
+schema using something unimplemented has to keep working, or adding a keyword to a tool breaks the
+tool instead of tightening it.
+
+Five things that took a real answer rather than a guess:
+
+- **The messages are AJV's wording**, not invented ones — `must be integer`, `must have required
+  property 'path'`. The reader is the **model**: it is about to correct itself from this sentence
+  and it has seen AJV's phrasing everywhere else. One existing test changed wording because of it.
+- **A missing property is reported at its own path.** Upstream prints `err.params.missingProperty`,
+  the bare name, so a nested one cannot say which object it was missing from; here it reads
+  `edits/0/path`.
+- **`[]` is both an empty array and an empty object.** `json_decode(assoc: true)` gives a PHP array
+  for both, so the two are told apart by `array_is_list()` — and the empty one is
+  indistinguishable. It satisfies either, because there is no third answer and rejecting one would
+  reject a valid document for being ambiguous with another valid one.
+- **`multipleOf` took three tries.** `fmod(0.3, 0.1)` is `0.0999999999999999778` — close to *the
+  divisor*, not to zero — so a one-sided tolerance on the remainder calls 0.3 not a multiple of
+  0.1. It asks whether the quotient is whole, to a tolerance. AJV asks
+  `Number.isInteger(value / multipleOf)` and therefore *does* reject 0.3, which is the standard's
+  literal reading and is deliberately not copied: "0.3 must be multiple of 0.1" is a correction a
+  model cannot act on.
+- **`pattern` is delimited with `#`, and lengths are counted in characters.** A schema's pattern is
+  an undelimited ECMA-262 regex, and `/` as the delimiter would silently change every pattern
+  containing a path. `strlen` would make a four-character Chinese string twelve and reject what the
+  schema allows.
+
+A pattern that is not a valid PCRE is the schema's mistake and is ignored rather than reported
+against the value, which would send the model looking where it did nothing wrong. Not ported:
+upstream's `validateToolCall(tools, call)`, which is `validateToolArguments` plus a find-by-name —
+it has no caller upstream either, because `AgentLoop` has the tool in hand by the time it
+validates and needs it afterwards to run.
+
 `Hooks\` is upstream's `core/hooks/`, all of it. A hook is a PHP file in `~/.pig/hooks` or
 `.pig/hooks` that returns a callable; the callable is handed a `HookApi` and registers what
 it wants to hear about:
@@ -1935,7 +1989,7 @@ What is left unported, across every package, each for a reason:
 |---|---|
 | seventeen of the twenty-five selector components | the interactive mode needs eight; `/model`, `/resume`, `/tree`, `/login` and `/logout` are the same `SelectList` in the same place instead, and `settings-selector.ts` is `showSettings()` plus `Interactive\SettingsSubmenu` |
 | `agent/proxy.ts` (340) | a stream function that routes LLM calls through somebody's server, so the server holds the keys. pig talks to providers directly; this arrives if something ever wants a proxy |
-| `ai/utils/validation.ts` + `typebox-helpers.ts` (104) | AJV and TypeBox, for checking a tool call against its schema. `Agent\ToolArguments` is pig's answer and its docblock states the trade: the two mistakes a model actually makes, and everything else through |
+| `ai/utils/typebox-helpers.ts` (24) | `StringEnum`, a TypeBox helper that emits `{type:"string", enum:[…]}` because TypeBox's own `Type.Enum` emits `anyOf`/`const` and Google's API rejects that. In PHP a schema **is** an array, so there is nothing to help with — you write the array, and `JsonSchemaTest` says so where the enum is tested |
 | `coding-agent/core/sdk.ts` | a programmatic factory; `CodingAgent::create()` plus `examples/` is what pig offers instead |
 | `coding-agent/modes/rpc/rpc-types.ts`, `rpc-client.ts` | TypeScript types for the wire shape, and a client for driving the mode from TypeScript. `RpcMode`'s docblock plus `RpcEvents` is the first; a host writes JSON lines in whatever language it is in |
 | every `index.ts` | barrel re-exports, which is what an autoloader does here |

@@ -192,8 +192,13 @@ final class AgentLoopTest extends TestCase
 
         $text = $messages[2]->content[0]->text;
         $this->assertTrue($messages[2]->isError);
-        $this->assertStringContainsString('path: is required', $text);
-        $this->assertStringContainsString('limit: expected integer, got string', $text);
+
+        // AJV's wording, which is upstream's, rather than the phrasing the two-rule checker used
+        // before `JsonSchema` replaced it. It matters because the reader is the **model**: it has
+        // seen `must have required property` everywhere else, and it is about to correct itself
+        // from this sentence.
+        $this->assertStringContainsString("path: must have required property 'path'", $text);
+        $this->assertStringContainsString('limit: must be integer', $text);
         // The tool never ran.
         $this->assertSame([], $tool->calls);
     }
