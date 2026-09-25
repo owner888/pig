@@ -111,9 +111,21 @@ GitHub Copilot 的十九个、Google Cloud Code Assist 的五个也在里面—�
 `/label 重构之前` 给当前这个点起个名字，`/tree` 会把名字连着当时说的话一起显示——用的是 pi 自己的
 label entry，所以在哪边起的名字另一边都看得见。
 
-`/tree` 回到对话里更早的某个点，从那儿接着聊。没走的那条路还留在会话文件里——所以往回走不花什么代价，
-而且随时能再走回来。它还会问要不要把正在离开的那条分支总结一份：这样探索了一小时的东西会跟着你到新分支
-上，而不是被留在原地。
+`/tree` 回到对话里更早的某个点，从那儿接着聊。它画的是**整棵**对话树、连分叉一起——所以「没走的那条路」
+是一行可以把光标移上去的东西，而不只是文件里还留着：
+
+```
+  • user: port the tree selector
+    • assistant: Here is what it does…
+    ├─ user: actually, do the proxy first
+    │  └─ assistant: Right — starting with CONNECT…
+    └─ • user: no, keep going with the tree
+          • assistant: Carrying on…
+```
+
+`•` 标的是你正在走的那条路。Ctrl+O 循环五种过滤（全部 / 不看工具结果 / 只看你说的 / 只看你起过名的 /
+一点不漏），直接打字就是搜索，`l` 给光标那一行起名字。往回走时它会问要不要把正在离开的那条分支总结一份：
+这样探索了一小时的东西会跟着你到新分支上，而不是被留在原地。
 
 会话用的是 **pi 自己的格式**、自己的目录布局——所以一边开的对话另一边能直接打开，`--resume`
 会把 `~/.pi/agent/sessions/` 里的会话和 pig 自己的一起列出来。接着聊一个 pi 的会话，就按那个格式

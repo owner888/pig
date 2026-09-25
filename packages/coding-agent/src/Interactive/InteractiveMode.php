@@ -1721,46 +1721,50 @@ final class InteractiveMode
             return;
         }
 
-        $points = array_reverse($store->branch());
+        $tree = $store->tree();
 
-        if (count($points) < 2) {
+        if (count($store->branch()) < 2) {
             $this->say('Nothing to go back to yet.');
 
             return;
         }
 
-        $items = [];
-
-        foreach ($points as $index => $point) {
-            // A name, where somebody gave one: "4 back · 7 back · 12 back" is a list nobody
-            // can choose from, and "before the refactor" is. The message stays beside it
-            // rather than being replaced, because the name is what you were thinking and the
-            // message is what was actually said.
-            $said = self::describe($point['message']);
-            $label = $point['label'];
-
-            $items[] = new SelectItem(
-                $point['id'],
-                $label === null ? $said : $this->palette->fg('accent', $label) . ' · ' . $said,
-                ($index === 0 ? 'where you are' : $index . ' back')
-                    . ($point['branches'] > 1 ? ' · ' . $point['branches'] . ' ways from here' : ''),
-            );
-        }
-
-        $picker = new SelectList($items, 8, $this->palette->selectListTheme());
-        $picker->setSelectHandler(function (SelectItem $item): void {
+        // `tree()`, not `branch()`. The branch is the path being talked on; a conversation that went
+        // back has another one beside it, still in the file with its parents intact, and listing
+        // only the current path made it unreachable — `goTo()` needs an id and nothing showed one.
+        $picker = new TreeList($tree, $store->leaf(), 12, $this->palette);
+        $picker->setSelectHandler(function (string $id): void {
             $this->closePicker();
 
             // In a fiber: going back may ask the model to summarise what is being left,
             // and that suspends. Same reason `send()` spawns.
-            Async::spawn(fn () => $this->goBackTo($item->value));
+            Async::spawn(fn () => $this->goBackTo($id));
         });
         $picker->setCancelHandler($this->closePicker(...));
+        $picker->setLabelHandler(function (string $id, ?string $current): void {
+            // Named from inside the tree, which is where anybody realises a point is worth a name.
+            // The overlay closes first: the name is asked for with the editor, and two things
+            // holding the focus is the bug `$overlay` exists to prevent.
+            $this->closePicker();
+            Async::spawn(function () use ($id, $current): void {
+                // The current name goes in as the placeholder rather than as a prefill: upstream
+                // seeds its own input with it, and `HookUi::input()` — which three classes
+                // implement — takes a placeholder and no prefill. Adding one for this would change
+                // an interface for a convenience, so the name is shown and retyped instead.
+                $name = trim((string) $this->ui->input(
+                    $current === null ? 'Name this point' : "Name this point (now: {$current})",
+                    $current ?? 'before the refactor',
+                ));
+
+                $this->session->store()?->appendLabel($id, $name === '' ? null : $name);
+                $this->say($name === '' ? 'Name cleared.' : 'Named "' . $name . '".');
+            });
+        });
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
         $this->overlay->addChild(new Text(
-            $this->palette->fg('muted', 'Go back to — enter to pick, esc to cancel'),
+            $this->palette->fg('muted', 'Go back to — enter to pick, ctrl+o to filter, l to name, type to search, esc to cancel'),
             1,
             0,
         ));

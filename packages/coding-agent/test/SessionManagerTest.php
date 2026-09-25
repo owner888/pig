@@ -663,4 +663,110 @@ final class SessionManagerTest extends TestCase
         $this->assertSame('3h ago', $info->when($now + 10_800));
         $this->assertSame('2d ago', $info->when($now + 172_800));
     }
+
+    // ---- the whole tree -----------------------------------------------------------------------
+
+    public function testTreeShowsABranchThatBranchOnlyHides(): void
+    {
+        $session = SessionManager::create($this->cwd());
+        $this->converse($session, 'A');
+        $branch = $session->branch();
+        $back = $branch[count($branch) - 1]['id'];
+        $this->converse($session, 'B');
+
+        $session->goTo($back);
+        $this->converse($session, 'C');
+
+        // `branch()` is the path being talked on, so B is gone from it.
+        $said = array_map(
+            static fn (array $point): string => (string) ($point['message']->content[0]->text ?? ''),
+            $session->branch(),
+        );
+
+        $this->assertNotContains('B', $said);
+
+        // `tree()` has it, which is the point: `goTo()` promises an abandoned branch can be gone
+        // back to, and until this existed nothing could name one.
+        $ids = [];
+        $walk = static function (array $nodes) use (&$walk, &$ids): void {
+            foreach ($nodes as $node) {
+                $ids[(string) ($node['message']->content[0]->text ?? '')] = $node['id'];
+                $walk($node['children']);
+            }
+        };
+        $walk($session->tree());
+
+        $this->assertArrayHasKey('B', $ids);
+        $this->assertArrayHasKey('C', $ids);
+
+        // And it is a real id: going back to it works.
+        $session->goTo($ids['B']);
+        $said = array_map(
+            static fn (array $point): string => (string) ($point['message']->content[0]->text ?? ''),
+            $session->branch(),
+        );
+
+        $this->assertContains('B', $said);
+        $this->assertNotContains('C', $said);
+    }
+
+    public function testTheTreeIsTheForkItDescribes(): void
+    {
+        $session = SessionManager::create($this->cwd());
+        $this->converse($session, 'A');
+        $branch = $session->branch();
+        $back = $branch[count($branch) - 1]['id'];
+        $this->converse($session, 'B');
+        $session->goTo($back);
+        $this->converse($session, 'C');
+
+        $tree = $session->tree();
+
+        // One root, and the fork is where the conversation went back to.
+        $this->assertCount(1, $tree);
+
+        $node = $tree[0];
+
+        while (count($node['children']) === 1) {
+            $node = $node['children'][0];
+        }
+
+        $this->assertCount(2, $node['children'], 'two ways forward from the point that was returned to');
+        $this->assertSame('B', $node['children'][0]['message']->content[0]->text ?? null, 'file order');
+        $this->assertSame('C', $node['children'][1]['message']->content[0]->text ?? null);
+    }
+
+    public function testATreeWithNothingInItIsEmptyRatherThanAFailure(): void
+    {
+        $this->assertSame([], SessionManager::create($this->cwd())->tree());
+    }
+
+    public function testALabelOnAPointIsOnItsNode(): void
+    {
+        $session = SessionManager::create($this->cwd());
+        $this->converse($session, 'A');
+        $branch = $session->branch();
+        $session->appendLabel($branch[0]['id'], 'the start');
+
+        $this->assertSame('the start', $session->tree()[0]['label']);
+    }
+
+    private function cwd(): string
+    {
+        return $this->home . '/project';
+    }
+
+    /** A question and an answer, which is what makes a session worth keeping. */
+    private function converse(SessionManager $session, string $text): void
+    {
+        $session->append(new UserMessage([new TextContent($text)]));
+        $session->append(new AssistantMessage(
+            [new TextContent('re: ' . $text)],
+            Api::AnthropicMessages,
+            'anthropic',
+            'm',
+            new Usage(),
+            StopReason::Stop,
+        ));
+    }
 }

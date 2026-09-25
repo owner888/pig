@@ -2179,7 +2179,7 @@ What is left unported, across every package, each for a reason:
 
 | Upstream | Why not |
 |---|---|
-| seventeen of the twenty-five selector components | the interactive mode needs eight; `/model`, `/resume`, `/tree`, `/login` and `/logout` are the same `SelectList` in the same place instead, and `settings-selector.ts` is `showSettings()` plus `Interactive\SettingsSubmenu` |
+| nine of the selector components, as files | every one of them is here as something else, and the audit that checked it is below: `hook-selector`, `hook-editor` and `hook-input` are `TerminalUi::select()`, `editor()` and `input()`; `queue-mode`, `show-images`, `thinking` and `settings-selector` are `/settings`' rows plus `thinkingSubmenu()`; `theme-selector` is that list's theme row; `oauth-selector` is `showSignIns()`; `session-selector` is `Cli\SessionPicker`; `model-selector` is `showModels()`. **`tree-selector.ts` is no longer among them** — it is `Interactive\TreeList` |
 | `ai/utils/typebox-helpers.ts` (24) | `StringEnum`, a TypeBox helper that emits `{type:"string", enum:[…]}` because TypeBox's own `Type.Enum` emits `anyOf`/`const` and Google's API rejects that. In PHP a schema **is** an array, so there is nothing to help with — you write the array, and `JsonSchemaTest` says so where the enum is tested |
 | `coding-agent/modes/rpc/rpc-types.ts` | TypeScript types for the wire shape. `RpcMode`'s docblock plus `RpcEvents` is the counterpart; a host reading JSON lines writes its own in whatever language it is in. Its `rpc-client.ts` **is** ported, as `Rpc\RpcClient` |
 | every `index.ts` | barrel re-exports, which is what an autoloader does here |
@@ -2971,6 +2971,42 @@ Barely covered by a test: `interactive()` opens `/dev/tty` for all three streams
 runner has no tty to open. What is tested is the empty-command guard and that a run with no
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
+
+### An abandoned branch was in the file and unreachable
+
+`SessionManager::goTo()`'s docblock has always said it:
+
+> Nothing is deleted and nothing is rewritten. The entries after this one are still in the file with
+> their parents intact, so the branch that was abandoned **can be gone back to in exactly the same
+> way**.
+
+The first half was true and the second was not reachable. `/tree` listed `branch()`, which is the
+path being talked on, and `SessionManager` had no public walker for anything else — so going back to
+an abandoned branch needed an id that nothing would show. Reproduced before the fix:
+
+```
+before going back, branch() shows: A, re: A, B — about to be abandoned, re: B
+after going back,  branch() shows: A, re: A, C — a different direction, re: C
+entries mentioning the abandoned branch, still in the file: 2
+```
+
+Found by auditing the unported-components row rather than by anybody hitting it, which is the
+interesting part: the row said those files were "mostly UI for unported subsystems", and for nine of
+them that was right. For this one the subsystem was ported — the tree is in the file, in pi's own
+format — and only the way in was missing. **A row that explains away a whole group is worth checking
+one member at a time**; this table has now been wrong five times.
+
+The fix is `SessionManager::tree()` plus `Interactive\TreeList`, upstream's `tree-selector.ts`. Two
+things in the walker are worth keeping straight:
+
+- **Children come out in file order.** Not sorted by id — an id is eight characters off a UUID, so
+  sorting by it scrambles a fork's arms, and the first version did exactly that until the test
+  asserting which arm comes first caught it. Not by timestamp either: that is the *message's*, and
+  the entries of one turn share it to the millisecond. `$this->entries` is insertion-ordered, which
+  is the file's order, so walking it once is the whole sort.
+- **An orphan is a root, not a dropped entry.** A file written by something newer can hold an entry
+  whose parent is not there, and losing part of somebody's conversation to keep a tidy tree is the
+  wrong way round. Upstream guards the same case.
 
 ### `--mode rpc` could not be started, by either route
 

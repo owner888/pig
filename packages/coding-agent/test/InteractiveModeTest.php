@@ -829,7 +829,54 @@ final class InteractiveModeTest extends TestCase
 
         $this->assertStringContainsString('Go back to', $screen);
         $this->assertStringContainsString('hello', $screen);
-        $this->assertStringContainsString('where you are', $screen);
+        // Who said it, which is what the tree shows instead of the old list's "N back": a row is
+        // read for what is on it, and the position is the `•` down the side.
+        $this->assertStringContainsString('user:', $screen);
+        $this->assertStringContainsString('assistant:', $screen);
+    }
+
+    public function testTreeShowsABranchThatWasAbandonedAndCanGoBackToIt(): void
+    {
+        // The whole reason `/tree` is a tree. Going back and carrying on leaves the first direction
+        // in the file with its parents intact, and listing only the current branch made it
+        // unreachable: `goTo()` needs an id and nothing showed one.
+        $this->start(['first answer', 'second answer', 'third answer'], store: true);
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('down the first road');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // Back to the first exchange, then somewhere else.
+        $this->type('/tree');
+        $this->type(self::ENTER);
+        $this->type("\e[A");
+        $this->type("\e[A");
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // "Summarise the branch you are leaving?" — No is the default, so Enter is no. Without
+        // answering it, everything typed next goes to that dialog: this test failed for exactly
+        // that reason first, with the message quietly going nowhere.
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('down the second road');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/tree');
+        $this->type(self::ENTER);
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('down the second road', $screen, 'the branch being talked on');
+        $this->assertStringContainsString('down the first road', $screen, 'and the one that was left');
+        // The fork is drawn rather than implied.
+        $this->assertMatchesRegularExpression('/[├└]/u', $screen);
     }
 
     public function testGoingBackRedrawsTheConversationWithoutWhatCameAfter(): void
@@ -846,7 +893,8 @@ final class InteractiveModeTest extends TestCase
 
         $this->type('/tree');
         $this->type(self::ENTER);
-        // Two rows down: past "where you are" and the answer, onto "and again".
+        // Two rows down from where the cursor starts, which is the point being talked on: the tree
+        // opens on the leaf and wraps at the ends, so this lands earlier in the conversation.
         $this->type("\e[B");
         $this->type("\e[B");
         $this->type(self::ENTER);

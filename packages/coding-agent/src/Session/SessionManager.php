@@ -260,6 +260,71 @@ final class SessionManager
     }
 
     /**
+     * The whole conversation as a tree, roots first, each node's children oldest first.
+     *
+     * **`branch()` walks the path being talked on; this walks everything.** The difference is the
+     * point of `goTo()`: nothing is deleted when a conversation goes back, so the entries that were
+     * left behind are still here with their parents intact — and until this existed, `branch()` was
+     * the only way to see any of them, which meant an abandoned branch could not be named and so
+     * could not be gone back to. The docblock below promised it could. See CLAUDE.md.
+     *
+     * Upstream's `getTree()`, including the two cases it guards: an entry whose parent is itself is
+     * a root, and an entry whose parent is not in the file is an **orphan treated as a root** rather
+     * than dropped. A file written by something newer can hold one, and losing part of somebody's
+     * conversation to keep a tidy tree is the wrong way round.
+     *
+     * **Children come out in file order, and neither sorted by id nor by timestamp.** An id is eight
+     * characters off a UUID, so sorting by it scrambles the order — the first version of this did,
+     * and the test that caught it is the one asserting which arm of a fork is first. A timestamp
+     * would not do either: it is the *message's*, and the entries of one turn share it to the
+     * millisecond. `$this->entries` is an insertion-ordered map, which is the file's own order, so
+     * walking it once and appending is the whole sort. Upstream sorts by timestamp and gets file
+     * order by luck.
+     *
+     * @return list<array{
+     *     id: string,
+     *     message: mixed,
+     *     label: string|null,
+     *     children: list<array<string, mixed>>,
+     * }>
+     */
+    public function tree(): array
+    {
+        $children = [];
+
+        foreach ($this->entries as $id => $entry) {
+            $parent = $entry['parent'];
+            // Its own parent, or a parent this file does not have: a root either way.
+            $key = $parent === null || $parent === (string) $id || !isset($this->entries[$parent])
+                ? ''
+                : $parent;
+            $children[$key][] = (string) $id;
+        }
+
+        return $this->nodesUnder('', $children);
+    }
+
+    /**
+     * @param array<string, list<string>> $children
+     * @return list<array{id: string, message: mixed, label: string|null, children: list<array<string, mixed>>}>
+     */
+    private function nodesUnder(string $parent, array $children): array
+    {
+        $nodes = [];
+
+        foreach ($children[$parent] ?? [] as $id) {
+            $nodes[] = [
+                'id' => $id,
+                'message' => $this->entries[$id]['message'],
+                'label' => $this->labels[$id] ?? null,
+                'children' => $this->nodesUnder($id, $children),
+            ];
+        }
+
+        return $nodes;
+    }
+
+    /**
      * Go back to an earlier point; the next thing said starts a new branch.
      *
      * Nothing is deleted and nothing is rewritten. The entries after this one are still

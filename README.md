@@ -128,10 +128,23 @@ name two models each: a bare name means the direct provider, and a subscription'
 `/label before the refactor` names where you are, and `/tree` shows the name beside what was
 said — pi's own label entries, so a name set in either tool shows up in the other.
 
-`/tree` goes back to an earlier point in the conversation and carries on from there. The road
-not taken stays in the session file, so going back costs nothing and can be undone the same way
-— and it offers to summarise the branch you are leaving, so an hour of exploring arrives on the
-branch you are joining instead of being left behind.
+`/tree` goes back to an earlier point in the conversation and carries on from there. It draws the
+**whole** conversation as a tree, forks and all, so the road not taken is a row you can move the
+cursor onto rather than something the file merely still contains:
+
+```
+  • user: port the tree selector
+    • assistant: Here is what it does…
+    ├─ user: actually, do the proxy first
+    │  └─ assistant: Right — starting with CONNECT…
+    └─ • user: no, keep going with the tree
+          • assistant: Carrying on…
+```
+
+`•` marks the path you are on. Ctrl+O cycles five filters (everything, no tool results, only what
+you said, only what you named, absolutely everything), typing searches, and `l` names the row under
+the cursor. Going back offers to summarise the branch you are leaving, so an hour of exploring
+arrives on the branch you are joining instead of being left behind.
 
 Sessions are written in **pi's own format**, in pi's own directory layout — so a conversation
 started in one opens in the other, and `--resume` lists what is in `~/.pi/agent/sessions/`
