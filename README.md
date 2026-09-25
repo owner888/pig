@@ -265,8 +265,10 @@ so a tool whose answer is a table is not squeezed through formatting meant for f
 
 Skills are folders with a `SKILL.md` in them. pig reads `~/.pig/skills` and `.pig/skills`, and
 also `~/.claude/skills`, `.claude/skills`, `~/.codex/skills`, `~/.pi/agent/skills` and `.pi/skills`,
-so a skill written for another agent — or for pi, before the move — works here unchanged. `/skills`
-lists what was found and where each one came from.
+so a skill written for another agent — or for pi, before the move — works here unchanged. Two folders
+holding the same name is an override rather than an error: `pig > pi > claude > codex`, a project
+folder beats the home one, and `--skills-dir` beats all of them. `/skills` lists what was found and
+where each one came from, and the startup says which file an override took the name from.
 
 There are three ways in, and the terminal is only the default. `-p` says it, prints the
 answer and exits — for a shell script, or a pipe:

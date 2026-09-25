@@ -908,10 +908,21 @@ and silently dropping their skills is the half-migration that is worse than none
 `getAgentDir()` upstream is `join(homedir(), ".pi", "agent")`, so a root pointed at `~/.pi/skills`
 would find nothing — there is a test whose only job is to say so.
 
-**Order is precedence**: the first root to define a name keeps it, and a later one with the same name
-is a warning naming both files. Other tools come first and pig's own last, which is upstream's order,
-so `~/.pi/agent/skills/review` shadows `~/.pig/skills/review` — nothing silent about it, the warning
-says which file took the name.
+**Order is precedence, lowest first: a later root overrides an earlier one of the same name.** So
+`pig > pi > claude > codex`, a project folder beats the home one of the same tool, and `--skills-dir`
+beats all of them because it was typed. `SkillsTest` proves the whole chain at once rather than one
+link — four folders, one name, and the pig one is what loads.
+
+**This is the second divergence, and upstream is the other way round.** It keeps the *first* one and
+warns `"skipping this one"`, in this same order — which makes `~/.codex/skills` outrank everything,
+including pi's own skills. Nobody who edits a skill in `~/.pig/skills` expects a copy in another
+tool's folder to be the one that runs, and between two answers to the same name the more specific one
+is right. The override is named in a warning either way, so which of the two files is in effect is
+never a guess: `name taken: "review" overrides the one from ~/.pi/agent/skills/review/SKILL.md`.
+
+One file reached through two roots — `~/.claude/skills` symlinked into `~/.pig/skills` — is still one
+skill and no warning, because the `realpath` check comes first. That is the normal way to keep one
+copy, and it is not an override.
 
 Three things it does that are easy to get wrong:
 

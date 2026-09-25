@@ -18,6 +18,10 @@ use Pig\CodingAgent\Config;
  * and `~/.codex/skills` are read exactly as `~/.pig/skills` is, because a person who has
  * written a skill once should not have to write it again per agent.
  *
+ * Two things differ from upstream and both are stated where they happen: a later root **overrides**
+ * an earlier one of the same name rather than being skipped, so pig beats pi beats Claude beats
+ * codex; and pi's own two roots are read at all.
+ *
  * **pi's own two are read as well, which upstream has no reason to do** — it *is* pi, so its
  * `~/.pi/agent/skills` is the root pig renamed to `~/.pig/skills`. Reading pi's as well follows from
  * what pig already does everywhere else: it opens pi's sessions, its `auth.json` and its
@@ -76,10 +80,15 @@ final class Skills
         $user = self::userHome();
         $cwd = rtrim($cwd, '/');
 
-        // Order is precedence: the first root to define a name keeps it, and a later one with the
-        // same name is a warning naming both paths. Other tools come first and pig's own last,
-        // which is upstream's order — pi's two go with the other tools, because that is what they
-        // are here.
+        // Order is precedence, lowest first: **a later root overrides an earlier one of the same
+        // name**, so pig beats pi beats Claude beats codex, and a project beats a home directory.
+        // `--skills-dir` comes last of all, because it was typed.
+        //
+        // This is a deliberate divergence. Upstream keeps the *first* one and skips the rest, in
+        // this same order — which makes `~/.codex/skills` outrank everything, including pi's own.
+        // Nobody who edits a skill in `~/.pig/skills` expects a copy in another tool's folder to be
+        // the one that runs, and the more specific of two answers is the right one. The override is
+        // named in a warning either way, so nothing about it is silent.
         //
         // `$piHome` is `~/.pi/agent`, not `~/.pi`: upstream's `getAgentDir()` is
         // `join(homedir(), ".pi", "agent")`, so its skills are one level deeper than the folder
@@ -126,12 +135,13 @@ final class Skills
                 }
 
                 if (isset($skills[$skill->name])) {
+                    // Said rather than done quietly: whoever has the same name in two folders is
+                    // about to run one of them, and which one is the whole question. Upstream's
+                    // wording is "skipping this one", which is the opposite way round.
                     $warnings[] = new SkillWarning(
                         $skill->path,
-                        "name taken: \"{$skill->name}\" was already loaded from {$skills[$skill->name]->path}",
+                        "name taken: \"{$skill->name}\" overrides the one from {$skills[$skill->name]->path}",
                     );
-
-                    continue;
                 }
 
                 $skills[$skill->name] = $skill;

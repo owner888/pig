@@ -138,21 +138,21 @@ final class SkillsTest extends TestCase
         $this->assertSame('pi-user', $skills[0]->source);
     }
 
-    public function testPigsOwnRootLosesANameToPisAndIsToldWhichFileTookIt(): void
+    public function testPigsOwnRootTakesANameFromPisAndSaysWhichFileItOverrode(): void
     {
-        // Order is precedence and other tools come first, which is upstream's order. Nothing is
-        // silent about it: the warning names both files, so somebody who copied a skill from one
-        // directory to the other finds out from the startup rather than from the answers.
-        $taken = $this->skill('home/.pi/agent/skills/review', "name: review\ndescription: pi's");
+        // The migration case: the same skill exists in both because it was copied across. The one
+        // being maintained for pig is the one that runs, and the startup says so.
+        $overridden = $this->skill('home/.pi/agent/skills/review', "name: review\ndescription: pi's");
         $this->skill('home/.pig/skills/review', "name: review\ndescription: pig's");
 
         [$skills, $warnings] = $this->load();
 
         $this->assertSame(['review'], array_map(static fn (Skill $s): string => $s->name, $skills));
-        $this->assertSame('pi-user', $skills[0]->source);
+        $this->assertSame('user', $skills[0]->source);
+        $this->assertSame("pig's", $skills[0]->description);
         $this->assertCount(1, $warnings);
         $this->assertStringContainsString('name taken', $warnings[0]->message);
-        $this->assertStringContainsString($taken, $warnings[0]->message, 'and which file has it');
+        $this->assertStringContainsString($overridden, $warnings[0]->message, 'and which one lost');
     }
 
     public function testAProjectWithBothPiAndPigFoldersReadsBoth(): void
@@ -229,19 +229,67 @@ final class SkillsTest extends TestCase
 
     // ---- collisions ---------------------------------------------------------------------
 
-    public function testTheFirstRootWinsAndTheSecondIsSaidOutLoud(): void
+    public function testTheLastRootWinsAndTheOverrideIsSaidOutLoud(): void
     {
-        $this->skill('home/.codex/skills/both', "name: both\ndescription: from codex");
+        $codex = $this->skill('home/.codex/skills/both', "name: both\ndescription: from codex");
         $this->skill('home/.pig/skills/both', "name: both\ndescription: from pig");
 
         [$skills, $warnings] = $this->load();
 
+        // pig's own beats another tool's copy. Upstream keeps the first and skips the rest, which
+        // in its own order means `~/.codex/skills` outranks everything — nobody editing a skill in
+        // `~/.pig/skills` expects a copy in another tool's folder to be the one that runs.
         $this->assertCount(1, $skills);
-        $this->assertSame('from codex', $skills[0]->description);
+        $this->assertSame('from pig', $skills[0]->description);
+        $this->assertSame('user', $skills[0]->source);
 
-        // Shadowed silently, the pig one looks like a skill that simply does not work.
+        // Said rather than done quietly: which of two files with one name is in effect is the whole
+        // question, and the answer names the loser.
         $this->assertCount(1, $warnings);
         $this->assertStringContainsString('name taken', $warnings[0]->message);
+        $this->assertStringContainsString($codex, $warnings[0]->message);
+    }
+
+    public function testThePrecedenceIsPigThenPiThenClaudeThenCodex(): void
+    {
+        // All four at once, which is the only way to show the whole chain rather than one link.
+        foreach ([
+            'home/.codex/skills/chain' => 'codex',
+            'home/.claude/skills/chain' => 'claude',
+            'home/.pi/agent/skills/chain' => 'pi',
+            'home/.pig/skills/chain' => 'pig',
+        ] as $where => $which) {
+            $this->skill($where, "name: chain\ndescription: from {$which}");
+        }
+
+        [$skills, $warnings] = $this->load();
+
+        $this->assertCount(1, $skills);
+        $this->assertSame('from pig', $skills[0]->description);
+        $this->assertCount(3, $warnings, 'one line per override, so the chain is readable');
+    }
+
+    public function testAProjectFolderBeatsTheHomeOneOfTheSameTool(): void
+    {
+        $this->skill('home/.pig/skills/mine', "name: mine\ndescription: from home");
+        $this->skill('project/.pig/skills/mine', "name: mine\ndescription: from the project");
+
+        [$skills] = $this->load();
+
+        // The same rule `Settings` has: a project setting still wins.
+        $this->assertSame('from the project', $skills[0]->description);
+        $this->assertSame('project', $skills[0]->source);
+    }
+
+    public function testSkillsDirBeatsEverythingBecauseItWasTyped(): void
+    {
+        $this->skill('home/.pig/skills/mine', "name: mine\ndescription: from home");
+        $this->skill('typed/mine', "name: mine\ndescription: from the flag");
+
+        [$skills] = $this->load([$this->root . '/typed']);
+
+        $this->assertSame('from the flag', $skills[0]->description);
+        $this->assertSame('custom', $skills[0]->source);
     }
 
     public function testOneFileReachedThroughTwoRootsIsOneSkill(): void
