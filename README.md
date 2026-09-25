@@ -46,6 +46,12 @@ read none of them; a hostname is handed to the proxy to resolve, because a local
 the other thing that does not work. Loopback always goes direct, `no_proxy` and `proxy.bypass` add
 to that, and `--no-proxy` turns the lot off.
 
+A different thing with the same name: `Agent\StreamProxy` sends the conversation to a **gateway
+server** that holds the provider keys and makes the call, speaking upstream's `/api/stream` wire
+format so a gateway written for pi works unchanged. Nothing turns it on — it is a `streamFn` you
+pass in — because it hands the conversation to whoever runs that server, which is the point for a
+team that wants no keys on laptops and a reason to avoid it otherwise.
+
 A tool call is checked against the tool's own JSON Schema before it runs — `Ai\Utils\JsonSchema`
 is a draft-07 subset with AJV's wording, because the reader of a validation failure is the model
 that has to correct itself from it. An unknown keyword is ignored rather than failed, so adding a
@@ -303,6 +309,14 @@ PHP >= 8.3 with `ext-json`, `ext-mbstring`, `ext-openssl`, and `ext-pcntl` for t
 
 `Fiber` arrived in PHP 8.1 and everything rests on it, so 8.1 is the absolute floor. 8.3 is the
 floor actually declared: 8.1 is end-of-life and 8.2 loses security support at the end of 2026.
+
+**No Composer dependencies at runtime**, which includes the provider protocols: the HTTP client,
+the event-stream parser and all five providers are written here. Upstream does none of that — the
+Anthropic, OpenAI and Google SDKs do it for pi. That is not a preference: PHP has no official SDK
+for the OpenAI or Gemini APIs at all, and the official Anthropic one streams by iterating a PSR-18
+response body synchronously, which would block the single `stream_select()` that watches the model's
+socket and the keyboard together — and with it Esc-to-interrupt and typing while the model streams.
+CLAUDE.md has the full arithmetic, and it is a dated judgement rather than a principle.
 
 ## Development
 

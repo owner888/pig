@@ -41,6 +41,11 @@ provider 的证书，所以代理只负责搬字节、读不到内容；域名�
 本地 DNS 往往也是坏的。回环地址永远直连，`no_proxy` 和 `proxy.bypass` 可以再加，`--no-proxy` 全部
 关掉。
 
+另一个同名但完全不同的东西：`Agent\StreamProxy` 是把对话发给一台**网关服务器**，由它保管 provider
+的 key 并代为调用，走的是上游的 `/api/stream` 协议，所以为 pi 写的网关可以直接用。它默认不开启——
+是一个你自己传进去的 `streamFn`——因为它等于把对话交给网关的运营方：对「不想让 key 落在笔记本上」的
+团队这正是目的，对其他人则正是不该用它的理由。
+
 工具调用在执行前会按工具自己的 JSON Schema 校验一遍：`Ai\Utils\JsonSchema` 是 draft-07 的一个
 子集，错误信息沿用 AJV 的措辞——因为读这条报错的是**模型**，它要靠这句话自我纠正。遇到没实现的
 关键字是忽略而不是判失败，所以给工具 schema 加一个关键字永远不会把工具搞坏。
@@ -266,6 +271,12 @@ PHP >= 8.3，需要 `ext-json`、`ext-mbstring`、`ext-openssl`，终端 UI 还�
 
 `Fiber` 是 PHP 8.1 引入的，整套地基都建在它上面，所以 8.1 是绝对下限。实际声明的下限定在 8.3：
 8.1 已经 EOL，8.2 的安全支持 2026 年底到期。
+
+**运行时零 Composer 依赖**，这里面包括 provider 协议本身：HTTP 客户端、event-stream 解析器和五个
+provider 全是自己写的。上游一行都不用写——Anthropic / OpenAI / Google 的 SDK 替 pi 干了这件事。这
+不是偏好：PHP **根本没有** OpenAI 和 Gemini 的官方 SDK，而官方 Anthropic PHP SDK 的流式是同步迭代
+PSR-18 响应体，会把那一次同时盯着模型 socket 和键盘的 `stream_select()` 堵死——连带堵死 Esc 打断和
+流式途中继续打字。完整的账在 CLAUDE.md 里，而且这是一个**带日期的判断**，不是原则。
 
 ## 开发
 

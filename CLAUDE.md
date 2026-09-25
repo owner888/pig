@@ -1460,6 +1460,81 @@ upstream's `validateToolCall(tools, call)`, which is `validateToolArguments` plu
 it has no caller upstream either, because `AgentLoop` has the tool in hand by the time it
 validates and needs it afterwards to run.
 
+### Talking to a gateway instead of a provider
+
+`Agent\StreamProxy` is upstream's `agent/proxy.ts`. **It is the second thing in this repository
+called a proxy and it does the opposite of the first.** `Ai\Http\Proxy` carries pig's own encrypted
+bytes to the provider and cannot read them; this one posts the conversation, the system prompt and
+the tool schemas to a server that holds the provider keys and makes the call. For a team that does
+not want keys on laptops that is exactly the point, and for anybody else it is a reason not to use
+it — so nothing turns it on. It is a `streamFn`, passed in:
+
+```php
+$proxy = new StreamProxy('https://genai.example.com', $token);
+$agent = new Agent(new AgentOptions(streamFn: $proxy->stream(...)));
+```
+
+The wire shape is upstream's, so a gateway written for pi serves pig unchanged: `POST
+{proxyUrl}/api/stream`, `Authorization: Bearer …`, a body of `{model, context, options}`, and
+events back with the `partial` field stripped to save bandwidth — the client rebuilds it.
+
+**That rebuilding is the whole file.** `AssistantMessage` is readonly here, so there is no object to
+mutate as upstream does; every event pig hands on carries a real snapshot from
+`AssistantMessageBuilder`, which is the same accumulator the five providers use. Reaching into it is
+a reach across an `@internal` line, and it is the faithful one: upstream imports
+`pi-ai/dist/utils/json-parse.js` here with a comment saying it is an internal import, for the same
+reason — a second answer to "what does a half-finished tool call look like" is one too many.
+
+Six things that took a decision:
+
+- **`MessageJson` moved to `pig/ai` for this.** The request body is the session file's message
+  shape — upstream sends the same objects to both — and the encoder was in `coding-agent`, where
+  `agent-core` cannot reach it. Copying it would have been a second hand-written notion of a
+  message, which is the mistake `ToolArguments` had already made once about tool schemas; twice is a
+  pattern. `SessionCodec` now keeps the three roles only pig has and delegates the rest, and went
+  from 302 lines to 146.
+- **The stream is read line by line, not with `SseParser`** — and not merely because upstream does
+  it that way. Splitting on `\n` and treating each `data:` line as a whole event is an assumption,
+  and a sound one: `JSON.stringify` never emits a newline, so an event is always exactly one line.
+  Because a blank line does not start with `data:`, this reader also handles a properly framed
+  stream, which makes it the **superset**; a strict SSE parser is not, because it waits for the
+  blank line and joins consecutive `data:` lines into one event, so against a gateway sending events
+  back to back it stalls or glues two together. The gateway's source is in neither repository, so
+  which wire it sends cannot be checked, and only one of the two readers is right either way. Four
+  tests hold it down: no blank lines, blank lines, CRLF, and an event split across two TCP reads.
+- **Two details around that reader *are* bugs upstream, and the proof is that pi contains the same
+  twelve lines twice.** `proxy.ts` tests `startsWith("data: ")` and slices 6; its own
+  `google-gemini-cli.ts` tests `startsWith("data:")`, slices 5 and trims, and wraps `JSON.parse` in
+  `try/catch { continue }`. The event-stream spec makes that space optional and strips exactly one,
+  so the gemini one is correct and `proxy.ts` silently drops every event from a gateway that writes
+  `data:{…}`. Putting upstream's rule back in pig fails one test in the ugliest possible way: the
+  turn returns `stopReason: stop` with **zero content**, because the `done` line in that fixture
+  happens to have a space and the content lines do not. pig takes the gemini spelling of both — one
+  optional space, and a line that is not JSON is skipped rather than fatal, so a `: keep-alive`
+  comment cannot kill a working stream.
+- **These are the only two hand-rolled event-stream readers in pi at all.** Everywhere else the
+  Anthropic, OpenAI and Google SDKs parse it, which is why upstream never wrote the parser pig had
+  to write — and why `GoogleGeminiCli` here uses `SseParser` while this does not: Google's Code
+  Assist frames properly and can be checked, a gateway cannot.
+- **A stream that ends without `done` is a failure.** `stopReason` defaults to `stop`, so a gateway
+  that died mid-sentence would otherwise be indistinguishable from a model that finished one. This
+  is a divergence: upstream calls `stream.end()` and reports success.
+- **An unknown `done` reason is a plain stop, and an unknown event type is ignored.** The turn did
+  finish; refusing it over a word this pig does not know loses the work. Same rule as `JsonSchema`'s
+  unknown keywords, applied to a wire protocol.
+- **`model` goes over whole — `headers` and `compat` included, and `cost` not `pricing`.** The
+  server reads the provider and api off it to decide who to call, and pig renamed `cost` to
+  `pricing` internally while the wire keeps the name the server was written against. A custom
+  provider's extra auth header therefore reaches the gateway; that is upstream's behaviour and it is
+  written down rather than quietly trimmed, because a model whose headers pig withheld would fail at
+  the gateway for a reason nobody could see.
+
+The usage a gateway reports is trusted as sent, except the cost, which the builder recomputes from
+the model's public price list — so a gateway reselling at its own rate is reported at list price.
+Upstream has the same gap. Not ported: `validateToolCall(tools, call)`, which has no caller upstream
+either, and `ProxyAssistantMessageEvent`, which is a TypeScript type whose counterpart is the event
+classes in `pig/ai`.
+
 `Hooks\` is upstream's `core/hooks/`, all of it. A hook is a PHP file in `~/.pig/hooks` or
 `.pig/hooks` that returns a callable; the callable is handed a `HookApi` and registers what
 it wants to hear about:
@@ -2150,6 +2225,55 @@ allowed, because the cost of being wrong is a wrong colour.
 The one thing PCRE has no answer for is JavaScript's `\p{RGI_Emoji}`, which matches a whole emoji
 *sequence*; PCRE properties test single codepoints. `Width` asks the question of the cluster's
 first codepoint instead, which gives the same answer for everything a terminal actually draws.
+
+### The upstream dependencies that no package can replace: the provider SDKs
+
+The five dependencies above were choices. **This one is not, and it is the largest single
+difference between the two trees**, so it is written down with the facts it was decided on rather
+than left to be rediscovered.
+
+`pi-ai` does not implement a provider protocol at all. `@anthropic-ai/sdk`, `openai`,
+`@google/genai` and `@mistralai/mistralai` are in its `dependencies`, and each one builds the
+request, reads the event stream and hands back typed events. Upstream hand-writes an event-stream
+reader in exactly **two** places in the whole repository — `google-gemini-cli.ts`, because Code
+Assist has no SDK, and `agent/proxy.ts`. Everywhere else an SDK does it.
+
+pig hand-writes all of it: 4,734 lines across `Providers/` and `Http/`, with 144 tests over them.
+That is not a preference. As of the date on this section:
+
+- **Anthropic has an official PHP SDK** — `anthropics/anthropic-sdk-php`, PHP `^8.1`, on `psr/http-client`
+  via `php-http/discovery`.
+- **OpenAI has none.** `openai-php/client`, the one everybody uses, describes itself as
+  community-maintained.
+- **Google has none.** The official GenAI SDK ships for Python, JavaScript/TypeScript, Go, Java and
+  C#; PHP is not on the list, and the PHP Gemini clients are community projects.
+
+So the SDK route covers **one provider out of five**, and the other four are hand-written either
+way — which would leave the tree less consistent than it is now, not more.
+
+**And that one has a conflict that matters more than the count.** The official PHP SDK streams by
+iterating a PSR-18 response body synchronously, and its own documentation says what happens with a
+client that does not stream: *"With a buffering client, the `foreach` loop yields every event at once
+when the response completes instead of incrementally"*. Even with Guzzle, the loop blocks the one PHP
+thread while it waits for the next event. pig's whole shape is one `stream_select()` waiting on the
+model's socket **and** the keyboard at the same time — the first paragraph of the README. A blocking
+read inside `AgentLoop` costs interrupting a running turn with Esc, typing while the model streams,
+and the spinner moving at all.
+
+There is a route that would work, and it is worth knowing about rather than reinventing later: PSR-18
+is only an interface, so a PSR-18 client and a PSR-7 stream backed by `Pig\Async\Socket` would make
+the SDK's `foreach` suspend its fiber instead of the process, and the loop would keep running
+underneath. It was not taken, and the reason is the arithmetic above: five new packages
+(`anthropic-sdk-php`, `psr/http-client`, `psr/http-factory`, `php-http/discovery`,
+`standard-webhooks`) plus an adapter, to replace one of five providers and leave the other four as
+they are.
+
+Two things follow for anybody reading this later. The first is that `Http\SseParser`,
+`Http\ChunkedDecoder` and `Http\HttpClient` are **load-bearing in a way they are not upstream**: a
+bug in them shows up as tokens going missing rather than as an error, and there is no vendor
+implementation to fall back to. The second is that this is a dated judgement, not a principle — if an
+official PHP SDK appears for OpenAI and for Gemini, and the streaming question is answerable, the
+arithmetic changes and this section should be re-run rather than quoted.
 
 ### Porting the unions
 
