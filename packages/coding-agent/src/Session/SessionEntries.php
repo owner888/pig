@@ -95,6 +95,7 @@ final class SessionEntries
                 'summary' => $item->summary,
                 'firstKeptEntryId' => $item->firstKeptEntryId,
                 'tokensBefore' => $item->tokensBefore,
+                'fromHook' => $item->fromHook,
                 // pi's `details` is "hook-specific data"; pig puts the file lists there,
                 // because they are the part a model needs exactly right and pi has nowhere
                 // else for them. A pi that does not know about them carries them along
@@ -183,6 +184,10 @@ final class SessionEntries
                 isset($line['firstKeptEntryId']) ? (string) $line['firstKeptEntryId'] : null,
                 0,
                 $at,
+                // Absent means pig's own, which is pi's rule for the same field: "undefined/false
+                // if pi-generated". A file written before this field existed reads as pig's own,
+                // which is what it was.
+                ($line['fromHook'] ?? false) === true,
             ),
 
             'branch_summary' => new BranchSummary(

@@ -263,17 +263,18 @@ final class Compaction
         $read = $modified = [];
 
         foreach ($messages as $message) {
-            if ($message instanceof CompactionSummary) {
-                // An earlier summary's lists carry forward, or a file read before the
-                // last compaction disappears from the record entirely.
+            // An earlier summary's lists carry forward, or a file read before the last compaction
+            // disappears from the record entirely — **unless a hook wrote it**, because then the
+            // lists are the hook's and not pig's findings. That exception was on the branch-summary
+            // arm below and not on this one, which is upstream's rule
+            // (`if (!prevCompaction.fromHook && …)`) applied to one of the two places it belongs.
+            if ($message instanceof CompactionSummary && !$message->fromHook) {
                 $read = [...$read, ...$message->readFiles];
                 $modified = [...$modified, ...$message->modifiedFiles];
 
                 continue;
             }
 
-            // A branch summary the same way, with one exception: a hook's own summary is
-            // prose pig did not produce, so its lists are not treated as pig's findings.
             if ($message instanceof BranchSummary && !$message->fromHook) {
                 $read = [...$read, ...$message->readFiles];
                 $modified = [...$modified, ...$message->modifiedFiles];

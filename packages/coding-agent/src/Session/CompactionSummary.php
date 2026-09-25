@@ -37,6 +37,12 @@ final readonly class CompactionSummary
      *                      Derived when the file is read, never written: it is the same
      *                      fact counted from the other end, and a file holding both is a
      *                      file that can disagree with itself.
+     * @param bool $fromHook written by a hook rather than by the model, which is pi's own field on
+     *                       this entry and was missing here. Two things read it: `Compaction::files()`
+     *                       does not carry a hook's file lists forward as though pig had found them,
+     *                       and **pi reading this file can tell** — a compaction pig wrote for a hook
+     *                       used to be indistinguishable from one it wrote itself. `BranchSummary`
+     *                       has had the flag all along, which is what made the omission visible.
      */
     public function __construct(
         public string $summary,
@@ -46,6 +52,7 @@ final readonly class CompactionSummary
         public ?string $firstKeptEntryId = null,
         public int $replaced = 0,
         ?int $timestamp = null,
+        public bool $fromHook = false,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();
     }

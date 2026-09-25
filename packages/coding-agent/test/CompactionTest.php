@@ -21,6 +21,7 @@ use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\Compaction;
 use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\SessionCodec;
 
 /** Deciding what to throw away, without a provider in sight. */
 final class CompactionTest extends TestCase
@@ -431,5 +432,56 @@ final class CompactionTest extends TestCase
             new Usage(),
             StopReason::ToolUse,
         );
+    }
+
+    // ---- whose findings are whose -------------------------------------------------------
+
+    public function testAnEarlierSummarysFileListsCarryForward(): void
+    {
+        // Or a file read before the last compaction disappears from the record entirely.
+        $messages = [
+            new CompactionSummary('what happened', ['read-earlier.php'], ['changed-earlier.php']),
+            self::calling('c1', 'read', ['path' => 'read-now.php']),
+        ];
+
+        [$read, $modified] = Compaction::files($messages);
+
+        $this->assertSame(['read-earlier.php', 'read-now.php'], $read);
+        $this->assertSame(['changed-earlier.php'], $modified);
+    }
+
+    public function testAHooksOwnSummaryDoesNotLendItsFileListsToPig(): void
+    {
+        // Upstream's rule — `if (!prevCompaction.fromHook && …)` — which pig applied to a branch
+        // summary and not to a compaction, because `CompactionSummary` had no such field. pi's own
+        // entry has always had one, so a compaction pig wrote for a hook was also indistinguishable
+        // from one pig wrote itself when pi read the file.
+        $messages = [
+            new CompactionSummary('a hook wrote this', ['hooks-idea.php'], ['hooks-other-idea.php'], fromHook: true),
+            self::calling('c1', 'read', ['path' => 'read-now.php']),
+        ];
+
+        [$read, $modified] = Compaction::files($messages);
+
+        $this->assertSame(['read-now.php'], $read);
+        $this->assertSame([], $modified);
+    }
+
+    public function testFromHookSurvivesTheSessionFile(): void
+    {
+        $encoded = SessionCodec::encode(new CompactionSummary('x', [], [], 0, null, 0, null, true));
+
+        $this->assertTrue($encoded['fromHook'] ?? null);
+
+        $decoded = SessionCodec::decode($encoded);
+
+        $this->assertInstanceOf(CompactionSummary::class, $decoded);
+        $this->assertTrue($decoded->fromHook);
+
+        // And an entry written before the field existed reads as pig's own, which is what it was.
+        $old = SessionCodec::encode(new CompactionSummary('x'));
+        unset($old['fromHook']);
+
+        $this->assertFalse(SessionCodec::decode($old)->fromHook);
     }
 }

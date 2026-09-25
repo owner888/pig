@@ -39,6 +39,7 @@ final class SessionCodec
                 'modifiedFiles' => $message->modifiedFiles,
                 'tokensBefore' => $message->tokensBefore,
                 'firstKeptEntryId' => $message->firstKeptEntryId,
+                'fromHook' => $message->fromHook,
                 'timestamp' => $message->timestamp,
             ],
             $message instanceof BranchSummary => [
@@ -87,6 +88,7 @@ final class SessionCodec
                 isset($entry['firstKeptEntryId']) ? (string) $entry['firstKeptEntryId'] : null,
                 (int) ($entry['replaced'] ?? 0),
                 $timestamp,
+                ($entry['fromHook'] ?? false) === true,
             ),
             'branchSummary' => new BranchSummary(
                 (string) ($entry['summary'] ?? ''),

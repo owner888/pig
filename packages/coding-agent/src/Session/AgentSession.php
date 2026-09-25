@@ -1147,6 +1147,10 @@ final class AgentSession
                 $answer->compaction->tokensBefore,
                 $firstKept,
                 $cut,
+                // Marked as the hook's, which is pi's own field on this entry. It keeps the next
+                // compaction from carrying these file lists forward as though pig had found them,
+                // and it is what tells pi — reading the same file — who wrote this summary.
+                fromHook: true,
             );
 
             $this->agent->replaceMessages([$summary, ...$kept]);
