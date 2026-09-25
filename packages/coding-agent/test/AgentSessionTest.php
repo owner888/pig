@@ -721,7 +721,7 @@ final class AgentSessionTest extends TestCase
         $session = $this->session(
             [],
             streamFn: $this->flaky(array_fill(0, 6, ['error' => 'Anthropic returned 503: overloaded'])),
-            settings: self::quickRetries(['maxAttempts' => 2]),
+            settings: self::quickRetries(['maxRetries' => 2]),
         );
 
         $ends = [];
@@ -748,7 +748,7 @@ final class AgentSessionTest extends TestCase
         $session = $this->session(
             [],
             streamFn: $this->flaky(array_fill(0, 6, ['error' => 'Anthropic returned 503: overloaded'])),
-            settings: self::quickRetries(['maxAttempts' => 3, 'baseDelayMs' => 2]),
+            settings: self::quickRetries(['maxRetries' => 3, 'baseDelayMs' => 2]),
         );
 
         $delays = [];

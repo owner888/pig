@@ -1943,7 +1943,12 @@ Five things that are load-bearing rather than tidy:
   at once.
 
 Settings are upstream's keys: `retry.enabled` (on unless turned off, like compaction),
-`retry.maxAttempts`, `retry.baseDelayMs`.
+`retry.maxRetries`, `retry.baseDelayMs`. **That sentence was false until the audit read it**: the
+middle one was `retry.maxAttempts` here, so a `settings.json` written for pi had its `maxRetries`
+ignored and got the built-in three. Its two siblings were upstream's, which is what gave it away —
+one key out of a group of three not matching is a typo, not a decision. The method is still
+`retryMaxAttempts()`, because attempts is what the number counts; the file speaks upstream's
+dialect and the code speaks its own.
 
 ### Where the startup time went
 
@@ -3033,6 +3038,31 @@ Barely covered by a test: `interactive()` opens `/dev/tty` for all three streams
 runner has no tty to open. What is tested is the empty-command guard and that a run with no
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
+
+### One settings key out of seventeen was not upstream's
+
+Third find from the audit, and the cheapest one to have prevented: **`retry.maxAttempts` where
+upstream writes `retry.maxRetries`.** A `settings.json` written for pi had that number silently
+ignored and got the built-in three.
+
+What gave it away was not reading the key — it was reading its **siblings**. `retry.enabled` and
+`retry.baseDelayMs` are both upstream's spellings, and `baseDelayMs` even carries a docblock saying
+so ("as upstream writes it"). One key out of a group of three not matching is a typo, not a decision.
+Sixteen of pig's seventeen settings keys were upstream's; this was the seventeenth.
+
+It had a second layer: **CLAUDE.md asserted the thing that was false.** "Settings are upstream's keys:
+`retry.enabled`, `retry.maxAttempts`, `retry.baseDelayMs`" — a sentence that would have stopped
+anybody from checking. A claim about matching upstream is worth a diff, not a sentence.
+
+And a third: **a test was passing because of the bug.** `AgentSessionTest` set `maxAttempts` in a
+fixture and asserted two attempts; with the key corrected, the fixture stopped applying and the
+assertion failed at three. The test had been documenting the wrong key rather than the behaviour.
+That is worth remembering for the rest of the audit — a green suite proves the code and the tests
+agree, and both were written by the same hand on the same day.
+
+The method is still `retryMaxAttempts()`: attempts is what the number counts, and upstream's own name
+is the odd one (it counts attempts after the first). The file speaks upstream's dialect; the code
+speaks its own.
 
 ### A hook's compaction summary was indistinguishable from pig's own
 

@@ -256,9 +256,22 @@ final class Settings
         $this->set('retry.enabled', $enabled);
     }
 
+    /**
+     * How many times a failed turn is tried again.
+     *
+     * **The key is `retry.maxRetries`, which is upstream's spelling, and it used to be
+     * `retry.maxAttempts` here.** Its sibling `retry.baseDelayMs` was upstream's all along, and one
+     * of two keys under the same object matching is the shape that gave this away — a `settings.json`
+     * written for pi had its `maxRetries` silently ignored and got the built-in three. CLAUDE.md said
+     * these were "upstream's keys" while one of the three was not. See CLAUDE.md.
+     *
+     * The method keeps the name `retryMaxAttempts`, because attempts is what the number counts and
+     * `Retry::MAX_ATTEMPTS` is what it falls back to. The file speaks upstream's dialect; the code
+     * speaks its own.
+     */
     public function retryMaxAttempts(int $fallback): int
     {
-        $value = $this->get('retry.maxAttempts');
+        $value = $this->get('retry.maxRetries');
 
         return is_int($value) && $value > 0 ? $value : $fallback;
     }

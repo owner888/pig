@@ -146,6 +146,27 @@ final class SettingsTest extends TestCase
         $this->assertSame([], $this->load()->proxyBypass());
     }
 
+    public function testTheRetryKeysAreUpstreamsSpellings(): void
+    {
+        // A `settings.json` written for pi has to work here, and `retry.maxAttempts` — which is
+        // what this read before the audit — is nobody's spelling. Its two siblings were right,
+        // which is what made it visible.
+        $this->writeGlobal(['retry' => ['enabled' => false, 'maxRetries' => 7, 'baseDelayMs' => 500]]);
+
+        $settings = $this->load();
+
+        $this->assertFalse($settings->retryEnabled());
+        $this->assertSame(7, $settings->retryMaxAttempts(3));
+        $this->assertSame(0.5, $settings->retryBaseDelay(2.0), 'milliseconds in the file, seconds in the code');
+    }
+
+    public function testAMissingRetryKeyFallsBackToWhatTheCallerBrought(): void
+    {
+        $this->assertSame(3, $this->load()->retryMaxAttempts(3));
+        $this->assertSame(2.0, $this->load()->retryBaseDelay(2.0));
+        $this->assertTrue($this->load()->retryEnabled(), 'on unless turned off, like compaction');
+    }
+
     public function testAFileThatIsNotJsonIsNamedRatherThanIgnored(): void
     {
         file_put_contents($this->home . '/settings.json', '{ oops');
