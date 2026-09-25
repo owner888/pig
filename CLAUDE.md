@@ -2181,7 +2181,7 @@ What is left unported, across every package, each for a reason:
 |---|---|
 | seventeen of the twenty-five selector components | the interactive mode needs eight; `/model`, `/resume`, `/tree`, `/login` and `/logout` are the same `SelectList` in the same place instead, and `settings-selector.ts` is `showSettings()` plus `Interactive\SettingsSubmenu` |
 | `ai/utils/typebox-helpers.ts` (24) | `StringEnum`, a TypeBox helper that emits `{type:"string", enum:[…]}` because TypeBox's own `Type.Enum` emits `anyOf`/`const` and Google's API rejects that. In PHP a schema **is** an array, so there is nothing to help with — you write the array, and `JsonSchemaTest` says so where the enum is tested |
-| `coding-agent/modes/rpc/rpc-types.ts`, `rpc-client.ts` | TypeScript types for the wire shape, and a client for driving the mode from TypeScript. `RpcMode`'s docblock plus `RpcEvents` is the first; a host writes JSON lines in whatever language it is in |
+| `coding-agent/modes/rpc/rpc-types.ts` | TypeScript types for the wire shape. `RpcMode`'s docblock plus `RpcEvents` is the counterpart; a host reading JSON lines writes its own in whatever language it is in. Its `rpc-client.ts` **is** ported, as `Rpc\RpcClient` |
 | every `index.ts` | barrel re-exports, which is what an autoloader does here |
 
 **This table has now been wrong four times.** Twice in the same way: the first time it said "the
@@ -2971,6 +2971,31 @@ Barely covered by a test: `interactive()` opens `/dev/tty` for all three streams
 runner has no tty to open. What is tested is the empty-command guard and that a run with no
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
+
+### `--mode rpc` could not be started, by either route
+
+Found by porting `rpc-client.ts` and pointing it at the real binary. Two guards in `bin/pig`, each
+right on its own, closed the door between them:
+
+```php
+if ($mode === 'rpc' && ($fileArgs !== [] || $messages !== [])) { … exit(1); }   // a message makes no sense
+if (!$interactive && $messages === [] && $fileArgs === []) { … exit(1); }        // "Nothing to say"
+```
+
+`bin/pig --mode rpc "hello"` was refused for having a message, and `bin/pig --mode rpc` was refused
+for having none. **So rpc mode — one of the three documented ways in, with its own class, its own
+twenty-two commands, its own test file and a section in this document — had never been reachable
+from the command line.** `RpcModeTest` did not notice because it constructs an `RpcMode` in process
+and hands it two streams; nothing started the binary.
+
+The fix is `Arguments::needsAMessage()`, which is false for the terminal *and* for rpc, tested
+directly. The condition could have stayed inline in `bin/pig` as `$mode !== 'rpc' && !$interactive`,
+and then the next person to touch it would have had nothing to run either.
+
+The general rule: **a mode that nothing starts the way a person starts it is a mode that can be
+broken by a line somewhere else entirely.** `RpcClientTest` is now the one test in the suite that
+spawns `bin/pig`, and that is the point of it — it also caught `RpcClient` sending `path` where the
+wire wants `sessionPath`, which no amount of reading would have.
 
 ### A new session recorded no thinking level, so `--continue` came back on `off`
 

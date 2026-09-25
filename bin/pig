@@ -139,7 +139,10 @@ if ($mode === 'rpc' && ($fileArgs !== [] || $messages !== [])) {
     exit(1);
 }
 
-if (!$interactive && $messages === [] && $fileArgs === []) {
+// `needsAMessage()` rather than `!$interactive`, and the difference is rpc mode: its conversation
+// arrives as commands on standard input, so it needs no message — and demanding one here, while the
+// guard above refuses one, made `--mode rpc` impossible to start by either route.
+if ($arguments->needsAMessage() && $messages === [] && $fileArgs === []) {
     fwrite(STDERR, Style::red("Nothing to say. Pass a message, or leave off --mode for the terminal.\n"));
 
     exit(1);

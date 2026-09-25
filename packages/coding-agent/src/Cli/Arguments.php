@@ -145,6 +145,23 @@ final readonly class Arguments
         return $mode === null || in_array($mode, self::MODES, true);
     }
 
+    /**
+     * Whether a message has to be on the command line for this to do anything.
+     *
+     * The terminal needs none — somebody will type one. **`--mode rpc` needs none either, and
+     * missing that made rpc mode impossible to start**: its conversation arrives as commands on
+     * standard input, so `bin/pig --mode rpc` was refused for having no message while
+     * `bin/pig --mode rpc "hello"` was refused for having one. Two guards, each right on its own,
+     * closing the door between them. See CLAUDE.md.
+     *
+     * A method here rather than a condition in `bin/pig` so it can be tested, which is the same
+     * reason this class exists at all.
+     */
+    public function needsAMessage(): bool
+    {
+        return !$this->isInteractive() && $this->mode() !== 'rpc';
+    }
+
     public function has(string $option): bool
     {
         return isset($this->options[$option]);

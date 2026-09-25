@@ -270,6 +270,10 @@ holding the same name is an override rather than an error: `pig > pi > claude > 
 folder beats the home one, and `--skills-dir` beats all of them. `/skills` lists what was found and
 where each one came from, and the startup says which file an override took the name from.
 
+`Rpc\RpcClient` is the other end of `--mode rpc`: it starts the agent, sends the twenty-two commands
+and hands back events, with every call suspending its own fiber rather than returning a promise — so
+a host reads like a program that blocks, and nothing blocks.
+
 There are three ways in, and the terminal is only the default. `-p` says it, prints the
 answer and exits — for a shell script, or a pipe:
 

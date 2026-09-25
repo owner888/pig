@@ -236,6 +236,29 @@ final class ArgumentsTest extends TestCase
         $this->assertSame('', $parsed->value('api-key'));
     }
 
+    // ---- does it need a message ---------------------------------------------------------
+
+    public function testRpcModeNeedsNoMessageBecauseItsMessagesArriveAsCommands(): void
+    {
+        // The bug this exists for: `bin/pig --mode rpc` was refused for having no message while
+        // `bin/pig --mode rpc "hello"` was refused for having one, so rpc mode — one of the three
+        // ways in, with its own class and its own twenty-two commands — could not be started at all.
+        $this->assertFalse($this->parse('--mode', 'rpc')->needsAMessage());
+    }
+
+    public function testEveryOtherModeStillNeedsOne(): void
+    {
+        $this->assertTrue($this->parse('--mode', 'text')->needsAMessage());
+        $this->assertTrue($this->parse('--mode', 'json')->needsAMessage());
+        $this->assertTrue($this->parse('-p')->needsAMessage(), 'the short way of saying --mode text');
+    }
+
+    public function testTheTerminalNeedsNoMessageEither(): void
+    {
+        // Somebody will type one.
+        $this->assertFalse($this->parse()->needsAMessage());
+    }
+
     // ---- the proxy ----------------------------------------------------------------------
 
     public function testTheProxyFlagTakesItsValueAndNotTheMessage(): void

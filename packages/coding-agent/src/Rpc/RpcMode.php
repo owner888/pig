@@ -51,8 +51,11 @@ use Throwable;
  *
  * Ported from upstream's `modes/rpc/rpc-mode.ts`. Its `rpc-types.ts` has no counterpart:
  * that file is TypeScript types for the wire shape, and the wire shape here is this class's
- * docblock plus `RpcEvents`. Its `rpc-client.ts` — a client for driving the mode from
- * TypeScript — has none either; a host writes JSON lines in whatever language it is in.
+ * docblock plus `RpcEvents`. Its `rpc-client.ts` is `Rpc\RpcClient` — which exists for the reason
+ * this docblock used to give for not having it. "A host writes JSON lines in whatever language it
+ * is in" is true, and it left the protocol with no test *as a protocol*: `RpcModeTest` hands this
+ * class two streams, so nothing checked the binary starting, a line crossing a pipe, or a field
+ * name. The first thing `RpcClient` found was that `bin/pig --mode rpc` could not start at all.
  *
  * **Six of upstream's commands are not here**, and the reasons divide in two:
  *
