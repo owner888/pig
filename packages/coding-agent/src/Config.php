@@ -37,14 +37,16 @@ final class Config
      * Anthropic rotates refresh tokens, so two files holding the same token is two tools
      * taking it in turns to log each other out.
      *
-     * `PI_HOME` overrides it, for a test and for anyone whose pi lives somewhere else —
-     * upstream's own override is `PI_AGENT_DIR`, which is read first for the same reason
-     * the skills loader reads Claude's and Codex's directories: somebody who already told
-     * one tool where things are should not have to tell the other.
+     * **`PI_CODING_AGENT_DIR` is upstream's own override**, and it is read first for the same reason
+     * the skills loader reads Claude's and Codex's directories: somebody who already told one tool
+     * where things are should not have to tell the other. The name is built rather than written
+     * there — `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR` with `APP_NAME` from `package.json` — so
+     * reading it off `getAgentDir()` alone gives `PI_AGENT_DIR`, which is what this used to look for
+     * and what nothing sets. `PI_HOME` is pig's own, for a test and for anyone who prefers it.
      */
     public static function piHome(): string
     {
-        foreach (['PI_AGENT_DIR', 'PI_HOME'] as $variable) {
+        foreach (['PI_CODING_AGENT_DIR', 'PI_HOME'] as $variable) {
             $override = getenv($variable);
 
             if ($override !== false && $override !== '') {

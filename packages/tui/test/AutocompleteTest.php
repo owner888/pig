@@ -205,7 +205,7 @@ final class AutocompleteTest extends TestCase
         $provider = new CombinedAutocompleteProvider([], $this->root, '/nonexistent/fd');
 
         // An email address should not open a file picker.
-        $this->assertNull($this->suggest($provider, 'mail kaka@example'));
+        $this->assertNull($this->suggest($provider, 'mail dev@example'));
     }
 
     public function testApplyingAnAtCompletionLeavesASpace(): void
@@ -246,7 +246,7 @@ final class AutocompleteTest extends TestCase
             ['/setings', true, 'a name nothing answers to is still being typed as a name'],
 
             ['/var/folders/mk/T/pig-clipboard-bf66.png', false, 'what pasting a picture leaves'],
-            ['/Users/kaka/Development/owner/pig', false, 'any absolute path'],
+            ['/Users/dev/Development/owner/pig', false, 'any absolute path'],
             ['/usr/bin', false, 'two segments is enough'],
             ['hello', false, 'no slash at all'],
         ];

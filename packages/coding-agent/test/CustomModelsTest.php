@@ -124,7 +124,7 @@ final class CustomModelsTest extends TestCase
     public function testHeadersMergeWithTheModelsOwnWinning(): void
     {
         $model = $this->load(self::provider([
-            'headers' => ['X-Tenant' => 'kaka', 'X-Keep' => 'yes'],
+            'headers' => ['X-Tenant' => 'acme', 'X-Keep' => 'yes'],
             'models' => [self::model(['headers' => ['X-Tenant' => 'other']])],
         ]))->models[0];
 

@@ -25,7 +25,7 @@ use Pig\Ai\Pricing;
  *       "apiKey": "MY_BOX_KEY",
  *       "api": "openai-completions",
  *       "authHeader": true,
- *       "headers": { "X-Tenant": "kaka" },
+ *       "headers": { "X-Tenant": "acme" },
  *       "models": [{
  *         "id": "qwen3-coder", "name": "Qwen3 Coder",
  *         "reasoning": false, "input": ["text"],

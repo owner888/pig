@@ -495,8 +495,8 @@ final class PiFormatTest extends TestCase
     {
         // `--` around the flattened path, every separator a dash, the leading one gone.
         $this->assertStringEndsWith(
-            '/sessions/--Users-kaka-Development-owner-pig--',
-            SessionManager::directory('/Users/kaka/Development/owner/pig'),
+            '/sessions/--Users-dev-Development-owner-pig--',
+            SessionManager::directory('/Users/dev/Development/owner/pig'),
         );
     }
 
@@ -506,8 +506,8 @@ final class PiFormatTest extends TestCase
         // `C:\` becomes two dashes, not one. Asserted as pi produces it rather than as it
         // would look tidier, because the whole point is that both tools name it the same.
         $this->assertStringEndsWith(
-            '/sessions/--C--Users-kaka-pig--',
-            SessionManager::directory('C:\\Users\\kaka\\pig'),
+            '/sessions/--C--Users-dev-pig--',
+            SessionManager::directory('C:\\Users\\dev\\pig'),
         );
     }
 

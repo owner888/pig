@@ -20,6 +20,15 @@ added for convenience.
 This is the rule that decided the built-in tool set: four by default, as upstream has it, with
 `grep`, `find` and `ls` reachable by name through `--tools`.
 
+### The developer's name does not appear in this repository
+
+Every file here goes to git, so **the developer is "the developer"** — never a name, in source
+comments, docblocks, test fixtures, `CLAUDE.md` or either README. A test that needs a home directory
+uses `/Users/dev/...`, a fixture that needs a tenant header uses `acme`, an example address is
+`dev@example`. This was found the hard way: the name had reached six files, including a docblock in
+`CustomModels` and a row in the table below, because a fixture written from a real path is the
+easiest thing in the world to paste.
+
 ## Upstream anchor
 
 **Port against commit `d0a4c37` (2026-01-02)** — the snapshot behind the "418 lines" claim
@@ -293,7 +302,7 @@ It is pi's now, field for field:
 
 | | pi, and now pig | pig, before |
 |---|---|---|
-| project directory | `--Users-kaka-Dev-pig--` | `Users-kaka-Dev-pig` |
+| project directory | `--Users-dev-Dev-pig--` | `Users-dev-Dev-pig` |
 | file | `2026-01-02T21-29-30-123Z_<uuid>.jsonl` | `2026-01-02-212930-<12 hex>.jsonl` |
 | header timestamp | `"2026-01-02T21:29:30.123Z"` | `1735849770123` |
 | a message | `{"type":"message","id","parentId","timestamp","message":{…}}` | the message, flat, plus `entryId` and `parent` |
@@ -325,7 +334,9 @@ Three things this changed that are worth knowing:
 - **`~/.pi/agent/sessions/` is read too**, beside pig's own, so `--resume` lists both and
   opening one appends to it in its own directory in its own format — the conversation stays one
   conversation. The `agent` in that path is not a typo: upstream's `getAgentDir()` is
-  `join(homedir(), ".pi", "agent")`. `PI_AGENT_DIR` and `PI_HOME` override it.
+  `join(homedir(), ".pi", "agent")`. `PI_CODING_AGENT_DIR` — upstream's own, whose name is
+  *built* from `APP_NAME` rather than written anywhere, which is how pig came to look for
+  `PI_AGENT_DIR` instead — and `PI_HOME`, pig's own, override it.
 
 **There is no reader for the old shape, on purpose.** The developer's call, and the reasoning
 is worth keeping because it is the kind that gets forgotten: pig has never been released and
@@ -719,6 +730,12 @@ with JavaScript off, prints, and greps.
 `Highlight` is reused through the seam that already existed for theming: a `HighlightTheme`
 whose closures write `<span class="hl-keyword">` instead of an escape sequence. The one trap
 in that is below.
+
+**The system prompt and the tool list are not in it**, where upstream's payload carries both for
+its viewer to show. An export is what gets pasted into a ticket or sent to a colleague, and what
+belongs there is the conversation: the prompt is pig's own text plus whatever `AGENTS.md` and the
+skill list put in it, and the tools are the same seven every time. Two more sections to leave out of
+every export by hand is worse than not writing them.
 
 `<details>` does the folding, which is the only interaction upstream's JavaScript provided
 that was worth keeping. Open or closed is decided on the *text* length, not the number of
@@ -1440,7 +1457,7 @@ Every key is upstream's, so a file written for pi works here unchanged:
 ```json
 { "providers": { "my-box": {
   "baseUrl": "http://192.168.1.9:8080/v1", "apiKey": "MY_BOX_KEY",
-  "api": "openai-completions", "authHeader": true, "headers": { "X-Tenant": "kaka" },
+  "api": "openai-completions", "authHeader": true, "headers": { "X-Tenant": "acme" },
   "models": [{ "id": "qwen3-coder", "name": "Qwen3 Coder", "reasoning": false,
                "input": ["text"], "contextWindow": 262144, "maxTokens": 32768 }] } } }
 ```
@@ -3073,6 +3090,24 @@ Barely covered by a test: `interactive()` opens `/dev/tty` for all three streams
 runner has no tty to open. What is tested is the empty-command guard and that a run with no
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
+
+### The override for pi's directory was a variable name nothing sets
+
+Twenty-first, and the whole of it is one string. Upstream does not write its environment variable
+down: `ENV_AGENT_DIR = \`${APP_NAME.toUpperCase()}_CODING_AGENT_DIR\`` with `APP_NAME` read from
+`package.json`, so the name is **`PI_CODING_AGENT_DIR`** and the only place it appears literally is a
+comment ("e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR") and the help text. Reading
+`getAgentDir()` alone suggests `PI_AGENT_DIR`, and that is what `Config::piHome()` looked for — a
+name nothing sets, with a docblock calling it "upstream's own override".
+
+So somebody who had moved pi's directory the documented way was read from `~/.pi/agent` anyway, and
+finding pi's files is the promise everything else about interop rests on. `PI_CODING_AGENT_DIR` is
+read first now, `PI_HOME` stays as pig's own, and `PI_AGENT_DIR` is gone rather than kept as a third
+spelling of one thing.
+
+**`Config` had no test at all** — 60 lines of path arithmetic, which is exactly the size that goes
+unchecked. `ConfigTest` states all six answers, including that the invented name is not read any
+more.
 
 ### One field in the session file was not pi's shape
 

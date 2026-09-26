@@ -163,14 +163,14 @@ final class MigrationsTest extends TestCase
     {
         $this->write(
             'a-session.jsonl',
-            "{\"type\":\"session\",\"cwd\":\"/Users/kaka/Dev/pig\",\"version\":2}\n{\"type\":\"message\"}\n",
+            "{\"type\":\"session\",\"cwd\":\"/Users/dev/Dev/pig\",\"version\":2}\n{\"type\":\"message\"}\n",
         );
 
         Migrations::sessionsFromAgentRoot($this->directory);
 
         // The same slug `SessionManager` builds, which is the only reason this helps: filing it
         // anywhere else would move it out of pi's sight without bringing it into pig's.
-        $moved = $this->directory . '/sessions/--Users-kaka-Dev-pig--/a-session.jsonl';
+        $moved = $this->directory . '/sessions/--Users-dev-Dev-pig--/a-session.jsonl';
 
         $this->assertFileExists($moved);
         $this->assertFileDoesNotExist($this->directory . '/a-session.jsonl');
@@ -192,12 +192,12 @@ final class MigrationsTest extends TestCase
 
     public function testASessionIsNeverMovedOverOneAlreadyFiled(): void
     {
-        $header = "{\"type\":\"session\",\"cwd\":\"/Users/kaka/Dev/pig\",\"version\":2}\n";
+        $header = "{\"type\":\"session\",\"cwd\":\"/Users/dev/Dev/pig\",\"version\":2}\n";
         $this->write('clash.jsonl', $header . "{\"from\":\"the root\"}\n");
 
-        mkdir($this->directory . '/sessions/--Users-kaka-Dev-pig--', 0o700, true);
+        mkdir($this->directory . '/sessions/--Users-dev-Dev-pig--', 0o700, true);
         file_put_contents(
-            $this->directory . '/sessions/--Users-kaka-Dev-pig--/clash.jsonl',
+            $this->directory . '/sessions/--Users-dev-Dev-pig--/clash.jsonl',
             $header . "{\"from\":\"already filed\"}\n",
         );
 
@@ -207,7 +207,7 @@ final class MigrationsTest extends TestCase
         // one that was filed on purpose.
         $this->assertStringContainsString(
             'already filed',
-            (string) file_get_contents($this->directory . '/sessions/--Users-kaka-Dev-pig--/clash.jsonl'),
+            (string) file_get_contents($this->directory . '/sessions/--Users-dev-Dev-pig--/clash.jsonl'),
         );
         $this->assertFileExists($this->directory . '/clash.jsonl', 'and the other is not thrown away');
     }
@@ -216,25 +216,25 @@ final class MigrationsTest extends TestCase
     {
         $this->write(
             '.hidden-session.jsonl',
-            "{\"type\":\"session\",\"cwd\":\"/Users/kaka/Dev/pig\",\"version\":2}\n",
+            "{\"type\":\"session\",\"cwd\":\"/Users/dev/Dev/pig\",\"version\":2}\n",
         );
 
         Migrations::sessionsFromAgentRoot($this->directory);
 
         // `glob('*.jsonl')` does not match a leading dot and upstream's `readdirSync` does, so
         // this one was invisible until the scan replaced the glob.
-        $this->assertFileExists($this->directory . '/sessions/--Users-kaka-Dev-pig--/.hidden-session.jsonl');
+        $this->assertFileExists($this->directory . '/sessions/--Users-dev-Dev-pig--/.hidden-session.jsonl');
     }
 
     public function testTheSessionDirectoryIsCreatedTheWayPigCreatesThem(): void
     {
-        $this->write('s.jsonl', "{\"type\":\"session\",\"cwd\":\"/Users/kaka/Dev/pig\",\"version\":2}\n");
+        $this->write('s.jsonl', "{\"type\":\"session\",\"cwd\":\"/Users/dev/Dev/pig\",\"version\":2}\n");
 
         Migrations::sessionsFromAgentRoot($this->directory);
 
         // `0700`, like `SessionManager` and `Auth` — not upstream's default umask. pig creates
         // this exact directory itself in ordinary use.
-        $mode = fileperms($this->directory . '/sessions/--Users-kaka-Dev-pig--');
+        $mode = fileperms($this->directory . '/sessions/--Users-dev-Dev-pig--');
 
         $this->assertSame('0700', substr(sprintf('%o', $mode), -4));
     }

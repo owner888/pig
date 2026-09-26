@@ -30,7 +30,7 @@ final class AuthTest extends TestCase
 
     /** Where this class writes, and what would otherwise answer for it. */
     private const array CLEARED = [
-        'PIG_HOME', 'PI_HOME', 'PI_AGENT_DIR',
+        'PIG_HOME', 'PI_HOME', 'PI_CODING_AGENT_DIR',
         'GEMINI_CLI_CLIENT_ID', 'GEMINI_CLI_CLIENT_SECRET',
         'KEY_FOR_A_DECLARED_PROVIDER',
     ];
