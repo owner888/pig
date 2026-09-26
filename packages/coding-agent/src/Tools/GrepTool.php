@@ -93,7 +93,7 @@ final class GrepTool implements AgentTool
         $shortened = false;
         $cache = [];
 
-        $exit = Process::stream(
+        [$exit, $errors] = Process::stream(
             $this->command($rg, $arguments, $root),
             function (string $line) use (
                 &$lines,
@@ -129,8 +129,13 @@ final class GrepTool implements AgentTool
         // 0 is matches, 1 is none, STOPPED is us having had enough. Anything else is rg
         // objecting to the pattern, which the model needs to hear about rather than see
         // as "no matches".
+        //
+        // And it hears rg's own sentence, not the code: `regex parse error: … ^` names the
+        // character to fix, where "exited with code 2" names nothing anybody can act on. Same
+        // rule as `find`, which the trap about fd's exit code was written for — this is its
+        // sibling, and it was the one not following it.
         if ($exit !== 0 && $exit !== 1 && $exit !== Process::STOPPED) {
-            throw new AgentError("ripgrep exited with code {$exit}");
+            throw new AgentError(trim($errors) === '' ? "ripgrep exited with code {$exit}" : trim($errors));
         }
 
         if ($matches === 0) {

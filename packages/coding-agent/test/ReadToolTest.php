@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use Pig\Agent\AgentError;
 use Pig\Ai\ImageContent;
 use Pig\CodingAgent\Tools\Paths;
@@ -242,5 +243,43 @@ final class ReadToolTest extends ToolTestCase
     {
         $this->assertSame('src/Main.php', Paths::relative('/work/src/Main.php', '/work'));
         $this->assertSame('/elsewhere/x', Paths::relative('/elsewhere/x', '/work'));
+    }
+
+    /**
+     * The answers are Node's `path.resolve`, which is what upstream uses, read off it.
+     *
+     * @return array<string, array{string, string}>
+     */
+    public static function paths(): array
+    {
+        return [
+            'a step up' => ['../README.md', '/home/dev/README.md'],
+            'a dot' => ['./x', '/home/dev/pkg/x'],
+            'a doubled slash' => ['a//b', '/home/dev/pkg/a/b'],
+            'up and down again' => ['t/../a/s', '/home/dev/pkg/a/s'],
+            'already absolute' => ['/etc/hosts', '/etc/hosts'],
+            'a bare name' => ['plain.txt', '/home/dev/pkg/plain.txt'],
+            'nothing at all' => ['', '/home/dev/pkg'],
+            'just a dot' => ['.', '/home/dev/pkg'],
+            'just up' => ['..', '/home/dev'],
+            'up twice' => ['../..', '/home'],
+            'past the root' => ['../../..', '/'],
+            'up twice mid-path' => ['a/b/../../c', '/home/dev/pkg/c'],
+            'absolute with a step up' => ['/a/b/../c', '/a/c'],
+            'absolute past the root' => ['/../..', '/'],
+            'a trailing slash' => ['trailing/', '/home/dev/pkg/trailing'],
+            'absolute trailing slash' => ['/abs/trailing/', '/abs/trailing'],
+            'several dots' => ['./././x', '/home/dev/pkg/x'],
+            'dots and a trailing slash' => ['a/./b/../c/', '/home/dev/pkg/a/c'],
+        ];
+    }
+
+    #[DataProvider('paths')]
+    public function testAResolvedPathIsTheOneAPersonWouldRecogniseIt(string $path, string $expected): void
+    {
+        // Not just "does it open the same file" — the OS collapses `..` either way. The
+        // resolved path is what `grep` and `find` prefix every output line with, so the model
+        // reads it and writes it back into its next call.
+        $this->assertSame($expected, Paths::resolve($path, '/home/dev/pkg'));
     }
 }

@@ -3264,7 +3264,28 @@ to tell it apart from the truth.
 run". `Process::run()` was added to return the exit code and stderr separately, and `find` now
 throws with fd's own message.
 
-Regression test: `SearchToolsTest::testABadPatternIsReportedRatherThanReadAsNoMatches`.
+**And `grep` was the sibling that did not follow it**, found by auditing `grep.ts` long after this
+entry was written. It streams rather than collecting, so it used `Process::stream()` — which read
+standard error only to stop the pipe filling and **threw the text away**. A bad pattern therefore
+reached the model as `ripgrep exited with code 2`, where rg had said:
+
+```
+regex parse error:
+    (?:[unclosed)
+       ^
+error: unclosed character class
+```
+
+One of those names the character to fix. `stream()` now hands back `[exit, stderr]` like `run()`
+does — one caller, and being the odd one out of the two was the bug. Worth noticing *how* it hid:
+there was a regression test, `testABadRegexIsReportedRatherThanReadAsNoMatches`, and it asserted
+`'ripgrep exited'` — **it pinned the shortfall**, because that string was what there was when it was
+written. A test written against what the code says rather than against what the caller needs will
+hold a half-fix in place for as long as nobody re-reads it. It asserts rg's own words now, and that
+the code number is *not* there.
+
+Regression tests: `SearchToolsTest::testABadPatternIsReportedRatherThanReadAsNoMatches` for fd and
+`testABadRegexIsReportedRatherThanReadAsNoMatches` for rg.
 
 ### An input method draws where the terminal's cursor is, not where the caret is drawn
 

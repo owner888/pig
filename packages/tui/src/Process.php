@@ -275,11 +275,19 @@ final class Process
      * repository — where waiting for it to finish means holding all of that in memory
      * for nothing. Returning false from $onLine kills it there and then.
      *
+     * **Standard error comes back with the exit code**, as it does from `run()`, and for the
+     * reason written on the `fd` trap: a command that failed has said why, and a caller left
+     * with only a number reports "exited with code 2" where the program said `regex parse
+     * error: …` and pointed at the character. It used to be read and dropped on the floor here
+     * — read so the pipe could not fill and block, which is right, and dropped because nothing
+     * asked for it, which is how `grep` came to tell the model a number.
+     *
      * @param list<string>          $command
      * @param Closure(string): bool $onLine  false to stop reading and kill the command
-     * @return int the exit code, or STOPPED when $onLine asked to stop
+     * @return array{0: int, 1: string} the exit code — STOPPED when $onLine asked to stop —
+     *         and whatever the command wrote to standard error
      */
-    public static function stream(array $command, Closure $onLine, float $timeout = self::DEFAULT_TIMEOUT): int
+    public static function stream(array $command, Closure $onLine, float $timeout = self::DEFAULT_TIMEOUT): array
     {
         if ($command === []) {
             throw new TuiError('Process::stream() needs a command');
@@ -294,19 +302,21 @@ final class Process
         }
 
         if (!is_resource($process)) {
-            return self::STOPPED;
+            return [self::STOPPED, ''];
         }
 
         stream_set_blocking($pipes[1], false);
         stream_set_blocking($pipes[2], false);
 
         $buffer = '';
+        $errors = '';
         $stopped = false;
         $deadline = microtime(true) + $timeout;
 
         while (true) {
             $chunk = stream_get_contents($pipes[1]);
-            stream_get_contents($pipes[2]);
+            // Kept, not just drained: a command that fails has said why on this pipe.
+            $errors .= (string) stream_get_contents($pipes[2]);
             $buffer .= (string) $chunk;
 
             // Only whole lines are delivered; the tail of a half-read line waits for the
@@ -345,11 +355,13 @@ final class Process
             $onLine($buffer);
         }
 
+        $errors .= (string) stream_get_contents($pipes[2]);
+
         fclose($pipes[1]);
         fclose($pipes[2]);
 
         $exit = proc_close($process);
 
-        return $stopped ? self::STOPPED : $exit;
+        return [$stopped ? self::STOPPED : $exit, $errors];
     }
 }

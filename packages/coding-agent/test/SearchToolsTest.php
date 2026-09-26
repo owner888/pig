@@ -454,11 +454,16 @@ final class SearchToolsTest extends ToolTestCase
         $this->file('a.txt', "text\n");
 
         // rg exits 2 for this. Reading that as "no matches" would send the model off
-        // looking for why its search found nothing.
-        $this->assertThrows(
+        // looking for why its search found nothing — and telling it "exited with code 2"
+        // is barely better, because the thing it has to fix is a character in its pattern.
+        // rg names that character, so rg's own sentence is what gets passed on. This used to
+        // assert the code-number message, which is what there was rather than what was wanted.
+        $error = $this->assertThrows(
             AgentError::class,
             fn () => $this->run(new GrepTool($this->cwd), ['pattern' => '[unclosed']),
-            'ripgrep exited',
+            'unclosed character class',
         );
+
+        $this->assertStringNotContainsString('exited with code', $error->getMessage());
     }
 }
