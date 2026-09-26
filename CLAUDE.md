@@ -111,7 +111,7 @@ being one `preg_match_all` where upstream needs `Intl.Segmenter` and a package.
 running. `pig/tui` additionally requires **`ext-pcntl`**, because SIGWINCH is the only way to learn
 that the window was resized; without it the UI would draw at the startup width forever, so
 `ProcessTerminal` refuses to start rather than doing that quietly. `ext-intl` is deliberately *not*
-required — see [Four upstream dependencies that are not needed here](#four-upstream-dependencies-that-are-not-needed-here).
+required — see [Five upstream dependencies that are not needed here](#five-upstream-dependencies-that-are-not-needed-here).
 
 **One required external binary: `stty`.** PHP core has no termios binding and ext-pcntl does not
 add one, so raw mode and the window size go through `proc_open('stty …')` against `/dev/tty`.
@@ -1631,6 +1631,33 @@ them).
 schema using something unimplemented has to keep working, or adding a keyword to a tool breaks the
 tool instead of tightening it.
 
+**Then it was run against AJV**, `ajv@8.20.0` with `ajv-formats` and upstream's own options, over
+~190 schema/value pairs covering every keyword it implements and every keyword it does not, values
+transported as JSON text so both sides decode the same document. Three things came out of it, and
+the first two are the same mistake in two places:
+
+- **`const` and `enum` compared with `!==`**, so `const: 5` refused `5.0`. JSON has one number type
+  — a provider sending `5.0` for a count sent 5 and had no way to send anything else, AJV compares
+  in a language that cannot hold the difference, and **`isType()` two methods away already said so
+  in a comment** for `integer`. A model cannot correct a value that was already right. `same()` is
+  numeric when both sides are numbers, recursive through lists and objects, and never PHP's `==` —
+  which would make `1` equal `true` and `0` equal `null`.
+- **`uniqueItems` sorted object keys at the top level only**, so an object nested inside a list
+  inside an object read as two different documents depending on the order its keys arrived in.
+  `identity()` recurses now.
+- **The duplicate is named by position**, as AJV names it: `(items ## 1 and 3 are identical)`. The
+  model has to fix that list, and "one of these is a duplicate" makes it read the whole list again.
+
+A branch that normalised whole floats in `identity()` was written at the same time and **removed for
+doing nothing**: PHP's `json_encode(1.0)` is already `1`. It was the mutation check that found it —
+mutating it changed no test, which is the only reason anybody looked. The docblock now says the
+verified thing rather than the assumed one.
+
+What the run left, all documented in the docblock: four verdicts that are the empty-array ambiguity
+(`type: object` against `[]` and `type: array` against `{}` are the same PHP value), three messages
+where AJV also lists why each `anyOf` branch failed and this reports only that none matched, and the
+missing-property path convention below.
+
 Five things that took a real answer rather than a guess:
 
 - **The messages are AJV's wording**, not invented ones — `must be integer`, `must have required
@@ -2629,6 +2656,13 @@ the whole method.
 The dev container has no route to packagist, so tests run on the Mac, not in the agent sandbox.
 
 ## Known traps
+
+Three shapes account for nearly every find in this file, and they are described where the audit that
+found them is written down: **a rule present in one place and absent in its sibling**, **a thing
+wired up at one end only**, and **PHP's value model is not JSON's** — all three at the end of
+[A hook's compaction summary was indistinguishable from pig's own](#a-hooks-compaction-summary-was-indistinguishable-from-pigs-own).
+Before reading a file against upstream, ask the three questions there:
+who else does this, who is at the other end, and is this value the same thing in both languages.
 
 ### `stream_socket_enable_crypto()` returns `0`, not just `true`/`false`
 
@@ -3819,9 +3853,28 @@ exist.
 **The second shape, from the same sweep: a thing wired up at one end only.** A hook message pushed
 onto a list the agent never reads; ctrl+p taken off the editor and bound to nothing; `TreeJump`
 carrying no editor text because `goTo()` never worked out that a question is something you go back
-to *before*. None of the three failed a test, because each was internally consistent — the wiring
-was missing, not wrong. What finds them is reading the *other* end: who consumes this list, who
-handles this key, what does the caller do with what it gets back.
+to *before*; `TreeList::search()`, public and documented "for whoever draws the search line", with
+nobody drawing it. None failed a test, because each was internally consistent — the wiring was
+missing, not wrong. What finds them is reading the *other* end: who consumes this list, who handles
+this key, what does the caller do with what it gets back.
+
+**The third shape is not about the port at all: PHP's value model is not JSON's.** Both languages
+read the same documents off the wire and disagree about what two of them being *the same* means, in
+opposite directions — and the disagreement is invisible until a value crosses the boundary.
+
+| The find | PHP | JSON, and JavaScript's runtime |
+|---|---|---|
+| `const: 5` refused `5.0` | `int` and `float` are two types, and `===` says so | one number type; `5.0` **is** `5`, and neither can express otherwise |
+| An empty arguments list went out as `[]` | one array type: `{}` and `[]` decode to the same value | `object` and `array` are two types, and `input: []` is refused |
+| `uniqueItems` and whole floats | `json_encode(1.0)` is `1`, so nothing was wrong — the branch written to fix it did nothing | — |
+| `Utf8::sanitize` exists at all | UTF-8 bytes; the failure is a truncated sequence | UTF-16; the failure is an unpaired surrogate |
+
+So PHP splits numbers **finer** and arrays **coarser**. Copying upstream's comparison faithfully is
+how the first one happened: `!==` is the honest translation of `!==` and the wrong answer anyway,
+because the question is not "is this the same PHP value" but "is this the same JSON document". The
+reading that finds these is not "does this line match upstream" but **"is this value the same thing
+in both languages"** — and the place to look is every boundary: `json_decode`, `json_encode`, and
+any comparison of two things that came through one.
 
 ### Compaction counted an image as nothing, so a conversation of screenshots could not be compacted
 

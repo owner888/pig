@@ -195,14 +195,67 @@ final class JsonSchemaTest extends TestCase
         $this->assertValid($schema, [1, 2]);
         $this->assertSame(['root: must NOT have fewer than 2 items'], $this->errors($schema, [1]));
         $this->assertSame(['root: must NOT have more than 3 items'], $this->errors($schema, [1, 2, 3, 4]));
-        $this->assertSame(['root: must NOT have duplicate items'], $this->errors($schema, [1, 1]));
+        $this->assertSame(
+            ['root: must NOT have duplicate items (items ## 0 and 1 are identical)'],
+            $this->errors($schema, [1, 1]),
+        );
+    }
+
+    public function testTheDuplicateIsNamedByPositionAsAjvNamesIt(): void
+    {
+        // The message is read by the model, which then has to fix the list. "one of these is a
+        // duplicate" makes it read the whole list again; AJV says which two, and a model that has
+        // seen AJV's wording everywhere else has seen the indices too.
+        $schema = ['type' => 'array', 'uniqueItems' => true];
+
+        $this->assertSame(
+            ['root: must NOT have duplicate items (items ## 1 and 3 are identical)'],
+            $this->errors($schema, [1, 2, 3, 2]),
+        );
+    }
+
+    public function testKeyOrderDoesNotCountAtAnyDepth(): void
+    {
+        // The sorting reached the top level only, so an object nested inside a list inside an
+        // object was encoded with its keys in arrival order and the two read as different
+        // documents. AJV's deep equality does not care about key order anywhere.
+        $this->assertSame(
+            ['root: must NOT have duplicate items (items ## 0 and 1 are identical)'],
+            $this->errors(
+                ['type' => 'array', 'uniqueItems' => true],
+                [['x' => [['b' => 1, 'a' => 2]]], ['x' => [['a' => 2, 'b' => 1]]]],
+            ),
+        );
+    }
+
+    public function testAWholeFloatIsTheSameItemAsItsInteger(): void
+    {
+        // `[1, 1.0]` is one number twice — JSON cannot say anything else, and the JavaScript AJV
+        // compares with cannot even hold the difference. This works because `json_encode(1.0)` is
+        // `1`; it is asserted rather than assumed, because the day it stops being true nothing
+        // else would say so.
+        $schema = ['type' => 'array', 'uniqueItems' => true];
+
+        $this->assertSame(
+            ['root: must NOT have duplicate items (items ## 0 and 1 are identical)'],
+            $this->errors($schema, [1, 1.0]),
+        );
+        $this->assertSame(
+            ['root: must NOT have duplicate items (items ## 0 and 1 are identical)'],
+            $this->errors($schema, [['a' => 1], ['a' => 1.0]]),
+        );
+
+        // Different types are different items, which is AJV's answer too: `1` is not `"1"`, and
+        // `0` is not `false`.
+        $this->assertValid($schema, [1, '1']);
+        $this->assertValid($schema, [0, false]);
     }
 
     public function testUniquenessDoesNotCareAboutKeyOrder(): void
     {
         // `{"a":1,"b":2}` and `{"b":2,"a":1}` are the same document, so these are duplicates.
         $this->assertSame(
-            ['root: must NOT have duplicate items'],
+            ['root: must NOT have duplicate items (items ## 0 and 1 are identical)'],
             $this->errors(
                 ['type' => 'array', 'uniqueItems' => true],
                 [['a' => 1, 'b' => 2], ['b' => 2, 'a' => 1]],
@@ -232,6 +285,43 @@ final class JsonSchemaTest extends TestCase
         // schema is an array, so there is nothing to help with — you write the array.
         $this->assertValid(['const' => 5], 5);
         $this->assertSame(['root: must be equal to constant'], $this->errors(['const' => 5], 6));
+    }
+
+    public function testAWholeFloatEqualsTheIntegerItIsBecauseJsonHasOneNumberType(): void
+    {
+        // The same rule `isType()` already applies to `integer`, two methods away: a provider
+        // that sends `5.0` for `const: 5` sent 5, and JSON has no way for it to have sent
+        // anything else. AJV compares with JavaScript's one number type and agrees. Strict `!==`
+        // refused it, and the model cannot correct a value that was already right.
+        $this->assertValid(['const' => 5], 5.0);
+        $this->assertValid(['const' => 5.0], 5);
+        $this->assertValid(['enum' => [1, 2]], 2.0);
+        $this->assertValid(['enum' => [1.5, 2]], 1.5);
+
+        // Nested, because the same question is asked of every value inside.
+        $this->assertValid(['enum' => [['a' => 1]]], ['a' => 1.0]);
+        $this->assertValid(['const' => ['a' => [1, 2]]], ['a' => [1.0, 2.0]]);
+    }
+
+    public function testNumericEqualityDoesNotMakeEverythingEqualToEverything(): void
+    {
+        // PHP's `==` would say yes to all of these — `1 == true`, `0 == null`, `0 == false` —
+        // which is why the comparison is numeric *only* when both sides are numbers.
+        $this->assertSame(['root: must be equal to constant'], $this->errors(['const' => 5], '5'));
+        $this->assertSame(['root: must be equal to constant'], $this->errors(['const' => 1], true));
+        $this->assertSame(['root: must be equal to constant'], $this->errors(['const' => 0], null));
+        $this->assertSame(['root: must be equal to constant'], $this->errors(['const' => 0], false));
+        $this->assertSame(['root: must be equal to constant'], $this->errors(['const' => true], 1));
+        $this->assertSame(
+            ['root: must be equal to one of the allowed values'],
+            $this->errors(['enum' => [1, 2]], '2'),
+        );
+
+        // A whole float is the *same number*; a different number is still different.
+        $this->assertSame(['root: must be equal to constant'], $this->errors(['const' => 5], 5.5));
+        $this->assertSame(['root: must be equal to constant'], $this->errors(['const' => ['a' => 1]], ['a' => 2]));
+        $this->assertSame(['root: must be equal to constant'], $this->errors(['const' => ['a' => 1]], ['b' => 1]));
+        $this->assertSame(['root: must be equal to constant'], $this->errors(['const' => [1, 2]], [1, 2, 3]));
     }
 
     public function testNumberBounds(): void

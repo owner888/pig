@@ -32,6 +32,19 @@ namespace Pig\Ai\Utils;
  * The messages are AJV's wording (`must be string`, `must have required property 'x'`) rather than
  * invented ones. They are read by the **model**, which then corrects itself and calls again — and
  * AJV's phrasing is what it has seen everywhere else.
+ *
+ * **Checked against AJV itself** — `ajv@8.20.0` with `ajv-formats`, `allErrors: true`,
+ * `strict: false`, upstream's own configuration — over ~190 schema/value pairs covering every
+ * keyword above and every keyword below, with the values transported as JSON text so both sides
+ * decode the same document. What the run left, once the deliberate omissions above are set aside:
+ *
+ * - **Four verdicts, all the empty-array ambiguity** — `type: object` against `[]` and `type: array`
+ *   against `{}`, which are the same PHP value. `isType()` says why either is accepted.
+ * - **Three messages where AJV also lists why each branch of an `anyOf`/`oneOf` failed** and this
+ *   reports only that none matched. More words, more actionable; a decision about how loud a
+ *   failure should be rather than a bug, so it waits for somebody to want it.
+ * - **One path convention**: a missing property is reported here at the property's own path
+ *   (`edits/0/new`) and by AJV at its container's (`edits/0`). Both name it in the message.
  */
 final class JsonSchema
 {
@@ -130,15 +143,61 @@ final class JsonSchema
      */
     private static function checkEnum(array $schema, mixed $value, string $path, array &$problems): void
     {
-        if (array_key_exists('const', $schema) && $schema['const'] !== $value) {
+        if (array_key_exists('const', $schema) && !self::same($schema['const'], $value)) {
             $problems[] = self::problem($path, 'must be equal to constant');
         }
 
         $enum = $schema['enum'] ?? null;
 
-        if (is_array($enum) && !in_array($value, $enum, true)) {
+        if (is_array($enum)) {
+            foreach ($enum as $allowed) {
+                if (self::same($allowed, $value)) {
+                    return;
+                }
+            }
+
             $problems[] = self::problem($path, 'must be equal to one of the allowed values');
         }
+    }
+
+    /**
+     * Whether two decoded JSON values are the same value.
+     *
+     * **A whole float is the integer it is**, which is the rule `isType()` already applies to
+     * `integer` and the reason it has to be applied here too: JSON has one number type, so a
+     * provider sending `5.0` for `const: 5` sent 5 and had no other way to send it. AJV compares
+     * with JavaScript's one number type and says the same. Strict `!==` refused it, and a model
+     * cannot correct a value that was already right.
+     *
+     * Numeric *only when both sides are numbers*, never PHP's `==`: that one says `1 == true`,
+     * `0 == null` and `0 == false`, and a schema saying `const: 1` does not mean `true`.
+     *
+     * Recursive, because the question is asked of every value inside a list or an object — AJV
+     * uses a deep equality for the same reason.
+     */
+    private static function same(mixed $expected, mixed $value): bool
+    {
+        $numbers = (is_int($expected) || is_float($expected)) && (is_int($value) || is_float($value));
+
+        if ($numbers && !is_bool($expected) && !is_bool($value)) {
+            return (float) $expected === (float) $value;
+        }
+
+        if (is_array($expected) && is_array($value)) {
+            if (count($expected) !== count($value)) {
+                return false;
+            }
+
+            foreach ($expected as $key => $inner) {
+                if (!array_key_exists($key, $value) || !self::same($inner, $value[$key])) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        return $expected === $value;
     }
 
     /**
@@ -278,10 +337,23 @@ final class JsonSchema
             // Compared encoded, because `in_array` with objects would compare them by value in a
             // way that depends on key order — and `{"a":1,"b":2}` and `{"b":2,"a":1}` are the same
             // document.
-            $seen = array_map(static fn (mixed $item): string => self::identity($item), $value);
+            $seen = [];
 
-            if (count(array_unique($seen)) !== $count) {
-                $problems[] = self::problem($path, 'must NOT have duplicate items');
+            foreach ($value as $index => $item) {
+                $identity = self::identity($item);
+
+                if (isset($seen[$identity])) {
+                    // Which two, as AJV names them: a model that has to fix the list should not
+                    // have to read the whole list again to find out where the duplicate is.
+                    $problems[] = self::problem(
+                        $path,
+                        "must NOT have duplicate items (items ## {$seen[$identity]} and {$index} are identical)",
+                    );
+
+                    break;
+                }
+
+                $seen[$identity] = $index;
             }
         }
 
@@ -422,12 +494,26 @@ final class JsonSchema
         return $matched;
     }
 
-    /** A value's identity for `uniqueItems`, with object keys sorted so order does not count. */
+    /**
+     * A value's identity for `uniqueItems`, with object keys sorted so order does not count.
+     *
+     * **Recursive, so the sorting reaches all the way down**: an object nested inside a list inside
+     * an object was encoded with its own keys in whatever order they arrived, so
+     * `[{"x":{"a":1,"b":2}}, {"x":{"b":2,"a":1}}]` read as two different documents. AJV's deep
+     * equality does not care about key order at any depth.
+     *
+     * A whole float needs no handling: PHP's `json_encode(1.0)` is `1`, so `[1, 1.0]` — one number
+     * twice, which is all JSON can mean — already collides here. Verified rather than assumed; a
+     * branch that normalised it was removed for doing nothing.
+     */
     private static function identity(mixed $value): string
     {
-        if (is_array($value) && !array_is_list($value)) {
-            ksort($value);
-            $value = array_map(static fn (mixed $each): mixed => is_array($each) ? self::identity($each) : $each, $value);
+        if (is_array($value)) {
+            if (!array_is_list($value)) {
+                ksort($value);
+            }
+
+            $value = array_map(static fn (mixed $each): string => self::identity($each), $value);
         }
 
         return (string) json_encode($value);
