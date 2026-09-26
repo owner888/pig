@@ -7,7 +7,7 @@ runs on a famously small core. Same architecture, same file layout, written for 
 runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the standard library.
 
 > **Status: it runs.** `bin/pig` is a coding agent you can talk to in a terminal: streaming
-> answers, seven tools with live output, edits shown as diffs, Escape to interrupt, typing
+> answers, tools with live output, edits shown as diffs, Escape to interrupt, typing
 > while it works, and `!cmd` to run a shell command the model can then see (`!!cmd` keeps it
 > out of the conversation). Sessions are saved as they happen — `--continue` picks up the
 > last one, `/resume` picks from a list. When the context fills it summarises itself and
@@ -110,6 +110,11 @@ the options, for a message that starts with a dash or an `@`.
 Ctrl+G opens whatever is in the prompt in `$VISUAL` or `$EDITOR` and puts the result back —
 for the message that turned out to be three paragraphs. It works while the model is still
 answering: the editor gets the terminal, and the answer keeps arriving behind it.
+
+The model gets four tools by default — read, bash, edit, write — which is upstream's set;
+`--tools read,grep,find,ls` names the set outright, and `--read-only` swaps in the read-only four.
+Fewer tools is deliberate: a model with seven spends part of every turn choosing between them, and
+searching through `bash` with `rg` is what the prompt already asks for.
 
 `--model` takes a part of a name rather than a whole id — `--model sonnet`, `--model 'opus 4.1'` —
 and `--model sonnet:high` sets the thinking level at the same time. `--models` lists the ones

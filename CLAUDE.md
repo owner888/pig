@@ -3,6 +3,23 @@
 A file-by-file port of [earendil-works/pi](https://github.com/earendil-works/pi): agent core,
 unified LLM API, terminal UI, coding agent CLI. Zero runtime dependencies beyond PHP itself.
 
+## pig is a minimal agent
+
+**The developer's standing rule, above every other decision in this file: pig stays minimal, and
+nothing that muddles the logic gets added.** More tools, more options, more paths through the same
+code are not free — the model spends part of every turn choosing between them, and every extra arm
+is a place for the rules to disagree with each other, which is what most of the traps at the bottom
+of this file turned out to be.
+
+So a feature that upstream does not have needs a reason that survives being read out loud, and a
+feature upstream *does* have arrives in upstream's shape rather than a wider one. When a choice is
+between two workable designs, the one with fewer branches wins. When something is already in reach
+another way — searching through `bash` rather than a third search tool — the second way does not get
+added for convenience.
+
+This is the rule that decided the built-in tool set: four by default, as upstream has it, with
+`grep`, `find` and `ls` reachable by name through `--tools`.
+
 ## Upstream anchor
 
 **Port against commit `d0a4c37` (2026-01-02)** — the snapshot behind the "418 lines" claim
@@ -3038,6 +3055,30 @@ Barely covered by a test: `interactive()` opens `/dev/tty` for all three streams
 runner has no tty to open. What is tested is the empty-command guard and that a run with no
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
+
+### The model had seven tools where upstream gives it four, and no way to say otherwise
+
+Eighteenth, and the one the developer decided rather than the code: `CodingAgent::session()` started
+with `ToolSet::ALL`, so every run handed the model `read, bash, edit, write, grep, find, ls`.
+Upstream's default is `codingTools` — the first four — and its `--tools read,grep,find,ls` names the
+set when something else is wanted. **pig had the wider default and not the flag.**
+
+Both are fixed the same way round: the default is upstream's four, and `--tools` is ported, with a
+name that matches nothing answered on the shell before anything loads ("No tool called 'nope'. There
+is read, bash, edit, write, grep, find, ls."). `--read-only` still *swaps* the set for the read-only
+four rather than narrowing whatever was asked for, which is what it always did.
+
+**The reason is the rule at the top of this file, in the developer's own words: more tools is more
+confusion.** A model with seven spends part of every turn choosing between them, and searching
+through `bash` with `rg` is what the system prompt already asks for — `grep`, `find` and `ls` stay
+ported, tested and one flag away. The test that asserted the old behaviour was called
+`testTheDefaultIsEveryTool`; it now asserts the four and is called
+`testTheDefaultIsUpstreamsFourAndNotEveryToolPigHas`, with a sibling for each of `--tools` and
+`--read-only` so the three answers cannot drift apart.
+
+`--tools` had to join `Arguments::TAKES_A_VALUE`, which is the trap that list exists for — and it is
+one letter from `--no-tools`, which is about the tools **somebody wrote** in `~/.pig/tools` and not
+about this. `ArgumentsTest` states both, next to each other.
 
 ### The overflow pattern for Cerebras and Mistral could never match pig's own words
 

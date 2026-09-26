@@ -25,6 +25,7 @@ final readonly class Arguments
     /** Every option that is followed by its value. Everything else is a flag. */
     public const array TAKES_A_VALUE = [
         'model', 'theme', 'thinking', 'cwd', 'resume', 'skills-dir', 'mode', 'api-key', 'models', 'proxy',
+        'tools',
     ];
 
     /**

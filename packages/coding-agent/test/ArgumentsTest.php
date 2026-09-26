@@ -269,6 +269,28 @@ final class ArgumentsTest extends TestCase
         $this->assertSame(['fix the bug'], $parsed->messages);
     }
 
+    public function testToolsTakesItsListAndNotThePromptAfterIt(): void
+    {
+        $parsed = $this->parse('--tools', 'read,grep', 'fix the bug');
+
+        // The same trap as `--api-key`: a value-taking option missing from `TAKES_A_VALUE` eats
+        // the next word, and here that would be the list of tools eating nothing and the prompt
+        // becoming the list.
+        $this->assertSame('read,grep', $parsed->options['tools']);
+        $this->assertSame(['fix the bug'], $parsed->messages);
+    }
+
+    public function testNoToolsIsStillAFlagAboutSomethingElse(): void
+    {
+        $parsed = $this->parse('--no-tools', 'fix the bug');
+
+        // `--tools` chooses the built-in set; `--no-tools` skips the ones somebody wrote in
+        // `~/.pig/tools`. Two different questions with names one letter apart.
+        $this->assertTrue($parsed->has('no-tools'));
+        $this->assertFalse(isset($parsed->options['tools']));
+        $this->assertSame(['fix the bug'], $parsed->messages);
+    }
+
     public function testNoProxyIsAFlagAndNotAnOptionWithAValue(): void
     {
         $parsed = $this->parse('--no-proxy', 'fix the bug');

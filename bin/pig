@@ -41,6 +41,7 @@ use Pig\CodingAgent\PrintMode;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Tools\ToolSet;
 use Pig\CodingAgent\Timings;
 use Pig\Tui\Style;
 
@@ -82,6 +83,8 @@ if (isset($options['help'])) {
       -h, --help        this
       --theme <name>    dark or light (default: dark)
       --thinking <l>    off, minimal, low, medium, high, xhigh
+      --tools <list>    which built-in tools the model gets, comma-separated
+                        (default: read,bash,edit,write; also grep, find, ls)
       --read-only       no edit, write or bash
       --cwd <path>      where to work (default: here)
       -c, --continue    pick up the most recent session here
@@ -246,6 +249,31 @@ if (!in_array($theme, Palette::names(), true)) {
     exit(1);
 }
 
+// Which built-in tools the model gets. Checked here rather than inside the assembly for the same
+// reason the theme is: a name that matches nothing should be one line on the shell, before anything
+// has been loaded, and it should list what the names are.
+$toolNames = null;
+
+if (isset($options['tools'])) {
+    $toolNames = array_values(array_filter(array_map('trim', explode(',', strtolower($options['tools'])))));
+    $unknown = array_values(array_diff($toolNames, ToolSet::ALL));
+
+    if ($toolNames === []) {
+        fwrite(STDERR, Style::red('--tools needs at least one name: ' . implode(', ', ToolSet::ALL) . ".\n"));
+
+        exit(1);
+    }
+
+    if ($unknown !== []) {
+        fwrite(STDERR, Style::red(
+            'No tool called ' . implode(' or ', array_map(static fn (string $one): string => "'{$one}'", $unknown))
+                . '. There is ' . implode(', ', ToolSet::ALL) . ".\n",
+        ));
+
+        exit(1);
+    }
+}
+
 // Resolved here rather than inside the assembly, because choosing one draws a list on the
 // terminal and `CodingAgent::session()` has no screen: it takes a path, or nothing.
 $resumePath = $options['resume'] ?? null;
@@ -292,6 +320,7 @@ try {
         withHooks: !isset($options['no-hooks']),
         withTools: !isset($options['no-tools']),
         skillsDir: $options['skills-dir'] ?? null,
+        tools: $toolNames,
     );
 } catch (CodingAgentError $error) {
     // Almost always a model name that matches nothing or a missing API key, both worth saying

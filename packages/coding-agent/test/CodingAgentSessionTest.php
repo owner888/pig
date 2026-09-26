@@ -524,16 +524,35 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertNotContains('bash', $names);
     }
 
-    public function testTheDefaultIsEveryTool(): void
+    public function testTheDefaultIsUpstreamsFourAndNotEveryToolPigHas(): void
     {
-        $names = array_map(
-            static fn (object $t): string => $t->definition()->name,
-            $this->start()->session->agent->state->tools,
-        );
+        $names = $this->toolNames($this->start());
 
-        foreach (ToolSet::ALL as $expected) {
-            $this->assertContains($expected, $names, $expected);
-        }
+        // `grep`, `find` and `ls` are ported and reachable by name; they are off by default
+        // because upstream's default is four and because a model with seven tools spends more of
+        // every turn choosing between them. See the rule at the top of CLAUDE.md.
+        $this->assertSame(ToolSet::CODING, $names);
+    }
+
+    public function testToolsNamesTheSetOutright(): void
+    {
+        $names = $this->toolNames($this->start([], ['tools' => ['read', 'grep', 'find', 'ls']]));
+
+        $this->assertSame(['read', 'grep', 'find', 'ls'], $names);
+    }
+
+    public function testReadOnlyStillSwapsTheWholeSetRatherThanNarrowingIt(): void
+    {
+        $this->assertSame(ToolSet::READ_ONLY, $this->toolNames($this->start([], ['readOnly' => true])));
+    }
+
+    /** @return list<string> */
+    private function toolNames(StartedSession $started): array
+    {
+        return array_map(
+            static fn (object $t): string => $t->definition()->name,
+            $started->session->agent->state->tools,
+        );
     }
 
     public function testNothingIsWrittenToAStream(): void

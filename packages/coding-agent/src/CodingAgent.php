@@ -146,6 +146,9 @@ final class CodingAgent
      * @param string|null $thinking what `--thinking` said, which beats a `:level` on the model
      * @param string|null $resume   a session file to open, already chosen
      * @param string|null $apiKey   a key for this run only, never written down
+     * @param list<string>|null $tools which built-in tools the model gets, as `ToolSet` names them.
+     *        Null means the default set — upstream's four — and `--read-only` swaps that for the
+     *        read-only four rather than narrowing this one.
      *
      * @throws CodingAgentError with a sentence worth showing as-is
      */
@@ -164,6 +167,7 @@ final class CodingAgent
         bool $withHooks = true,
         bool $withTools = true,
         ?string $skillsDir = null,
+        ?array $tools = null,
     ): StartedSession {
         $warnings = [];
 
@@ -247,7 +251,13 @@ final class CodingAgent
 
         // The built-in names are handed in so a tool that would shadow `bash` is named rather than
         // quietly replacing it.
-        $builtIn = $readOnly ? ToolSet::READ_ONLY : ToolSet::ALL;
+        //
+        // **Four by default, which is upstream's set and not every tool pig has.** `grep`, `find`
+        // and `ls` are ported and available by name through `--tools`; they are not on by default
+        // because a model with seven tools spends more of every turn deciding between them, and
+        // searching through `bash` with `rg` is what the prompt already tells it to do. pig is a
+        // minimal agent: see the rule at the top of this file.
+        $builtIn = $tools ?? ($readOnly ? ToolSet::READ_ONLY : ToolSet::CODING);
 
         // Held onto rather than left to the loader: it is what a mode later hands the UI to, and it
         // is the object every tool factory closed over.

@@ -6,7 +6,7 @@
 pig 保持相同的架构和文件划分，面向 PHP 8.3，**零运行时依赖**——不用 Guzzle、不用 ReactPHP、不用
 amphp、不用 ncurses，只用标准库。
 
-> **状态：能跑了。** `bin/pig` 就是一个可以在终端里对话的 coding agent：流式回答、七个工具的
+> **状态：能跑了。** `bin/pig` 就是一个可以在终端里对话的 coding agent：流式回答、工具的
 > 实时输出、改动以 diff 呈现、Esc 打断、干活途中可以继续打字，`!命令` 跑一条 shell 命令并把结果
 > 交给模型（`!!命令` 则不进上下文）。会话边聊边存——`--continue` 接上最近一次，`/resume` 从列表里
 > 挑。上下文快满了会自我总结之后接着聊，`/compact` 也可以随时手动压一次，`/model` 中途换模型。
@@ -96,6 +96,10 @@ bin/pig @screenshot.png "这里哪儿不对？"
 
 Ctrl+G 把 prompt 里现在的内容丢进 `$VISUAL` 或 `$EDITOR`，改完再塞回来——给那种写到一半发现要写
 三段的消息用。模型还在回答的时候也能用：编辑器拿着终端，回答在它背后继续到。
+
+模型默认拿到四个工具——read、bash、edit、write，和上游一致；`--tools read,grep,find,ls` 直接指定
+这一组，`--read-only` 换成只读的那四个。工具少是有意的：给模型七个，它每一轮都要花一部分精力在
+「用哪个」上，而用 `bash` 里的 `rg` 搜索本来就是 prompt 让它做的事。
 
 `--model` 不用写全 id，写一部分就行——`--model sonnet`、`--model 'opus 4.1'`——`--model sonnet:high`
 还能顺手把思考档位一起设了。`--models` 把**有 key 的**那些列出来，带上下文窗口和输出上限；
