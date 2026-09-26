@@ -279,6 +279,28 @@ final class StreamProxyTest extends TestCase
         ]]], $sent['tools']);
     }
 
+    public function testAToolResultThatIsNotUtf8StillReachesTheGateway(): void
+    {
+        $context = new Context(
+            [
+                new UserMessage([new TextContent('cat the log')]),
+                new ToolResultMessage('call-1', 'read', [new TextContent("header\n\x80stray\nfooter\n")], false),
+            ],
+            'be brief',
+        );
+
+        [$message] = $this->turn([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]], $context);
+
+        // `read` and `bash` hand back a file's own bytes, so one latin-1 log made
+        // `json_encode` answer false and the turn died with "could not be encoded" — and
+        // then so did every turn after it, because the result stays in the conversation.
+        $this->assertSame(StopReason::Stop, $message->stopReason, $message->errorMessage ?? '');
+
+        $text = $this->server->receivedJson()['context']['messages'][1]['content'][0]['text'];
+        $this->assertStringContainsString('header', $text);
+        $this->assertStringContainsString('footer', $text);
+    }
+
     public function testTheOptionsGoOverAsThreeFields(): void
     {
         $this->turn(

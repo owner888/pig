@@ -42,6 +42,17 @@ final class FileToolsTest extends ToolTestCase
         $this->assertSame('new', file_get_contents($this->cwd . '/out.txt'));
     }
 
+    public function testTheByteCountIsBytesAndNotCharacters(): void
+    {
+        $result = $this->run(new WriteTool($this->cwd), ['path' => 'out.txt', 'content' => '你好世界']);
+
+        // Upstream reports `content.length` — UTF-16 code units — in a sentence that says
+        // bytes, so this file is 12 bytes and the model is told 4. The number here is what
+        // was written.
+        $this->assertSame(12, strlen((string) file_get_contents($this->cwd . '/out.txt')));
+        $this->assertStringContainsString('Wrote 12 bytes to out.txt', $this->output($result));
+    }
+
     public function testWritingOverADirectoryIsRefused(): void
     {
         mkdir($this->cwd . '/adir');

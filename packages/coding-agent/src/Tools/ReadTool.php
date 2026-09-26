@@ -21,6 +21,31 @@ use Pig\Tui\Images\ImageType;
  * block rather than as bytes, so the model can look at it. And the output is cut to
  * something worth sending, with a line saying exactly where to resume — the model's next
  * move after a truncated read should be obvious from the read itself.
+ *
+ * Run against upstream's `read.ts` over 193 cases — every offset and limit around the ends of
+ * a file, both truncation limits and the line that is over the budget by itself, the six image
+ * signatures, and 120 random files with random offsets and limits. **Every field of
+ * `details.truncation` agrees in all 62 cases that have one**, byte counts and
+ * `lastLinePartial` included, and the text agrees except in five places, each deliberate:
+ *
+ * - **A bad offset or limit is clamped and made whole.** Upstream carries a fraction through
+ *   into its own notice (`Use offset=2.5 to continue`) and a negative limit into `slice()`,
+ *   where `limit: -1` quietly reads all but the last line. The schema says `number`, so a
+ *   model can send either — and here the cast is load-bearing rather than tidy, because
+ *   `array_slice()` takes `int` and a float is a `TypeError` rather than a rounded read.
+ * - **An empty read's notice has no blank line in front of it.** Upstream appends `\n\n` to
+ *   content that is the empty string.
+ * - **The errors are this file's words**, and the missing-file one is the reason: upstream
+ *   lets Node's `access` throw, so the model is handed `ENOENT: … access '/tmp/x/…'` — an
+ *   absolute path it never wrote, and an errno it can do nothing with.
+ * - **Bytes that are not UTF-8 stay as they are.** Upstream reads with `readFile(path,
+ *   "utf-8")` and every such byte reaches the model as U+FFFD. Sanitising happens once, at
+ *   the request boundary, where the four providers already do it.
+ * - **A bare `GIF` is not a GIF.** `file-type`, which upstream asks, accepts those three
+ *   bytes; `ImageType` wants `GIF87a` or `GIF89a`, as a real GIF has.
+ *
+ * `details.notice` is this file's own key and the one case upstream leaves empty — see the
+ * note on `notice()`.
  */
 final class ReadTool implements AgentTool
 {

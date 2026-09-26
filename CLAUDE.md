@@ -2878,7 +2878,23 @@ them, and the sharpest is one where upstream is the one doing damage: it reads t
 **an edit to line 90 of a latin-1 file rewrites line 3 as U+FFFD**. This reads bytes and splices
 bytes. `testAFileThatIsNotUtf8KeepsItsBytes` is what stops that "fidelity" being restored later.
 
-**The lesson of the three runs is the same one: a hand-rolled replacement for a package is worth a
+**`ReadTool` and `WriteTool` went through a fourth run — 193 cases — and found nothing either.**
+Every field of `details.truncation` agrees in all 62 cases that have one, and the bytes `write` puts
+on disk agree everywhere. Five deliberate deviations, in the two docblocks: the errors are pig's
+words (upstream hands the model Node's `ENOENT` with an absolute path it never wrote), an empty
+read's notice has no blank line in front of it, bytes that are not UTF-8 stay as they are, a bare
+`GIF` magic is not a GIF here, and — the two worth knowing —
+
+- **`write`'s byte count is bytes.** Upstream reports `content.length`, UTF-16 code units, in a
+  sentence that says "bytes": `你好世界` is reported as 4 into a file of 12. The third shape from the
+  index, in its sixth guise.
+- **An offset or limit that is not a whole count is made one.** The schema says `number`, so a model
+  can send `2.7` or `-1`; upstream carries the fraction into its own notice (`Use offset=2.5 to
+  continue`) and turns `limit: -1` into `slice(0, -1)`, reading all but the last line. Here the cast
+  is load-bearing rather than tidy — `array_slice()` takes `int`, so a float is a `TypeError` out of
+  the tool, which the mutation check is what showed.
+
+**The lesson of the four runs is the same one: a hand-rolled replacement for a package is worth a
 corpus, and the corpus is worth keeping the count of.** "It matched on the cases I thought of" is
 what reading gives you — and a run that finds nothing is only worth having if the count is written
 down, or the next reader has to take it on trust.
@@ -2983,6 +2999,33 @@ Two things worth keeping:
 
 Regression tests: the four `ToolExecutionTest::testOutputThatIsNotUtf8IsDrawnRatherThanFatal` rows,
 which assert the frame is drawn *and* is UTF-8 rather than merely not throwing.
+
+### One `read` of a binary file ended a gateway session for good
+
+Five places encode a conversation, and four of them had an answer to bytes that are not UTF-8: the
+providers sanitise each text block, `SessionManager` and `RpcMode` pass
+`JSON_INVALID_UTF8_SUBSTITUTE` — and `RpcMode`'s docblock says exactly why, which is the sentence
+that names the bug in the fifth:
+
+> a tool that read a binary file must not be able to stop the protocol dead
+
+`Agent\StreamProxy::request()` was the fifth, and it encoded the whole conversation with neither.
+So `read` or `bash` on one latin-1 log made `json_encode` answer false and the turn died with
+`The conversation could not be encoded for the proxy` — **and then so did every turn after it**,
+because the result stays in the conversation, and compacting it away needs a model call through the
+same encoder. A gateway session was over, permanently, with a message that names nothing the person
+did.
+
+Fixed with the flag rather than `Utf8::sanitize()` per field: this encodes the whole request in one
+call, so a flag cannot miss a field somebody adds later. The `=== false` guard stays for what the
+flag does not cover — a recursive structure, a float that is not a number.
+
+**The shape is the first one in the index, at its purest**, and worth noting how it was found: not
+by reading `StreamProxy`, but by asking of `read`'s output "where does this end up, and who deals
+with it there" — which is the same question the `edit` diff entry above came from, pointed at a
+different pipe. `HtmlExport` is a sixth site and was checked: it keeps every byte.
+
+Regression test: `StreamProxyTest::testAToolResultThatIsNotUtf8StillReachesTheGateway`.
 
 ### Editing a file with one byte that is not UTF-8 in it took the session down
 

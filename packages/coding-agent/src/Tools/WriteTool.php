@@ -18,6 +18,21 @@ use Pig\Async\AbortSignal;
  * Overwrites without asking, which is the behaviour the model is told about: a write is
  * for a new file or for replacing one outright, and anything else should be an edit,
  * which can only change text it has already seen.
+ *
+ * Three deviations from upstream's `write.ts`, found by running both over one corpus:
+ *
+ * - **The byte count is bytes.** Upstream reports `content.length`, which is UTF-16 code
+ *   units, in a sentence that says "bytes" — so writing `你好世界` tells the model it wrote 4
+ *   bytes into a file of 12, and a family emoji comes out as 8 of its 18. This reports what
+ *   `file_put_contents()` actually wrote. Same family as the editor's cursor and `Fuzzy`'s
+ *   walk: a JavaScript `length` is not a byte count, and porting the expression instead of
+ *   the unit is how that stays invisible for as long as the text is ASCII.
+ * - **A path that is a directory is refused by name**, where upstream lets `writeFile` fail
+ *   with whatever Node calls `EISDIR`.
+ * - **One abort check, at the door.** Upstream has three, between its `await`s. Nothing here
+ *   suspends between them — `mkdir` and `file_put_contents` are synchronous, so no other
+ *   fiber can run and no signal can change — which makes a second check a line that cannot
+ *   fire. `EditTool` keeps upstream's mid-way one; it is inert there for the same reason.
  */
 final class WriteTool implements AgentTool
 {

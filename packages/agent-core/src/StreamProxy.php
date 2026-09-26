@@ -151,6 +151,19 @@ final class StreamProxy
      *
      * `reasoning` is the enum's own string, which is what upstream sends: its `reasoning` is the
      * same five words.
+     *
+     * `JSON_INVALID_UTF8_SUBSTITUTE` because a conversation holds whatever the tools read, and
+     * `read` and `bash` hand back a file's own bytes. Without it one latin-1 log made
+     * `json_encode` answer false and this threw — **and then threw on every later turn too**,
+     * because the result stays in the conversation and compacting it away needs a model call
+     * through here. The five other places a conversation is encoded all had an answer to this
+     * already: the four providers sanitise each text block, and `SessionManager` and `RpcMode`
+     * pass this same flag, the latter with the reason written beside it.
+     *
+     * The flag rather than `Utf8::sanitize()` per field, which is the providers' answer: this
+     * encodes the whole request in one call, so a flag cannot miss a field somebody adds later.
+     * The `=== false` guard stays for what the flag does not cover — a recursive structure, or
+     * a float that is not a number.
      */
     private function request(Model $model, Context $context, ?SimpleStreamOptions $options): Request
     {
@@ -162,7 +175,7 @@ final class StreamProxy
                 'maxTokens' => $options?->maxTokens,
                 'reasoning' => $options?->reasoning?->value,
             ],
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
 
         if ($body === false) {
             throw new AgentError('The conversation could not be encoded for the proxy');

@@ -80,6 +80,45 @@ final class ReadToolTest extends ToolTestCase
         $this->assertSame("a\nb", $this->output($this->run($this->read(), ['path' => 'short.txt', 'limit' => 10])));
     }
 
+    /** @return iterable<string, array{0: array<string, mixed>, 1: string}> */
+    public static function badRanges(): iterable
+    {
+        yield 'a negative limit' => [['limit' => -1], '[4 more lines in file. Use offset=1 to continue]'];
+        yield 'a negative offset' => [['offset' => -3], "a\nb\nc\nd"];
+        yield 'a fractional limit' => [['limit' => 1.5], "a\n\n[3 more lines in file. Use offset=2 to continue]"];
+        yield 'a fractional offset' => [['offset' => 2.7], "b\nc\nd"];
+    }
+
+    /**
+     * The schema says `number`, so a model can send a fraction or a minus sign.
+     *
+     * Upstream carries both through: a fraction reaches its own notice as `Use offset=2.5 to
+     * continue`, which is not an offset anything can be called with, and `limit: -1` becomes
+     * `slice(0, -1)` — all but the last line, silently. Clamped and cast to whole here.
+     *
+     * @param array<string, mixed> $range
+     */
+    #[DataProvider('badRanges')]
+    public function testAnOffsetOrLimitThatIsNotAWholeCountIsMadeOne(array $range, string $expected): void
+    {
+        $this->file('short.txt', "a\nb\nc\nd");
+
+        $this->assertSame($expected, $this->output($this->run($this->read(), ['path' => 'short.txt', ...$range])));
+    }
+
+    public function testAFileThatIsNotUtf8IsHandedOverAsItIs(): void
+    {
+        $this->file('binary.log', "header\n\x80stray\nfooter\n");
+
+        // Upstream decodes as UTF-8, so the byte reaches the model as U+FFFD. Sanitising
+        // happens once, at the request boundary, where all four providers already do it —
+        // and the display path has its own guard. Reading is not the place for either.
+        $this->assertSame(
+            "header\n\x80stray\nfooter\n",
+            $this->output($this->run($this->read(), ['path' => 'binary.log'])),
+        );
+    }
+
     public function testAnOffsetPastTheEndIsAnError(): void
     {
         $this->file('short.txt', "a\nb");
