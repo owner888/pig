@@ -8,6 +8,7 @@ use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
+use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
@@ -484,6 +485,50 @@ final class OpenAiCompletionsTest extends TestCase
         $this->send(new Context([new UserMessage('hi')]), $model);
 
         $this->assertFalse(array_key_exists('store', $this->server->receivedJson()));
+    }
+
+    // ---- what Copilot needs on top -----------------------------------------------------------
+
+    public function testCopilotGetsItsHeadersHereToo(): void
+    {
+        // The rule lives in `Copilot` and both providers call it, so this is the sibling of the
+        // same case in `OpenAiResponsesTest` — written down on both sides because having it on one
+        // is how it went missing from the other.
+        $url = $this->serve([['choices' => [['delta' => ['content' => 'ok'], 'finish_reason' => 'stop']]]]);
+
+        Async::run(function () use ($url): void {
+            $model = new Model(
+                'gpt-4.1',
+                'GPT-4.1',
+                Api::OpenAiCompletions,
+                'github-copilot',
+                rtrim($url, '/'),
+                128_000,
+                16_000,
+                false,
+                ['text', 'image'],
+                new Pricing(),
+            );
+
+            // Empty key on purpose — see the responses test: a key sends this to the real Copilot.
+            $stream = (new OpenAiCompletions())->stream(
+                $model,
+                new Context([new UserMessage([new TextContent('look'), new ImageContent('AAA', 'image/png')])]),
+                new OpenAiOptions(apiKey: ''),
+            );
+
+            foreach ($stream as $ignored) {
+                // Drain it.
+            }
+
+            $stream->result()->await();
+        });
+
+        $head = strtolower($this->server->receivedHead());
+
+        $this->assertStringContainsString('x-initiator: user', $head);
+        $this->assertStringContainsString('openai-intent: conversation-edits', $head);
+        $this->assertStringContainsString('copilot-vision-request: true', $head);
     }
 
     // ---- scaffolding ---------------------------------------------------------------------

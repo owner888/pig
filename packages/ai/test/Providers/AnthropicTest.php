@@ -409,6 +409,85 @@ final class AnthropicTest extends TestCase
         $this->assertGreaterThanOrEqual(1, $message->usage->output);
     }
 
+    // ---- a conversation another provider started -------------------------------------------
+
+    public function testAnotherProvidersThinkingGoesBackAsTaggedTextRatherThanAsSignedThinking(): void
+    {
+        // `/model gemini`, then `/model sonnet`. A thought is signed by the model that had it and
+        // the signature means nothing here, so Anthropic rejects the request outright — which is
+        // what `TransformMessages` exists to prevent, and this provider was the one of four that
+        // did not call it.
+        $body = $this->sendAndCapture(new Context([
+            new UserMessage('hi'),
+            $this->fromGoogle([new ThinkingContent('mine', 'GEMINI-SIG'), new TextContent('so')]),
+            new UserMessage('go on'),
+        ]));
+
+        $assistant = $body['messages'][1];
+
+        $this->assertSame('assistant', $assistant['role']);
+        $this->assertSame('text', $assistant['content'][0]['type']);
+        $this->assertStringContainsString('<thinking>', $assistant['content'][0]['text']);
+        $this->assertStringNotContainsString('GEMINI-SIG', (string) json_encode($body));
+    }
+
+    public function testACallLeftWithoutAResultGetsOneInventedForIt(): void
+    {
+        // An interrupted turn leaves this behind, and Anthropic refuses a `tool_use` with no
+        // `tool_result` rather than ignoring it — so the next thing anybody types fails.
+        $body = $this->sendAndCapture(new Context([
+            new UserMessage('hi'),
+            $this->fromAnthropic([new ToolCall('c1', 'read', ['path' => 'a.php'])]),
+            new UserMessage('never mind, do something else'),
+        ]));
+
+        $results = $body['messages'][2]['content'];
+
+        $this->assertSame('tool_result', $results[0]['type']);
+        $this->assertSame('c1', $results[0]['tool_use_id']);
+        $this->assertTrue($results[0]['is_error']);
+        $this->assertStringContainsString('No result provided', (string) json_encode($results[0]['content']));
+    }
+
+    /** @param list<mixed> $content */
+    private function fromGoogle(array $content): AssistantMessage
+    {
+        return new AssistantMessage(
+            $content,
+            Api::GoogleGenerativeAi,
+            'google',
+            'gemini-2.5-pro',
+            new Usage(),
+            StopReason::Stop,
+        );
+    }
+
+    /** @param list<mixed> $content */
+    private function fromAnthropic(array $content): AssistantMessage
+    {
+        return new AssistantMessage(
+            $content,
+            Api::AnthropicMessages,
+            'anthropic',
+            'claude-sonnet-4-5',
+            new Usage(),
+            StopReason::ToolUse,
+        );
+    }
+
+    /** @return array<string, mixed> the request body this provider sent */
+    private function sendAndCapture(Context $context): array
+    {
+        $url = $this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]]);
+
+        Async::run(function () use ($url, $context): void {
+            foreach ($this->anthropic()->stream($this->model($url), $context, $this->options()) as $ignored) {
+            }
+        });
+
+        return $this->server->receivedJson();
+    }
+
     /** @return array{0: list<string>, 1: AssistantMessage} */
     private function collect(string $url, Context $context): array
     {

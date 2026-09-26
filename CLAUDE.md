@@ -3039,6 +3039,60 @@ runner has no tty to open. What is tested is the empty-command guard and that a 
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
 
+### Anthropic was the one provider of four that never cleaned the conversation up
+
+Fifteenth, from the request-building side, and it is the same count as the others: upstream calls
+`transformMessages()` in all four providers; pig called it in three. `Anthropic::messages()` walked
+`$context->messages` raw.
+
+Both things that transform does are **refusals** on this API, not degradations:
+
+- A thought is signed by the model that had it, and the signature means nothing anywhere else.
+  pig's own rule downgraded an *unsigned* thinking block to text, so a Gemini thought — which has a
+  signature, just not one Anthropic can read — went out as a signed `thinking` block and Anthropic
+  rejected the whole request. **`/model gemini` then `/model sonnet` broke the conversation** until
+  it was compacted past.
+- A tool call with no result is what an interrupted turn leaves behind, and Anthropic refuses a
+  `tool_use` with no matching `tool_result`. So the next thing anybody typed failed.
+
+One line, and both tests fail on the old code. Two differences from upstream in `TransformMessages`
+itself, both noted while reading it: pig flushes pending calls at the **end** of the conversation as
+well as before each assistant or user message — upstream only inserts synthetic results when a
+later message arrives, so a conversation that *ends* on a dangling call is still unsendable there —
+and pig treats any non-result message as closing the turn rather than listing the roles.
+
+### The provider that talks to Copilot sent none of Copilot's headers
+
+Sixteenth, and a sharp one: `github-copilot`'s models are **`openai-responses`** in the registry, and
+the three headers Copilot needs — `X-Initiator`, `Openai-Intent`, `Copilot-Vision-Request` — existed
+only in `OpenAiCompletions`. Upstream has the same block in both providers because Copilot serves
+both APIs; pig had it in the one Copilot never uses. So every Copilot turn went out without them:
+an agent follow-up after a tool result was billed and rate-limited as though a person had just typed
+it, and **an image was refused outright**, which is the whole of `/paste`-a-screenshot on Copilot.
+
+**Nothing covered those headers in either provider**, which is how the one that mattered ended up
+empty. They live in `Providers\Copilot` now — one implementation, two call sites, a test on each
+side — for the reason this audit keeps arriving at. The call goes *after* `$model->headers` in both,
+which is upstream's order: a registry entry must not be able to turn off the headers that make the
+request acceptable at all.
+
+Testing them needs one trick worth knowing: with a non-empty key, `endpoint()` asks
+`GithubCopilot::baseUrl()` where to go and the request leaves for the real Copilot API, so a canned
+server never sees it. The tests pass an empty key, which is the branch that keeps the model's own
+base URL.
+
+Two deviations in the request bodies that are **deliberate** and now written down:
+
+- **Gemini's public endpoint gets an explicit `thinkingBudget: 0`** when nothing asked for
+  thinking, where upstream sends no `thinkingConfig` at all. Saying nothing to Gemini is not saying
+  no — it thinks by default — so upstream's "off" is really "Gemini decides". pig says no. (The
+  Code Assist endpoint is the opposite way round: it rejects a `thinkingConfig` on a model that
+  cannot think, and reads its absence as none, so that one sends nothing.)
+- **The `# Juice: 0 !important` hack for gpt-5** keys off `$model->id` where upstream reads
+  `model.name`. Upstream's registry names are `GPT-5.2` and the like, so `startsWith("gpt-5")` on
+  the name is false and their own workaround never fires; pig's check is the one their comment
+  describes.
+
 ### Every Anthropic turn's input count was wiped out by its own last event
 
 Eleventh find, from reading the four providers' stream events. `message_delta` is the event that

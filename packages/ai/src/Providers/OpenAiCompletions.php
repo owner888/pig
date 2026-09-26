@@ -374,8 +374,10 @@ final class OpenAiCompletions
             'accept' => 'text/event-stream',
             'content-type' => 'application/json',
             'authorization' => 'Bearer ' . ($options?->apiKey ?? ''),
-            ...$this->copilotHeaders($model, $context),
             ...$model->headers,
+            // After the model's own, which is upstream's order: a registry entry cannot turn off
+            // the headers Copilot needs to accept the request at all.
+            ...Copilot::headers($model, $context),
         ];
 
         return new Request(
@@ -384,40 +386,6 @@ final class OpenAiCompletions
             $headers,
             $this->encode($this->body($model, $context, $options)),
         );
-    }
-
-    /**
-     * Copilot wants to know who asked.
-     *
-     * It bills and rate-limits a follow-up after a tool differently from something a
-     * person typed, and it refuses images unless told to expect them.
-     *
-     * @return array<string, string>
-     */
-    private function copilotHeaders(Model $model, Context $context): array
-    {
-        if ($model->provider !== 'github-copilot') {
-            return [];
-        }
-
-        $last = $context->messages[count($context->messages) - 1] ?? null;
-
-        $headers = [
-            'X-Initiator' => $last !== null && !$last instanceof UserMessage ? 'agent' : 'user',
-            'Openai-Intent' => 'conversation-edits',
-        ];
-
-        foreach ($context->messages as $message) {
-            foreach ($message->content as $block) {
-                if ($block instanceof ImageContent) {
-                    $headers['Copilot-Vision-Request'] = 'true';
-
-                    return $headers;
-                }
-            }
-        }
-
-        return $headers;
     }
 
     /** @param array<string, mixed> $body */

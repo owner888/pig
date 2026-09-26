@@ -421,6 +421,9 @@ final class OpenAiResponses
             'content-type' => 'application/json',
             'authorization' => 'Bearer ' . ($options?->apiKey ?? ''),
             ...$model->headers,
+            // Copilot's models speak this API, not completions, so this is the provider that has to
+            // send them — and it was the one that did not. See `Copilot`.
+            ...Copilot::headers($model, $context),
         ];
 
         return new Request(

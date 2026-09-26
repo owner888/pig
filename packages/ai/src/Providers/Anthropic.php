@@ -407,11 +407,23 @@ final class Anthropic
         ];
     }
 
-    /** @return list<array<string, mixed>> */
+    /**
+     * The conversation, as Anthropic wants it.
+     *
+     * **Through `TransformMessages` first**, which the other three providers all did and this one
+     * did not. Two things it fixes here, and both are refusals rather than degradations: a thought
+     * another model had is signed by that model, and sending it on as a signed `thinking` block
+     * makes Anthropic reject the whole request — so `/model gemini` followed by `/model sonnet`
+     * broke the conversation. And a tool call left without a result, which is what an interrupted
+     * turn leaves behind, is refused outright rather than ignored, so the next thing anybody typed
+     * failed until the conversation was compacted past it.
+     *
+     * @return list<array<string, mixed>>
+     */
     private function messages(Context $context, Model $model): array
     {
         $out = [];
-        $messages = $context->messages;
+        $messages = TransformMessages::apply($context->messages, $model);
         $count = count($messages);
 
         for ($i = 0; $i < $count; $i++) {

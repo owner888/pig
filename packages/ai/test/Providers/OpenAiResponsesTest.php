@@ -490,6 +490,77 @@ final class OpenAiResponsesTest extends TestCase
         });
     }
 
+    // ---- what Copilot needs on top -----------------------------------------------------------
+
+    public function testCopilotIsToldWhoAskedAndThatAnImageIsComing(): void
+    {
+        // Copilot's models speak *this* API, and these three headers lived in the completions
+        // provider only — so the one that actually talks to Copilot sent none of them: every
+        // follow-up after a tool was billed as though a person had typed it, and an image was
+        // refused outright.
+        $this->sendAsCopilot(new Context([
+            new UserMessage([new TextContent('look at this'), new ImageContent('AAA', 'image/png')]),
+            $this->assistant([new ToolCall('c1', 'read', ['path' => 'a.php'])]),
+            new ToolResultMessage('c1', 'read', [new TextContent('ok')], false),
+        ]));
+
+        $head = strtolower($this->server->receivedHead());
+
+        $this->assertStringContainsString('x-initiator: agent', $head, 'a tool result is the agent carrying on');
+        $this->assertStringContainsString('openai-intent: conversation-edits', $head);
+        $this->assertStringContainsString('copilot-vision-request: true', $head);
+    }
+
+    public function testATurnSomebodyTypedIsNotAnAgentCall(): void
+    {
+        $this->sendAsCopilot(new Context([new UserMessage('hello')]));
+
+        $head = strtolower($this->server->receivedHead());
+
+        $this->assertStringContainsString('x-initiator: user', $head);
+        $this->assertStringNotContainsString('copilot-vision-request', $head, 'and no image, no header');
+    }
+
+    public function testAnOrdinaryOpenAiModelGetsNoneOfThem(): void
+    {
+        $this->send(new Context([new UserMessage('hello')]));
+
+        $head = strtolower($this->server->receivedHead());
+
+        $this->assertStringNotContainsString('x-initiator', $head);
+        $this->assertStringNotContainsString('openai-intent', $head);
+    }
+
+    private function sendAsCopilot(Context $context): void
+    {
+        $url = $this->serve([['type' => 'response.completed', 'response' => ['status' => 'completed']]]);
+
+        Async::run(function () use ($url, $context): void {
+            $model = new Model(
+                'gpt-5.2',
+                'GPT-5.2',
+                Api::OpenAiResponses,
+                'github-copilot',
+                rtrim($url, '/'),
+                200_000,
+                64_000,
+                true,
+                ['text', 'image'],
+                new Pricing(),
+            );
+
+            // An empty key on purpose: with one, `endpoint()` asks `GithubCopilot::baseUrl()` where
+            // to go and the request leaves for the real Copilot API instead of the canned server.
+            $stream = (new OpenAiResponses())->stream($model, $context, new OpenAiOptions(apiKey: ''));
+
+            foreach ($stream as $ignored) {
+                // Drain it; what is under test is what went out.
+            }
+
+            $stream->result()->await();
+        });
+    }
+
     private function send(Context $context, ?Model $model = null, ?ReasoningEffort $reasoning = null): void
     {
         $url = $this->serve([['type' => 'response.completed', 'response' => ['status' => 'completed']]]);
