@@ -122,52 +122,71 @@ final class ReadTool implements AgentTool
         $limit = isset($arguments['limit']) ? max(0, (int) $arguments['limit']) : null;
         $selected = $limit === null ? array_slice($lines, $start) : array_slice($lines, $start, $limit);
         $truncation = Truncate::head(implode("\n", $selected));
+        $notice = $this->notice($truncation, $lines, $path, $offset, $limit);
+
+        // The notice goes in the text *and* in the details, because it has two readers: the
+        // model reads the text, and the transcript's collapsed view keeps the front of the
+        // output — where this line, which sits at the end, is never on screen.
+        $text = $notice === null
+            ? $truncation->content
+            : ($truncation->content === '' ? "[{$notice}]" : $truncation->content . "\n\n[{$notice}]");
+
+        // `truncation` only when something was actually cut, which is upstream's shape: a read
+        // that fitted has no details there either. `notice` is pig's own key, and it is set in
+        // one case upstream leaves empty — a `limit` that stopped short of the end of the file,
+        // where the model is told and the transcript should be too.
+        $details = array_filter(
+            [
+                'truncation' => $truncation->truncated ? $truncation : null,
+                'notice' => $notice,
+            ],
+            static fn (mixed $value): bool => $value !== null,
+        );
 
         return new AgentToolResult(
-            [new TextContent($this->render($truncation, $lines, $path, $offset, $limit))],
-            $truncation,
+            [new TextContent($text)],
+            $details === [] ? null : $details,
         );
     }
 
     /**
-     * The text, plus a line saying what was left out and how to get it.
+     * What was left out and how to get it, or null when nothing was.
      *
      * "Showing lines 1-2000 of 8431, use offset=2001" is a next step; "output truncated"
      * is a dead end that costs another turn to get past.
      *
      * @param list<string> $lines
      */
-    private function render(Truncation $truncation, array $lines, string $path, int $offset, ?int $limit): string
+    private function notice(Truncation $truncation, array $lines, string $path, int $offset, ?int $limit): ?string
     {
         $total = count($lines);
         $start = $offset - 1;
 
-        if ($truncation->firstTooBig) {
+        if ($truncation->firstLineExceedsLimit) {
             // One line longer than the whole budget. There is nothing useful to send, so
             // send the command that gets a piece of it instead.
             $size = Truncate::size(strlen($lines[$start]));
             $cap = Truncate::MAX_BYTES;
 
-            return "[Line {$offset} is {$size}, over the " . Truncate::size($cap) . ' limit. '
-                . "Use bash: sed -n '{$offset}p' {$path} | head -c {$cap}]";
+            return "Line {$offset} is {$size}, over the " . Truncate::size($cap) . ' limit. '
+                . "Use bash: sed -n '{$offset}p' {$path} | head -c {$cap}";
         }
 
         if ($truncation->truncated) {
             $last = $offset + $truncation->outputLines - 1;
             $next = $last + 1;
-            $why = $truncation->by === 'lines' ? '' : ' (' . Truncate::size(Truncate::MAX_BYTES) . ' limit)';
+            $why = $truncation->truncatedBy === 'lines' ? '' : ' (' . Truncate::size(Truncate::MAX_BYTES) . ' limit)';
 
-            return $truncation->content
-                . "\n\n[Showing lines {$offset}-{$last} of {$total}{$why}. Use offset={$next} to continue]";
+            return "Showing lines {$offset}-{$last} of {$total}{$why}. Use offset={$next} to continue";
         }
 
         if ($limit !== null && $start + $limit < $total) {
             $remaining = $total - ($start + $limit);
             $next = $start + $limit + 1;
 
-            return $truncation->content . "\n\n[{$remaining} more lines in file. Use offset={$next} to continue]";
+            return "{$remaining} more lines in file. Use offset={$next} to continue";
         }
 
-        return $truncation->content;
+        return null;
     }
 }

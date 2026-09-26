@@ -124,14 +124,51 @@ final class ReadToolTest extends ToolTestCase
         $this->assertStringContainsString("sed -n '1p' minified.js", $output);
     }
 
-    public function testTruncationDetailsGoToTheUiNotTheModel(): void
+    public function testTruncationDetailsGoToTheUiAsWellAsTheModel(): void
     {
         $this->file('big.txt', implode("\n", array_fill(0, Truncate::MAX_LINES + 10, 'x')));
 
         $result = $this->run($this->read(), ['path' => 'big.txt']);
 
-        $this->assertTrue($result->details?->truncated);
-        $this->assertSame('lines', $result->details?->by);
+        $this->assertTrue($result->details['truncation']->truncated);
+        $this->assertSame('lines', $result->details['truncation']->truncatedBy);
+
+        // The same sentence the output ends with, handed over as data. The transcript's
+        // collapsed view keeps the front of the output, so the copy in the text is the one
+        // the person never sees.
+        $this->assertSame(
+            'Showing lines 1-2000 of 2010. Use offset=2001 to continue',
+            $result->details['notice'],
+        );
+        $this->assertStringEndsWith(
+            "[{$result->details['notice']}]",
+            $this->output($result),
+        );
+    }
+
+    public function testAFileThatFitsHasNoDetailsAtAll(): void
+    {
+        $this->file('small.txt', "one\ntwo\n");
+
+        $result = $this->run($this->read(), ['path' => 'small.txt']);
+
+        // Upstream's shape: a read that fitted says nothing about truncation rather than
+        // recording that none happened.
+        $this->assertNull($result->details);
+        $this->assertStringNotContainsString('[', $this->output($result));
+    }
+
+    public function testALimitThatStopsShortIsRecordedForTheTranscript(): void
+    {
+        $this->file('hundred.txt', implode("\n", array_fill(0, 100, 'x')));
+
+        $result = $this->run($this->read(), ['path' => 'hundred.txt', 'limit' => 5]);
+
+        // Nothing was *truncated* — the model asked for five lines and got five — so there is
+        // no truncation record, which is upstream's shape. The notice is pig's: the collapsed
+        // tool view keeps the front of the output and this line sits at the end of it.
+        $this->assertArrayNotHasKey('truncation', $result->details);
+        $this->assertSame('95 more lines in file. Use offset=6 to continue', $result->details['notice']);
     }
 
     public function testAnImageComesBackAsSomethingTheModelCanLookAt(): void

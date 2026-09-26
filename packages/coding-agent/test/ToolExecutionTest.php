@@ -224,6 +224,67 @@ final class ToolExecutionTest extends TestCase
         $this->assertStringNotContainsString('more lines', $text);
     }
 
+    public function testWhatTheToolCutIsSaidWhereCollapsingCannotHideIt(): void
+    {
+        // The tool puts its notice at the *end* of the output, for the model to read last —
+        // and the collapsed view keeps the *front* of it, so that one line is exactly the
+        // line that gets cut. Upstream says it twice for this reason: once in the text for
+        // the model, once in the component for the person.
+        $listing = implode("\n", array_map(static fn (int $i): string => "f{$i}.php", range(1, 30)));
+        $notice = '200 entry limit reached. Use limit=400 for more';
+
+        $tool = $this->tool('ls', ['path' => '.']);
+        $tool->updateResult(new AgentToolResult(
+            [new TextContent($listing . "\n\n[{$notice}]")],
+            ['notice' => $notice],
+        ));
+
+        $text = $this->text($tool);
+
+        $this->assertStringContainsString('... (12 more lines)', $text);
+        $this->assertStringContainsString("[{$notice}]", $text);
+    }
+
+    public function testItIsNotSaidTwiceWhenTheWholeOutputIsOnScreen(): void
+    {
+        // Expanded, the output's own notice is right there — a second copy of the same
+        // sentence under it reads as a rendering fault rather than as a warning.
+        $notice = '200 entry limit reached. Use limit=400 for more';
+
+        $tool = $this->tool('ls', ['path' => '.']);
+        $tool->updateResult(new AgentToolResult(
+            [new TextContent("f1.php\nf2.php\n\n[{$notice}]")],
+            ['notice' => $notice],
+        ));
+
+        $this->assertSame(1, substr_count($this->text($tool), $notice));
+
+        $tool->setExpanded(true);
+
+        $this->assertSame(1, substr_count($this->text($tool), $notice));
+    }
+
+    public function testATruncatedReadSaysSoUnderThePreview(): void
+    {
+        $notice = 'Showing lines 1-2000 of 8431. Use offset=2001 to continue';
+
+        $tool = $this->tool('read', ['path' => '/tmp/big.txt']);
+        $tool->updateResult(new AgentToolResult(
+            [new TextContent(implode("\n", array_fill(0, 40, 'x')) . "\n\n[{$notice}]")],
+            ['notice' => $notice],
+        ));
+
+        $this->assertStringContainsString("[{$notice}]", $this->text($tool));
+    }
+
+    public function testAToolThatCutNothingAddsNoLine(): void
+    {
+        $tool = $this->tool('ls', ['path' => '.']);
+        $tool->updateResult($this->said(implode("\n", array_map(static fn (int $i): string => "f{$i}.php", range(1, 30)))));
+
+        $this->assertStringNotContainsString('[', $this->text($tool));
+    }
+
     public function testEscapesInAToolsOutputAreStripped(): void
     {
         // A command that prints its own colours would otherwise paint over the box —

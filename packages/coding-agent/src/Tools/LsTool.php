@@ -118,8 +118,25 @@ final class LsTool implements AgentTool
             $notices[] = Truncate::size(Truncate::MAX_BYTES) . ' limit reached';
         }
 
-        $output = $truncation->content . ($notices === [] ? '' : "\n\n[" . implode('. ', $notices) . ']');
+        $notice = $notices === [] ? null : implode('. ', $notices);
 
-        return new AgentToolResult([new TextContent($output)], $notices === [] ? null : $truncation);
+        // In the text for the model, and in the details for the transcript: the collapsed view
+        // keeps the front of the output, and this line sits at the end of it.
+        $output = $notice === null ? $truncation->content : $truncation->content . "\n\n[{$notice}]";
+
+        // Upstream's keys, because `details` ends up in the session file and that file is pi's:
+        // `entryLimitReached` is the limit that was hit, which is what pi's own tool view reads.
+        // `notice` is pig's and has no counterpart there — see CLAUDE.md.
+        return new AgentToolResult(
+            [new TextContent($output)],
+            $notice === null ? null : array_filter(
+                [
+                    'entryLimitReached' => $hitLimit ? $limit : null,
+                    'truncation' => $truncation,
+                    'notice' => $notice,
+                ],
+                static fn (mixed $value): bool => $value !== null,
+            ),
+        );
     }
 }

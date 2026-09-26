@@ -410,8 +410,8 @@ thinking and the message is what was actually said, and only one of those is a f
 object and `JSON.stringify` is the whole persistence layer. PHP objects do not survive
 that, so the shapes are written out by hand — which is the one place that has to change
 when a message type gains a field. A tool's `details` is `mixed`, so it is flattened to
-arrays on the way out; the only thing anything reads back out of it is `edit`'s diff,
-which is strings and integers and survives exactly.
+arrays on the way out; the only things anything reads back out of it are `edit`'s diff and a
+truncation `notice`, which are strings and integers and survive exactly.
 
 A resumed conversation is **redrawn from its messages**, not from anything saved about the
 screen — `InteractiveMode::replay()`. A transcript is a view of the conversation, and
@@ -530,23 +530,67 @@ difference has a reason worth keeping — a `!` command is the thing the person 
 is looking at, where a model's is one step inside something else. pig reuses one component for
 both, so the number is a constructor argument rather than a second class.
 
-**Open, and needs a decision before it is touched: the truncation notice only the model reads.**
-Every tool that cuts its own output appends a line saying so — `[Showing lines 1-2000 of 8431
-(256KB limit). Use offset=2001 to continue]` and its siblings — and that line is *the last line of
-the output*. `ToolExecutionComponent` keeps the **first** ten, twenty or fifteen lines when the
-view is collapsed, so for `read`, `ls`, `find` and `grep` the one line saying "this is not all of
-it" is exactly the line that gets cut. `bash` is fine by accident: its preview keeps the tail,
-which is where its notice already is. Upstream says it twice on purpose — once in the text for the
-model, once in the component for the person, `[Truncated: showing 2000 of 8431 lines]` after the
-preview — and the second copy is the one collapsing cannot hide.
+**A truncation notice has two readers, so it is said twice.** Every tool that cuts its own output
+ends the text with a line saying so — `[Showing lines 1-2000 of 8431. Use offset=2001 to
+continue]` and its siblings — and *the last line of the output is exactly the line a collapsed
+tool view cuts*, because the preview keeps the first ten, twenty or fifteen. So for a while
+`read`, `ls`, `find` and `grep` told the model what was left out and told the person nothing;
+`bash` was fine by accident, since its preview keeps the tail, which is where its notice already
+is. Upstream has the same two copies for the same reason: one in the text, one in the component,
+where collapsing cannot reach it.
 
-Not fixed here, because every version of the fix is worse than it looks. A second sentence built
-from `details` stutters when the view is expanded, and cannot say what `ls`, `find` and `grep`
-actually cut, since their entry, result and match limits are in the notice text and not in
-`Truncation`. Keeping the output's last line when it looks like a notice guesses: a `read` of a
-file whose last line is `[section]` would be given a notice it does not have. The honest fix is
-for the tool to hand its notice over **as data** beside the text, which is four tools and a field
-on the result — the developer decides that, not the audit.
+**The tool builds the sentence; the result carries it.** The notice goes in `details` under
+`notice`, as the same string the text ends with, without its brackets. The alternative, upstream's,
+is for the component to build a second sentence out of structured fields — a second wording of one
+fact, which then has to be kept in step with the first. Guessing from the text was the other
+candidate and it guesses wrong: a `read` of a file whose last line is `[section]` would be handed a
+notice it does not have.
+
+### A tool result's `details` is pi's shape, under pi's names
+
+`details` is written into the session file, and the session file is pi's — so a name pig invented
+here is a field pi cannot read. It cost nothing pig could see and everything pi could: a
+conversation pig had written opened in pi with its truncation records unreadable, so pi drew no
+truncation warning on any of them. The keys are now upstream's exactly, `notice` aside:
+
+| Tool | `details` |
+|---|---|
+| `read` | `truncation` (only when something was cut) |
+| `bash` | `truncation`, `fullOutputPath` |
+| `ls` | `entryLimitReached`, `truncation` |
+| `find` | `resultLimitReached`, `truncation` |
+| `grep` | `matchLimitReached`, `truncation`, `linesTruncated` |
+
+A key whose value would be null is left out rather than written as null, which is upstream's shape
+too — its details start empty and it only assigns the ones that apply, and `read` has no `details`
+at all when the file fitted.
+
+**`notice` is the one key upstream does not have**, and it is set in one case upstream leaves
+empty: a `limit` that stopped short of the end of the file, where nothing was *truncated* — the
+model asked for five lines and got five — but there is more file and both readers should know.
+
+Renames, kept because they are what a `grep` for the old name should find:
+
+| pig had | pi's name, now pig's |
+|---|---|
+| `Truncation::$by` | `$truncatedBy` |
+| `Truncation::$lastPartial` | `$lastLinePartial` |
+| `Truncation::$firstTooBig` | `$firstLineExceedsLimit` |
+| `details['fullOutput']` (bash) | `details['fullOutputPath']` |
+
+`Truncation` also gained `maxLines` and `maxBytes`, which upstream records and pig had left to its
+constants. They are per call and not constant: `ls`, `find` and `grep` pass `PHP_INT_MAX` for the
+line limit, because the entry, result and match limits above them already cap how many there are.
+
+One deviation from upstream, and it follows from showing the tool's own sentence rather than a
+second one: the component prints the notice **only while the preview is cut**. Upstream prints its
+warning either way, which it can afford because its two sentences are worded differently. Two
+identical lines under each other read as a rendering fault, and an expanded view already has the
+tool's own copy on screen.
+
+`bash` carries `notice` too, though nothing reads it there. A shape that holds for four tools and
+not the fifth is the next person's puzzle, and the reason it is unread — that one preview keeps the
+tail — is a fact about that tool, not about what a result is allowed to say.
 
 `Components\Rule` is upstream's `DynamicBorder`, renamed: "dynamic" there means "asks the width
 at render time", which is what every component in `pig/tui` does — there is no static kind for it

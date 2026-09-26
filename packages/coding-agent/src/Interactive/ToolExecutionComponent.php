@@ -548,9 +548,31 @@ final class ToolExecutionComponent extends Container
         }
 
         $rest = count($lines) - $keep;
+        $notice = $this->notice();
 
         return implode("\n", array_slice($lines, 0, $keep))
-            . $this->palette->fg('toolOutput', "\n... ({$rest} more lines)");
+            . $this->palette->fg('toolOutput', "\n... ({$rest} more lines)")
+            . ($notice === null ? '' : "\n" . $this->palette->fg('warning', "[{$notice}]"));
+    }
+
+    /**
+     * What the tool says it left out, or null.
+     *
+     * **Said twice on purpose, and this is the copy for the person.** A tool that cuts its own
+     * output puts the notice at the end of the text, where the model reads it last — and the
+     * collapsed view keeps the front, so that one line is exactly the line that goes. Upstream
+     * has the same two copies for the same reason.
+     *
+     * Only while the view is cut, which is where upstream and pig part: upstream prints its
+     * warning either way, and since pig shows the tool's own sentence rather than a second
+     * wording of it, an expanded view would carry the same line twice and read as a fault.
+     */
+    private function notice(): ?string
+    {
+        $details = $this->result?->details;
+        $notice = is_array($details) ? ($details['notice'] ?? null) : null;
+
+        return is_string($notice) && $notice !== '' ? $notice : null;
     }
 
     /**

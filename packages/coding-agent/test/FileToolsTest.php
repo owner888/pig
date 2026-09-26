@@ -107,10 +107,19 @@ final class FileToolsTest extends ToolTestCase
             $this->file("file{$index}.txt");
         }
 
-        $output = $this->output($this->run(new LsTool($this->cwd), ['limit' => 3]));
+        $result = $this->run(new LsTool($this->cwd), ['limit' => 3]);
+        $output = $this->output($result);
 
         $this->assertStringContainsString('[3 entry limit reached. Use limit=6 for more]', $output);
         $this->assertCount(3, explode("\n", explode("\n\n", $output)[0]));
+
+        // And again as data, for the transcript: the notice is the last line of the output and
+        // a collapsed tool view keeps the first twenty.
+        $this->assertSame('3 entry limit reached. Use limit=6 for more', $result->details['notice']);
+
+        // Under upstream's key, because `details` goes into pi's session file and pi's own tool
+        // view reads this one to draw its warning.
+        $this->assertSame(3, $result->details['entryLimitReached']);
     }
 
     public function testTruncationLimitsAreWhatTheToolsAdvertise(): void

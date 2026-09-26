@@ -90,9 +90,10 @@ final class BashTool implements AgentTool
 
         $truncation = Truncate::tail($output);
         $text = $truncation->content === '' ? '(no output)' : $truncation->content;
+        $notice = $truncation->truncated ? self::notice($truncation, $output, $run->spillPath) : null;
 
-        if ($truncation->truncated) {
-            $text .= "\n\n[" . self::notice($truncation, $output, $run->spillPath) . ']';
+        if ($notice !== null) {
+            $text .= "\n\n[{$notice}]";
         }
 
         if ($exit !== 0) {
@@ -101,9 +102,20 @@ final class BashTool implements AgentTool
             throw new AgentError($text . "\n\nCommand exited with code {$exit}");
         }
 
+        // `notice` is beside the other two so every tool that cuts its own output carries the
+        // same three keys. The transcript does not need it here — a command's preview keeps the
+        // *tail*, which is where this line already is — and a shape that holds for four tools
+        // and not the fifth is the next person's puzzle.
         return new AgentToolResult(
             [new TextContent($text)],
-            $truncation->truncated ? ['truncation' => $truncation, 'fullOutput' => $run->spillPath] : null,
+            $notice === null ? null : array_filter(
+                [
+                    'truncation' => $truncation,
+                    'fullOutputPath' => $run->spillPath,
+                    'notice' => $notice,
+                ],
+                static fn (mixed $value): bool => $value !== null,
+            ),
         );
     }
 
@@ -119,7 +131,7 @@ final class BashTool implements AgentTool
         $last = $truncation->totalLines;
         $where = $spillPath === null ? '' : ". Full output: {$spillPath}";
 
-        if ($truncation->lastPartial) {
+        if ($truncation->lastLinePartial) {
             // One line longer than the whole budget — a progress bar with no newlines,
             // usually. There are no line numbers worth quoting.
             $lines = explode("\n", $output);
@@ -129,7 +141,7 @@ final class BashTool implements AgentTool
                 . " of line {$last}, which is {$size}{$where}";
         }
 
-        $limit = $truncation->by === 'lines' ? '' : ' (' . Truncate::size(Truncate::MAX_BYTES) . ' limit)';
+        $limit = $truncation->truncatedBy === 'lines' ? '' : ' (' . Truncate::size(Truncate::MAX_BYTES) . ' limit)';
 
         return "Showing lines {$first}-{$last} of {$truncation->totalLines}{$limit}{$where}";
     }

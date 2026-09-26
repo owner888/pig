@@ -239,9 +239,14 @@ final class BashToolTest extends ToolTestCase
         $result = $this->bash(['command' => "seq 1 {$total}"]);
 
         $this->assertTrue($result->details['truncation']->truncated);
-        $this->assertSame('lines', $result->details['truncation']->by);
-        $this->assertFileExists($result->details['fullOutput']);
-        unlink($result->details['fullOutput']);
+        $this->assertSame('lines', $result->details['truncation']->truncatedBy);
+        $this->assertFileExists($result->details['fullOutputPath']);
+
+        // The same three keys every tool that cuts its own output carries. This one is not
+        // read by the transcript — a command's preview keeps the tail, where the notice
+        // already is — but a shape that holds for four tools and not the fifth is a puzzle.
+        $this->assertStringStartsWith('Showing lines 102-2101 of 2101', $result->details['notice']);
+        unlink($result->details['fullOutputPath']);
     }
 
     public function testAnAlreadyAbortedSignalStopsBeforeAnythingRuns(): void

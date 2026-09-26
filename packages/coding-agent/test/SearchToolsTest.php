@@ -233,9 +233,15 @@ final class SearchToolsTest extends ToolTestCase
             $this->file("f{$index}.php");
         }
 
-        $output = $this->output($this->run(new FindTool($this->cwd), ['pattern' => '*.php', 'limit' => 4]));
+        $result = $this->run(new FindTool($this->cwd), ['pattern' => '*.php', 'limit' => 4]);
 
-        $this->assertStringContainsString('[4 result limit reached. Use limit=8 for more', $output);
+        $this->assertStringContainsString('[4 result limit reached. Use limit=8 for more', $this->output($result));
+
+        // And as data, for the collapsed tool view, which keeps the front of the output and
+        // never shows the line at the end of it. `resultLimitReached` is upstream's key, which
+        // pi reads out of the session file pig wrote.
+        $this->assertStringStartsWith('4 result limit reached', $result->details['notice']);
+        $this->assertSame(4, $result->details['resultLimitReached']);
     }
 
     public function testFindOnAMissingDirectoryIsAnError(): void
@@ -381,10 +387,13 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsRipgrep();
         $this->file('a.txt', str_repeat("needle\n", 500));
 
-        $output = $this->output($this->run(new GrepTool($this->cwd), ['pattern' => 'needle', 'limit' => 5]));
+        $result = $this->run(new GrepTool($this->cwd), ['pattern' => 'needle', 'limit' => 5]);
+        $output = $this->output($result);
 
         $this->assertCount(5, $this->lines($output));
         $this->assertStringContainsString('[5 match limit reached. Use limit=10 for more', $output);
+        $this->assertStringStartsWith('5 match limit reached', $result->details['notice']);
+        $this->assertSame(5, $result->details['matchLimitReached']);
     }
 
     public function testALongLineIsShortenedAndTheModelIsTold(): void
@@ -392,11 +401,15 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsRipgrep();
         $this->file('bundle.js', 'x' . str_repeat('y', 2000) . "needle\n");
 
-        $output = $this->output($this->run(new GrepTool($this->cwd), ['pattern' => 'needle']));
+        $result = $this->run(new GrepTool($this->cwd), ['pattern' => 'needle']);
+        $output = $this->output($result);
 
         $chars = Truncate::MAX_MATCH_CHARS;
         $this->assertStringContainsString('... [truncated]', $output);
         $this->assertStringContainsString("Some lines shortened to {$chars} characters", $output);
+
+        // Upstream's key for the same fact, since `details` is written to pi's session file.
+        $this->assertTrue($result->details['linesTruncated']);
     }
 
     public function testSearchingOneFileNamesItWithoutAPath(): void

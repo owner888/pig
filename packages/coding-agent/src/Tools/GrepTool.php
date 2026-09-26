@@ -154,9 +154,25 @@ final class GrepTool implements AgentTool
             $notices[] = "Some lines shortened to {$chars} characters. Use read to see them in full";
         }
 
-        $output = $truncation->content . ($notices === [] ? '' : "\n\n[" . implode('. ', $notices) . ']');
+        $notice = $notices === [] ? null : implode('. ', $notices);
 
-        return new AgentToolResult([new TextContent($output)], $notices === [] ? null : $truncation);
+        // In the text for the model, and in the details for the transcript: the collapsed view
+        // keeps the front of the output, and this line sits at the end of it.
+        $output = $notice === null ? $truncation->content : $truncation->content . "\n\n[{$notice}]";
+
+        // Upstream's keys — `details` is written to pi's session file. `notice` is pig's own.
+        return new AgentToolResult(
+            [new TextContent($output)],
+            $notice === null ? null : array_filter(
+                [
+                    'matchLimitReached' => $matches >= $limit ? $limit : null,
+                    'truncation' => $truncation,
+                    'linesTruncated' => $shortened ? true : null,
+                    'notice' => $notice,
+                ],
+                static fn (mixed $value): bool => $value !== null,
+            ),
+        );
     }
 
     /**

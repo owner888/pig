@@ -17,7 +17,7 @@ namespace Pig\CodingAgent\Tools;
 final class Truncate
 {
     public const int MAX_LINES = 2000;
-    public const int MAX_BYTES = 50 * 1024; // 50KB
+    public const int MAX_BYTES = 50 * 1024;
 
     /** Widest a single grep match is shown before it is cut. */
     public const int MAX_MATCH_CHARS = 500;
@@ -34,13 +34,34 @@ final class Truncate
         $totalBytes = strlen($content);
 
         if ($totalLines <= $maxLines && $totalBytes <= $maxBytes) {
-            return new Truncation($content, false, null, $totalLines, $totalBytes, $totalLines, $totalBytes);
+            return new Truncation(
+                $content,
+                false,
+                null,
+                $totalLines,
+                $totalBytes,
+                $totalLines,
+                $totalBytes,
+                $maxLines,
+                $maxBytes,
+            );
         }
 
         // Nothing whole fits. Saying so is more use than half a line, because the model
         // can act on it — the read tool turns this into "use bash and head -c".
         if (strlen($lines[0]) > $maxBytes) {
-            return new Truncation('', true, 'bytes', $totalLines, $totalBytes, 0, 0, firstTooBig: true);
+            return new Truncation(
+                '',
+                true,
+                'bytes',
+                $totalLines,
+                $totalBytes,
+                0,
+                0,
+                $maxLines,
+                $maxBytes,
+                firstLineExceedsLimit: true,
+            );
         }
 
         $kept = [];
@@ -81,7 +102,17 @@ final class Truncate
         $totalBytes = strlen($content);
 
         if ($totalLines <= $maxLines && $totalBytes <= $maxBytes) {
-            return new Truncation($content, false, null, $totalLines, $totalBytes, $totalLines, $totalBytes);
+            return new Truncation(
+                $content,
+                false,
+                null,
+                $totalLines,
+                $totalBytes,
+                $totalLines,
+                $totalBytes,
+                $maxLines,
+                $maxBytes,
+            );
         }
 
         $kept = [];
@@ -169,7 +200,9 @@ final class Truncate
             $totalBytes,
             count($kept),
             $bytes,
-            lastPartial: $partial,
+            $maxLines,
+            $maxBytes,
+            lastLinePartial: $partial,
         );
     }
 
