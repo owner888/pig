@@ -522,4 +522,52 @@ final class EditorTest extends TestCase
 
         $this->assertSame([3, 5], $editor->caret(40));
     }
+
+    public function testUpFromALongerLineLandsOnACharacterAndNotInsideOne(): void
+    {
+        // 你 is three bytes and `ab` is two characters, so carrying that 2 across as a byte
+        // offset lands between 你's first and second byte.
+        $this->editor->setText("你\nab");
+        $this->type("\x05", "\x1b[A");
+
+        $column = $this->editor->cursor()['col'];
+
+        $this->assertSame(0, $this->editor->cursor()['line']);
+        $this->assertTrue(
+            mb_check_encoding(substr($this->editor->lines()[0], 0, $column), 'UTF-8'),
+            'the cursor is inside a character rather than on the boundary of one',
+        );
+    }
+
+    public function testACursorMovedUpOntoAWideCharacterCanStillBeDrawn(): void
+    {
+        $this->editor->setText("你\nab");
+        $this->type("\x05", "\x1b[A");
+
+        // render() runs inside the loop's own input callback, so a throw here is the session.
+        $this->assertSame(str_repeat('─', 20), Ansi::strip($this->editor->render(20)[0]));
+    }
+
+    public function testTypingAfterMovingUpDoesNotSplitTheCharacterUnderTheCursor(): void
+    {
+        $this->editor->setText("wide 你好世界 mix\nsecond");
+        $this->type("\x05", "\x1b[A", 'Z');
+
+        $this->assertTrue(mb_check_encoding($this->editor->text(), 'UTF-8'), 'the buffer is no longer UTF-8');
+        $this->assertStringContainsString('你', $this->editor->lines()[0]);
+    }
+
+    public function testUpAndDownKeepTheSameCharacterOffsetAcrossWideLines(): void
+    {
+        // Upstream carries the offset in UTF-16 code units, which for these lines is the
+        // character count, so the port has to carry characters and not bytes to agree with it.
+        $this->editor->setText("你好世界\nabcd");
+        $this->type("\x01", "\x1b[B", "\x1b[C", "\x1b[C", "\x1b[A");
+
+        $this->assertSame(['line' => 0, 'col' => strlen('你好')], $this->editor->cursor());
+
+        $this->type("\x1b[B");
+
+        $this->assertSame(['line' => 1, 'col' => 2], $this->editor->cursor());
+    }
 }

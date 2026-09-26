@@ -732,23 +732,40 @@ final class Editor implements Caret, Component, InputHandler
     }
 
     /**
+     * Up or down one drawn row, keeping the offset into the row.
+     *
+     * **Counted in characters, not bytes**, which is the whole substance of this method.
+     * Upstream carries `cursorCol - startCol` straight across and clamps it; its offsets are
+     * UTF-16 code units, so on everything either project edits that is a character and lands
+     * on one. Translating the arithmetic literally made it a byte offset, and a byte offset
+     * carried onto a line with a multi-byte character in it lands *inside* the character: 你
+     * is three bytes, so Up from `ab` onto 你 put the cursor between its first and second
+     * byte. From there `Graphemes::split()` is handed half a character and throws — out of
+     * `render()`, inside the loop's input callback, which is the session — and anything typed
+     * first split 你 into two invalid bytes with a letter wedged between them. Four keystrokes
+     * in a Chinese prompt reached it.
+     *
+     * Counting graphemes rather than codepoints costs nothing and is the same answer one step
+     * safer: the cursor lands between clusters, so it never separates a combining mark or one
+     * person of a family emoji from the rest.
+     *
      * @param list<VisualLine> $rows
      */
     private function moveVertically(array $rows, int $delta): void
     {
         $current = $this->currentRow($rows);
-        $column = $this->cursorCol - (($rows[$current] ?? null)?->startCol ?? 0);
         $target = $rows[$current + $delta] ?? null;
 
         if ($target === null) {
             return;
         }
 
+        $start = ($rows[$current] ?? null)?->startCol ?? 0;
+        $offset = count(Graphemes::split(substr($this->lines[$this->cursorLine], $start, $this->cursorCol - $start)));
+        $row = substr($this->lines[$target->logicalLine], $target->startCol, $target->length);
+
         $this->cursorLine = $target->logicalLine;
-        $this->cursorCol = min(
-            $target->startCol + min($column, $target->length),
-            strlen($this->lines[$target->logicalLine]),
-        );
+        $this->cursorCol = $target->startCol + self::lengthOfFirst($row, $offset);
     }
 
     private function moveWordBackwards(): void
@@ -957,7 +974,11 @@ final class Editor implements Caret, Component, InputHandler
 
         if (count($pastedLines) === 1) {
             // Inserted whole rather than one character at a time, so a pasted `/` or `@`
-            // does not pop a completion list the user did not ask for.
+            // does not pop a completion list the user did not ask for — and so the change
+            // handler is called once for the paste rather than once per character, which is
+            // the only difference a differential run against `editor.ts` found in the whole
+            // editing model: upstream pastes through `insertCharacter` and fires `onChange`
+            // twenty times for `[paste #1 +12 lines]`, once per letter of its own marker.
             $this->insert($pastedLines[0]);
 
             return;
@@ -1149,5 +1170,21 @@ final class Editor implements Caret, Component, InputHandler
         $graphemes = Graphemes::split($text);
 
         return $graphemes === [] ? 0 : strlen($graphemes[count($graphemes) - 1]);
+    }
+
+    /** Bytes in the first $count graphemes of $text, or all of it when there are fewer. */
+    private static function lengthOfFirst(string $text, int $count): int
+    {
+        $length = 0;
+
+        foreach (Graphemes::split($text) as $index => $grapheme) {
+            if ($index >= $count) {
+                break;
+            }
+
+            $length += strlen($grapheme);
+        }
+
+        return $length;
     }
 }

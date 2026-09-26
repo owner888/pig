@@ -358,6 +358,16 @@ final class Input implements Caret, Component, InputHandler
      *
      * The value is treated as one column longer than it is, so the cursor always has a
      * cell of its own to sit in at the end of the line.
+     *
+     * **Unconditionally, where upstream reserves that cell only when the cursor *is* at the
+     * end** — so while the field is scrolled and the cursor is somewhere in the middle, this
+     * shows one character fewer than upstream would. Deliberate: upstream's window therefore
+     * shifts sideways by a column the moment the cursor reaches the end of the line and back
+     * again when it leaves, and in a one-line field where most typing happens at the end, a
+     * line that jumps under the cursor costs more than the character it buys. Found by a
+     * differential run against `input.ts`, which is also where the other direction came from:
+     * upstream slices its window by character index, so on CJK or emoji it draws lines of the
+     * wrong width — 79 of 5103 renders in that run — and this one measures in columns.
      */
     private function scrollStart(int $available): int
     {

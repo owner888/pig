@@ -104,6 +104,31 @@ Both were chosen explicitly, not by default:
 
 `Pig\Async` has no upstream counterpart at all — JS ships an event loop, PHP does not.
 
+#### `Future` + `Deferred` is the Promise, and `then()` is what fibers make unnecessary
+
+Asked directly whether a fiber could be wrapped in a Promise class, the answer is that it already
+is: `Future` is the read side, `Deferred` the write side, which is the promise/resolver split, and
+`Future`'s own docblock says what it stands in for. What fibers make *unnecessary* is `.then()` —
+that exists in JavaScript because a JavaScript function cannot stop in the middle, and `await()`
+gives straight-line code instead. Adding `then()` would put two async styles in one codebase, half
+the calls reading `$x = f()->await();` and half `f()->then(…)`, which the rule at the top of this
+file forbids.
+
+**The one genuinely inexpressible piece is the combinators** — `all`, `race`, `any`. Those are not
+syntax sugar that a fiber replaces: "wait until all three finish" needs a counter and a shared
+`Deferred`, written once. They are **not here**, and the reason is this project's usual standard
+rather than an oversight: nothing in pig waits on more than one thing at a time. Outside
+`packages/async` there is exactly one use of `Future::` at all — `Agent::waitForIdle()`'s
+`Future::complete(null)`.
+
+So this is the marker for the day that changes, because the shape of the API should be decided by
+its first caller and not before. **The case to expect is fanning out to several providers at once**
+— a `--model 'anthropic/*'` scope, a race between a fast model and a good one, or a settings screen
+probing every signed-in provider's key. Any of those wants `all()` or `race()` on `Future`, and
+that is new public surface in `Pig\Async`, so it is the developer's call: ask before adding it, and
+write it once rather than letting the first caller hand-roll a counter of its own — which is this
+file's commonest find, arriving early for once.
+
 **The rule has a second edge, and it is the one that gets missed:** where upstream is *working
 around* something JavaScript does not have, the port is the PHP call, not the workaround.
 `Changelog` was written with upstream's split-into-three-and-subtract version comparison before
@@ -2743,6 +2768,46 @@ while (true) {
 }
 ```
 
+### A JavaScript string offset carried across as a byte offset lands inside a character
+
+Four keystrokes killed the session, and all four of them are ordinary in a Chinese prompt: type
+`你`, Shift+Enter, `ab`, Up. The next frame threw `Grapheme split failed: Malformed UTF-8` — out of
+`Editor::render()`, which runs inside the loop's own input callback, so there is nothing above it to
+catch. Typing anything before the frame was worse: it wedged the letter between 你's first and
+second byte and left two invalid bytes in the buffer.
+
+`Editor::moveVertically()` is a literal port of upstream's `moveCursor(deltaLine)`: take
+`cursorCol - startCol`, clamp it, add it to the target row's `startCol`. **Upstream's offsets are
+UTF-16 code units**, so for everything either project edits that arithmetic is a character count
+and lands on a character. `substr()` counts bytes, so the same arithmetic aimed two bytes into a
+three-byte character:
+
+```php
+// cursor two characters along `ab`, moving up onto `你` (e4 bd a0)
+$this->cursorCol = $target->startCol + min($column, $target->length);   // 2 → between e4 and bd
+$this->cursorCol = $target->startCol + self::lengthOfFirst($row, $offset);   // 2 graphemes → 3
+```
+
+**The rule: when upstream indexes a string, port the *unit* and not the expression.** A JS
+`length`, `slice`, `indexOf` or `charCodeAt` offset is a code-unit count; `strlen`, `substr` and
+`$s[$i]` are bytes, and the two agree only while the text is ASCII — which is exactly how long the
+bug stays invisible. Where the offset is a cursor, counting graphemes is the same answer one step
+safer than counting codepoints, because it also refuses to separate a combining mark or one person
+of a family emoji from the rest.
+
+This is the third shape from the index above — *PHP's value model is not JavaScript's* — in its
+fourth guise, and the first one that crashes rather than misreporting: numbers split finer, arrays
+split coarser, UTF-8 counts bytes where UTF-16 counts units. Anywhere a number crosses from one
+string into another, ask what it is counting.
+
+Found by a differential run against `editor.ts` — 1308 keystroke sequences — which crashed pig on
+case 1258 before it could compare anything. With it fixed, the two agree exactly on text, lines,
+cursor and submitted value, and every one of the 9990 drawn lines is exactly the terminal's width.
+Regression tests: `EditorTest::testUpFromALongerLineLandsOnACharacterAndNotInsideOne`,
+`testACursorMovedUpOntoAWideCharacterCanStillBeDrawn`,
+`testTypingAfterMovingUpDoesNotSplitTheCharacterUnderTheCursor`,
+`testUpAndDownKeepTheSameCharacterOffsetAcrossWideLines`.
+
 ### PCRE's `$` matches before a trailing newline, so `^…$` is not "the whole string"
 
 `Width::visible()` starts with a fast path — almost every line is printable ASCII, where one byte is
@@ -3979,13 +4044,16 @@ opposite directions — and the disagreement is invisible until a value crosses 
 | An empty arguments list went out as `[]` | one array type: `{}` and `[]` decode to the same value | `object` and `array` are two types, and `input: []` is refused |
 | `uniqueItems` and whole floats | `json_encode(1.0)` is `1`, so nothing was wrong — the branch written to fix it did nothing | — |
 | `Utf8::sanitize` exists at all | UTF-8 bytes; the failure is a truncated sequence | UTF-16; the failure is an unpaired surrogate |
+| Up in the editor landed inside a character | a string offset counts **bytes**, so `2` is two thirds of `你` | a string offset counts code units, so `2` is two characters |
 
 So PHP splits numbers **finer** and arrays **coarser**. Copying upstream's comparison faithfully is
 how the first one happened: `!==` is the honest translation of `!==` and the wrong answer anyway,
 because the question is not "is this the same PHP value" but "is this the same JSON document". The
 reading that finds these is not "does this line match upstream" but **"is this value the same thing
 in both languages"** — and the place to look is every boundary: `json_decode`, `json_encode`, and
-any comparison of two things that came through one.
+any comparison of two things that came through one. The last row widens that: a **string offset** is
+a value too, so the same question has to be asked of every number carried over from a `length`,
+`slice` or `indexOf` — see the trap entry, which is the one member of this family that crashes.
 
 ### Compaction counted an image as nothing, so a conversation of screenshots could not be compacted
 
