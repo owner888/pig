@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Tui\Test;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Tui\Ansi;
 use Pig\Tui\Components\DefaultTextStyle;
@@ -286,6 +287,44 @@ final class MarkdownTest extends TestCase
         // Borders wider than the content would be worse than the markdown itself.
         $this->assertStringContainsString('aaa', implode("\n", $rows));
         $this->assertStringNotContainsString('┌', implode("\n", $rows));
+    }
+
+    /**
+     * A table stays one table at every width it claims to be drawable at.
+     *
+     * The columns are shrunk proportionally, and `max(1, …)` on each one can push the total
+     * back **over** the budget — nothing took the excess away, so every line came out one or
+     * two columns too wide and the wrap in `lines()` broke each of them onto a second row.
+     * The user-visible property is this one: the top border is one line and ends in a corner.
+     *
+     * @return array<string, array{string}>
+     */
+    public static function tables(): array
+    {
+        return [
+            'one wide column and two narrow' => ["| " . str_repeat('y', 120) . " | b | c |\n|---|---|---|\n| 1 | 2 | 3 |"],
+            'three narrow columns and prose' => ["| a | b | c | " . str_repeat('w', 150) . " |\n|---|---|---|---|\n| 1 | 2 | 3 | 4 |"],
+            'a path beside two ticks' => ["| File | ok | n |\n|---|---|---|\n| packages/coding-agent/src/Interactive/InteractiveMode.php | y | 3 |"],
+            'three prose columns' => ["| Flag | Default | What it does |\n|---|---|---|\n| `--tools` | read, bash, edit | Names the tools the model is given |"],
+        ];
+    }
+
+    #[DataProvider('tables')]
+    public function testATableIsOneTableAtEveryWidthItDrawsAt(string $markdown): void
+    {
+        for ($width = 12; $width <= 120; $width++) {
+            $rows = $this->rows($markdown, $width);
+
+            if (!str_contains($rows[0] ?? '', '┌')) {
+                continue;   // Too narrow to draw: the source is shown instead.
+            }
+
+            $this->assertStringEndsWith('┐', $rows[0], "the top border wrapped at width {$width}");
+
+            foreach ($rows as $index => $row) {
+                $this->assertLessThanOrEqual($width, Width::visible($row), "row {$index} at width {$width}");
+            }
+        }
     }
 
     public function testATableShrinksItsColumnsToFit(): void

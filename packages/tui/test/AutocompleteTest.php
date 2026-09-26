@@ -270,7 +270,7 @@ final class AutocompleteTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
-        foreach (['src/models/claude.php', 'src/Agent.php', 'README.md'] as $file) {
+        foreach (['src/models/claude.php', 'src/Agent.php', 'README.md', 'noisy-fd'] as $file) {
             if (is_file("{$this->root}/{$file}")) {
                 unlink("{$this->root}/{$file}");
             }
@@ -283,5 +283,56 @@ final class AutocompleteTest extends TestCase
                 rmdir($path);
             }
         }
+    }
+
+    // ---- running fd ------------------------------------------------------------------
+
+    /**
+     * A stand-in for `fd` that floods standard error before it answers.
+     *
+     * Real `fd` does this: one warning per path it cannot read metadata for, which on a tree
+     * with many restricted directories runs past a pipe buffer long before it finishes.
+     */
+    private function noisyFd(int $warnings): string
+    {
+        $path = "{$this->root}/noisy-fd";
+
+        file_put_contents($path, <<<SH
+            #!/bin/sh
+            i=0
+            while [ \$i -lt {$warnings} ]; do
+              echo "[fd::warning] Could not retrieve metadata for a/deep/path/\$i: Permission denied" >&2
+              i=\$((i+1))
+            done
+            echo "src/"
+            echo "src/Agent.php"
+            SH);
+        chmod($path, 0o755);
+
+        return $path;
+    }
+
+    public function testFdFloodingStandardErrorDoesNotHangThePicker(): void
+    {
+        // Reading only stdout deadlocks: fd blocks writing to a full stderr pipe, so it never
+        // closes stdout, so the read never returns — inside the loop's own input callback,
+        // which is the whole terminal. `Process::run()` drains both and says why in a comment.
+        $provider = new CombinedAutocompleteProvider([], $this->root, $this->noisyFd(4000));
+
+        $suggestions = $this->suggest($provider, '@Age');
+
+        $this->assertNotNull($suggestions);
+        $this->assertSame('@src/Agent.php', $suggestions->items[0]->value);
+    }
+
+    public function testAQuietFdStillAnswers(): void
+    {
+        $provider = new CombinedAutocompleteProvider([], $this->root, $this->noisyFd(0));
+
+        $suggestions = $this->suggest($provider, '@src');
+
+        $this->assertNotNull($suggestions);
+        // The directory scores higher than the file inside it, so it comes first.
+        $this->assertSame('@src/', $suggestions->items[0]->value);
     }
 }

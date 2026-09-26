@@ -2810,6 +2810,65 @@ Regression tests: `SettingsListTest::testNoLineIsWiderThanTheTerminal` (widths 6
 named Enter and not Space, while `handleInput()` accepts both — upstream's own hint names both, and
 the Ctrl+G rule the other way round.
 
+### A budget handed out by flooring has to be corrected in both directions
+
+A markdown table with three short columns and one prose column — an everyday shape in an answer —
+came apart at **every width from 17 to 115**: the top border, the separator and every row each one
+or two columns too wide, so the wrap in `Markdown::lines()` broke each of them onto a second row.
+
+`columnWidths()` shares the budget out in proportion to what each column wants, floors each share,
+and then hands back the columns that flooring lost. What it did not do is take back what
+`max(1, …)` *added*: a column whose share rounded to nothing is given 1 anyway, and three of those
+put the total three over the budget with nothing to remove it. Upstream has the same arithmetic and
+the same half-correction.
+
+```php
+$widths = array_map(static fn (int $want): int => max(1, (int) floor($want / $total * $available)), …);
+// hand back what flooring lost … and then take back what max(1, …) added, from the widest column
+```
+
+**The shape to remember: a proportional split with a floor *and* a minimum overshoots in both
+directions, so both need correcting.** Flooring is the one everybody writes; the minimum is the one
+that bites, because it only fires on the inputs where one column dwarfs the others — which is why a
+three-prose-column table was fine and a table with a path and two tick marks was not.
+
+It stayed invisible because the symptom is not an error: `Tui::checkWidth()` never fires, since
+`lines()` wraps every rendered line before padding it. A line that is too wide is therefore *wrapped*
+rather than refused, and a wrapped table border does not look like a width bug, it looks like the
+renderer cannot draw tables. The test asserts the user-visible invariant instead — the top border is
+one line and ends in `┐`, at every width the table claims to be drawable at:
+`MarkdownTest::testATableIsOneTableAtEveryWidthItDrawsAt`, over four shapes and 109 widths each.
+
+### A subprocess whose standard error nobody reads blocks forever with nothing on standard output
+
+Pressing `@` froze the terminal for good. `CombinedAutocompleteProvider::runFd()` opened `fd`
+itself, read standard **output** to EOF, and closed standard error unread — and `fd` writes a
+warning per path whose metadata it cannot read. On a tree with enough restricted directories that
+fills the stderr pipe, `fd` blocks writing to it, so it never closes stdout, so the read never
+returns. There was no timeout either, and this runs from a keystroke inside the loop's own input
+callback, so the whole UI went with it. Reproduced with a stand-in for `fd` that writes 360KB to
+stderr before answering: the call never came back.
+
+**`Process::run()` already drains both pipes, and its own comment names this exact failure** —
+*"Read stderr too, or a command that writes a lot to it fills the pipe and blocks forever with
+nothing on stdout to show for it."* So this is the first shape from the index above at its purest: a
+rule written down in one place, with the reason beside it, and a sibling forty lines long that
+re-implemented the same subprocess worse and did not follow it. The fix is not the missing drain
+added a second time, it is the sibling deleted — `runFd()` now calls `Process::run()`, which brings
+the timeout it never had.
+
+The timeout is short (2s) and that is the interesting half: the query re-runs `fd` on **every
+keystroke**, so a picker able to freeze the terminal for longer than a moment is worse than one that
+comes up empty on a very large cold tree. Upstream blocks indefinitely, because `spawnSync` does.
+
+**The general rule: `proc_open()` with a pipe nobody reads is a deadlock waiting for a noisy
+command.** Either read every pipe you opened, or do not open it — and in this tree the answer is
+almost always `Process::run()`, which is what the other callers use.
+
+Regression tests: `AutocompleteTest::testFdFloodingStandardErrorDoesNotHangThePicker` — which hangs
+rather than fails if the old read goes back, so it is worth knowing that a hanging suite here means
+that line — and `testAQuietFdStillAnswers` beside it, so the fix cannot become "stop running fd".
+
 ### `getenv()` answers `''` for a variable exported without a value, and `!== false` calls that present
 
 `Capabilities::detect()` decides whether this terminal can draw a picture, and four of its seven

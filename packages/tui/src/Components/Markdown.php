@@ -269,6 +269,12 @@ final class Markdown implements Component
             foreach ($body as $line) {
                 // A continuation lines up under the text, not under the bullet — unless
                 // it is a nested list, which brought its own indent.
+                //
+                // Asked of the leading space, where upstream asks its rendered output
+                // `/^\s+\x1b\[36m[-\d]/` — spaces, then **cyan**, then a bullet character. That
+                // hard-codes one theme's colour into the layout: a `listBullet` that is not
+                // cyan makes upstream miss every nested list and indent it twice. The indent is
+                // the thing that was actually put there, so it is the thing to look for.
                 $lines[] = str_starts_with($line, ' ') ? $line : $indent . '  ' . $line;
             }
         }
@@ -355,6 +361,18 @@ final class Markdown implements Component
     /**
      * How wide each column gets: what it wants, or its share of what there is.
      *
+     * **The total is made to equal the budget in both directions**, which is the part upstream
+     * gets half right. Flooring each share loses a column or two, and it hands those back; but
+     * `max(1, …)` on a column whose share rounded to nothing *adds* to the total, and nothing
+     * took that excess away again. So a table with one wide column beside two or three narrow
+     * ones came out one or two columns too wide at every ordinary width — and every line of it
+     * then met the wrap in `lines()` and broke onto a second row, which is a table that has
+     * come apart rather than one that is slightly too wide. Three short columns and a prose
+     * column is an everyday shape, and it was broken from width 17 to 115.
+     *
+     * The loops terminate because the caller has already refused to draw a table narrower than
+     * one column per column, so an allocation of 1 each always fits.
+     *
      * @return list<int>
      */
     private function columnWidths(Table $token, int $available): array
@@ -388,6 +406,19 @@ final class Markdown implements Component
         for ($index = 0; $remaining > 0 && $index < count($widths); $index++) {
             $widths[$index]++;
             $remaining--;
+        }
+
+        // And take back what the `max(1, …)` above added, from whichever column is widest —
+        // a column that had to be rounded up to 1 has nothing to give, and the widest one
+        // loses the least by giving.
+        while (array_sum($widths) > $available) {
+            $widest = array_keys($widths, max($widths), true)[0];
+
+            if ($widths[$widest] <= 1) {
+                break;
+            }
+
+            $widths[$widest]--;
         }
 
         return $widths;

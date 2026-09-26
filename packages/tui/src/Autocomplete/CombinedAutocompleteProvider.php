@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Tui\Autocomplete;
 
+use Pig\Tui\Process;
 use Pig\Tui\TuiError;
 
 /**
@@ -18,6 +19,9 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
     /** Most a fuzzy search looks at, and most it offers. */
     private const int FD_MAX_RESULTS = 100;
     private const int FUZZY_MAX_ITEMS = 20;
+
+    /** Longest the picker will freeze waiting for `fd`; see runFd(). */
+    private const float FD_TIMEOUT = 2.0;
 
     /** @var list<SlashCommand|AutocompleteItem> */
     private array $commands;
@@ -171,7 +175,16 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
                 $name = $command instanceof SlashCommand ? $command->name : $command->value;
 
                 if (str_starts_with(mb_strtolower($name, 'UTF-8'), $typed)) {
-                    $items[] = new AutocompleteItem($name, $name, $command->description);
+                    // The label is the item's own where it has one: a `SlashCommand` is named
+                    // and nothing else, but an `AutocompleteItem` carries a value to insert and
+                    // a label to show, and they need not be the same string. Nothing passes one
+                    // of those as a command today — `InteractiveMode` builds `SlashCommand`s —
+                    // so this arm is upstream's shape rather than a behaviour anybody sees.
+                    $items[] = new AutocompleteItem(
+                        $name,
+                        $command instanceof SlashCommand ? $command->name : $command->label,
+                        $command->description,
+                    );
                 }
             }
 
@@ -278,6 +291,13 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
             $aIsDirectory = str_ends_with($a->value, '/');
             $bIsDirectory = str_ends_with($b->value, '/');
 
+            // `strcmp` and not a locale comparison, which is where upstream's
+            // `localeCompare` differs: in en-US that orders `bin` before `CLAUDE.md`, where
+            // this puts every capital first. Deliberate — PHP's equivalent is `strcoll`,
+            // whose answer depends on the locale the terminal happens to be in, so the same
+            // directory would list in a different order on two machines and a test could
+            // only pin one of them. A file list that is always in the same order is worth
+            // more here than one that is alphabetical the way a dictionary is.
             return $aIsDirectory === $bIsDirectory ? strcmp($a->label, $b->label) : ($aIsDirectory ? -1 : 1);
         });
 
@@ -403,12 +423,29 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
     }
 
     /**
+     * Run `fd` and read back what it found.
+     *
+     * **Through `Process::run()`, which is the whole of the fix that put it there.** This used
+     * to open the process itself and read standard output only, closing standard error unread —
+     * and `fd` writes a warning per path whose metadata it cannot read, so on a tree with many
+     * restricted directories it fills the stderr pipe, blocks writing to it, never closes
+     * standard output, and the read never returns. There was no timeout either, and this runs
+     * from a keystroke inside the loop's own input callback: pressing `@` froze the whole
+     * terminal for good. `Process::run()` drains both pipes in a loop and its own comment names
+     * this failure, which is the sibling this should have been using from the start.
+     *
+     * A non-zero exit is no suggestions, as upstream has it — `fd` exits 0 when it found
+     * nothing, so a non-zero one means the command itself failed, and a picker has nowhere to
+     * report that to. So does the timeout, and it is short on purpose: this re-runs on every
+     * keystroke of the query, so a picker that can freeze the terminal for longer than a
+     * moment is worse than one that comes up empty on a very large cold tree.
+     *
      * @return list<array{0: string, 1: bool}> path and whether it is a directory
      */
     private function runFd(string $query): array
     {
         $command = [
-            $this->fdPath,
+            (string) $this->fdPath,
             '--base-directory', $this->basePath,
             '--max-results', (string) self::FD_MAX_RESULTS,
             '--type', 'f',
@@ -419,20 +456,9 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
             $command[] = $query;
         }
 
-        $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-        // The array form: PHP builds the argv itself, so a filename with a space in it
-        // is one argument and nothing has to be quoted.
-        $process = proc_open($command, $descriptors, $pipes);
+        [$exit, $output] = Process::run($command, self::FD_TIMEOUT);
 
-        if (!is_resource($process)) {
-            return [];
-        }
-
-        $output = (string) stream_get_contents($pipes[1]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-
-        if (proc_close($process) !== 0) {
+        if ($exit !== 0) {
             return [];
         }
 

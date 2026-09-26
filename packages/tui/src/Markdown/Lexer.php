@@ -16,7 +16,18 @@ namespace Pig\Tui\Markdown;
  */
 final class Lexer
 {
-    /** @return list<BlockToken> */
+    /**
+     * A tab becomes **four** spaces, and the number is load-bearing.
+     *
+     * Four is what CommonMark says a tab advances to, and it is what `indentedCode()` below
+     * looks for — so a tab-indented line is an indented code block here, which is what it is
+     * in every other markdown reader. Upstream writes three, and says why: it is normalising
+     * for *display width*, because `marked` never sees the tab. Anyone aligning this with
+     * upstream's three would quietly turn every tab-indented code block back into a paragraph,
+     * which is why it says so here rather than in a commit message.
+     *
+     * @return list<BlockToken>
+     */
     public static function lex(string $markdown): array
     {
         $lines = explode("\n", str_replace(["\r\n", "\r", "\t"], ["\n", "\n", '    '], $markdown));
