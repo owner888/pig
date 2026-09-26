@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Prompt;
 
+use Pig\Ai\Utils\Utf8;
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Tools\Paths;
 
 /**
  * Finding the skills on this machine, and listing them for the model.
@@ -36,7 +38,16 @@ use Pig\CodingAgent\Config;
  */
 final class Skills
 {
-    /** The spec's ceilings. https://agentskills.io/specification#frontmatter-required */
+    /**
+     * The spec's ceilings, in **characters**. https://agentskills.io/specification#frontmatter-required
+     *
+     * Counted with `mb_strlen()`, not `strlen()`. The spec says characters and upstream counts
+     * UTF-16 code units, which for anything either project reads is the same number; bytes are
+     * neither, and a 341-character Chinese description would be complained about for being
+     * 1024 bytes long — with a number in the complaint that counts nothing anybody asked about.
+     * Same family as the editor's cursor and `write`'s byte count: port the unit, not the
+     * expression.
+     */
     private const int MAX_NAME = 64;
 
     private const int MAX_DESCRIPTION = 1024;
@@ -104,7 +115,7 @@ final class Skills
         ];
 
         foreach ($extraDirs as $directory) {
-            $roots[] = [self::expand($directory, $user), 'custom', self::RECURSIVE];
+            $roots[] = [Paths::expand($directory), 'custom', self::RECURSIVE];
         }
 
         $skills = [];
@@ -286,10 +297,12 @@ final class Skills
             return [null, [...$warnings, new SkillWarning($path, 'description is required')]];
         }
 
-        if (strlen($description) > self::MAX_DESCRIPTION) {
+        $length = mb_strlen($description, 'UTF-8');
+
+        if ($length > self::MAX_DESCRIPTION) {
             $warnings[] = new SkillWarning(
                 $path,
-                'description is longer than ' . self::MAX_DESCRIPTION . ' characters (' . strlen($description) . ')',
+                'description is longer than ' . self::MAX_DESCRIPTION . " characters ({$length})",
             );
         }
 
@@ -310,8 +323,10 @@ final class Skills
             $problems[] = "name \"{$name}\" does not match the folder \"{$folder}\"";
         }
 
-        if (strlen($name) > self::MAX_NAME) {
-            $problems[] = 'name is longer than ' . self::MAX_NAME . ' characters (' . strlen($name) . ')';
+        $length = mb_strlen($name, 'UTF-8');
+
+        if ($length > self::MAX_NAME) {
+            $problems[] = 'name is longer than ' . self::MAX_NAME . " characters ({$length})";
         }
 
         if (preg_match('/^[a-z0-9-]+$/', $name) !== 1) {
@@ -394,23 +409,29 @@ final class Skills
         return false;
     }
 
-    private static function expand(string $directory, string $home): string
-    {
-        return $directory === '~' || str_starts_with($directory, '~/')
-            ? $home . substr($directory, 1)
-            : $directory;
-    }
-
     /** The person's home, which is not `Config::home()` — that is `~/.pig`. */
     private static function userHome(): string
     {
-        $home = getenv('HOME');
-
-        return $home === false || $home === '' ? sys_get_temp_dir() : rtrim($home, '/');
+        return Config::userHome();
     }
 
+    /**
+     * For the prompt, which is XML-ish and is read by the model.
+     *
+     * Sanitised first, and that is the whole reason this is not one call:
+     * `htmlspecialchars()` answers the **empty string** for input that is not UTF-8 — so one
+     * stray byte in a `SKILL.md` put the skill in the prompt with `<description></description>`.
+     * Listed, loaded, complained about for nothing, and impossible for the model to ever
+     * choose, with nothing anywhere saying why. A skill's file is a file somebody wrote in
+     * whatever their editor saved, so this is not an exotic input.
+     *
+     * `ENT_SUBSTITUTE` was the other candidate and is worse here: it would put U+FFFD in front
+     * of the model, where dropping the byte leaves the sentence readable. The terminal's
+     * equivalent of this decision is `Interactive\SafeText`, which strips more because a
+     * terminal acts on what it is sent; a prompt does not.
+     */
     private static function escape(string $text): string
     {
-        return htmlspecialchars($text, ENT_QUOTES | ENT_XML1, 'UTF-8');
+        return htmlspecialchars(Utf8::sanitize($text), ENT_QUOTES | ENT_XML1, 'UTF-8');
     }
 }

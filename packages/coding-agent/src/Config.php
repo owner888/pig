@@ -57,6 +57,17 @@ final class Config
         return self::homeDirectory() . '/.pi/agent';
     }
 
+    /**
+     * The person's home directory, which is not `home()` — that is `~/.pig` inside it.
+     *
+     * Public because `Prompt\Skills` needs it for other tools' roots (`~/.codex/skills`) and
+     * had its own copy of these four lines, fallback and all. One lookup, one answer.
+     */
+    public static function userHome(): string
+    {
+        return self::homeDirectory();
+    }
+
     private static function homeDirectory(): string
     {
         $home = getenv('HOME');

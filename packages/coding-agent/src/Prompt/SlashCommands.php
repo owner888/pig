@@ -69,6 +69,13 @@ final class SlashCommands
      * Quoted so an argument can hold a space: `/review "the parser" --strict` is two
      * things and a flag, not four words.
      *
+     * A walk over **bytes** where upstream walks code units, and here that is the same answer
+     * rather than the usual trap: the four characters it looks for — the two quotes, space and
+     * tab — are all below 0x80, so none of them can occur inside a UTF-8 sequence, and
+     * concatenating the bytes in between puts the characters back exactly. `/review "解析器"`
+     * comes out as one argument either way. (Where the same shape *is* a trap, the number is
+     * an index or a length rather than a scan — see `Utils\Fuzzy` and the editor's cursor.)
+     *
      * @return list<string>
      */
     public static function arguments(string $text): array
@@ -126,6 +133,11 @@ final class SlashCommands
     {
         // `$@` first: it is the only one whose replacement can itself contain a `$1`,
         // and substituting it last would fill in arguments that came from an argument.
+        //
+        // `str_replace`, so the arguments go in as themselves. Upstream uses
+        // `String.replace()` with a string replacement, where `$&` and `$1` in the
+        // *replacement* are special — so an argument that is literally `$&` inserts the match
+        // there. Same reason `EditTool` splices rather than replaces.
         $content = str_replace('$@', implode(' ', $arguments), $content);
 
         return (string) preg_replace_callback(
@@ -155,6 +167,9 @@ final class SlashCommands
         $commands = [];
 
         foreach ($entries as $entry) {
+            // Dotted names are skipped, which upstream does not do here: it would recurse into
+            // a `.git` in a commands folder and offer every `.md` in the history of it as a
+            // command. The same call `HookLoader::discover()`'s note argues for.
             if (str_starts_with($entry, '.')) {
                 continue;
             }

@@ -455,6 +455,49 @@ final class SkillsTest extends TestCase
         $this->assertStringContainsString('Use the read tool', $prompt);
     }
 
+    public function testADescriptionInChineseIsMeasuredInCharactersNotBytes(): void
+    {
+        // 800 characters, well inside the spec's 1024 — and 2400 bytes, well outside it. The
+        // ceiling is a character count in the spec and a code-unit count upstream, which for
+        // anything either project reads is the same number; `strlen()` is neither.
+        $long = str_repeat('描述', 400);
+        $this->skill('home/.pig/skills/cjk', "name: cjk\ndescription: {$long}");
+
+        [$skills, $warnings] = $this->load();
+
+        $this->assertCount(1, $skills);
+        $this->assertSame([], $warnings);
+    }
+
+    public function testANameInTheWrongAlphabetIsCountedInCharactersToo(): void
+    {
+        $name = str_repeat('名', 40);
+        $this->skill("home/.pig/skills/{$name}", "name: {$name}\ndescription: something");
+
+        [, $warnings] = $this->load();
+        $said = implode(' | ', array_map(static fn ($one): string => $one->message, $warnings));
+
+        // It is still the wrong alphabet, and that is worth one complaint. The length is not
+        // one: forty characters is forty, where `strlen()` makes it a hundred and twenty.
+        $this->assertStringContainsString('lowercase letters', $said);
+        $this->assertStringNotContainsString('longer than 64', $said);
+    }
+
+    public function testASkillWhoseDescriptionIsNotUtf8StillHasOneInThePrompt(): void
+    {
+        $this->skill('home/.pig/skills/logs', "name: logs\ndescription: reads a " . chr(0x80) . " log");
+
+        [$skills] = $this->load();
+        $prompt = Skills::forPrompt($skills);
+
+        // `htmlspecialchars()` answers the **empty string** for input that is not UTF-8, so the
+        // skill went into the prompt with `<description></description>`: listed, loadable, and
+        // impossible for the model to ever choose, with nothing anywhere saying why.
+        $this->assertStringContainsString('reads a', $prompt);
+        $this->assertStringNotContainsString('<description></description>', $prompt);
+        $this->assertTrue(mb_check_encoding($prompt, 'UTF-8'));
+    }
+
     public function testAngleBracketsInADescriptionCannotBreakTheBlock(): void
     {
         $this->skill('home/.pig/skills/xml', "name: xml\ndescription: use <read> & <write> carefully");

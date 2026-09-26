@@ -3903,6 +3903,44 @@ presses escape for real:
 *why* the key can arrive at all: the command is not blocking the loop, which is the previous fix
 holding the door open for this one.
 
+### A skill whose description was not UTF-8 went into the prompt with no description
+
+`htmlspecialchars()` answers the **empty string** for input that is not UTF-8. `Skills::escape()`
+is the one thing between a `SKILL.md` and the prompt, so one stray byte in a description put the
+skill in front of the model as:
+
+```xml
+  <skill>
+    <name>logs</name>
+    <description></description>
+    <location>/home/dev/.pig/skills/logs/SKILL.md</location>
+  </skill>
+```
+
+Listed, loaded, warned about for nothing, and **impossible for the model to ever choose** — the
+description is the only thing it sees. A `SKILL.md` is a file somebody wrote in whatever their
+editor saved, so this is not an exotic input, and the failure says nothing anywhere.
+
+`Utf8::sanitize()` first. `ENT_SUBSTITUTE` was the other candidate and is worse here: it would put
+U+FFFD in front of the model where dropping the byte leaves the sentence readable. **The rule this
+adds to the family:** a function that answers `''` on bad input is a silent truncation, not an
+error — `htmlspecialchars()`, `json_encode()` and `preg_match_all()` each fail that way, and the
+tell is that the caller has no way to know.
+
+Found in the same read, and the same family in its seventh guise: **both length ceilings were
+counted in bytes.** The spec says characters and upstream counts UTF-16 code units, which for
+anything either project reads is the same number; `strlen()` is neither. An 800-character Chinese
+description — comfortably inside the spec's 1024 — was complained about at startup for being 2400
+long, with a number that counts nothing anybody asked about. `mb_strlen()` now.
+
+And the third hand-rolled `~` expansion went the way of the two in the loaders: `Skills::expand()`
+is `Paths::expand()`, so `--skills-dir` pasted out of Finder resolves; `Skills::userHome()` is
+`Config::userHome()`, which is where those four lines already lived.
+
+Regression tests: `SkillsTest::testASkillWhoseDescriptionIsNotUtf8StillHasOneInThePrompt`,
+`testADescriptionInChineseIsMeasuredInCharactersNotBytes`,
+`testANameInTheWrongAlphabetIsCountedInCharactersToo`.
+
 ### `-p` handed a custom tool a context with no session in it
 
 `CustomToolSet` needs two things once a mode is running: the UI and the session context.
