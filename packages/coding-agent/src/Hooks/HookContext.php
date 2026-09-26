@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Hooks;
 
 use Closure;
 use Pig\Ai\Model;
+use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Session\SessionManager;
 
 /**
@@ -31,6 +32,9 @@ final readonly class HookContext
      * @param Closure(): void|null $abort             stop whatever is running
      * @param Closure(): bool|null $hasQueuedMessages whether someone typed while it worked
      * @param HookUi|null          $ui                `NoUi` when there is no terminal
+     * @param AbortSignal|null     $signal            the turn in progress's, null between
+     *        turns — what a handler's own waiting should park on, so escape cuts it short
+     *        rather than the person waiting it out. `$pi->exec()` uses it without being told
      */
     public function __construct(
         public string $cwd,
@@ -41,6 +45,7 @@ final readonly class HookContext
         private ?Closure $hasQueuedMessages = null,
         ?HookUi $ui = null,
         public bool $hasUi = false,
+        public ?AbortSignal $signal = null,
     ) {
         $this->ui = $ui ?? new NoUi();
     }

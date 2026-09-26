@@ -139,6 +139,7 @@ final class RpcMode
                 $this->session->abort();
             },
             hasQueuedMessages: fn (): bool => $this->session->queued() !== [],
+            signal: fn () => $this->session->signal(),
             ui: $this->ui,
             send: function (HookMessage $message, bool $triggerTurn): void {
                 $this->session->sendHookMessage($message, $triggerTurn);

@@ -63,6 +63,8 @@ final class CustomToolSet
     public function withContext(Closure $context): void
     {
         $this->context = $context;
+        // And to the shared API object, so `$pi->exec()` can reach the turn's signal.
+        $this->api?->withContext($context);
     }
 
     public function isEmpty(): bool

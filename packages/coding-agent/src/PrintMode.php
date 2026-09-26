@@ -108,6 +108,7 @@ final class PrintMode
                 $this->session->abort();
             },
             hasQueuedMessages: fn (): bool => $this->session->queued() !== [],
+            signal: fn () => $this->session->signal(),
             ui: new NoUi(),
             send: function (HookMessage $message, bool $triggerTurn): void {
                 $this->session->sendHookMessage($message, $triggerTurn);

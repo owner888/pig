@@ -278,6 +278,7 @@ final class InteractiveMode
                 $session->abort();
             },
             hasQueuedMessages: static fn (): bool => $session->queued() !== [],
+            signal: static fn () => $session->signal(),
             ui: $this->ui,
             send: static function (HookMessage $message, bool $triggerTurn) use ($session): void {
                 $session->sendHookMessage($message, $triggerTurn);

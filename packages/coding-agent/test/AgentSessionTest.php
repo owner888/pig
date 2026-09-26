@@ -65,6 +65,31 @@ final class AgentSessionTest extends TestCase
         $this->current = null;
     }
 
+    // ---- the turn's signal -------------------------------------------------------
+
+    public function testThereIsASignalDuringATurnAndNoneBetweenThem(): void
+    {
+        $session = $this->session(['hello']);
+        $during = null;
+
+        $this->assertNull($session->signal(), 'idle');
+
+        $session->subscribe(static function (AgentEvent $event) use ($session, &$during): void {
+            if ($event instanceof MessageStartEvent) {
+                $during = $session->signal();
+            }
+        });
+
+        Async::run(static fn () => $session->prompt('hi'));
+
+        // What a hook's own waiting parks on, so escape reaches a command it started. Null
+        // afterwards, and that half matters as much: handing back the last turn's signal would
+        // mean an already-aborted one for everything asking after an interrupted turn.
+        $this->assertNotNull($during);
+        $this->assertFalse($during->aborted());
+        $this->assertNull($session->signal(), 'between turns');
+    }
+
     // ---- events ------------------------------------------------------------------
 
     public function testListenersSeeWhatTheAgentEmits(): void

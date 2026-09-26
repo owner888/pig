@@ -6,6 +6,7 @@ namespace Pig\Tui;
 
 use Closure;
 use Fiber;
+use Pig\Async\AbortSignal;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
 
@@ -68,19 +69,32 @@ final class Process
      * factory runs at startup, long before `Async::run()`, and a command there has nothing to
      * be polite to.
      *
-     * @param list<string> $command
-     * @param string|null  $cwd     where to run it; null means wherever pig was started
-     * @return array{0: int, 1: string, 2: string} STOPPED as the code when it timed out
-     *         or could not be started; 128 + the signal when something killed it
+     * **A signal kills it**, which is the other half of not freezing: the screen staying alive
+     * is no use if escape then has nothing to stop. `STOPPED` covers both ends of that, since
+     * "this was not allowed to finish" is what the caller acts on either way.
+     *
+     * @param list<string>     $command
+     * @param string|null      $cwd    where to run it; null means wherever pig was started
+     * @param AbortSignal|null $signal kills the command and returns STOPPED
+     * @return array{0: int, 1: string, 2: string} STOPPED as the code when it timed out, was
+     *         aborted, or could not be started; 128 + the signal when something killed it
      */
-    public static function runAsync(array $command, float $timeout = self::DEFAULT_TIMEOUT, ?string $cwd = null): array
-    {
+    public static function runAsync(
+        array $command,
+        float $timeout = self::DEFAULT_TIMEOUT,
+        ?string $cwd = null,
+        ?AbortSignal $signal = null,
+    ): array {
         if ($command === []) {
             throw new TuiError('Process::runAsync() needs a command');
         }
 
         if (Fiber::getCurrent() === null) {
             return self::run($command, $timeout, $cwd);
+        }
+
+        if ($signal?->aborted() ?? false) {
+            return [self::STOPPED, '', ''];
         }
 
         set_error_handler(static fn (): bool => true);
@@ -146,18 +160,27 @@ final class Process
             );
         }
 
-        $timedOut = false;
+        $stopped = false;
+        $kill = static function () use (&$stopped, $process, $finished): void {
+            $stopped = true;
+
+            if (is_resource($process)) {
+                proc_terminate($process, 9);
+            }
+
+            // Stop waiting rather than waiting for the pipes to close, which is not the same
+            // thing: `proc_terminate()` kills the command and not its children, so
+            // `sh -c 'echo; sleep 5'` leaves `sleep` holding the pipe open and EOF never
+            // comes. A command that was not allowed to finish has finished as far as the
+            // caller is concerned, and what the watchers have already read is what there is.
+            if (!$finished->future->isComplete()) {
+                $finished->complete(null);
+            }
+        };
+
+        $listener = $signal?->onAbort($kill);
         $timer = $timeout > 0
-            ? Loop::get()->delay($timeout, static function () use (&$timedOut, $process, $finished): void {
-                $timedOut = true;
-
-                if (is_resource($process)) {
-                    proc_terminate($process, 9);
-                }
-
-                // Killed, but the pipes still have to close before anything can be read off
-                // them; the watchers see EOF and complete in the ordinary way.
-            })
+            ? Loop::get()->delay($timeout, $kill)
             : null;
 
         try {
@@ -169,6 +192,10 @@ final class Process
                 Loop::get()->cancel($timer);
             }
 
+            if ($listener !== null) {
+                $signal?->removeListener($listener);
+            }
+
             foreach (array_keys($watchers) as $fd) {
                 $close($fd);
             }
@@ -177,7 +204,7 @@ final class Process
         $status = proc_get_status($process);
         $exit = proc_close($process);
 
-        if ($timedOut) {
+        if ($stopped) {
             return [self::STOPPED, $collected[0], $collected[1]];
         }
 

@@ -16,6 +16,7 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Async\AbortController;
+use Pig\Async\AbortSignal;
 use Pig\Async\Deferred;
 use Pig\Async\Future;
 use Throwable;
@@ -180,6 +181,23 @@ final class Agent
     public function abort(): void
     {
         $this->controller?->abort('Aborted');
+    }
+
+    /**
+     * The signal for the run in progress, or null between runs.
+     *
+     * So that something waiting on its own behalf during a turn — a hook running a command,
+     * say — can be cut short by the same escape that stops the turn, rather than having to be
+     * waited out. Null when idle, because the controller is cleared in `run()`'s `finally`:
+     * handing back the last run's signal would mean an already-aborted signal for anything
+     * asking after an interrupted turn, and everything it touched would stop instantly.
+     *
+     * Upstream has no counterpart — its equivalents take an `AbortSignal` from the caller and
+     * there is nowhere for that caller to get one.
+     */
+    public function signal(): ?AbortSignal
+    {
+        return $this->controller?->signal;
     }
 
     /** Resolves when no run is in flight — immediately, if none is. */

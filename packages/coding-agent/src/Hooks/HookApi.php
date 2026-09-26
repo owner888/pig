@@ -94,6 +94,9 @@ final class HookApi
 
     private ?Closure $note = null;
 
+    /** @var Closure(): HookContext|null */
+    private ?Closure $context = null;
+
     public function __construct(
         private readonly string $cwd = '.',
         private readonly string $path = '',
@@ -214,6 +217,20 @@ final class HookApi
     }
 
     /**
+     * Where to read the session from, once there is one.
+     *
+     * The provider rather than a `HookContext`, because the runner builds one fresh per emit:
+     * what `exec()` reads off it has to be the turn running now.
+     *
+     * @param Closure(): HookContext $context
+     * @internal called by `HookRunner::initialize()`
+     */
+    public function withContext(Closure $context): void
+    {
+        $this->context = $context;
+    }
+
+    /**
      * Wire the writers, once there is a session to write to.
      *
      * Either on its own: they are two independent facts, and one missing must not take the
@@ -294,20 +311,27 @@ final class HookApi
      *   `Process::STOPPED`. It is wider by one case and says so on itself: a program that is
      *   not on this machine answers the same way as one that ran too long, where upstream
      *   reports that as `code: 1, killed: false`.
-     * - **Escape cannot cut it short**, though the screen stays alive while it runs. The
-     *   command goes on the loop (`Process::runAsync()`), so keystrokes, the spinner and the
-     *   redraw all keep working — but a handler runs inside the agent's own fiber, parked on
-     *   that command, and nothing hands a hook the turn's `AbortSignal` to park on as well.
-     *   Upstream's `ExecOptions` has a `signal` field and its `HookContext` has no signal to
-     *   put in it either, so a hook there cannot abort one of its own commands. The timeout
-     *   is what bounds it at both ends, which is the second reason it is not optional.
+     * - **Escape stops it**, and the screen stays alive while it runs: the command goes on the
+     *   loop (`Process::runAsync()`) and parks on the turn's own `AbortSignal`, so it comes
+     *   back as `stopped()` the moment somebody interrupts. **Upstream cannot do this** —
+     *   its `ExecOptions` has a `signal` field and its `HookContext` has no signal to put in
+     *   it, so a hook there can only be waited out. The signal is not a parameter here for the
+     *   same reason: one a hook had to remember to pass is one whose author did not. A handler
+     *   that waits on something of its own reads `$ctx->signal` and parks on that.
      *
      * @param list<string> $command the program and its arguments, unquoted
      * @param string|null  $cwd     defaults to the directory pig is working in
      */
     public function exec(array $command, ?string $cwd = null, float $timeout = self::EXEC_TIMEOUT): ExecResult
     {
-        [$exit, $stdout, $stderr] = Process::runAsync($command, $timeout, $cwd ?? $this->cwd);
+        [$exit, $stdout, $stderr] = Process::runAsync(
+            $command,
+            $timeout,
+            $cwd ?? $this->cwd,
+            // The turn's signal, without the hook having to pass it: escape means stop, and a
+            // hook that had to remember to opt in is a hook whose author did not.
+            $this->context === null ? null : ($this->context)()->signal,
+        );
 
         return new ExecResult($exit, $stdout, $stderr);
     }

@@ -411,6 +411,17 @@ final class AgentSession
         return $this->agent->state->isStreaming;
     }
 
+    /**
+     * The signal for the turn in progress, or null between turns.
+     *
+     * What a hook's own waiting parks on, so escape cuts it short rather than the person
+     * waiting out its timeout. `Agent::signal()`'s docblock says why it is null when idle.
+     */
+    public function signal(): ?AbortSignal
+    {
+        return $this->agent->signal();
+    }
+
     /** @return list<mixed> the conversation, app messages included */
     public function messages(): array
     {

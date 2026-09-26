@@ -1884,6 +1884,47 @@ final class InteractiveModeTest extends TestCase
         $this->assertSame("one\nTWO\nthree\n", file_get_contents($this->cwd . '/notes.txt'));
     }
 
+    /**
+     * The other end of the wire, and the end that was missing.
+     *
+     * `HookRunnerTest` drives the runner with a signal handed to it directly; nothing checked
+     * that the *terminal* hands it one. Taking `signal:` out of `initialize()` here broke no
+     * test at all — the same "wired at one end only" shape as the ctrl+o handler that named
+     * three classes, made again inside its own fix.
+     */
+    public function testEscapeStopsACommandAHooksGuardStarted(): void
+    {
+        $result = null;
+        $api = new HookApi($this->cwd, 'guard.php');
+        $api->on('tool_call', function ($event, $context) use (&$result, $api): mixed {
+            // Escape arrives while this is parked on the command, which is the real order: the
+            // loop can only deliver the key because the command is not blocking it.
+            Async::spawn(function (): void {
+                Async::delay(0.05);
+                $this->type(self::ESC);
+            });
+
+            $result = $api->exec(['sh', '-c', 'echo guarding; sleep 5']);
+
+            return null;
+        });
+
+        $this->start(
+            answers: [self::wants('read', ['path' => 'notes.txt']), 'done'],
+            hooks: $this->runner($api, 'guard.php'),
+        );
+
+        $started = microtime(true);
+        $this->type('read it');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertNotNull($result, 'the guard never ran');
+        $this->assertTrue($result->stopped());
+        $this->assertStringContainsString('guarding', $result->stdout);
+        $this->assertLessThan(3.0, microtime(true) - $started, 'escape did not reach the command');
+    }
+
     // ---- what a hook says -------------------------------------------------------------
 
     public function testAHooksMessageIsDrawnAsItsOwnThingNotAsSomethingYouSaid(): void

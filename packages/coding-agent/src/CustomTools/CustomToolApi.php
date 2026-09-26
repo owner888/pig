@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\CustomTools;
 
+use Closure;
 use Pig\CodingAgent\Hooks\ExecResult;
+use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookUi;
 use Pig\CodingAgent\Hooks\NoUi;
 use Pig\Tui\Process;
@@ -34,6 +36,9 @@ final class CustomToolApi
 
     private ?HookUi $ui = null;
 
+    /** @var Closure(): HookContext|null */
+    private ?Closure $context = null;
+
     public function __construct(public readonly string $cwd = '.')
     {
     }
@@ -48,6 +53,20 @@ final class CustomToolApi
     public function withUi(HookUi $ui): void
     {
         $this->ui = $ui;
+    }
+
+    /**
+     * Where to read the session from, once a mode has one.
+     *
+     * The same provider `CustomToolSet` hands to `execute`, so `exec()` can park a command on
+     * the turn's signal without the tool having to pass it — see `HookApi::exec()`.
+     *
+     * @param Closure(): HookContext $context
+     * @internal called by `CustomToolSet::withContext()`
+     */
+    public function withContext(Closure $context): void
+    {
+        $this->context = $context;
     }
 
     /** Asking the person something. `NoUi`'s answers until a mode says otherwise. */
@@ -77,7 +96,12 @@ final class CustomToolApi
      */
     public function exec(array $command, ?string $cwd = null, float $timeout = self::EXEC_TIMEOUT): ExecResult
     {
-        [$exit, $stdout, $stderr] = Process::runAsync($command, $timeout, $cwd ?? $this->cwd);
+        [$exit, $stdout, $stderr] = Process::runAsync(
+            $command,
+            $timeout,
+            $cwd ?? $this->cwd,
+            $this->context === null ? null : ($this->context)()->signal,
+        );
 
         return new ExecResult($exit, $stdout, $stderr);
     }

@@ -1986,16 +1986,23 @@ through `Process::run()`, which polls with `usleep()`, so while a hook's command
 keystrokes, no spinner and no redraw — a thirty-second linter was a thirty-second freeze. It and
 `CustomToolApi::exec()` both go through `Process::runAsync()` now; see the trap below.
 
-Three differences from upstream's version remain, all deliberate. **There is a timeout by
-default** where upstream's is opt-in, so a hook that forgets one cannot park the turn for as long
-as its command wants. **`killed` is `ExecResult::stopped()`**, wider by one case and saying so on
-itself: a program that is not on this machine answers the same way as one that ran too long, where
-upstream reports that as `code: 1, killed: false`. And **escape still cannot cut a command short**,
-though the screen stays alive now: a handler runs inside the agent's own fiber, parked on the
-command, and nothing hands a hook the turn's `AbortSignal` to park on as well — upstream's
-`ExecOptions` has a `signal` field and its `HookContext` has no signal to put in it either, so a
-hook there cannot abort its own command. The timeout bounds it at both ends, which is the second
-reason it is not optional.
+**And escape stops it**, which is pig doing something upstream cannot. Upstream's `ExecOptions`
+has a `signal` field and its `HookContext` has no signal to put in it, so a hook's command can
+only be waited out there. Here `Agent::signal()` answers the run in progress's — null between
+runs, because the controller is cleared in `run()`'s `finally` and handing back the last one would
+mean an already-aborted signal for everything asking after an interrupted turn — and the modes
+pass it to `HookRunner::initialize()` the way they already pass `getModel`. It reaches `exec()`
+through the **context provider** rather than as a parameter: the runner builds a `HookContext`
+fresh per emit, so what `exec()` reads is the turn running now, and a signal the hook had to
+remember to pass is one whose author did not. `$ctx->signal` is there too, for a handler whose own
+waiting is not a subprocess. `CustomToolApi` is wired the same way, through the `withContext()`
+the modes already call.
+
+Two differences from upstream's version remain, both deliberate. **There is a timeout by default**
+where upstream's is opt-in, so a hook that forgets one cannot park the turn for as long as its
+command wants. And **`killed` is `ExecResult::stopped()`**, wider by two cases and saying so on
+itself: a program that is not on this machine, and one escape stopped, answer the same way as one
+that ran too long — where upstream reports the first as `code: 1, killed: false`.
 
 `HookUi` is upstream's `HookUIContext`, and it is what makes `tool_call` more than a
 yes-or-no rule: a handler can ask the person something and wait for the answer.
@@ -3858,9 +3865,30 @@ Four things in it are load-bearing rather than tidy, and three are rules this fi
   `CustomToolsTest::testTheFactoryGetsTheWorkingDirectoryAndCanRunThings`, because a factory runs
   at startup and a factory may run a command.
 
+- **A killed command stops being waited for**, which is not the same as waiting for its pipes to
+  close. `proc_terminate()` kills the command and not its children, so `sh -c 'echo; sleep 5'`
+  leaves `sleep` holding the pipe open and EOF never comes: the first version of this waited the
+  full five seconds after the kill, for both the timeout and the abort. A command that was not
+  allowed to finish has finished as far as the caller is concerned, and what the watchers have
+  already read is what there is. **Every test of a kill asserts the elapsed time**, because the
+  outcome (`STOPPED`, plus whatever it printed) is identical either way — the first draft of those
+  tests passed while waiting out the timeout, which is how the defect got written in the first
+  place.
+
 `Process` had **no test file at all** before this — 370 lines of process handling, which is the size
 that goes unchecked, exactly as `Config`'s sixty lines of path arithmetic were. `ProcessTest` covers
-`runAsync` in fourteen cases; the rest of the class is still only covered through its callers.
+`runAsync` in seventeen cases; the rest of the class is still only covered through its callers.
+
+**Then escape was wired through, and the mutation check caught the missing end.** Removing
+`signal:` from `InteractiveMode::initialize()` broke **no test at all** — the runner-level tests
+hand the runner a signal directly, so they prove the runner and say nothing about who feeds it.
+That is the *wired at one end only* shape from the index, made inside its own fix, for the second
+time (the first was the ctrl+o handler that named three classes). What closes it is a test that
+presses escape for real:
+`InteractiveModeTest::testEscapeStopsACommandAHooksGuardStarted` — a `tool_call` guard runs
+`sleep 5`, escape arrives while the guard is parked on it, and the command comes back stopped. Note
+*why* the key can arrive at all: the command is not blocking the loop, which is the previous fix
+holding the door open for this one.
 
 ### Two loaders each had their own worse copy of `Paths::resolve()`
 

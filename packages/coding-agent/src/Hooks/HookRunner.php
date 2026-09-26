@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Hooks;
 
 use Closure;
 use Pig\Ai\ImageContent;
+use Pig\Async\AbortSignal;
 use Pig\Ai\Model;
 use Pig\CodingAgent\Hooks\Events\BeforeAgentStartEvent;
 use Pig\CodingAgent\Hooks\Events\ContextEvent;
@@ -63,6 +64,8 @@ final class HookRunner
 
     private ?Closure $hasQueuedMessages = null;
 
+    private ?Closure $getSignal = null;
+
     private ?HookUi $ui = null;
 
     /** @param list<LoadedHook> $hooks in the order they were loaded, which is the order they run */
@@ -86,6 +89,7 @@ final class HookRunner
      * @param Closure(): bool|null    $isIdle
      * @param Closure(): void|null    $abort
      * @param Closure(): bool|null    $hasQueuedMessages
+     * @param Closure(): (AbortSignal|null)|null $signal the turn in progress's
      * @param HookUi|null                     $ui   the terminal's, when there is one
      * @param Closure(HookMessage, bool): void|null $send `$pi->sendMessage()`
      * @param Closure(string, mixed): void|null     $note `$pi->appendEntry()`
@@ -95,6 +99,7 @@ final class HookRunner
         ?Closure $isIdle = null,
         ?Closure $abort = null,
         ?Closure $hasQueuedMessages = null,
+        ?Closure $signal = null,
         ?HookUi $ui = null,
         ?Closure $send = null,
         ?Closure $note = null,
@@ -103,6 +108,7 @@ final class HookRunner
         $this->isIdle = $isIdle;
         $this->abort = $abort;
         $this->hasQueuedMessages = $hasQueuedMessages;
+        $this->getSignal = $signal;
         $this->ui = $ui;
 
         // Handed to each hook's own API object rather than kept here, because that is the
@@ -115,6 +121,10 @@ final class HookRunner
         // handler`, which is an explanation of something that did not happen.
         foreach ($this->hooks as $hook) {
             $hook->api->writesTo($send, $note);
+            // The context rather than the signal itself: it is built fresh per emit, so what
+            // `$pi->exec()` reads off it is the signal for the turn running *now* rather than
+            // whichever one existed when the hooks were wired.
+            $hook->api->withContext($this->context(...));
         }
     }
 
@@ -233,6 +243,7 @@ final class HookRunner
             // `$this->ui !== null` said yes to it, so a hook in `--mode text` was told there
             // was somebody there and then heard nothing back.
             $this->ui !== null && !$this->ui instanceof NoUi,
+            $this->getSignal === null ? null : ($this->getSignal)(),
         );
     }
 

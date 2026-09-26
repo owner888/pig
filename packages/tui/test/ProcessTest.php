@@ -6,6 +6,7 @@ namespace Pig\Tui\Test;
 
 use Fiber;
 use PHPUnit\Framework\TestCase;
+use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Tui\Process;
@@ -83,10 +84,15 @@ final class ProcessTest extends TestCase
 
     public function testACommandThatRunsTooLongIsStoppedAndKeepsWhatItSaid(): void
     {
+        $started = microtime(true);
+
         [$exit, $stdout] = $this->runAsync(['/bin/sh', '-c', 'echo first; sleep 5'], 0.3);
 
         $this->assertSame(Process::STOPPED, $exit);
         $this->assertSame("first\n", $stdout);
+        // And it comes back when it says it does. Waiting for the pipes to close after the
+        // kill would have waited for `sleep`, which inherited them and was never killed.
+        $this->assertLessThan(2.0, microtime(true) - $started, 'it waited for the grandchild');
     }
 
     public function testACommandSomethingKilledReportsWhatTheShellWouldHaveSaid(): void
@@ -94,6 +100,57 @@ final class ProcessTest extends TestCase
         [$exit] = $this->runAsync(['/bin/sh', '-c', 'kill -9 $$']);
 
         $this->assertSame(137, $exit);
+    }
+
+    public function testAnAbortKillsItAndSaysSo(): void
+    {
+        $controller = new AbortController();
+        $started = microtime(true);
+
+        [$exit, $stdout] = Async::run(static function () use ($controller): array {
+            Async::spawn(static function () use ($controller): void {
+                Async::delay(0.05);
+                $controller->abort('escape');
+            });
+
+            return Process::runAsync(['/bin/sh', '-c', 'echo first; sleep 5'], 5.0, null, $controller->signal);
+        });
+
+        $this->assertSame(Process::STOPPED, $exit);
+        $this->assertSame("first\n", $stdout);
+        $this->assertLessThan(2.0, microtime(true) - $started, 'it waited out the timeout instead');
+    }
+
+    public function testASignalAlreadyAbortedMeansItNeverStarts(): void
+    {
+        $controller = new AbortController();
+        $controller->abort('escape');
+        $marker = sys_get_temp_dir() . '/pig-abort-' . bin2hex(random_bytes(4));
+
+        [$exit] = Async::run(static fn (): array => Process::runAsync(
+            ['/bin/sh', '-c', 'touch ' . escapeshellarg($marker)],
+            2.0,
+            null,
+            $controller->signal,
+        ));
+
+        $this->assertSame(Process::STOPPED, $exit);
+        $this->assertFileDoesNotExist($marker);
+    }
+
+    public function testTheAbortListenerIsNotLeftOnTheSignal(): void
+    {
+        $controller = new AbortController();
+
+        Async::run(static function () use ($controller): void {
+            Process::runAsync(['/bin/sh', '-c', 'echo quick'], 2.0, null, $controller->signal);
+        });
+
+        // A listener left behind would fire into a command that has already been reaped, and
+        // the next `proc_terminate()` would be aimed at whatever has that pid now.
+        $controller->abort('later');
+
+        $this->assertTrue($controller->signal->aborted());
     }
 
     public function testAProgramThatIsNotOnThisMachineIsStopped(): void

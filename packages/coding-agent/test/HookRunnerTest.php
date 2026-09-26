@@ -12,6 +12,7 @@ use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
 use Pig\Ai\Tool;
 use Pig\Ai\UserMessage;
+use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\CodingAgent\Hooks\Events\AgentStartEvent;
@@ -481,6 +482,70 @@ final class HookRunnerTest extends TestCase
         // answer: no keystrokes, no spinner, no redraw, because `Process::run()` polls with
         // `usleep()` and the one thread is inside it. The count is 0 if that comes back.
         $this->assertGreaterThan(1, $ticks);
+    }
+
+    public function testEscapeStopsAHooksCommandRatherThanWaitingItOut(): void
+    {
+        $controller = new AbortController();
+        $api = new HookApi('.');
+        $runner = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], '.');
+        $runner->initialize(
+            getModel: static fn () => null,
+            signal: static fn (): AbortSignal => $controller->signal,
+        );
+
+        $result = null;
+        $started = microtime(true);
+
+        Async::run(static function () use ($controller, $api, &$result): void {
+            Async::spawn(static function () use ($controller): void {
+                Async::delay(0.05);
+                $controller->abort('escape');
+            });
+
+            $result = $api->exec(['sh', '-c', 'echo started; sleep 5']);
+        });
+
+        // Upstream cannot do this: its `ExecOptions` has a `signal` field and its
+        // `HookContext` has no signal to put in it, so a hook's command can only be waited
+        // out. The hook does not pass one here either — one it had to remember is one whose
+        // author did not.
+        $this->assertTrue($result->stopped());
+        $this->assertStringContainsString('started', $result->stdout);
+        $this->assertLessThan(2.0, microtime(true) - $started);
+    }
+
+    public function testAHandlerCanParkOnTheTurnsSignalItself(): void
+    {
+        $controller = new AbortController();
+        $api = new HookApi('.');
+        $runner = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], '.');
+        $runner->initialize(
+            getModel: static fn () => null,
+            signal: static fn (): AbortSignal => $controller->signal,
+        );
+
+        $seen = null;
+        $api->on('agent_start', static function ($event, $context) use (&$seen): void {
+            $seen = $context->signal;
+        });
+
+        $runner->emit(new AgentStartEvent());
+
+        // On the context too, for a handler whose own waiting is not a subprocess.
+        $this->assertSame($controller->signal, $seen);
+    }
+
+    public function testBetweenTurnsThereIsNoSignalAndACommandStillRuns(): void
+    {
+        $api = new HookApi('.');
+        $runner = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], '.');
+        $runner->initialize(getModel: static fn () => null, signal: static fn () => null);
+
+        $result = Async::run(static fn () => $api->exec(['echo', 'idle']));
+
+        $this->assertTrue($result->ok());
+        $this->assertSame("idle\n", $result->stdout);
     }
 
     public function testAHooksCommandStillRunsWhereThereIsNoLoop(): void
