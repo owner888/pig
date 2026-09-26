@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Theme;
 
 use InvalidArgumentException;
+use Pig\Tui\Env;
 
 /**
  * A colour, as the terminal in front of us can render it.
@@ -40,12 +41,11 @@ final class Colour
             return true;
         }
 
-        // Windows Terminal takes 24-bit colour and says so nowhere else. Compared against ''
-        // and not false, because `getenv()` answers '' for a variable exported without a
-        // value and upstream reads this one through JavaScript's truthiness, where '' is not
-        // Windows Terminal. Same correction as `Images\Capabilities::isSet()`, whose docblock
-        // says what it costs when the variable decides whether to draw a picture.
-        return (string) getenv('WT_SESSION') !== '';
+        // Windows Terminal takes 24-bit colour and says so nowhere else. Asked through
+        // `Tui\Env::isSet()`, whose docblock says why a variable exported without a value is not
+        // presence and what it cost in the file that found it — this was a third copy of that
+        // comparison and the clipboard had four of the wrong one.
+        return Env::isSet('WT_SESSION');
     }
 
     /**

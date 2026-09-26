@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Tools;
 
+use Pig\Tui\Paths as TuiPaths;
+
 /**
  * Turning what the model wrote into a path that exists.
  *
@@ -12,31 +14,19 @@ namespace Pig\CodingAgent\Tools;
  */
 final class Paths
 {
-    /**
-     * The Unicode spaces that get into a path by way of a copy and paste.
-     *
-     * Any of these where a plain space belongs makes the path miss, and nothing about
-     * the error says why, because the two look identical.
-     */
-    private const string UNICODE_SPACES = '/[\x{00A0}\x{2000}-\x{200A}\x{202F}\x{205F}\x{3000}]/u';
-
+    /** The space a macOS screenshot has in its own name, before `AM` or `PM`. */
     private const string NARROW_NO_BREAK_SPACE = "\u{202F}";
 
-    /** Expand a leading `~`, and normalise the spaces. */
+    /**
+     * Expand a leading `~`, and normalise the spaces.
+     *
+     * `Tui\Paths::expand()` is the implementation, because the `@` file picker lives in that
+     * package and cannot see this one — and had its own worse copy of these lines until it did.
+     * Kept here as the name every caller in this package already asks for.
+     */
     public static function expand(string $path): string
     {
-        $path = (string) preg_replace(self::UNICODE_SPACES, ' ', $path);
-        $home = getenv('HOME');
-
-        if ($home === false || $home === '') {
-            return $path;
-        }
-
-        return match (true) {
-            $path === '~' => $home,
-            str_starts_with($path, '~/') => $home . substr($path, 1),
-            default => $path,
-        };
+        return TuiPaths::expand($path);
     }
 
     /**

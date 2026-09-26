@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\Tui\Autocomplete;
 
+use Pig\Tui\Env;
+use Pig\Tui\Paths;
 use Pig\Tui\Process;
 use Pig\Tui\TuiError;
 
@@ -251,14 +253,27 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
     private function files(string $prefix): array
     {
         $isAt = str_starts_with($prefix, '@');
-        $path = self::expandHome($isAt ? substr($prefix, 1) : $prefix);
+        $typed = $isAt ? substr($prefix, 1) : $prefix;
+        // `Paths::expand()` rather than a copy of it: it normalises the spaces as well, which is
+        // what makes a path pasted out of Finder complete at all.
+        $path = Paths::expand($typed);
         [$directory, $namePrefix] = $this->split($prefix, $path);
 
-        // A prefix that names no directory is a prefix nobody can complete: the user is
-        // mid-word, not in error. Checked rather than suppressed, so a directory that
-        // exists but cannot be read still raises instead of silently offering nothing.
+        // Normalising is what makes a pasted path resolve and is also what breaks a name that
+        // really holds one of those spaces — a directory somebody called `Q1 2026` with a no-break
+        // space in it. So the spelling that was typed is the second answer, exactly as
+        // `CodingAgent\Tools\Paths::resolveForRead()` retries for a macOS screenshot.
         if (!is_dir($directory)) {
-            return [];
+            [$asTyped] = $this->split($prefix, self::expandHome($typed));
+
+            if (!is_dir($asTyped)) {
+                // A prefix that names no directory is a prefix nobody can complete: the user is
+                // mid-word, not in error. Checked rather than suppressed, so a directory that
+                // exists but cannot be read still raises instead of silently offering nothing.
+                return [];
+            }
+
+            $directory = $asTyped;
         }
 
         $entries = scandir($directory);
@@ -268,10 +283,20 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
         }
 
         $items = [];
-        $needle = mb_strtolower($namePrefix, 'UTF-8');
+        // Both sides normalised, so a pasted `Shot-4.31.05<U+202F>PM` matches the file actually
+        // called `Shot-4.31.05 PM.png` — and a name that really holds one of these spaces still
+        // matches itself. Normalising only the needle answers the first and loses the second.
+        //
+        // The reverse — an ordinary space typed against a name holding U+202F — cannot be reached
+        // from here whatever this does, because a space is where `pathPrefix()` ends the word. So
+        // a path with a space in it is not completable by either spelling, which is upstream's
+        // behaviour too and is the one thing here that is a limit rather than a rule.
+        $needle = Paths::normaliseSpaces(mb_strtolower($namePrefix, 'UTF-8'));
 
         foreach ($entries as $name) {
-            if ($name === '.' || $name === '..' || !str_starts_with(mb_strtolower($name, 'UTF-8'), $needle)) {
+            $comparable = Paths::normaliseSpaces(mb_strtolower($name, 'UTF-8'));
+
+            if ($name === '.' || $name === '..' || !str_starts_with($comparable, $needle)) {
                 continue;
             }
 
@@ -355,19 +380,25 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
         return $marker . ($directory === '/' ? '/' : $directory . '/') . $name;
     }
 
+    /**
+     * A `~` expanded and nothing else touched.
+     *
+     * The second answer for a directory whose real name holds one of the spaces `Paths::expand()`
+     * normalises away — see `files()`. Everything else goes through `Paths::expand()`.
+     */
     private static function expandHome(string $path): string
     {
-        $home = getenv('HOME');
+        $home = Env::home();
 
-        if ($home === false || $home === '') {
+        if ($home === null) {
             return $path;
         }
 
-        if ($path === '~') {
-            return $home;
-        }
-
-        return str_starts_with($path, '~/') ? $home . substr($path, 1) : $path;
+        return match (true) {
+            $path === '~' => $home,
+            str_starts_with($path, '~/') => $home . substr($path, 1),
+            default => $path,
+        };
     }
 
     private static function join(string $base, string $path): string

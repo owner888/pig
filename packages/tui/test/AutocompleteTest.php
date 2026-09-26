@@ -12,6 +12,9 @@ use Pig\Tui\Autocomplete\SlashCommand;
 
 final class AutocompleteTest extends TestCase
 {
+    /** The space macOS puts in a path copied out of Finder, and in a screenshot's own name. */
+    private const string NARROW_NO_BREAK_SPACE = "\u{202F}";
+
     private string $root;
 
     #[\Override]
@@ -250,6 +253,84 @@ final class AutocompleteTest extends TestCase
             ['/usr/bin', false, 'two segments is enough'],
             ['hello', false, 'no slash at all'],
         ];
+    }
+
+    /** Tab, which is how an absolute path at the start of a line gets completed. */
+    private function tabValues(CombinedAutocompleteProvider $provider, string $line): array
+    {
+        return $this->values($provider->forcedFileSuggestions([$line], 0, strlen($line)));
+    }
+
+    public function testAPathCopiedOutOfAFileManagerStillCompletes(): void
+    {
+        mkdir("{$this->root}/Screenshots", 0o755, true);
+        file_put_contents("{$this->root}/Screenshots/one.png", '');
+
+        // What Finder puts on the clipboard has U+202F where the name on disk has a space, and
+        // U+202F is not whitespace to `\S`, so the whole pasted path arrives as one word. The
+        // path looks identical on screen, `is_dir()` says no, and the picker answered with
+        // nothing at all — the same silence `Tools\Paths::expand()` was written to end, from the
+        // one caller that could not reach it.
+        $directory = str_replace('Screenshots', 'Screen' . self::NARROW_NO_BREAK_SPACE . 'Shots', "{$this->root}/Screenshots/");
+        rename("{$this->root}/Screenshots", "{$this->root}/Screen Shots");
+
+        $this->assertSame(
+            ["{$directory}one.png"],
+            $this->tabValues($this->provider(), $directory),
+        );
+
+        unlink("{$this->root}/Screen Shots/one.png");
+        rmdir("{$this->root}/Screen Shots");
+    }
+
+    public function testAPastedNameMatchesTheFileWhoseNameHasTheOrdinarySpace(): void
+    {
+        // The directory resolving is not enough on its own: the last segment is a name prefix
+        // matched against what `scandir()` returned, so a pasted `Shot-4.31.05<U+202F>PM` had to
+        // match the file actually called `Shot-4.31.05 PM.png`. Both sides are normalised for the
+        // comparison, which is also what keeps a real U+202F in a name from stopping matching
+        // itself.
+        file_put_contents("{$this->root}/Shot-4.31.05 PM.png", '');
+
+        $typed = "{$this->root}/Shot-4.31.05" . self::NARROW_NO_BREAK_SPACE . 'PM';
+
+        $this->assertSame(
+            ["{$this->root}/Shot-4.31.05 PM.png"],
+            $this->tabValues($this->provider(), $typed),
+        );
+
+        unlink("{$this->root}/Shot-4.31.05 PM.png");
+    }
+
+    public function testAFileWhoseRealNameHoldsThatSpaceStillMatchesItself(): void
+    {
+        // The other side of the comparison, and the reason both sides are normalised: a macOS
+        // screenshot really is called `Screenshot … 4.31.05<U+202F>PM.png` on disk. Normalising
+        // only what was typed turns the needle into an ordinary space and the file then matches
+        // nothing — including the exact name it was copied from.
+        $name = 'Shot-4.31.05' . self::NARROW_NO_BREAK_SPACE . 'PM.png';
+        file_put_contents("{$this->root}/{$name}", '');
+
+        $typed = "{$this->root}/Shot-4.31.05" . self::NARROW_NO_BREAK_SPACE . 'PM';
+
+        $this->assertSame(["{$this->root}/{$name}"], $this->tabValues($this->provider(), $typed));
+
+        unlink("{$this->root}/{$name}");
+    }
+
+    public function testADirectoryWhoseRealNameHoldsThatSpaceIsStillListed(): void
+    {
+        // And the directory half of it: normalising is what makes a pasted path resolve, so the
+        // spelling that was typed has to stay the second answer or a folder somebody named with
+        // a no-break space stops completing.
+        $real = "{$this->root}/Q1" . self::NARROW_NO_BREAK_SPACE . '2026';
+        mkdir($real, 0o755, true);
+        file_put_contents($real . '/plan.md', '');
+
+        $this->assertSame([$real . '/plan.md'], $this->tabValues($this->provider(), $real . '/'));
+
+        unlink($real . '/plan.md');
+        rmdir($real);
     }
 
     /**

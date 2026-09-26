@@ -258,10 +258,22 @@ response was meant to be. Asserting only on the bytes pig *sends* would have pas
 packages/async/      → Pig\Async\        (pig/async)       Loop, Future, Deferred, Async, Socket, Abort*
 packages/ai/         → Pig\Ai\           (pig/ai)          unified LLM API, HTTP/SSE, Anthropic
 packages/agent-core/ → Pig\Agent\        (pig/agent-core)  AgentLoop, Agent, tools, events
-packages/tui/        → Pig\Tui\          (pig/tui)         renderer, widths, keys, editor, markdown, images
+packages/tui/        → Pig\Tui\          (pig/tui)         renderer, widths, keys, editor, markdown, images, env
 packages/coding-agent/ → Pig\CodingAgent\ (pig/coding-agent) tools, theme, session, interactive CLI
 bin/pig                                     the entry point
 ```
+
+**There are two `Paths` classes and that is deliberate.** `Pig\Tui\Paths` is a path as a *person*
+typed or pasted it — a leading `~`, and the spaces macOS substitutes on the way to the clipboard —
+and `Pig\CodingAgent\Tools\Paths` is the rest: resolving against a working directory, collapsing
+`..`, the macOS screenshot retry. The split is which package can see which: the `@` file picker lives
+in `pig/tui` and had its own worse copy of the first part until this, which is the third time that
+has happened to the same fourteen lines. A grep for `Paths::expand` finding both is the point of the
+shared name, and the second one delegates.
+
+`Pig\Tui\Env` has no upstream counterpart either, and exists for one reason: `getenv()` answers `''`
+for a variable exported without a value where JavaScript's truthiness reads that as absent, so the
+same correction was being written out in six places. Both traps are at the bottom of this file.
 
 Ported so far: all of `ai` (`types.ts`, `utils/event-stream.ts`, `stream.ts`, the Anthropic provider),
 all of `agent-core` (`types.ts` 217 → `agent-loop.ts` 417 → `agent.ts` 439), and `tui`'s foundation
@@ -3229,19 +3241,70 @@ forwarding the name without a value therefore made pig send iTerm2 inline-image 
 terminal that cannot draw them — **not a missing picture, tens of kilobytes of base64 printed into
 the transcript**, plus a `CSI 16 t` whose answer never comes.
 
-`Capabilities::isSet()` is the one implementation, and the same correction went into
-`Theme\Colour::truecolor()`, whose `WT_SESSION` test upstream also reads as truthiness.
 **`detect()` had no test at all** — twenty-five lines of environment arithmetic, which is the size
 that goes unchecked, exactly as `Config`'s sixty lines of path arithmetic were. `CapabilitiesTest`
 states all twelve terminals as well as the four empty-variable cases, and the twelve passing first
 time is what says the rest of the detection is upstream's.
 
-**Four more sites still read `!== false`**, all in `Clipboard\SystemClipboard` — `WAYLAND_DISPLAY`,
-`TERMUX_VERSION`, `WSL_DISTRO_NAME`, `WSL_INTEROP` — and they are pig's own, with no upstream
-counterpart to be faithful to. What they cost is milder by a lot: the wrong clipboard command is
-chosen, `Process::capture()` answers null for it, and the result is no clipboard rather than a screen
-full of base64. Left alone pending a decision on whether the presence test is worth one shared helper
-across two packages, which is public surface in `pig/tui` and so not an audit's to add.
+**`Tui\Env::isSet()` is the one implementation, and getting there took two goes.** The first fix put
+it in `Images\Capabilities` as a private method and wrote the same comparison out again in
+`Theme\Colour::truecolor()` — two copies with a comment between them — and left **four more sites
+reading `!== false`** in `Clipboard\SystemClipboard`: `WAYLAND_DISPLAY`, `TERMUX_VERSION`,
+`WSL_DISTRO_NAME`, `WSL_INTEROP`. Those are pig's own, with no upstream counterpart to be faithful
+to, and what they cost is milder by a lot — the wrong clipboard command is chosen,
+`Process::capture()` answers null for it, and the result is no clipboard rather than a screen full
+of base64. They were left for a decision about public surface in `pig/tui`, which the developer has
+since made: one `Env`, and a rule with six readers has one answer rather than two right ones, one
+written-out one and four wrong ones. `EnvTest` states the rule and reaches three of the clipboard's
+four through the methods that read them; the fourth is `linuxWrite()`'s command order, which has no
+seam that does not involve running `wl-copy` for real.
+
+`Env::home()` is the other half of that file and answers **null** where `Config::homeDirectory()`
+answers the temp directory. That split is the point: pig's own files have to go *somewhere*, while
+`Paths::expand()` leaves a `~` alone and the footer leaves a path unshortened — so a
+`sys_get_temp_dir()` underneath all three would resolve `~/notes` into `/tmp`, which is exactly what
+two hook loaders were caught doing. It also trims the trailing slash, which none of the four copies
+did: with `HOME=/Users/dev/`, `~/notes` was `/Users/dev//notes` and the footer compared a path
+against a prefix one character too long.
+
+### The `@` picker had the third copy of `Paths::expand()`, and it was the worse one again
+
+Word for word the same find as the two hook loaders below — `~` expanded, spaces not normalised —
+one package over, which is why the sweep that caught those two did not see this one.
+`CombinedAutocompleteProvider::expandHome()` is in `pig/tui`, and `Tools\Paths::expand()` is in
+`pig/coding-agent`, so the picker could not have called it. What it cost: a path pasted out of
+Finder has U+202F where the name on disk has a space, `is_dir()` says no, and the picker answers
+**nothing at all** — the same silence, on the one input that arrives by paste rather than by typing.
+
+U+202F is not whitespace to `\S`, which is why this is reachable: a pasted path with spaces in it
+arrives as **one word**, where the same path typed with ordinary spaces is cut at the first one by
+`pathPrefix()`. So a path with real spaces is not completable by either spelling — upstream's
+behaviour too, and the one thing in that method that is a limit rather than a rule.
+
+`Tui\Paths::expand()` is the implementation now and `Tools\Paths::expand()` calls it, which is the
+only direction that works. Two things about the fix are worth more than the move:
+
+- **Normalising is not enough on its own, because it breaks the other direction.** A macOS
+  screenshot really is called `Screenshot … 4.31.05<U+202F>PM.png` on disk, and a folder somebody
+  named `Q1<U+202F>2026` really has that space in it. So the directory is looked for under the
+  normalised spelling **and then under the one that was typed** — the pair of answers
+  `Tools\Paths::resolveForRead()` already arrives at by retrying — and the name comparison
+  normalises **both sides**, so a pasted needle finds the file with the ordinary space and a real
+  U+202F still matches itself.
+- **Half of that second point was dead code until a test was written for it.** Mutating the
+  name-side normalisation away broke nothing: the pasted-needle case passes with the needle alone
+  normalised, and the reverse direction cannot be reached from here at all. What makes it
+  load-bearing is the case neither test covered — a name holding U+202F, typed or pasted with
+  U+202F — which matches only if both sides are normalised. Same as the whole-float branch in
+  `JsonSchema::identity()`, except that one really was doing nothing and was deleted; **the
+  mutation check is what tells those two apart, and only if you go looking for the missing case
+  rather than deleting on the first silent mutation.**
+
+Regression tests: `AutocompleteTest::testAPathCopiedOutOfAFileManagerStillCompletes`,
+`testAPastedNameMatchesTheFileWhoseNameHasTheOrdinarySpace`,
+`testAFileWhoseRealNameHoldsThatSpaceStillMatchesItself` and
+`testADirectoryWhoseRealNameHoldsThatSpaceIsStillListed` — four, because there are two spellings on
+each of two sides and no one case covers a second.
 
 ### A JavaScript string offset carried across as a byte offset lands inside a character
 
@@ -4129,6 +4192,11 @@ Both now call `Paths::resolve()`. **The lesson is the one this file keeps arrivi
 other direction:** the question is not "is this fourteen lines correct" but "who else answers
 this question, and do they agree" — and the two copies could not have diverged from `Paths`
 without diverging from each other too, which is why neither looked wrong on its own.
+
+**And there was a third copy, which this sweep could not see: `CombinedAutocompleteProvider`, one
+package over.** A grep across `coding-agent` finds the two loaders and stops there, so the rule to
+take from this entry is that the sweep is **every package** — the same fourteen lines, the same half
+missing, the same silence. See the `@` picker entry above.
 
 Found in the same read and *not* changed, because checking came first: both loaders use
 `glob('*.php')`, which skips a leading dot where upstream's `readdirSync` does not — and here

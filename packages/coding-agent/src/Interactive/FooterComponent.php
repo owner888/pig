@@ -13,6 +13,7 @@ use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
 use Pig\Tui\Component;
+use Pig\Tui\Env;
 use Pig\Tui\Width;
 
 /**
@@ -113,10 +114,10 @@ final class FooterComponent implements Component
 
     private function where(int $width): string
     {
-        $home = getenv('HOME');
+        $home = Env::home();
         $path = $this->cwd;
 
-        if (is_string($home) && $home !== '' && str_starts_with($path, $home)) {
+        if ($home !== null && str_starts_with($path, $home)) {
             $path = '~' . substr($path, strlen($home));
         }
 

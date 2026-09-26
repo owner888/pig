@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Tui\Clipboard;
 
+use Pig\Tui\Env;
 use Pig\Tui\Process;
 
 /**
@@ -66,7 +67,7 @@ final class SystemClipboard implements Clipboard
 
     private function linuxWrite(string $text): bool
     {
-        $commands = getenv('WAYLAND_DISPLAY') !== false
+        $commands = Env::isSet('WAYLAND_DISPLAY')
             ? [['wl-copy'], ['xclip', '-selection', 'clipboard'], ['xsel', '--clipboard', '--input']]
             : [['xclip', '-selection', 'clipboard'], ['xsel', '--clipboard', '--input'], ['wl-copy']];
 
@@ -84,7 +85,7 @@ final class SystemClipboard implements Clipboard
     {
         // Termux has a clipboard but no image on it, and asking costs a process launch
         // on every paste.
-        if (getenv('TERMUX_VERSION') !== false) {
+        if (Env::isSet('TERMUX_VERSION')) {
             return null;
         }
 
@@ -321,11 +322,11 @@ final class SystemClipboard implements Clipboard
 
     private static function isWayland(): bool
     {
-        return getenv('WAYLAND_DISPLAY') !== false || getenv('XDG_SESSION_TYPE') === 'wayland';
+        return Env::isSet('WAYLAND_DISPLAY') || getenv('XDG_SESSION_TYPE') === 'wayland';
     }
 
     private static function isWsl(): bool
     {
-        return getenv('WSL_DISTRO_NAME') !== false || getenv('WSL_INTEROP') !== false;
+        return Env::isSet('WSL_DISTRO_NAME') || Env::isSet('WSL_INTEROP');
     }
 }

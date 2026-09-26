@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
+use Pig\Tui\Env;
+
 /** Where pig keeps what belongs to the person rather than to a project. */
 final class Config
 {
@@ -68,10 +70,16 @@ final class Config
         return self::homeDirectory();
     }
 
+    /**
+     * The fallback is this method's own, and is the reason `Tui\Env::home()` answers null instead.
+     *
+     * pig's files have to go *somewhere*, so no `HOME` means the temp directory here. The two
+     * other readers of that variable want the opposite — a `~` left alone, a path left
+     * unshortened — and a `sys_get_temp_dir()` underneath all three would resolve `~/notes` to a
+     * file in `/tmp`, which is what two hook loaders were caught doing.
+     */
     private static function homeDirectory(): string
     {
-        $home = getenv('HOME');
-
-        return $home === false || $home === '' ? sys_get_temp_dir() : rtrim($home, '/');
+        return Env::home() ?? sys_get_temp_dir();
     }
 }
