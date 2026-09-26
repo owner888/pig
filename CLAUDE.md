@@ -3039,6 +3039,80 @@ runner has no tty to open. What is tested is the empty-command guard and that a 
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
 
+### Every Anthropic turn's input count was wiped out by its own last event
+
+Eleventh find, from reading the four providers' stream events. `message_delta` is the event that
+carries the stop reason and the final usage, and both pig and upstream read its `usage` with a
+`?? 0` / `|| 0`. Anthropic's `MessageDeltaUsage` types `input_tokens`, `cache_read_input_tokens` and
+`cache_creation_input_tokens` as **`number | null`** — "may not be reported" — and the streaming
+documentation's own example carries nothing but `output_tokens`. So the final event replaced the
+counts `message_start` had already given with zeros.
+
+What that costs: the input cost of every Anthropic turn disappears from `/stats` and the footer,
+and `Compaction::contextTokens()` — which believes `totalTokens` — sees a conversation the size of
+its last answer. **Auto-compaction never fires on Anthropic**; the turn recovers only when the API
+rejects the request as too long, which is late, and by accident.
+
+`Anthropic::update()` now merges: a field the delta reports updates, a field it does not leaves the
+earlier number standing. That is right under either API behaviour, and the nullable type is the
+argument for it — `null` means "no update", not "zero". It is a deliberate divergence from upstream's
+literal `|| 0`, on the same ground as every other "no silent fallback" rule in this file.
+
+**The fixture repeated the input in `message_delta`**, which real Anthropic does not, so the suite
+agreed with the code. It now carries the documented shape, and two cases state the rule from both
+sides: a delta with `input_tokens: null` keeps 1000, and a delta that does report 1200 is believed.
+
+### OpenAI's final tool-call arguments were read from the deltas only
+
+Twelfth. On the responses API a function call's arguments arrive as `function_call_arguments.delta`
+events **and** whole, as `arguments` on the `response.output_item.done` item. Upstream builds the
+finished `ToolCall` from that item (`JSON.parse(item.arguments)`); pig used only what the deltas had
+accumulated and never looked at the field. Usually the same JSON, so usually the same call — but a
+stream that sends no argument deltas, which this API allows and a compatible endpoint may do (Copilot
+speaks this API and implements it itself), left the call with **no arguments at all**.
+
+`AssistantMessageBuilder::setJson()` replaces rather than appends, for the same reason
+`setSignature()` exists: the usual case is the same JSON arriving twice, and appending would give
+`{"a":1}{"a":1}`.
+
+### A Gemini tool call's thought signature was collected and then dropped
+
+Thirteenth, and the clearest "wired at one end only" of the whole audit. Four places handle a tool
+call's `thoughtSignature`: `GoogleShared` reads it off the part, `setSignature()` stores it,
+`GoogleShared::messages()` writes it back into the request, and `TransformMessages` carries it
+across. The fifth — `AssistantMessageBuilder::toContent()`, the one place that *builds* the
+`ToolCall` — constructed it with three arguments out of four, so `ToolCall::thoughtSignature` was
+always null for a call that came from a stream.
+
+So Gemini never got its own thought context back with the call it came out of, which is what the
+field is for and what Gemini 3 expects. The write half could not be tested before this, because
+nothing could produce a call that had one; it has a test now, and so does the read half.
+
+**Two smaller things in the same read.** A Gemini `Part` is a one-of by convention rather than by
+schema, and upstream reads `text` and then `functionCall` from the same part; pig checked for the
+call first and returned, dropping any text that shared the part. And pig keeps the last non-null
+`thoughtSignature` on a thinking block where upstream assigns `part.thoughtSignature` every time,
+including `undefined` — which clears a signature an earlier part had set. pig's is kept.
+
+### OpenRouter's encrypted reasoning was neither read nor sent
+
+Fourteenth, and both halves were missing, which is why nothing looked wrong. A reasoning model
+reached through OpenRouter returns its chain of thought as `reasoning_details` — a list of
+`reasoning.encrypted` objects, each naming a tool call by id — rather than as text in one of the
+three `reasoning*` fields pig already read. Upstream files each one against the matching call's
+`thoughtSignature` and writes them back beside `tool_calls` on the next request. pig did neither, so
+**multi-step tool use through OpenRouter lost the model's reasoning between every turn.**
+
+Both halves are ported, with the whole detail kept rather than just its `data`, because the whole
+object is what goes back. Anything that will not decode is left out rather than sent as a string:
+the field is a list of objects and is rejected otherwise.
+
+Two differences in the completions provider that are **kept** rather than aligned, now that they are
+written down: a tool call whose id arrives *after* its first delta stays one call here and becomes
+two upstream (`toolCall.id && currentBlock.id !== toolCall.id` splits on the id appearing, where pig
+also requires the open call to have had one); and pig pushes no `toolcall_delta` for a chunk that
+carries an id and no arguments, where upstream pushes one with an empty delta.
+
 ### Twelve models were never told how hard to think
 
 Ninth find, from auditing the providers — the part of pig that is hand-written where upstream has

@@ -187,7 +187,46 @@ final class OpenAiCompletions
             }
         }
 
+        // After the calls, because it names one of them.
+        if (is_array($delta['reasoning_details'] ?? null)) {
+            $this->onReasoningDetails($delta['reasoning_details'], $builder);
+        }
+
         return $open;
+    }
+
+    /**
+     * OpenRouter's encrypted reasoning, filed against the call it belongs to.
+     *
+     * A reasoning model reached through OpenRouter returns its chain of thought as an opaque blob
+     * rather than as text, addressed to a tool call by id, and it has to go back out with that call
+     * or the next turn starts the reasoning over. Both halves of this were missing: nothing read the
+     * field and nothing wrote it, so multi-step tool use through OpenRouter lost the model's
+     * reasoning between every turn. Upstream reads it here and writes it in `assistant()`.
+     *
+     * The whole detail is kept, not just its data, because that is what goes back.
+     *
+     * @param list<mixed> $details
+     */
+    private function onReasoningDetails(array $details, AssistantMessageBuilder $builder): void
+    {
+        foreach ($details as $detail) {
+            if (!is_array($detail) || ($detail['type'] ?? null) !== 'reasoning.encrypted') {
+                continue;
+            }
+
+            $id = $detail['id'] ?? null;
+
+            if (!is_string($id) || $id === '' || !is_string($detail['data'] ?? null)) {
+                continue;
+            }
+
+            $index = $builder->indexOfToolCall($id);
+
+            if ($index !== null) {
+                $builder->setSignature($index, (string) json_encode($detail));
+            }
+        }
     }
 
     /**
@@ -595,6 +634,23 @@ final class OpenAiCompletions
                 ],
                 $calls,
             );
+
+            // The encrypted reasoning that came with these calls, handed back as it arrived —
+            // see `onReasoningDetails()`. Anything that will not decode is left out rather than
+            // sent as a string: the field is a list of objects and OpenRouter rejects it otherwise.
+            $details = [];
+
+            foreach ($calls as $call) {
+                $decoded = $call->thoughtSignature === null ? null : json_decode($call->thoughtSignature, true);
+
+                if (is_array($decoded)) {
+                    $details[] = $decoded;
+                }
+            }
+
+            if ($details !== []) {
+                $out['reasoning_details'] = $details;
+            }
         }
 
         $empty = ($out['content'] === null || $out['content'] === '' || $out['content'] === [])

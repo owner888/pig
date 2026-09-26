@@ -49,7 +49,10 @@ final class AnthropicTest extends TestCase
             ['content_block_delta', ['index' => 0, 'delta' => ['type' => 'text_delta', 'text' => 'Hel']]],
             ['content_block_delta', ['index' => 0, 'delta' => ['type' => 'text_delta', 'text' => 'lo']]],
             ['content_block_stop', ['index' => 0]],
-            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => ['input_tokens' => 12, 'output_tokens' => 5, 'cache_read_input_tokens' => 4]]],
+            // Anthropic's documented shape: the final delta carries the output count and nothing
+            // else. Repeating the input here — which this fixture used to do — is what hid a `?? 0`
+            // that wiped out everything `message_start` had reported.
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => ['output_tokens' => 5]]],
             ['message_stop', []],
         ]);
 
@@ -74,6 +77,59 @@ final class AnthropicTest extends TestCase
         $this->assertSame(12, $message->usage->input);
         $this->assertSame(4, $message->usage->cacheRead);
         $this->assertSame(3.0 / 1_000_000 * 12, $message->usage->cost->input);
+    }
+
+    public function testAUsageFieldTheFinalDeltaDoesNotMentionKeepsWhatWasReported(): void
+    {
+        // `input_tokens: number | null` is the SDK's own type for this field: null means "not
+        // reported", and read as zero it wipes out what `message_start` said. The input cost of
+        // every turn vanished from `/stats`, and `Compaction::contextTokens()` — which believes
+        // `totalTokens` — saw a conversation the size of its last answer, so auto-compaction never
+        // fired on Anthropic at all.
+        $url = $this->serveStream([
+            ['message_start', ['message' => ['usage' => [
+                'input_tokens' => 1000,
+                'cache_read_input_tokens' => 200,
+                'cache_creation_input_tokens' => 50,
+            ]]]],
+            ['content_block_start', ['index' => 0, 'content_block' => ['type' => 'text']]],
+            ['content_block_delta', ['index' => 0, 'delta' => ['type' => 'text_delta', 'text' => 'ok']]],
+            ['content_block_stop', ['index' => 0]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => [
+                'output_tokens' => 7,
+                // Explicitly null, which is what the API sends when it has nothing to add.
+                'input_tokens' => null,
+            ]]],
+            ['message_stop', []],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(1000, $message->usage->input);
+        $this->assertSame(200, $message->usage->cacheRead);
+        $this->assertSame(50, $message->usage->cacheWrite);
+        $this->assertSame(7, $message->usage->output, 'and what it did report is taken');
+        $this->assertSame(1257, $message->usage->totalTokens);
+    }
+
+    public function testAFinalDeltaThatDoesReportTheCumulativeCountsWins(): void
+    {
+        // The other half: the field is nullable, not absent, so a stream that carries the running
+        // totals must be believed rather than ignored.
+        $url = $this->serveStream([
+            ['message_start', ['message' => ['usage' => ['input_tokens' => 10]]]],
+            ['content_block_start', ['index' => 0, 'content_block' => ['type' => 'text']]],
+            ['content_block_stop', ['index' => 0]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => [
+                'input_tokens' => 1200,
+                'output_tokens' => 3,
+            ]]],
+            ['message_stop', []],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(1200, $message->usage->input);
     }
 
     public function testTextArrivesInPiecesNotAllAtOnce(): void

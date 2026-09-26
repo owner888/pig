@@ -90,6 +90,23 @@ final class AssistantMessageBuilder
         return null;
     }
 
+    /**
+     * Which block is the tool call with this id, if any.
+     *
+     * For a provider that addresses something *to* a call rather than putting it in the call's own
+     * event — OpenRouter's encrypted reasoning arrives as its own field, naming the call by id.
+     */
+    public function indexOfToolCall(string $id): ?int
+    {
+        foreach ($this->blocks as $index => $block) {
+            if ($block['type'] === 'toolCall' && $block['id'] === $id) {
+                return $index;
+            }
+        }
+
+        return null;
+    }
+
     public function append(int $index, string $field, string $delta): void
     {
         $this->blocks[$index][$field] .= $delta;
@@ -120,6 +137,21 @@ final class AssistantMessageBuilder
     }
 
     /**
+     * Replace a tool call's arguments with the authoritative JSON, rather than adding to it.
+     *
+     * The same shape as `setSignature()` and for the same reason: OpenAI's responses API streams
+     * the arguments as deltas *and* repeats them whole on `response.output_item.done`. Appending
+     * the whole to the pieces would give `{"a":1}{"a":1}`, so the finished item replaces what was
+     * accumulated — and a stream that sent no deltas at all, which a compatible endpoint may do,
+     * ends up with the arguments it did send instead of none.
+     */
+    public function setJson(int $index, string $json): void
+    {
+        $this->blocks[$index]['json'] = $json;
+        $this->blocks[$index]['arguments'] = PartialJson::parse($json);
+    }
+
+    /**
      * Fill in a tool call's id and name after it was opened.
      *
      * Anthropic names a tool call in the event that opens it. OpenAI does not have to:
@@ -139,9 +171,29 @@ final class AssistantMessageBuilder
 
     public function toolCallOf(int $index): ToolCall
     {
-        $block = $this->blocks[$index];
+        return self::call($this->blocks[$index]);
+    }
 
-        return new ToolCall($block['id'], $block['name'], $block['arguments']);
+    /**
+     * One tool call, signature included.
+     *
+     * **The signature was being dropped here**, in the one place that builds the object, while
+     * three others handled it: Google's provider reads a `thoughtSignature` off the part and
+     * `setSignature()` stores it, `GoogleShared::messages()` writes it back out, and
+     * `TransformMessages` carries it across. `ToolCall::thoughtSignature` was therefore always null
+     * for a call that came from a stream, so Gemini never got its own thought context back with the
+     * call it came out of — which is what that field is for, and what Gemini 3 expects.
+     *
+     * @param array{type: string, text: string, signature: string, id: string, name: string, arguments: array<string, mixed>, json: string, wire: int} $block
+     */
+    private static function call(array $block): ToolCall
+    {
+        return new ToolCall(
+            $block['id'],
+            $block['name'],
+            $block['arguments'],
+            $block['signature'] === '' ? null : $block['signature'],
+        );
     }
 
     /**
@@ -204,7 +256,7 @@ final class AssistantMessageBuilder
                 $block['text'],
                 $block['signature'] === '' ? null : $block['signature'],
             ),
-            'toolCall' => new ToolCall($block['id'], $block['name'], $block['arguments']),
+            'toolCall' => self::call($block),
             // Text carries a signature too on the responses API: the message's own id,
             // which has to go back with it or the turn is a different message.
             default => new TextContent($block['text'], $block['signature'] === '' ? null : $block['signature']),

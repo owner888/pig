@@ -137,7 +137,7 @@ final class Anthropic
     private function onMessageStart(array $data, AssistantMessageBuilder $builder): void
     {
         // Captured here as well as at the end, so an aborted run still knows its input cost.
-        $builder->setUsage($this->usage($data['message']['usage'] ?? []));
+        $builder->setUsage(self::update(new Usage(), $data['message']['usage'] ?? []));
     }
 
     /** @param array<string, mixed> $data */
@@ -228,19 +228,47 @@ final class Anthropic
             $builder->setStopReason($this->stopReason($reason));
         }
 
-        $builder->setUsage($this->usage($data['usage'] ?? []));
+        // Merged with what `message_start` reported rather than replacing it — see `update()`.
+        $builder->setUsage(self::update($builder->snapshot()->usage, $data['usage'] ?? []));
+    }
+
+    /**
+     * The counts, with anything this report does not mention left as it was.
+     *
+     * **A field the delta does not carry means "no change", not "zero".** Anthropic's
+     * `message_delta.usage` is typed `input_tokens: number | null` — the SDK's own words for "may
+     * not be reported" — and the streaming documentation's own example carries nothing but
+     * `output_tokens`. Read with a `?? 0`, as this and upstream both did, the final delta wipes out
+     * the input, cache-read and cache-write counts that `message_start` had already reported.
+     *
+     * What that costs is not cosmetic: the input cost of every Anthropic turn disappears from
+     * `/stats` and the footer, and `Compaction::contextTokens()` — which believes `totalTokens` —
+     * sees a conversation the size of its last answer, so auto-compaction never fires on the
+     * provider most of these conversations are had with. The turn still recovers when the API
+     * rejects the request as too long, but late and by accident.
+     *
+     * Both API behaviours are handled by merging: a delta that does carry the cumulative numbers
+     * updates them, and one that does not leaves them standing. Anthropic reports the components
+     * and no total, which is what `AssistantMessageBuilder::setUsage()` adds up.
+     *
+     * @param array<string, mixed> $usage
+     */
+    private static function update(Usage $sofar, array $usage): Usage
+    {
+        return new Usage(
+            self::count($usage, 'input_tokens', $sofar->input),
+            self::count($usage, 'output_tokens', $sofar->output),
+            self::count($usage, 'cache_read_input_tokens', $sofar->cacheRead),
+            self::count($usage, 'cache_creation_input_tokens', $sofar->cacheWrite),
+        );
     }
 
     /** @param array<string, mixed> $usage */
-    private function usage(array $usage): Usage
+    private static function count(array $usage, string $key, int $sofar): int
     {
-        // Anthropic reports the components and no total; withTotalTokens() adds it up.
-        return new Usage(
-            (int) ($usage['input_tokens'] ?? 0),
-            (int) ($usage['output_tokens'] ?? 0),
-            (int) ($usage['cache_read_input_tokens'] ?? 0),
-            (int) ($usage['cache_creation_input_tokens'] ?? 0),
-        );
+        $value = $usage[$key] ?? null;
+
+        return is_numeric($value) ? (int) $value : $sofar;
     }
 
     private function stopReason(string $reason): StopReason

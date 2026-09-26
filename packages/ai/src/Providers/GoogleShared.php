@@ -225,6 +225,15 @@ final class GoogleShared
         AssistantMessageEventStream $stream,
         ?array $open,
     ): ?array {
+        // Both fields of one part, text first, which is upstream's order. A `Part` is a one-of by
+        // convention rather than by schema, and this used to check for the call first and return —
+        // so text sharing a part with a call was dropped.
+        $text = $part['text'] ?? null;
+
+        if (is_string($text) && $text !== '') {
+            $open = self::onText($part, $text, $builder, $stream, $open);
+        }
+
         if (is_array($part['functionCall'] ?? null)) {
             // A call arrives whole, so the block opens, fills and closes here.
             self::close($builder, $stream, $open);
@@ -232,12 +241,21 @@ final class GoogleShared
             return self::wholeCall($part, $builder, $stream);
         }
 
-        $text = $part['text'] ?? null;
+        return $open;
+    }
 
-        if (!is_string($text) || $text === '') {
-            return $open;
-        }
-
+    /**
+     * @param array<string, mixed> $part
+     * @param array{0: int, 1: string}|null $open
+     * @return array{0: int, 1: string}
+     */
+    private static function onText(
+        array $part,
+        string $text,
+        AssistantMessageBuilder $builder,
+        AssistantMessageEventStream $stream,
+        ?array $open,
+    ): array {
         // The one field, told apart by a flag. Thinking and answer look identical
         // otherwise, and a block ends where the flag changes.
         $kind = ($part['thought'] ?? false) === true ? 'thinking' : 'text';

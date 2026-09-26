@@ -307,6 +307,18 @@ final class OpenAiResponses
             $this->joinIds((string) ($item['call_id'] ?? ''), (string) ($item['id'] ?? '')),
             (string) ($item['name'] ?? ''),
         );
+
+        // The finished item's own arguments are the call, and they were being ignored: the deltas
+        // are usually the same JSON, but a stream that sent none — which this API allows and a
+        // compatible endpoint does — left the call with no arguments at all. Replaced rather than
+        // appended, because the usual case is the same JSON arriving twice. Upstream reads the
+        // item here too, and reads nothing else.
+        $arguments = $item['arguments'] ?? null;
+
+        if (is_string($arguments) && $arguments !== '') {
+            $builder->setJson($index, $arguments);
+        }
+
         $stream->push(new ToolCallEndEvent($index, $builder->toolCallOf($index), $builder->snapshot()));
 
         return null;

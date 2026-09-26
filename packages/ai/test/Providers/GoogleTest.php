@@ -185,6 +185,57 @@ final class GoogleTest extends TestCase
         $this->assertStringContainsString('SAFETY', (string) $message->errorMessage);
     }
 
+    public function testACallsThoughtSignatureSurvivesIntoTheMessage(): void
+    {
+        $url = $this->serve([
+            ['candidates' => [['content' => ['parts' => [[
+                'functionCall' => ['name' => 'read', 'args' => ['path' => 'a.php']],
+                'thoughtSignature' => 'SIG-1',
+            ]]], 'finishReason' => 'STOP']]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $call = $message->content[0];
+
+        $this->assertInstanceOf(ToolCall::class, $call);
+
+        // Collected by the provider, written back by `GoogleShared::messages()`, and dropped in
+        // between: `AssistantMessageBuilder` built every `ToolCall` without it. Gemini 3 wants its
+        // own thought context back with the call that came out of it.
+        $this->assertSame('SIG-1', $call->thoughtSignature);
+    }
+
+    public function testAPartCarryingBothTextAndACallLosesNeither(): void
+    {
+        // A `Part` is a one-of by convention and not by schema, and upstream reads both fields of
+        // one part — text first, then the call. pig checked for the call first and returned, so any
+        // text sharing the part was dropped on the floor.
+        $url = $this->serve([
+            ['candidates' => [['content' => ['parts' => [[
+                'text' => 'let me look at that',
+                'functionCall' => ['name' => 'read', 'args' => ['path' => 'a.php']],
+            ]]], 'finishReason' => 'STOP']]],
+        ]);
+
+        [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame([
+            'StartEvent',
+            'TextStartEvent',
+            'TextDeltaEvent',
+            'TextEndEvent',
+            'ToolCallStartEvent',
+            'ToolCallDeltaEvent',
+            'ToolCallEndEvent',
+            'DoneEvent',
+        ], $types);
+
+        $this->assertCount(2, $message->content);
+        $this->assertSame('let me look at that', $message->content[0]->text);
+        $this->assertSame('read', $message->content[1]->name);
+        $this->assertSame(StopReason::ToolUse, $message->stopReason);
+    }
+
     public function testThinkingTokensAreCountedAsOutputBecauseTheyAreBilledAsOutput(): void
     {
         // Gemini's own arithmetic: `promptTokenCount` *includes* the cached tokens, and
@@ -317,6 +368,24 @@ final class GoogleTest extends TestCase
 
         $this->assertTrue($part['thought']);
         $this->assertSame('SIG', $part['thoughtSignature']);
+    }
+
+    public function testACallsSignatureGoesBackWithTheCall(): void
+    {
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ToolCall('c1', 'read', ['path' => 'a.php'], 'SIG-1')]),
+            new UserMessage('go on'),
+        ]);
+
+        $this->send($context);
+
+        $part = $this->server->receivedJson()['contents'][1]['parts'][0];
+
+        // The other end of the signature that used to be dropped on the way in: this half was
+        // written and could not be reached, because nothing ever produced a call that had one.
+        $this->assertSame('read', $part['functionCall']['name']);
+        $this->assertSame('SIG-1', $part['thoughtSignature']);
     }
 
     public function testAnImageGoesInlineAndIsLeftOutForAModelThatCannotSeeOne(): void

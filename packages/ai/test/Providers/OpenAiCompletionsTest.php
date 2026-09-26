@@ -158,6 +158,51 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame('c2', $message->content[1]->id);
     }
 
+    public function testEncryptedReasoningIsKeptWithTheCallItBelongsTo(): void
+    {
+        // OpenRouter's shape: a reasoning model's chain of thought comes back as an opaque blob
+        // addressed to a tool call by id, not as text. Nothing read this field, so the reasoning was
+        // lost — and with it the model's place in a multi-step task.
+        $url = $this->serve([
+            ['choices' => [['delta' => ['tool_calls' => [['id' => 'c1', 'function' => ['name' => 'read', 'arguments' => '{}']]]]]]],
+            ['choices' => [['delta' => ['reasoning_details' => [
+                ['type' => 'reasoning.encrypted', 'id' => 'c1', 'data' => 'AAAA'],
+            ]]]]],
+            ['choices' => [['delta' => [], 'finish_reason' => 'tool_calls']]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $call = $message->content[0];
+
+        $this->assertInstanceOf(ToolCall::class, $call);
+        $this->assertSame(
+            ['type' => 'reasoning.encrypted', 'id' => 'c1', 'data' => 'AAAA'],
+            json_decode((string) $call->thoughtSignature, true),
+            'the whole detail, because that is what has to go back',
+        );
+    }
+
+    public function testEncryptedReasoningGoesBackBesideTheCalls(): void
+    {
+        $detail = ['type' => 'reasoning.encrypted', 'id' => 'c1', 'data' => 'AAAA'];
+
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ToolCall('c1', 'read', ['path' => 'a'], (string) json_encode($detail))]),
+            new ToolResultMessage('c1', 'read', [new TextContent('ok')], false),
+            new UserMessage('go on'),
+        ]);
+
+        $this->send($context);
+
+        $messages = $this->server->receivedJson()['messages'];
+        $assistant = array_values(array_filter($messages, static fn (array $m): bool => $m['role'] === 'assistant'))[0];
+
+        // The other half. Sent as the object it arrived as: a string here is rejected.
+        $this->assertSame([$detail], $assistant['reasoning_details']);
+        $this->assertSame('c1', $assistant['tool_calls'][0]['id']);
+    }
+
     public function testCachedTokensAreTakenOutOfTheInputTheyWereCountedIn(): void
     {
         $url = $this->serve([

@@ -140,6 +140,54 @@ final class OpenAiResponsesTest extends TestCase
         $this->assertSame(['path' => 'a.php'], $call->arguments);
     }
 
+    public function testArgumentsThatOnlyArriveOnTheFinishedItemAreStillTheCall(): void
+    {
+        // Which is how a compatible endpoint can send them — Copilot speaks this API and implements
+        // it itself — and how OpenAI's own stream ends every call: `output_item.done` carries the
+        // complete `arguments` string. pig accumulated the deltas and never read that field, so a
+        // call whose arguments were not streamed went out with none at all.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => [
+                'type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'read',
+            ]],
+            ['type' => 'response.output_item.done', 'item' => [
+                'type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'read',
+                'arguments' => '{"path":"b.php"}',
+            ]],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $call = $message->content[0];
+
+        $this->assertInstanceOf(ToolCall::class, $call);
+        $this->assertSame(['path' => 'b.php'], $call->arguments);
+    }
+
+    public function testTheFinishedItemsArgumentsReplaceTheDeltasRatherThanJoiningThem(): void
+    {
+        // The usual case: the same JSON arrives twice, once in pieces and once whole. Appending the
+        // whole to the pieces would be `{"path":"a.php"}{"path":"a.php"}` — valid to nobody.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => [
+                'type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'read', 'arguments' => '',
+            ]],
+            ['type' => 'response.function_call_arguments.delta', 'delta' => '{"path":'],
+            ['type' => 'response.function_call_arguments.delta', 'delta' => '"a.php"}'],
+            ['type' => 'response.output_item.done', 'item' => [
+                'type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'read',
+                'arguments' => '{"path":"a.php"}',
+            ]],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $call = $message->content[0];
+
+        $this->assertInstanceOf(ToolCall::class, $call);
+        $this->assertSame(['path' => 'a.php'], $call->arguments);
+    }
+
     public function testATurnThatCalledAToolIsFinishedWithTheTurnAndNotTheTask(): void
     {
         $url = $this->serve([
