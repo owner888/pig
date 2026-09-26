@@ -312,6 +312,26 @@ final class OpenAiResponsesTest extends TestCase
         $this->assertSame('user', $input[count($input) - 1]['role']);
     }
 
+    public function testACallWithNoArgumentsGoesOutAsAnObjectAndNotAnEmptyList(): void
+    {
+        // An empty PHP array encodes as `[]`, and `arguments` is an object — Anthropic's and
+        // Google's arms guard this and these two did not.
+        $this->send(new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ToolCall('c1', 'now', [])]),
+            new ToolResultMessage('c1', 'now', [new TextContent('12:00')], false),
+            new UserMessage('thanks'),
+        ]));
+
+        $input = $this->server->receivedJson()['input'];
+        $call = array_values(array_filter(
+            $input,
+            static fn (array $item): bool => ($item['type'] ?? '') === 'function_call',
+        ))[0];
+
+        $this->assertSame('{}', $call['arguments']);
+    }
+
     public function testAThinkingBlockGoesBackAsTheItemItCameFrom(): void
     {
         $item = ['type' => 'reasoning', 'id' => 'rs_1', 'encrypted_content' => 'OPAQUE'];

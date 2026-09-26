@@ -636,7 +636,8 @@ final class OpenAiResponses
                     'id' => $itemId,
                     'call_id' => $callId,
                     'name' => $block->name,
-                    'arguments' => $this->encode($block->arguments),
+                    // `{}` and not `[]` — see the same line in `OpenAiCompletions`.
+                    'arguments' => $block->arguments === [] ? '{}' : $this->encode($block->arguments),
                 ];
             }
         }

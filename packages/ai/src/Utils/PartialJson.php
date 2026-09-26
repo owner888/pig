@@ -14,6 +14,19 @@ namespace Pig\Ai\Utils;
  * Never throws and never returns a partial *value*: what comes back is always a decodable
  * object, possibly an empty one. The authoritative parse is the one at the end of the
  * stream, over complete JSON — this only has to be good enough to look at.
+ *
+ * **Checked against the real package**, `partial-json@0.1.7`, over every prefix of a corpus of
+ * realistic tool arguments — escapes, newlines, tabs, astral characters, nested arrays, numbers
+ * cut mid-digit, `tr` for `true`, a `\u00e` cut mid-escape. Two differences, both accounted for:
+ *
+ * - **An empty object comes back as `[]`**, because PHP has one array type and `{}` and `[]` decode
+ *   to the same value. That distinction is restored where it matters, which is where the arguments
+ *   are encoded again: all four providers and `MessageJson` write `{}` for an empty arguments list,
+ *   because `[]` is not an object and Anthropic refuses one.
+ * - **Whitespace at the cut end of a string is kept**, where the package drops it: `{"a":"const `
+ *   reads as `const ` here and `const` there. This value exists to be looked at while it fills up,
+ *   the complete parse at the end is identical either way, and dropping what the model actually
+ *   sent is the stranger of the two.
  */
 final class PartialJson
 {

@@ -156,6 +156,24 @@ final class SessionManagerTest extends TestCase
         // The one thing anything reads out of a tool's details is the edit diff.
         $this->assertSame("-1 a\n+1 b", $back[2]->details['diff']);
 
+        // A call with no arguments is written as `{}` and not `[]`. The file is pi's, and pi
+        // sends this history straight back to a provider — `input: []` is refused by Anthropic,
+        // so an empty PHP array reaching the file is a conversation pi cannot carry on.
+        $session->append(new AssistantMessage(
+            [new ToolCall('c2', 'now', [])],
+            Api::AnthropicMessages,
+            'anthropic',
+            'claude-x',
+            new Usage(),
+            StopReason::ToolUse,
+        ));
+
+        $lines = array_values(array_filter(explode("\n", (string) file_get_contents($session->path))));
+        $written = (string) end($lines);
+
+        $this->assertStringContainsString('"arguments":{}', $written);
+        $this->assertSame([], SessionManager::open($session->path)->messages()[4]->content[0]->arguments);
+
         $bash = $back[3];
         $this->assertInstanceOf(BashExecution::class, $bash);
         $this->assertSame('ls', $bash->command);

@@ -15,6 +15,7 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
+use stdClass;
 
 /**
  * The three message types of `Pig\Ai`, to JSON and back.
@@ -134,7 +135,9 @@ final class MessageJson
                     'type' => 'toolCall',
                     'id' => $block->id,
                     'name' => $block->name,
-                    'arguments' => $block->arguments,
+                    // `{}` and not `[]`: this file is pi's, and pi hands the history straight
+                    // back to a provider — Anthropic refuses an `input` that is a list.
+                    'arguments' => $block->arguments === [] ? new stdClass() : $block->arguments,
                     'thoughtSignature' => $block->thoughtSignature,
                 ],
                 default => null,

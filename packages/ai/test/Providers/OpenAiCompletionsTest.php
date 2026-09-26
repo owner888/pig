@@ -256,6 +256,23 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertStringContainsString('Bearer test-key', $this->server->receivedHead());
     }
 
+    public function testACallWithNoArgumentsGoesOutAsAnObjectAndNotAnEmptyList(): void
+    {
+        // A tool that takes nothing, or a call whose arguments never arrived, leaves an empty
+        // PHP array — and an empty PHP array encodes as `[]`, which is not what `arguments`
+        // is. Anthropic's and Google's arms already guard this; these two did not.
+        $this->send(new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ToolCall('c1', 'now', [])]),
+            new ToolResultMessage('c1', 'now', [new TextContent('12:00')], false),
+            new UserMessage('thanks'),
+        ]));
+
+        $body = $this->server->receivedJson();
+
+        $this->assertSame('{}', $body['messages'][1]['tool_calls'][0]['function']['arguments']);
+    }
+
     public function testAReasoningModelsSystemPromptGoesInADeveloperTurn(): void
     {
         $this->send(new Context([new UserMessage('hi')], 'be helpful'), $this->model(reasoning: true));

@@ -598,7 +598,12 @@ final class OpenAiCompletions
                 fn (ToolCall $call): array => [
                     'id' => $this->toolId($call->id, $compat),
                     'type' => 'function',
-                    'function' => ['name' => $call->name, 'arguments' => $this->encode($call->arguments)],
+                    // `{}` and not `[]`: an empty PHP array is both, and `arguments` is an
+                    // object. Anthropic's and Google's arms guard the same thing their own way.
+                    'function' => [
+                        'name' => $call->name,
+                        'arguments' => $call->arguments === [] ? '{}' : $this->encode($call->arguments),
+                    ],
                 ],
                 $calls,
             );

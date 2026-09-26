@@ -3341,10 +3341,33 @@ and the CESU-8 surrogate case its docblock claims (verified, not assumed); `Over
 upstream's, pattern for pattern; `Credentials`, `Provider` and all four OAuth flows carry upstream's
 endpoints, client ids and the same five-minute renewal margin; `SseParser` follows the spec on the
 one optional space, multi-line `data:`, comments and CRLF; `PartialJson` is a hand-written stand-in
-for the `partial-json` package and agrees with it on complete JSON, which is the only case that
-reaches a tool. `Retry` differs from upstream deliberately and says so: it reads the status out of
+for the `partial-json` package, and it has now been run **against** it — `partial-json@0.1.7`, every
+prefix of a corpus of realistic tool arguments, two differences and both accounted for in its
+docblock. `Retry` differs from upstream deliberately and says so: it reads the status out of
 pig's own message shape instead of matching bare numbers anywhere in the prose, and adds 408 and
 529 — Anthropic's real "overloaded" — to upstream's list.
+
+### An empty arguments list went out as `[]`, which is not an object
+
+Found by the differential run above rather than by a provider complaining, which is the point of
+running one: `PartialJson::parse('')` answers `[]`, and in PHP that is both the empty list and the
+empty map — so a tool call with no arguments carries an array that `json_encode` writes as `[]`.
+
+`arguments` is an object everywhere it is sent. **Anthropic and Google guarded it** —
+`$content->arguments === [] ? new stdClass() : …` — and the two OpenAI arms and `MessageJson` did
+not, so the same fact was known in two places out of four and the shape of the miss is this file's
+commonest one. What it costs: Anthropic refuses `input: []` outright, and the session file — which
+is pi's, and which pi hands straight back to a provider — recorded `"arguments": []` for pi to be
+refused with later.
+
+When does a call have no arguments? A tool that takes none, and a call whose arguments never
+arrived because the turn was interrupted. Both are ordinary.
+
+Fixed at all four sites, in the shape the two that had it already used: `=== [] ? '{}'` for the two
+that encode to a string, `new stdClass()` for the two that hand back a value. **Four copies of one
+rule** is what that leaves, and it is deliberate for now — the two originals were already inline and
+a shared helper is a decision about `Pig\Ai`'s public surface, not an audit's to make. If a fifth
+site appears, that is the moment.
 
 ### Anthropic was the one provider of four that never cleaned the conversation up
 
