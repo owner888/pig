@@ -65,6 +65,17 @@ final class Overflow
     private const string NO_BODY = '/\b4(00|13|29)\b.*\(no body\)/i';
 
     /**
+     * The same thing in pig's own words.
+     *
+     * `NO_BODY` above is the **OpenAI SDK's** phrasing, which is what upstream reads and what pig
+     * never writes: every provider here says `"<who> returned <status>: <body>"`, so a 4xx with an
+     * empty body ends at the colon. The ported pattern could not fire, and an oversized prompt to
+     * Cerebras or Mistral was retried three times with backoff instead of being compacted and sent
+     * again. Anchored at the end, so a 400 that did explain itself is still not a guess.
+     */
+    private const string EMPTY_BODY = '/\breturned 4(00|13|29):\s*$/i';
+
+    /**
      * @param int|null $contextWindow needed only for the silent case below
      */
     public static function happened(AssistantMessage $message, ?int $contextWindow = null): bool
@@ -77,6 +88,10 @@ final class Overflow
             }
 
             if (preg_match(self::NO_BODY, $message->errorMessage) === 1) {
+                return true;
+            }
+
+            if (preg_match(self::EMPTY_BODY, $message->errorMessage) === 1) {
                 return true;
             }
         }

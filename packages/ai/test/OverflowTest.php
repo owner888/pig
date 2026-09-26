@@ -11,7 +11,16 @@ use Pig\Ai\AssistantMessage;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\Usage;
+use Pig\Ai\Context;
+use Pig\Ai\Model;
+use Pig\Ai\Pricing;
+use Pig\Ai\Providers\OpenAiCompletions;
+use Pig\Ai\Providers\OpenAiOptions;
+use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\Overflow;
+use Pig\Async\Async;
+use Pig\Async\Loop;
+use Pig\Test\CannedServer;
 
 /**
  * Did the conversation outgrow the window?
@@ -61,6 +70,60 @@ final class OverflowTest extends TestCase
         $this->assertTrue(Overflow::happened(self::failed('400 status code (no body)')));
         $this->assertTrue(Overflow::happened(self::failed('413 status code (no body)')));
         $this->assertTrue(Overflow::happened(self::failed('429 status code (no body)')));
+    }
+
+    public function testTheWordingPigItselfProducesForABodilessFourHundred(): void
+    {
+        // The case above is the OpenAI SDK's wording, which is what upstream matches — and which
+        // **pig never writes**: its providers say "<who> returned <status>: <body>", so a 400 with
+        // an empty body ends at the colon. The ported pattern therefore could not fire, and an
+        // oversized prompt to Cerebras or Mistral was retried three times with backoff instead of
+        // being compacted and sent again.
+        //
+        // Through a real provider rather than by quoting the string, so the pattern and the message
+        // that has to match it cannot drift apart.
+        $message = $this->failedRequest(400, '');
+
+        $this->assertSame('cerebras returned 400: ', $message->errorMessage);
+        $this->assertTrue(Overflow::happened($message));
+
+        $this->assertTrue(Overflow::happened($this->failedRequest(413, '')));
+        $this->assertTrue(Overflow::happened($this->failedRequest(429, '')));
+    }
+
+    public function testAFiveHundredWithNoBodyIsNotAnOverflowEither(): void
+    {
+        // Only the three statuses that mean "too much" are guessed at; a 500 is the provider
+        // having a bad day, and compacting the conversation would be answering the wrong question.
+        $this->assertFalse(Overflow::happened($this->failedRequest(500, '')));
+    }
+
+    /** A real failed request, so the message under test is the one pig actually produces. */
+    private function failedRequest(int $status, string $body): AssistantMessage
+    {
+        $server = new CannedServer();
+        $url = $server->start(["HTTP/1.1 {$status} Nope\r\nContent-Type: application/json\r\n\r\n", $body]);
+
+        $model = new Model(
+            'test-model',
+            'Test',
+            Api::OpenAiCompletions,
+            'cerebras',
+            rtrim($url, '/'),
+            8_192,
+            4_096,
+            pricing: new Pricing(),
+        );
+
+        return Async::run(static function () use ($model): AssistantMessage {
+            $stream = (new OpenAiCompletions())->stream($model, new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'k'));
+
+            foreach ($stream as $ignored) {
+                // Drain it; the failure is the result.
+            }
+
+            return $stream->result()->await();
+        });
     }
 
     public function testAFourHundredWithAnExplanationIsNotAssumedToBeAnOverflow(): void

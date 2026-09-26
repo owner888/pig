@@ -3039,6 +3039,35 @@ runner has no tty to open. What is tested is the empty-command guard and that a 
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
 
+### The overflow pattern for Cerebras and Mistral could never match pig's own words
+
+Seventeenth, and the narrowest kind of porting bug: a regex ported with its subject left behind.
+`Overflow::NO_BODY` matches `"400 status code (no body)"` — the **OpenAI SDK's** phrasing, which is
+what upstream reads. pig has no SDK: all five of its providers write
+`"<who> returned <status>: <message or body>"`, so a 4xx with an empty body ends at the colon and
+that pattern could not fire.
+
+Cerebras and Mistral answer an oversized prompt with exactly that — a bare 400 and no body — so the
+one case the pattern exists for was the one it missed. `Retry::worthRetrying()` then found a
+retryable status and pig sent the same too-long request three more times with backoff before giving
+up, where compaction was the answer.
+
+`EMPTY_BODY` is pig's own wording, anchored at the end so a 400 that *did* explain itself is still
+not a guess, and `NO_BODY` stays for messages that come from somewhere else. **The test that was
+there asserted the SDK string**, which no provider here produces; the new one goes through a real
+provider and a canned 400, so the pattern and the message it has to match cannot drift apart again.
+
+Checked at the same time and found matching, so nobody has to check them twice: the other
+`packages/ai` utilities. `Utf8::sanitize()` handles what upstream's `sanitizeSurrogates()` handles
+and the CESU-8 surrogate case its docblock claims (verified, not assumed); `Overflow`'s table is
+upstream's, pattern for pattern; `Credentials`, `Provider` and all four OAuth flows carry upstream's
+endpoints, client ids and the same five-minute renewal margin; `SseParser` follows the spec on the
+one optional space, multi-line `data:`, comments and CRLF; `PartialJson` is a hand-written stand-in
+for the `partial-json` package and agrees with it on complete JSON, which is the only case that
+reaches a tool. `Retry` differs from upstream deliberately and says so: it reads the status out of
+pig's own message shape instead of matching bare numbers anywhere in the prose, and adds 408 and
+529 — Anthropic's real "overloaded" — to upstream's list.
+
 ### Anthropic was the one provider of four that never cleaned the conversation up
 
 Fifteenth, from the request-building side, and it is the same count as the others: upstream calls
