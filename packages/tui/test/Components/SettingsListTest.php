@@ -339,6 +339,60 @@ final class SettingsListTest extends TestCase
         $this->assertSame('on', $list->valueOf('first'), 'and not the row above it');
     }
 
+    /**
+     * Every line has to fit, because `Tui::checkWidth()` throws on one that does not —
+     * a too-wide line wraps, so the throw is deliberate and the component's job is to fit.
+     */
+    public function testNoLineIsWiderThanTheTerminal(): void
+    {
+        $rows = [
+            new SettingItem('theme', 'Theme', 'dark', 'Which colour scheme to use', ['dark', 'light']),
+            new SettingItem('blocks', 'Thinking blocks', 'shown', null, ['shown', 'hidden']),
+            new SettingItem('queue', 'Queued messages', 'follow-up', null, ['follow-up', 'steer']),
+        ];
+
+        for ($width = 6; $width <= 60; $width++) {
+            foreach ($this->list($rows)->render($width) as $index => $line) {
+                $this->assertLessThanOrEqual(
+                    $width,
+                    Width::visible($line),
+                    "line {$index} at width {$width}: " . $line,
+                );
+            }
+        }
+    }
+
+    public function testTheHintNamesBothKeysThatChangeARow(): void
+    {
+        $drawn = implode("\n", $this->list(self::two())->render(80));
+
+        $this->assertStringContainsString('Enter', $drawn);
+        $this->assertStringContainsString('Space', $drawn, 'Space changes a row, so it belongs on the hint');
+        $this->assertStringContainsString('Esc', $drawn);
+    }
+
+    public function testTheHintFitsANarrowTerminal(): void
+    {
+        // Reproduced at width 32, where the hint is 33 columns: /settings on a split pane
+        // threw out of render(), which runs in the loop's own callback.
+        $lines = $this->list(self::two())->render(32);
+
+        $this->assertLessThanOrEqual(32, Width::visible($lines[count($lines) - 1]));
+    }
+
+    public function testTheScrollCountFitsToo(): void
+    {
+        $items = [];
+
+        for ($index = 0; $index < 30; $index++) {
+            $items[] = new SettingItem("k{$index}", "Setting {$index}", 'on', values: ['on', 'off']);
+        }
+
+        foreach ($this->list($items, 4)->render(14) as $line) {
+            $this->assertLessThanOrEqual(14, Width::visible($line));
+        }
+    }
+
     public function testASubmenuThatCannotTakeKeysIsDrawnRatherThanCrashedOn(): void
     {
         $list = $this->list([new SettingItem(

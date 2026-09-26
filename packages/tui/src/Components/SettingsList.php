@@ -8,6 +8,7 @@ use Closure;
 use Pig\Tui\Component;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
+use Pig\Tui\TextWrap;
 use Pig\Tui\Width;
 
 /**
@@ -58,6 +59,9 @@ final class SettingsList implements Component, InputHandler
 
     /** The widest a label may be before the value column starts, in columns. */
     private const int LABEL_MAX_WIDTH = 30;
+
+    /** Columns left empty at the right-hand end of a row, as upstream leaves. */
+    private const int RIGHT_MARGIN = 2;
 
     /** @param list<SettingItem> $items */
     public function __construct(
@@ -125,20 +129,14 @@ final class SettingsList implements Component, InputHandler
         }
 
         if ($this->items === []) {
-            return [($this->theme->hint)('  Nothing to set')];
+            return $this->hint('Nothing to set', $width);
         }
 
         $total = count($this->items);
         $start = max(0, min($this->selected - intdiv($this->maxVisible, 2), $total - $this->maxVisible));
         $end = min($start + $this->maxVisible, $total);
 
-        // One column for every label, so the values line up. Measured in columns rather
-        // than characters, so a CJK label does not push the value column off the screen.
-        $labelWidth = min(self::LABEL_MAX_WIDTH, max(array_map(
-            static fn (SettingItem $item): int => Width::visible($item->label),
-            $this->items,
-        )));
-
+        $labelWidth = $this->labelWidth($width);
         $lines = [];
 
         for ($index = $start; $index < $end; $index++) {
@@ -147,7 +145,9 @@ final class SettingsList implements Component, InputHandler
 
         if ($start > 0 || $end < $total) {
             $position = $this->selected + 1;
-            $lines[] = ($this->theme->hint)("  ({$position}/{$total})");
+            // Truncated rather than wrapped, which `SelectList` and upstream both do to this
+            // line: half of `(3/30)` on a second row says nothing.
+            $lines[] = ($this->theme->hint)(Width::truncate("  ({$position}/{$total})", max(1, $width - 2), ''));
         }
 
         $description = $this->items[$this->selected]->description ?? null;
@@ -158,9 +158,37 @@ final class SettingsList implements Component, InputHandler
         }
 
         $lines[] = '';
-        $lines[] = ($this->theme->hint)('  Enter to change · Esc when done');
 
-        return $lines;
+        // Space is named because Space works. Upstream says `Enter/Space to change · Esc to
+        // cancel`; pig keeps its own second half, because Escape here means done rather than
+        // cancelled, and had quietly dropped the first — a key that works and is not on the
+        // list is the Ctrl+G rule from the other side.
+        return [...$lines, ...$this->hint('Enter or Space to change · Esc when done', $width)];
+    }
+
+    /**
+     * The label column, wide enough for the widest name and narrow enough to leave a value.
+     *
+     * Measured in columns rather than characters, so a CJK label does not push the value
+     * column off the screen — and **clamped to the terminal**, which upstream does not do.
+     * Upstream caps it at 30 and then writes the label out in full anyway, so a row is as
+     * wide as it likes; here a line wider than the terminal is not cosmetic, because
+     * `Tui::checkWidth()` throws on one rather than letting it wrap and corrupt every cursor
+     * move below it. Reproduced before it was fixed: `/settings` on a terminal 32 columns or
+     * narrower took the session down from inside `render()`.
+     */
+    private function labelWidth(int $width): int
+    {
+        $widest = max(array_map(
+            static fn (SettingItem $item): int => Width::visible($item->label),
+            $this->items,
+        ));
+
+        // What is left after the cursor, the two-column separator, the right margin and one
+        // column of value — which is the point of the screen and so is never given up.
+        $room = $width - Width::visible($this->theme->cursor) - 2 - self::RIGHT_MARGIN - 1;
+
+        return max(1, min(self::LABEL_MAX_WIDTH, $widest, $room));
     }
 
     private function row(SettingItem $item, bool $isSelected, int $labelWidth, int $width): string
@@ -169,13 +197,34 @@ final class SettingsList implements Component, InputHandler
         $label = Width::truncate($item->label, $labelWidth, '');
         $label .= str_repeat(' ', max(0, $labelWidth - Width::visible($label)));
 
-        $used = Width::visible($cursor . $label) + 2;
-        $value = Width::truncate($this->current[$item->id], max(1, $width - $used - 2), '');
+        $room = $width - Width::visible($cursor) - $labelWidth - 2 - self::RIGHT_MARGIN;
+        $value = $room < 1 ? '' : Width::truncate($this->current[$item->id], $room, '');
 
         return $cursor
             . ($this->theme->label)($label, $isSelected)
             . '  '
             . ($this->theme->value)($value, $isSelected);
+    }
+
+    /**
+     * A hint, wrapped rather than cut.
+     *
+     * Which is how every other hint in pig is drawn — `TerminalUi` puts each one in a `Text`
+     * — and a hint is the one line on the screen that has to be readable: `Esc when don` is
+     * worse than two rows. The indent goes on *after* the wrap, or the second row hangs in
+     * the margin; that is the per-line-prefix trap, one line long.
+     *
+     * @return list<string>
+     */
+    private function hint(string $text, int $width): array
+    {
+        $lines = [];
+
+        foreach (TextWrap::wrap($text, max(1, $width - 2)) as $line) {
+            $lines[] = ($this->theme->hint)('  ' . $line);
+        }
+
+        return $lines;
     }
 
     #[\Override]

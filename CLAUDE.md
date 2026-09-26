@@ -2768,6 +2768,48 @@ while (true) {
 }
 ```
 
+### A line wider than the terminal is fatal here, so a hint upstream lets overflow is a crash
+
+`/settings` on a terminal 32 columns or narrower took the session down:
+
+```
+Pig\Tui\TuiError — Rendered line 8 is 33 columns wide, terminal is 32
+```
+
+Line 8 is the hint, `  Enter to change · Esc when done`, which `SettingsList` returned at its full
+length however narrow the screen was. Upstream does the same and gets away with it, because there a
+too-wide line merely wraps; **`Tui::checkWidth()` throws instead**, deliberately — a wrapped line
+puts every cursor move below it one row low, and silent screen corruption with no visible cause is
+worse than a loud stop. That choice is what turns a cosmetic overflow in a ported component into a
+crash, and `render()` runs inside the loop's own callback, so there is nothing above it to catch.
+
+Three of that component's lines could not fit, and the third is the one worth remembering: the rows
+themselves. Upstream caps the label column at 30 columns and then **writes the label out in full
+anyway**, so the cap does nothing and a row is as wide as its longest name; the column is clamped to
+the terminal here, keeping one column of value, because the value is the point of that screen.
+The count (`(3/30)`) is truncated as `SelectList` and upstream both truncate it, and the hints are
+**wrapped**, which is how every other hint in pig is drawn — `TerminalUi` puts each one in a `Text`
+— because `Esc when don` is worse than two rows. The indent goes on after the wrap, or the second
+row hangs in the margin.
+
+**Then the same question was asked of everything else that builds its own lines**, which is the half
+that makes this worth an entry rather than a fix: `FooterComponent`, `TreeList` and
+`BashOutputComponent` measure and truncate, `DiffView` hands back a string that goes through `Text`,
+and `ToolExecutionComponent`, `UserMessageComponent`, `HookMessageComponent`, `BorderedLoader` and
+the banner are `Text`/`Markdown`/`Container` all the way down, which wrap and pad by themselves.
+`SettingsList` was the only one that did not fit, and it was the last component ported.
+
+So the rule for any new component: **the lines it returns are a contract with the renderer, not a
+suggestion.** Anything assembled by concatenation rather than handed to `Text` has to truncate or
+wrap it itself. A probe over widths 1–60 is the cheap way to ask — everything in the package
+overflows at four columns or fewer, because `max(1, $width - $padding * 2)` is the floor everywhere
+and upstream's is the same, and that is the only band where a difference is not a bug.
+
+Regression tests: `SettingsListTest::testNoLineIsWiderThanTheTerminal` (widths 6 to 60),
+`testTheHintFitsANarrowTerminal`, `testTheScrollCountFitsToo`. Found in the same read: the hint
+named Enter and not Space, while `handleInput()` accepts both — upstream's own hint names both, and
+the Ctrl+G rule the other way round.
+
 ### A JavaScript string offset carried across as a byte offset lands inside a character
 
 Four keystrokes killed the session, and all four of them are ordinary in a Chinese prompt: type
