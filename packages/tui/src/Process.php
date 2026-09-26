@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Pig\Tui;
 
 use Closure;
+use Fiber;
+use Pig\Async\Deferred;
+use Pig\Async\Loop;
 
 /**
  * Run a command and take what it printed.
@@ -25,6 +28,9 @@ final class Process
     /** Exit code for a command this killed rather than let finish. */
     public const int STOPPED = -1;
 
+    /** How much to take off a pipe at a time, for the loop-driven reads. */
+    private const int READ_CHUNK = 65536;
+
     /**
      * Standard output, or null when the command failed, was not found, or timed out.
      *
@@ -44,7 +50,152 @@ final class Process
     }
 
     /**
+     * The same as `run()`, but it suspends the fiber instead of stopping the loop.
+     *
+     * `run()` polls with `usleep()`, which is right for the two-second probes it was written
+     * for and wrong for anything a person waits through: while it sleeps there are no
+     * keystrokes, no spinner and no escape, because the one thread is inside the sleep. A
+     * hook that runs a linter is thirty seconds of a terminal that will not answer.
+     *
+     * So the pipes go on the loop — the same `select()` that waits on the model's socket —
+     * and this parks on a `Deferred` until they close. Everything else is `run()`'s: the same
+     * return shape, the same STOPPED for a timeout, the same single `proc_terminate()` that
+     * kills the command and not its grandchildren (`Tools\Shell::killTree()` is the answer to
+     * that and lives above this package).
+     *
+     * **With no fiber to suspend, this is `run()`.** Not a fallback papering over a failure:
+     * blocking is the correct thing to do when there is no loop being kept alive — a hook
+     * factory runs at startup, long before `Async::run()`, and a command there has nothing to
+     * be polite to.
+     *
+     * @param list<string> $command
+     * @param string|null  $cwd     where to run it; null means wherever pig was started
+     * @return array{0: int, 1: string, 2: string} STOPPED as the code when it timed out
+     *         or could not be started; 128 + the signal when something killed it
+     */
+    public static function runAsync(array $command, float $timeout = self::DEFAULT_TIMEOUT, ?string $cwd = null): array
+    {
+        if ($command === []) {
+            throw new TuiError('Process::runAsync() needs a command');
+        }
+
+        if (Fiber::getCurrent() === null) {
+            return self::run($command, $timeout, $cwd);
+        }
+
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $cwd);
+        } finally {
+            restore_error_handler();
+        }
+
+        if (!is_resource($process)) {
+            return [self::STOPPED, '', ''];
+        }
+
+        $collected = ['', ''];
+        $open = 2;
+        $watchers = [];
+        $finished = new Deferred();
+
+        $close = static function (int $fd) use (&$watchers, &$pipes, &$open, $finished): void {
+            // Cancelled before the close, or `stream_select()` drops a closed stream and then
+            // fails with an error that names nothing.
+            if (isset($watchers[$fd])) {
+                Loop::get()->cancel($watchers[$fd]);
+                unset($watchers[$fd]);
+            }
+
+            if (is_resource($pipes[$fd] ?? null)) {
+                fclose($pipes[$fd]);
+            }
+
+            unset($pipes[$fd]);
+            $open--;
+
+            if ($open <= 0 && !$finished->future->isComplete()) {
+                $finished->complete(null);
+            }
+        };
+
+        foreach ([1, 2] as $fd) {
+            stream_set_blocking($pipes[$fd], false);
+            $watchers[$fd] = Loop::get()->onReadable(
+                $pipes[$fd],
+                static function () use ($fd, &$collected, &$pipes, $close): void {
+                    $pipe = $pipes[$fd] ?? null;
+
+                    if (!is_resource($pipe)) {
+                        return;
+                    }
+
+                    $chunk = fread($pipe, self::READ_CHUNK);
+
+                    if ($chunk === false || $chunk === '') {
+                        if (feof($pipe)) {
+                            $close($fd);
+                        }
+
+                        return;
+                    }
+
+                    $collected[$fd - 1] .= $chunk;
+                },
+            );
+        }
+
+        $timedOut = false;
+        $timer = $timeout > 0
+            ? Loop::get()->delay($timeout, static function () use (&$timedOut, $process, $finished): void {
+                $timedOut = true;
+
+                if (is_resource($process)) {
+                    proc_terminate($process, 9);
+                }
+
+                // Killed, but the pipes still have to close before anything can be read off
+                // them; the watchers see EOF and complete in the ordinary way.
+            })
+            : null;
+
+        try {
+            $finished->future->await();
+        } finally {
+            if ($timer !== null) {
+                // A pending timer keeps the loop from ever going idle, so `bin/pig` would
+                // not exit.
+                Loop::get()->cancel($timer);
+            }
+
+            foreach (array_keys($watchers) as $fd) {
+                $close($fd);
+            }
+        }
+
+        $status = proc_get_status($process);
+        $exit = proc_close($process);
+
+        if ($timedOut) {
+            return [self::STOPPED, $collected[0], $collected[1]];
+        }
+
+        // Same translation as `Tools\Run::close()`: `proc_close()` hands back the signal
+        // number where every shell reports 128 + it.
+        if (($status['signaled'] ?? false) === true && ($status['termsig'] ?? 0) > 0) {
+            return [128 + (int) $status['termsig'], $collected[0], $collected[1]];
+        }
+
+        return [$exit, $collected[0], $collected[1]];
+    }
+
+    /**
      * Exit code, standard output and standard error.
+     *
+     * Blocking: it polls with `usleep()`, so nothing else in this process runs while it
+     * waits. Right for a two-second probe, wrong for anything a person waits through — see
+     * `runAsync()`, which is the same thing on the loop.
      *
      * @param list<string> $command
      * @param string|null  $cwd     where to run it; null means wherever pig was started

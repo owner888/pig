@@ -1981,15 +1981,21 @@ Four things worth keeping straight:
 has `{...tool, execute}`. `Process::run()` grew an optional `$cwd` so `$pi->exec()` can run a
 command where the project is.
 
-**`$pi->exec()` blocks the loop, and upstream's does not.** `Process::run()` polls with
-`usleep()`, so while a hook's command runs there are no keystrokes, no spinner and no escape — a
-thirty-second linter is a thirty-second freeze. Upstream's `execCommand` is async and takes an
-`AbortSignal`. The loop-aware version already exists as `Tools\Run`, which is what `bash` uses, so
-this is a wiring decision rather than a piece of work: it is new surface on `HookApi` and
-therefore the developer's. Until then the timeout is what bounds the damage, which is the second
-reason it is not optional — upstream's timeout is opt-in, pig's is 30 seconds by default, and
-upstream's `killed` field is `ExecResult::stopped()` here, wider by one case (a program that is
-not on this machine answers the same way) and saying so on itself.
+**`$pi->exec()` is on the loop**, as upstream's `execCommand` is asynchronous. It was not: it went
+through `Process::run()`, which polls with `usleep()`, so while a hook's command ran there were no
+keystrokes, no spinner and no redraw — a thirty-second linter was a thirty-second freeze. It and
+`CustomToolApi::exec()` both go through `Process::runAsync()` now; see the trap below.
+
+Three differences from upstream's version remain, all deliberate. **There is a timeout by
+default** where upstream's is opt-in, so a hook that forgets one cannot park the turn for as long
+as its command wants. **`killed` is `ExecResult::stopped()`**, wider by one case and saying so on
+itself: a program that is not on this machine answers the same way as one that ran too long, where
+upstream reports that as `code: 1, killed: false`. And **escape still cannot cut a command short**,
+though the screen stays alive now: a handler runs inside the agent's own fiber, parked on the
+command, and nothing hands a hook the turn's `AbortSignal` to park on as well — upstream's
+`ExecOptions` has a `signal` field and its `HookContext` has no signal to put in it either, so a
+hook there cannot abort its own command. The timeout bounds it at both ends, which is the second
+reason it is not optional.
 
 `HookUi` is upstream's `HookUIContext`, and it is what makes `tool_call` more than a
 yes-or-no rule: a handler can ask the person something and wait for the answer.
@@ -3822,6 +3828,39 @@ Discarding a good reading costs one turn without one; keeping a stale one costs 
 after it.
 
 Regression test: `AgentSessionTest::testCompactingDoesNotLeaveTheSessionAskingToCompactAgain`.
+
+### A command run with `usleep()` freezes everything a person can see
+
+`Process::run()` polls with `usleep()` while it waits. That is right for what it was written
+for — a two-second `wl-paste`, a `which` — and wrong for anything a person waits through, because
+the one thread is inside the sleep: no keystrokes, no spinner, no redraw, no escape. A hook's
+`$pi->exec(['npm','test'])` went through it, so a thirty-second command was thirty seconds of a
+terminal that would not answer, and the only thing that ended it was the timeout.
+
+`Process::runAsync()` is the same function with the pipes on the loop — the same `select()` that
+waits on the model's socket — parked on a `Deferred` until they close. `HookApi::exec()` and
+`CustomToolApi::exec()` use it. `run()` is untouched, because its thirty-odd other callers are
+probes where blocking is the honest thing to do and some of them run before there is a loop at all.
+
+Four things in it are load-bearing rather than tidy, and three are rules this file already had:
+
+- **The watcher is cancelled before the pipe is closed**, or `stream_select()` drops a closed
+  stream and then fails with an error that names nothing.
+- **The timeout timer is cancelled in a `finally`.** A pending timer keeps `Loop::isIdle()` false
+  for the rest of its span and `bin/pig` waits for the loop before it exits, so a leak here is a
+  program that does not quit. `ProcessTest::testTheLoopHasNothingLeftToWaitForAfterwards` fails on
+  exactly that, and it asserts the elapsed time too — otherwise it would pass by waiting.
+- **A signal death is 128 + the signal**, the same translation `Tools\Run::close()` makes, for the
+  same reason.
+- **With no fiber to suspend, it is `run()`.** That is not a fallback papering over a failure:
+  blocking is correct when there is no loop being kept alive. It is also not speculative — taking
+  the branch out turns **five existing tests** red, among them
+  `CustomToolsTest::testTheFactoryGetsTheWorkingDirectoryAndCanRunThings`, because a factory runs
+  at startup and a factory may run a command.
+
+`Process` had **no test file at all** before this — 370 lines of process handling, which is the size
+that goes unchecked, exactly as `Config`'s sixty lines of path arithmetic were. `ProcessTest` covers
+`runAsync` in fourteen cases; the rest of the class is still only covered through its callers.
 
 ### Two loaders each had their own worse copy of `Paths::resolve()`
 

@@ -294,20 +294,20 @@ final class HookApi
      *   `Process::STOPPED`. It is wider by one case and says so on itself: a program that is
      *   not on this machine answers the same way as one that ran too long, where upstream
      *   reports that as `code: 1, killed: false`.
-     * - **It blocks the loop, and upstream's does not.** `Process::run()` polls with
-     *   `usleep()`, so while a hook's command runs there are no keystrokes, no spinner and no
-     *   escape — a thirty-second linter is a thirty-second freeze. Upstream's exec is async
-     *   and takes an `AbortSignal`. The loop-aware version of this already exists as
-     *   `Tools\Run`, which is what `bash` uses; wiring a hook's commands through it is the
-     *   developer's call, since it is new surface on this class. Until then the timeout is
-     *   what bounds the damage, which is the other reason it is not optional.
+     * - **Escape cannot cut it short**, though the screen stays alive while it runs. The
+     *   command goes on the loop (`Process::runAsync()`), so keystrokes, the spinner and the
+     *   redraw all keep working — but a handler runs inside the agent's own fiber, parked on
+     *   that command, and nothing hands a hook the turn's `AbortSignal` to park on as well.
+     *   Upstream's `ExecOptions` has a `signal` field and its `HookContext` has no signal to
+     *   put in it either, so a hook there cannot abort one of its own commands. The timeout
+     *   is what bounds it at both ends, which is the second reason it is not optional.
      *
      * @param list<string> $command the program and its arguments, unquoted
      * @param string|null  $cwd     defaults to the directory pig is working in
      */
     public function exec(array $command, ?string $cwd = null, float $timeout = self::EXEC_TIMEOUT): ExecResult
     {
-        [$exit, $stdout, $stderr] = Process::run($command, $timeout, $cwd ?? $this->cwd);
+        [$exit, $stdout, $stderr] = Process::runAsync($command, $timeout, $cwd ?? $this->cwd);
 
         return new ExecResult($exit, $stdout, $stderr);
     }

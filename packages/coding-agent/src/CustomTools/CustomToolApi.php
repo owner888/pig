@@ -68,12 +68,16 @@ final class CustomToolApi
      * The argv array and the timeout are why this is here rather than left to
      * `shell_exec`: nothing needs quoting, and a command that hangs does not hang pig.
      *
+     * On the loop, so a tool that runs a build does not stop the screen while it does —
+     * `Process::runAsync()`, and `HookApi::exec()`'s docblock is where the three differences
+     * from upstream's `execCommand` are written down, since both go through the same thing.
+     *
      * @param list<string> $command the program and its arguments, unquoted
      * @param string|null  $cwd     defaults to the directory pig is working in
      */
     public function exec(array $command, ?string $cwd = null, float $timeout = self::EXEC_TIMEOUT): ExecResult
     {
-        [$exit, $stdout, $stderr] = Process::run($command, $timeout, $cwd ?? $this->cwd);
+        [$exit, $stdout, $stderr] = Process::runAsync($command, $timeout, $cwd ?? $this->cwd);
 
         return new ExecResult($exit, $stdout, $stderr);
     }

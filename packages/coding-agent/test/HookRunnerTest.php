@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use Fiber;
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentTool;
@@ -12,6 +13,7 @@ use Pig\Ai\TextContent;
 use Pig\Ai\Tool;
 use Pig\Ai\UserMessage;
 use Pig\Async\AbortSignal;
+use Pig\Async\Async;
 use Pig\CodingAgent\Hooks\Events\AgentStartEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\ToolCallEvent;
@@ -458,6 +460,36 @@ final class HookRunnerTest extends TestCase
         $this->assertFalse($result->ok());
         $this->assertSame(3, $result->exitCode);
         $this->assertStringContainsString('oops', $result->stderr);
+    }
+
+    public function testAHooksCommandDoesNotFreezeTheScreenWhileItRuns(): void
+    {
+        $ticks = 0;
+
+        Async::run(static function () use (&$ticks): void {
+            Async::spawn(static function () use (&$ticks): void {
+                for ($index = 0; $index < 5; $index++) {
+                    Async::delay(0.02);
+                    $ticks++;
+                }
+            });
+
+            (new HookApi('.'))->exec(['sh', '-c', 'sleep 0.3']);
+        });
+
+        // A hook that runs a linter used to be that many seconds of a terminal that would not
+        // answer: no keystrokes, no spinner, no redraw, because `Process::run()` polls with
+        // `usleep()` and the one thread is inside it. The count is 0 if that comes back.
+        $this->assertGreaterThan(1, $ticks);
+    }
+
+    public function testAHooksCommandStillRunsWhereThereIsNoLoop(): void
+    {
+        // A hook factory runs at startup, before `Async::run()` — the same call, outside a
+        // fiber, still has to work.
+        $this->assertNull(Fiber::getCurrent());
+
+        $this->assertSame("plain\n", (new HookApi('.'))->exec(['echo', 'plain'])->stdout);
     }
 
     // ---- the wrapped tool --------------------------------------------------------------
