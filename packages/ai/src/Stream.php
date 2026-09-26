@@ -99,22 +99,34 @@ final class Stream
         return null;
     }
 
-    /** Upstream: mapOptionsForApi(). */
+    /**
+     * Upstream: mapOptionsForApi().
+     *
+     * **One arm per API and no `default`**, which is how `start()` below has always been written
+     * and how this should have been: the `default` that used to sit here handed back plain
+     * `StreamOptions`, so an API with no arm got no thinking configuration and said nothing about
+     * it — which is exactly what happened to `google-gemini-cli` for twelve models. Upstream's own
+     * default is an exhaustiveness check that throws. Without a `default`, a new `Api` case fails
+     * here loudly instead of quietly asking the provider for its defaults.
+     */
     private static function translate(Model $model, ?SimpleStreamOptions $options): StreamOptions
     {
         $maxTokens = $options?->maxTokens ?? min($model->maxTokens, self::DEFAULT_MAX_TOKENS);
         $apiKey = $options?->apiKey ?? self::envApiKey($model->provider);
 
         return match ($model->api) {
+            // The same question as for the responses arm below, and upstream asks it the same way
+            // in both: xhigh is a property of the *model*, not of the protocol it speaks. This used
+            // to clamp unconditionally — "xhigh is OpenAI's alone" — which is true of the models in
+            // the registry today and not of a `models.json` proxy that resells `gpt-5.2` over
+            // chat-completions, which is a common shape.
             Api::OpenAiCompletions => new OpenAiOptions(
                 $options?->temperature,
                 $maxTokens,
                 $options?->signal,
                 $apiKey,
-                // Xhigh is OpenAI's alone; everyone else speaking this protocol clamps.
-                reasoning: $options?->reasoning?->clampToHigh(),
+                reasoning: $model->supportsXhigh() ? $options?->reasoning : $options?->reasoning?->clampToHigh(),
             ),
-            // Not clamped here: this is OpenAI's own API, and xhigh is where it came from.
             Api::OpenAiResponses => new OpenAiOptions(
                 $options?->temperature,
                 $maxTokens,
@@ -123,6 +135,7 @@ final class Stream
                 reasoning: $model->supportsXhigh() ? $options?->reasoning : $options?->reasoning?->clampToHigh(),
             ),
             Api::GoogleGenerativeAi => self::gemini($model, $options, $maxTokens, $apiKey),
+            Api::GoogleGeminiCli => self::geminiCli($model, $options, $maxTokens, $apiKey),
             Api::AnthropicMessages => new AnthropicOptions(
                 $options?->temperature,
                 $maxTokens,
@@ -133,7 +146,6 @@ final class Stream
                 thinkingEnabled: $options?->reasoning !== null,
                 thinkingBudgetTokens: self::anthropicBudget($options?->reasoning),
             ),
-            default => new StreamOptions($options?->temperature, $maxTokens, $options?->signal, $apiKey),
         };
     }
 
@@ -170,11 +182,51 @@ final class Stream
             return new GoogleOptions(...$base, thinkingEnabled: false);
         }
 
-        if (str_contains($model->id, 'gemini-3')) {
+        // Upstream's two checks rather than one on `gemini-3`: a Gemini 3 model that is neither
+        // pro nor flash takes the budget path there, and two arms of one file disagreeing about
+        // which models are Gemini 3 is the shape this audit keeps finding.
+        if (str_contains($model->id, '3-pro') || str_contains($model->id, '3-flash')) {
             return new GoogleOptions(...$base, thinkingEnabled: true, thinkingLevel: self::geminiLevel($model, $effort));
         }
 
         return new GoogleOptions(...$base, thinkingEnabled: true, thinkingBudget: self::geminiBudget($model, $effort));
+    }
+
+    /**
+     * The same question for Code Assist, and not quite the same answer.
+     *
+     * **This arm was missing**, so every `google-gemini-cli` model — the five Gemini CLI ones and
+     * the seven Antigravity ones, which speak the same API — fell through to the `default` above
+     * and was handed plain `StreamOptions`. `--thinking high` on any of them asked for no thinking
+     * and got none, without a word. The `off` case came out right by accident: Code Assist reads a
+     * missing `thinkingConfig` as none.
+     *
+     * The shape is the public endpoint's; the numbers are not. Upstream's gemini-cli arm has one
+     * flat budget table for every 2.x model where the public arm has per-model ceilings —
+     * `2.5-pro` starts at 128 there and 1024 here. The Gemini 3 level path *is* the same, so it
+     * shares `geminiLevel()`.
+     */
+    private static function geminiCli(Model $model, ?SimpleStreamOptions $options, int $maxTokens, ?string $apiKey): GoogleOptions
+    {
+        $base = [$options?->temperature, $maxTokens, $options?->signal, $apiKey];
+        $effort = $options?->reasoning?->clampToHigh();
+
+        if ($effort === null) {
+            return new GoogleOptions(...$base, thinkingEnabled: false);
+        }
+
+        // Upstream's two checks rather than one for `gemini-3`: Antigravity's ids are
+        // `gemini-3-pro-high` and `gemini-3-flash`, and its Claude models take the budget path.
+        if (str_contains($model->id, '3-pro') || str_contains($model->id, '3-flash')) {
+            return new GoogleOptions(...$base, thinkingEnabled: true, thinkingLevel: self::geminiLevel($model, $effort));
+        }
+
+        return new GoogleOptions(...$base, thinkingEnabled: true, thinkingBudget: match ($effort) {
+            ReasoningEffort::Minimal => 1024,
+            ReasoningEffort::Low => 2048,
+            ReasoningEffort::Medium => 8192,
+            default => 16_384,
+        });
     }
 
     /** Gemini 3 Pro offers two levels; Flash offers four. */

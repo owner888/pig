@@ -3039,6 +3039,71 @@ runner has no tty to open. What is tested is the empty-command guard and that a 
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
 
+### Twelve models were never told how hard to think
+
+Ninth find, from auditing the providers — the part of pig that is hand-written where upstream has
+an SDK, so the expectation was mistranslation and what turned up was a missing `match` arm.
+
+`Stream::translate()` (upstream's `mapOptionsForApi()`) had four arms for five APIs. There was no
+`Api::GoogleGeminiCli`, and the `default` handed back plain `StreamOptions` — so every model on the
+Code Assist API got no thinking configuration at all: the five `google-gemini-cli` models **and the
+seven `google-antigravity` ones**, which speak the same API. `--thinking high` on any of them asked
+for nothing and was answered by a model that did not think, without a word anywhere. The `off` case
+came out right by accident, because Code Assist reads a missing `thinkingConfig` as none.
+
+**The `default` arm is the actual finding.** `Stream::start()`, ten lines below, matches on the same
+enum with no `default` at all — so a new API would fail there loudly and silently get provider
+defaults here. Upstream's own default is an exhaustiveness check that throws. `translate()` now has
+one arm per API and no `default`, which is the same shape as its sibling and the reason the gap can
+not recur silently.
+
+Two rules were stated as being about the protocol when upstream has them about the model, and both
+are now the model's:
+
+- **xhigh** was clamped for every `openai-completions` model on the grounds that "xhigh is OpenAI's
+  alone". True of the registry, false of a `models.json` proxy reselling `gpt-5.2` over
+  chat-completions — which is the common shape where the direct API is unreachable. Upstream asks
+  `supportsXhigh(model)` in both OpenAI arms; so does pig now.
+- **Gemini 3** was `str_contains($id, 'gemini-3')` in the public arm and upstream's two checks
+  (`3-pro`, `3-flash`) in the one being added. Two arms of one file disagreeing about which models
+  are Gemini 3 is the shape of every other find here, so both now ask upstream's question.
+
+The Code Assist arm is deliberately *not* the public Google arm: upstream gives it one flat budget
+table for all 2.x models where the public arm has per-model ceilings (`2.5-pro` starts at 128 there
+and 1024 here). The Gemini 3 level path is shared, because that part is the same.
+
+**`StreamTest` covered one API of the four.** The tests it had were good ones — every reasoning
+level against Anthropic's budget table — and the arm that was missing entirely belonged to a
+provider nothing in that file mentioned. A data provider over one arm reads like coverage of the
+method.
+
+### The token total was recomputed for providers that report one
+
+Tenth find, and the numbers it moves are the ones compaction decides on.
+`AssistantMessageBuilder::setUsage()` called `withTotalTokens()` for every provider — Anthropic's
+rule (it reports the components and no total) applied to the three that do report one. For Anthropic
+and OpenAI's completions the sum is the same figure either way, so it looked harmless.
+
+**For Google it is not.** Gemini's `promptTokenCount` *includes* the cached tokens, so
+prompt + output + cacheRead counts them twice, and `totalTokenCount` — the figure Google sends,
+which does not — was thrown away. `Compaction::contextTokens()` prefers `totalTokens`, so a
+conversation with most of its prompt cached reported a context far fuller than it was and compacted
+early: a summarisation paid for, and a shorter window than the model actually had. Upstream computes
+the total in exactly the two providers whose API gives none and reads it in the two that do; that is
+now the one line in `setUsage()`.
+
+**The test fixture was written to agree with the bug.** `GoogleTest` asserted `totalTokens === 170`
+against a `usageMetadata` whose `totalTokenCount` *was* 170 — 100 prompt + 10 candidates + 40
+thoughts + 20 cached, which is not arithmetic Google does. Gemini would have sent 150. A fixture
+invented to match the code under test is the same failure as a claim in this file that nobody
+diffed.
+
+Not changed, because it is upstream's too: the **cost** still charges `promptTokenCount` at the
+input rate *and* `cachedContentTokenCount` at the cache rate, so the cached part is paid for twice
+in the displayed cost. Upstream's `calculateCost` does exactly this with exactly these fields. It is
+a divergence from reality rather than from upstream, and it belongs in one place — here — until
+upstream moves.
+
 ### A hook's message sent mid-turn was queued where nothing reads it
 
 Sixth find, from auditing `agent-session.ts`' queues. `sendHookMessage()` while the agent is

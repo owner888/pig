@@ -187,13 +187,17 @@ final class GoogleTest extends TestCase
 
     public function testThinkingTokensAreCountedAsOutputBecauseTheyAreBilledAsOutput(): void
     {
+        // Gemini's own arithmetic: `promptTokenCount` *includes* the cached tokens, and
+        // `totalTokenCount` is prompt + candidates + thoughts — so 100 + 10 + 40, with the 20
+        // cached already inside the 100. The first version of this fixture said 170, which is what
+        // pig computed rather than what Google sends, and that is what hid the bug below.
         $url = $this->serve([
             ['usageMetadata' => [
                 'promptTokenCount' => 100,
                 'candidatesTokenCount' => 10,
                 'thoughtsTokenCount' => 40,
                 'cachedContentTokenCount' => 20,
-                'totalTokenCount' => 170,
+                'totalTokenCount' => 150,
             ]],
         ]);
 
@@ -201,7 +205,11 @@ final class GoogleTest extends TestCase
 
         $this->assertSame(50, $message->usage->output);
         $this->assertSame(20, $message->usage->cacheRead);
-        $this->assertSame(170, $message->usage->totalTokens);
+
+        // The number Google sent, not a sum of the parts: adding them up counts the cached tokens
+        // twice, and `Compaction::contextTokens()` believes this figure — so a conversation with
+        // most of its prompt cached looked far fuller than it was and got compacted early.
+        $this->assertSame(150, $message->usage->totalTokens);
     }
 
     // ---- writing the request --------------------------------------------------------------

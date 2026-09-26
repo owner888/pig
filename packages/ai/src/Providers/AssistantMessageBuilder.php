@@ -144,9 +144,26 @@ final class AssistantMessageBuilder
         return new ToolCall($block['id'], $block['name'], $block['arguments']);
     }
 
+    /**
+     * Only a provider that reported no total gets one worked out for it.
+     *
+     * This used to add the parts up for every provider, which is Anthropic's rule — it reports the
+     * components and no total — applied to the three that do report one. For Anthropic and
+     * OpenAI's completions the sum is the same number either way, so it looked harmless. **For
+     * Google it is not:** `promptTokenCount` *includes* the cached tokens, so prompt + output +
+     * cacheRead counts them twice, and `totalTokenCount` — the figure Google sends, which does not
+     * — was thrown away. A conversation with most of its prompt cached therefore reported a
+     * context far fuller than it was, and `Compaction::contextTokens()` believes that figure: it
+     * compacted early, which costs a summarisation and shortens the window it was trying to save.
+     *
+     * Upstream computes the total in exactly the two providers where the API gives none, and reads
+     * it in the two where it does. That is the same rule as this line.
+     */
     public function setUsage(Usage $usage): void
     {
-        $this->usage = $usage->withTotalTokens()->withCost($this->model);
+        $counted = $usage->totalTokens > 0 ? $usage : $usage->withTotalTokens();
+
+        $this->usage = $counted->withCost($this->model);
     }
 
     public function setStopReason(StopReason $reason): void
