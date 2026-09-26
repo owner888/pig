@@ -151,8 +151,8 @@ cursor onto rather than something the file merely still contains:
 ```
 
 `•` marks the path you are on. Ctrl+O cycles five filters (everything, no tool results, only what
-you said, only what you named, absolutely everything), typing searches, and `l` names the row under
-the cursor. Going back offers to summarise the branch you are leaving, so an hour of exploring
+you said, only what you named, absolutely everything), typing searches — what you have typed is on
+the `Search:` line above the rows — and `l` names the row under the cursor. Going back offers to summarise the branch you are leaving, so an hour of exploring
 arrives on the branch you are joining instead of being left behind. Going back to something *you*
 said takes it out of the conversation and puts it back in the prompt, to be asked differently.
 

@@ -9,7 +9,6 @@ use Pig\Ai\AssistantMessage;
 use Pig\Ai\ImageContent;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
-use Pig\Ai\ThinkingContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
@@ -475,6 +474,7 @@ final class TreeList implements Component, InputHandler
     {
         if ($this->visible === []) {
             return [
+                $this->searchLine($width),
                 $this->palette->fg('muted', '  Nothing matches'),
                 $this->palette->fg('muted', '  (0/0)' . $this->filterLabel()),
             ];
@@ -483,7 +483,7 @@ final class TreeList implements Component, InputHandler
         $total = count($this->visible);
         $start = max(0, min($this->selected - intdiv($this->maxVisible, 2), $total - $this->maxVisible));
         $end = min($start + $this->maxVisible, $total);
-        $lines = [];
+        $lines = [$this->searchLine($width)];
 
         for ($position = $start; $position < $end; $position++) {
             $lines[] = $this->row($this->flat[$this->visible[$position]], $position === $this->selected, $width);
@@ -495,6 +495,26 @@ final class TreeList implements Component, InputHandler
         );
 
         return $lines;
+    }
+
+    /**
+     * What is typed, above the rows.
+     *
+     * Drawn here rather than by whoever built the list — upstream gives it a component of its own,
+     * wired to the list's `getSearchQuery()`, and here the accessor existed while the line never
+     * did. The list owns the query, so the list draws it, and then there is no second end to
+     * forget. **Always, even empty**, as upstream has it: a label saying `Search:` is what tells
+     * anybody that typing does something, and when nothing matches it is the only way to see what
+     * was typed wrong.
+     */
+    private function searchLine(int $width): string
+    {
+        $line = '  ' . $this->palette->fg('muted', 'Search:')
+            . ($this->search === '' ? '' : ' ' . $this->palette->fg('accent', $this->search));
+
+        // Cut like every other line here: a query longer than the terminal is wide would wrap and
+        // push a row off the bottom of the list on each keystroke.
+        return Width::truncate($line, $width, '');
     }
 
     /**
@@ -582,7 +602,12 @@ final class TreeList implements Component, InputHandler
                 "[model: {$message->provider}/{$message->modelId}]",
             ),
             $message instanceof ThinkingLevelChange => $this->palette->fg('dim', "[thinking: {$message->level}]"),
-            $message instanceof Label => $this->palette->fg('dim', "[label: {$message->label}]"),
+            // A cleared name is a `Label` entry with no label — nothing is deleted from a session
+            // file — and `[label: ]` is a row that reads like a rendering fault. Upstream's word.
+            $message instanceof Label => $this->palette->fg(
+                'dim',
+                '[label: ' . ($message->label ?? '(cleared)') . ']',
+            ),
             $message instanceof CustomEntry => $this->palette->fg('dim', "[{$message->customType}]"),
             default => $this->palette->fg('dim', '[' . get_debug_type($message) . ']'),
         };
@@ -607,7 +632,22 @@ final class TreeList implements Component, InputHandler
         return $this->palette->fg('muted', '(no text)');
     }
 
-    /** @param list<mixed> $content */
+    /**
+     * What a message says, for a row and for the search.
+     *
+     * **Thinking is not part of it**, which is upstream's rule and pig's own: the tree is a list of
+     * points somebody might go back to, and the model talking to itself is neither what a point
+     * *is* nor something anybody read. It counted once, and thinking plus a tool call is what most
+     * tool-calling turns look like on a provider that returns its reasoning — so the default tree
+     * grew a row of chain-of-thought between every question and its answer, and a search matched
+     * text nobody had seen. `SessionInfo::$text` leaves thinking out of the session search for the
+     * same reason.
+     *
+     * `[image]` is pig's, and the one addition: a screenshot pasted with nothing said about it is a
+     * point worth going back to, where upstream draws `user: ` and nothing after it.
+     *
+     * @param list<mixed> $content
+     */
     private static function textOf(array $content): string
     {
         $parts = [];
@@ -615,8 +655,6 @@ final class TreeList implements Component, InputHandler
         foreach ($content as $block) {
             if ($block instanceof TextContent) {
                 $parts[] = $block->text;
-            } elseif ($block instanceof ThinkingContent) {
-                $parts[] = $block->thinking;
             } elseif ($block instanceof ImageContent) {
                 $parts[] = '[image]';
             }

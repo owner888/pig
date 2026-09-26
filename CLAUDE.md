@@ -3843,6 +3843,29 @@ things in the walker are worth keeping straight:
   whose parent is not there, and losing part of somebody's conversation to keep a tidy tree is the
   wrong way round. Upstream guards the same case.
 
+Three more the audit found in the list itself, all in what a row is made of:
+
+- **What is typed had nothing on screen.** `search()` was there, public, documented "for whoever
+  draws the search line" — and nobody drew it. Upstream has a component of its own for it, wired to
+  the list's `getSearchQuery()`, which is one more thing to wire at one end only; here the second
+  end was simply never written. So the rows narrowed and nothing said why: a typo could not be
+  seen, an empty filter could not be told from a query that matched nothing, and backspace was
+  blind. `TreeList::render()` draws it now, because the list owns the query — **always, even
+  empty**, since the word `Search:` is what says typing does anything, and a query longer than the
+  terminal is cut like every other line here.
+- **Thinking counted as what a row says.** `textOf()` collected `ThinkingContent` along with text,
+  and two things read it: the row, and the default filter's "did this turn say anything". Thinking
+  plus a tool call is what most tool-calling turns look like on a provider that returns its
+  reasoning — so the default tree grew a row of the model talking to itself between every question
+  and its answer, and a search matched text nobody had ever read. It is out, which is upstream's
+  rule and pig's own: `SessionInfo::$text` leaves thinking out of the *session* search for exactly
+  this reason, and a tree is a list of points somebody might go back to. `[image]` stays in, and is
+  the one addition — a screenshot pasted with nothing said about it is a point worth going back to,
+  where upstream draws `user: ` and nothing after it.
+- **A cleared name drew `[label: ]`.** Nothing is deleted from a session file, so clearing a name
+  writes a `Label` entry with a null label, and its row under the `all` filter read like a
+  rendering fault. Upstream's word for it is `(cleared)`.
+
 ### `--mode rpc` could not be started, by either route
 
 Found by porting `rpc-client.ts` and pointing it at the real binary. Two guards in `bin/pig`, each

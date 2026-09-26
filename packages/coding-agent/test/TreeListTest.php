@@ -8,13 +8,16 @@ use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\StopReason;
+use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
+use Pig\Ai\ThinkingContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Interactive\TreeList;
 use Pig\CodingAgent\Session\CustomEntry;
+use Pig\CodingAgent\Session\Label;
 use Pig\CodingAgent\Session\ModelChange;
 use Pig\CodingAgent\Theme\Palette;
 
@@ -203,6 +206,75 @@ final class TreeListTest extends TestCase
         $this->assertStringContainsString('[read: {"path":"a.txt"}]', $screen);
     }
 
+    public function testThinkingIsNotWhatARowSays(): void
+    {
+        // Thinking plus a tool call is what most tool-calling turns look like on a provider that
+        // returns its reasoning — so counting it as text put a row of the model talking to itself
+        // between every question and its answer. It is not row material for the reason it is not
+        // search material either: nobody read it, and it is not what the point *is*.
+        $tree = [self::node('a', self::said('read it'), [
+            self::node('b', self::answered([
+                new ThinkingContent('the file is probably under src, let me look'),
+                new ToolCall('call-1', 'read', ['path' => 'a.txt']),
+            ]), [
+                self::node('c', new ToolResultMessage('call-1', 'read', [new TextContent('contents')])),
+            ]),
+        ])];
+
+        $list = self::list($tree, 'c');
+        $screen = self::plain($list);
+
+        $this->assertStringNotContainsString('probably under src', $screen);
+        $this->assertStringNotContainsString('assistant:', $screen);
+    }
+
+    public function testASearchDoesNotMatchThinkingEither(): void
+    {
+        $tree = [self::node('a', self::said('read it'), [
+            self::node('b', self::answered([
+                new ThinkingContent('the file is probably under src'),
+                new ToolCall('call-1', 'read', ['path' => 'a.txt']),
+            ]), [
+                self::node('c', new ToolResultMessage('call-1', 'read', [new TextContent('contents')])),
+            ]),
+        ])];
+
+        $list = self::list($tree, 'c');
+
+        foreach (str_split('probably') as $character) {
+            $list->handleInput($character);
+        }
+
+        $this->assertSame(0, $list->count());
+    }
+
+    public function testAPictureWithNothingSaidAboutItStillHasARow(): void
+    {
+        // pig's own, and the reason `textOf` is not simply upstream's text-blocks-only: a
+        // screenshot pasted with no words is a point somebody goes back to, and `user: ` with
+        // nothing after it is a row that cannot be told from a rendering fault.
+        $tree = [self::node('a', new UserMessage([new ImageContent('x', 'image/png')]))];
+
+        $this->assertStringContainsString('user: [image]', self::plain(self::list($tree, 'a')));
+    }
+
+    public function testAClearedNameSaysSoRatherThanShowingAnEmptyBracket(): void
+    {
+        // Nothing is deleted from a session file, so clearing a name writes a `Label` with no
+        // label. Its row is only visible under the `all` filter, which is where bookkeeping lives.
+        $tree = [self::node('a', self::said('hello'), [
+            self::node('b', new Label('a')),
+        ])];
+
+        $list = self::list($tree, 'b');
+        $list->handleInput(self::CTRL_O);
+        $list->handleInput(self::CTRL_O);
+        $list->handleInput(self::CTRL_O);
+        $list->handleInput(self::CTRL_O);
+
+        $this->assertStringContainsString('[label: (cleared)]', self::plain($list));
+    }
+
     public function testATurnThatFailedIsShownEvenWithNoText(): void
     {
         // "The turn that broke" is exactly the point somebody goes back to.
@@ -303,6 +375,34 @@ final class TreeListTest extends TestCase
         $this->assertSame('road not', $list->search());
         $this->assertSame(1, $list->count());
         $this->assertSame('c', $list->current());
+    }
+
+    public function testWhatIsTypedIsOnScreen(): void
+    {
+        // Without it the rows narrow and nothing says why: a typo cannot be seen, "nothing
+        // matches" cannot be told from an empty filter, and backspace is blind. Upstream draws
+        // the same line, and `search()` existed here for a caller that was never written.
+        $list = self::list(self::forked(), 'f');
+
+        $this->assertStringContainsString('Search:', self::plain($list));
+
+        foreach (str_split('road') as $character) {
+            $list->handleInput($character);
+        }
+
+        $this->assertStringContainsString('Search: road', self::plain($list));
+    }
+
+    public function testTheSearchLineIsStillThereWhenNothingMatches(): void
+    {
+        // Where it matters most: the only way to see what was typed wrong.
+        $list = self::list(self::forked(), 'f');
+
+        foreach (str_split('zzz') as $character) {
+            $list->handleInput($character);
+        }
+
+        $this->assertStringContainsString('Search: zzz', self::plain($list));
     }
 
     public function testBackspaceTakesTheSearchApartAgain(): void
