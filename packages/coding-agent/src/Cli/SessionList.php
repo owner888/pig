@@ -30,6 +30,9 @@ use Pig\Tui\Keys;
  * key to switch between the two halves and no focus to lose — which is the only arrangement
  * that works, because a search box you have to tab into is a search box nobody finds.
  *
+ * **Escape and Ctrl+C are two keys and not one**, which is the whole reason `setQuitHandler()`
+ * exists next to `setCancelHandler()` — upstream's `onCancel` and `onExit`.
+ *
  * One difference from upstream, in the rendering rather than the behaviour: the rows come from
  * `SelectList`, which pig already had, where upstream draws its own two-line rows. So a
  * session is one line here and fits ten on screen instead of five.
@@ -48,6 +51,9 @@ final class SessionList implements Caret, Component, InputHandler
 
     /** @var Closure(): void|null */
     private ?Closure $onCancel = null;
+
+    /** @var Closure(): void|null */
+    private ?Closure $onQuit = null;
 
     /** @param list<SessionInfo> $sessions newest first, as `SessionManager::listFor()` gives them */
     public function __construct(
@@ -73,10 +79,16 @@ final class SessionList implements Caret, Component, InputHandler
         $this->onSelect = $handler;
     }
 
-    /** @param Closure(): void|null $handler */
+    /** @param Closure(): void|null $handler escape: this list is done, pig is not */
     public function setCancelHandler(?Closure $handler): void
     {
         $this->onCancel = $handler;
+    }
+
+    /** @param Closure(): void|null $handler ctrl+c: upstream's `onExit`, and it means the program */
+    public function setQuitHandler(?Closure $handler): void
+    {
+        $this->onQuit = $handler;
     }
 
     /** What is typed in the search, which is the only state worth asking about from outside. */
@@ -135,15 +147,25 @@ final class SessionList implements Caret, Component, InputHandler
     #[\Override]
     public function handleInput(string $data): void
     {
+        // Before the list, because `SelectList` answers ctrl+c with its cancel handler — it is
+        // one key to a list inside a screen, where the screen deals with quitting. Here the list
+        // *is* the screen, and cancelling is what escape already does.
+        if (Keys::isCtrlC($data)) {
+            if ($this->onQuit !== null) {
+                ($this->onQuit)();
+            }
+
+            return;
+        }
+
         $forList = Keys::isArrowUp($data)
             || Keys::isArrowDown($data)
             || Keys::isEnter($data)
-            || Keys::isEscape($data)
-            || Keys::isCtrlC($data);
+            || Keys::isEscape($data);
 
         if ($forList) {
-            // Escape and Ctrl+C reach `onCancel` through the list's own handler rather than
-            // being answered here, so there is one route out and not two.
+            // Escape reaches `onCancel` through the list's own handler rather than being
+            // answered here, so there is one route out and not two.
             $this->list->handleInput($data);
 
             return;

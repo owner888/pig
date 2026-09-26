@@ -16,7 +16,11 @@ use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\Usage;
 use Pig\Async\Loop;
+use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\Provider;
+use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Interactive\FooterComponent;
+use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
@@ -195,6 +199,72 @@ final class FooterTest extends TestCase
         $this->spent($session, new Usage(1_000, 0, 0, 0), StopReason::Aborted);
 
         $this->assertStringContainsString('30.0%/200k', $this->lines($session)[1]);
+    }
+
+    public function testAutoCompactionSaysSoBesideThePercentage(): void
+    {
+        // The percentage means two different things depending on this: with auto-compaction on,
+        // reaching the top is a pause and a summary, and with it off it is a request that gets
+        // refused. The footer is the only place that says which, and the setting is readable
+        // from anywhere — `/settings` can turn it off mid-session.
+        $session = $this->session();
+        $this->spent($session, new Usage(50_000, 0, 0, 0));
+
+        $settings = Settings::inMemory();
+
+        $footer = new FooterComponent($session, $this->palette, $this->cwd, $settings);
+        $this->assertStringContainsString('25.0%/200k (auto)', Ansi::strip($footer->render(self::WIDTH)[1]));
+
+        $settings->setCompactionEnabled(false);
+        $this->assertStringNotContainsString('(auto)', Ansi::strip($footer->render(self::WIDTH)[1]));
+    }
+
+    public function testWithNoSettingsAtAllItIsOnBecauseThatIsTheDefault(): void
+    {
+        $session = $this->session();
+        $this->spent($session, new Usage(50_000, 0, 0, 0));
+
+        $this->assertStringContainsString('(auto)', $this->lines($session)[1]);
+    }
+
+    public function testASubscriptionSaysTheMoneyIsNotReal(): void
+    {
+        // Signed in rather than paying per token, so the number beside it is what the same
+        // conversation *would have* cost. Without the marker a Max subscriber reads a bill.
+        $session = $this->session();
+        $this->spent($session, new Usage(100, 50, 0, 0, 150, new Cost(0.5, 0.25, 0, 0, 0.75)));
+
+        $auth = Auth::inMemory();
+        $auth->setCredentials(Provider::Anthropic, new Credentials('r', 'a', 0));
+
+        $footer = new FooterComponent($session, $this->palette, $this->cwd, null, $auth);
+
+        $this->assertStringContainsString('$0.750 (sub)', Ansi::strip($footer->render(self::WIDTH)[1]));
+    }
+
+    public function testASubscriptionIsSaidEvenBeforeAnythingIsSpent(): void
+    {
+        $auth = Auth::inMemory();
+        $auth->setCredentials(Provider::Anthropic, new Credentials('r', 'a', 0));
+
+        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd, null, $auth);
+
+        // Upstream's condition is "cost or subscription", not "cost": the interesting fact on a
+        // fresh screen is that this one is not being billed.
+        $this->assertStringContainsString('$0.000 (sub)', Ansi::strip($footer->render(self::WIDTH)[1]));
+    }
+
+    public function testAStoredApiKeyIsNotASubscription(): void
+    {
+        $session = $this->session();
+        $this->spent($session, new Usage(100, 50, 0, 0, 150, new Cost(0.5, 0.25, 0, 0, 0.75)));
+
+        $auth = Auth::inMemory();
+        $auth->setApiKey('anthropic', 'sk-test');
+
+        $footer = new FooterComponent($session, $this->palette, $this->cwd, null, $auth);
+
+        $this->assertStringNotContainsString('(sub)', Ansi::strip($footer->render(self::WIDTH)[1]));
     }
 
     public function testAFullContextIsColouredAndAnEmptyOneIsNot(): void

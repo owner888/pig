@@ -31,6 +31,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Changelog;
+use Pig\CodingAgent\Cli\SessionList;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
@@ -250,7 +251,9 @@ final class InteractiveMode
         $this->status = new Container();
         $this->overlay = new Container();
         $this->editor = new CustomEditor(new Editor($palette->editorTheme()));
-        $this->footer = new FooterComponent($session, $palette, $cwd);
+        // `$this->settings` rather than the argument: with none given it is the in-memory one
+        // that `/settings` writes to, and the footer has to read what that screen changes.
+        $this->footer = new FooterComponent($session, $palette, $cwd, $this->settings, $auth);
 
         // The palette as a closure: `/theme` replaces it, and a dialog opened afterwards
         // should be drawn in the colour that is on now.
@@ -1572,26 +1575,37 @@ final class InteractiveMode
             return;
         }
 
-        $items = [];
+        // The same component `--resume` draws before the screen exists, search box and all.
+        // A plain `SelectList` was here first and it is the wrong list for this one thing: a
+        // project with thirty conversations gives eight rows of openings and the arrow keys,
+        // and what anybody remembers three days later is a phrase from the middle.
+        $picker = new SessionList($sessions, $this->palette, 8);
 
-        foreach ($sessions as $index => $info) {
-            $items[] = new SelectItem(
-                (string) $index,
-                $info->opening === '' ? '(nothing was said)' : $info->opening,
-                $info->when() . ' · ' . $info->messages . ' messages',
-            );
-        }
+        $picker->setSelectHandler(function (string $path) use ($sessions): void {
+            foreach ($sessions as $info) {
+                if ($info->path === $path) {
+                    $this->closePicker();
+                    $this->resume($info);
 
-        $picker = new SelectList($items, 8, $this->palette->selectListTheme());
-        $picker->setSelectHandler(function (SelectItem $item) use ($sessions): void {
-            $this->closePicker();
-            $this->resume($sessions[(int) $item->value]);
+                    return;
+                }
+            }
         });
+
+        // Escape and ctrl+c both close it. They mean different things where the list is the
+        // whole screen — `SessionList` keeps them apart for `bin/pig`, which quits on one of
+        // them — but inside a running session there is nothing to quit to: the conversation is
+        // still behind the overlay either way.
         $picker->setCancelHandler($this->closePicker(...));
+        $picker->setQuitHandler($this->closePicker(...));
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text($this->palette->fg('muted', 'Pick a session — enter to open, esc to cancel'), 1, 0));
+        $this->overlay->addChild(new Text(
+            $this->palette->fg('muted', 'Pick a session — type to search, enter to open, esc to cancel'),
+            1,
+            0,
+        ));
         $this->overlay->addChild($picker);
 
         // Focus moves to the list, so arrow keys reach it rather than the editor.

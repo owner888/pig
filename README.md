@@ -73,7 +73,9 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 `--api-key <key>` uses a key for this run only, without saving it;
 `-c`/`--continue` to pick up where you left off, or `-r`/`--resume` on its own to choose from
 a list — type in that list to search it, and the search matches anything said in the
-conversation, not just the line it opened with. `-h` for the flags, `-v` for the version.
+conversation, not just the line it opened with. Escape there starts a new conversation instead;
+ctrl+c leaves without starting one. `/resume` inside a session shows the same list, search and
+all. `-h` for the flags, `-v` for the version.
 `/help` inside lists the keys.
 
 With a Claude Pro or Max subscription there is no key to set: `/login` gives you a URL to open

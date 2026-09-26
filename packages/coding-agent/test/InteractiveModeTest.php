@@ -719,6 +719,62 @@ final class InteractiveModeTest extends TestCase
         $this->assertCount(2, $this->session->messages());
     }
 
+    public function testTypingSearchesTheSessionsFromInsideASession(): void
+    {
+        // The same search the startup picker has. Without it the in-session list is eight rows
+        // of openings and the arrow keys, which is the thing `SessionList` was written to fix —
+        // and upstream shows the searchable list in both places, not one.
+        $this->start(['first answer', 'second answer'], store: true);
+
+        $this->type('the markdown lexer');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/new');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('the tls handshake');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/resume');
+        $this->type(self::ENTER);
+
+        // Newest first, so the highlighted row is the tls one; the query has to be what
+        // decides, or this passes with no search at all.
+        foreach (['l', 'e', 'x'] as $key) {
+            $this->type($key);
+        }
+
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('the markdown lexer', $screen);
+        $this->assertStringNotContainsString('the tls handshake', $screen);
+    }
+
+    public function testASearchThatMatchesNothingSaysSoRatherThanLookingEmpty(): void
+    {
+        $this->start(['answered'], store: true);
+        $this->type('something memorable');
+        $this->type(self::ENTER);
+        $this->settle();
+        $this->mode->stop();
+
+        $this->start(store: true);
+        $this->type('/resume');
+        $this->type(self::ENTER);
+
+        foreach (['z', 'z', 'z'] as $key) {
+            $this->type($key);
+        }
+
+        $this->assertStringContainsString('No sessions found', $this->screen());
+    }
+
     public function testEscapeClosesThePickerAndChangesNothing(): void
     {
         $this->start(['answered'], store: true);

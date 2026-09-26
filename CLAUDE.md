@@ -504,12 +504,49 @@ are rebuilt on every `draw()` rather than appended to, because a running tool re
 again on each update — and `setShowImages()` rebuilds them for the same reason `setExpanded()`
 does, since the setting is changed while a transcript is already on screen.
 
+**The footer's two markers were both missing, and both for the same reason.** Upstream writes
+` (auto)` after the context percentage while auto-compaction is on, and ` (sub)` after the cost
+while the model is reached with a signed-in account rather than a key — and it shows the cost at
+all in that case, even at `$0.000`. Neither was here. `(auto)` had a docblock saying it was "not
+ported: nothing to report yet", which was true when it was written and stopped being true the day
+auto-compaction landed; a comment asserting a thing about the rest of the repository is a comment
+that goes stale silently, which is the `PI_AGENT_DIR` trap in a different file. `(sub)` was never
+mentioned. What they cost: a percentage that means two different things — a pause and a summary,
+or a request that gets refused — with nothing saying which, and a subscriber reading a running
+bill that is not a bill.
+
+Upstream pushes the first one in, with a `setAutoCompactEnabled()` that whoever changes the
+setting has to remember to call. Here both are **read on every frame** — `Settings` and `Auth` are
+constructor arguments and the render asks them — because the footer redraws constantly anyway, the
+two facts are already stored where they can be looked up, and a setter is one more thing to wire
+at one end only. `InteractiveMode` passes `$this->settings` and not its own argument: with no
+settings given, that is the in-memory object `/settings` writes to, and the footer has to read
+what that screen changes.
+
 **Two preview sizes for command output**, both upstream's, in one component where upstream has
 two: `BASH_LINES = 5` for a command the model ran, `TYPED_BASH_LINES = 20` for one typed with
 `!`. Upstream's numbers live in `tool-execution.ts` and `bash-execution.ts` respectively, and the
 difference has a reason worth keeping — a `!` command is the thing the person just asked for and
 is looking at, where a model's is one step inside something else. pig reuses one component for
 both, so the number is a constructor argument rather than a second class.
+
+**Open, and needs a decision before it is touched: the truncation notice only the model reads.**
+Every tool that cuts its own output appends a line saying so — `[Showing lines 1-2000 of 8431
+(256KB limit). Use offset=2001 to continue]` and its siblings — and that line is *the last line of
+the output*. `ToolExecutionComponent` keeps the **first** ten, twenty or fifteen lines when the
+view is collapsed, so for `read`, `ls`, `find` and `grep` the one line saying "this is not all of
+it" is exactly the line that gets cut. `bash` is fine by accident: its preview keeps the tail,
+which is where its notice already is. Upstream says it twice on purpose — once in the text for the
+model, once in the component for the person, `[Truncated: showing 2000 of 8431 lines]` after the
+preview — and the second copy is the one collapsing cannot hide.
+
+Not fixed here, because every version of the fix is worse than it looks. A second sentence built
+from `details` stutters when the view is expanded, and cannot say what `ls`, `find` and `grep`
+actually cut, since their entry, result and match limits are in the notice text and not in
+`Truncation`. Keeping the output's last line when it looks like a notice guesses: a `read` of a
+file whose last line is `[section]` would be given a notice it does not have. The honest fix is
+for the tool to hand its notice over **as data** beside the text, which is four tools and a field
+on the result — the developer decides that, not the audit.
 
 `Components\Rule` is upstream's `DynamicBorder`, renamed: "dynamic" there means "asks the width
 at render time", which is what every component in `pig/tui` does — there is no static kind for it
@@ -805,6 +842,19 @@ Two decisions of pig's own:
 | Queued messages | `AgentSession::setQueueMode()`, which tells the agent and writes the setting |
 | Auto-compact | `compaction.enabled`, read again on every turn |
 | Auto-retry | `retry.enabled`, read again on every failure |
+
+**Row by row against upstream's seven, two differ.** Upstream's list is `autocompact`,
+`queue-mode`, `hide-thinking`, `collapse-changelog`, `thinking`, `theme`, `show-images` — so pig
+has `autoRetry`, which upstream has no setting for at all, and lacks `collapse-changelog`.
+`collapse-changelog` governs one thing: whether the note shown once after an upgrade is the
+release notes or the line "Updated to vX. Use /changelog to view full changelog.". It stays out,
+and the reason is the rule at the top of this file rather than an oversight — a row whose whole
+job is to make one banner shorter is a second way to render a thing pig renders one way, and
+`sayChangelog()` exists precisely because `/changelog` and the upgrade note are "the same thing
+arriving for two reasons". Somebody who does not want to read release notes has the shorter answer
+already: they are shown once, under the conversation, and never again. If pig ever ships a
+`CHANGELOG.md` long enough that the note is genuinely in the way, the row is three lines and this
+paragraph is where to start.
 
 **Queue mode is a row now, and getting there meant the anchor commit's own break.** Upstream has
 one `setQueueMode()`; pig has two queues, because `d0a4c37` is the commit that split the single
@@ -2089,6 +2139,17 @@ Three things about it:
 - **Only with a terminal.** In `--mode text|json|rpc` there is nobody to ask, so a bare
   `--resume` stays the error it was — a clearer one now, naming what is missing.
 
+**Ctrl+C is the third answer, and it went missing because there were only two.** `ask()` handed
+back a `?string`, so the two keys that leave the list with nothing chosen had one value between
+them — and `SelectList` answers both of them with its cancel handler, because to a list inside a
+running screen ctrl+c is the screen's business. Here the list *is* the screen: pressing ctrl+c
+started a brand new session, so somebody who asked to leave got a fresh agent, an empty prompt
+and the same key as the only way out of that. Escape is "not this session", ctrl+c is "not pig",
+and `SessionChoice` is what carries three answers instead of two — upstream keeps them apart with
+a third callback that calls `process.exit(0)`, which a class here cannot do and `bin/pig` does
+instead. `SessionList::setQuitHandler()` is that third callback, and a search box with a
+half-typed query in it does not hold on to anybody: ctrl+c is the list's whichever way.
+
 Upstream's selector has a third key, delete. Not ported: a session file is a record of
 something that happened, and a list you move through with the arrow keys is the wrong place
 for an irreversible key.
@@ -2103,6 +2164,14 @@ borrowed `SelectList` for instead.
 **The keys divide in two and nothing switches between them**: up, down, Enter, Escape and
 Ctrl+C belong to the list, and *everything else is typing*. A search box you have to tab into
 is a search box nobody finds, and there is no focus to lose this way.
+
+**`/resume` from inside a session shows this same list**, and for a while it did not. It built its
+own rows into a plain `SelectList` — so the searchable list existed, was already ported, and was
+reachable from exactly one of the two places that need it, which is this audit's commonest shape.
+Upstream draws the searchable selector in both. The thirty-conversations problem is worse inside a
+session than at startup, not better: the overlay is eight rows tall. Escape and ctrl+c both close
+the overlay there — the distinction `bin/pig` needs has nothing to answer inside a running
+session, where the conversation is still behind the overlay either way.
 
 What it matches is `SessionInfo::$text` — upstream's `allMessagesText`, every text block of
 every user and assistant message run together, collected by `SessionManager::describe()` while

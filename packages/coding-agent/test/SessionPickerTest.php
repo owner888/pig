@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Cli\SessionChoice;
 use Pig\CodingAgent\Cli\SessionPicker;
 use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Theme\Palette;
@@ -27,6 +28,8 @@ final class SessionPickerTest extends TestCase
 
     private const string DOWN = "\e[B";
 
+    private const string CTRL_C = "\x03";
+
     #[\Override]
     protected function setUp(): void
     {
@@ -35,6 +38,12 @@ final class SessionPickerTest extends TestCase
 
     /** @param list<string> $keys typed in order, before the picker opens */
     private function pick(array $sessions, array $keys): ?string
+    {
+        return $this->choose($sessions, $keys)->path;
+    }
+
+    /** @param list<string> $keys typed in order, before the picker opens */
+    private function choose(array $sessions, array $keys): SessionChoice
     {
         $terminal = new FakeTerminal(80, 24);
 
@@ -89,13 +98,41 @@ final class SessionPickerTest extends TestCase
     {
         // Which `bin/pig` reads as "start a new one" rather than as "stop": someone who
         // opened the list and changed their mind still wanted pig.
-        $this->assertNull($this->pick([self::session('/a.jsonl', 'first')], [self::ESC]));
+        $choice = $this->choose([self::session('/a.jsonl', 'first')], [self::ESC]);
+
+        $this->assertNull($choice->path);
+        $this->assertFalse($choice->quit);
+    }
+
+    public function testCtrlCQuitsRatherThanStartingANewSession(): void
+    {
+        // The two are not the same key and upstream does not treat them as one: escape is
+        // "not this session", ctrl+c is "not pig". Answering ctrl+c with a new session hands
+        // somebody who asked to leave a fresh agent and an empty screen, and the only way out
+        // of *that* is the key they just pressed.
+        $choice = $this->choose([self::session('/a.jsonl', 'first')], [self::CTRL_C]);
+
+        $this->assertTrue($choice->quit);
+        $this->assertNull($choice->path);
+    }
+
+    public function testCtrlCWhileSearchingQuitsToo(): void
+    {
+        // The half-typed query is not a reason to hold on to somebody: ctrl+c is answered by
+        // the list no matter what is in the search box, the same as escape.
+        $this->assertTrue($this->choose(
+            [self::session('/a.jsonl', 'the markdown lexer')],
+            ['l', 'e', 'x', self::CTRL_C],
+        )->quit);
     }
 
     public function testNoSessionsIsAnsweredWithoutDrawingAnything(): void
     {
         // Not a screen saying "nothing here" that somebody has to dismiss.
-        $this->assertNull(SessionPicker::ask([], Palette::dark(true)));
+        $choice = SessionPicker::ask([], Palette::dark(true));
+
+        $this->assertNull($choice->path);
+        $this->assertFalse($choice->quit);
     }
 
     // ---- searching -----------------------------------------------------------------

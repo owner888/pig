@@ -297,8 +297,15 @@ if ($resumePath === '' && !isset($options['no-save'])) {
 
     // Escape answers null, which starts a new session — someone who opened the list and changed
     // their mind still wanted pig, and refusing to start would only make them type the command
-    // again.
-    $resumePath = SessionPicker::ask($sessions, Palette::named($theme));
+    // again. Ctrl+C is the other thing, and it is the caller's to do: the list has already put
+    // the terminal back, so this is an ordinary end to the program and not a signal.
+    $choice = SessionPicker::ask($sessions, Palette::named($theme));
+
+    if ($choice->quit) {
+        exit(0);
+    }
+
+    $resumePath = $choice->path;
 }
 
 // Everything from the model to the restored conversation. It lives in `CodingAgent::session()`

@@ -64,7 +64,9 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 `--read-only` 去掉 edit、write、bash；`--theme light` 给浅色终端用；`--api-key <key>` 只对这一次
 运行生效、不存盘；`-c`/`--continue` 接着上次聊，
 或者单独写个 `-r`/`--resume` 从列表里挑一个——在那个列表里直接打字就是搜索，搜的是整段对话里
-说过的话，不只是开头那一句。`-h` 看所有旗标，`-v` 看版本。进去之后 `/help` 列出所有按键。
+说过的话，不只是开头那一句。在那儿按 esc 是「不挑了，开个新的」，ctrl+c 是「不用了」，直接退出。
+进去之后 `/resume` 也是同一个列表，同样能搜。`-h` 看所有旗标，`-v` 看版本。进去之后 `/help`
+列出所有按键。
 
 有 Claude Pro 或 Max 订阅的话不用配 key：`/login` 给你一个网址，打开点同意，把回来的 code 粘回来
 就行。GitHub Copilot 的订阅也一样走 `/login`——它给你一个码，去 github.com 输进去，pig 这边等着，

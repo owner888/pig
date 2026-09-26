@@ -31,6 +31,9 @@ use Pig\Tui\Tui;
  * has a third key — delete — which is not here: a session file is a record of something that
  * happened, and a list you navigate with the arrow keys is the wrong place to put an
  * irreversible key.
+ *
+ * **Three answers, not two**, which is why this returns a `SessionChoice`: upstream's picker takes
+ * three callbacks and the third one exits the process.
  */
 final class SessionPicker
 {
@@ -38,18 +41,19 @@ final class SessionPicker
     private const int VISIBLE = 10;
 
     /**
-     * Ask, and answer with the path, or null if nobody chose.
+     * Ask, and answer with the path, or with what was meant instead — see `SessionChoice`.
      *
      * @param list<SessionInfo> $sessions newest first, as `SessionManager::listFor()` gives them
      */
-    public static function ask(array $sessions, Palette $palette, ?Terminal $terminal = null): ?string
+    public static function ask(array $sessions, Palette $palette, ?Terminal $terminal = null): SessionChoice
     {
         if ($sessions === []) {
-            return null;
+            return new SessionChoice();
         }
 
         $tui = new Tui($terminal ?? new ProcessTerminal());
         $chosen = null;
+        $quit = false;
 
         $list = new SessionList($sessions, $palette, self::VISIBLE);
 
@@ -64,6 +68,11 @@ final class SessionPicker
         });
 
         $list->setCancelHandler(static function (): void {
+            Loop::get()->stop();
+        });
+
+        $list->setQuitHandler(static function () use (&$quit): void {
+            $quit = true;
             Loop::get()->stop();
         });
 
@@ -88,7 +97,7 @@ final class SessionPicker
         // has no screen at all, and either way it starts from a terminal nobody else holds.
         $tui->stop();
 
-        return $chosen;
+        return new SessionChoice($chosen, $quit);
     }
 
     /**

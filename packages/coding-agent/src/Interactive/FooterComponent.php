@@ -7,7 +7,9 @@ namespace Pig\CodingAgent\Interactive;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\StopReason;
+use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
 use Pig\Tui\Component;
@@ -20,9 +22,13 @@ use Pig\Tui\Width;
  * difference between "ask one more thing" and "start a new session" — so it is the only
  * thing here that takes a colour, and only once it is worth looking at.
  *
- * Ported from upstream's `components/footer.ts`. Not ported: the auto-compaction marker,
- * which has nothing to report yet, and the watcher on `.git/HEAD` — the branch is re-read
- * on every invalidate, which is what the watcher was arranging anyway.
+ * Ported from upstream's `components/footer.ts`. Not ported: the watcher on `.git/HEAD` — the
+ * branch is re-read on every invalidate, which is what the watcher was arranging anyway.
+ *
+ * **The settings and the credentials are read on every frame, not pushed in.** Upstream has a
+ * `setAutoCompactEnabled()` that whoever changes the setting has to remember to call, which is
+ * one more thing wired at one end only; both of these are already stored somewhere the footer
+ * can look, and looking costs an array lookup per frame.
  */
 final class FooterComponent implements Component
 {
@@ -37,10 +43,18 @@ final class FooterComponent implements Component
     /** @var array<string, string> what hooks and custom tools have to say, by key */
     private array $statuses = [];
 
+    /**
+     * @param Settings|null $settings for the auto-compaction marker; absent means the default,
+     *        which is on — the same answer `AgentSession::shouldCompact()` gives without one
+     * @param Auth|null     $auth     for "(sub)"; absent means nothing is known about how this
+     *        provider is paid for, which is not the same as knowing it is billed
+     */
     public function __construct(
         private readonly AgentSession $session,
         private readonly Palette $palette,
         private readonly string $cwd,
+        private readonly ?Settings $settings = null,
+        private readonly ?Auth $auth = null,
     ) {
     }
 
@@ -212,8 +226,12 @@ final class FooterComponent implements Component
             }
         }
 
-        if ($stats->cost > 0) {
-            $parts[] = '$' . number_format($stats->cost, 3);
+        // Upstream's condition, and the `||` is the point: on a subscription the interesting
+        // fact is there before any money is, because the number beside it is notional.
+        $subscription = $this->onASubscription();
+
+        if ($stats->cost > 0 || $subscription) {
+            $parts[] = '$' . number_format($stats->cost, 3) . ($subscription ? ' (sub)' : '');
         }
 
         $parts[] = $this->context();
@@ -264,7 +282,11 @@ final class FooterComponent implements Component
         $window = $model?->contextWindow ?? 0;
         $used = $this->lastTurnTokens();
         $percent = $window > 0 ? $used / $window * 100 : 0.0;
-        $display = number_format($percent, 1) . '%/' . self::tokens($window);
+
+        // What reaching the top *means*: a pause and a summary, or a request that gets refused.
+        // `/settings` can change it mid-session, so it is read here rather than remembered.
+        $auto = ($this->settings?->compactionEnabled() ?? true) ? ' (auto)' : '';
+        $display = number_format($percent, 1) . '%/' . self::tokens($window) . $auto;
 
         return match (true) {
             $percent > self::ALARM_AT => $this->palette->fg('error', $display),
@@ -295,6 +317,20 @@ final class FooterComponent implements Component
         }
 
         return 0;
+    }
+
+    /**
+     * Whether this model is reached with a signed-in account rather than a key.
+     *
+     * Upstream's `ModelRegistry::isUsingOAuth()`, which is the same lookup: what is stored for
+     * the provider, and whether it is a token or a key. A model with nothing stored answers
+     * false — it is being paid for by an environment variable, or it is not working.
+     */
+    private function onASubscription(): bool
+    {
+        $model = $this->session->model();
+
+        return $model !== null && $this->auth?->kind($model->provider) === 'oauth';
     }
 
     private function model(): string
