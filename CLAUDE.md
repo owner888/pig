@@ -1756,11 +1756,41 @@ Six things that took a decision:
   written down rather than quietly trimmed, because a model whose headers pig withheld would fail at
   the gateway for a reason nobody could see.
 
-The usage a gateway reports is trusted as sent, except the cost, which the builder recomputes from
-the model's public price list — so a gateway reselling at its own rate is reported at list price.
-Upstream has the same gap. Not ported: `validateToolCall(tools, call)`, which has no caller upstream
-either, and `ProxyAssistantMessageEvent`, which is a TypeScript type whose counterpart is the event
-classes in `pig/ai`.
+**The usage a gateway reports is trusted as sent, cost included** — and for a while it was not.
+`AssistantMessageBuilder::setUsage()` recomputed the cost from the model's public price list, which
+is right for the five providers (none of them sends a cost, so the list price is the only figure
+there is) and wrong for the one caller that gets one: the gateway made the call and knows what it
+paid. A gateway on its own deal was reported at list price and one running flat-rate was reported as
+owing money. `setUsage(…, priced: true)` keeps what arrived, which is upstream assigning
+`partial.usage = proxyEvent.usage` whole. The other side of trusting the wire, stated rather than
+worked around: a gateway that sends no `cost` is reported as costing nothing — upstream's own type
+requires the field, so an absent one is taken at its word instead of guessed at from a price list
+pig has no reason to think applies. The token *total* is still filled in when the gateway omits it,
+because that is arithmetic on numbers it did send.
+
+Not ported: `validateToolCall(tools, call)`, which has no caller upstream either, and
+`ProxyAssistantMessageEvent`, which is a TypeScript type whose counterpart is the event classes in
+`pig/ai`.
+
+### An `Agent` nobody configured has a model, and it is the free one
+
+`AgentState::DEFAULT_PROVIDER` and `DEFAULT_MODEL` are upstream's default —
+`google/gemini-2.5-flash-lite-preview-06-17`, the cheapest thing Google sells, which is the only
+reason a default is defensible at all: five lines of library code answer without anybody choosing a
+model, and choosing an expensive one for somebody is the thing a default must not do. pig had `null`
+here and threw `No model configured`, which is safer in one way and unhelpful in the way that
+matters, since upstream's own tests and examples assume an agent that works out of the box.
+
+Two constants rather than a parsed string, so there is one place to change it. **`bin/pig` never
+reaches this**: `CodingAgent::session()` resolves its own model — `--model`, then `PIG_MODEL`, then
+the settings, then `claude-sonnet-4-5` — and calls `setModel()` before anything is sent, so nobody's
+coding session quietly goes to Google.
+
+`$model` stays nullable and `Agent::prompt()` keeps its `No model configured`, because
+`Models::find()` answers null if that id ever leaves the registry — and the honest message for that
+is about configuration and not a null three layers down. Three tests that used to get "no model" for
+free now clear it explicitly, which is what the state they are testing actually is: a model that was
+lost, not one never chosen.
 
 ### Starting up, and why it had to stop living in `bin/pig`
 
@@ -3380,6 +3410,26 @@ prefix of a corpus of realistic tool arguments, two differences and both account
 docblock. `Retry` differs from upstream deliberately and says so: it reads the status out of
 pig's own message shape instead of matching bare numbers anywhere in the prose, and adds 408 and
 529 — Anthropic's real "overloaded" — to upstream's list.
+
+### `Agent::continue()` turned a misuse into a fabricated turn in somebody's conversation
+
+Upstream checks two things before starting a loop that adds no message: there has to *be* a
+conversation, and the last message must not be the assistant's — a provider rejects a request that
+ends on its own turn. pig had both checks, in `AgentLoop::continue()`, and not the one place that
+matters.
+
+`Agent::run()` wraps the whole loop in a `try`, and the loop's guards throw **synchronously**,
+before the fiber starts. So the throw landed in `run()`'s `catch`, which does what it is there for:
+turns a failed turn into an `AssistantMessage` with `stopReason: error`, appends it to the
+conversation, sets `state->error` and emits `agent_end`. The caller saw nothing thrown. What a
+misuse of the method left behind was **an assistant turn nobody's model produced, in the session
+file**, saying "Cannot continue: no messages in context".
+
+The two guards are in `Agent::continue()` now, where upstream has them, and the loop keeps its own —
+it is a separate entry point and a public one. The rule this is an instance of: **a `catch` wide
+enough to turn any failure into a message has to be narrower than the argument checks**, or every
+programming error becomes conversation. Nothing in pig relied on the old behaviour; the suite was
+green before the tests for it were written, which is exactly why it had survived.
 
 ### An empty arguments list went out as `[]`, which is not an object
 

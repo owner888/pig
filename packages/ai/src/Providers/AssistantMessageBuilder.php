@@ -210,12 +210,19 @@ final class AssistantMessageBuilder
      *
      * Upstream computes the total in exactly the two providers where the API gives none, and reads
      * it in the two where it does. That is the same rule as this line.
+     *
+     * @param bool $priced the cost came with the usage, so it is kept rather than worked out from
+     *        the model's price list. **False for every provider** — none of them reports a cost, so
+     *        the list price is the only figure there is. True for `Agent\StreamProxy`, whose
+     *        gateway made the call and knows what it actually paid; pricing that from the public
+     *        list reports a number nobody was charged, which is what upstream avoids by assigning
+     *        the usage whole.
      */
-    public function setUsage(Usage $usage): void
+    public function setUsage(Usage $usage, bool $priced = false): void
     {
         $counted = $usage->totalTokens > 0 ? $usage : $usage->withTotalTokens();
 
-        $this->usage = $counted->withCost($this->model);
+        $this->usage = $priced ? $counted : $counted->withCost($this->model);
     }
 
     public function setStopReason(StopReason $reason): void

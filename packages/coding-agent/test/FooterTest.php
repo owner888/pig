@@ -323,6 +323,10 @@ final class FooterTest extends TestCase
     {
         $agent = new Agent(new AgentOptions(apiKey: 'k'));
 
+        // An `AgentState` fills in a default model, so a footer with none to name is one whose
+        // model was lost — the registry no longer carrying the default it asked for.
+        $agent->state->model = null;
+
         $this->assertStringContainsString('no-model', $this->lines(new AgentSession($agent))[1]);
     }
 

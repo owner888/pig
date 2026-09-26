@@ -335,6 +335,48 @@ final class StreamProxyTest extends TestCase
         $this->assertSame(7, $message->usage->output);
     }
 
+    public function testTheGatewaysOwnCostIsKeptAndNotRepricedFromTheListPrice(): void
+    {
+        // The gateway knows what it paid; pig only knows what the model's public price list says.
+        // Upstream assigns the usage whole for this reason, and the builder's repricing — right for
+        // the four providers, which send no cost at all — was overwriting the one caller that sends
+        // one. A gateway on its own deal was reported at list price, and one running flat-rate was
+        // reported as owing money.
+        $usage = [
+            ...self::usage(),
+            'cost' => ['input' => 0.5, 'output' => 0.25, 'cacheRead' => 0.0, 'cacheWrite' => 0.0, 'total' => 0.75],
+        ];
+
+        [$message] = $this->turn([['type' => 'done', 'reason' => 'stop', 'usage' => $usage]]);
+
+        $this->assertSame(0.5, $message->usage->cost->input);
+        $this->assertSame(0.25, $message->usage->cost->output);
+        $this->assertSame(0.75, $message->usage->cost->total);
+    }
+
+    public function testAGatewayThatSaysNothingAboutCostIsReportedAsCostingNothing(): void
+    {
+        // The other side of trusting the wire, and upstream's contract: `usage.cost` is required of
+        // a conforming gateway, so an absent one is taken at its word rather than guessed at. The
+        // model's price list would say 0.000033 for these counts, which is a number pig made up.
+        [$message] = $this->turn([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]]);
+
+        $this->assertSame(0.0, $message->usage->cost->total);
+        $this->assertSame(0.0, $message->usage->cost->input);
+    }
+
+    public function testATokenTotalTheGatewayLeftOutIsStillFilledIn(): void
+    {
+        // Not part of the cost question: the counts are added up when the gateway sends no total,
+        // the same as for a provider that omits it, because that one is arithmetic on numbers the
+        // gateway did send.
+        $usage = [...self::usage(), 'totalTokens' => 0];
+
+        [$message] = $this->turn([['type' => 'done', 'reason' => 'stop', 'usage' => $usage]]);
+
+        $this->assertSame(18, $message->usage->totalTokens);
+    }
+
     public function testThinkingKeepsItsSignature(): void
     {
         [$message] = $this->turn([

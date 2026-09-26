@@ -11,6 +11,7 @@ use Pig\Agent\AgentError;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentOptions;
 use Pig\Agent\AgentStartEvent;
+use Pig\Agent\AgentState;
 use Pig\Agent\QueueMode;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Api;
@@ -221,15 +222,80 @@ final class AgentTest extends TestCase
         $this->assertNull($this->options[0]->reasoning);
     }
 
-    public function testNoModelIsAConfigurationError(): void
+    public function testAnAgentNobodyConfiguredStillHasAModel(): void
     {
-        $agent = new Agent();
+        // Upstream's default, and it is the free one — an `Agent` built with nothing can answer,
+        // which is what a library's first five lines should do. `bin/pig` never sees this: it
+        // resolves its own model and calls `setModel()`, with `claude-sonnet-4-5` as *its* default.
+        $model = (new Agent())->state->model;
+
+        $this->assertNotNull($model);
+        $this->assertSame(AgentState::DEFAULT_MODEL, $model->id);
+        $this->assertSame(AgentState::DEFAULT_PROVIDER, $model->provider);
+    }
+
+    public function testTheDefaultCanBeReplacedAtConstruction(): void
+    {
+        $agent = new Agent(new AgentOptions(initialState: new AgentState(model: $this->model())));
+
+        $this->assertSame('test-model', $agent->state->model?->id);
+    }
+
+    public function testAStateWithItsModelClearedIsStillAConfigurationError(): void
+    {
+        // Reachable two ways: a `Model` taken back out of a state that is mutable by design, and a
+        // default that is not in the registry — `Models::find()` answers null then, and the message
+        // has to be about configuration rather than a null somewhere downstream.
+        $agent = $this->agent([]);
+        $agent->state->model = null;
 
         $this->assertThrows(
             AgentError::class,
             static fn () => Async::run(static fn () => $agent->prompt('hi')),
             'No model configured',
         );
+    }
+
+    public function testContinuingFromNothingIsRefusedAndLeavesTheConversationAlone(): void
+    {
+        // `AgentLoop::continue()` refuses both of these, but it throws *inside* `run()`'s try —
+        // so the misuse was being turned into a fabricated failed assistant turn appended to
+        // somebody's conversation, with nothing thrown for the caller to notice. Upstream checks
+        // here, before the loop, and the conversation is untouched.
+        $agent = $this->agent([]);
+
+        $this->assertThrows(
+            AgentError::class,
+            static fn () => Async::run(static fn () => $agent->continue()),
+            'No messages to continue from',
+        );
+
+        $this->assertSame([], $agent->state->messages);
+        $this->assertNull($agent->state->error);
+    }
+
+    public function testContinuingFromAnAnswerIsRefusedAndLeavesTheConversationAlone(): void
+    {
+        $agent = $this->agent([]);
+        $agent->appendMessage(new UserMessage('hi'));
+        $agent->appendMessage(new AssistantMessage(
+            [new TextContent('there')],
+            Api::AnthropicMessages,
+            'anthropic',
+            'claude-test',
+            new Usage(),
+            StopReason::Stop,
+        ));
+
+        $this->assertThrows(
+            AgentError::class,
+            static fn () => Async::run(static fn () => $agent->continue()),
+            'Cannot continue from an assistant message',
+        );
+
+        // Two, not three: the refusal is not a turn.
+        $this->assertCount(2, $agent->state->messages);
+        $this->assertNull($agent->state->error);
     }
 
     public function testResetForgetsTheConversationButKeepsTheSetup(): void

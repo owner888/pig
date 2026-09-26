@@ -228,6 +228,19 @@ final class Agent
             throw new AgentError('Agent is already working. Wait for it to finish before continuing.');
         }
 
+        // **Checked here as well as in the loop, and here is the half that matters.**
+        // `AgentLoop::continue()` refuses both of these too, but it throws *inside* `run()`'s try —
+        // so the caller saw nothing thrown and the conversation got a fabricated failed assistant
+        // turn instead, which is a misuse of this method written into somebody's session file.
+        // Upstream checks before the loop for the same reason.
+        if ($this->state->messages === []) {
+            throw new AgentError('No messages to continue from');
+        }
+
+        if ($this->state->messages[count($this->state->messages) - 1] instanceof AssistantMessage) {
+            throw new AgentError('Cannot continue from an assistant message');
+        }
+
         $this->run(null);
     }
 

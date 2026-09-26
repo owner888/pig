@@ -448,7 +448,7 @@ final class StreamProxy
         // event. An unknown word is treated as a plain stop rather than as a failure: the turn did
         // finish, and refusing a finished turn over a word loses the work.
         $builder->setStopReason(StopReason::tryFrom((string) ($event['reason'] ?? '')) ?? StopReason::Stop);
-        $builder->setUsage(self::usage($event['usage'] ?? []));
+        $builder->setUsage(self::usage($event['usage'] ?? []), priced: true);
         $message = $builder->snapshot();
         $stream->push(new DoneEvent($message->stopReason, $message));
         $stream->end();
@@ -457,7 +457,7 @@ final class StreamProxy
     /** @param array<string, mixed> $event */
     private function failed(AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array $event): void
     {
-        $builder->setUsage(self::usage($event['usage'] ?? []));
+        $builder->setUsage(self::usage($event['usage'] ?? []), priced: true);
         $builder->fail(
             (string) ($event['errorMessage'] ?? 'The proxy reported an error with no message'),
             ($event['reason'] ?? '') === 'aborted',
@@ -470,10 +470,19 @@ final class StreamProxy
     /**
      * The usage a gateway reports.
      *
-     * Trusted as sent — including the cost, which is the one number here pig cannot check: the
-     * gateway knows what it paid and pig only knows what the model's public price list says. The
-     * builder recomputes the total from the model's pricing, so a gateway reselling at its own
-     * rate is reported at the list price. Upstream has the same gap.
+     * Trusted as sent, **cost included** — `setUsage(…, priced: true)`, which is upstream assigning
+     * `partial.usage = proxyEvent.usage` whole. The gateway made the call and knows what it paid;
+     * pig knows only what the model's public price list says, so repricing here reports a number
+     * nobody was charged: list price for a gateway on its own deal, and a bill for one running
+     * flat-rate. That repricing is right for the four providers, none of which sends a cost at all,
+     * and this is the one caller that gets one.
+     *
+     * The other side of trusting the wire: a gateway that sends no `cost` is reported as costing
+     * nothing. Upstream's own type requires the field, so an absent one is taken at its word rather
+     * than guessed at from a price list pig has no reason to think applies.
+     *
+     * The token counts are still added up when the gateway sends no total — that one is arithmetic
+     * on numbers it did send.
      *
      * @param mixed $usage
      */

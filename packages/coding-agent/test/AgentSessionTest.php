@@ -135,6 +135,11 @@ final class AgentSessionTest extends TestCase
     public function testPromptingWithNoModelSaysSo(): void
     {
         $agent = new Agent(new AgentOptions(streamFn: $this->provider([], null), apiKey: 'test-key'));
+
+        // Cleared rather than never set: an `AgentState` fills in a default model, so the only way
+        // to have none is to have lost one — the registry no longer carrying the default, which is
+        // what `Models::find()` answering null means.
+        $agent->state->model = null;
         $session = new AgentSession($agent);
 
         $this->assertThrows(
@@ -1276,6 +1281,9 @@ final class AgentSessionTest extends TestCase
         ));
 
         $agent = new Agent(new AgentOptions(streamFn: $this->provider([], null), apiKey: 'test-key'));
+        // See `testPromptingWithNoModelSaysSo`: a state fills in a default, so "no model" is a
+        // model that was lost rather than one never chosen.
+        $agent->state->model = null;
         $session = new AgentSession($agent, sys_get_temp_dir(), $store);
         $session->restore($store->messages());
 
