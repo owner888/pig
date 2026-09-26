@@ -7,6 +7,10 @@ namespace Pig\Tui\Test;
 use PHPUnit\Framework\TestCase;
 use Pig\Async\Loop;
 use Pig\Test\AssertsThrows;
+use Pig\Tui\Components\Image;
+use Pig\Tui\Images\Capabilities;
+use Pig\Tui\Images\ImageProtocol;
+use Pig\Tui\Images\TerminalImage;
 use Pig\Tui\Keys;
 use Pig\Tui\Tui;
 use Pig\Tui\TuiError;
@@ -322,5 +326,59 @@ final class TuiTest extends TestCase
             fn () => Loop::get()->tick(),
             'columns wide',
         );
+    }
+
+    public function testTheCellSizeReplyDoesNotRedrawTheWholeFrameOverItself(): void
+    {
+        // The reply arrives as input on an image-capable terminal, and it used to force the
+        // next render — which empties previousLines, which the renderer reads as "first frame
+        // ever" and writes with no clear, starting wherever the cursor already was. Nothing
+        // here holds a picture, so the answer changes nothing and nothing should be drawn.
+        TerminalImage::reset(new Capabilities(ImageProtocol::Kitty, true, true));
+
+        $this->tui->addChild(new TextComponent("one\ntwo\nthree"));
+        $this->tui->start();
+        $this->frame();
+
+        $this->terminal->clearWrites();
+        $this->terminal->type("\x1b[6;18;9t");
+        Loop::get()->tick();
+
+        $this->assertSame(9, TerminalImage::cellSize()->widthPx, 'the reply was still read');
+        $this->assertSame('', $this->terminal->output(), 'the frame was drawn a second time');
+
+        TerminalImage::reset();
+    }
+
+    public function testThePictureIsRedrawnWhenTheCellSizeArrives(): void
+    {
+        // The other half: a plain render still has to reach the images, or asking the
+        // question was pointless. A tall picture at a different cell size is a different
+        // number of rows, so the lines holding it change and only those are rewritten.
+        TerminalImage::reset(new Capabilities(ImageProtocol::Kitty, true, true));
+
+        // A 20×400 PNG: tall enough that the cell height decides how many rows it takes.
+        // The terminal is tall enough to hold it, or the change would sit above the window
+        // and a full clearing redraw would be the right answer rather than a differential one.
+        $png = base64_encode("\x89PNG\r\n\x1a\n" . pack('N', 13) . 'IHDR' . pack('NN', 20, 400) . "\x08\x06\x00\x00\x00");
+        $terminal = new FakeTerminal(columns: 20, rows: 200);
+        $tui = new Tui($terminal);
+        $tui->addChild(new TextComponent('header'));
+        $tui->addChild(new Image($png, 'image/png'));
+        $tui->start();
+        Loop::get()->tick();
+
+        $this->assertStringContainsString('header', $terminal->output(), 'the first frame');
+
+        $terminal->clearWrites();
+        $terminal->type("\x1b[6;36;9t");
+        Loop::get()->tick();
+
+        $output = $terminal->output();
+
+        $this->assertNotSame('', $output, 'the picture was never remeasured');
+        $this->assertStringNotContainsString('header', $output, 'the unchanged line above was rewritten too');
+
+        TerminalImage::reset();
     }
 }

@@ -2942,6 +2942,25 @@ overwritten by something else.
 Caught by `TuiTest::testAResizeRedrawsEverythingAndClearsTheScrollback`, which asserts the
 `\e[3J\e[2J\e[H` is there.
 
+**And there was a second caller, which is the reason this entry is longer than the fix.** Having
+written down that force is for "callers who know the screen was overwritten by something else",
+nobody went and read the other one: `takeCellSizeReply()` forced the render after the terminal
+answered `CSI 16 t`. So on **every terminal that draws pictures** — which is every terminal that
+answers that query, and the only kind pig asks — the startup screen came out twice: frame one drew,
+the reply arrived as input a moment later, force emptied `previousLines`, and `draw()` wrote the
+whole frame again with no clear from wherever the cursor already was, which is the last line of
+frame one. Upstream asks for a plain render there, for the same reason the resize handler does.
+
+Two things about the shape of it. It is **the trap this file already described, in the caller it did
+not name** — a written-down rule is only as good as the audit of who obeys it, and "force stays for
+callers who know" is a sentence about callers that lists none. And it was invisible to every test in
+the suite, because `FakeTerminal` records what was written and nothing compares two frames drawn
+over each other; what a test can see is that *nothing at all* should be written when the answer
+changes nothing on screen, which is what
+`TuiTest::testTheCellSizeReplyDoesNotRedrawTheWholeFrameOverItself` asserts, with
+`testThePictureIsRedrawnWhenTheCellSizeArrives` holding the other half so the fix cannot become
+"stop rendering".
+
 ### An image is drawn from the cursor downwards, so the cursor goes up first
 
 Both image protocols put the picture where the cursor is and grow it *down*. The renderer

@@ -101,6 +101,13 @@ class Tui extends Container
      * so an incomplete escape sequence is held back rather than delivered as keystrokes —
      * but only until something that looks like a finished sequence turns up, because a
      * terminal that never answers must not swallow the user's typing forever.
+     *
+     * Once the reply is found, whatever followed it goes straight out even if *that* looks
+     * half-finished. Upstream runs its held-back check on the remainder instead and then
+     * stops buffering, so the bytes it decided to wait for are never delivered at all: a
+     * `\e[` arriving on the heels of the reply is dropped and the `A` behind it is typed as a
+     * letter. One press of an arrow key at exactly the wrong moment either way, and handing
+     * the bytes over is the half that cannot type something nobody pressed.
      */
     private function takeCellSizeReply(string $data): string
     {
@@ -113,9 +120,15 @@ class Tui extends Container
             $rest = (string) preg_replace('/\x1b\[6;\d+;\d+t/', '', $this->cellSizeBuffer, 1);
             $this->cellSizeBuffer = '';
 
-            // Every image was measured against the wrong cell size until now.
+            // Every image was measured against the wrong cell size until now, so their
+            // caches go — and then an ordinary render, **not a forced one**. Forcing empties
+            // previousLines, which `draw()` reads as "first frame ever" and writes with no
+            // clear from wherever the cursor already is: the whole startup screen came out
+            // twice on every terminal that answers this query, which is every terminal that
+            // draws pictures. Upstream asks for a plain render here for the same reason the
+            // resize handler does, and the trap entry about `force` is the long version.
             $this->invalidate();
-            $this->requestRender(true);
+            $this->requestRender();
 
             return $rest;
         }
