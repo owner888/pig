@@ -2627,6 +2627,7 @@ What is left unported, across every package, each for a reason:
 | Upstream | Why not |
 |---|---|
 | nine of the selector components, as files | every one of them is here as something else, and the audit that checked it is below: `hook-selector`, `hook-editor` and `hook-input` are `TerminalUi::select()`, `editor()` and `input()`; `queue-mode`, `show-images`, `thinking` and `settings-selector` are `/settings`' rows plus `thinkingSubmenu()`; `theme-selector` is that list's theme row; `oauth-selector` is `showSignIns()`; `session-selector` is `Cli\SessionPicker`; `model-selector` is `showModels()`. **`tree-selector.ts` is no longer among them** — it is `Interactive\TreeList` |
+| `coding-agent/modes/interactive/components/user-message-selector.ts` | the **tenth** selector, and the one that is not here as something else: it is `/branch`'s list, and `/branch` forks a conversation into a second session file, which pig does not do. `/tree` is pig's answer to the same wish and has its own list. Upstream also opens this one on a **double Escape** with an empty prompt; pig's Escape stops whatever is running and does nothing when nothing is, so that gesture has no meaning here. If a key for "go back to something I said" is ever wanted, `/tree` is what it should open and this row is where to start |
 | `ai/utils/typebox-helpers.ts` (24) | `StringEnum`, a TypeBox helper that emits `{type:"string", enum:[…]}` because TypeBox's own `Type.Enum` emits `anyOf`/`const` and Google's API rejects that. In PHP a schema **is** an array, so there is nothing to help with — you write the array, and `JsonSchemaTest` says so where the enum is tested |
 | `coding-agent/modes/rpc/rpc-types.ts` | 203 lines of types for JSON that arrives from outside the process, where a static type guarantees nothing and the runtime checks are the contract — the long version is in the RPC section, including the two things that *would* be worth typing and why neither is done yet. `RpcMode`'s docblock plus `RpcEvents` is where the wire shape is written down. Its `rpc-client.ts` **is** ported, as `Rpc\RpcClient` |
 | every `index.ts` | barrel re-exports, which is what an autoloader does here |
@@ -2665,6 +2666,14 @@ can be ported into a file called something else — pig's is a component rather 
 because only `render()` knows the terminal's width. Before writing "not ported", read what the
 upstream file does and grep pig for the behaviour, which is the same evidence a "done" claim
 needs.
+
+**The last run of it went five names deep and the five answers were all different**, which is what
+that rule is worth in practice. `tui/components/cancellable-loader.ts` and `truncated-text.ts` are
+`Components\CancellableLoader` and `Components\TruncatedText` — ported, never named here.
+`utils/mime.ts` is `Tui\Images\ImageType::ofFile()`, and its two upstream callers, `read.ts` and
+`file-processor.ts`, are `ReadTool` and `Cli\FileArguments` here calling the same one.
+`user-message-selector.ts` is the row above. And `core/bash-executor.ts` had a real find in it —
+the entry on cleaning a command's output at the source.
 
 So the rule, which is the same rule and a wider sweep: **a claim that nothing is missing is worth
 checking against the file list rather than against memory, in every package and not just the one
@@ -3582,6 +3591,49 @@ A command that shuts its own standard output and then keeps working is what make
 reproducible without load — the window becomes the whole of its remaining life.
 `testACommandWhoseOutputEndsBeforeItDoesStillReportsTheSignal` exists in both files for that
 reason: *a race is worth a test that is not one.*
+
+### A command's output was cleaned on the way to the screen and not on the way to the model
+
+`bash-executor.ts` has no counterpart file here and that is right — it is upstream's *second*
+command runner, the one `AgentSession.executeBash()` uses for `!command`, where `core/tools/bash.ts`
+is the one the tool uses. pig has one `Tools\Run` for both, which is the better arrangement and is
+also how this hid: reading the sweep as "one file, no counterpart, because pig shares" stops one
+line too early. The line after it is upstream's own comment:
+
+```ts
+// Sanitize once at the source: strip ANSI, replace binary garbage, normalize newlines
+const text = sanitizeBinaryOutput(stripAnsi(data.toString())).replace(/\r/g, "");
+```
+
+pig cleaned the same text, with the same three rules, in `Interactive\SafeText` — **at the display
+boundary**. So the screen was right and the two readers nobody looks at until later were not: the
+**model** got `\e[32m` and the `\r` that redraws a progress line, and so did the **session file**,
+which is pi's file. `npm`, `cargo` and `docker` colour their output whether or not anybody is
+watching, and anything with a progress bar writes `\r` by the hundred — so what the model read of a
+failed build was a line overwritten twenty times and a third of its tokens spent on escapes.
+
+`Run::read()` cleans each chunk now, through the same `SafeText`, so the model, the session file,
+the spill file and the screen all get one text. Three things about it:
+
+- **It is a deliberate step past upstream for the `bash` *tool*.** Upstream cleans at the source in
+  `bash-executor.ts` and not in `bash.ts`, where only the component cleans — so there the model
+  reads the escapes from a tool call and not from a `!command`. Two answers to one question, and
+  this takes the one with the reason written beside it, the same way the image token count did.
+- **An escape split across two reads survives**, because each chunk is cleaned on its own. Upstream
+  has that too, and the alternative is holding bytes back in case the rest of a sequence arrives,
+  which would stop the output being live. Same for a multi-byte character cut in half, which
+  `Utf8::sanitize()` turns into U+FFFD at the seam.
+- **The spill file is cleaned too**, as upstream's is. It is named in the truncation notice so the
+  model can go and read the part that was cut, so it has to be the same text as the part that was
+  not.
+
+`SafeText` lives in `Interactive\` and now has a caller in `Tools\`, which is one namespace too
+narrow for what it is — its own docblock already calls it "the one rule for text from outside".
+Moving it is a rename with four call sites and is the developer's to approve; it is not done.
+
+Regression tests: `AgentSessionTest::testWhatACommandPrintedIsCleanedAtTheSourceAndNotOnlyOnScreen`
+for `!command`, `BashToolTest::testWhatTheModelReadsHasNoEscapesOrProgressLinesInIt` for the tool,
+and `testTheFullOutputFileIsCleanToo` for the file the notice points at.
 
 ### Output truncated by line count also needs somewhere to look
 

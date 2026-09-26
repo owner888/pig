@@ -61,6 +61,33 @@ final class BashToolTest extends ToolTestCase
         $this->assertStringContainsString('err', $output);
     }
 
+    public function testWhatTheModelReadsHasNoEscapesOrProgressLinesInIt(): void
+    {
+        $output = $this->output($this->bash(['command' => "printf 'a\\033[32mb\\033[0m\\rc\\n'"]));
+
+        // A deliberate step past upstream, which cleans a command's output at the source in
+        // `bash-executor.ts` — the `!command` path — and not in `bash.ts`, where only the
+        // component cleans it. So there the model reads `\e[32m` and a `\r` that redraws the
+        // line it is on, and the screen reads neither. Two answers to one question; this is
+        // the one with the reason written beside it.
+        $this->assertSame("abc\n", $output);
+    }
+
+    public function testTheFullOutputFileIsCleanToo(): void
+    {
+        $total = Truncate::MAX_LINES + 100;
+
+        $result = $this->bash(['command' => "for i in \$(seq 1 {$total}); do printf '\\033[32m%s\\033[0m\\n' \"\$i\"; done"]);
+        $path = $result->details['fullOutputPath'];
+
+        // It is named in the notice so the model can go and read the part that was cut, so it is
+        // the same text as the part that was not. Upstream writes the cleaned chunks here too.
+        $this->assertStringNotContainsString("\033", (string) file_get_contents($path));
+        $this->assertSame($total, substr_count((string) file_get_contents($path), "\n"));
+
+        unlink($path);
+    }
+
     public function testACommandWithNoOutputSaysSo(): void
     {
         $this->assertSame('(no output)', $this->output($this->bash(['command' => 'true'])));

@@ -239,6 +239,26 @@ final class AgentSessionTest extends TestCase
         $this->assertStringContainsString('hi', $execution->toText());
     }
 
+    public function testWhatACommandPrintedIsCleanedAtTheSourceAndNotOnlyOnScreen(): void
+    {
+        $session = $this->session([]);
+
+        // `npm`, `cargo` and `docker` colour their output whether or not anybody is looking, and
+        // anything with a progress line writes `\r` to redraw it. Upstream cleans this in
+        // `bash-executor.ts` — "sanitize once at the source" — so what reaches the model, the
+        // session file and the screen is the same clean text. pig cleaned it at the display
+        // boundary only, so the model and the file got the escapes.
+        $execution = Async::run(
+            static fn () => $session->executeBash("printf 'a\\033[32mb\\033[0m\\rc\\n'"),
+        );
+
+        $this->assertSame("abc\n", $execution->output);
+        // And it is the text the model reads, which is the half a display-layer fix cannot reach.
+        $this->assertStringContainsString('abc', $execution->toText());
+        $this->assertStringNotContainsString("\033", $execution->toText());
+        $this->assertStringNotContainsString("\r", $execution->toText());
+    }
+
     public function testTwoBangsRunItWithoutJoiningTheConversation(): void
     {
         $session = $this->session([]);
