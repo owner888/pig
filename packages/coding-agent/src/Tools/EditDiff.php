@@ -70,12 +70,35 @@ final class EditDiff
     /**
      * A diff with line numbers, and the line the change starts on in the new file.
      *
+     * Run against upstream's `generateDiffString` over 515 pairs. Three differences, all of
+     * them deliberate once looked at, and they are worth stating because the numbers make it
+     * sound worse than it is:
+     *
+     * - **Trailing context is numbered in the new file** (259 pairs). Upstream numbers every
+     *   context line with its *old* number, which after the change points into a file that no
+     *   longer exists; the `+` lines are new numbers, the file on disk is the new file, and a
+     *   number you can go and look at is worth more than one you cannot. Leading context is
+     *   unambiguous either way, since old and new agree before the change.
+     * - **A trailing newline is an empty last line, consistently** (2 pairs). Upstream pops the
+     *   final empty element of every part, which hides the difference in the one place it
+     *   matters: `"a\nb\n"` against `"a\nb"` comes out of upstream as `-2 b` then `+2 b` — the
+     *   same text removed and re-added, a diff that says a line changed while showing it did
+     *   not. Here the empty last line goes away and is shown going away.
+     * - **Several separate edits come out as one block** (152 pairs), which is the limitation in
+     *   the class docblock above and cannot arise from `EditTool`: an edit replaces one
+     *   contiguous run, so those pairs only exist because the corpus made them.
+     *
      * @return array{0: string, 1: int|null}
      */
     public static function render(string $old, string $new, int $context = self::CONTEXT): array
     {
-        $oldLines = explode("\n", $old);
-        $newLines = explode("\n", $new);
+        // An empty document has no lines, where `explode("\n", '')` gives one empty one. Without
+        // this, an edit that emptied a file drew a `+1 ` under its removals — a blank line
+        // nobody wrote — and filling an empty file drew a `-1 ` for one nobody deleted. Note
+        // what it must *not* swallow: the last element of `"a\nb\n"` is a real empty line, so
+        // losing a trailing newline is still a removed line and still shown as one.
+        $oldLines = $old === '' ? [] : explode("\n", $old);
+        $newLines = $new === '' ? [] : explode("\n", $new);
 
         $prefix = self::commonPrefix($oldLines, $newLines);
         $suffix = self::commonSuffix($oldLines, $newLines, $prefix);

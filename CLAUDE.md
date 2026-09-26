@@ -2838,6 +2838,39 @@ Regression tests: `SettingsListTest::testNoLineIsWiderThanTheTerminal` (widths 6
 named Enter and not Space, while `handleInput()` accepts both — upstream's own hint names both, and
 the Ctrl+G rule the other way round.
 
+### An empty document has no lines, and `explode("\n", '')` has one
+
+An edit that emptied a file drew this:
+
+```
+-1 one
+-2 two
+-3 three
++1
+```
+
+That last line claims a blank line was added. Nothing added one: `explode("\n", '')` answers
+`['']`, so `EditDiff::render()` saw the new file as one empty line rather than as no lines, and the
+mirror case — an edit that fills an empty file — drew a `-1` for a line nobody deleted. Fixed by
+treating `''` as zero lines, and the test beside it exists to stop that being over-applied: the last
+element of `"a\nb\n"` **is** a real empty line, so losing a trailing newline is still a removed line
+and is still shown as one.
+
+Found by running `EditDiff` against upstream's `generateDiffString` over 515 pairs, which is also
+the only reason the other differences are now written down rather than guessed at: 259 pairs differ
+only in trailing context being numbered in the new file (deliberate — upstream's old numbers point
+into a file that no longer exists), 2 in pig treating a trailing newline as an empty last line
+consistently (deliberate, and upstream's alternative renders `"a\nb\n"` → `"a\nb"` as `-2 b` then
+`+2 b`, the same text removed and re-added), and 152 are several separate edits in one file, which
+is the documented single-block limitation and which `EditTool` cannot produce.
+
+`Truncate` went through the same run — 777 documents with varied limits — and `head()`, `tail()` and
+`size()` agree with upstream field for field, byte counts, `truncatedBy`, the partial-line edge case
+and all. `line()` is the one that differs, and by unit rather than by intent: upstream counts UTF-16
+code units, this counts characters. **The lesson of both runs is the same one: a hand-rolled
+replacement for a package is worth a corpus, and the corpus is worth keeping the count of.** "It
+matched on the cases I thought of" is what reading gives you.
+
 ### A hook's message was the one long thing in the transcript ctrl+o could not fold
 
 `setExpanded()` exists on `ToolExecutionComponent`, `CompactionComponent` and

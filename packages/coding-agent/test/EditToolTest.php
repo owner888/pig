@@ -239,4 +239,30 @@ final class EditToolTest extends ToolTestCase
     {
         $this->assertSame(['', null], EditDiff::render("a\nb", "a\nb"));
     }
+
+    public function testEmptyingAFileDoesNotClaimABlankLineWasAdded(): void
+    {
+        // `explode("\n", '')` is one empty line, and an empty document has none. So an edit
+        // that emptied a file drew a `+1 ` under the removals — a blank line nobody wrote.
+        [$diff] = EditDiff::render("one\ntwo\nthree", '');
+
+        $this->assertSame(['-1 one', '-2 two', '-3 three'], explode("\n", $diff));
+    }
+
+    public function testFillingAnEmptyFileDoesNotClaimABlankLineWasRemoved(): void
+    {
+        [$diff] = EditDiff::render('', 'now has content');
+
+        $this->assertSame(['+1 now has content'], explode("\n", $diff));
+    }
+
+    public function testLosingATrailingNewlineIsStillARemovedLine(): void
+    {
+        // Not the same thing: the last element of `a\nb\n` really is an empty line, and
+        // dropping it really is a change. The fix above must not swallow this one.
+        [$diff] = EditDiff::render("a\nb\n", "a\nb");
+
+        $this->assertSame(' 1 a', explode("\n", $diff)[0]);
+        $this->assertSame('-3 ', explode("\n", $diff)[2]);
+    }
 }

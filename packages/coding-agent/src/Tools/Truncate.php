@@ -154,6 +154,24 @@ final class Truncate
      *
      * @return array{0: string, 1: bool} the line, and whether anything was dropped
      */
+    /**
+     * One over-long match line, cut with a marker.
+     *
+     * **Counted in characters, where upstream counts UTF-16 code units** — `line.length` and
+     * `line.slice()`. That is JavaScript's unit rather than a decision: the same line would be
+     * cut somewhere else in any other language, and a family emoji is eleven units there and
+     * seven characters here. Characters are the faithful reading of what the number is for, and
+     * they are the only unit that is the same on both sides of a `mb_substr`; bytes would be
+     * closer to "how much output is this" and would cut a character in half, which is worse for
+     * text going to a model. So the two differ on where a 500-character line with non-ASCII in
+     * it gets cut, and on nothing else.
+     *
+     * `head()`, `tail()` and `size()` were run against upstream's over 777 documents with varied
+     * limits and agree field for field; this is the one function in the file that does not, and
+     * it is the reason the run was worth doing rather than reading.
+     *
+     * @return array{0: string, 1: bool}
+     */
     public static function line(string $line, int $maxChars = self::MAX_MATCH_CHARS): array
     {
         if (mb_strlen($line, 'UTF-8') <= $maxChars) {
