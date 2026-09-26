@@ -790,6 +790,36 @@ final class AgentSessionTest extends TestCase
         $this->assertNotContains(RetryStartEvent::class, $seen);
     }
 
+    public function testAQuotaTenMinutesAwayEndsTheTurnInsteadOfPretendingToRetry(): void
+    {
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([['error' => 'google returned 429: Your quota will reset after 10m15s']]),
+            settings: self::quickRetries(),
+        );
+
+        $seen = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$seen): void {
+            $seen[] = $event;
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+
+        // No countdown, because a ten-minute countdown is a screen that looks like a hang.
+        $this->assertNotContains(RetryStartEvent::class, array_map('get_class', $seen));
+
+        // And what the provider said is what is left in front of the person — it names the time,
+        // which is the only useful thing anybody can act on here.
+        $messages = $session->messages();
+        $last = $messages[count($messages) - 1];
+
+        $this->assertInstanceOf(AssistantMessage::class, $last);
+        $this->assertStringContainsString('reset after 10m15s', $last->errorMessage ?? '');
+    }
+
     public function testRetryingCanBeTurnedOff(): void
     {
         $session = $this->session(
@@ -827,6 +857,40 @@ final class AgentSessionTest extends TestCase
         // Nothing in the settings turned it on. Someone who never asked for auto-retry still
         // did not ask to lose a turn because the provider was busy for two seconds.
         $this->assertSame('here you go', self::textOf($session->messages()[1]));
+    }
+
+    public function testAQuotaThatSaysWhenItResetsIsWaitedOutForThatLongAndNotTwoSeconds(): void
+    {
+        // Code Assist's free tier answers a 429 with the moment its quota comes back. The
+        // doubling would send three more requests inside the window it just named.
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky(array_fill(0, 4, [
+                'error' => 'google returned 429: Your quota will reset after 30s',
+            ])),
+            settings: self::quickRetries(),
+        );
+
+        $starts = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$starts): void {
+            if ($event instanceof RetryStartEvent) {
+                $starts[] = $event;
+            }
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+
+        // Parked on the timer rather than waiting it out — the delay is the subject, so the
+        // test must not sit through it.
+        self::tickWithoutWaiting();
+
+        $this->assertCount(1, $starts);
+        $this->assertSame(31.0, $starts[0]->delaySeconds, 'thirty seconds as asked, plus the clock-skew second');
+
+        $session->abortRetry();
+        self::settle();
     }
 
     public function testAbortingStopsTheWaiting(): void

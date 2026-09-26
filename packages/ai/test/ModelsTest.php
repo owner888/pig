@@ -29,6 +29,92 @@ final class ModelsTest extends TestCase
         }
     }
 
+    /**
+     * How many of each provider's models are here, which is upstream's count for every one.
+     *
+     * The whole table is transcribed by hand out of `models.generated.ts`, so the way it goes
+     * wrong is a row quietly missing or doubled — and nothing downstream would say so: a model
+     * that is not in the table is "no such model", which reads like a typo in what was asked for.
+     * The counts were checked against the anchor commit's generated file, provider by provider.
+     */
+    public function testEachProvidersCountIsUpstreams(): void
+    {
+        $counts = [];
+
+        foreach (Models::all() as $model) {
+            $counts[$model->provider] = ($counts[$model->provider] ?? 0) + 1;
+        }
+
+        ksort($counts);
+
+        $this->assertSame(
+            [
+                'anthropic' => 21,
+                'cerebras' => 3,
+                'github-copilot' => 19,
+                'google' => 21,
+                'google-antigravity' => 7,
+                'google-gemini-cli' => 5,
+                'groq' => 15,
+                'mistral' => 25,
+                'openai' => 33,
+                'xai' => 22,
+                'zai' => 7,
+            ],
+            $counts,
+        );
+    }
+
+    /**
+     * One model per provider, to the number.
+     *
+     * A context window that is wrong by a factor is not a cosmetic error: it is where
+     * compaction fires, so too small summarises a conversation that had room and too large
+     * lets the provider refuse the request instead. A price that is wrong is a bill that is
+     * wrong. Neither shows up as anything but a number nobody checks, which is why these
+     * eleven rows are checked.
+     *
+     * @return list<array{0: string, 1: string, 2: int, 3: int, 4: float, 5: float, 6: float, 7: float}>
+     */
+    public static function spotValues(): array
+    {
+        return [
+            ['anthropic', 'claude-opus-4-5', 200_000, 64_000, 5, 25, 0.5, 6.25],
+            ['openai', 'gpt-5.2', 400_000, 128_000, 1.75, 14, 0.175, 0],
+            ['google', 'gemini-3-pro-preview', 1_000_000, 64_000, 2, 12, 0.2, 0],
+            ['github-copilot', 'gpt-5', 128_000, 128_000, 0, 0, 0, 0],
+            ['google-gemini-cli', 'gemini-2.5-pro', 1_048_576, 65_535, 0, 0, 0, 0],
+            ['google-antigravity', 'gemini-3-pro-high', 1_048_576, 65_535, 0, 0, 0, 0],
+            ['groq', 'moonshotai/kimi-k2-instruct', 131_072, 16_384, 1, 3, 0, 0],
+            ['mistral', 'mistral-large-latest', 262_144, 262_144, 0.5, 1.5, 0, 0],
+            ['cerebras', 'zai-glm-4.6', 131_072, 40_960, 0, 0, 0, 0],
+            ['xai', 'grok-4', 256_000, 64_000, 3, 15, 0.75, 0],
+            ['zai', 'glm-4.6', 204_800, 131_072, 0.6, 2.2, 0.11, 0],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('spotValues')]
+    public function testTheNumbersAreUpstreams(
+        string $provider,
+        string $id,
+        int $window,
+        int $maxTokens,
+        float $input,
+        float $output,
+        float $cacheRead,
+        float $cacheWrite,
+    ): void {
+        $model = Models::find($provider, $id);
+
+        $this->assertNotNull($model, "{$provider}/{$id}");
+        $this->assertSame($window, $model->contextWindow);
+        $this->assertSame($maxTokens, $model->maxTokens);
+        $this->assertSame($input, $model->pricing->input);
+        $this->assertSame($output, $model->pricing->output);
+        $this->assertSame($cacheRead, $model->pricing->cacheRead);
+        $this->assertSame($cacheWrite, $model->pricing->cacheWrite);
+    }
+
     public function testEveryModelSpeaksAProtocolThatIsPorted(): void
     {
         foreach (Models::all() as $model) {

@@ -10,15 +10,17 @@ use Pig\Ai\Providers\GoogleGeminiCli;
  * Every model this can talk to, by provider and id.
  *
  * Upstream generates `models.generated.ts` from models.dev: 7105 lines, 414 models,
- * twelve providers. Here are the ones whose protocol is ported — Anthropic's 21, OpenAI's
- * own 33 on the Responses API, Google's 21, the 72 across five providers that speak
- * `openai-completions`, GitHub Copilot's 19 and Code Assist's 5. A model that could be selected and then not
- * talked to is a worse answer than "no such model". What is left out: OpenRouter's 236,
- * because that list is a directory of everyone else's models and goes stale fastest, and the
- * two Gemini CLI providers, which need a loopback OAuth flow that is not ported.
+ * twelve providers. Here are the 178 whose protocol is ported — Anthropic's 21, OpenAI's own 33 on
+ * the Responses API, Google's 21, the 72 across five providers that speak `openai-completions`,
+ * GitHub Copilot's 19, Code Assist's 5 and Antigravity's 7. A model that could be selected and then
+ * not talked to is a worse answer than "no such model". **What is left out is OpenRouter's 236**,
+ * because that list is a directory of everyone else's models and goes stale fastest.
  *
  * The figures are upstream's at the anchor commit, which is the source a port should
- * agree with rather than whatever models.dev says today.
+ * agree with rather than whatever models.dev says today. Every row was checked against that file
+ * field for field — id, name, api, provider, base URL, reasoning, accepted input, context window,
+ * max tokens and all four prices — and `ModelsTest` pins the per-provider counts and a row per
+ * provider so a hand-transcribed table cannot drift quietly.
  *
  * Adding a provider is adding a table and one line in `table()`, not changing the rest.
  *

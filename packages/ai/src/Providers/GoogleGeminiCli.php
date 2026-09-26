@@ -42,12 +42,17 @@ use Throwable;
  *   ordinary Gemini key arriving here.
  *
  * **Upstream's in-provider retry is not ported.** It wraps the request in three attempts with
- * exponential backoff and honours a server-suggested `retryDelay`, because Code Assist's free
- * tier rate-limits hard. pig already waits out a 429 in `Session\Retry`, one level up — and that
- * one can be turned off with `retry.enabled`, counts down on screen, and stops when escape is
- * pressed. Two retry mechanisms means neither is the one somebody is looking at, so this keeps
- * the one that can be seen and interrupted. The developer's call; if Code Assist turns out to
- * need a tighter loop than a session-level wait, it belongs here and this note is where to start.
+ * exponential backoff, because Code Assist's free tier rate-limits hard. pig already waits out a
+ * 429 in `Session\Retry`, one level up — and that one can be turned off with `retry.enabled`,
+ * counts down on screen, and stops when escape is pressed. Two retry mechanisms means neither is
+ * the one somebody is looking at, so this keeps the one that can be seen and interrupted. The
+ * developer's call; if Code Assist turns out to need a tighter loop than a session-level wait, it
+ * belongs here and this note is where to start.
+ *
+ * **What that loop knew is not lost with it.** It also read the moment the quota comes back out of
+ * the error body, which is the part that actually matters on this endpoint — `Retry::statedDelay()`
+ * reads the same three shapes, so the session-level wait is as long as Code Assist asked for
+ * rather than two seconds.
  */
 final class GoogleGeminiCli
 {

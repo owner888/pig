@@ -13,12 +13,12 @@ use Pig\Ai\Http\HttpClient;
  * `refreshOAuthToken()` and `getOAuthApiKey()` are methods here rather than free functions,
  * because PHP has no module-level functions and both were a `switch` on the provider anyway.
  *
- * **All four are named and only one works.** That is not an oversight left to be tidied: the
- * credentials file is keyed by these strings and is shared with pi, so a name pig cannot sign
- * in with is still a name pig has to be able to *read* without choking — and `available()` is
- * what keeps anything from offering a sign-in that would fail. The other three need a loopback
- * HTTP server and a browser, or a device flow against models pig's registry does not carry
- * yet; each can arrive on its own.
+ * **All four work**, and `available()` is still a table rather than `return true`: the credentials
+ * file is keyed by these strings and is shared with pi, so a name pig could not sign in with would
+ * still be a name pig has to *read* without choking, and the row is where a half-ported fifth
+ * provider says so. They arrived one at a time — Anthropic's pasted code, Copilot's device flow,
+ * then the two Google ones with their loopback server — which is what the flows in this directory
+ * are.
  */
 enum Provider: string
 {

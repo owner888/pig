@@ -194,4 +194,94 @@ final class RetryTest extends TestCase
         // `2 ** -1` is 0.5, which would make a nonsense of "the first wait is the base".
         $this->assertSame(2.0, Retry::delayFor(0));
     }
+
+    // ---- when the provider says when ----------------------------------------------------
+
+    /**
+     * Three real shapes, all Google's, all from Code Assist's free tier.
+     *
+     * @return list<array{0: string, 1: float}>
+     */
+    public static function statedDelays(): array
+    {
+        return [
+            ['google returned 429: Your quota will reset after 39s', 40.0],
+            ['google returned 429: Your quota will reset after 10m15s', 616.0],
+            ['google returned 429: Your quota will reset after 18h31m10s', 66_671.0],
+            ['google returned 429: Please retry in 12.5s', 13.5],
+            ['google returned 429: Please retry in 250ms', 1.25],
+            ['google returned 429: {"error":{"details":[{"retryDelay":"34.074824224s"}]}}', 35.074824224],
+        ];
+    }
+
+    #[DataProvider('statedDelays')]
+    public function testAProviderThatSaysWhenIsBelieved(string $error, float $expected): void
+    {
+        // Doubling from 2s against a quota that resets in 39 is three more 429s and a turn that
+        // dies after fourteen seconds of waiting — when waiting forty would have worked.
+        $this->assertSame($expected, Retry::statedDelay($error));
+    }
+
+    public function testASecondIsAddedBecauseTheirClockIsNotOurs(): void
+    {
+        // Upstream's buffer, and the reason for it: coming back at the exact moment the quota
+        // resets is a coin toss on two clocks, and losing it costs the whole attempt.
+        $this->assertSame(7.0, Retry::statedDelay('google returned 429: Your quota will reset after 6s'));
+    }
+
+    public function testAWaitLongerThanAMinuteIsNotWorthWaiting(): void
+    {
+        // The point of retrying is that the turn carries on. A quota that comes back in ten
+        // minutes is not going to be waited out by anybody sitting in front of a countdown, and
+        // pretending to retry for ten minutes is worse than repeating what the provider said.
+        $this->assertFalse(Retry::worthRetrying(self::failed(
+            'google returned 429: Your quota will reset after 10m15s',
+        )));
+        $this->assertFalse(Retry::worthRetrying(self::failed(
+            'google returned 429: Your quota will reset after 18h31m10s',
+        )));
+        $this->assertFalse(Retry::worthRetrying(self::failed(
+            'google returned 429: {"error":{"details":[{"retryDelay":"120s"}]}}',
+        )));
+    }
+
+    public function testAWaitInsideTheMinuteIsStillWaitedOut(): void
+    {
+        // Which is the case the reading exists for: tens of seconds is what Code Assist's free
+        // tier actually says, and the doubling would spend them on three refusals.
+        $this->assertTrue(Retry::worthRetrying(self::failed(
+            'google returned 429: Your quota will reset after 39s',
+        )));
+        $this->assertTrue(Retry::worthRetrying(self::failed('google returned 429: Please retry in 250ms')));
+
+        // 59s plus the clock-skew second is exactly the bound, and the bound is inclusive.
+        $this->assertTrue(Retry::worthRetrying(self::failed(
+            'google returned 429: Your quota will reset after 59s',
+        )));
+        $this->assertFalse(Retry::worthRetrying(self::failed(
+            'google returned 429: Your quota will reset after 60s',
+        )));
+    }
+
+    public function testATooLongWaitBeatsTheWordsThatSoundRetryable(): void
+    {
+        // "rate limit" is in the word list, and the word list is what answers a failure with no
+        // status at all — a stated wait beyond the bound has to win over both, or the sentence
+        // saying "not for five minutes" becomes the reason to try again in two seconds.
+        $this->assertFalse(Retry::worthRetrying(self::failed(
+            'google returned 429: rate limit exceeded. Please retry in 300s',
+        )));
+        $this->assertFalse(Retry::worthRetrying(self::failed(
+            'the stream ended. Please retry in 300s',
+        )));
+    }
+
+    public function testAFailureThatSaysNothingAboutTimeGetsTheDoubling(): void
+    {
+        $this->assertNull(Retry::statedDelay('anthropic returned 529: overloaded'));
+        $this->assertNull(Retry::statedDelay('google returned 429: resource exhausted'));
+
+        // Zero is not a delay: something said "0s", which is not a request to wait.
+        $this->assertNull(Retry::statedDelay('google returned 429: Please retry in 0s'));
+    }
 }

@@ -1120,7 +1120,10 @@ final class AgentSession
             return;
         }
 
-        $delay = Retry::delayFor(
+        // What the provider asked for, when it said so, and the doubling otherwise. A 429 whose
+        // body names the moment its quota resets is the one case where guessing is strictly
+        // worse: the guess is too early three times over and then the turn is gone.
+        $delay = Retry::statedDelay($error) ?? Retry::delayFor(
             $this->attempt,
             $this->settings?->retryBaseDelay(Retry::BASE_DELAY) ?? Retry::BASE_DELAY,
         );

@@ -171,7 +171,10 @@ code highlighted, no JavaScript in it at all.
 
 A turn that fails because the provider is busy — a 429, a 503, a socket that died — is
 **waited out and sent again**, doubling from two seconds, up to three times, with what the
-provider said and a countdown on screen and escape to stop. A turn that fails because the
+provider said and a countdown on screen and escape to stop. When the provider names the moment
+its quota comes back, that is the wait instead of the doubling — coming back in two seconds to a
+quota that resets in forty is three more refusals. Past a minute it is not waited out at all: the
+turn ends with what the provider said, because a retry that resumes after lunch is not a retry. A turn that fails because the
 conversation outgrew the model's window is a different thing and is treated as one: it is
 summarised first, then sent again, because the same request would be exactly as long in four
 seconds. `retry.enabled: false` in the settings turns the first off.

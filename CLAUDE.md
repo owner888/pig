@@ -1315,12 +1315,30 @@ And the key is two things in one string — `Provider::apiKey()` encodes `{token
 which is taken apart in `credentials()`. **An ordinary Gemini API key arriving there is refused by
 name**, because that is the likely mistake and a 401 three layers later names nothing.
 
-**Upstream's in-provider retry is not ported**: three attempts with exponential backoff honouring
-a server-suggested `retryDelay`, because Code Assist's free tier rate-limits hard. `Session\Retry`
-already waits out a 429 one level up, and that one can be turned off with `retry.enabled`, counts
-down on screen and stops on escape. Two retry mechanisms means neither is the one somebody is
-looking at. If Code Assist turns out to need a tighter loop than a session-level wait, it belongs
-in the provider and its docblock says so.
+**Upstream's in-provider retry is not ported**: three attempts with exponential backoff, because
+Code Assist's free tier rate-limits hard. `Session\Retry` already waits out a 429 one level up, and
+that one can be turned off with `retry.enabled`, counts down on screen and stops on escape. Two
+retry mechanisms means neither is the one somebody is looking at. If Code Assist turns out to need a
+tighter loop than a session-level wait, it belongs in the provider and its docblock says so.
+
+**The one thing that loop knew, the policy knows now.** Upstream's loop reads the moment the quota
+comes back out of the error — `Your quota will reset after 18h31m10s`, `Please retry in 250ms`, a
+`retryDelay` field in the body — and pig had kept the loop out and the reading with it, so a 429
+saying "39 seconds" was answered at 2s, 4s and 8s: three more 429s inside the window the provider
+had just named, and a turn dead after fourteen seconds of waiting when forty would have worked.
+`Retry::statedDelay()` reads the three shapes and `AgentSession` prefers it to the doubling. A
+second is added, as upstream adds it, because coming back at the exact moment a quota resets is a
+coin toss between two clocks.
+
+**Past a minute it is not a retry any more, so there is none.** `MAX_STATED_WAIT = 60` is the
+developer's number and it is checked in `worthRetrying()`, before the status and before the word
+list, because it has to beat both: a 429 is retryable and "rate limit" is in the word list, and
+neither of them knows that the sentence beside it says "not for ten minutes". So a stated wait
+inside the minute is waited out as asked; one past it ends the turn then and there, and what the
+person reads is the provider's own line — which names the time, and is the only thing anybody can
+act on. The alternative was upstream's, which waits whatever it is told inside a `setTimeout`: an
+eighteen-hour countdown is a session that looks dead, and *a retry whose point is that the turn
+carries on is not a retry when the turn resumes after lunch*.
 
 ### Antigravity, which is the same protocol against a different deployment
 
@@ -2086,7 +2104,10 @@ Five things that are load-bearing rather than tidy:
   else would have stopped a message racing it into the same agent.
 - **The waits double** — 2s, 4s, 8s from `retry.baseDelayMs`. The failures this waits out are
   the ones where everybody else is also retrying, and a fixed delay brings the whole crowd back
-  at once.
+  at once. **Unless the provider said when**: `Retry::statedDelay()` reads a stated reset time out
+  of the error and that wins, because against a quota that comes back in 39 seconds the doubling
+  is three more refusals. A stated wait **past a minute** is not waited out at all — see the Gemini
+  CLI section.
 
 Settings are upstream's keys: `retry.enabled` (on unless turned off, like compaction),
 `retry.maxRetries`, `retry.baseDelayMs`. **That sentence was false until the audit read it**: the
