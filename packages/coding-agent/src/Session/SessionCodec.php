@@ -47,6 +47,8 @@ final class SessionCodec
                 'summary' => $message->summary,
                 'readFiles' => $message->readFiles,
                 'modifiedFiles' => $message->modifiedFiles,
+                // Null, not `root`: that word is pi's, in pi's file, and `SessionEntries` is where
+                // the translation lives. This is pig's own wire, where "there was no leaf" says so.
                 'fromId' => $message->fromId,
                 'fromHook' => $message->fromHook,
                 'timestamp' => $message->timestamp,

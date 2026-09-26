@@ -111,7 +111,10 @@ final class SessionEntries
             return [
                 'type' => 'branch_summary',
                 ...$base,
-                'fromId' => $item->fromId,
+                // `root` where pig has no leaf, which is upstream's `branchFromId ?? "root"`: the
+                // field is a string in every pi file, and a null here was the one place pig's
+                // session file was not pi's.
+                'fromId' => $item->fromId ?? 'root',
                 'summary' => $item->summary,
                 'fromHook' => $item->fromHook,
                 'details' => [
@@ -194,13 +197,21 @@ final class SessionEntries
                 (string) ($line['summary'] ?? ''),
                 self::files($details, 'readFiles'),
                 self::files($details, 'modifiedFiles'),
-                isset($line['fromId']) ? (string) $line['fromId'] : null,
+                // And back the same way: `root` is pi's word for "there was no leaf", not an
+                // entry id, so it must not come back as one.
+                self::branchedFrom($line['fromId'] ?? null),
                 (bool) ($line['fromHook'] ?? false),
                 $at,
             ),
 
             default => null,
         };
+    }
+
+    /** The entry a branch summary is about, or null for pi's `root`. */
+    private static function branchedFrom(mixed $fromId): ?string
+    {
+        return is_string($fromId) && $fromId !== '' && $fromId !== 'root' ? $fromId : null;
     }
 
     /** `2026-01-02T21:29:30.123Z`, which is what pi writes and what its file names are made of. */

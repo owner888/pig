@@ -12,6 +12,7 @@ use Pig\Ai\TextContent;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\CustomEntry;
 use Pig\CodingAgent\Session\HookMessage;
@@ -180,6 +181,42 @@ final class PiFormatTest extends TestCase
 
         // Never the count: that is derived when the file is read.
         $this->assertArrayNotHasKey('replaced', $line);
+    }
+
+    public function testABranchSummaryAtTheRootSaysRootAsPiWritesIt(): void
+    {
+        // Upstream's line is `fromId: branchFromId ?? "root"` — a string either way, never null.
+        // pig wrote null, which is the one field in this file that was not pi's shape: a pi reading
+        // it finds null where its own type says string, and a pig reading pi's file gets an entry
+        // id that is not an entry.
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer());
+        $session->append(new BranchSummary('what the other branch was about', ['a.php'], [], null));
+
+        $line = self::linesOf($session->path)[3];
+
+        $this->assertSame('branch_summary', $line['type']);
+        $this->assertSame('root', $line['fromId']);
+
+        // And back: `root` is pi's word for "there was no leaf", so it comes back as null rather
+        // than as an id nothing in the file has.
+        $reopened = SessionManager::open($session->path);
+        $summary = $reopened->messages()[2];
+
+        $this->assertInstanceOf(BranchSummary::class, $summary);
+        $this->assertNull($summary->fromId);
+    }
+
+    public function testABranchSummaryFromAnEntryKeepsThatEntrysId(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer());
+        $leaf = $session->leaf();
+        $session->append(new BranchSummary('about that branch', [], [], $leaf));
+
+        $this->assertSame($leaf, self::linesOf($session->path)[3]['fromId']);
     }
 
     public function testAHooksMessageIsACustomMessageEntry(): void

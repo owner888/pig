@@ -1640,7 +1640,7 @@ Three rules make it testable, and they are worth keeping when it grows:
 
 `bin/pig` went from 539 lines to 411.
 
-`Hooks\` is upstream's `core/hooks/`, all of it. A hook is a PHP file in `~/.pig/hooks` or
+`Hooks\` is upstream's `core/hooks/`. A hook is a PHP file in `~/.pig/hooks` or
 `.pig/hooks` that returns a callable; the callable is handed a `HookApi` and registers what
 it wants to hear about:
 
@@ -1674,6 +1674,24 @@ Sixteen of upstream's eighteen events are fired. `session_before_branch` and `se
 are not: they are about forking a conversation into a second session file, and pig branches
 inside one file instead. Subscribing to either says so rather than silently never firing —
 as does a typo, since the names are a list here rather than eighteen TypeScript overloads.
+
+**What is not here is upstream's `HookCommandContext`**, and this is the one place to look for it.
+Upstream gives a slash command's handler four methods an event handler does not get —
+`waitForIdle()`, `newSession()`, `branch()` and `navigateTree()` — walled off that way because
+calling them from inside the agent loop deadlocks. pig has one `HookContext` for both, with
+everything that can be read at any moment plus `abort()`. The four are not ported, and not as an
+oversight: `branch()` is the session-file fork pig does not do, `navigateTree()` is `goTo()`, whose
+answer is a summary, an abort or text for the prompt rather than a yes; and the other two would need
+a second context class to be safe from the deadlock upstream avoids by having one. Two context types
+so a hook command can restart the session is more machinery than the thing is worth — see the rule
+at the top of this file. A hook that wants a handoff can say so with `sendMessage()` and let the
+person press `/new`.
+
+**`isError` on a `tool_result` result is honoured in one direction**, which is one more than
+upstream: `true` raises, so a hook can call a successful tool's output a failure, and the verdict
+still comes from the one place the loop reads it — `execute()` throwing. `false` on a tool that
+*did* throw is not read, because rescuing it would be a second route to "this succeeded". Upstream
+declares the field and reads neither direction, so setting it there does nothing.
 
 Four things worth keeping straight:
 
@@ -3055,6 +3073,43 @@ Barely covered by a test: `interactive()` opens `/dev/tty` for all three streams
 runner has no tty to open. What is tested is the empty-command guard and that a run with no
 controlling terminal answers STOPPED without polling — which is the branch a session started
 from a script takes.
+
+### One field in the session file was not pi's shape
+
+Nineteenth, and the only one found in the file format — which matters more than its size, because a
+conversation opening in either tool is the promise `PiFormatTest` exists to keep. Upstream writes a
+branch summary's origin as `fromId: branchFromId ?? "root"` — **a string either way**. pig wrote
+null when there was no leaf. A pi reading a pig file finds null where its own type says string, and
+a pig reading a pi file gets `"root"` as though it were an entry id.
+
+`SessionEntries` now writes `root` and reads it back as null, so pig's own meaning is unchanged and
+the line on disk is pi's. The wire codec keeps null on purpose and says so: that is pig's own
+protocol, where "there was no leaf" is an answer, and one translation in one place is the point.
+
+**`PiFormatTest` had no branch-summary case at all** — the file's newest entry type was the one the
+fence did not cover. It has two now, one for each direction.
+
+### Hooks: what upstream walls off for commands is not here, and the docs said "all of it"
+
+Twentieth, and a documentation find rather than a code one. The hooks section claimed `Hooks\` was
+upstream's `core/hooks/` "all of it", and then said — correctly — that sixteen of eighteen events
+are fired. What it never mentioned is `HookCommandContext`: upstream gives a slash command's handler
+`waitForIdle()`, `newSession()`, `branch()` and `navigateTree()`, walled off from event handlers
+because calling them inside the agent loop deadlocks. pig has one `HookContext` for both and none of
+the four.
+
+Left unported, deliberately and now in writing: `branch()` is the session-file fork pig does not do,
+`navigateTree()` is `goTo()` — whose answer is a summary, an abort or text for the prompt rather than
+a yes — and the other two would need a second context class to be safe from the deadlock upstream
+avoids by having one. Two context types so that a hook command can restart the session is more
+machinery than the thing is worth. A hook that wants a handoff can say so with `sendMessage()`.
+
+Found in the same read: **`isError` on a `tool_result` result**. Upstream declares the field
+("Override isError flag") and its wrapper reads neither direction, so a hook setting it there changes
+nothing. pig honours `true` by raising — the verdict still comes from the one place the loop reads,
+`execute()` throwing — and deliberately ignores `false` on a tool that did throw, because rescuing it
+would be a second route to "this succeeded". The class's own docblock claimed `false` meant
+"not an error after all", which was a promise the code never kept; it says what happens now.
 
 ### The model had seven tools where upstream gives it four, and no way to say otherwise
 
