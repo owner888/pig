@@ -38,6 +38,10 @@ final class WidthTest extends TestCase
             ["\x1b[31mred\x1b[0m", 3, 'colour codes are invisible'],
             ["\x1b]8;;http://example.com\x07link\x1b]8;;\x07", 4, 'an OSC 8 hyperlink is invisible'],
             ["a\tb", 5, 'a tab is three spaces'],
+            ["a\nb", 2, 'a newline is not a column'],
+            ["abc\n", 3, 'and it is still not one at the end — see the trailing-newline trap'],
+            ["\n", 0, 'on its own it is nothing'],
+            ["hello world\n", 11, 'the ascii fast path has to agree with the slow one'],
         ];
     }
 
@@ -45,6 +49,20 @@ final class WidthTest extends TestCase
     public function testVisibleWidth(string $text, int $expected, string $why): void
     {
         $this->assertSame($expected, Width::visible($text), $why);
+    }
+
+    public function testATrailingNewlineIsNotAColumnAnywhereItIsMeasured(): void
+    {
+        // PCRE's `$` matches *before* a trailing newline, so the printable-ASCII fast path
+        // accepted `"abc\n"` and answered `strlen()` — four columns for three. The slow path
+        // disagreed (a newline is `\p{Cc}`, which is zero), so the same string measured 4 alone
+        // and 3 inside a longer one.
+        $this->assertSame(Width::visible('abc'), Width::visible("abc\n"));
+
+        // What that bought, where it shows: a padded line one space short of the width.
+        $padded = Width::background("abc\n", 6, static fn (string $text): string => $text);
+
+        $this->assertSame("abc\n   ", $padded);
     }
 
     public function testTheCacheReturnsTheSameAnswerTwice(): void

@@ -41,7 +41,13 @@ final class Width
         }
 
         // Almost every line is printable ASCII, where one byte is one column.
-        if (preg_match('/^[\x20-\x7e]*$/', $text) === 1) {
+        //
+        // `\z` and not `$`: PCRE's `$` matches *before* a trailing newline, so `"abc\n"` took this
+        // path and got `strlen()` — four columns for three. The slow path below disagreed, because
+        // a newline is `\p{Cc}` and therefore zero, so one string measured differently depending on
+        // whether anything followed the newline. Anything that pads a line to a width was then a
+        // space short of it.
+        if (preg_match('/^[\x20-\x7e]*\z/', $text) === 1) {
             return strlen($text);
         }
 

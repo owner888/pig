@@ -2743,6 +2743,33 @@ while (true) {
 }
 ```
 
+### PCRE's `$` matches before a trailing newline, so `^…$` is not "the whole string"
+
+`Width::visible()` starts with a fast path — almost every line is printable ASCII, where one byte is
+one column — and it was guarded by `/^[\x20-\x7e]*$/`. That pattern **accepts `"abc\n"`**, because
+`$` matches at the end *or* just before a final newline, so the newline went through `strlen()` and
+the string measured four columns for three. The slow path disagreed: a newline is `\p{Cc}`, which is
+zero, so the same characters measured 3 inside a longer string and 4 at the end of one. Anything that
+pads a line to a width — `Width::background()`, and every box and selected row through it — was a
+space short whenever the line ended in a newline.
+
+```php
+preg_match('/^[\x20-\x7e]*$/',  "abc\n");   // 1  — "$" forgives the newline
+preg_match('/^[\x20-\x7e]*\z/', "abc\n");   // 0  — what was meant
+```
+
+**`\z` is the fix and the rule**: in a pattern that means "the whole string is nothing but this", the
+end anchor is `\z`, never `$`. (`/D` does the same for the last `$` in a pattern; `\z` says it at the
+place it applies, which is what a reader needs.) Found by a differential run against upstream's
+`utils.ts`, not by anybody noticing a missing space — `truncateToWidth` disagreed on five multi-line
+inputs and the width function underneath it was the reason.
+
+The same shape is elsewhere in the tree and **was left alone**: `HookApi`'s `customType` and tool
+names, `Skills`' name check, `Editor`'s "is this word completable" — each is `^…$` against a string
+that would have to end in a newline to slip through, and none of them can be reached with one today.
+Changing them tightens what is accepted, which is a behaviour change with no reproduced bug behind
+it. If one of those inputs ever comes from somewhere new, this is the entry to remember.
+
 ### A signal makes `stream_select()` return `false`
 
 Terminal resize sends SIGWINCH. With a handler installed, an in-flight `stream_select()` is
