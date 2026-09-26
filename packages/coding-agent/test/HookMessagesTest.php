@@ -26,6 +26,9 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Export\HtmlExport;
+use Pig\CodingAgent\Interactive\HookMessageComponent;
+use Pig\CodingAgent\Theme\Palette;
+use Pig\Tui\Ansi;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
@@ -551,5 +554,44 @@ final class HookMessagesTest extends TestCase
         for ($tick = 0; $tick < $ticks && !Loop::get()->isIdle(); $tick++) {
             Loop::get()->tick();
         }
+    }
+
+    // ---- how it is drawn -------------------------------------------------------------
+
+    public function testALongHookMessageIsFoldedUntilItIsExpanded(): void
+    {
+        // What a hook sends is a build failure or a lint report, so this is the common case,
+        // not the edge one — and ctrl+o folded every tool call around it while this one stayed
+        // open for ever, because the expand mechanism was wired to three classes and not four.
+        $text = implode("\n", array_map(static fn (int $i): string => "line {$i}", range(1, 20)));
+        $component = new HookMessageComponent(new HookMessage('build', [new TextContent($text)]), Palette::named('dark'));
+
+        $collapsed = implode("\n", array_map(Ansi::strip(...), $component->render(60)));
+
+        $this->assertStringContainsString('line 5', $collapsed);
+        $this->assertStringNotContainsString('line 6', $collapsed);
+        $this->assertStringContainsString('15 more lines', $collapsed);
+        $this->assertStringContainsString('ctrl+o', $collapsed);
+
+        $component->setExpanded(true);
+        $expanded = implode("\n", array_map(Ansi::strip(...), $component->render(60)));
+
+        $this->assertStringContainsString('line 20', $expanded);
+        $this->assertStringNotContainsString('more lines', $expanded);
+        $this->assertStringNotContainsString('ctrl+o', $expanded);
+    }
+
+    public function testAShortHookMessageIsNotFoldedAndSaysNothingAboutCtrlO(): void
+    {
+        $component = new HookMessageComponent(
+            new HookMessage('build', [new TextContent("one\ntwo")]),
+            Palette::named('dark'),
+        );
+
+        $drawn = implode("\n", array_map(Ansi::strip(...), $component->render(60)));
+
+        $this->assertStringContainsString('two', $drawn);
+        $this->assertStringNotContainsString('more lines', $drawn);
+        $this->assertStringNotContainsString('ctrl+o', $drawn);
     }
 }

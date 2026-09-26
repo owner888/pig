@@ -634,6 +634,7 @@ final class InteractiveMode
                 if ($child instanceof ToolExecutionComponent
                     || $child instanceof CompactionComponent
                     || $child instanceof BranchSummaryComponent
+                    || $child instanceof HookMessageComponent
                 ) {
                     $child->setExpanded($this->expanded);
                 }

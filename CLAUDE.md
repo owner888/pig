@@ -683,7 +683,14 @@ It was found by driving each effect to its end in a test and watching one of the
 frames, then by printing the topmost ink row of all 31 columns rather than reasoning about it. The
 fix is the condition `settled >= height` was reaching for: a column is done when there is nothing
 left above what has landed. Nothing about the finished picture changes — every effect was already
-verified to end on the byte-identical grid — and all seven now stop between 8 and 186 frames.
+verified to end on the byte-identical grid.
+
+Re-measured during the `armin.ts` audit, forty runs of each, because a number in this file is worth
+a re-run rather than a quotation — and the sentence that used to be here said 8 to 186, which is one
+out at both ends: **glitch 9, crt 19, scanline 19, dissolve 28, fade 38, rain 137–174, typewriter
+187.** Only rain varies, which is the randomness in where each drop starts. All seven end on the
+same grid and it is byte-identical to what upstream's `buildFinalGrid` produces from the same 144
+bytes, which were compared byte for byte as well.
 
 Three smaller notes:
 
@@ -2830,6 +2837,27 @@ Regression tests: `SettingsListTest::testNoLineIsWiderThanTheTerminal` (widths 6
 `testTheHintFitsANarrowTerminal`, `testTheScrollCountFitsToo`. Found in the same read: the hint
 named Enter and not Space, while `handleInput()` accepts both — upstream's own hint names both, and
 the Ctrl+G rule the other way round.
+
+### A hook's message was the one long thing in the transcript ctrl+o could not fold
+
+`setExpanded()` exists on `ToolExecutionComponent`, `CompactionComponent` and
+`BranchSummaryComponent`, and `InteractiveMode`'s ctrl+o handler names those three. It could not
+name `HookMessageComponent`, because that class had no such method: a hook's message was drawn
+whole, for ever, while ctrl+o folded every tool call around it. Upstream cuts it to five lines with
+a `...`.
+
+What that costs is not cosmetic, and it is visible in what the method is *for*: a hook's
+`sendMessage()` is how a build failure, a lint report or a diff reaches the model, so the long
+message is the common case rather than the edge one. This file's own example for the feature is "a
+build that just failed".
+
+The instructive part is the second commit. Folding the component made the four tests pass and **the
+`instanceof` line was still untested** — removing it changed nothing, because the tests drove the
+component directly. That is the same *wired at one end only* shape as the bug, made again in its own
+fix, and it took a test that presses ctrl+o through `InteractiveMode` to close:
+`testCtrlOOpensALongHookMessageTheWayItOpensEverythingElse`. **When the find is a missing
+connection, a test of the two ends is not a test of the wire.** The mutation check is what says
+which of the two you have written.
 
 ### One byte that is not UTF-8 in a tool's output took the session down
 

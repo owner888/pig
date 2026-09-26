@@ -1827,6 +1827,29 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('build', $screen);
     }
 
+    public function testCtrlOOpensALongHookMessageTheWayItOpensEverythingElse(): void
+    {
+        // The component folding itself is one end; this is the other, and it is the end that
+        // was missing — the ctrl+o handler named three classes and the fold has to be reached
+        // through it or the component folds for nobody.
+        $api = new HookApi('.', 'test.php');
+        $hooks = new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd);
+        $this->start(answers: ['ok'], hooks: $hooks);
+
+        $long = implode("\n", array_map(static fn (int $i): string => "detail {$i}", range(1, 20)));
+
+        Async::spawn(static function () use ($api, $long): void {
+            $api->sendMessage('lint', $long);
+        });
+        $this->settle();
+
+        $this->assertStringNotContainsString('detail 20', $this->screen(), 'folded to start with');
+
+        $this->type("\x0f");
+
+        $this->assertStringContainsString('detail 20', $this->screen(), 'ctrl+o did not reach it');
+    }
+
     public function testAMessageMarkedNotToDisplayIsNotDrawn(): void
     {
         $api = new HookApi('.', 'test.php');
