@@ -142,6 +142,65 @@ final class HookUiTest extends TestCase
         $this->assertSame('second', $answer);
     }
 
+    public function testEveryDialogSaysHowToAnswerIt(): void
+    {
+        // The one screen in pig that did not. A hook's dialog holds a *parked turn*, so "esc
+        // cancels" is the line that matters most, and upstream's three components each carry
+        // their own hint — `/tree`, `/resume`, `/model` and `/settings` all carry one here too.
+        $dialogs = [
+            'select' => fn (): mixed => $this->ui->select('Which one?', ['first', 'second']),
+            'confirm' => fn (): mixed => $this->ui->confirm('Carry on?', ''),
+            'input' => fn (): mixed => $this->ui->input('Ticket number?'),
+            'editor' => fn (): mixed => $this->ui->editor('What should it say?'),
+        ];
+
+        foreach ($dialogs as $which => $open) {
+            Async::spawn($open);
+            $this->settle();
+
+            $this->assertStringContainsString('esc to cancel', $this->screen(), $which);
+
+            $this->type("\x1b");
+            $this->settle();
+        }
+    }
+
+    public function testTheMultiLineHintNamesTheKeysThatAreThere(): void
+    {
+        // Ctrl+G is only mentioned when there is an external editor to hand the text to, which
+        // is upstream's rule: naming a key that does nothing is worse than not naming it.
+        Async::spawn(fn (): mixed => $this->ui->editor('What should it say?'));
+        $this->settle();
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('enter to finish', $screen);
+        $this->assertStringContainsString('shift+enter for a line', $screen);
+        $this->assertStringNotContainsString('ctrl+g', $screen, 'no external editor was given');
+    }
+
+    public function testCtrlGIsNamedOnceThereIsSomewhereToHandTheTextTo(): void
+    {
+        $ui = new TerminalUi(
+            $this->tui,
+            $this->chat,
+            $this->overlay,
+            $this->editor,
+            new FooterComponent(
+                new AgentSession(new Agent(new AgentOptions()), sys_get_temp_dir()),
+                $this->palette,
+                sys_get_temp_dir(),
+            ),
+            fn (): Palette => $this->palette,
+            static fn (string $text): string => $text,
+        );
+
+        Async::spawn(fn (): mixed => $ui->editor('What should it say?'));
+        $this->settle();
+
+        $this->assertStringContainsString('ctrl+g', $this->screen());
+    }
+
     public function testEscapeAnswersWithNothing(): void
     {
         $answer = 'not asked yet';

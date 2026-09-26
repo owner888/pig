@@ -2949,6 +2949,19 @@ The overlay's contents are the state here, not a flag: `canAsk()` asks the conta
 in it. A flag would be a second copy of the same fact, and a second copy that can disagree is
 the shape of the bug this whole entry is about.
 
+**And the dialog says which keys work**, which for a while it did not. Upstream's three components
+each end with a hint line — `↑↓ navigate  enter select  esc cancel`, `enter submit  esc cancel`,
+`ctrl+enter submit  esc cancel  ctrl+g external editor` — and pig folded all three into
+`TerminalUi`, hint lines included, except that the hints did not come with them. `/tree`,
+`/resume`, `/model` and `/settings` all carry one, so a hook's dialog was the one screen here that
+did not say how to answer it — **in front of a parked turn**, where the line saying escape works is
+the one that matters: the alternative to reading it is guessing, and guessing wrong on a screen
+holding a turn is how a session gets killed. It is one argument to `open()` now, because one place
+opens all four. `custom()` passes none: a hook that drew its own component knows its own keys and
+pig does not. Ctrl+G is named only when there is an external editor to hand the text to, which is
+upstream's rule for the same hint — a key in the list that does nothing is worse than a key missing
+from it.
+
 Regression tests: `InteractiveModeTest::testATurnEndingDoesNotEraseAnOpenScreenFromUnderTheCursor`
 (fails if `showSettings()` is pointed back at `$status`),
 `testAWorkingLoaderAndAnOpenScreenBothFitOnTheScreen`, and

@@ -168,7 +168,11 @@ final class TerminalUi implements HookUi
             $answer->complete(null);
         });
 
-        $this->open($title . ($placeholder === '' ? '' : " ({$placeholder})"), $field);
+        $this->open(
+            $title . ($placeholder === '' ? '' : " ({$placeholder})"),
+            $field,
+            'enter to submit, esc to cancel',
+        );
 
         $value = $answer->future->await();
 
@@ -227,7 +231,11 @@ final class TerminalUi implements HookUi
             });
         });
 
-        $this->open($title . '  ' . $this->palette()->fg('dim', 'enter to finish · shift+enter for a line'), $field);
+        // Ctrl+G is named only when there is somewhere to hand the text to, which is upstream's
+        // rule for the same hint: a key in the list that does nothing is worse than a key missing
+        // from it.
+        $this->open($title, $field, 'enter to finish, shift+enter for a line, esc to cancel'
+            . ($this->externalEditor === null ? '' : ', ctrl+g for $VISUAL'));
 
         $value = $answer->future->await();
 
@@ -347,15 +355,25 @@ final class TerminalUi implements HookUi
             $answer->complete(null);
         });
 
-        $this->open($title, $list);
+        $this->open($title, $list, 'enter to choose, esc to cancel');
 
         $value = $answer->future->await();
 
         return is_string($value) ? $value : null;
     }
 
-    /** Put $component in the overlay, with the title above it, and give it the keys. */
-    private function open(string $title, object $component): void
+    /**
+     * Put $component in the overlay, with the title above it and the keys below, and give it the
+     * keys themselves.
+     *
+     * **The hint is not decoration.** A hook's dialog is in front of a *parked turn*, so the line
+     * saying escape works is the one that matters — without it the only way out of a dialog is to
+     * guess, and guessing wrong on a screen that is holding a turn is how a session gets killed.
+     * Upstream's three components each carry their own; here they are one line in one place,
+     * because there is one place that opens all four. `custom()` passes none: a hook that drew its
+     * own component knows its own keys, and pig does not.
+     */
+    private function open(string $title, object $component, string $hint = ''): void
     {
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
@@ -367,6 +385,10 @@ final class TerminalUi implements HookUi
         }
 
         $this->overlay->addChild($component);
+
+        if ($hint !== '') {
+            $this->overlay->addChild(new Text($this->palette()->fg('dim', $hint), 1, 0));
+        }
 
         $this->tui->setFocus($component);
         $this->tui->requestRender();
