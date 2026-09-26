@@ -107,6 +107,29 @@ final class EditToolTest extends ToolTestCase
         );
     }
 
+    public function testOverlappingMatchesCountAsOneAndAreReplaced(): void
+    {
+        $this->file('a.txt', "aaa\n");
+
+        // `substr_count` does not count overlaps, and neither does the `split(old).length - 1`
+        // upstream counts with — so `aa` in `aaa` is one match on both sides, not two.
+        $after = $this->apply(['path' => 'a.txt', 'oldText' => 'aa', 'newText' => 'b']);
+
+        $this->assertSame("ba\n", $after);
+    }
+
+    public function testAFileThatIsNotUtf8KeepsItsBytes(): void
+    {
+        $this->file('a.txt', "header\n\x80stray\nfooter\n");
+
+        $after = $this->apply(['path' => 'a.txt', 'oldText' => 'footer', 'newText' => 'FOOTER']);
+
+        // The deliberate divergence: upstream decodes the file as UTF-8, so the stray byte
+        // comes back as U+FFFD and is written over — an edit at the bottom of the file
+        // rewriting a line at the top. Reading bytes and splicing bytes leaves it alone.
+        $this->assertSame("header\n\x80stray\nFOOTER\n", $after);
+    }
+
     public function testADollarSignInTheReplacementIsLiteral(): void
     {
         $this->file('a.sh', "echo OLD\n");
@@ -157,6 +180,19 @@ final class EditToolTest extends ToolTestCase
         $after = $this->apply(['path' => 'a.php', 'oldText' => '<?php', 'newText' => '<?php declare(strict_types=1);']);
 
         $this->assertSame("\u{FEFF}<?php declare(strict_types=1);\necho 1;\n", $after);
+    }
+
+    public function testAMarkAndCrlfBothSurviveTheSameEdit(): void
+    {
+        $this->file('a.txt', "\u{FEFF}one\r\ntwo\r\n");
+
+        // Both are restored, and in the right order — the mark goes back in front of text
+        // whose endings have already been put back. Upstream detects the ending on the
+        // mark-stripped text and so does this, though nothing can tell: the three bytes of
+        // the mark hold no CR and no LF, so they cannot move where the first one is found.
+        $after = $this->apply(['path' => 'a.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+
+        $this->assertSame("\u{FEFF}one\r\nTWO\r\n", $after);
     }
 
     // ---- the diff ------------------------------------------------------------------

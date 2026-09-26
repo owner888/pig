@@ -2867,9 +2867,21 @@ is the documented single-block limitation and which `EditTool` cannot produce.
 `Truncate` went through the same run — 777 documents with varied limits — and `head()`, `tail()` and
 `size()` agree with upstream field for field, byte counts, `truncatedBy`, the partial-line edge case
 and all. `line()` is the one that differs, and by unit rather than by intent: upstream counts UTF-16
-code units, this counts characters. **The lesson of both runs is the same one: a hand-rolled
-replacement for a package is worth a corpus, and the corpus is worth keeping the count of.** "It
-matched on the cases I thought of" is what reading gives you.
+code units, this counts characters.
+
+**`EditTool` itself went through a third run — 307 cases, comparing the bytes left on disk — and
+found nothing.** That is worth recording because it is the one file in the tree that changes somebody
+else's work, so "probably fine" is not good enough: BOM, every mix of line endings, a lone CR,
+overlapping matches, `$1` in the replacement, invalid UTF-8, and 260 random files with a random slice
+of each as `oldText`. Four deliberate deviations, all now in the class docblock with this run beside
+them, and the sharpest is one where upstream is the one doing damage: it reads the file as UTF-8, so
+**an edit to line 90 of a latin-1 file rewrites line 3 as U+FFFD**. This reads bytes and splices
+bytes. `testAFileThatIsNotUtf8KeepsItsBytes` is what stops that "fidelity" being restored later.
+
+**The lesson of the three runs is the same one: a hand-rolled replacement for a package is worth a
+corpus, and the corpus is worth keeping the count of.** "It matched on the cases I thought of" is
+what reading gives you — and a run that finds nothing is only worth having if the count is written
+down, or the next reader has to take it on trust.
 
 ### A hook's message was the one long thing in the transcript ctrl+o could not fold
 

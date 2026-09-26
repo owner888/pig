@@ -19,6 +19,27 @@ use Pig\Async\AbortSignal;
  * nothing means the model is working from something other than the file as it is, and
  * matching twice means it does not know which one it meant. Either way the right answer
  * is to say so and let it read the file again, not to guess and edit the wrong line.
+ *
+ * Run against upstream's `edit.ts` over 307 cases — BOM, every mix of line endings, a
+ * lone CR, overlapping matches, `$1` in the replacement, invalid UTF-8, and 260 random
+ * files with a random slice of each as `oldText`. **The bytes on disk agree everywhere but
+ * the three cases below**, and the diffs differ only in the three ways `EditDiff::render()`
+ * already documents. Four deviations, all deliberate:
+ *
+ * - **Bytes that are not UTF-8 survive an edit.** Upstream reads with
+ *   `readFile(path, "utf-8")`, so every such byte becomes U+FFFD *and is written back that
+ *   way*: one stray byte in a latin-1 file, and an edit to line 90 rewrites line 3 as well.
+ *   This reads bytes and splices bytes, so the untouched part of the file is untouched.
+ * - **An empty `oldText` is refused.** Upstream's `includes('')` is true and its count is
+ *   `length - 1`, so a non-empty file is told "Found N occurrences" and an *empty* one has
+ *   the text inserted — replacing nothing with something, from a tool whose whole contract
+ *   is that the text appears exactly once.
+ * - **A missing file and an unreadable one are told apart.** Upstream folds both into
+ *   `File not found`, and its `access(R_OK | W_OK)` passes for a *directory*, which then
+ *   fails on the read with whatever Node calls `EISDIR`.
+ * - **The wording is this file's.** Same three refusals, in the same three places, worded
+ *   to say what to do about it — the reader is the model, and it is about to correct itself
+ *   from the sentence.
  */
 final class EditTool implements AgentTool
 {
