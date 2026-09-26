@@ -8,6 +8,7 @@ use Closure;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
+use Pig\Ai\Utils\Utf8;
 use Pig\CodingAgent\Theme\Highlight;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\Paths;
@@ -416,7 +417,7 @@ final class ToolExecutionComponent extends Container
         // Drawn from the arguments, not from the result: the point of showing a write is
         // seeing what is being written, and by the time it has been written it is too
         // late to care.
-        return $content === '' ? $text : $text . "\n\n" . $this->source($content, $path);
+        return $content === '' ? $text : $text . "\n\n" . $this->source($content, $path, total: true);
     }
 
     private function edit(): string
@@ -527,7 +528,10 @@ final class ToolExecutionComponent extends Container
     }
 
     /** A file's contents, syntax-coloured when the name says what they are. */
-    private function source(string $content, string $path): string
+    /**
+     * @param bool $total say how many lines there are altogether, not just how many are left
+     */
+    private function source(string $content, string $path, bool $total = false): string
     {
         $language = Highlight::languageFromPath($path);
 
@@ -535,13 +539,21 @@ final class ToolExecutionComponent extends Container
             ? array_map(fn (string $line): string => $this->palette->fg('toolOutput', self::tabs($line)), explode("\n", $content))
             : Highlight::lines(self::tabs($content), $language, $this->palette->highlightTheme());
 
-        return $this->cut($lines, self::FILE_LINES);
+        return $this->cut($lines, self::FILE_LINES, $total);
     }
 
     /**
      * @param list<string> $lines
      */
-    private function cut(array $lines, int $keep): string
+    /**
+     * @param list<string> $lines
+     * @param bool         $total upstream's `write` alone says how many lines there are
+     *        altogether, and it is right to: the content is the whole file, so its size is
+     *        what is being decided. A `read` shows a window into a file, where the window's
+     *        own line count is not the file's and saying "25 total" would be a number about
+     *        nothing.
+     */
+    private function cut(array $lines, int $keep, bool $total = false): string
     {
         if ($this->expanded || count($lines) <= $keep) {
             return implode("\n", $lines);
@@ -549,9 +561,10 @@ final class ToolExecutionComponent extends Container
 
         $rest = count($lines) - $keep;
         $notice = $this->notice();
+        $counted = $total ? "{$rest} more lines, " . count($lines) . ' total' : "{$rest} more lines";
 
         return implode("\n", array_slice($lines, 0, $keep))
-            . $this->palette->fg('toolOutput', "\n... ({$rest} more lines)")
+            . $this->palette->fg('toolOutput', "\n... ({$counted})")
             . ($notice === null ? '' : "\n" . $this->palette->fg('warning', "[{$notice}]"));
     }
 
@@ -581,6 +594,16 @@ final class ToolExecutionComponent extends Container
      * Escape sequences are stripped: a tool's output is data, and a command that prints
      * its own colours would otherwise paint over the component's — including the
      * background that says whether it succeeded.
+     *
+     * **And bytes that are not UTF-8 are dropped**, which is not tidiness: everything that
+     * measures a line goes through `Graphemes::split()`, which is `preg_match_all('/\X/u')`
+     * and answers false on malformed UTF-8, so a single stray byte threw out of `render()`
+     * inside the loop's own input callback and took the session with it. `cat` on anything
+     * that is not text reaches this — a binary file, a latin-1 log, `head /dev/urandom` — so
+     * it is not an edge case, it is the second thing a model tries when a file will not read.
+     * Upstream sanitises in this same method and says the same thing about its own width
+     * function. `Ai\Utils\Utf8::sanitize()` already existed for the request body; this is the
+     * other end that had no caller.
      */
     private function output(): string
     {
@@ -592,7 +615,7 @@ final class ToolExecutionComponent extends Container
 
         foreach ($this->result->content as $block) {
             if ($block instanceof TextContent) {
-                $parts[] = str_replace("\r", '', Ansi::strip($block->text));
+                $parts[] = str_replace("\r", '', Ansi::strip(Utf8::sanitize($block->text)));
 
                 continue;
             }

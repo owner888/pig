@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\ImageContent;
@@ -329,6 +330,31 @@ final class ToolExecutionTest extends TestCase
         $this->assertStringContainsString('return 2;', $this->text($tool));
     }
 
+    public function testACutWriteSaysHowManyLinesTheWholeFileHas(): void
+    {
+        // Upstream's write says `(N more lines, M total)` where every other tool says only
+        // `(N more lines)`, and the extra number is the one that matters here: the content is
+        // the whole file, so how big it is about to be is the thing being decided.
+        $content = implode("\n", array_map(static fn (int $i): string => "line {$i}", range(1, 25)));
+        $tool = $this->tool('write', ['path' => 'notes.txt', 'content' => $content]);
+
+        $this->assertStringContainsString('... (15 more lines, 25 total)', $this->text($tool));
+    }
+
+    public function testAReadSaysOnlyHowManyMoreLinesThereAre(): void
+    {
+        // Not a total: what a read shows is a window into a file, and the number of lines in
+        // the window is not the number of lines in the file.
+        $lines = implode("\n", array_map(static fn (int $i): string => "line {$i}", range(1, 25)));
+        $tool = $this->tool('read', ['path' => 'notes.txt']);
+        $tool->updateResult($this->said($lines));
+
+        $text = $this->text($tool);
+
+        $this->assertStringContainsString('... (15 more lines)', $text);
+        $this->assertStringNotContainsString('total', $text);
+    }
+
     public function testAnEditShowsTheDiffTheToolActuallyWrote(): void
     {
         [$diff, $line] = EditDiff::render("a\nold\nc\n", "a\nnew\nc\n");
@@ -368,6 +394,35 @@ final class ToolExecutionTest extends TestCase
         $this->assertStringContainsString('line 12', $text);
         $this->assertStringNotContainsString('line 1 ', $text);
         $this->assertStringContainsString('... (7 earlier lines)', $text);
+    }
+
+    /** @return array<string, array{string}> */
+    public static function binaryOutputs(): array
+    {
+        return [
+            'a stray continuation byte' => ["hello \x80 world"],
+            'a truncated multi-byte sequence' => ["prefix \xe4\xbd suffix"],
+            'a lone 0xff' => ["\xff\xfe binary header"],
+            'a surrogate encoded as UTF-8' => ["a \xed\xa0\x80 b"],
+        ];
+    }
+
+    /**
+     * `cat` on anything that is not UTF-8 used to kill the session.
+     *
+     * `Graphemes::split()` is `preg_match_all('/\X/u')`, which answers false on malformed
+     * UTF-8 and therefore throws — out of `render()`, in the loop's own input callback.
+     */
+    #[DataProvider('binaryOutputs')]
+    public function testOutputThatIsNotUtf8IsDrawnRatherThanFatal(string $output): void
+    {
+        $tool = $this->tool('bash', ['command' => 'cat thing']);
+        $tool->updateResult($this->said($output));
+
+        $lines = $tool->render(60);
+
+        $this->assertNotSame([], $lines);
+        $this->assertTrue(mb_check_encoding(implode("\n", $lines), 'UTF-8'), 'the drawn frame is not UTF-8');
     }
 
     public function testTheEarlierLinesNoteFitsANarrowTerminal(): void

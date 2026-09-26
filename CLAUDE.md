@@ -2817,6 +2817,41 @@ Regression tests: `SettingsListTest::testNoLineIsWiderThanTheTerminal` (widths 6
 named Enter and not Space, while `handleInput()` accepts both — upstream's own hint names both, and
 the Ctrl+G rule the other way round.
 
+### One byte that is not UTF-8 in a tool's output took the session down
+
+`cat` on anything that is not text — a binary file, a latin-1 log, `head /dev/urandom` — ended the
+session:
+
+```
+Pig\Tui\TuiError: Grapheme split failed: Malformed UTF-8 characters, possibly incorrectly encoded
+```
+
+Everything that measures or cuts a line goes through `Graphemes::split()`, which is
+`preg_match_all('/\X/u')`, and `preg_match_all` **answers false on malformed UTF-8**. So one stray
+`0x80` in what a tool said threw out of `render()`, inside the loop's own input callback, where
+nothing catches it. Reproduced from four shapes: a stray continuation byte, a truncated multi-byte
+sequence, a lone `0xff`, and a surrogate code point encoded as UTF-8.
+
+Upstream has `sanitizeBinaryOutput` for exactly this, applied in the same method, with a comment
+saying it is there because its width function crashes otherwise. **And pig already had the function
+— `Ai\Utils\Utf8::sanitize()` — with no caller on this side of the tree**, because it was written for
+the other end of the same problem: making a request body encodable. One end of the pipe sanitised and
+the other did not, which is this file's commonest shape with an unusually bad consequence.
+
+Two things worth keeping:
+
+- **The session file was already safe and that is why nothing noticed.** `SessionManager` encodes
+  with `JSON_INVALID_UTF8_SUBSTITUTE`, so a binary tool result persists as U+FFFD rather than
+  failing the write. The display path was the only one without a guard, and the display path is the
+  one that must never throw.
+- **`Graphemes::split()` returning false is a whole class, not one site.** Anything that reaches it
+  with bytes from outside — a hook's message, a custom tool's text, a pasted line — has the same
+  ending. Sanitising at the display boundary is what was reproduced and fixed; if another source
+  turns up, this is the entry, and `Utf8::sanitize()` is the call.
+
+Regression tests: the four `ToolExecutionTest::testOutputThatIsNotUtf8IsDrawnRatherThanFatal` rows,
+which assert the frame is drawn *and* is UTF-8 rather than merely not throwing.
+
 ### A budget handed out by flooring has to be corrected in both directions
 
 A markdown table with three short columns and one prose column — an everyday shape in an answer —
