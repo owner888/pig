@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Interactive;
 
+use Pig\Ai\Utils\Utf8;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Style;
 
@@ -13,6 +14,13 @@ use Pig\Tui\Style;
  * `Tools\EditDiff` produces the diff; this paints it. Split that way because the tool
  * has to produce the same text whether or not anyone is watching, and because the colours
  * belong to the palette rather than to the tool.
+ *
+ * Which makes this the diff's display boundary, and therefore where the bytes are made
+ * safe: a diff is built from a *file's* own bytes, so `edit` is the one tool that can hand
+ * the renderer something that is not UTF-8 with no tool output involved at all. Everything
+ * downstream measures with `Graphemes::split()`, which answers false on malformed UTF-8 and
+ * throws out of `render()`, where nothing catches it. The tool's own text is left alone —
+ * it goes to the model and into the session file, which have their own answers.
  *
  * Ported from upstream's `components/diff.ts`.
  */
@@ -26,7 +34,7 @@ final class DiffView
      */
     public static function render(string $diff, Palette $palette): string
     {
-        $lines = explode("\n", $diff);
+        $lines = explode("\n", Utf8::sanitize($diff));
         $output = [];
         $at = 0;
 

@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Interactive;
 
 use Closure;
+use Pig\Agent\AgentError;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\Ai\Utils\Utf8;
 use Pig\CodingAgent\Theme\Highlight;
 use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Tools\EditDiff;
 use Pig\CodingAgent\Tools\Paths;
 use Pig\Tui\Ansi;
 use Pig\Tui\Components\Box;
@@ -93,6 +95,23 @@ final class ToolExecutionComponent extends Container
     private bool $reported = false;
 
     /**
+     * The three arguments the preview was computed for, or null before there is one.
+     *
+     * Compared rather than a flag, because `setArgsComplete()` can be called again for the
+     * same call and the file read is not free — upstream keys the same cache on a
+     * `JSON.stringify` of the three.
+     *
+     * @var array{0: string, 1: string, 2: string}|null
+     */
+    private ?array $previewOf = null;
+
+    private string $previewDiff = '';
+
+    private ?int $previewLine = null;
+
+    private ?string $previewError = null;
+
+    /**
      * @param array<string, mixed>          $arguments still arriving, so any of them may be missing
      * @param CustomTool|null               $custom    the declaration, when this is a tool
      *        somebody wrote — for `renderCall` and `renderResult`
@@ -101,6 +120,9 @@ final class ToolExecutionComponent extends Container
      *        for a `!` command, the default for one the model ran
      * @param bool $showImages the person's `terminal.showImages`. Off draws the same label a
      *        terminal that cannot draw pictures gets, so the two look alike
+     * @param string|null $cwd where the project is, for `setArgsComplete()` to read the file
+     *        an edit is about. Null means nobody said, and then there is no preview — which
+     *        is what the two `!command` call sites want, since neither is ever an edit
      */
     public function __construct(
         private readonly string $tool,
@@ -113,6 +135,7 @@ final class ToolExecutionComponent extends Container
         // handful of silent off-by-ones.
         private readonly int $bashLines = self::BASH_LINES,
         private bool $showImages = true,
+        private readonly ?string $cwd = null,
     ) {
         $this->addChild(new Spacer(1));
 
@@ -138,6 +161,50 @@ final class ToolExecutionComponent extends Container
     public function updateArgs(array $arguments): void
     {
         $this->arguments = $arguments;
+        $this->draw();
+    }
+
+    /**
+     * The arguments have stopped arriving, so an edit can be shown before it is made.
+     *
+     * Upstream's `setArgsComplete()`, called once the assistant message has ended — every
+     * tool call in it is then whole, and the ones that are edits can be read off the file
+     * as it still stands. See `EditDiff::preview()` for what that window is worth.
+     *
+     * A refusal is kept and drawn in place of the diff, because "Found 3 occurrences" is
+     * worth reading before the call runs rather than after it has failed.
+     */
+    public function setArgsComplete(): void
+    {
+        if ($this->tool !== 'edit' || $this->cwd === null) {
+            return;
+        }
+
+        $path = $this->arguments['path'] ?? null;
+        $old = $this->arguments['oldText'] ?? null;
+        $new = $this->arguments['newText'] ?? null;
+
+        // Any of the three may still be missing: a turn can end on a call whose arguments
+        // never finished arriving, and then there is nothing to preview.
+        if (!is_string($path) || !is_string($old) || !is_string($new)) {
+            return;
+        }
+
+        if ($this->previewOf === [$path, $old, $new]) {
+            return;
+        }
+
+        $this->previewOf = [$path, $old, $new];
+
+        try {
+            [$this->previewDiff, $this->previewLine] = EditDiff::preview($path, $old, $new, $this->cwd);
+            $this->previewError = null;
+        } catch (AgentError $problem) {
+            $this->previewDiff = '';
+            $this->previewLine = null;
+            $this->previewError = $problem->getMessage();
+        }
+
         $this->draw();
     }
 
@@ -424,7 +491,9 @@ final class ToolExecutionComponent extends Container
     {
         $path = $this->path();
         $details = is_array($this->result?->details) ? $this->result->details : [];
-        $line = $details['firstChangedLine'] ?? null;
+
+        // The result's numbers once there are any, the preview's until then.
+        $line = $details['firstChangedLine'] ?? $this->previewLine;
 
         $text = $this->heading('edit') . ' ' . $this->target($path)
             . ($line === null ? '' : $this->palette->fg('warning', ":{$line}"));
@@ -435,12 +504,17 @@ final class ToolExecutionComponent extends Container
             return $said === '' ? $text : $text . "\n\n" . $this->palette->fg('error', $said);
         }
 
-        $diff = $details['diff'] ?? '';
+        // Once the tool has run, its own diff: it was built from the file it actually wrote,
+        // where the preview was built from the file as it stood a moment before. Upstream
+        // keeps showing the preview even afterwards, which is the same text in every case
+        // but the one where somebody changed the file in between — and there the file on
+        // disk is the honest answer.
+        $diff = (string) ($details['diff'] ?? $this->previewDiff);
 
-        // The diff comes from the tool, which built it from the file it actually wrote.
-        // Upstream previews it from the arguments while they are still streaming; doing
-        // that here would mean a second copy of the replace logic, which is one copy too
-        // many for a preview that arrives a second early.
+        if ($diff === '' && $this->previewError !== null) {
+            return $text . "\n\n" . $this->palette->fg('error', $this->previewError);
+        }
+
         return $diff === '' ? $text : $text . "\n\n" . DiffView::render($diff, $this->palette);
     }
 

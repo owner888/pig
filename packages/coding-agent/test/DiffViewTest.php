@@ -108,4 +108,29 @@ final class DiffViewTest extends TestCase
     {
         $this->assertSame('', Ansi::strip(DiffView::render('', $this->palette)));
     }
+
+    /**
+     * @return iterable<string, array{0: string}>
+     */
+    public static function badBytes(): iterable
+    {
+        yield 'stray continuation byte' => ["\x80"];
+        yield 'truncated sequence' => ["\xe4\xbd"];
+        yield 'lone 0xff' => ["\xff"];
+        yield 'surrogate as utf-8' => ["\xed\xa0\x80"];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('badBytes')]
+    public function testADiffOfAFileThatIsNotUtf8IsDrawnRatherThanFatal(string $bad): void
+    {
+        // `edit` is the one tool whose display text is built from the file's own bytes, so
+        // it is the one that can hand the renderer something that is not UTF-8 without any
+        // tool *output* being involved. Anything downstream of here measures with
+        // `Graphemes::split()`, which answers false on malformed UTF-8 and throws.
+        [$diff] = EditDiff::render("keep\n{$bad}old\n", "keep\n{$bad}new\n");
+        $rendered = DiffView::render($diff, $this->palette);
+
+        $this->assertTrue(mb_check_encoding($rendered, 'UTF-8'));
+        $this->assertStringContainsString('keep', Ansi::strip($rendered));
+    }
 }

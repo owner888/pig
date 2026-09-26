@@ -28,10 +28,38 @@ final class ToolExecutionTest extends TestCase
 
     private Palette $palette;
 
+    /** @var list<string> scratch directories made by `project()` */
+    private array $scratch = [];
+
     #[\Override]
     protected function setUp(): void
     {
         $this->palette = Palette::dark(true);
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        foreach ($this->scratch as $directory) {
+            foreach (glob($directory . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+
+            rmdir($directory);
+        }
+
+        $this->scratch = [];
+    }
+
+    /** A directory holding one file, for the edit preview to read. */
+    private function project(string $name, string $contents): string
+    {
+        $directory = sys_get_temp_dir() . '/pig-preview-' . getmypid() . '-' . bin2hex(random_bytes(4));
+        mkdir($directory, 0o700, true);
+        file_put_contents($directory . '/' . $name, $contents);
+        $this->scratch[] = $directory;
+
+        return $directory;
     }
 
     /** @param array<string, mixed> $arguments */
@@ -423,6 +451,108 @@ final class ToolExecutionTest extends TestCase
 
         $this->assertNotSame([], $lines);
         $this->assertTrue(mb_check_encoding(implode("\n", $lines), 'UTF-8'), 'the drawn frame is not UTF-8');
+    }
+
+    /**
+     * The same killer through the one path `Utf8::sanitize()` did not cover.
+     *
+     * `edit`'s diff is built from the file's own bytes and drawn through `DiffView` rather
+     * than through `output()`, so editing any file with one byte that is not UTF-8 in it
+     * took the session down — no tool output involved, and nothing on screen to say why.
+     */
+    #[DataProvider('binaryOutputs')]
+    public function testAnEditDiffThatIsNotUtf8IsDrawnRatherThanFatal(string $content): void
+    {
+        $tool = $this->tool('edit', ['path' => 'notes.txt']);
+        $tool->updateResult(new AgentToolResult(
+            [new TextContent('Replaced text in notes.txt.')],
+            ['diff' => " 1 keep\n-2 {$content}\n+2 {$content} changed\n", 'firstChangedLine' => 2],
+        ));
+
+        $lines = $tool->render(60);
+
+        $this->assertNotSame([], $lines);
+        $this->assertTrue(mb_check_encoding(implode("\n", $lines), 'UTF-8'), 'the drawn frame is not UTF-8');
+    }
+
+    // ---- an edit shown before it happens -----------------------------------------------
+
+    /** @param array<string, mixed> $arguments */
+    private function editing(string $directory, array $arguments): ToolExecutionComponent
+    {
+        return new ToolExecutionComponent('edit', $arguments, $this->palette, cwd: $directory);
+    }
+
+    public function testAnEditIsShownAsADiffBeforeItHappens(): void
+    {
+        $directory = $this->project('notes.txt', "one\ntwo\nthree\n");
+        $tool = $this->editing($directory, ['path' => 'notes.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+
+        $tool->setArgsComplete();
+        $shown = $this->text($tool);
+
+        // No result yet: this is the file as it still stands, read to answer "what is this
+        // call about to do" while a hook may be asking whether to let it.
+        $this->assertStringContainsString('-2 two', $shown);
+        $this->assertStringContainsString('+2 TWO', $shown);
+        $this->assertStringContainsString('notes.txt:2', $shown);
+        $this->assertSame("one\ntwo\nthree\n", file_get_contents($directory . '/notes.txt'));
+    }
+
+    public function testAnEditThatCannotBeMadeSaysSoBeforeItIsTried(): void
+    {
+        $directory = $this->project('notes.txt', "same\nsame\n");
+        $tool = $this->editing($directory, ['path' => 'notes.txt', 'oldText' => 'same', 'newText' => 'other']);
+
+        $tool->setArgsComplete();
+
+        // The tool's own words, from the tool's own check — worth reading before the call
+        // runs rather than after it has failed.
+        $this->assertStringContainsString('Found 2 occurrences', $this->text($tool));
+    }
+
+    public function testTheToolsOwnDiffReplacesThePreviewOnceItHasRun(): void
+    {
+        $directory = $this->project('notes.txt', "one\ntwo\n");
+        $tool = $this->editing($directory, ['path' => 'notes.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+
+        $tool->setArgsComplete();
+        $tool->updateResult(new AgentToolResult(
+            [new TextContent('Replaced text in notes.txt.')],
+            ['diff' => " 1 one\n-2 two\n+2 WROTE\n", 'firstChangedLine' => 2],
+        ));
+
+        // The preview read the file as it was; the result was built from the file actually
+        // written, and that is the one on disk.
+        $shown = $this->text($tool);
+        $this->assertStringContainsString('+2 WROTE', $shown);
+        $this->assertStringNotContainsString('+2 TWO', $shown);
+    }
+
+    public function testThereIsNoPreviewWithoutSomewhereToReadFrom(): void
+    {
+        $this->project('notes.txt', "one\ntwo\n");
+        $tool = $this->tool('edit', ['path' => 'notes.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+
+        $tool->setArgsComplete();
+
+        // No cwd given, so a relative path names nothing — answering from the process's own
+        // directory would preview an edit to whichever file happened to be there.
+        $this->assertStringNotContainsString('+2', $this->text($tool));
+        $this->assertStringNotContainsString('Could not find', $this->text($tool));
+    }
+
+    public function testArgumentsThatNeverFinishedArrivingAreNotPreviewed(): void
+    {
+        $directory = $this->project('notes.txt', "one\ntwo\n");
+        $tool = $this->editing($directory, ['path' => 'notes.txt', 'oldText' => 'two']);
+
+        $tool->setArgsComplete();
+
+        // A turn can end on a half-written call; there is nothing to preview and nothing
+        // to complain about either.
+        $this->assertStringNotContainsString('Could not find', $this->text($tool));
+        $this->assertStringContainsString('notes.txt', $this->text($tool));
     }
 
     public function testTheEarlierLinesNoteFitsANarrowTerminal(): void

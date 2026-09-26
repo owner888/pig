@@ -108,7 +108,7 @@ final class EditTool implements AgentTool
         $find = EditDiff::toLf((string) $arguments['oldText']);
         $replace = EditDiff::toLf((string) $arguments['newText']);
 
-        $new = $this->replace($old, $find, $replace, $path);
+        $new = EditDiff::apply($old, $find, $replace, $path);
 
         $signal?->throwIfAborted();
 
@@ -124,40 +124,4 @@ final class EditTool implements AgentTool
         );
     }
 
-    /** The content with the one occurrence swapped, or an error explaining why not. */
-    private function replace(string $content, string $find, string $replace, string $path): string
-    {
-        if ($find === '') {
-            throw new AgentError('oldText is empty. Give the exact text to replace.');
-        }
-
-        $count = substr_count($content, $find);
-
-        if ($count === 0) {
-            throw new AgentError(
-                "Could not find that exact text in {$path}. It must match the file exactly, "
-                    . 'including whitespace and line breaks — read the file and copy the text from it.',
-            );
-        }
-
-        if ($count > 1) {
-            throw new AgentError(
-                "Found {$count} occurrences of that text in {$path}. It has to be unique — "
-                    . 'include the lines around it so there is only one match.',
-            );
-        }
-
-        $at = strpos($content, $find);
-
-        // Spliced rather than replaced: str_replace is fine, but preg_replace and friends
-        // read `$1` in a replacement, and a model editing a shell script or a regex will
-        // sooner or later hand one over.
-        $new = substr($content, 0, (int) $at) . $replace . substr($content, (int) $at + strlen($find));
-
-        if ($new === $content) {
-            throw new AgentError("No change made to {$path}: newText is identical to oldText.");
-        }
-
-        return $new;
-    }
 }

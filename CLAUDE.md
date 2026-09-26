@@ -2883,6 +2883,51 @@ corpus, and the corpus is worth keeping the count of.** "It matched on the cases
 what reading gives you — and a run that finds nothing is only worth having if the count is written
 down, or the next reader has to take it on trust.
 
+### An edit was approved with nothing on screen but a path
+
+`edit-diff.ts` has a second reader pig did not have: `computeEditDiff()`, which upstream calls from
+`setArgsComplete()` the moment the assistant message ends — so the diff is drawn from the file **as
+it still stands**, before the tool runs. `EditDiff::preview()` is it, and `ToolExecutionComponent`
+now computes it in the same place.
+
+**The reason for porting it is not that the diff arrives a second early.** The gap between "the model
+finished writing this call" and "the call ran" is normally nothing — and is however long a
+`tool_call` hook takes to ask whether the edit may run. That guard is the whole reason hooks can ask
+anything, and until this it asked *"Let edit run?"* with a path and no diff: approving a change to a
+file without being shown the change.
+
+The comment that used to sit in `ToolExecutionComponent::edit()` said this was left out because a
+preview "would mean a second copy of the replace logic". That was wrong twice, and both halves are
+worth keeping: upstream does not have a second copy either — `edit.ts` and `computeEditDiff()` share
+`edit-diff.ts` — and the sharing was available here too, which is what `EditDiff::apply()` is. **A
+reason written next to a deviation is only worth what is in it**, and "we would have to duplicate it"
+should always be read as a question about whether it can be shared.
+
+Three things decided while porting it:
+
+- **The result's diff still wins once the tool has run.** Upstream keeps showing the preview, which
+  is the same text in every case but one — somebody changed the file in between — and there the file
+  on disk is the honest answer.
+- **`apply()` is shared, so a refusal cannot be worded twice.** Upstream's two readers have already
+  drifted: `No changes made to` against `No changes would be made to`, one fact in two sentences.
+  `testAPreviewRefusesInTheWordsTheEditWouldHaveUsed` asserts the two messages are the same string.
+- **No cwd means no preview**, rather than resolving a relative path against whatever directory the
+  process happens to be in. The two `!command` call sites pass none and neither is ever an edit.
+
+**And the harness had two gaps that this could not have been tested through**, which is the part
+worth remembering. `InteractiveModeTest`'s provider stub pushed `StartEvent` and `DoneEvent` and
+nothing between, so no `MessageUpdateEvent` was ever emitted and a tool call's component was created
+by `tool_execution_start` — *after* the message had ended. And it called `$agent->setTools()` without
+`HookedTool::wrap()`, so **no `tool_call` hook could fire in any test in that file**: a guard that
+works in production was unreachable from the one place that drives the whole front end. Both are
+fixed, and the second is the same shape as the settings that were "live in production and inert in
+every test" a few entries down.
+
+Regression test: `InteractiveModeTest::testAnEditIsOnScreenBeforeAHookIsAskedWhetherToAllowIt`,
+which parks a real turn on a real dialog and checks the diff is up and the file is not yet changed.
+It fails if either end of the wire is removed — the `setArgsComplete()` loop or the cwd. The
+component's own end is the five `ToolExecutionTest` cases under "an edit shown before it happens".
+
 ### A hook's message was the one long thing in the transcript ctrl+o could not fold
 
 `setExpanded()` exists on `ToolExecutionComponent`, `CompactionComponent` and
@@ -2938,6 +2983,35 @@ Two things worth keeping:
 
 Regression tests: the four `ToolExecutionTest::testOutputThatIsNotUtf8IsDrawnRatherThanFatal` rows,
 which assert the frame is drawn *and* is UTF-8 rather than merely not throwing.
+
+### Editing a file with one byte that is not UTF-8 in it took the session down
+
+The same killer as the entry below about `cat`, through the one path that fix did not cover, and
+found by writing down *why* pig keeps a file's odd bytes where upstream rewrites them:
+
+```
+Pig\Tui\TuiError: Grapheme split failed: Malformed UTF-8 characters, possibly incorrectly encoded
+```
+
+`edit`'s display text is not the tool's output — it is a **diff, built from the file's own bytes**.
+So `edit` is the one tool that can hand the renderer something that is not UTF-8 with no tool output
+involved at all, and it is the only display path that never went through `Utf8::sanitize()`:
+`ToolExecutionComponent::output()` sanitises, `edit()` handed `details['diff']` straight to
+`DiffView::render()`. One latin-1 file, one log with a stray byte, and the next frame threw out of
+`render()` inside the loop's own input callback.
+
+The fix is at the diff's display boundary — `DiffView::render()`, whose docblock already said it is
+the thing that paints a diff, and which is now where the bytes are made safe for every future caller.
+The tool's own text is left alone: it goes to the model and into the session file, and both of those
+have their own answers (`JSON_INVALID_UTF8_SUBSTITUTE` for the file).
+
+**The shape, and it is the second time this exact question has been worth asking:** a sweep for
+"which display paths sanitise" is not the same sweep as "which display paths are built from *text a
+tool printed*". This one is built from a file, and that is why it was not on the first list.
+
+Regression tests: the four `DiffViewTest::testADiffOfAFileThatIsNotUtf8IsDrawnRatherThanFatal` rows
+at the boundary, and the four `ToolExecutionTest::testAnEditDiffThatIsNotUtf8IsDrawnRatherThanFatal`
+rows through the component, which are the ones that reproduce the session ending.
 
 ### A budget handed out by flooring has to be corrected in both directions
 

@@ -20,6 +20,8 @@ use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
+use Pig\Ai\ToolCall;
+use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
@@ -29,6 +31,7 @@ use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\CustomTools\LoadedCustomTool;
 use Pig\CodingAgent\Hooks\HookApi;
+use Pig\CodingAgent\Hooks\HookedTool;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Interactive\InteractiveMode;
@@ -74,7 +77,7 @@ final class InteractiveModeTest extends TestCase
 
     private InteractiveMode $mode;
 
-    /** @var list<string> */
+    /** @var list<string|AssistantMessage> a bare string is an answer of that text */
     private array $answers = [];
 
     /** Set while a test is holding the agent mid-run; the stream it is waiting on. */
@@ -142,8 +145,9 @@ final class InteractiveModeTest extends TestCase
     }
 
     /**
-     * @param list<string>      $answers one per model call
-     * @param list<ContextFile> $context
+     * @param list<string|AssistantMessage> $answers one per model call
+     * @param list<ContextFile>             $context
+     * @param list<string>                  $tools which built-ins the agent is given
      */
     private function start(
         array $answers = [],
@@ -160,6 +164,7 @@ final class InteractiveModeTest extends TestCase
         array $initialImages = [],
         ?Auth $auth = null,
         ?string $changelog = null,
+        array $tools = ['read'],
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->settings = $settings ?? Settings::inMemory();
@@ -177,9 +182,13 @@ final class InteractiveModeTest extends TestCase
         ));
 
         // The same shape `CodingAgent::create()` builds: one built-in plus whatever was
-        // loaded. Without it `/tools` would be answering about an agent that has none,
-        // which is not the agent anyone runs.
-        $agent->setTools([...ToolSet::create($this->cwd, ['read']), ...($customTools?->agentTools() ?? [])]);
+        // loaded, wrapped. Without the tools `/tools` would be answering about an agent that
+        // has none; without the wrapping no `tool_call` hook fires at all, so a guard that
+        // works in production could not be reached from here.
+        $agent->setTools(HookedTool::wrap(
+            [...ToolSet::create($this->cwd, $tools), ...($customTools?->agentTools() ?? [])],
+            $hooks ?? new HookRunner(),
+        ));
 
         $saved = match (true) {
             $resume !== null => SessionManager::open($resume),
@@ -221,21 +230,32 @@ final class InteractiveModeTest extends TestCase
 
     private function provider(Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream
     {
-        $text = array_shift($this->answers) ?? throw new RuntimeException('out of scripted answers');
+        $answer = array_shift($this->answers) ?? throw new RuntimeException('out of scripted answers');
+        $message = $answer instanceof AssistantMessage ? $answer : self::message($answer);
         $stream = new AssistantMessageEventStream();
 
         // Held open: the two tests about typing mid-run need the agent to still be
         // working when the next key arrives, which an instant answer never is.
         if ($this->held === null && $this->holding) {
             $this->held = $stream;
-            $this->answers[] = $text;
+            $this->answers[] = $answer;
 
             return $stream;
         }
 
-        Async::spawn(static function () use ($stream, $text): void {
-            $stream->push(new StartEvent(self::message($text)));
-            $stream->push(new DoneEvent(StopReason::Stop, self::message($text)));
+        Async::spawn(static function () use ($stream, $message): void {
+            $stream->push(new StartEvent($message));
+
+            // Each call announced as it closes, which is what every real provider does and
+            // what gives the terminal a component to draw before the message ends. Without
+            // it the first thing the UI hears about a call is that it has started running.
+            foreach ($message->content as $index => $block) {
+                if ($block instanceof ToolCall) {
+                    $stream->push(new ToolCallEndEvent($index, $block, $message));
+                }
+            }
+
+            $stream->push(new DoneEvent($message->stopReason, $message));
             $stream->end();
         });
 
@@ -1803,6 +1823,65 @@ final class InteractiveModeTest extends TestCase
 
         // Not silence: a name that would not survive the session is a name nobody asked for.
         $this->assertStringContainsString('would not survive', $this->screen());
+    }
+
+    // ---- an edit shown before it is made ----------------------------------------------
+
+    /** @param array<string, mixed> $arguments */
+    private static function wants(string $tool, array $arguments): AssistantMessage
+    {
+        return new AssistantMessage(
+            [new ToolCall('call-1', $tool, $arguments)],
+            Api::AnthropicMessages,
+            'anthropic',
+            'claude-test',
+            new Usage(),
+            StopReason::ToolUse,
+        );
+    }
+
+    /**
+     * The window the preview exists for, and the wire that has to reach it.
+     *
+     * The component computing its own preview is one end; this is the other. A `tool_call`
+     * hook parks the whole turn on a question, and until this was wired the answer was
+     * given with nothing on screen but a path — approving a change to a file without being
+     * shown the change.
+     */
+    public function testAnEditIsOnScreenBeforeAHookIsAskedWhetherToAllowIt(): void
+    {
+        file_put_contents($this->cwd . '/notes.txt', "one\ntwo\nthree\n");
+
+        $api = new HookApi($this->cwd, 'guard.php');
+        $api->on('tool_call', function ($event, $context): mixed {
+            $context->ui->confirm('Let edit run?', 'notes.txt');
+
+            return null;
+        });
+
+        $this->start(
+            answers: [self::wants('edit', ['path' => 'notes.txt', 'oldText' => 'two', 'newText' => 'TWO']), 'done'],
+            hooks: $this->runner($api, 'guard.php'),
+            tools: ['edit'],
+        );
+
+        $this->type('fix line two');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+        $this->assertStringContainsString('Let edit run?', $screen);
+        $this->assertStringContainsString('-2 two', $screen);
+        $this->assertStringContainsString('+2 TWO', $screen);
+
+        // And it really has not happened yet.
+        $this->assertSame("one\ntwo\nthree\n", file_get_contents($this->cwd . '/notes.txt'));
+
+        $this->type("\e[B");
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertSame("one\nTWO\nthree\n", file_get_contents($this->cwd . '/notes.txt'));
     }
 
     // ---- what a hook says -------------------------------------------------------------

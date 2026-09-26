@@ -195,6 +195,52 @@ final class EditToolTest extends ToolTestCase
         $this->assertSame("\u{FEFF}one\r\nTWO\r\n", $after);
     }
 
+    // ---- the same edit, previewed ---------------------------------------------------
+
+    public function testAPreviewIsTheDiffTheEditWouldProduceAndChangesNothing(): void
+    {
+        $this->file('a.txt', "one\ntwo\nthree\n");
+
+        [$diff, $line] = EditDiff::preview('a.txt', 'two', 'TWO', $this->cwd);
+
+        $this->assertSame("one\ntwo\nthree\n", file_get_contents($this->cwd . '/a.txt'));
+        $this->assertSame(2, $line);
+
+        // And it is the diff, not an approximation of it: the edit goes through the same
+        // `apply()`, so the preview cannot show one change and the tool make another.
+        $result = $this->run($this->edit(), ['path' => 'a.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+        $this->assertSame($diff, $result->details['diff']);
+        $this->assertSame($line, $result->details['firstChangedLine']);
+    }
+
+    public function testAPreviewRefusesInTheWordsTheEditWouldHaveUsed(): void
+    {
+        $this->file('a.txt', "same\nsame\n");
+
+        $previewed = $this->assertThrows(
+            AgentError::class,
+            fn () => EditDiff::preview('a.txt', 'same', 'other', $this->cwd),
+            'Found 2 occurrences',
+        );
+
+        $attempted = $this->assertThrows(
+            AgentError::class,
+            fn () => $this->run($this->edit(), ['path' => 'a.txt', 'oldText' => 'same', 'newText' => 'other']),
+        );
+
+        // One sentence, not two that can drift — upstream's have already drifted.
+        $this->assertSame($attempted->getMessage(), $previewed->getMessage());
+    }
+
+    public function testAPreviewOfAFileThatIsNotThereSaysSo(): void
+    {
+        $this->assertThrows(
+            AgentError::class,
+            fn () => EditDiff::preview('nope.txt', 'a', 'b', $this->cwd),
+            'File not found',
+        );
+    }
+
     // ---- the diff ------------------------------------------------------------------
 
     public function testTheDiffGoesToTheUiWithLineNumbers(): void

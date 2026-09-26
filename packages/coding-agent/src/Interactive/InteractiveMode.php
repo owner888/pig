@@ -2561,6 +2561,13 @@ final class InteractiveMode
             }
 
             $this->tools = [];
+        } else {
+            // The message is whole, so every call in it is whole — which is the moment an
+            // edit can be shown before it happens, and the last moment before a `tool_call`
+            // hook may stop everything to ask about one. Upstream's own place for this.
+            foreach ($this->tools as $tool) {
+                $tool->setArgsComplete();
+            }
         }
 
         $this->streaming = null;
@@ -2732,6 +2739,7 @@ final class InteractiveMode
                 $this->sayWarning("tool {$name}: {$problem}");
             },
             showImages: $this->showImages,
+            cwd: $this->cwd,
         );
         $tool->setExpanded($this->expanded);
         $this->chat->addChild($tool);

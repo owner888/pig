@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Tools;
 
+use Pig\Agent\AgentError;
+
 /**
  * Working out what an edit changed, and drawing it.
  *
@@ -150,6 +152,94 @@ final class EditDiff
     private static function number(int $line, int $width): string
     {
         return str_pad((string) $line, $width, ' ', STR_PAD_LEFT);
+    }
+
+    /**
+     * The content with the one occurrence of $find swapped for $replace.
+     *
+     * Shared with `preview()` below and with `EditTool` rather than written twice: what
+     * counts as a match, how many is too many and what to say about it are the same three
+     * questions whether or not the file is about to be written. Upstream has two readers
+     * too, and the sentences have already drifted — `edit.ts` says `No changes made to`
+     * where `computeEditDiff()` says `No changes would be made to`, which is one fact
+     * worded twice and the beginning of them meaning different things.
+     *
+     * @param string $path as the model wrote it — it is in every message
+     * @throws AgentError when the text is missing, is not unique, or changes nothing
+     */
+    public static function apply(string $content, string $find, string $replace, string $path): string
+    {
+        if ($find === '') {
+            throw new AgentError('oldText is empty. Give the exact text to replace.');
+        }
+
+        $count = substr_count($content, $find);
+
+        if ($count === 0) {
+            throw new AgentError(
+                "Could not find that exact text in {$path}. It must match the file exactly, "
+                    . 'including whitespace and line breaks — read the file and copy the text from it.',
+            );
+        }
+
+        if ($count > 1) {
+            throw new AgentError(
+                "Found {$count} occurrences of that text in {$path}. It has to be unique — "
+                    . 'include the lines around it so there is only one match.',
+            );
+        }
+
+        $at = strpos($content, $find);
+
+        // Spliced rather than replaced: str_replace is fine, but preg_replace and friends
+        // read `$1` in a replacement, and a model editing a shell script or a regex will
+        // sooner or later hand one over.
+        $new = substr($content, 0, (int) $at) . $replace . substr($content, (int) $at + strlen($find));
+
+        if ($new === $content) {
+            throw new AgentError("No change made to {$path}: newText is identical to oldText.");
+        }
+
+        return $new;
+    }
+
+    /**
+     * What that edit would do, read off the file as it stands, without doing it.
+     *
+     * Upstream's `computeEditDiff`, and it is the reason this file reads from disk at all.
+     * The diff is drawn as soon as the model has finished *writing* the call rather than
+     * when the call returns, and the gap between those two is not the moment it sounds
+     * like: it is however long a `tool_call` hook takes to ask whether the edit may run.
+     * Without this, that question is answered with nothing on screen but a path — which is
+     * the one screen where knowing what is about to change is the whole point.
+     *
+     * Read-only, so it asks only for readability where `EditTool` asks for both. A refusal
+     * comes back as the same `AgentError` the tool would raise, from the same place, so the
+     * preview cannot say one thing and the attempt another.
+     *
+     * @return array{0: string, 1: int|null} the diff, and the line the change starts on
+     * @throws AgentError
+     */
+    public static function preview(string $path, string $find, string $replace, string $cwd): array
+    {
+        $absolute = Paths::resolve($path, $cwd);
+
+        if (!is_file($absolute) || !is_readable($absolute)) {
+            throw new AgentError("File not found: {$path}");
+        }
+
+        $raw = file_get_contents($absolute);
+
+        if ($raw === false) {
+            throw new AgentError("Could not read {$path}");
+        }
+
+        // No line-ending detection: nothing is written, and the diff is of the normalised
+        // text either way. The mark still comes off, or a match on the first line fails.
+        [, $content] = self::splitBom($raw);
+        $old = self::toLf($content);
+
+        return self::render($old, self::apply($old, self::toLf($find), self::toLf($replace), $path));
     }
 
     /**
