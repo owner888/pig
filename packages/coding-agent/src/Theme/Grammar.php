@@ -93,6 +93,17 @@ final readonly class Grammar
     }
 
     /** The language a file is in, going by its extension. */
+    /**
+     * Which grammar a file name asks for, or null for one nothing here can colour.
+     *
+     * The extension, where upstream takes the last dot-separated piece of the whole name.
+     * The two agree on everything with a dot in it and differ on the names that have none:
+     * `Makefile` and `Dockerfile` come back as themselves there, and upstream's table has a
+     * row for each. Here they are extensionless and answer null — which is the same drawing
+     * either way, because neither is among the thirteen grammars. **The day one of them is,
+     * this is the line that has to learn about whole file names**, and it will look like the
+     * grammar simply not working.
+     */
     public static function fromPath(string $path): ?string
     {
         $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));

@@ -153,6 +153,12 @@ final class Palette
             // Unstyled, as above: the terminal's own foreground is already the right
             // colour for a bracket, and escaping every one of them costs a line's width
             // in bytes for nothing.
+            //
+            // Which is why the two theme tables below have 49 colours where upstream's JSON
+            // has 51: `syntaxOperator` and `syntaxPunctuation` are the two it defines and this
+            // has nothing to name them with, because `Highlight` has seven categories and a
+            // `plain`. Checked the other way round too — every one of the 49 holds the same
+            // hex as upstream's, var references resolved, in both themes.
             plain: static fn (string $text): string => $text,
         );
     }

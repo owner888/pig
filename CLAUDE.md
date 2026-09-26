@@ -282,6 +282,20 @@ unknown name throws where the component is wired rather than rendering colourles
 Reading a theme from JSON, the custom-themes directory and the watcher that reloads one as
 it is edited are not ported; they arrive with a `/theme` command if that is ever wanted.
 
+Audited against `theme.ts` difference by difference, and it is the one area so far where that
+found nothing to fix — worth recording, because "nothing was wrong" is only worth anything with
+the evidence attached. `Colour::to256()` was run against upstream's `rgbTo256` over **all
+16,777,216 colours**, a byte per colour on each side, files compared: zero differences. Both
+colour tables were resolved through their `vars` and compared name by name: every one of pig's 49
+holds upstream's hex, in both themes. What differs is two names — `syntaxOperator` and
+`syntaxPunctuation`, which `Highlight` has no category for and paints as `plain` — and three
+places where pig is stricter or narrower with the reason written beside each: `Colour::rgb()`
+rejects a hex digit that is not one where `parseInt` would read what it can, `Grammar::fromPath()`
+answers on the extension where upstream takes the last dotted piece of the whole name (so
+`Makefile` and `Dockerfile` are rows there and nothing here, which draws the same until one of
+them gets a grammar), and the extension table maps into thirteen grammars rather than forty
+languages, which is the `cli-highlight` trade stated above.
+
 `!command` runs a shell command and puts the result in the conversation, as a
 `Session\BashExecution` — an app message, not an LLM one. `CodingAgent` supplies the
 `convertToLlm` that turns it into a user message on the way to the model; the agent's own

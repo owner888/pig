@@ -71,6 +71,12 @@ final class Colour
      * the colour was nearly neutral to begin with. Without that guard a slightly warm
      * grey snaps to a pure grey and the theme loses its tint; with it, a colour with any
      * real saturation keeps its hue even when a grey happens to be numerically nearer.
+     *
+     * **Verified exhaustively against upstream's `rgbTo256`, not read against it:** all
+     * 16,777,216 colours, both sides written to a byte per colour and the two files compared.
+     * Zero differences. Worth saying because this is the one piece of real arithmetic in the
+     * theme, floating-point weights and all, and "it looks the same" is not a claim anybody
+     * can check later.
      */
     public static function to256(int $red, int $green, int $blue): int
     {
@@ -99,7 +105,17 @@ final class Colour
             : 16 + 36 * $redIndex + 6 * $greenIndex + $blueIndex;
     }
 
-    /** @return array{0: int, 1: int, 2: int} */
+    /**
+     * The three channels of `#rrggbb`.
+     *
+     * Every digit has to be a hex digit, where upstream checks the length and then trusts
+     * `parseInt(…, 16)` — which stops at the first character it cannot read rather than
+     * failing, so `#1z1z1z` is rgb(1, 1, 1) there and a mistyped colour is a colour. Only a
+     * theme file can be wrong this way and pig does not read one yet, so this is strictness
+     * with nothing to catch today; it costs a regex.
+     *
+     * @return array{0: int, 1: int, 2: int}
+     */
     public static function rgb(string $hex): array
     {
         $digits = ltrim($hex, '#');
