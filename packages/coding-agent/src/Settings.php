@@ -90,6 +90,21 @@ final class Settings
         return is_string($theme) && $theme !== '' ? $theme : null;
     }
 
+    /**
+     * The shell to run commands with, when this machine wants a particular one.
+     *
+     * Upstream's key. It earns a typed accessor because of macOS: `/bin/bash` there is **3.2**
+     * — no `mapfile`, no `${var^^}` — and a homebrew bash 5 does not get picked up by being
+     * installed, since `Shell::bash()` prefers `/bin/bash`. pig stored this key and nothing read
+     * it, which is the `terminal.showImages` shape again.
+     */
+    public function shellPath(): ?string
+    {
+        $path = $this->get('shellPath');
+
+        return is_string($path) && $path !== '' ? $path : null;
+    }
+
     public function setTheme(string $theme): void
     {
         $this->set('theme', $theme);

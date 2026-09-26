@@ -18,11 +18,42 @@ final class Shell
 {
     private static ?string $bash = null;
 
+    private static ?string $configured = null;
+
+    /**
+     * Use this shell instead of looking for one. Null goes back to looking.
+     *
+     * Static because `bash()` is, and for `Models::register()`'s reason: a command runs from
+     * `bash`, from `!command`, and from a hook, and a shell only some of those could see is a
+     * shell that works until you use another door. `bin/pig` sets it once from the settings.
+     *
+     * @internal wired by `CodingAgent::session()`
+     */
+    public static function useShellPath(?string $path): void
+    {
+        self::$configured = $path === null || $path === '' ? null : $path;
+        self::$bash = null;
+    }
+
     /** The shell to run commands with. */
     public static function bash(): string
     {
         if (self::$bash !== null) {
             return self::$bash;
+        }
+
+        if (self::$configured !== null) {
+            // Refused by name rather than quietly falling back to `/bin/bash`: somebody who
+            // wrote this down did it because the default was the wrong one, and silently using
+            // it anyway is the bug they were working around, back again with no way to see it.
+            if (!is_executable(self::$configured)) {
+                throw new AgentError(
+                    "shellPath is set to '" . self::$configured . "', which is not executable. "
+                        . 'Fix or remove it in settings.json.',
+                );
+            }
+
+            return self::$bash = self::$configured;
         }
 
         $candidates = ['/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash', '/opt/homebrew/bin/bash'];
@@ -45,6 +76,7 @@ final class Shell
     public static function forget(): void
     {
         self::$bash = null;
+        self::$configured = null;
     }
 
     /**

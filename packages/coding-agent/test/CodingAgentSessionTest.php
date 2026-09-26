@@ -113,6 +113,26 @@ final class CodingAgentSessionTest extends TestCase
      * @param array<string, string|false> $environment
      * @param array<string, mixed>        $named
      */
+    public function testAContextFileThatCannotBeReadIsAmongTheStartupWarnings(): void
+    {
+        $path = $this->cwd . '/AGENTS.md';
+        file_put_contents($path, 'be careful');
+        chmod($path, 0o000);
+
+        if (is_readable($path)) {
+            // root reads whatever it likes, so this runs where the suite actually runs.
+            $this->markTestSkipped('cannot make a file unreadable as this user');
+        }
+
+        $started = $this->start();
+
+        // `ContextFiles` collects the complaint; this is the other end of that wire, and the
+        // mutation check is what said it was missing — taking the loop out of `session()`
+        // broke no test at all.
+        $this->assertNotSame([], $started->warnings);
+        $this->assertStringContainsString('AGENTS.md could not be read', implode(' | ', $started->warnings));
+    }
+
     private function start(array $environment = [], array $named = [], ?Auth $auth = null): StartedSession
     {
         $settings = Settings::load($this->cwd, $this->home);

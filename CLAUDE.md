@@ -144,6 +144,15 @@ that the window was resized; without it the UI would draw at the startup width f
 `ProcessTerminal` refuses to start rather than doing that quietly. `ext-intl` is deliberately *not*
 required — see [Five upstream dependencies that are not needed here](#five-upstream-dependencies-that-are-not-needed-here).
 
+**`shellPath` in the settings names the shell**, which is upstream's key and was a key pig stored
+and nothing read — the `terminal.showImages` shape again. It earns its keep on macOS: `/bin/bash`
+there is **3.2**, with no `mapfile` and no `${var^^}`, and `Shell::bash()` prefers `/bin/bash`, so
+installing a homebrew bash 5 did nothing. A path that is not executable is **refused by name**
+rather than falling back to `/bin/bash`, because the fallback is the bug the setting was written to
+work around. `Shell::useShellPath()` is static for `Models::register()`'s reason: `bash`, a typed
+`!command` and a hook's `exec()` all reach one shell, and a shell only some of them could see is a
+shell that works until you use another door.
+
 **One required external binary: `stty`.** PHP core has no termios binding and ext-pcntl does not
 add one, so raw mode and the window size go through `proc_open('stty …')` against `/dev/tty`.
 
@@ -3432,16 +3441,84 @@ times and reads as "something killed this, probably for memory". Told "code 9" i
 exit code the program chose, in a program that never got to choose one. An out-of-memory kill during
 a build is the common case, and `139` for a segfault is the next one.
 
-`Run::close()` asks `proc_get_status()` before `proc_close()` — the only order that works, since the
-status is the last thing the process resource knows — and returns `128 + termsig` when the command was
-signalled.
-
 **Upstream has the opposite bug and it is worse.** Node reports `code: null` for a signal death, and
 `bash.ts` guards with `code !== 0 && code !== null` — so a segfaulting build resolves as a command
 that *worked*, with whatever it printed before dying.
 
+The first fix here asked `proc_get_status()` and then `proc_close()`, on the grounds that the status
+is the last thing the process resource knows. Both halves of that turned out to be wrong about how
+PHP behaves, and **the sentence that was here — "`proc_close()` hands back the signal number" — is
+only true when nothing asked for the status first.** What was measured, identically on 8.3 and 8.4,
+by `proc_get_status()` in a loop and printing every call:
+
+```
+first call that finds it gone   running=false exitcode=-1 signaled=true  termsig=15
+second call                     running=false exitcode=-1 signaled=false termsig=0
+third call                      running=false exitcode=-1 signaled=false termsig=0
+proc_close=-1
+```
+
+So the status of a command something killed is **readable exactly once** — the call that finds the
+process gone is the call that reaps it, and after that every reader is told the command chose its own
+exit code, `proc_close()` included. Two rules come out of that, and `Process::awaitFinish()` is where
+both of them live:
+
+- **The answer is kept, not asked for again.** `codeOf()` takes the status that carries it; nothing
+  reads `proc_close()`'s return any more. `run()`, `stream()` and `feed()` already had the right
+  status in hand from their own loops and now keep it — `stream()`'s loop goes round again after the
+  process has gone whenever there is still output on the pipe, so the last status it read was not
+  the one that mattered.
+- **A command finishes twice, and the second time is the one to wait for**: its pipes close, and
+  then it exits. See the entry below.
+
 Regression tests: the three `BashToolTest::testACommandKilledBySignalReportsWhatTheShellWouldHaveSaid`
-rows.
+rows, `ProcessTest::testTheSameKilledCommandIsReportedTheSameWithAFiberAndWithout` — the two doors,
+since the translation used to be in `runAsync()` and `Run::close()` and nowhere else, so the same
+command reported 137 during a turn and 9 from a hook factory at startup — and
+`testAKilledCommandStreamingItsOutputReportsTheSignalToo`, which is the number `grep` puts in front
+of the model.
+
+### A command finishes twice, and the pipes closing is the first of them
+
+The three rows above failed on 8.3 in one full-suite run and passed on 8.4 and in twenty-five runs of
+their own file:
+
+```
+expected "Command exited with code 15" to contain "exited with code 143"
+```
+
+The first hypothesis was a difference between the two PHP versions, and a probe disproved it —
+worth recording, because the probe was written to confirm rather than to test, and it reported
+`running=false signaled=true termsig=15` six times out of six on both. What it did not do was
+reproduce the conditions: the failing run had the other version's suite beside it.
+
+**The two events are the pipes reaching EOF and the process exiting, and they arrive in that
+order.** Both `Run` and `Process::runAsync()` complete their `Deferred` on the first, so the status
+was asked for in the window between — where `running` is still true, so `signaled` is false and the
+number that comes back is the bare signal. Under four spinning CPUs that window caught **23 of 120
+runs** of `kill -15 $$`, on 8.3 and 8.4 alike.
+
+`Process::awaitFinish()` is the wait for the second event, polled at `POLL_MICROSECONDS` because
+PHP offers no waiting that leaves the status readable — `proc_close()` is the blocking wait and it
+is also the end of the resource. Three things about it are load-bearing:
+
+- **It is on the loop.** By the time it is reached the pipes are shut, so nothing else would wake
+  the loop, and `proc_close()` holds the one thread for as long as the command has left. That was a
+  second, worse bug hiding behind the first: `bash -c 'exec 1>&- 2>&-; sleep 30'` froze pig for
+  thirty seconds — no keystrokes, no spinner, no escape — which is exactly the freeze
+  `runAsync()` was written to remove, arriving by the one path that skipped it.
+- **It happens while the timer is still armed**, inside the `try` rather than after the `finally`
+  that cancels it. Otherwise a command that outlived its output is waited out in full and then
+  reported as having *worked*: the timeout it blew through was cancelled before the wait began.
+  That is what `testATimeoutStillReachesACommandThatOutlivedItsOutput` and its escape twin hold
+  down, and moving the call one block out is what makes them fail.
+- **There is no deadline of its own**, for the same reason: the caller's is still running, and a
+  second one underneath would cut a command short on a rule nobody asked for.
+
+A command that shuts its own standard output and then keeps working is what makes all of this
+reproducible without load — the window becomes the whole of its remaining life.
+`testACommandWhoseOutputEndsBeforeItDoesStillReportsTheSignal` exists in both files for that
+reason: *a race is worth a test that is not one.*
 
 ### Output truncated by line count also needs somewhere to look
 
@@ -3870,8 +3947,9 @@ Four things in it are load-bearing rather than tidy, and three are rules this fi
   for the rest of its span and `bin/pig` waits for the loop before it exits, so a leak here is a
   program that does not quit. `ProcessTest::testTheLoopHasNothingLeftToWaitForAfterwards` fails on
   exactly that, and it asserts the elapsed time too — otherwise it would pass by waiting.
-- **A signal death is 128 + the signal**, the same translation `Tools\Run::close()` makes, for the
-  same reason.
+- **A signal death is 128 + the signal**, and it is `Process::codeOf()` rather than a translation of
+  its own. Having two — this one and `Tools\Run::close()`'s — is how `run()` came to report 9 for
+  the command `runAsync()` reported 137 for; see the entry on that above.
 - **With no fiber to suspend, it is `run()`.** That is not a fallback papering over a failure:
   blocking is correct when there is no loop being kept alive. It is also not speculative — taking
   the branch out turns **five existing tests** red, among them
@@ -3888,9 +3966,12 @@ Four things in it are load-bearing rather than tidy, and three are rules this fi
   tests passed while waiting out the timeout, which is how the defect got written in the first
   place.
 
+- **And then it waits for the process**, which is the one thing the list above was missing and which
+  the pipes closing does not tell you — see the entry on a command finishing twice.
+
 `Process` had **no test file at all** before this — 370 lines of process handling, which is the size
 that goes unchecked, exactly as `Config`'s sixty lines of path arithmetic were. `ProcessTest` covers
-`runAsync` in seventeen cases; the rest of the class is still only covered through its callers.
+`runAsync` in nineteen cases; the rest of the class is still only covered through its callers.
 
 **Then escape was wired through, and the mutation check caught the missing end.** Removing
 `signal:` from `InteractiveMode::initialize()` broke **no test at all** — the runner-level tests
@@ -3902,6 +3983,53 @@ presses escape for real:
 `sleep 5`, escape arrives while the guard is parked on it, and the command comes back stopped. Note
 *why* the key can arrive at all: the command is not blocking the loop, which is the previous fix
 holding the door open for this one.
+
+### An HTML export coloured its code with a palette from neither theme
+
+`HtmlExport::style()` had the six `hl-*` colours written out as hex — `#b5bd68`, `#b294bb`,
+`#81a2be` and three more — and they belong to **neither of pig's two palettes**. What that costs
+is worst on the light theme, where the export is a white page and those are colours chosen for a
+dark one: pale blue keywords and mauve numbers, at a contrast nobody would pick. On the dark theme
+it is milder and still wrong — an export that does not match the terminal the person had just been
+reading.
+
+The colours were right there. `Palette` holds all 49 per theme and resolves them through its
+`vars`; it just had no way to hand one over as anything but an escape sequence, because every
+consumer until now was a terminal. `Palette::hex()` is that way, and `style()` generates the seven
+rules from `SYNTAX`, which is the one place that has to know what `Highlight`'s class names mean.
+
+The two *page* palettes stay written out, and that is not the same decision: a document needs a
+card, a border and a rule that no terminal theme has an opinion about. What is shared is what both
+media are colouring the same thing for.
+
+Regression test: `HtmlExportTest::testTheSyntaxColoursAreTheThemesOwnInBothThemes`, which asserts
+each theme's own `syntaxKeyword` **and** that the old hex is gone.
+
+### `AGENTS.md` that could not be read was skipped without a word
+
+Every loader in this repository hands a problem it cannot fix back to `bin/pig` to print before
+the UI starts — `Skills`, `HookLoader`, `CustomToolLoader`, `Settings`, `CustomModels`. `ContextFiles`
+was the one that swallowed it. Its comment said *"skipped rather than fatal"*, which answers
+whether to **stop** and says nothing about whether to **speak**; upstream prints a yellow warning
+here. Permissions and a broken symlink are the two ways in, and what it costs is that the agent
+works without instructions the person wrote and nobody ever finds out.
+
+Two things about the shape of the fix:
+
+- **`load()` keeps its signature and `loadWithWarnings()` is the new one**, which is upside down
+  from its three siblings — `Skills::load()`, `HookLoader::load()` and `CustomToolLoader::load()`
+  all return `[things, problems]`. The reason is not a design preference: `Prompt\SystemPrompt`
+  calls `load()` and is a file the developer owns, so the tuple cannot be pushed into it from
+  here. Aligning it is a one-line change the next person to touch that file can make.
+- **An unreadable `AGENTS.md` no longer hides the `CLAUDE.md` beside it.** The fall-through to the
+  second name is upstream's behaviour and the useful one, since the second name exists precisely
+  for a project that has one and not the other.
+
+**And the mutation check caught the missing end again.** Dropping the warnings where
+`CodingAgent::session()` collects them broke no test — `ContextFilesTest` proves the loader and says
+nothing about who reads it. That is the third time in four batches, which is worth saying plainly:
+**after wiring anything through, mutate each end separately, not the middle.** Both ends have tests
+now; they skip as root, so they run where the suite is actually run rather than in the container.
 
 ### A skill whose description was not UTF-8 went into the prompt with no description
 

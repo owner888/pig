@@ -18,6 +18,7 @@ use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Theme\Palette;
 
 /**
  * A conversation as one HTML file that opens anywhere.
@@ -95,7 +96,7 @@ final class HtmlExport
             . '<meta charset="utf-8">' . "\n"
             . '<meta name="viewport" content="width=device-width, initial-scale=1">' . "\n"
             . '<title>' . MarkdownHtml::escape($title) . "</title>\n"
-            . "<style>\n" . self::style() . "</style>\n"
+            . "<style>\n" . self::style($theme) . "</style>\n"
             . "</head>\n<body>\n"
             . '<header><h1>' . MarkdownHtml::escape(self::opening($messages)) . '</h1>'
             . '<p class="where">' . MarkdownHtml::escape($cwd) . '</p></header>' . "\n"
@@ -345,8 +346,29 @@ final class HtmlExport
      * definition, and a template that has to be found at run time is one more thing that
      * can be missing from an installation.
      */
-    private static function style(): string
+    /**
+     * The stylesheet, with the theme's own colours in it.
+     *
+     * The two page palettes are written out because the export is a document and not a
+     * terminal — a card needs a border and a shadow that no terminal theme has an opinion
+     * about. **The syntax colours are not**: those are the theme's, and they used to be six
+     * hand-written hex values belonging to neither of pig's two palettes. What that cost is
+     * visible the moment somebody on the light theme exports anything with code in it — pale
+     * blue keywords and mauve numbers on white — and on the dark theme it meant an export that
+     * did not match the terminal the person had just been reading.
+     *
+     * `Highlight` writes `<span class="hl-keyword">` for the terminal's sake as well, so the
+     * class names are the seam and this is the one place that has to know what they mean.
+     */
+    private static function style(string $theme): string
     {
+        $palette = Palette::named(in_array($theme, Palette::names(), true) ? $theme : 'dark', false);
+        $syntax = '';
+
+        foreach (self::SYNTAX as $class => $colour) {
+            $syntax .= "        .hl-{$class} { color: " . $palette->hex($colour) . "; }\n";
+        }
+
         return <<<'CSS'
         :root { --bg: #16161d; --fg: #d8d8e0; --dim: #8a8a99; --card: #1e1e26; --line: #2c2c38;
           --user: #2a2a3a; --accent: #8abeb7; --error: #cc6666; --code: #14141a; }
@@ -381,12 +403,24 @@ final class HtmlExport
         img { max-width: 100%; border-radius: 6px; margin: .5rem 0; }
         a { color: var(--accent); }
         hr { border: 0; border-top: 1px solid var(--line); margin: 1.2rem 0; }
-        .hl-comment { color: var(--dim); font-style: italic; }
-        .hl-string { color: #b5bd68; }
-        .hl-number { color: #b294bb; }
-        .hl-keyword { color: #81a2be; }
-        .hl-type, .hl-variable { color: #8abeb7; }
-        .hl-function { color: #f0c674; }
-        CSS;
+        .hl-comment { font-style: italic; }
+        CSS . "\n" . $syntax;
     }
+
+    /**
+     * The highlighter's class names, and which palette colour each one is.
+     *
+     * `Highlight` paints `syntaxOperator` and `syntaxPunctuation` as plain text — it has no
+     * category for either — so neither has a class here, which is the same shortfall stated in
+     * CLAUDE.md about the terminal.
+     */
+    private const array SYNTAX = [
+        'comment' => 'syntaxComment',
+        'string' => 'syntaxString',
+        'number' => 'syntaxNumber',
+        'keyword' => 'syntaxKeyword',
+        'type' => 'syntaxType',
+        'function' => 'syntaxFunction',
+        'variable' => 'syntaxVariable',
+    ];
 }

@@ -32,12 +32,23 @@ final class Palette
     /** @var array<string, string> name to the escape that turns it on */
     private array $colours = [];
 
+    /**
+     * @var array<string, string> name to the colour itself, `#rrggbb`
+     *
+     * Kept beside the escapes because one consumer does not want an escape: the HTML export
+     * writes a stylesheet, and a CSS file full of `\e[38;2;…m` is no use to it. Without this
+     * it had the dark theme's six syntax colours written out by hand, so a light-theme export
+     * came out with pale blue keywords on white.
+     */
+    private array $hex = [];
+
     private function __construct(array $palette, private readonly bool $truecolor)
     {
         $vars = $palette['vars'];
 
         foreach ($palette['colors'] as $name => $value) {
             $resolved = self::resolve($value, $vars, $name);
+            $this->hex[$name] = $resolved;
 
             // Backgrounds are named as such, and reset differently, so they are kept
             // apart by name rather than by a second table.
@@ -102,6 +113,12 @@ final class Palette
         $reset = str_ends_with($name, 'Bg') ? "\e[49m" : "\e[39m";
 
         return static fn (string $text): string => $escape . $text . $reset;
+    }
+
+    /** The named colour as `#rrggbb`, for a consumer that is not a terminal. */
+    public function hex(string $name): string
+    {
+        return $this->hex[$name] ?? throw new InvalidArgumentException("No colour called '{$name}'");
     }
 
     public function isTruecolor(): bool

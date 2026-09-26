@@ -17,6 +17,7 @@ use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Export\MarkdownHtml;
+use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
 
@@ -195,6 +196,19 @@ final class HtmlExportTest extends TestCase
         $this->assertStringContainsString('<span class="hl-keyword">echo</span>', $html);
         $this->assertStringContainsString('&lt;?php', $html);
         $this->assertStringNotContainsString("\e[", $html);
+    }
+
+    public function testTheSyntaxColoursAreTheThemesOwnInBothThemes(): void
+    {
+        $dark = HtmlExport::render([new UserMessage('x')], '/p', 'dark');
+        $light = HtmlExport::render([new UserMessage('x')], '/p', 'light');
+
+        // The stylesheet had six syntax colours written out by hand, belonging to neither
+        // theme — so a light export coloured keywords pale blue on white, and a dark one did
+        // not match the terminal the person had just been reading.
+        $this->assertStringContainsString(Palette::dark(false)->hex('syntaxKeyword'), $dark);
+        $this->assertStringContainsString(Palette::light(false)->hex('syntaxKeyword'), $light);
+        $this->assertStringNotContainsString('#81a2be', $dark, 'a colour from neither palette');
     }
 
     public function testATightListStaysTight(): void

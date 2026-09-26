@@ -7,6 +7,7 @@ namespace Pig\Tui;
 use Closure;
 use Fiber;
 use Pig\Async\AbortSignal;
+use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
 
@@ -31,6 +32,92 @@ final class Process
 
     /** How much to take off a pipe at a time, for the loop-driven reads. */
     private const int READ_CHUNK = 65536;
+
+    /**
+     * Wait for a process to be over, close it, and report what `$?` would have said.
+     *
+     * Two things about `proc_get_status()` decide the shape of this, and both were measured
+     * rather than read — identically on 8.3 and 8.4:
+     *
+     * **A command finishes twice: its pipes close, and then it exits.** Waiting for the
+     * first and then asking for the status is answered `running: true` about one time in
+     * eight on a loaded machine, and a command that closes its own standard output first is
+     * in that window for the whole of its remaining life. In that window `signaled` is false,
+     * so a command something killed reads as one that chose its own exit code.
+     *
+     * **And the status is readable exactly once.** The first call that reports the process
+     * gone carries `signaled: true, termsig: 15`; every later call says `signaled: false,
+     * termsig: 0` and `exitcode: -1`, and `proc_close()` says -1 too, because that first
+     * call is the one that reaped the child. So there is no asking again later: the answer
+     * is kept from the read that carries it, and `proc_close()`'s own return is not used.
+     *
+     * Polled, because PHP offers no waiting that leaves the status readable afterwards —
+     * `proc_close()` is the blocking wait and it is also the end of the resource. **On the
+     * loop, so the wait is not a freeze**: by the time this is reached the pipes are shut,
+     * so nothing else would wake the loop, and `proc_close()` would hold the one thread for
+     * as long as the command had left. **With no fiber to suspend it sleeps**, for
+     * `runAsync()`'s reason — blocking is correct where there is no loop being kept alive.
+     *
+     * There is no deadline here on purpose. Whoever is waiting has one — `Run::wait()`'s
+     * timer and `runAsync()`'s are both still armed across this — and a second one
+     * underneath would cut a command short on a rule nobody asked for.
+     *
+     * @param resource|null $process
+     */
+    public static function awaitFinish(mixed $process): int
+    {
+        if (!is_resource($process)) {
+            return 0;
+        }
+
+        while (true) {
+            $status = proc_get_status($process);
+
+            if ($status['running'] !== true) {
+                break;
+            }
+
+            if (Fiber::getCurrent() === null) {
+                usleep(self::POLL_MICROSECONDS);
+
+                continue;
+            }
+
+            Async::delay(self::POLL_MICROSECONDS / 1_000_000);
+        }
+
+        $exit = self::codeOf($status);
+        proc_close($process);
+
+        return $exit;
+    }
+
+    /**
+     * What `$?` would have said, read off the one status that carries it.
+     *
+     * A command something killed is reported by PHP as the **signal number** — 9 for a
+     * SIGKILL — where every shell reports 128 + the signal. 137 is the number a model has
+     * seen a thousand times and reads as "something killed this, probably for memory"; told
+     * "code 9" it goes looking for an exit code the program chose. Upstream has the opposite
+     * bug and it is worse: Node reports `code: null` there, which its
+     * `code !== 0 && code !== null` guard treats as **success**, so a segfaulting build comes
+     * back as a command that worked.
+     *
+     * One implementation, because the answer has to be the same whichever door a command came
+     * in by. This translation used to be in `runAsync()` and in `Tools\Run::close()` and
+     * nowhere else, so `run()` — which is what `runAsync()` becomes with no fiber — reported 9
+     * for the very command `runAsync()` reported 137 for.
+     *
+     * @param array<string, mixed> $status the first `proc_get_status()` that reported it gone
+     */
+    private static function codeOf(array $status): int
+    {
+        if (($status['signaled'] ?? false) === true && ($status['termsig'] ?? 0) > 0) {
+            return 128 + (int) $status['termsig'];
+        }
+
+        return (int) ($status['exitcode'] ?? -1);
+    }
 
     /**
      * Standard output, or null when the command failed, was not found, or timed out.
@@ -183,8 +270,14 @@ final class Process
             ? Loop::get()->delay($timeout, $kill)
             : null;
 
+        $exit = 0;
+
         try {
             $finished->future->await();
+            // The pipes closing is not the command exiting, and the code is a fact about the
+            // process — see `awaitFinish()`. Inside the try, so the timeout and the abort above
+            // still reach a command that shut its own output and carried on.
+            $exit = self::awaitFinish($process);
         } finally {
             if ($timer !== null) {
                 // A pending timer keeps the loop from ever going idle, so `bin/pig` would
@@ -201,20 +294,7 @@ final class Process
             }
         }
 
-        $status = proc_get_status($process);
-        $exit = proc_close($process);
-
-        if ($stopped) {
-            return [self::STOPPED, $collected[0], $collected[1]];
-        }
-
-        // Same translation as `Tools\Run::close()`: `proc_close()` hands back the signal
-        // number where every shell reports 128 + it.
-        if (($status['signaled'] ?? false) === true && ($status['termsig'] ?? 0) > 0) {
-            return [128 + (int) $status['termsig'], $collected[0], $collected[1]];
-        }
-
-        return [$exit, $collected[0], $collected[1]];
+        return [$stopped ? self::STOPPED : $exit, $collected[0], $collected[1]];
     }
 
     /**
@@ -226,8 +306,8 @@ final class Process
      *
      * @param list<string> $command
      * @param string|null  $cwd     where to run it; null means wherever pig was started
-     * @return array{0: int, 1: string, 2: string} STOPPED as the code when it timed out
-     *         or could not be started
+     * @return array{0: int, 1: string, 2: string} STOPPED as the code when it timed out or
+     *         could not be started; 128 + the signal when something killed it
      */
     public static function run(array $command, float $timeout = self::DEFAULT_TIMEOUT, ?string $cwd = null): array
     {
@@ -291,7 +371,11 @@ final class Process
         fclose($pipes[1]);
         fclose($pipes[2]);
 
-        $exit = proc_close($process);
+        // The status the loop already read is the answer: it is only carried by the one call
+        // that found the process gone, and `proc_close()` after it reports -1 for a command
+        // something killed. See `awaitFinish()`.
+        $exit = self::codeOf($status);
+        proc_close($process);
 
         return [$timedOut ? self::STOPPED : $exit, $output, $errors];
     }
@@ -354,11 +438,19 @@ final class Process
         // Closed before the wait, because that is what says the input has ended.
         fclose($pipes[0]);
 
-        while (proc_get_status($process)['running'] && microtime(true) < $deadline) {
+        // The status is kept rather than asked for twice: only the call that finds the process
+        // gone carries the real answer — see `awaitFinish()`.
+        while (true) {
+            $status = proc_get_status($process);
+
+            if (!$status['running'] || microtime(true) >= $deadline) {
+                break;
+            }
+
             usleep(self::POLL_MICROSECONDS);
         }
 
-        $timedOut = proc_get_status($process)['running'];
+        $timedOut = (bool) $status['running'];
 
         if ($timedOut) {
             proc_terminate($process, 9);
@@ -367,7 +459,8 @@ final class Process
         fclose($pipes[1]);
         fclose($pipes[2]);
 
-        $exit = proc_close($process);
+        $exit = self::codeOf($status);
+        proc_close($process);
 
         return !$timedOut && $written === $length && $exit === 0;
     }
@@ -437,6 +530,10 @@ final class Process
             $yield();
         }
 
+        // The one exit code here that is not translated, and not an oversight: the caller asks
+        // whether the person saved, so anything but 0 says the same thing. With a $yield the
+        // loop above has already taken the status that carries the answer; without one there is
+        // nothing to wait with, and `proc_close()` is the wait.
         return proc_close($process);
     }
 
@@ -462,8 +559,8 @@ final class Process
      *
      * @param list<string>          $command
      * @param Closure(string): bool $onLine  false to stop reading and kill the command
-     * @return array{0: int, 1: string} the exit code — STOPPED when $onLine asked to stop —
-     *         and whatever the command wrote to standard error
+     * @return array{0: int, 1: string} the exit code — STOPPED when $onLine asked to stop, and
+     *         128 + the signal when something killed it — and whatever it wrote to standard error
      */
     public static function stream(array $command, Closure $onLine, float $timeout = self::DEFAULT_TIMEOUT): array
     {
@@ -490,6 +587,10 @@ final class Process
         $errors = '';
         $stopped = false;
         $deadline = microtime(true) + $timeout;
+        // The one status read that carries the answer, kept because every later one says
+        // `signaled: false` — see `awaitFinish()`. This loop goes round again after the process
+        // has gone when there is still output to take off the pipe, so it cannot be the last.
+        $final = null;
 
         while (true) {
             $chunk = stream_get_contents($pipes[1]);
@@ -511,6 +612,10 @@ final class Process
             }
 
             $status = proc_get_status($process);
+
+            if ($final === null && $status['running'] !== true) {
+                $final = $status;
+            }
 
             if (!$status['running'] && ($chunk === false || $chunk === '')) {
                 break;
@@ -538,7 +643,9 @@ final class Process
         fclose($pipes[1]);
         fclose($pipes[2]);
 
-        $exit = proc_close($process);
+        // Null only when this killed the command, which is reported as STOPPED either way.
+        $exit = $final === null ? self::STOPPED : self::codeOf($final);
+        proc_close($process);
 
         return [$stopped ? self::STOPPED : $exit, $errors];
     }

@@ -11,6 +11,7 @@ use Pig\Ai\TextContent;
 use Pig\Async\AbortSignal;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
+use Pig\Tui\Process;
 
 /**
  * One running command.
@@ -59,6 +60,9 @@ final class Run
     private int $open = 0;
 
     private ?Deferred $finished = null;
+
+    /** What the command reported, once `wait()` has waited for it. */
+    private int $exit = 0;
 
     /** @param Closure(AgentToolResult): void|null $onUpdate */
     public function __construct(
@@ -110,6 +114,12 @@ final class Run
 
         try {
             $this->finished?->future->await();
+            // The pipes closing is not the command exiting, and the code is a fact about the
+            // process — see `Process::awaitFinish()`, which is also what keeps that wait from
+            // being a freeze. Inside the try, so the timer and the signal above still reach a
+            // command that shut its own output and carried on.
+            $this->exit = Process::awaitFinish($this->process);
+            $this->process = null;
         } finally {
             if ($timer !== null) {
                 Loop::get()->cancel($timer);
@@ -243,27 +253,10 @@ final class Run
             $this->spill = null;
         }
 
-        if (!is_resource($this->process)) {
-            return 0;
-        }
-
-        // Asked before `proc_close()`, which is the only order that works: the status is the
-        // last thing the process resource knows and closing it is the end of the resource.
-        $status = proc_get_status($this->process);
-        $exit = proc_close($this->process);
-        $this->process = null;
-
-        // `proc_close()` answers with the **signal number** for a command something killed —
-        // 9 for a SIGKILL — where every shell reports 128 + the signal. 137 is the number a
-        // model has seen a thousand times and reads as "something killed this, probably for
-        // memory"; told "code 9" it goes looking for an exit code the program chose. Upstream
-        // has the opposite bug and it is worse: Node reports `code: null` there, which its
-        // `code !== 0 && code !== null` guard treats as **success**, so a segfaulting build
-        // comes back as a command that worked.
-        if (($status['signaled'] ?? false) === true && ($status['termsig'] ?? 0) > 0) {
-            return 128 + (int) $status['termsig'];
-        }
-
-        return $exit;
+        // The process was waited for and closed in `wait()`, where the timer was still armed and
+        // the status was still readable — asked a second time it says `signaled: false`, so
+        // there is nothing left to ask here. What "$? would have said" is `Process`'s one
+        // answer, so a command reports the same whether it came through here or `runAsync()`.
+        return $this->exit;
     }
 }

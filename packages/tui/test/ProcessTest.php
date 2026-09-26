@@ -102,6 +102,60 @@ final class ProcessTest extends TestCase
         $this->assertSame(137, $exit);
     }
 
+    /**
+     * A command whose output ends before it does still reports the signal.
+     *
+     * The pipes closing and the process exiting are two events, and the first can arrive
+     * first — so the status is asked for while the process is still there, which answers
+     * `signaled: false`, and `proc_close()` hands back the bare signal number. Under load
+     * that happened to `kill -15 $$` about one run in eight; a command that closes its own
+     * standard output first widens the window to the whole of its remaining life, which is
+     * the same defect made reproducible.
+     */
+    public function testACommandWhoseOutputEndsBeforeItDoesStillReportsTheSignal(): void
+    {
+        [$exit, $stdout] = $this->runAsync(
+            ['/bin/sh', '-c', 'echo said this first; exec 1>&- 2>&-; sleep 0.2; kill -15 $$'],
+            5.0,
+        );
+
+        $this->assertSame(143, $exit);
+        $this->assertSame("said this first\n", $stdout);
+    }
+
+    public function testTheLoopKeepsTurningWhileACommandOutlivesItsOutput(): void
+    {
+        $ticks = 0;
+
+        Async::run(static function () use (&$ticks): void {
+            Async::spawn(static function () use (&$ticks): void {
+                for ($index = 0; $index < 5; $index++) {
+                    Async::delay(0.02);
+                    $ticks++;
+                }
+            });
+
+            Process::runAsync(['/bin/sh', '-c', 'exec 1>&- 2>&-; sleep 0.3'], 5.0);
+        });
+
+        // Waiting for the process by reaching `proc_close()` blocks the one thread for as
+        // long as it takes, which is the freeze `runAsync()` exists to avoid — and here the
+        // pipes are shut, so nothing on the loop would have woken it either.
+        $this->assertGreaterThan(1, $ticks);
+    }
+
+    public function testATimeoutStillReachesACommandThatOutlivedItsOutput(): void
+    {
+        $started = microtime(true);
+
+        [$exit] = $this->runAsync(['/bin/sh', '-c', 'exec 1>&- 2>&-; sleep 5'], 0.3);
+
+        // The wait for the process has to happen while the timer is still armed, or a command
+        // that shut its own output waits out its whole life and is reported as having worked.
+        $this->assertSame(Process::STOPPED, $exit);
+        $this->assertLessThan(2.0, microtime(true) - $started);
+    }
+
     public function testAnAbortKillsItAndSaysSo(): void
     {
         $controller = new AbortController();
@@ -199,6 +253,38 @@ final class ProcessTest extends TestCase
 
         $this->assertSame(0, $exit);
         $this->assertSame("outside\n", $stdout);
+    }
+
+    public function testTheSameKilledCommandIsReportedTheSameWithAFiberAndWithout(): void
+    {
+        $command = ['/bin/sh', '-c', 'kill -15 $$'];
+
+        [$inside] = $this->runAsync($command);
+        // `runAsync()` with no fiber *is* `run()`, and the translation lived in `runAsync()`
+        // alone — so the same command through the same call reported 143 during a turn and 15
+        // from a hook factory at startup.
+        [$outside] = Process::runAsync($command);
+
+        $this->assertSame(143, $inside);
+        $this->assertSame($inside, $outside);
+    }
+
+    public function testAKilledCommandStreamingItsOutputReportsTheSignalToo(): void
+    {
+        $lines = [];
+
+        [$exit] = Process::stream(
+            ['/bin/sh', '-c', 'echo one; kill -15 $$'],
+            static function (string $line) use (&$lines): bool {
+                $lines[] = $line;
+
+                return true;
+            },
+        );
+
+        // `grep` puts this number in front of the model, so it is the same number here.
+        $this->assertSame(143, $exit);
+        $this->assertSame(['one'], $lines);
     }
 
     public function testAnEmptyCommandIsRefused(): void

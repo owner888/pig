@@ -29,12 +29,39 @@ final class ContextFiles
      */
     public static function load(string $cwd, ?string $home = null): array
     {
+        [$files] = self::loadWithWarnings($cwd, $home);
+
+        return $files;
+    }
+
+    /**
+     * The same, and what could not be read.
+     *
+     * **A file this skips is a file the person wrote and the agent is now working without.**
+     * It used to be skipped silently, which is not what the rest of this repository does with a
+     * problem it cannot fix: `Skills`, `HookLoader`, `CustomToolLoader`, `Settings` and
+     * `CustomModels` all hand their complaints back for `bin/pig` to print before the UI
+     * starts. The old comment said "skipped rather than fatal", which answers whether to
+     * *stop* and says nothing about whether to speak — and upstream prints a yellow warning
+     * here. Permissions and a broken symlink are the two ways in.
+     *
+     * Why this is a second method rather than `load()`'s own shape, which is what its three
+     * siblings have: `Prompt\SystemPrompt` calls `load()` and is a file the developer owns, so
+     * the tuple cannot be pushed into it from here. `load()` is the thin wrapper for that
+     * caller; everything else should ask for the warnings.
+     *
+     * @return array{0: list<ContextFile>, 1: list<string>}
+     */
+    public static function loadWithWarnings(string $cwd, ?string $home = null): array
+    {
         $home ??= Config::home();
         $files = [];
+        $warnings = [];
         $seen = [];
 
         // The person's own instructions come first, so a project can override them.
-        $global = self::inDirectory($home);
+        [$global, $complaints] = self::inDirectory($home);
+        $warnings = [...$warnings, ...$complaints];
 
         if ($global !== null) {
             $files[] = $global;
@@ -45,7 +72,8 @@ final class ContextFiles
         $directory = rtrim($cwd, '/');
 
         while (true) {
-            $found = self::inDirectory($directory === '' ? '/' : $directory);
+            [$found, $complaints] = self::inDirectory($directory === '' ? '/' : $directory);
+            $warnings = [...$warnings, ...$complaints];
 
             if ($found !== null && !isset($seen[$found->path])) {
                 // Unshifted, so the walk up comes back out as a walk down.
@@ -62,11 +90,22 @@ final class ContextFiles
             $directory = $parent;
         }
 
-        return [...$files, ...$ancestors];
+        return [[...$files, ...$ancestors], $warnings];
     }
 
-    private static function inDirectory(string $directory): ?ContextFile
+    /**
+     * The first of the two names that is there and readable, and what the other cost.
+     *
+     * A name that is there and cannot be read falls through to the next candidate, as
+     * upstream's does — an unreadable `AGENTS.md` should not hide a perfectly good
+     * `CLAUDE.md` beside it — and is complained about either way.
+     *
+     * @return array{0: ContextFile|null, 1: list<string>}
+     */
+    private static function inDirectory(string $directory): array
     {
+        $warnings = [];
+
         foreach (self::NAMES as $name) {
             $path = rtrim($directory, '/') . '/' . $name;
 
@@ -74,16 +113,15 @@ final class ContextFiles
                 continue;
             }
 
-            $content = file_get_contents($path);
+            $content = is_readable($path) ? file_get_contents($path) : false;
 
-            // An unreadable one is skipped rather than fatal: a context file is help,
-            // and refusing to start because one of them has awkward permissions would
-            // be worse than starting without it.
             if ($content !== false) {
-                return new ContextFile($path, $content);
+                return [new ContextFile($path, $content), $warnings];
             }
+
+            $warnings[] = "{$path} could not be read";
         }
 
-        return null;
+        return [null, $warnings];
     }
 }

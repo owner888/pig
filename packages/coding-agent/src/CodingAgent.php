@@ -31,6 +31,7 @@ use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Prompt\SystemPrompt;
+use Pig\CodingAgent\Tools\Shell;
 use Pig\CodingAgent\Tools\ToolSet;
 use Throwable;
 
@@ -214,7 +215,17 @@ final class CodingAgent
 
         // Loaded here rather than left to the prompt builder, so a banner and the system prompt
         // cannot disagree about what was picked up.
-        $contextFiles = ContextFiles::load($cwd);
+        // Before anything can run a command. Static for `Models::register()`'s reason, which
+        // `Shell::useShellPath()` states: `bash`, `!command` and a hook all reach one shell.
+        Shell::useShellPath($settings->shellPath());
+
+        [$contextFiles, $contextWarnings] = ContextFiles::loadWithWarnings($cwd);
+
+        foreach ($contextWarnings as $problem) {
+            $warnings[] = $problem;
+        }
+
+
         Timings::mark('contextFiles');
 
         [$skills, $skillWarnings] = $settings->skillsEnabled()

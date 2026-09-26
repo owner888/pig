@@ -12,6 +12,7 @@ use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Tools\BashTool;
+use Pig\CodingAgent\Tools\Shell;
 use Pig\CodingAgent\Tools\Truncate;
 use Pig\Test\AssertsThrows;
 
@@ -103,6 +104,126 @@ final class BashToolTest extends ToolTestCase
         );
 
         $this->assertStringContainsString('got this far', $error->getMessage());
+    }
+
+    /**
+     * The same, for a command whose output ends before it does.
+     *
+     * A command finishes twice over: its pipes close, and then the process exits. `Run`
+     * waits for the first, so the status was asked for while the process was still there —
+     * which answers `signaled: false`, and `proc_close()` then hands back the bare signal
+     * number. Measured at about one run in eight on a loaded machine with the three rows
+     * above; closing standard output first makes it every run.
+     */
+    public function testACommandWhoseOutputEndsBeforeItDoesStillReportsTheSignal(): void
+    {
+        $error = $this->assertThrows(
+            AgentError::class,
+            fn () => $this->bash(['command' => 'echo said this first; exec 1>&- 2>&-; sleep 0.2; kill -15 $$']),
+            'exited with code 143',
+        );
+
+        $this->assertStringContainsString('said this first', $error->getMessage());
+    }
+
+    public function testTheLoopKeepsRunningWhileACommandOutlivesItsOutput(): void
+    {
+        $ticks = 0;
+        $tool = new BashTool($this->cwd);
+
+        Async::run(static function () use ($tool, &$ticks): void {
+            Async::spawn(static function () use (&$ticks): void {
+                for ($index = 0; $index < 5; $index++) {
+                    Async::delay(0.02);
+                    $ticks++;
+                }
+            });
+
+            $tool->execute('call-1', ['command' => 'exec 1>&- 2>&-; sleep 0.3']);
+        });
+
+        // Reaching `proc_close()` to wait for it blocks the one thread for as long as the
+        // command has left, which is the freeze this tool is built not to have — and with the
+        // pipes already shut, nothing on the loop would have woken it either.
+        $this->assertGreaterThan(1, $ticks);
+    }
+
+    public function testATimeoutStillReachesACommandThatOutlivedItsOutput(): void
+    {
+        $started = microtime(true);
+
+        $error = $this->assertThrows(
+            AgentError::class,
+            fn () => $this->bash(['command' => 'exec 1>&- 2>&-; sleep 30', 'timeout' => 0.3]),
+            'timed out',
+        );
+
+        // Waiting for the process has to happen while the timer is still armed, or a command
+        // that shut its own output waits out its whole life and is then reported as having
+        // worked — with escape unable to reach it either.
+        $this->assertLessThan(5.0, microtime(true) - $started);
+        $this->assertStringContainsString('0.3 seconds', $error->getMessage());
+    }
+
+    public function testEscapeStillReachesACommandThatOutlivedItsOutput(): void
+    {
+        $controller = new AbortController();
+        $tool = new BashTool($this->cwd);
+        $started = microtime(true);
+
+        $this->assertThrows(
+            AgentError::class,
+            static function () use ($tool, $controller): void {
+                Async::run(static function () use ($tool, $controller): void {
+                    Async::spawn(static function () use ($controller): void {
+                        Async::delay(0.15);
+                        $controller->abort('Escape');
+                    });
+
+                    $tool->execute('call-1', ['command' => 'exec 1>&- 2>&-; sleep 30'], $controller->signal);
+                });
+            },
+            'aborted',
+        );
+
+        $this->assertLessThan(5.0, microtime(true) - $started);
+    }
+
+    public function testAConfiguredShellIsTheOneThatRuns(): void
+    {
+        $marker = $this->cwd . '/which-shell';
+        file_put_contents($marker, "#!/bin/sh\necho \"ran by a stand-in\"\n");
+        chmod($marker, 0o755);
+
+        Shell::useShellPath($marker);
+
+        try {
+            // macOS ships bash 3.2 as `/bin/bash`, and `bash()` prefers it — so somebody with a
+            // homebrew bash 5 had no way to be given it. pig stored this setting and read it
+            // nowhere.
+            $this->assertStringContainsString('ran by a stand-in', $this->output($this->bash(['command' => 'anything'])));
+        } finally {
+            Shell::forget();
+        }
+    }
+
+    public function testAConfiguredShellThatIsNotThereIsRefusedByName(): void
+    {
+        Shell::useShellPath($this->cwd . '/no-such-shell');
+
+        try {
+            $error = $this->assertThrows(
+                AgentError::class,
+                fn () => $this->bash(['command' => 'echo hi']),
+                'not executable',
+            );
+
+            // Falling back to `/bin/bash` would be the bug they wrote the setting to work
+            // around, back again with nothing on screen about it.
+            $this->assertStringContainsString('settings.json', $error->getMessage());
+        } finally {
+            Shell::forget();
+        }
     }
 
     public function testStdinIsNotTheTerminal(): void
