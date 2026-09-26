@@ -663,21 +663,11 @@ final class ToolExecutionComponent extends Container
     }
 
     /**
-     * What the tool said, as text.
+     * What the tool said, as text a frame can hold.
      *
-     * Escape sequences are stripped: a tool's output is data, and a command that prints
-     * its own colours would otherwise paint over the component's — including the
-     * background that says whether it succeeded.
-     *
-     * **And bytes that are not UTF-8 are dropped**, which is not tidiness: everything that
-     * measures a line goes through `Graphemes::split()`, which is `preg_match_all('/\X/u')`
-     * and answers false on malformed UTF-8, so a single stray byte threw out of `render()`
-     * inside the loop's own input callback and took the session with it. `cat` on anything
-     * that is not text reaches this — a binary file, a latin-1 log, `head /dev/urandom` — so
-     * it is not an edge case, it is the second thing a model tries when a file will not read.
-     * Upstream sanitises in this same method and says the same thing about its own width
-     * function. `Ai\Utils\Utf8::sanitize()` already existed for the request body; this is the
-     * other end that had no caller.
+     * Every byte of it came from a file or a subprocess, so it goes through `SafeText`, whose
+     * docblock is where the three reasons are — and the reason there is a class rather than
+     * three copies of the rule is that this was the only one of the three sites that had it.
      */
     private function output(): string
     {
@@ -689,7 +679,7 @@ final class ToolExecutionComponent extends Container
 
         foreach ($this->result->content as $block) {
             if ($block instanceof TextContent) {
-                $parts[] = str_replace("\r", '', Ansi::strip(Utf8::sanitize($block->text)));
+                $parts[] = SafeText::of($block->text);
 
                 continue;
             }
@@ -701,6 +691,7 @@ final class ToolExecutionComponent extends Container
 
         return implode("\n", $parts);
     }
+
 
     /** The path argument, shortened to `~` where it is under home. */
     private function path(string $fallback = ''): string

@@ -594,4 +594,22 @@ final class HookMessagesTest extends TestCase
         $this->assertStringNotContainsString('more lines', $drawn);
         $this->assertStringNotContainsString('ctrl+o', $drawn);
     }
+
+    public function testABuildLogAHookSentIsDrawnWhateverBytesAreInIt(): void
+    {
+        // A hook's message is output it just captured, so it is no more pig's own words than a
+        // tool's result is — and it was the one of the three transcript paths with no guard at
+        // all: `\x80` threw out of `render()`, and `\x0c` reached the terminal and dropped a row.
+        $component = new HookMessageComponent(
+            new HookMessage('build', [new TextContent("make said\n\x80stray\x0clatin-1\x07done")]),
+            Palette::named('dark'),
+        );
+
+        $frame = implode("\n", $component->render(60));
+
+        $this->assertTrue(mb_check_encoding($frame, 'UTF-8'), 'the drawn frame is not UTF-8');
+        $this->assertStringNotContainsString("\x0c", $frame);
+        $this->assertStringNotContainsString("\x07", $frame);
+        $this->assertStringContainsString('make said', Ansi::strip($frame));
+    }
 }

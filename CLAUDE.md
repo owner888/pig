@@ -2894,6 +2894,16 @@ read's notice has no blank line in front of it, bytes that are not UTF-8 stay as
   is load-bearing rather than tidy — `array_slice()` takes `int`, so a float is a `TypeError` out of
   the tool, which the mutation check is what showed.
 
+**`ls`, `find` and `bash` were read against their upstream files rather than run**, because the two
+search tools are `fd` and `rg` with flags — where the differences that matter are the three traps
+below about globs and exit codes — and `bash` is a process, not a function. What that reading found
+is one bug (the signal number, below) and a row of places where **upstream mishandles a bad argument
+and pig clamps it**: `ls` with `limit: 0` answers `(empty directory)` for a directory full of files,
+`find`'s non-zero-with-partial-output branch is dead code for every exit code `fd` actually produces,
+and `ls` skips an entry it cannot `stat` where pig lists it — a broken symlink is a real entry, and
+hiding it is how the model ends up unable to explain what it is seeing. `ls`'s sort adds a `strcmp`
+tiebreak upstream has no equivalent of, so two names differing only in case have an order.
+
 **The lesson of the four runs is the same one: a hand-rolled replacement for a package is worth a
 corpus, and the corpus is worth keeping the count of.** "It matched on the cases I thought of" is
 what reading gives you — and a run that finds nothing is only worth having if the count is written
@@ -3026,6 +3036,47 @@ with it there" — which is the same question the `edit` diff entry above came f
 different pipe. `HtmlExport` is a sixth site and was checked: it keeps every byte.
 
 Regression test: `StreamProxyTest::testAToolResultThatIsNotUtf8StillReachesTheGateway`.
+
+### A control character in tool output measures as nothing and moves the real cursor
+
+`Tui::checkWidth()` throws on a line wider than the terminal, because a wrapped line puts every
+later cursor move one row low and silent screen corruption is worse than a loud stop. **This is that
+same failure arriving by the one route the check cannot see**: `\p{Cc}` is *zero columns wide*, so a
+line carrying a form feed measures exactly right, passes, and is written to a terminal that then
+drops a row anyway.
+
+What reaches it: `\x0c` and `\x0b` drop a row, `\x08` leaves the padding measuring a column that is
+no longer there, `\x00` is swallowed by some terminals and shown by others — and `\x07` is the one
+that is worst to live with, because the transcript is redrawn as the conversation grows, so one bell
+in a build log beeps again on every redraw. All of them are ordinary: `cat` a binary file, a
+progress display that backspaces over itself, a `make` that rings.
+
+Upstream has `sanitizeBinaryOutput` for exactly this and applies it in the same method. **pig had the
+UTF-8 half of that function and not this one** — because the UTF-8 half arrived through
+`Utf8::sanitize()`, which was written for the request body and pressed into service here, so the
+control-character half was never missed.
+
+Three transcript paths carry text that is not pig's own words, and **all three were different**: the
+tool view sanitised UTF-8, `DiffView` gained it a batch later, and `HookMessageComponent` had
+neither — so a hook that sent a build log with one stray byte in it took the session down, which is
+the same killer a third time. `Interactive\SafeText` is the one rule now: escape sequences out,
+malformed UTF-8 out, every control character but tab and newline out.
+
+Two deliberate differences from upstream's version, and the second is the more useful one to
+remember:
+
+- **`\r` goes here and stays there.** A bare CR returns the cursor to column 0 and the rest of the
+  line overwrites what was drawn. Upstream gets away with keeping it because its renderer is not
+  differential.
+- **U+FFF9–FFFB stay**, though upstream strips them. That is a crash in `string-width`; `Width`
+  reads them as `\p{Cf}` and measures them at nothing, which is what they are. Same rule as
+  `version_compare()` replacing upstream's arithmetic: **where upstream is working around a bug in
+  its own dependency, the port is not the workaround.**
+
+Regression tests: the five `ToolExecutionTest::testAControlCharacterInToolOutputNeverReachesTheTerminal`
+rows, `DiffViewTest::testADiffOfAFileWithAFormFeedInItDoesNotMoveTheCursor` — a form feed is legal in
+C and ordinary in Emacs-era source — and
+`HookMessagesTest::testABuildLogAHookSentIsDrawnWhateverBytesAreInIt`.
 
 ### Editing a file with one byte that is not UTF-8 in it took the session down
 
@@ -3336,6 +3387,25 @@ this runs while someone is waiting for Escape to take effect.
 
 Regression test: `BashToolTest::testAbortingKillsWhatTheCommandStartedToo`, which starts a
 grandchild that would write a file half a second later and asserts the file never appears.
+
+### `proc_close()` reports the signal number where every shell reports 128 plus it
+
+A command something killed came back as `Command exited with code 9`. Nine is not a number any shell
+ever prints for a SIGKILL — `$?` says **137** — and 137 is the number a model has seen a thousand
+times and reads as "something killed this, probably for memory". Told "code 9" it goes looking for an
+exit code the program chose, in a program that never got to choose one. An out-of-memory kill during
+a build is the common case, and `139` for a segfault is the next one.
+
+`Run::close()` asks `proc_get_status()` before `proc_close()` — the only order that works, since the
+status is the last thing the process resource knows — and returns `128 + termsig` when the command was
+signalled.
+
+**Upstream has the opposite bug and it is worse.** Node reports `code: null` for a signal death, and
+`bash.ts` guards with `code !== 0 && code !== null` — so a segfaulting build resolves as a command
+that *worked*, with whatever it printed before dying.
+
+Regression tests: the three `BashToolTest::testACommandKilledBySignalReportsWhatTheShellWouldHaveSaid`
+rows.
 
 ### Output truncated by line count also needs somewhere to look
 

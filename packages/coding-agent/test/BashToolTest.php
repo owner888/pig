@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
@@ -74,6 +75,34 @@ final class BashToolTest extends ToolTestCase
 
         // The output goes with the error: it is what the model needs to react to.
         $this->assertStringContainsString('what went wrong', $error->getMessage());
+    }
+
+    /** @return iterable<string, array{0: int, 1: int}> */
+    public static function signals(): iterable
+    {
+        yield 'SIGKILL, which is what an out-of-memory kill looks like' => [9, 137];
+        yield 'SIGSEGV' => [11, 139];
+        yield 'SIGTERM' => [15, 143];
+    }
+
+    /**
+     * A command the kernel killed reports what `$?` would have said.
+     *
+     * `proc_close()` hands back the *signal number* — 9 for a SIGKILL — where every shell on
+     * earth reports 128 + the signal, and 137 is the number a model has seen a thousand times
+     * and reads as "something killed it, probably the OOM killer". Told "code 9" it goes
+     * looking for an exit code the program chose.
+     */
+    #[DataProvider('signals')]
+    public function testACommandKilledBySignalReportsWhatTheShellWouldHaveSaid(int $signal, int $expected): void
+    {
+        $error = $this->assertThrows(
+            AgentError::class,
+            fn () => $this->bash(['command' => "echo got this far; kill -{$signal} \$\$"]),
+            "exited with code {$expected}",
+        );
+
+        $this->assertStringContainsString('got this far', $error->getMessage());
     }
 
     public function testStdinIsNotTheTerminal(): void

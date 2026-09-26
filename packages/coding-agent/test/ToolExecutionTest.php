@@ -453,6 +453,43 @@ final class ToolExecutionTest extends TestCase
         $this->assertTrue(mb_check_encoding(implode("\n", $lines), 'UTF-8'), 'the drawn frame is not UTF-8');
     }
 
+    /** @return iterable<string, array{0: string, 1: string, 2: string}> */
+    public static function cursorMovers(): iterable
+    {
+        yield 'a backspace' => ["progress 100%\x08\x08\x08 50%", "\x08", 'progress 100% 50%'];
+        yield 'a form feed' => ["one\x0ctwo", "\x0c", 'onetwo'];
+        yield 'a bell' => ["compile failed\x07", "\x07", 'compile failed'];
+        yield 'a nul' => ["field\x00value", "\x00", 'fieldvalue'];
+        yield 'a vertical tab' => ["up\x0bdown", "\x0b", 'updown'];
+    }
+
+    /**
+     * A control character in a tool's output moves the real cursor and measures as nothing.
+     *
+     * Which is the failure `Tui::checkWidth()` exists to prevent, arriving by the one route it
+     * cannot see: `\p{Cc}` is zero columns wide, so the line passes every width check and the
+     * terminal then acts on it — a form feed or a vertical tab drops a row, so every later
+     * cursor move is one row low, and a backspace leaves the padding measuring a column that
+     * is no longer there. A bell is worse in a different way: the transcript is redrawn as the
+     * conversation grows, so one `\x07` in a build log beeps again on every redraw.
+     */
+    #[DataProvider('cursorMovers')]
+    public function testAControlCharacterInToolOutputNeverReachesTheTerminal(
+        string $output,
+        string $forbidden,
+        string $survives,
+    ): void {
+        $tool = $this->tool('bash', ['command' => 'go build']);
+        $tool->updateResult($this->said($output));
+
+        $frame = implode("\n", $tool->render(40));
+
+        $this->assertStringNotContainsString($forbidden, $frame);
+        // Stripped, not swallowed: a lone ESC is `Ansi::strip()`'s already, and the rest of
+        // the line has to survive or a build log with one stray byte in it goes blank.
+        $this->assertStringContainsString($survives, Ansi::strip($frame));
+    }
+
     /**
      * The same killer through the one path `Utf8::sanitize()` did not cover.
      *

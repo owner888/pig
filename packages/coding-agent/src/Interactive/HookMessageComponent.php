@@ -44,7 +44,10 @@ final class HookMessageComponent extends Container
         private readonly Palette $palette,
         bool $expanded = false,
     ) {
-        $this->text = $message->toText();
+        // A hook's message is usually output it just captured, so it is no more pig's own
+        // words than a tool's result is — and this was the one of the three that had no
+        // guard at all: one stray byte from a build log threw out of `render()`.
+        $this->text = SafeText::of($message->toText());
         $this->heading = new Text('', 1, 0);
 
         $this->setExpanded($expanded);

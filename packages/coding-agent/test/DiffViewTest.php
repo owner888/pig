@@ -133,4 +133,17 @@ final class DiffViewTest extends TestCase
         $this->assertTrue(mb_check_encoding($rendered, 'UTF-8'));
         $this->assertStringContainsString('keep', Ansi::strip($rendered));
     }
+
+    public function testADiffOfAFileWithAFormFeedInItDoesNotMoveTheCursor(): void
+    {
+        // A form feed is legal in C and ordinary in Emacs-era source, and it measures as zero
+        // columns — so the line passes every width check and the terminal drops a row anyway,
+        // putting each later cursor move one row low.
+        [$diff] = EditDiff::render("head\n\x0cpage\ntail\n", "head\n\x0cPAGE\x00\ntail\n");
+        $rendered = DiffView::render($diff, $this->palette);
+
+        $this->assertStringNotContainsString("\x0c", $rendered);
+        $this->assertStringNotContainsString("\x00", $rendered);
+        $this->assertStringContainsString('PAGE', Ansi::strip($rendered));
+    }
 }

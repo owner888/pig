@@ -247,8 +247,22 @@ final class Run
             return 0;
         }
 
+        // Asked before `proc_close()`, which is the only order that works: the status is the
+        // last thing the process resource knows and closing it is the end of the resource.
+        $status = proc_get_status($this->process);
         $exit = proc_close($this->process);
         $this->process = null;
+
+        // `proc_close()` answers with the **signal number** for a command something killed —
+        // 9 for a SIGKILL — where every shell reports 128 + the signal. 137 is the number a
+        // model has seen a thousand times and reads as "something killed this, probably for
+        // memory"; told "code 9" it goes looking for an exit code the program chose. Upstream
+        // has the opposite bug and it is worse: Node reports `code: null` there, which its
+        // `code !== 0 && code !== null` guard treats as **success**, so a segfaulting build
+        // comes back as a command that worked.
+        if (($status['signaled'] ?? false) === true && ($status['termsig'] ?? 0) > 0) {
+            return 128 + (int) $status['termsig'];
+        }
 
         return $exit;
     }
