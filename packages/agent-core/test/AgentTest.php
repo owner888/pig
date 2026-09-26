@@ -148,6 +148,90 @@ final class AgentTest extends TestCase
         $this->assertStringContainsString('already working', $refusal);
     }
 
+    public function testContinuingWhileWorkingIsRefusedToo(): void
+    {
+        // The other half of the same guard, and upstream tests both: `continue()` starting a second
+        // loop over the same agent would have two runs writing into one `AgentState`.
+        $refusal = null;
+
+        $agent = $this->agent(['ok'], hook: static function (Agent $agent) use (&$refusal): void {
+            try {
+                $agent->continue();
+            } catch (AgentError $error) {
+                $refusal = $error->getMessage();
+            }
+        });
+
+        Async::run(static fn () => $agent->prompt('hi'));
+
+        $this->assertNotNull($refusal);
+        $this->assertStringContainsString('already working', $refusal);
+    }
+
+    public function testAbortingWhenNothingIsRunningDoesNothing(): void
+    {
+        // Upstream pins it: `abort()` on an idle agent must not throw. There is no controller to
+        // abort, and a UI's escape key does not know whether a turn is in flight.
+        $agent = $this->agent([]);
+
+        $agent->abort();
+
+        $this->assertFalse($agent->state->isStreaming);
+    }
+
+    public function testTheStateMutatorsEachWriteTheirOwnField(): void
+    {
+        $agent = $this->agent([]);
+        $tool = new class implements \Pig\Agent\AgentTool {
+            public function definition(): \Pig\Ai\Tool
+            {
+                return new \Pig\Ai\Tool('noop', 'does nothing', ['properties' => []]);
+            }
+
+            public function label(): string
+            {
+                return 'Noop';
+            }
+
+            public function execute(
+                string $toolCallId,
+                array $arguments,
+                ?\Pig\Async\AbortSignal $signal = null,
+                ?Closure $onUpdate = null,
+            ): \Pig\Agent\AgentToolResult {
+                return new \Pig\Agent\AgentToolResult([new TextContent('')]);
+            }
+        };
+
+        $agent->setSystemPrompt('be brief');
+        $agent->setThinkingLevel(ThinkingLevel::High);
+        $agent->setTools([$tool]);
+        $agent->replaceMessages([new UserMessage('one')]);
+        $agent->appendMessage(new UserMessage('two'));
+
+        $this->assertSame('be brief', $agent->state->systemPrompt);
+        $this->assertSame(ThinkingLevel::High, $agent->state->thinkingLevel);
+        $this->assertSame([$tool], $agent->state->tools);
+        $this->assertCount(2, $agent->state->messages);
+
+        $agent->clearMessages();
+
+        $this->assertSame([], $agent->state->messages);
+    }
+
+    public function testReplacingMessagesTakesACopyAndReindexesIt(): void
+    {
+        // Upstream asserts the copy because a JS array would otherwise be shared with the caller;
+        // PHP copies on write by itself, so what is worth pinning here is the other half —
+        // `array_values()`, which turns whatever the caller had into a list. A message list with a
+        // gap in its keys reaches `count()` and `$messages[count - 1]` in three places, and those
+        // read the wrong thing.
+        $agent = $this->agent([]);
+        $agent->replaceMessages([3 => new UserMessage('one'), 7 => new UserMessage('two')]);
+
+        $this->assertSame([0, 1], array_keys($agent->state->messages));
+    }
+
     public function testSteeringCutsInBeforeTheNextTurn(): void
     {
         $steered = false;

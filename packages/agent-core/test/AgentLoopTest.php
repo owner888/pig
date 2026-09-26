@@ -385,6 +385,105 @@ final class AgentLoopTest extends TestCase
         $this->assertInstanceOf(AssistantMessage::class, $messages[0]);
     }
 
+    public function testTheContextIsTransformedBeforeItIsConvertedForTheModel(): void
+    {
+        // The order is the whole point: `transformContext` works on the app's own messages —
+        // compaction and the `ContextEvent` hook both arrive here — and `convertToLlm` then throws
+        // away whatever the model cannot read. Reversed, a transform would be handed messages that
+        // no longer include the app's own kinds, which is the one thing it is for.
+        $saw = null;
+        $transformed = null;
+        $converted = null;
+
+        $config = new AgentLoopConfig(
+            model: $this->model(),
+            convertToLlm: static function (array $messages) use (&$converted): array {
+                $converted = $messages;
+
+                return array_values(array_filter(
+                    $messages,
+                    static fn ($m): bool => $m instanceof UserMessage || $m instanceof AssistantMessage,
+                ));
+            },
+            transformContext: static function (array $messages) use (&$saw, &$transformed): array {
+                $saw = $messages;
+
+                // Upstream's own test prunes to the last two, which is what a context transform
+                // does for a living.
+                $transformed = array_slice($messages, -2);
+
+                return $transformed;
+            },
+            apiKey: 'test-key',
+        );
+
+        Async::run(function () use ($config): void {
+            $stream = AgentLoop::start(
+                [new UserMessage('the new one')],
+                new AgentContext([
+                    new Notice('the app said something'),
+                    new UserMessage('an old question'),
+                    $this->answer('an old answer'),
+                ], 'be brief'),
+                $config,
+                null,
+                $this->provider([$this->answer('ok')]),
+            );
+
+            foreach ($stream as $ignored) {
+                // Drained; what is under test is what the two callbacks were handed.
+            }
+
+            $stream->result()->await();
+        });
+
+        // Four in the context by then — three plus the prompt — and the transform saw all of them,
+        // the app's own message included.
+        $this->assertCount(4, $saw ?? []);
+        $this->assertInstanceOf(Notice::class, ($saw ?? [])[0]);
+        $this->assertCount(2, $transformed ?? []);
+        $this->assertSame($transformed, $converted, 'convertToLlm is handed the transform’s output');
+
+        // And the model saw only what survived both steps.
+        $this->assertCount(2, $this->seen[0]->messages);
+    }
+
+    public function testAnAppsOwnMessageMayBeTheLastOneWhenContinuing(): void
+    {
+        // Only an assistant message is refused. A hook message at the end is the caller's
+        // business: `convertToLlm` is what turns it into something a provider accepts, and
+        // refusing it here would refuse the case `continue()` exists for.
+        [$messages, $sent] = Async::run(function (): array {
+            $stream = AgentLoop::continue(
+                new AgentContext([new Notice('a hook said something')]),
+                new AgentLoopConfig(
+                    model: $this->model(),
+                    convertToLlm: static fn (array $messages): array => array_map(
+                        static fn ($m): UserMessage => $m instanceof Notice
+                            ? new UserMessage([new TextContent($m->text)])
+                            : $m,
+                        $messages,
+                    ),
+                    apiKey: 'test-key',
+                ),
+                null,
+                $this->provider([$this->answer('answered the hook')]),
+            );
+
+            foreach ($stream as $ignored) {
+                // Drained.
+            }
+
+            return [$stream->result()->await(), $this->seen[0]->messages];
+        });
+
+        $this->assertCount(1, $messages);
+        $this->assertInstanceOf(AssistantMessage::class, $messages[0]);
+
+        // The provider saw a user message, which is what the conversion was for.
+        $this->assertInstanceOf(UserMessage::class, $sent[0]);
+    }
+
     /**
      * @param list<AssistantMessage> $turns   one per model call, in order
      * @param list<mixed>            $prompts

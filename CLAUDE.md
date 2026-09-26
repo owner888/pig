@@ -47,6 +47,12 @@ at that same commit still calls `agent.queueMessage()`, `clearMessageQueue()`,
 `getQueueMode()` and `setQueueMode()` — none of which exist there any more. The anchor is a
 snapshot taken mid-break.
 
+**And `packages/agent`'s own test suite is on the old side of it too**, which matters when the tests
+are read as a specification: `agent/test/agent.test.ts` calls `agent.queueMessage(message)` and
+asserts the old refusal wording, so that file cannot run at the anchor either. Where a test there
+describes behaviour the split did not touch, it is still the spec and pig pins it; where it names the
+queue, it describes an API that no longer exists.
+
 So "port it literally" has no meaning for the parts of `coding-agent` that touch the queue:
 there is no working original. Those are ported against the **split** API, which is what
 `Pig\Agent\Agent` has, and the mapping is written down where it happens. Anywhere else the
@@ -1686,6 +1692,34 @@ against the value, which would send the model looking where it did nothing wrong
 upstream's `validateToolCall(tools, call)`, which is `validateToolArguments` plus a find-by-name —
 it has no caller upstream either, because `AgentLoop` has the tool in hand by the time it
 validates and needs it afterwards to run.
+
+### `packages/agent`'s test suite, read as a specification
+
+Upstream's tests are the only written statement of what its code is *supposed* to do, so the sweep
+after auditing `agent-core` was: for each `it(...)` over there, is there something here that would
+fail if pig got it wrong? Five were not pinned, and all five turned out to pass — which is the useful
+answer, because the alternative was not knowing:
+
+- **`transformContext` runs before `convertToLlm`.** The order is the point: a transform works on the
+  app's own message kinds — compaction and the `ContextEvent` hook both arrive there — and the
+  conversion then drops what the model cannot read. Reversed, a transform would be handed a list with
+  the app's own kinds already removed, which is the one thing it exists for. Pinned by reversing the
+  two in `AgentLoop` and watching the test go red.
+- **An app's own message may be the last one when continuing.** Only an assistant message is refused;
+  a hook message at the end is the caller's business, because `convertToLlm` is what turns it into
+  something a provider accepts. Refusing it would refuse the case `continue()` exists for.
+- **`continue()` while streaming is refused**, the other half of the guard `prompt()` has.
+- **`abort()` on an idle agent does nothing** — there is no controller, and a UI's escape key does
+  not know whether a turn is in flight.
+- **The state mutators each write their own field**, and `replaceMessages()` re-indexes. Upstream
+  asserts that one as "should be a copy", which PHP does by itself; the half worth pinning here is
+  `array_values()`, since a message list with a gap in its keys reaches `count()` and
+  `$messages[count - 1]` in three places and both read the wrong thing.
+
+`e2e.test.ts` is the same five scenarios against seven live providers and needs real keys, so it is
+not a spec pig can run; the one part of it that is not provider-specific — `Agent.continue()`'s two
+validation throws — is the find above it in this file, which upstream tests at the `Agent` level and
+pig had only in the loop.
 
 ### Talking to a gateway instead of a provider
 
