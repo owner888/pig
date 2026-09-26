@@ -471,6 +471,27 @@ final class HookMessagesTest extends TestCase
         $this->assertSame('second', $runner->renderers()['build']());
     }
 
+    public function testAModeThatWiresOneWriterGetsThatOne(): void
+    {
+        $api = $this->api();
+        $runner = $this->runner($api);
+        $sent = [];
+
+        // One condition for two independent facts meant a mode offering only `send` got
+        // neither — and the hook was then told `sendMessage() needs a session — call it from
+        // a handler`, which explains something that did not happen.
+        $runner->initialize(
+            getModel: static fn () => null,
+            send: static function (HookMessage $message) use (&$sent): void {
+                $sent[] = $message->customType;
+            },
+        );
+
+        $api->sendMessage('build', 'the build is broken');
+
+        $this->assertSame(['build'], $sent);
+    }
+
     // ---- the fixtures ----------------------------------------------------------------
 
     /** Called from inside the first turn, for the cases about sending mid-run. */

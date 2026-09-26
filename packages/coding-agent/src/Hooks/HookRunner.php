@@ -108,10 +108,13 @@ final class HookRunner
         // Handed to each hook's own API object rather than kept here, because that is the
         // object the hook closed over — `$pi->sendMessage()` inside a handler is a call on
         // the thing the factory was given at load time, long before a session existed.
-        if ($send !== null && $note !== null) {
-            foreach ($this->hooks as $hook) {
-                $hook->api->writesTo($send, $note);
-            }
+        //
+        // One at a time, as upstream wires them: `$send !== null && $note !== null` was one
+        // condition for two independent facts, so a mode that offered only one got neither —
+        // and what a hook would then read is `sendMessage() needs a session — call it from a
+        // handler`, which is an explanation of something that did not happen.
+        foreach ($this->hooks as $hook) {
+            $hook->api->writesTo($send, $note);
         }
     }
 

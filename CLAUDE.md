@@ -1981,6 +1981,16 @@ Four things worth keeping straight:
 has `{...tool, execute}`. `Process::run()` grew an optional `$cwd` so `$pi->exec()` can run a
 command where the project is.
 
+**`$pi->exec()` blocks the loop, and upstream's does not.** `Process::run()` polls with
+`usleep()`, so while a hook's command runs there are no keystrokes, no spinner and no escape — a
+thirty-second linter is a thirty-second freeze. Upstream's `execCommand` is async and takes an
+`AbortSignal`. The loop-aware version already exists as `Tools\Run`, which is what `bash` uses, so
+this is a wiring decision rather than a piece of work: it is new surface on `HookApi` and
+therefore the developer's. Until then the timeout is what bounds the damage, which is the second
+reason it is not optional — upstream's timeout is opt-in, pig's is 30 seconds by default, and
+upstream's `killed` field is `ExecResult::stopped()` here, wider by one case (a program that is
+not on this machine answers the same way) and saying so on itself.
+
 `HookUi` is upstream's `HookUIContext`, and it is what makes `tool_call` more than a
 yes-or-no rule: a handler can ask the person something and wait for the answer.
 
@@ -3812,6 +3822,62 @@ Discarding a good reading costs one turn without one; keeping a stale one costs 
 after it.
 
 Regression test: `AgentSessionTest::testCompactingDoesNotLeaveTheSessionAskingToCompactAgain`.
+
+### Two loaders each had their own worse copy of `Paths::resolve()`
+
+`HookLoader` and `CustomToolLoader` both take extra file paths from the settings, and both had
+their own private `resolve()` — the same fourteen lines, pasted, doing a worse job than the
+function three directories away that exists for this:
+
+```php
+// what both had
+if (str_starts_with($path, '~')) {
+    $home = getenv('HOME');
+    $home = $home === false || $home === '' ? sys_get_temp_dir() : rtrim($home, '/');
+    return $home . substr($path, 1);
+}
+```
+
+Three things wrong with it, in order of how much they cost:
+
+- **It does not normalise Unicode spaces**, which is the whole reason `Paths::expand()` exists:
+  the space in a path copied out of Finder is U+202F. So a hook that is right there was reported
+  as `not a readable file`, naming a path that looks identical to the one on disk. Reproduced.
+- **A missing `HOME` becomes `/tmp`**, which is a silent fallback of exactly the kind the
+  conventions forbid — `~/.pig/hooks/x.php` resolves to a file under the temp directory and the
+  complaint names a path nobody wrote. `Paths::expand()` leaves the path alone.
+- **It does not collapse `..`**, which `Paths::resolve()` has done since the `grep` prefix fix.
+
+Both now call `Paths::resolve()`. **The lesson is the one this file keeps arriving at from the
+other direction:** the question is not "is this fourteen lines correct" but "who else answers
+this question, and do they agree" — and the two copies could not have diverged from `Paths`
+without diverging from each other too, which is why neither looked wrong on its own.
+
+Found in the same read and *not* changed, because checking came first: both loaders use
+`glob('*.php')`, which skips a leading dot where upstream's `readdirSync` does not — and here
+that is protective rather than a gap. A hook directory is a directory somebody edits, and Emacs
+writes a `.#name.php` symlink beside the open file; upstream picks that up and reports a load
+error for as long as the editor is open. `Migrations` scans instead, for the opposite reason:
+missing a session file there loses a conversation. Both now say so where the code is.
+
+Regression tests: `HookLoaderTest::testAConfiguredPathCopiedOutOfAFileManagerStillResolves` and
+its twin in `CustomToolsTest`.
+
+### One condition for two independent facts wired neither
+
+`HookRunner::initialize()` handed each hook its `sendMessage()` and `appendEntry()` writers
+behind `if ($send !== null && $note !== null)`. Both are optional and independent, so a mode
+offering only one got **neither** — and what the hook would then read is `sendMessage() needs a
+session — call it from a handler`, which is a confident explanation of something that did not
+happen. All three modes pass both today, so this was the next mode's bug rather than a live one;
+upstream sets the two independently, which is what it does now.
+
+The shape, and it is worth having a name for: **an `&&` over two unrelated conditions is a
+silent disabling waiting for a caller who only satisfies one.** The tell is that the two halves
+have separate error messages — if one fact can be missing on its own, it has to be *wired* on its
+own.
+
+Regression test: `HookMessagesTest::testAModeThatWiresOneWriterGetsThatOne`.
 
 ### A hook that fails while being asked for permission has not given it
 

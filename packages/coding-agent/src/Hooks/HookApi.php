@@ -214,16 +214,20 @@ final class HookApi
     }
 
     /**
-     * Wire the two writers, once there is a session to write to.
+     * Wire the writers, once there is a session to write to.
      *
-     * @param Closure(HookMessage, bool): void $send
-     * @param Closure(string, mixed): void     $note
+     * Either on its own: they are two independent facts, and one missing must not take the
+     * other with it. Whichever is not given stays null, which is what `sendMessage()` and
+     * `appendEntry()` already have an answer for.
+     *
+     * @param Closure(HookMessage, bool): void|null $send
+     * @param Closure(string, mixed): void|null     $note
      * @internal called by `HookRunner::initialize()`
      */
-    public function writesTo(Closure $send, Closure $note): void
+    public function writesTo(?Closure $send, ?Closure $note): void
     {
-        $this->send = $send;
-        $this->note = $note;
+        $this->send = $send ?? $this->send;
+        $this->note = $note ?? $this->note;
     }
 
     /**
@@ -280,6 +284,23 @@ final class HookApi
      *
      * Here because the timeout and the argv array are worth having by default: a hook
      * that reaches for `shell_exec` gets neither, and a hook that hangs hangs pig.
+     *
+     * Three differences from upstream's `execCommand`, and the third is the one to know:
+     *
+     * - **There is a timeout by default.** Upstream's is opt-in, so a hook that forgets it
+     *   parks the turn for as long as its command wants. Thirty seconds is long enough for a
+     *   test run and short enough to be survivable.
+     * - **`killed` is `ExecResult::stopped()`**, which is upstream's field under pig's
+     *   `Process::STOPPED`. It is wider by one case and says so on itself: a program that is
+     *   not on this machine answers the same way as one that ran too long, where upstream
+     *   reports that as `code: 1, killed: false`.
+     * - **It blocks the loop, and upstream's does not.** `Process::run()` polls with
+     *   `usleep()`, so while a hook's command runs there are no keystrokes, no spinner and no
+     *   escape — a thirty-second linter is a thirty-second freeze. Upstream's exec is async
+     *   and takes an `AbortSignal`. The loop-aware version of this already exists as
+     *   `Tools\Run`, which is what `bash` uses; wiring a hook's commands through it is the
+     *   developer's call, since it is new surface on this class. Until then the timeout is
+     *   what bounds the damage, which is the other reason it is not optional.
      *
      * @param list<string> $command the program and its arguments, unquoted
      * @param string|null  $cwd     defaults to the directory pig is working in

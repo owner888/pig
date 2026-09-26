@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\CustomTools;
 
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Tools\Paths;
 use Throwable;
 
 /**
@@ -53,7 +54,7 @@ final class CustomToolLoader
         ];
 
         foreach ($configured as $path) {
-            $paths[] = self::resolve($path, $cwd);
+            $paths[] = Paths::resolve($path, $cwd);
         }
 
         // One API for every tool, as upstream has it: what is on it is either the same
@@ -107,6 +108,9 @@ final class CustomToolLoader
      *
      * Sorted so two machines with the same folders load in the same order — a name
      * collision is decided by load order, and readdir order is not an order.
+     *
+     * A glob, so a folder whose name begins with a dot is not a tool — see the note on
+     * `HookLoader::discover()` for why that is deliberate on both sides.
      *
      * @return list<string>
      */
@@ -192,16 +196,4 @@ final class CustomToolLoader
             . ' (' . basename($error->getFile()) . ':' . $error->getLine() . ')';
     }
 
-    /** Absolute as given, `~` from the environment, relative from the working directory. */
-    private static function resolve(string $path, string $cwd): string
-    {
-        if (str_starts_with($path, '~')) {
-            $home = getenv('HOME');
-            $home = $home === false || $home === '' ? sys_get_temp_dir() : rtrim($home, '/');
-
-            return $home . substr($path, 1);
-        }
-
-        return str_starts_with($path, '/') ? $path : $cwd . '/' . $path;
-    }
 }

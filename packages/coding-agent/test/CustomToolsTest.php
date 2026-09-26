@@ -228,6 +228,23 @@ final class CustomToolsTest extends TestCase
         $this->assertCount(1, $tools);
     }
 
+    public function testAConfiguredPathCopiedOutOfAFileManagerStillResolves(): void
+    {
+        // Both loaders had their own copy of a worse `Paths::resolve()`, which did not know
+        // that the space in a path copied out of Finder is U+202F. See `HookLoaderTest`.
+        $this->write($this->project, 'my tool', self::source('wc'));
+
+        [$tools, $problems] = CustomToolLoader::load(
+            $this->project,
+            [],
+            [$this->project . "/my\u{202F}tool/index.php"],
+            $this->home,
+        );
+
+        $this->assertSame([], $problems);
+        $this->assertCount(1, $tools);
+    }
+
     // ---- what goes wrong ---------------------------------------------------------------
 
     /** A tool that shadowed `bash` would be called in its place by a model told otherwise. */

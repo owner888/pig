@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Hooks;
 
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Tools\Paths;
 use Throwable;
 
 /**
@@ -58,7 +59,7 @@ final class HookLoader
         ];
 
         foreach ($configured as $path) {
-            $paths[] = self::resolve($path, $cwd);
+            $paths[] = Paths::resolve($path, $cwd);
         }
 
         $hooks = [];
@@ -99,6 +100,14 @@ final class HookLoader
      *
      * Not recursive, and sorted so that two machines with the same files load them in the
      * same order — hooks run in load order, and readdir order is not an order.
+     *
+     * A `glob()` rather than a scan, and here that is the point rather than an oversight:
+     * a glob does not match a leading dot, and a hook directory is a directory somebody
+     * *edits*. Emacs writes a `.#name.php` symlink beside the file it has open, which ends
+     * in `.php` — upstream's `readdirSync` picks it up (it accepts symlinks) and reports a
+     * load error for as long as the editor is open. `Migrations` has the opposite rule, and
+     * for the opposite reason: missing a session file there loses somebody's conversation,
+     * where missing a dotfile here is how an editor's droppings stay out of the way.
      *
      * @return list<string>
      */
@@ -184,20 +193,4 @@ final class HookLoader
         return "{$type}: {$error->getMessage()} ({$where})";
     }
 
-    /** Absolute as given, `~` from the environment, relative from the working directory. */
-    private static function resolve(string $path, string $cwd): string
-    {
-        if (str_starts_with($path, '~')) {
-            $home = getenv('HOME');
-            $home = $home === false || $home === '' ? sys_get_temp_dir() : rtrim($home, '/');
-
-            return $home . substr($path, 1);
-        }
-
-        if (str_starts_with($path, '/')) {
-            return $path;
-        }
-
-        return $cwd . '/' . $path;
-    }
 }

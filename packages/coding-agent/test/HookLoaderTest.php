@@ -243,6 +243,24 @@ final class HookLoaderTest extends TestCase
         $this->assertCount(1, $hooks);
     }
 
+    public function testAConfiguredPathCopiedOutOfAFileManagerStillResolves(): void
+    {
+        // The space in a path copied out of Finder is U+202F, not a space — which is the whole
+        // reason `Paths::expand()` exists, and this loader had its own hand-rolled version of
+        // that function which did not know. What it cost: a hook that is right there, reported
+        // as "not a readable file", naming a path that looks identical to the one on disk.
+        mkdir($this->project . '/my hooks', 0o777, true);
+        $this->write($this->project . '/my hooks', 'extra.php', '<?php return function ($pi): void {};');
+
+        [$hooks, $errors] = HookLoader::load($this->project, ["my\u{202F}hooks/extra.php"], $this->home);
+
+        $this->assertSame([], $errors);
+        $this->assertCount(1, $hooks);
+
+        unlink($this->project . '/my hooks/extra.php');
+        rmdir($this->project . '/my hooks');
+    }
+
     public function testAConfiguredPathThatIsNotThereIsAComplaint(): void
     {
         [$hooks, $errors] = HookLoader::load($this->project, ['/no/such/hook.php'], $this->home);
