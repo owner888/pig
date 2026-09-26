@@ -16,6 +16,7 @@ use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\Tui\Ansi;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Text;
+use Pig\Tui\Width;
 use Closure;
 use RuntimeException;
 
@@ -367,6 +368,25 @@ final class ToolExecutionTest extends TestCase
         $this->assertStringContainsString('line 12', $text);
         $this->assertStringNotContainsString('line 1 ', $text);
         $this->assertStringContainsString('... (7 earlier lines)', $text);
+    }
+
+    public function testTheEarlierLinesNoteFitsANarrowTerminal(): void
+    {
+        // Every line a component hands back has to fit, because `Tui::checkWidth()` throws on
+        // one that does not. `... (35 earlier lines)` is 22 columns and was never cut to the
+        // width, so a narrow pane took the session down as soon as any output was truncated.
+        $tool = $this->tool('bash', ['command' => 'make']);
+        $tool->updateResult($this->said(implode("\n", array_map(static fn (int $i): string => "line {$i}", range(1, 40)))));
+
+        for ($width = 8; $width <= 60; $width++) {
+            foreach ($tool->render($width) as $index => $line) {
+                $this->assertLessThanOrEqual(
+                    $width,
+                    Width::visible($line),
+                    "line {$index} at width {$width}: " . Ansi::strip($line),
+                );
+            }
+        }
     }
 
     public function testBashCountsRowsOnScreenNotNewlines(): void

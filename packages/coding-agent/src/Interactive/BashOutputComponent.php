@@ -20,6 +20,15 @@ use Pig\Tui\Width;
  * knows how wide the terminal is. Upstream passes the whole TUI into the tool component
  * to reach `terminal.columns`; asking at render time is the same answer without the
  * dependency.
+ *
+ * Two differences from upstream's `bash-execution.ts`, both about the note:
+ *
+ * - **It counts the rows that were dropped.** Upstream counts *logical* lines — how many the
+ *   `slice(-20)` left behind — and then truncates visually on top of that, discarding the
+ *   `skippedCount` its own helper hands back. So a long wrapped line is hidden and the note
+ *   says nothing was.
+ * - **It goes above the output, not below it.** "N earlier lines" reads as a count of what is
+ *   off the top, which is where those rows went; upstream puts it down with the exit status.
  */
 final class BashOutputComponent implements Component
 {
@@ -75,7 +84,12 @@ final class BashOutputComponent implements Component
         $kept = array_slice($visual, $dropped);
 
         if ($this->note !== null) {
-            array_unshift($kept, ($this->note)($dropped));
+            // Cut to the width, not wrapped: `... (35 earlier lines)` is 22 columns and every
+            // line handed to the renderer has to fit — `Tui::checkWidth()` throws on one that
+            // does not, so a note nobody cut took the session down on a pane narrower than
+            // itself. Truncated rather than wrapped for the same reason a scroll count is:
+            // half of a count on a second row says nothing.
+            array_unshift($kept, Width::truncate(($this->note)($dropped), $width, ''));
         }
 
         return self::padded($kept, $width);

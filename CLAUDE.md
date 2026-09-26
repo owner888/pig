@@ -2793,11 +2793,18 @@ The count (`(3/30)`) is truncated as `SelectList` and upstream both truncate it,
 row hangs in the margin.
 
 **Then the same question was asked of everything else that builds its own lines**, which is the half
-that makes this worth an entry rather than a fix: `FooterComponent`, `TreeList` and
-`BashOutputComponent` measure and truncate, `DiffView` hands back a string that goes through `Text`,
-and `ToolExecutionComponent`, `UserMessageComponent`, `HookMessageComponent`, `BorderedLoader` and
-the banner are `Text`/`Markdown`/`Container` all the way down, which wrap and pad by themselves.
-`SettingsList` was the only one that did not fit, and it was the last component ported.
+that makes this worth an entry rather than a fix: `FooterComponent` and `TreeList` measure and
+truncate, `DiffView` hands back a string that goes through `Text`, and `ToolExecutionComponent`,
+`UserMessageComponent`, `HookMessageComponent`, `BorderedLoader` and the banner are
+`Text`/`Markdown`/`Container` all the way down, which wrap and pad by themselves.
+
+**That sweep named `BashOutputComponent` as one of the safe ones and it was not**, which is worth
+more than the fix: it pads every line to the width and truncates none of them, and the line it adds
+itself — `... (35 earlier lines)` — is 22 columns whatever the terminal is. So a `!` command whose
+output was cut took the session down on any pane narrower than that. *Measuring is not truncating,
+and a sweep that reads for `Width::` finds both.* Checking a claim like that means running the probe
+per component, not grepping for the function name — `MarkdownTest` and
+`ToolExecutionTest::testTheEarlierLinesNoteFitsANarrowTerminal` are what hold the two of them now.
 
 So the rule for any new component: **the lines it returns are a contract with the renderer, not a
 suggestion.** Anything assembled by concatenation rather than handed to `Text` has to truncate or
