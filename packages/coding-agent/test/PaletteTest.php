@@ -178,4 +178,51 @@ final class PaletteTest extends TestCase
         'thinkingOff', 'thinkingMinimal', 'thinkingLow', 'thinkingMedium', 'thinkingHigh',
         'thinkingXhigh', 'bashMode',
     ];
+
+    // ---- what the environment says the terminal can do ------------------------------
+
+    public function testTruecolorIsReadOffColorterm(): void
+    {
+        $saved = [getenv('COLORTERM'), getenv('WT_SESSION')];
+        putenv('WT_SESSION');
+
+        try {
+            putenv('COLORTERM=truecolor');
+            $this->assertTrue(Colour::truecolor());
+
+            putenv('COLORTERM=24bit');
+            $this->assertTrue(Colour::truecolor());
+
+            putenv('COLORTERM=');
+            $this->assertFalse(Colour::truecolor());
+        } finally {
+            self::restore(['COLORTERM' => $saved[0], 'WT_SESSION' => $saved[1]]);
+        }
+    }
+
+    public function testWindowsTerminalIsRecognisedButNotByAnEmptyVariable(): void
+    {
+        $saved = [getenv('COLORTERM'), getenv('WT_SESSION')];
+        putenv('COLORTERM');
+
+        try {
+            putenv('WT_SESSION=8a1b');
+            $this->assertTrue(Colour::truecolor());
+
+            // Exported without a value is not Windows Terminal: `getenv()` answers '' rather
+            // than false, and upstream reads the same variable through JS truthiness.
+            putenv('WT_SESSION=');
+            $this->assertFalse(Colour::truecolor());
+        } finally {
+            self::restore(['COLORTERM' => $saved[0], 'WT_SESSION' => $saved[1]]);
+        }
+    }
+
+    /** @param array<string, string|false> $variables */
+    private static function restore(array $variables): void
+    {
+        foreach ($variables as $name => $value) {
+            putenv($value === false ? $name : "{$name}={$value}");
+        }
+    }
 }

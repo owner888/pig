@@ -40,8 +40,12 @@ final class Colour
             return true;
         }
 
-        // Windows Terminal takes 24-bit colour and says so nowhere else.
-        return getenv('WT_SESSION') !== false;
+        // Windows Terminal takes 24-bit colour and says so nowhere else. Compared against ''
+        // and not false, because `getenv()` answers '' for a variable exported without a
+        // value and upstream reads this one through JavaScript's truthiness, where '' is not
+        // Windows Terminal. Same correction as `Images\Capabilities::isSet()`, whose docblock
+        // says what it costs when the variable decides whether to draw a picture.
+        return (string) getenv('WT_SESSION') !== '';
     }
 
     /**

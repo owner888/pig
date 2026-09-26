@@ -32,15 +32,15 @@ final readonly class Capabilities
         $term = strtolower((string) getenv('TERM'));
         $colour = strtolower((string) getenv('COLORTERM'));
 
-        $kitty = getenv('KITTY_WINDOW_ID') !== false || $program === 'kitty';
-        $ghostty = $program === 'ghostty' || str_contains($term, 'ghostty') || getenv('GHOSTTY_RESOURCES_DIR') !== false;
-        $wezterm = getenv('WEZTERM_PANE') !== false || $program === 'wezterm';
+        $kitty = self::isSet('KITTY_WINDOW_ID') || $program === 'kitty';
+        $ghostty = $program === 'ghostty' || str_contains($term, 'ghostty') || self::isSet('GHOSTTY_RESOURCES_DIR');
+        $wezterm = self::isSet('WEZTERM_PANE') || $program === 'wezterm';
 
         if ($kitty || $ghostty || $wezterm) {
             return new self(ImageProtocol::Kitty, true, true);
         }
 
-        if (getenv('ITERM_SESSION_ID') !== false || $program === 'iterm.app') {
+        if (self::isSet('ITERM_SESSION_ID') || $program === 'iterm.app') {
             return new self(ImageProtocol::ITerm2, true, true);
         }
 
@@ -51,5 +51,22 @@ final readonly class Capabilities
         }
 
         return new self(null, $colour === 'truecolor' || $colour === '24bit', true);
+    }
+
+    /**
+     * Whether a variable is set to anything at all.
+     *
+     * Four of the tests above are presence tests, and **an exported-but-empty variable is not
+     * presence**. `getenv()` answers `false` for absent and `''` for set-but-empty, so the
+     * obvious `!== false` calls an empty one present; upstream reads the same variable through
+     * JavaScript's truthiness, where `''` is falsy, and therefore ignores it. A bare `export
+     * ITERM_SESSION_ID`, a `docker run -e ITERM_SESSION_ID`, or an ssh or tmux environment
+     * that forwards the name without a value made pig send iTerm2 image sequences to a
+     * terminal that cannot draw them — which is not a missing picture, it is tens of kilobytes
+     * of base64 printed into the transcript.
+     */
+    private static function isSet(string $name): bool
+    {
+        return (string) getenv($name) !== '';
     }
 }

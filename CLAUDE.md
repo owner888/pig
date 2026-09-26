@@ -2810,6 +2810,38 @@ Regression tests: `SettingsListTest::testNoLineIsWiderThanTheTerminal` (widths 6
 named Enter and not Space, while `handleInput()` accepts both — upstream's own hint names both, and
 the Ctrl+G rule the other way round.
 
+### `getenv()` answers `''` for a variable exported without a value, and `!== false` calls that present
+
+`Capabilities::detect()` decides whether this terminal can draw a picture, and four of its seven
+tests are presence tests: is `KITTY_WINDOW_ID` / `GHOSTTY_RESOURCES_DIR` / `WEZTERM_PANE` /
+`ITERM_SESSION_ID` there at all. Upstream reads each through JavaScript's truthiness, where `''` is
+falsy; `getenv()` answers `false` for absent and `''` for set-but-empty, so `!== false` said yes to
+an empty one.
+
+```php
+getenv('ITERM_SESSION_ID') !== false        // true  for `export ITERM_SESSION_ID`
+(string) getenv('ITERM_SESSION_ID') !== ''  // false, which is what upstream reads
+```
+
+A bare `export ITERM_SESSION_ID`, a `docker run -e ITERM_SESSION_ID`, or an ssh or tmux environment
+forwarding the name without a value therefore made pig send iTerm2 inline-image sequences to a
+terminal that cannot draw them — **not a missing picture, tens of kilobytes of base64 printed into
+the transcript**, plus a `CSI 16 t` whose answer never comes.
+
+`Capabilities::isSet()` is the one implementation, and the same correction went into
+`Theme\Colour::truecolor()`, whose `WT_SESSION` test upstream also reads as truthiness.
+**`detect()` had no test at all** — twenty-five lines of environment arithmetic, which is the size
+that goes unchecked, exactly as `Config`'s sixty lines of path arithmetic were. `CapabilitiesTest`
+states all twelve terminals as well as the four empty-variable cases, and the twelve passing first
+time is what says the rest of the detection is upstream's.
+
+**Four more sites still read `!== false`**, all in `Clipboard\SystemClipboard` — `WAYLAND_DISPLAY`,
+`TERMUX_VERSION`, `WSL_DISTRO_NAME`, `WSL_INTEROP` — and they are pig's own, with no upstream
+counterpart to be faithful to. What they cost is milder by a lot: the wrong clipboard command is
+chosen, `Process::capture()` answers null for it, and the result is no clipboard rather than a screen
+full of base64. Left alone pending a decision on whether the presence test is worth one shared helper
+across two packages, which is public surface in `pig/tui` and so not an audit's to add.
+
 ### A JavaScript string offset carried across as a byte offset lands inside a character
 
 Four keystrokes killed the session, and all four of them are ordinary in a Chinese prompt: type
