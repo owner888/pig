@@ -137,6 +137,12 @@ final class AgentSession
         return $this->store;
     }
 
+    /** The project directory, so a mode holding a session need not be handed it twice. */
+    public function cwd(): string
+    {
+        return $this->cwd;
+    }
+
     /**
      * Write somewhere else from now on.
      *

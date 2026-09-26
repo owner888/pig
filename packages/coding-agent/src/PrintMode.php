@@ -11,6 +11,7 @@ use Pig\Ai\TextContent;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
 use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
+use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\NoUi;
@@ -126,6 +127,16 @@ final class PrintMode
         });
 
         $this->customTools?->withUi(new NoUi());
+
+        // And the context, which this mode did not wire — so a custom tool here was handed
+        // `CustomToolSet`'s own stub: no session to read, no model, `abort()` a no-op, and a
+        // working directory of `.`, which is whatever directory pig was started from rather
+        // than the project. The other two modes wired both, and the comment above claiming
+        // "the same wiring, with the one difference that matters" was counting one difference
+        // too few.
+        $this->customTools?->withContext(
+            fn () => $this->hooks?->context() ?? new HookContext($this->session->cwd(), $this->session->store()),
+        );
 
         if ($this->mode === 'json') {
             $this->session->subscribe($this->emit(...));

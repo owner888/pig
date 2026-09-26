@@ -31,6 +31,7 @@ use Pig\CodingAgent\CustomTools\CustomToolSessionEvent;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\CustomTools\LoadedCustomTool;
 use Pig\CodingAgent\Hooks\HookApi;
+use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\PrintMode;
@@ -469,6 +470,43 @@ final class PrintModeTest extends TestCase
 
         $this->assertSame(['start', 'shutdown'], $told);
         $this->assertStringContainsString('cannot start', $this->complained());
+    }
+
+    public function testACustomToolGetsTheRealSessionHereToo(): void
+    {
+        $seen = null;
+        $tool = new CustomTool(
+            name: 'noop',
+            label: 'Noop',
+            description: 'Does nothing.',
+            parameters: ['type' => 'object', 'properties' => [], 'required' => []],
+            execute: static fn (): mixed => null,
+            onSession: static function (CustomToolSessionEvent $event, HookContext $context) use (&$seen): void {
+                if ($event->reason === 'start') {
+                    $seen = $context;
+                }
+            },
+        );
+
+        $this->answers = ['ok'];
+        $this->run(
+            ['ask'],
+            hooks: $this->hooks([]),
+            customTools: new CustomToolSet([new LoadedCustomTool('t/index.php', 't', $tool)]),
+            store: true,
+        );
+
+        // This mode wired the UI and not the context, so a tool here was handed
+        // `CustomToolSet`'s own stub — no session, no model, `abort()` a no-op, and a working
+        // directory of `.`, so a tool resolving a path against it read a different file than
+        // the same tool in the terminal. The other two modes wired both.
+        $this->assertNotNull($seen);
+        $this->assertSame($this->cwd, $seen->cwd);
+        $this->assertNotNull($seen->model);
+        // The store is the runner's to carry — `CodingAgent::session()` builds it with one —
+        // so what this pins is that the tool is handed the runner's context at all rather than
+        // a stub, which is where every other field comes from too.
+        $this->assertFalse($seen->hasUi, 'and there is nobody to ask in this mode');
     }
 
     /** @param array<string, callable> $handlers */

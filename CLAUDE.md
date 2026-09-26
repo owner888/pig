@@ -2212,6 +2212,19 @@ things about them:
 `CustomToolAPI.ui` is ported as `HookUi`, in both `$pi->ui()` and the context handed to
 `execute`. Nothing of upstream's custom-tool module is left out.
 
+Audited difference by difference against `wrapper.ts`, `types.ts` and `loader.ts`. `wrapper.ts` is
+`WrappedCustomTool` line for line, argument order included. What the rest found is one bug — the
+`-p` context, below — and a row of places where pig is stricter with a reason already written
+beside it: the declaration validates itself where upstream accepts a nameless tool with no
+description, `hasUi` is derived from the UI rather than passed beside it as a second fact that can
+disagree, and the dedupe is on `realpath()` where upstream's is on `path.resolve()`. Two things
+were **checked rather than assumed** and turned out fine: `glob('*/index.php')` does follow a
+symlinked tool folder, and `glob('*.php')` does match a symlinked hook file — upstream tests
+`isDirectory() || isSymbolicLink()` explicitly, so the question was whether pig's globs quietly
+skipped what that clause exists to catch. They do not. Left out on purpose: upstream's
+`isBunBinary` branch, which is a second loader for a packaging mode pig has no equivalent of, and
+`setUIContext`'s `hasUI` parameter for the reason above.
+
 ### Picking a failed turn back up
 
 A turn can fail for a reason that undoes itself — the provider is busy — or for a reason the
@@ -3889,6 +3902,37 @@ presses escape for real:
 `sleep 5`, escape arrives while the guard is parked on it, and the command comes back stopped. Note
 *why* the key can arrive at all: the command is not blocking the loop, which is the previous fix
 holding the door open for this one.
+
+### `-p` handed a custom tool a context with no session in it
+
+`CustomToolSet` needs two things once a mode is running: the UI and the session context.
+`InteractiveMode` and `RpcMode` wire both. `PrintMode` wired the UI, under a comment reading
+*"the same wiring as the other two modes, with the one difference that matters: no UI"* — which
+was counting one difference too few.
+
+What a custom tool got in `-p` and `--mode json` was therefore `CustomToolSet::contextFn()`'s own
+stub: no model, no conversation to reconstruct its state from, an `abort()` that does nothing,
+and a **working directory of `.`** — so a tool resolving a path against `$ctx->cwd` read a
+different file there than the same tool in the terminal, which is the kind of difference somebody
+debugs for an hour.
+
+Three things about it are worth keeping:
+
+- **The stub is why it went unnoticed.** It exists so a tool asked something legitimately early
+  gets an answer rather than a `TypeError`, and nothing distinguishes that from a mode that
+  forgot to wire. It says so on itself now.
+- **The `?? new HookContext(…)` fallbacks in the modes are unreachable from `bin/pig`**, which
+  builds a `HookRunner` unconditionally — `--no-hooks` gives an *empty* runner, not a null one. So
+  the only live path was the one `PrintMode` did not take.
+- **`AgentSession::cwd()` is why the fix needed no new constructor parameter.** The session
+  already holds the project directory, and a mode holding the session being handed it a second
+  time is the two-copies shape on a value that cannot differ.
+
+Found in the same read and corrected rather than annotated: `CustomToolSet`'s own docblock said
+`notify()` is called "from the interactive mode", which two other modes had already made false —
+the fourth shape from the index, a docblock asserting something about the rest of the repository.
+
+Regression test: `PrintModeTest::testACustomToolGetsTheRealSessionHereToo`.
 
 ### Two loaders each had their own worse copy of `Paths::resolve()`
 

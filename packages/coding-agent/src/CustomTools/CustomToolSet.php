@@ -18,10 +18,14 @@ use Throwable;
  * hand them what only exists once a mode is running. There that is the UI context; here it
  * is that, the session context, and the lifecycle events.
  *
- * `notify()` is called from the interactive mode rather than from the session, because
- * all four moments a tool hears about — startup, `/new` and `/resume`, `/tree`, quitting —
- * are things someone did in the UI. Routing them through the hook runner was the other
- * option and was worse: `/hooks` would then list tool files as hooks.
+ * `notify()` is called from the **modes** rather than from the session, because all four
+ * moments a tool hears about — startup, `/new` and `/resume`, `/tree`, quitting — are things
+ * somebody asked for, and the mode is what knows. Routing them through the hook runner was
+ * the other option and was worse: `/hooks` would then list tool files as hooks. All four fire
+ * in the terminal and over RPC; `PrintMode` fires `start` and `shutdown`, which is all of
+ * them that exist there, since it has no `/tree` and no way to switch sessions. (This said
+ * "the interactive mode" for a while, which was a claim about the rest of the repository that
+ * two other modes had already made false.)
  */
 final class CustomToolSet
 {
@@ -151,6 +155,14 @@ final class CustomToolSet
     {
         // A context with nothing wired up rather than null: a tool reading
         // `$ctx->isIdle()` outside a session should get an answer, not a TypeError.
+        //
+        // **A mode that reaches this has forgotten to call `withContext()`**, which is what
+        // `PrintMode` had done: the stub answers every question without a session behind it,
+        // so a tool got no model, no conversation, an `abort()` that does nothing and a
+        // working directory of `.`. Nothing distinguishes that from a tool being asked
+        // something legitimately early, which is why it went unnoticed — the three modes all
+        // wire it now, and `PrintModeTest::testACustomToolGetsTheRealSessionHereToo` is what
+        // keeps the third one honest.
         return $this->context ?? static fn (): HookContext => new HookContext('.');
     }
 }
