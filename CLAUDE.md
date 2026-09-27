@@ -1795,10 +1795,10 @@ Five things decided here:
   AJV and no TypeBox; the checks are written out, which is `Agent\ToolArguments`' trade again.
 - **No `compat` block means null**, so `OpenAiCompat::detect()` still works it out from the URL.
   That is a better default than any set of flags: a local llama.cpp gets what it needs with
-  nothing written. A block uses upstream's four key names (`supportsStore`,
-  `supportsDeveloperRole`, `supportsReasoningEffort`, `maxTokensField`) so files stay portable,
-  and pig's four extra flags are accepted too — a file using those is a pig file, which is the
-  trade and it is stated.
+  nothing written. A block uses **all eight of upstream's key names** so files stay portable — the
+  four `supports…`/`maxTokensField` ones and the four upstream prefixes with `requires`. This
+  sentence used to say upstream had four of the eight and that the other four were pig's own; see
+  the trap entry on it.
 
 `--list-models` moved to **after** this loads, which it had to: a listing that cannot show the model
 somebody just declared is a listing they will not trust about the rest either. It costs a
@@ -2823,23 +2823,22 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 92 | 39,200 |
+| read difference by difference | 93 | 39,400 |
 | ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **22** | **2,100** |
+| **not yet read** | **21** | **1,900** |
 
-Those figures go stale; the queue does not. **Nothing over 300 lines is left**, which is the first
-time that has been true: the three that were — `tui.ts`, `components/input.ts` and
-`terminal-image.ts` — each have an entry below. What remains is 22 files under 220 lines, all but
-three of them components:
+Those figures go stale; the queue does not. **Nothing over 200 lines is left, and 19 of the 21 are
+components**, which is the narrowest the remaining risk has been: the four largest files —
+`tui.ts`, `components/input.ts`, `terminal-image.ts` and `ai/types.ts` — each have an entry below.
+The two that are not components:
 
 ```
- 217  ai/types.ts                          188  tui/components/settings-list.ts
- 196  coding-agent/…/bash-execution.ts      184  tui/components/select-list.ts
- 147  coding-agent/…/diff.ts                138  tui/terminal.ts
+ 138  tui/terminal.ts                       28  coding-agent/utils/clipboard.ts
 ```
 
-…and sixteen more from 134 lines down to 18. The count is rebuilt by listing the sweep's output and
-striking off what this file records as read, not by editing these numbers.
+and the components run from 196 lines (`bash-execution.ts`) down to 18 (`user-message.ts`). The
+count is rebuilt by listing the sweep's output and striking off what this file records as read, not
+by editing these numbers.
 
 **`markdown.ts` was the one a surface map could not read**, and the corpus is what read it — see the
 trap on the two list bugs it found. The rule it confirms: where upstream leans on a package pig had to
@@ -5454,6 +5453,55 @@ are all still there, and it fails if the two lines are put back in upstream's or
 typed during a turn and then thrown away with the conversation was still waiting to be sent in its
 replacement. Reading two callers finds which one is wrong; giving them one implementation is what
 stops the question coming back.
+
+### Four keys out of eight were not upstream's, and a docblock said that was fine
+
+The same find as the entry below, on a different shared file, and this time **the sentence that
+should have prevented it is the one that caused it.** `CustomModels::compat()` read a
+`models.json`'s compatibility block, and its docblock said:
+
+> Upstream names four of these and this takes those four under upstream's own spellings … pig's
+> `OpenAiCompat` has four more … a file that uses them is a pig file, which is the trade and it is
+> stated.
+
+Upstream's `OpenAICompat` in `types.ts` has **all eight**, and the four it supposedly lacks are
+right there with a `requires` prefix on each: `requiresToolResultName`,
+`requiresAssistantAfterToolResult`, `requiresThinkingAsText`, `requiresMistralToolIds`. pig read
+them without the prefix, so a `models.json` written for pi had four of its eight settings silently
+ignored — and the last of the four is the one that matters most, because a Mistral-shaped endpoint
+rejects any tool id that is not exactly nine alphanumeric characters. Somebody who had configured
+their proxy correctly for pi got a 400 out of pig with nothing on screen to connect it to.
+
+Three things worth taking from it:
+
+- **A claim about what upstream has is worth a `grep`, not a sentence** — which this file says about
+  itself in four other places, and which is exactly what a confident docblock buys you out of doing.
+  The claim was wrong twice over: about upstream's count, and about whose the other four were.
+- **The tell was there and it is the same tell as last time:** four spellings out of a group of
+  eight not matching is a typo, not a design. `retry.maxRetries` was one out of three.
+- **The short spellings are gone rather than kept beside them**, for the session format's reason:
+  nobody has a pig `models.json` from a release, and a file holding both names for one flag is a
+  file that can disagree with itself.
+
+And the test that covered it was called `testACompatBlockUsesUpstreamsSpellings` and asserted three
+of the four that were already right. *A test named after the rule is not a test of the rule.*
+
+Regression test: `CustomModelsTest::testTheFourKeysWithARequiresPrefixAreUpstreamsToo`.
+
+**The rest of `types.ts` matched, which is worth the words because it is 217 lines of nothing but
+field names** — and a renamed or dropped field there is a wire difference with no error to announce
+it. Checked one by one: the five `Api` values, twelve `KnownProvider` names, five reasoning levels,
+the four option fields and `reasoning` on top of them, all four content types including
+`textSignature`, `thinkingSignature` and `thoughtSignature`, `Usage`'s five counts and five costs,
+the five stop reasons, the three messages' fields, `Tool`, `Context`, **all twelve stream events**
+down to `error` carrying its message under the field name `error` rather than `message`, and
+`Model`'s twelve. Two differences with no defect behind them, now written where they live:
+`ToolResultMessage`'s `isError` has a default where upstream requires it (every construction here
+passes it), and `Context::$tools` is `[]` for "none" where upstream's is `undefined` — which is a
+difference **on the wire**, because `[]` is truthy in JavaScript, so three of upstream's four
+providers send `tools: []` for a conversation with no tools where pig sends no field. Only its
+Google provider asks `.length > 0`, as pig does everywhere, and the one case where the empty field
+is load-bearing already has a branch in `OpenAiCompletions`.
 
 ### One settings key out of seventeen was not upstream's
 

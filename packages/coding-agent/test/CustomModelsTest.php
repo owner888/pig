@@ -154,12 +154,34 @@ final class CustomModelsTest extends TestCase
             'maxTokensField' => 'max_tokens',
         ]])]]))->models[0];
 
-        // Upstream's four key names, so a `models.json` written for pi works here unchanged.
+        // All eight of upstream's key names, so a `models.json` written for pi works here
+        // unchanged. This used to assert three of them and this method used to be right about
+        // three of them: upstream declares all eight and pig read four under names of its own.
         $this->assertNotNull($model->compat);
         $this->assertFalse($model->compat->store);
         $this->assertFalse($model->compat->reasoningEffort);
         $this->assertTrue($model->compat->developerRole, 'unmentioned keys keep their default');
         $this->assertSame('max_tokens', $model->compat->maxTokensField);
+    }
+
+    public function testTheFourKeysWithARequiresPrefixAreUpstreamsToo(): void
+    {
+        $model = $this->load(self::provider(['models' => [self::model(['compat' => [
+            'requiresToolResultName' => true,
+            'requiresAssistantAfterToolResult' => true,
+            'requiresThinkingAsText' => true,
+            'requiresMistralToolIds' => true,
+        ]])]]))->models[0];
+
+        // Read under pig's own shorter spellings, these four were silently ignored — and the one
+        // that matters most is the last: a Mistral-shaped endpoint rejects a tool id that is not
+        // exactly nine alphanumeric characters, so somebody who had configured it correctly for pi
+        // got a 400 with nothing on screen to connect it to.
+        $this->assertNotNull($model->compat);
+        $this->assertTrue($model->compat->toolResultName);
+        $this->assertTrue($model->compat->assistantAfterToolResult);
+        $this->assertTrue($model->compat->thinkingAsText);
+        $this->assertTrue($model->compat->mistralToolIds);
     }
 
     // ---- the key ---------------------------------------------------------------------------

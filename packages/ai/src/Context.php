@@ -21,6 +21,16 @@ final readonly class Context
      * Upstream orders these systemPrompt, messages, tools; PHP wants the required
      * parameter first, so messages leads.
      *
+     * **`$tools` is `[]` for "none", where upstream's is `undefined`** — and that is a difference
+     * on the wire rather than only in the types, because `[]` is *truthy* in JavaScript: its
+     * Anthropic, OpenAI-completions and OpenAI-responses providers all guard with
+     * `if (context.tools)` and therefore send `tools: []` for a conversation with no tools, while
+     * pig's `!== []` sends no field at all. Only its Google provider asks `.length > 0`, as pig
+     * does everywhere. No defect has been traced to either, and the one case where the empty field
+     * is load-bearing is already handled: `OpenAiCompletions` sends `tools: []` when the
+     * conversation holds tool calls, because some proxies reject one otherwise — a branch upstream
+     * needs no equivalent of, since its condition covers it by accident.
+     *
      * @param list<Message> $messages
      * @param list<Tool>    $tools
      */

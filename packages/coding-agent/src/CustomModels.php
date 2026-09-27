@@ -305,10 +305,16 @@ final readonly class CustomModels
     /**
      * The ways an OpenAI-compatible endpoint is not, as a file can say them.
      *
-     * Upstream names four of these and this takes those four under upstream's own spellings,
-     * so a `models.json` written for pi works here unchanged. pig's `OpenAiCompat` has four
-     * more, worth having because this file exists precisely to point at an endpoint nobody
-     * tested — a file that uses them is a pig file, which is the trade and it is stated.
+     * **All eight keys are upstream's spellings**, so a `models.json` written for pi works here
+     * unchanged. This used to read four of them under pig's own shorter names — the four upstream
+     * prefixes with `requires` — on the stated grounds that upstream only had four. It has all
+     * eight, in `types.ts`, and the note claiming otherwise is what stopped anybody checking:
+     * `requiresMistralToolIds: true` in a pi file did nothing here, and that flag is the one that
+     * cuts a tool id to the nine characters such an endpoint will accept.
+     *
+     * The short spellings are gone rather than kept beside them, for the reason the session
+     * format's old shape is: nobody has a pig `models.json` from a release, and a file that holds
+     * both names for one flag is a file that can disagree with itself.
      *
      * Absent means null, and null means `OpenAiCompat::detect()` works it out from the URL.
      * That is a better default than any of these flags: a local llama.cpp gets the loose
@@ -333,10 +339,10 @@ final readonly class CustomModels
             developerRole: $flag('supportsDeveloperRole', true),
             reasoningEffort: $flag('supportsReasoningEffort', true),
             maxTokensField: $maxTokensField === 'max_tokens' ? 'max_tokens' : 'max_completion_tokens',
-            toolResultName: $flag('toolResultName', false),
-            assistantAfterToolResult: $flag('assistantAfterToolResult', false),
-            thinkingAsText: $flag('thinkingAsText', false),
-            mistralToolIds: $flag('mistralToolIds', false),
+            toolResultName: $flag('requiresToolResultName', false),
+            assistantAfterToolResult: $flag('requiresAssistantAfterToolResult', false),
+            thinkingAsText: $flag('requiresThinkingAsText', false),
+            mistralToolIds: $flag('requiresMistralToolIds', false),
         );
     }
 
