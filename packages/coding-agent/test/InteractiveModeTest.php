@@ -899,6 +899,41 @@ final class InteractiveModeTest extends TestCase
 
     // ---- going back ---------------------------------------------------------------------------
 
+    public function testATranscriptDrawsAMessageWhoseBytesAreNotUtf8(): void
+    {
+        // The fifth transcript path. `pig @notes.txt` on a latin-1 file, or `pig $'ask \x80 this'`,
+        // put bytes in here that no keystroke could — and `Graphemes::split()` throws on them from
+        // inside `render()`, in the loop's own callback, which takes the session with it. The other
+        // four paths had a guard; what the person said looked obviously safe.
+        $this->start(['the answer'], initialMessages: ['why does ' . chr(0x80) . ' this fail']);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('why does', $screen);
+        $this->assertStringContainsString('this fail', $screen);
+    }
+
+    public function testATreeRowSaysWhatWasSaidEvenWhenItsBytesAreNotUtf8(): void
+    {
+        // `bin/pig @notes.txt` on a latin-1 file is exactly this: the bytes reach the first
+        // message without passing an editor, and `/tree` reads the conversation in memory rather
+        // than the file, so the `JSON_INVALID_UTF8_SUBSTITUTE` that protects the file is not here.
+        $this->start(['the answer'], store: true, initialMessages: ['why does ' . chr(0x80) . ' this fail']);
+        $this->settle();
+
+        $this->type('/tree');
+        $this->type(self::ENTER);
+
+        $screen = $this->screen();
+
+        // `preg_replace('/\s+/u', …)` answers null on malformed UTF-8 and `(string) null` is '',
+        // so the row fell through to `(nothing said)` — which is the line for a message that is a
+        // pasted picture and nothing else, and the one row nobody would go back to.
+        $this->assertStringNotContainsString('(nothing said)', $screen);
+        $this->assertStringContainsString('why does', $screen);
+    }
+
     public function testTreeOffersThePointsInThisConversation(): void
     {
         $this->start(['the answer'], store: true);

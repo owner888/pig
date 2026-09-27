@@ -56,6 +56,20 @@ final class FileArgumentsTest extends TestCase
         $this->assertSame([], $read->images);
     }
 
+    public function testAFileThatIsNotUtf8ArrivesAsTextRatherThanAsItsBytes(): void
+    {
+        // Upstream reads with `readFile(path, "utf-8")`, whose decoder substitutes U+FFFD for a
+        // byte it cannot read, so its `<file>` element is always text. `file_get_contents()` hands
+        // over the file as it is — and a latin-1 file, or anything saved from an editor with
+        // another default, then travels into the conversation as bytes nothing downstream expects.
+        $this->write('notes.txt', "caf\xe9 opens at 8\n");
+
+        $read = FileArguments::read(['notes.txt'], $this->cwd);
+
+        $this->assertTrue(mb_check_encoding($read->text, 'UTF-8'));
+        $this->assertStringContainsString('opens at 8', $read->text);
+    }
+
     public function testFilesArriveInTheOrderTheyWereGiven(): void
     {
         $this->write('a.txt', 'first');

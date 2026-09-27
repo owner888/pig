@@ -300,4 +300,16 @@ final class ArgumentsTest extends TestCase
         $this->assertTrue($parsed->has('no-proxy'));
         $this->assertSame(['fix the bug'], $parsed->messages);
     }
+
+    public function testAMessageFromTheShellArrivesAsTextRatherThanAsBytes(): void
+    {
+        // A shell hands over bytes: `pig $'ask about \xe9 this'` is a perfectly ordinary thing to
+        // type in a latin-1 locale. Node decodes `process.argv` as UTF-8 and substitutes U+FFFD, so
+        // upstream never sees it; here it has to be said.
+        $arguments = $this->parse("ask about \xe9 this");
+
+        $this->assertTrue(mb_check_encoding($arguments->messages[0], 'UTF-8'));
+        $this->assertStringContainsString('ask about', $arguments->messages[0]);
+        $this->assertStringContainsString('this', $arguments->messages[0]);
+    }
 }

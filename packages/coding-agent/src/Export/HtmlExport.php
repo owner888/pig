@@ -13,6 +13,7 @@ use Pig\Ai\ThinkingContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\Utf8;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
@@ -109,7 +110,12 @@ final class HtmlExport
     {
         foreach ($messages as $message) {
             if ($message instanceof UserMessage) {
-                $text = trim((string) preg_replace('/\s+/u', ' ', self::textOf($message->content)));
+                // Sanitised first: `/\s+/u` answers **null** on malformed UTF-8 and `(string) null`
+                // is `''`, so the heading fell through to "a conversation" and the page lost what
+                // it was about. A `/u` pattern over text from outside is a silent truncation the
+                // same way `htmlspecialchars()` is.
+                $clean = Utf8::sanitize(self::textOf($message->content));
+                $text = trim((string) preg_replace('/\s+/u', ' ', $clean));
 
                 if ($text !== '') {
                     return mb_strlen($text) > 80 ? mb_substr($text, 0, 80) . '...' : $text;

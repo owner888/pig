@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Cli;
 
 use Pig\Agent\AgentError;
 use Pig\Ai\ImageContent;
+use Pig\Ai\Utils\Utf8;
 use Pig\CodingAgent\Tools\Paths;
 use Pig\Tui\Images\ImageType;
 
@@ -81,7 +82,12 @@ final readonly class FileArguments
                 continue;
             }
 
-            $text .= "<file name=\"{$absolute}\">\n{$bytes}\n</file>\n";
+            // Sanitised, because upstream's `readFile(path, "utf-8")` already has been: Node's
+            // decoder substitutes U+FFFD for a byte it cannot read, where `file_get_contents()`
+            // hands over the file as it is. Without this, `pig @notes.txt` on a latin-1 file — or
+            // on anything saved from an editor with another default — took the session down on the
+            // first frame, in `Graphemes::split()`, before a word of it reached the model.
+            $text .= "<file name=\"{$absolute}\">\n" . Utf8::sanitize($bytes) . "\n</file>\n";
         }
 
         return new self($text, $images);

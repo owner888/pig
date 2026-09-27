@@ -37,6 +37,19 @@ final class HtmlExportTest extends TestCase
 
     // ---- the document --------------------------------------------------------------------
 
+    public function testATitleSurvivesAFirstMessageWhoseBytesAreNotUtf8(): void
+    {
+        // `@notes.txt` on a latin-1 file puts its bytes into the first message, and an export is
+        // taken from the conversation in memory rather than from the session file — so the
+        // `JSON_INVALID_UTF8_SUBSTITUTE` that protects the file is not in this path.
+        $html = $this->html([new UserMessage('why does ' . chr(0x80) . ' this fail')]);
+
+        // `preg_replace('/\s+/u', …)` answers null on malformed UTF-8 and `(string) null` is '',
+        // so the heading fell through to the placeholder and the page lost what it was about.
+        $this->assertStringNotContainsString('<h1>a conversation</h1>', $html);
+        $this->assertStringContainsString('why does', $html);
+    }
+
     public function testTheFileCarriesNoScriptAtAll(): void
     {
         $html = $this->html([

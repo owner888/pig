@@ -21,6 +21,7 @@ use Pig\CodingAgent\Session\Label;
 use Pig\CodingAgent\Session\ModelChange;
 use Pig\CodingAgent\Session\ThinkingLevelChange;
 use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Tools\Shell;
 use Pig\Tui\Component;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
@@ -663,9 +664,18 @@ final class TreeList implements Component, InputHandler
         return trim(implode(' ', $parts));
     }
 
+    /**
+     * A message's text as one row of a list.
+     *
+     * `Shell::sanitize()` first, and it is not belt-and-braces: this pattern has no `/u`, so it
+     * neither fails on malformed UTF-8 nor removes it, and what it hands to `Width::truncate()`
+     * goes into `Graphemes::split()`, which throws. `pig @notes.txt` on a latin-1 file and then
+     * `/tree` was a dead session. Escapes go too, or a coloured line from a model would paint over
+     * the selected row's background.
+     */
     private static function oneLine(string $text): string
     {
-        return trim((string) preg_replace('/[\r\n\t]+/', ' ', $text));
+        return trim((string) preg_replace('/[\n\t]+/', ' ', Shell::sanitize($text)));
     }
 
     // ---- keys ----------------------------------------------------------------------------------

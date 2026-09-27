@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Cli;
 
+use Pig\Ai\Utils\Utf8;
+
 /**
  * What was typed on the command line, told apart.
  *
@@ -117,7 +119,14 @@ final readonly class Arguments
 
         [$messages, $files] = self::split($rest);
 
-        return new self($options, [...$messages, ...$verbatim], $files);
+        // Sanitised because a shell hands over **bytes**, not text: `pig $'ask about \x80 this'`
+        // puts a byte that is not UTF-8 into the first message, and everything that measures a
+        // line goes through `Graphemes::split()`, which throws on one. Upstream never sees this
+        // because Node decodes `process.argv` as UTF-8 and substitutes U+FFFD for what it cannot
+        // read — the platform doing for free what has to be said here.
+        $said = array_map(Utf8::sanitize(...), [...$messages, ...$verbatim]);
+
+        return new self($options, $said, $files);
     }
 
     /**

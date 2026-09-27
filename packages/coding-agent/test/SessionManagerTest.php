@@ -564,6 +564,30 @@ final class SessionManagerTest extends TestCase
         $this->assertSame(2, $listed[0]->messages);
     }
 
+    /**
+     * A label survives a first message whose bytes are not UTF-8, and writing is why.
+     *
+     * `opening()` folds the whitespace with `preg_replace('/\s+/u', …)`, which answers **null** on
+     * malformed UTF-8, and `(string) null` is `''` — so the label would be empty and the
+     * conversation would sit in `--resume` with no name on it. It cannot happen here because this
+     * only ever reads what `append()` wrote, and that goes through `JSON_INVALID_UTF8_SUBSTITUTE`.
+     * The guard is one method away from the thing it protects, so this pins it: `@notes.txt` on a
+     * latin-1 file puts those bytes straight into the first message, since `Cli\FileArguments`
+     * reads with `file_get_contents` and wraps without cleaning.
+     */
+    public function testASessionThatOpensWithBytesThatAreNotUtf8StillHasALabel(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('read this ' . chr(0x80) . ' file'));
+        $session->append($this->answer());
+
+        $listed = SessionManager::listFor('/some/project');
+
+        $this->assertNotSame('', $listed[0]->opening);
+        $this->assertStringContainsString('read this', $listed[0]->opening);
+        $this->assertStringContainsString('file', $listed[0]->opening);
+    }
+
     public function testEverythingSaidIsCollectedSoASessionCanBeFoundByIt(): void
     {
         $session = SessionManager::create('/some/project');

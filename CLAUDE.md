@@ -3102,6 +3102,61 @@ fix, and it took a test that presses ctrl+o through `InteractiveMode` to close:
 connection, a test of the two ends is not a test of the wire.** The mutation check is what says
 which of the two you have written.
 
+### `pig @notes.txt` on a latin-1 file was a dead session, and the reason is a platform difference
+
+The same killer as the three entries below, on the one input that looked obviously safe: **what the
+person said.** Four transcript paths had been found and guarded — a tool's output, a diff, a hook's
+message, a typed command's output — and `UserMessageComponent` was not among them, because a
+keystroke is a keystroke. It is not:
+
+```
+pig @notes.txt "what is wrong here"        # a latin-1 file, or anything saved from an editor
+pig $'ask about \xe9 this'                  # a shell hands over bytes, not text
+```
+
+Either one throws `Grapheme split failed` out of `render()` on the **first frame**, before a word of
+it reaches the model. Traced twice, because fixing the transcript uncovered a sixth path:
+`TreeList::oneLine()` — so `/tree` on such a conversation was a second dead session.
+
+**The root of it is a platform difference, not an oversight.** Upstream reads an `@file` with
+`readFile(path, "utf-8")` and gets its argv from `process.argv`; Node decodes both as UTF-8 and
+substitutes U+FFFD for a byte it cannot read, so upstream's `<file>` element and its messages are
+**always text**. `file_get_contents()` and PHP's `$argv` hand over bytes. That is the mirror of the
+usual case in this file — where PHP has what JavaScript reaches for a package for — and it is worth
+stating as its own question: **what does upstream get for free from its runtime that PHP does not?**
+Both doors are decoded where they read now, which is where upstream's decoding happens.
+
+And the display paths are guarded too, because the entry doors are not the only way in — a **paste**
+goes through the editor, and `mb_str_split()` keeps a malformed byte as it finds it. That is
+`UserMessageComponent` (the fifth path) and `TreeList::oneLine()` (the sixth).
+
+**Then the same read found four implementations of "fold a message into one line for a list", each
+wrong in its own way** — the first shape from the index, at its largest so far:
+
+| | pattern | what a malformed byte did |
+|---|---|---|
+| `SessionManager::opening()` | `/\s+/u` | nothing: it only ever reads what `append()` wrote, and that went through `JSON_INVALID_UTF8_SUBSTITUTE` |
+| `HtmlExport::opening()` | `/\s+/u` | `preg_replace` answers **null**, `(string) null` is `''`, so the heading fell through to "a conversation" and the page lost what it was about |
+| `TreeList::oneLine()` | `/[\r\n\t]+/`, no `/u` | never null and never cleaned either, so the bytes reached `Width::truncate()` — the dead session above |
+| `InteractiveMode::describe()` | `/\s+/u` | nothing, because **it has no caller**: `/tree` uses `TreeList::describe()`. Dead code, left alone pending a decision — see below |
+
+The rule the second and third rows share: **a `/u` pattern over text from outside is a silent
+truncation**, exactly as `htmlspecialchars()` and `json_encode()` are, and the same family this file
+already names. `preg_last_error()` *does* say 4 afterwards, and nobody asks it; the `(string)` cast
+turns a failure into an empty string one character later.
+
+`SessionManager::opening()` is the interesting row: it is right, and only because a guard one method
+away happens to cover it. `testASessionThatOpensWithBytesThatAreNotUtf8StillHasALabel` pins that
+rather than the code, so the day somebody reads the label from memory instead of from the file, it
+goes red.
+
+Regression tests, one per end, each of which the other four leave green:
+`FileArgumentsTest::testAFileThatIsNotUtf8ArrivesAsTextRatherThanAsItsBytes`,
+`ArgumentsTest::testAMessageFromTheShellArrivesAsTextRatherThanAsBytes`,
+`InteractiveModeTest::testATranscriptDrawsAMessageWhoseBytesAreNotUtf8`,
+`testATreeRowSaysWhatWasSaidEvenWhenItsBytesAreNotUtf8`,
+`HtmlExportTest::testATitleSurvivesAFirstMessageWhoseBytesAreNotUtf8`.
+
 ### One byte that is not UTF-8 in a tool's output took the session down
 
 `cat` on anything that is not text — a binary file, a latin-1 log, `head /dev/urandom` — ended the
@@ -3189,7 +3244,11 @@ neither — so a hook that sent a build log with one stray byte in it took the s
 the same killer a third time. `Tools\Shell::sanitize()` is the one rule now: escape sequences out,
 malformed UTF-8 out, every control character but tab and newline out.
 
-**There was a fourth path, and counting them as three is how it stayed hidden for four batches.**
+**There were three more, and counting them as three is how the fourth stayed hidden for four
+batches** — the fifth and sixth are the entry above, and the lesson repeats: a count in this file is
+a count of what somebody looked at.
+
+**The fourth:**
 `BashOutputComponent` — what a typed `!command` is drawn with — has no guard of its own, so
 `!head -c 400 /dev/urandom`, or a `!cat` of anything that is not text, took the session down in
 exactly the way above. Measured, with and without the fix: 200 bytes in, `valid utf-8 = false`,
