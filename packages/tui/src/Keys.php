@@ -63,6 +63,17 @@ final class Keys
      *
      * The old spelling is the letter with its top three bits cleared — Ctrl+A is 0x01 —
      * which is where upstream's table of thirteen raw constants comes from.
+     *
+     * **Wider than upstream's `isKittyCtrl()`, which is only the new spelling**: there the raw byte
+     * is a thirteen-entry table consulted by each `isCtrlX()` separately, so adding Ctrl+B means
+     * adding a constant. Here the arithmetic covers all twenty-six.
+     *
+     * **A letter that is not a lowercase letter throws**, where upstream answers false for anything
+     * whose length is not 1 and then compares against `charCodeAt(0)` of whatever it got — so
+     * `isKittyCtrl(data, 'C')` is silently false there, for a caller who meant Ctrl+C. Nothing can
+     * pass a wrong letter except a mistake in this repository, and a predicate that answers "no" to
+     * a question it could not understand is the kind of thing this file's conventions call a silent
+     * fallback.
      */
     public static function isCtrl(string $data, string $letter): bool
     {

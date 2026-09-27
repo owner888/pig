@@ -18,15 +18,15 @@ use Pig\CodingAgent\Config;
  * a crash, a closed laptop, Ctrl+C twice. Reading one back is reading the file top to
  * bottom; there is no state to reconstruct beyond the messages themselves.
  *
- * Ported from upstream's `session-manager.ts`, which is 1129 lines to this one's ~200.
- * The difference is the tree: upstream gives every entry a parent, which is what makes
- * `/branch` and `/tree` possible — going back to an earlier message and taking the
- * conversation somewhere else. That needs a UI to navigate it and a compaction system
- * that understands branches, neither of which is ported, so the log here is a line. The
- * file format is upstream's all the same, so adding the parent later is adding a field.
+ * Ported from upstream's `session-manager.ts`, 1129 lines to this one's 1000-odd. What this
+ * paragraph used to say was that the tree, labels, the model and thinking-level entries and the
+ * format migrations were all unported and the log was a line — which was true when it was written
+ * and had stopped being true of every item on the list. A docblock that inventories what is missing
+ * is a docblock that goes stale silently; this one now says what is here.
  *
- * Also not ported: labels, session migrations between format versions, and the separate
- * entry types for a model or thinking-level change.
+ * What is not ported is `branch()` in upstream's sense: forking a conversation into a **second
+ * session file**. pig branches inside one file, which is `goTo()` plus `tree()`, and the reason is
+ * in CLAUDE.md. Everything else in that file has a counterpart here.
  */
 final class SessionManager
 {
@@ -139,6 +139,14 @@ final class SessionManager
             throw new AgentError("Not a pig session file: {$path}");
         }
 
+        $upgraded = self::upgrade($lines, $header);
+
+        if ($upgraded !== null) {
+            $lines = $upgraded;
+            $header = json_decode($lines[0], true);
+            self::rewrite($path, $lines);
+        }
+
         $session = new self(
             $path,
             (string) ($header['id'] ?? ''),
@@ -189,6 +197,99 @@ final class SessionManager
         $session->leaf = $previous;
 
         return $session;
+    }
+
+    /**
+     * A session file pi wrote before it had a tree, brought up to the shape it has now.
+     *
+     * v1 had no `version`, no `id` and no `parentId`: **the order of the lines was the chain**, and
+     * a compaction named its cut by `firstKeptEntryIndex` — an index into the file, the header
+     * counted. pig read such a file as a set of entries with no parents, which makes every one of
+     * them a root, so walking back from the leaf found exactly one message: *a conversation
+     * somebody had with pi before the tree existed opened as its last line and nothing else.*
+     *
+     * Upstream's `migrateV1ToV2()`, and like upstream the file is **rewritten**. That is the one
+     * decision here worth arguing, and the argument is `Migrations`': what happens is exactly what
+     * pi itself does on its next start, so running it converges rather than diverges. Leaving the
+     * file alone is worse than it looks — pig would append v2 entries to a v1 file, and pi's own
+     * migration then re-ids every line from the top, flattening whatever branches pig made in
+     * between.
+     *
+     * @param list<string>         $lines  the file, line by line
+     * @param array<string, mixed> $header its first line, decoded
+     * @return list<string>|null the upgraded lines, or null when there was nothing to do
+     */
+    private static function upgrade(array $lines, array $header): ?array
+    {
+        if ((int) ($header['version'] ?? 1) >= self::VERSION) {
+            return null;
+        }
+
+        $decoded = [$header];
+        $taken = [];
+
+        foreach (array_slice($lines, 1) as $line) {
+            $raw = json_decode($line, true);
+
+            // A line that is not JSON is dropped rather than carried, which is the one place this
+            // differs from reading: an unreadable line has no id to give the next one a parent, so
+            // keeping it would leave a hole in the chain this exists to build.
+            if (!is_array($raw)) {
+                continue;
+            }
+
+            $decoded[] = $raw;
+        }
+
+        $previous = null;
+
+        foreach ($decoded as $at => $raw) {
+            if ($at === 0) {
+                continue;
+            }
+
+            $id = self::newId($taken);
+            $taken[$id] = true;
+            $decoded[$at]['id'] = $id;
+            $decoded[$at]['parentId'] = $previous;
+            $previous = $id;
+        }
+
+        foreach ($decoded as $at => $raw) {
+            if (($raw['type'] ?? null) !== 'compaction' || !is_int($raw['firstKeptEntryIndex'] ?? null)) {
+                continue;
+            }
+
+            $target = $decoded[$raw['firstKeptEntryIndex']] ?? null;
+            unset($decoded[$at]['firstKeptEntryIndex']);
+
+            if (is_array($target) && ($target['type'] ?? null) !== 'session') {
+                $decoded[$at]['firstKeptEntryId'] = $target['id'];
+            }
+        }
+
+        $decoded[0]['version'] = self::VERSION;
+
+        return array_map(static fn (array $raw): string => (string) json_encode($raw), $decoded);
+    }
+
+    /**
+     * Put the upgraded lines back, and carry on regardless if that cannot be done.
+     *
+     * A read-only checkout or somebody else's file that is not ours to write is not a reason to
+     * refuse the conversation: the entries in memory are already right, and the only cost is that
+     * the next open upgrades it again. `Migrations`' rule — every step skipped at the first sign of
+     * trouble, because half-migrating somebody else's data is worse than not starting.
+     *
+     * @param list<string> $lines
+     */
+    private static function rewrite(string $path, array $lines): void
+    {
+        if (!is_writable($path)) {
+            return;
+        }
+
+        file_put_contents($path, implode("\n", $lines) . "\n");
     }
 
     /**

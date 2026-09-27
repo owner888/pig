@@ -573,6 +573,91 @@ final class PiFormatTest extends TestCase
         $this->assertSame('kept', $messages[1]->content[0]->text);
     }
 
+    // ---- a session pi wrote before it had a tree --------------------------------------
+
+    /** A v1 file: no `version`, no `id`, no `parentId` — the order is the chain. */
+    private function v1Session(string $name, array $entries): string
+    {
+        $path = $this->home . '/' . $name;
+        mkdir(dirname($path), 0o755, true);
+        $lines = [['type' => 'session', 'id' => 'old-1', 'timestamp' => '2026-01-02T21:29:30.000Z', 'cwd' => '/p']];
+
+        file_put_contents($path, implode("\n", array_map(
+            static fn (array $entry): string => (string) json_encode($entry),
+            [...$lines, ...$entries],
+        )) . "\n");
+
+        return $path;
+    }
+
+    /** @return array<string, mixed> */
+    private function said(string $text, string $at): array
+    {
+        return ['type' => 'message', 'timestamp' => $at,
+                'message' => ['role' => 'user', 'content' => [['type' => 'text', 'text' => $text]]]];
+    }
+
+    public function testAV1SessionComesBackWholeRatherThanAsItsLastLine(): void
+    {
+        $path = $this->v1Session('old.jsonl', [
+            $this->said('why is the build red', '2026-01-02T21:29:31.000Z'),
+            $this->said('a missing semicolon', '2026-01-02T21:29:32.000Z'),
+            $this->said('fix it then', '2026-01-02T21:29:33.000Z'),
+        ]);
+
+        $messages = SessionManager::open($path)->messages();
+
+        // Every entry lacked a `parentId`, so every one was a root, so the walk back from the leaf
+        // found one message. A conversation somebody had with pi before it grew a tree opened as
+        // its last line and nothing else.
+        $this->assertCount(3, $messages);
+        $this->assertSame('why is the build red', $messages[0]->content[0]->text);
+        $this->assertSame('fix it then', $messages[2]->content[0]->text);
+    }
+
+    public function testOpeningAV1SessionUpgradesTheFileTheWayPiWould(): void
+    {
+        $path = $this->v1Session('upgrade.jsonl', [
+            $this->said('one', '2026-01-02T21:29:31.000Z'),
+            $this->said('two', '2026-01-02T21:29:32.000Z'),
+        ]);
+
+        SessionManager::open($path);
+
+        $lines = array_map(
+            static fn (string $line): array => (array) json_decode($line, true),
+            array_filter(explode("\n", (string) file_get_contents($path))),
+        );
+
+        // Rewritten, because pi rewrites it on its next start: converging on one shape rather than
+        // leaving a file that pig appends v2 entries to and pi then re-ids from top to bottom,
+        // flattening whatever branches pig made in between.
+        $this->assertSame(2, $lines[0]['version']);
+        $this->assertIsString($lines[1]['id']);
+        $this->assertNull($lines[1]['parentId']);
+        $this->assertSame($lines[1]['id'], $lines[2]['parentId']);
+    }
+
+    public function testAV1CompactionsIndexBecomesTheIdItPointsAt(): void
+    {
+        $path = $this->v1Session('old-compaction.jsonl', [
+            $this->said('old one', '2026-01-02T21:29:31.000Z'),
+            $this->said('old two', '2026-01-02T21:29:32.000Z'),
+            $this->said('kept', '2026-01-02T21:29:33.000Z'),
+            // v1 named the cut by its **index into the file**, header included.
+            ['type' => 'compaction', 'timestamp' => '2026-01-02T21:29:34.000Z',
+             'summary' => 'what pi summarised', 'firstKeptEntryIndex' => 3, 'tokensBefore' => 5],
+        ]);
+
+        $messages = SessionManager::open($path)->messages();
+
+        $this->assertCount(2, $messages);
+        $this->assertInstanceOf(CompactionSummary::class, $messages[0]);
+        $this->assertSame('what pi summarised', $messages[0]->summary);
+        $this->assertSame(2, $messages[0]->replaced, 'two messages before the kept one');
+        $this->assertSame('kept', $messages[1]->content[0]->text);
+    }
+
     // ---- both directories ------------------------------------------------------------
 
     public function testPisSessionsAreListedBesidePigsOwn(): void

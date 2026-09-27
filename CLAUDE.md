@@ -452,6 +452,40 @@ a line pi could have written is a line pig has nothing to do with, and takes the
 The general rule, for the next time this comes up: **back-compatibility is a debt to real users,
 and there are none until there is a release.** Before that, a format change is a format change.
 
+**And that rule is about pig's own old shape, which is the distinction that hid a real gap for
+months.** pi's v1 sessions are somebody else's history, and there are real users with those:
+`--resume` lists them, because pig reads pi's directory. A v1 file has **no `version`, no `id` and
+no `parentId` — the order of the lines is the chain** — and a compaction there names its cut by
+`firstKeptEntryIndex`, an index into the file with the header counted.
+
+Read as v2, every entry is parentless, so every entry is a root, so walking back from the leaf finds
+exactly one message. Measured on a three-message file: **pig opened it as its last line and nothing
+else.** Somebody moving over from an older pi saw their conversation in the list, opened it, and got
+one sentence.
+
+`SessionManager::upgrade()` is upstream's `migrateV1ToV2()`, and like upstream **the file is
+rewritten**. That is the decision worth arguing and the argument is `Migrations`': what happens is
+exactly what pi does on its next start, so running it converges rather than diverges. Leaving it
+alone is worse than it sounds — pig would append v2 entries to a v1 file and pi's own migration would
+then re-id every line from the top, flattening whatever branches pig had made in between. A file that
+cannot be written is read correctly and left alone, which costs one more upgrade next time.
+
+What made it findable at all was reading the upstream file's **top-level functions** rather than its
+class: `migrateV1ToV2`, `migrateToCurrentVersion` and `migrateSessionEntries` are three of the nine
+functions above `class SessionManager`, and a method-by-method comparison of the two classes skips
+all nine.
+
+Regression tests: `PiFormatTest::testAV1SessionComesBackWholeRatherThanAsItsLastLine`,
+`testOpeningAV1SessionUpgradesTheFileTheWayPiWould`,
+`testAV1CompactionsIndexBecomesTheIdItPointsAt` — one per end, and each stays green when the other
+two are broken.
+
+**The class docblock had inventoried what was missing**, and every item on the list had since been
+ported: the tree, labels, the model and thinking-level entries, the migrations. *A docblock that
+lists absences is a docblock that goes stale silently* — the fourth shape from the index, at its
+largest, since the list was four items long and wrong about all four. It says what is there now, and
+the one real absence (`branch()` in upstream's sense — forking into a second file) is named.
+
 ### What a conversation was being had with
 
 `model_change` and `thinking_level_change` are lines in the file that are not messages: the
@@ -2758,22 +2792,20 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 78 | 28,200 |
+| read difference by difference | 80 | 29,900 |
 | ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **36** | **13,100** |
+| **not yet read** | **34** | **11,400** |
 
-Those figures go stale; the queue does not. **Fourteen files are 300 lines or more and they are
+Those figures go stale; the queue does not. **Twelve files are 300 lines or more and they are
 where the remaining risk is** — every one of them is ported and none has been read end to end:
 
 ```
 2439  coding-agent/modes/interactive/interactive-mode.ts   → Interactive\InteractiveMode
 1901  coding-agent/core/agent-session.ts                   → Session\AgentSession
-1129  coding-agent/core/session-manager.ts                 → Session\SessionManager
  866  coding-agent/modes/interactive/components/tree-selector.ts → Interactive\TreeList
  646  tui/components/markdown.ts                           → Components\Markdown + Markdown\Lexer, Inline
  630  coding-agent/modes/interactive/components/tool-execution.ts → Interactive\ToolExecutionComponent
  576  tui/autocomplete.ts                                  → Autocomplete\CombinedAutocompleteProvider
- 547  tui/keys.ts                                          → Keys
  469  coding-agent/modes/rpc/rpc-mode.ts                   → Rpc\RpcMode
  451  coding-agent/main.ts                                 → bin/pig
  351  tui/tui.ts                                           → Tui
@@ -3132,7 +3164,20 @@ and `ls` skips an entry it cannot `stat` where pig lists it — a broken symlink
 hiding it is how the model ends up unable to explain what it is seeing. `ls`'s sort adds a `strcmp`
 tiebreak upstream has no equivalent of, so two names differing only in case have an order.
 
-**The lesson of the four runs is the same one: a hand-rolled replacement for a package is worth a
+**`Keys` went through a fifth run — 35 predicates over 1,568 inputs, 54,880 answers compared — and
+found nothing either.** The corpus is every single byte, every `\e`+byte, the CSI finals and the
+tilde family, SS3, CSI with one and two parameters over the finals that matter (including lock-bit
+modifiers, 65/66/129/130), two dozen malformed shapes (`\e[`, `\e[;u`, `\e[1;2;3u`, `\e[999999999u`)
+and some multi-byte text. The generated kitty table was compared too: pig rebuilds upstream's
+eighteen `Keys` constants from `Keys::kitty()` and all eighteen match byte for byte.
+
+What the run could not cover, and was read instead: `isCtrl()` is **wider** than upstream's
+`isKittyCtrl()` — it takes the raw byte as well, by arithmetic, where upstream has a thirteen-entry
+table each `isCtrlX()` consults separately — and it **throws** on a letter that is not lowercase
+where upstream answers false. Both are now on the method; the second is the interesting one, since
+`isKittyCtrl(data, 'C')` is silently false upstream for a caller who meant Ctrl+C.
+
+**The lesson of the five runs is the same one: a hand-rolled replacement for a package is worth a
 corpus, and the corpus is worth keeping the count of.** "It matched on the cases I thought of" is
 what reading gives you — and a run that finds nothing is only worth having if the count is written
 down, or the next reader has to take it on trust.
