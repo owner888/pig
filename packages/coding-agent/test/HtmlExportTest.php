@@ -18,12 +18,16 @@ use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Export\MarkdownHtml;
 use Pig\CodingAgent\Theme\Palette;
+use Pig\Agent\AgentError;
 use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Session\CompactionSummary;
 
 /** A conversation as one HTML file, with no JavaScript in it. */
 final class HtmlExportTest extends TestCase
 {
+    use \Pig\Test\AssertsThrows;
+
     /** @param list<mixed> $messages */
     private function html(array $messages): string
     {
@@ -33,6 +37,56 @@ final class HtmlExportTest extends TestCase
     private function assistant(array $content, StopReason $stop = StopReason::Stop, ?string $error = null): AssistantMessage
     {
         return new AssistantMessage($content, Api::AnthropicMessages, 'anthropic', 'claude-x', new Usage(), $stop, $error);
+    }
+
+    // ---- from a file, without opening the conversation ------------------------------------
+
+    public function testASessionOnDiskIsExportedWithoutOpeningIt(): void
+    {
+        // Upstream's `exportFromFile()`, which is what `bin/pig --export` is: somebody with a
+        // `.jsonl` and no wish to reopen it had no way out — `/export` needs a running session and
+        // the RPC `export` command needs a host.
+        $directory = sys_get_temp_dir() . '/pig-export-' . bin2hex(random_bytes(4));
+        mkdir($directory, 0o755, true);
+
+        $store = SessionManager::create($directory);
+        $store->append(new UserMessage('what does this do'));
+        $store->append($this->assistant([new TextContent('it exports')]));
+
+        $written = HtmlExport::fromFile($store->path, null, $directory);
+
+        $this->assertSame($directory . '/pig-session-' . basename($store->path, '.jsonl') . '.html', $written);
+        $this->assertStringContainsString('what does this do', (string) file_get_contents($written));
+        $this->assertStringContainsString('it exports', (string) file_get_contents($written));
+
+        $named = $directory . '/somewhere-else.html';
+        $this->assertSame($named, HtmlExport::fromFile($store->path, $named, $directory));
+
+        self::remove($directory);
+    }
+
+    public function testAPathThatIsNotASessionIsNamedRatherThanCalledEmpty(): void
+    {
+        // "Nothing to export" about a path that does not exist sends the reader to the wrong
+        // question, which is `write()`'s message and not this one's.
+        $missing = sys_get_temp_dir() . '/pig-not-a-session-' . bin2hex(random_bytes(4)) . '.jsonl';
+
+        $error = $this->assertThrows(
+            AgentError::class,
+            static fn () => HtmlExport::fromFile($missing),
+            'No session file at',
+        );
+
+        $this->assertStringContainsString($missing, $error->getMessage());
+    }
+
+    private static function remove(string $path): void
+    {
+        foreach (glob(rtrim($path, '/') . '/*') ?: [] as $entry) {
+            is_dir($entry) ? self::remove($entry) : unlink($entry);
+        }
+
+        rmdir($path);
     }
 
     // ---- the document --------------------------------------------------------------------

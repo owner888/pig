@@ -25,6 +25,7 @@ use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\HttpError;
 use Pig\Ai\Http\Proxy;
 use Pig\Async\Async;
+use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Cli\Arguments;
 use Pig\CodingAgent\Cli\FileArguments;
 use Pig\CodingAgent\Cli\ModelList;
@@ -90,7 +91,10 @@ if (isset($options['help'])) {
       -c, --continue    pick up the most recent session here
       -r, --resume      choose from a list; `--resume <file>` opens one by path
       --no-save         do not write this session to disk
+      --export <file>   write a session file out as HTML and stop. A second word is
+                        where it goes: `--export a.jsonl out.html`
       --skills-dir <d>  one more folder of skills, on top of the standard ones
+      --no-skills       start without loading any skills, wherever they live
       --no-hooks        start without loading ~/.pig/hooks or .pig/hooks
       --no-tools        start without loading ~/.pig/tools or .pig/tools
       -p, --print       say it, print the answer, exit — the same as --mode text
@@ -241,6 +245,32 @@ if (isset($options['models'])) {
     exit(0);
 }
 
+// Prints and exits, like `--models`, and for the same reason it sits this far down: the theme
+// decides what the page looks like, and the theme comes from the settings. A session on disk and
+// no wish to reopen it had no way out until this — `/export` needs a running session and the RPC
+// `export` command needs a host.
+if (isset($options['export'])) {
+    try {
+        // The write first and the sentence after, not `echo 'Exported to: ', …` with the call as
+        // the second argument: `echo` writes left to right, so a failure printed the prefix and
+        // then the error under it. Found by running it, which is the only way that shows.
+        $written = HtmlExport::fromFile(
+            $options['export'],
+            $arguments->messages[0] ?? null,
+            $cwd,
+            $options['theme'] ?? ($settings->theme() ?? 'dark'),
+        );
+
+        echo "Exported to: {$written}\n";
+    } catch (Throwable $problem) {
+        fwrite(STDERR, Style::red($problem->getMessage() . "\n"));
+
+        exit(1);
+    }
+
+    exit(0);
+}
+
 $theme = $options['theme'] ?? (getenv('PIG_THEME') ?: ($settings->theme() ?? 'dark'));
 
 if (!in_array($theme, Palette::names(), true)) {
@@ -325,6 +355,7 @@ try {
         save: !isset($options['no-save']),
         readOnly: isset($options['read-only']),
         withHooks: !isset($options['no-hooks']),
+        withSkills: !isset($options['no-skills']),
         withTools: !isset($options['no-tools']),
         skillsDir: $options['skills-dir'] ?? null,
         tools: $toolNames,

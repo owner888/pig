@@ -795,6 +795,12 @@ final class TreeList implements Component, InputHandler
      *
      * The escape hatch for every key this class does not name: an arrow it does not handle arrives
      * as `\e[…` and would otherwise be typed into the search box one bracket at a time.
+     *
+     * **Two ranges, where upstream has three, and the missing one is the point.** It also refuses
+     * 0x80–0x9f, the C1 controls, which is right in a language that walks UTF-16 code units and
+     * wrong in one that walks bytes: 0x80–0xbf is where every UTF-8 continuation byte lives, so
+     * that range would make 一 (`e4 b8 80`), 、and 退 untypeable — the search box would silently
+     * ignore them. The third shape from CLAUDE.md's index, on a comparison rather than on a length.
      */
     private static function hasControlCharacters(string $data): bool
     {

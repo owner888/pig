@@ -167,6 +167,7 @@ final class CodingAgent
         bool $readOnly = false,
         bool $withHooks = true,
         bool $withTools = true,
+        bool $withSkills = true,
         ?string $skillsDir = null,
         ?array $tools = null,
     ): StartedSession {
@@ -228,7 +229,11 @@ final class CodingAgent
 
         Timings::mark('contextFiles');
 
-        [$skills, $skillWarnings] = $settings->skillsEnabled()
+        // Upstream's `--no-skills`, and the reason it is here rather than only in the settings is
+        // its two siblings: `--no-hooks` and `--no-tools` are flags, and a third loader with a
+        // settings switch and no flag is the asymmetry that makes somebody think skills cannot be
+        // turned off for one run. The settings still decide when nothing was typed.
+        [$skills, $skillWarnings] = $withSkills && $settings->skillsEnabled()
             ? Skills::load(
                 $cwd,
                 extraDirs: array_filter([$skillsDir, ...$settings->skillList('customDirectories')]),

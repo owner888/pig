@@ -460,6 +460,38 @@ final class TreeListTest extends TestCase
         $this->assertSame('', $list->search());
     }
 
+    public function testACharacterWhoseBytesLookLikeControlCodesIsStillTyped(): void
+    {
+        // 一 is `e4 b8 80`, and that last byte is `0x80` — which upstream's own version of this
+        // check would call a C1 control character and refuse. It can afford to: it walks UTF-16
+        // code units, where 0x80–0x9f really are controls. Here the walk is over **bytes**, and
+        // 0x80–0xbf is where every UTF-8 continuation byte lives, so porting that range literally
+        // would make a whole class of character untypeable — 一, 、and 退 among them.
+        $list = self::list([
+            self::node('a', self::said('一起看看')),
+            self::node('b', self::said('something else')),
+        ], 'b');
+
+        foreach (['一', '、', '退'] as $typed) {
+            $list->handleInput($typed);
+        }
+
+        $this->assertSame('一、退', $list->search());
+    }
+
+    public function testASearchInAnotherAlphabetNarrowsTheList(): void
+    {
+        $list = self::list([
+            self::node('a', self::said('一起看看'), [self::node('b', self::said('something else'))]),
+        ], 'b');
+
+        $list->handleInput('一');
+
+        $shown = self::plain($list);
+        $this->assertStringContainsString('一起看看', $shown);
+        $this->assertStringNotContainsString('something else', $shown);
+    }
+
     // ---- moving --------------------------------------------------------------------------------
 
     public function testUpAndDownWrapAtBothEnds(): void

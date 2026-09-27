@@ -68,6 +68,37 @@ final class HtmlExport
         return $path;
     }
 
+    /**
+     * Export a session file without opening it, which is what `bin/pig --export` is.
+     *
+     * Upstream's `exportFromFile()`, and it lives here rather than in the entry point for the
+     * reason four other classes in `Cli\` exist: a script that ends in `exit()` cannot be called
+     * twice by a test. Somebody with a `.jsonl` and no wish to reopen the conversation had no way
+     * to get the HTML out of it — `/export` needs a running session and the RPC `export` command
+     * needs a host.
+     *
+     * A missing file is named rather than reported as an empty session, because "nothing to
+     * export" about a path that does not exist sends the reader looking at the wrong thing.
+     *
+     * @param string|null $path where to write, or null for `defaultPath()` in $directory
+     * @return string where it went
+     * @throws AgentError when the session cannot be read, is empty, or cannot be written
+     */
+    public static function fromFile(
+        string $session,
+        ?string $path = null,
+        string $directory = '.',
+        string $theme = 'dark',
+    ): string {
+        if (!is_file($session)) {
+            throw new AgentError("No session file at {$session}");
+        }
+
+        $store = SessionManager::open($session);
+
+        return self::write($store, $path ?? self::defaultPath($store, $directory), $theme);
+    }
+
     /** Where an export goes when nobody said: beside the session, named after it. */
     public static function defaultPath(SessionManager $session, string $directory): string
     {

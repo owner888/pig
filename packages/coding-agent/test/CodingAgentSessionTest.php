@@ -511,6 +511,21 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertSame([], $this->start([], ['withTools' => false])->warnings);
     }
 
+    public function testNoSkillsLoadsNoneOfThem(): void
+    {
+        mkdir($this->home . '/skills/review', 0o755, true);
+        file_put_contents(
+            $this->home . '/skills/review/SKILL.md',
+            "---\nname: review\ndescription: Review a file closely\n---\n\nRead it.\n",
+        );
+
+        $this->assertNotSame([], $this->start()->skills, 'the skill is there to begin with');
+
+        // Its two siblings have had `--no-hooks` and `--no-tools` from the start, and skills had a
+        // settings switch and no flag — which reads as "this one cannot be turned off for one run".
+        $this->assertSame([], $this->start([], ['withSkills' => false])->skills);
+    }
+
     // ---- the agent it built --------------------------------------------------------------------
 
     public function testTheAgentIsSetUpWithTheModelTheLevelAndThePrompt(): void

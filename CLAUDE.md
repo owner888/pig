@@ -2823,28 +2823,27 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 82 | 34,200 |
+| read difference by difference | 84 | 35,500 |
 | ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **32** | **7,100** |
+| **not yet read** | **30** | **5,800** |
 
-Those figures go stale; the queue does not. **Ten files are 300 lines or more and they are
+Those figures go stale; the queue does not. **Eight files are 300 lines or more and they are
 where the remaining risk is** — every one of them is ported and none has been read end to end:
 
 ```
- 866  coding-agent/modes/interactive/components/tree-selector.ts → Interactive\TreeList
  646  tui/components/markdown.ts                           → Components\Markdown + Markdown\Lexer, Inline
  630  coding-agent/modes/interactive/components/tool-execution.ts → Interactive\ToolExecutionComponent
  576  tui/autocomplete.ts                                  → Autocomplete\CombinedAutocompleteProvider
  469  coding-agent/modes/rpc/rpc-mode.ts                   → Rpc\RpcMode
- 451  coding-agent/main.ts                                 → bin/pig
  351  tui/tui.ts                                           → Tui
  344  tui/components/input.ts                              → Components\Input
  340  tui/terminal-image.ts                                → Images\TerminalImage
  324  coding-agent/modes/interactive/components/footer.ts   → Interactive\FooterComponent
 ```
 
-The remaining 22 are under 300 lines each and mostly components; the count is rebuilt by listing the
-sweep's output and striking off what this file records as read.
+The remaining 22 are under 300 lines each and almost all components — the biggest of them is
+`ai/types.ts` at 217, and nine of the rest are under 50. The count is rebuilt by listing the sweep's
+output and striking off what this file records as read, not by editing these numbers.
 
 **The two largest files came off that list together, and both were read by surface rather than top
 to bottom** — `agent-session.ts`, 74 upstream methods against pig's 66, and `interactive-mode.ts`,
@@ -5657,6 +5656,49 @@ that pin the ends separately — dropping the `await`, dropping `startRetrying()
 `startBackgroundWork()` on the overflow path, and dropping the release at the tail. The last of those
 fails as `The event loop ran out of work while the root coroutine was still suspended`, which is the
 honest shape of a handle nobody completes.
+
+### A session on disk could not be exported, and skills were the one loader with no off switch
+
+`main.ts` is 451 lines and almost all of it is pig's already, in `CodingAgent::session()` and
+`bin/pig`. What a flag-by-flag comparison of the two found is three things, and the first two are
+fixed here.
+
+**`--export <file> [out]`.** Upstream exports a session to HTML from the command line and exits.
+pig had every piece — `HtmlExport`, `/export` inside a session, `export` over RPC — and no way in
+from the shell, so somebody with a `.jsonl` and no wish to reopen the conversation was stuck.
+`HtmlExport::fromFile()` is upstream's `exportFromFile()`, and it is in the export module rather
+than in the entry point for the reason four classes in `Cli\` exist: *a script that ends in
+`exit()` cannot be called twice by a test.* `export` had to join `Arguments::TAKES_A_VALUE`, which
+is the trap that list is for — a session path does not start with a dash, so the flag would have
+taken no value and the path would have been sent to the model as a message.
+
+*And the three lines in `bin/pig` had a bug that only running them shows:*
+`echo 'Exported to: ', HtmlExport::fromFile(…)` writes left to right, so a missing file printed
+`Exported to: ` and then the error underneath it. The write happens first and the sentence after.
+
+**`--no-skills`.** `--no-hooks` and `--no-tools` have been there from the start; skills had
+`skillsEnabled()` in the settings and no flag — three loaders, two with a switch on the command
+line and one without, which reads as "this one cannot be turned off for one run". `withSkills` on
+`session()`, and the settings still decide when nothing was typed.
+
+**The third is a name collision, and it is the developer's call rather than a fix.** pig's
+`--models` *lists* the registry; upstream's `--models` takes glob patterns and **scopes the session**
+to them for ctrl+P cycling, and its listing flag is `--list-models`. So the same word does two
+different things in the two tools, and pig's glob scopes are deliberately unported (see
+`ModelResolver`). Renaming pig's to `--list-models` would match upstream and leave the door open for
+the scope to arrive under its own name later; keeping `--models` as it is means anybody moving
+between the two tools gets a listing where they asked for a scope. Neither is free, so it waits.
+
+Left out of `main.ts` with reasons, so the flag list is not compared twice:
+
+| Upstream | Why not |
+|---|---|
+| `checkForNewVersion()` | fetches `registry.npmjs.org` at every start to see whether a newer release exists. pig is not published, and the habit is one pig refuses elsewhere in as many words — *"reaching for the network to draw a completion list is not something a keystroke should do"* |
+| `--system-prompt`, `--append-system-prompt`, and `.pi/SYSTEM.md` discovery | the system prompt is the developer's own file here, so this is theirs to decide rather than the audit's |
+| `--hook <path>`, `--tool <path>` | pig adds hook and custom-tool paths through the settings only, which is where a path somebody uses twice belongs. The mirror of `--no-hooks`/`--no-tools`, which upstream lacks and pig has |
+| `--session <path>` | `--resume <path>` already opens one by path — see the note on `--resume` taking an optional value |
+| `--session-dir <dir>` | `PIG_HOME` moves the whole directory, which is the only use anybody has had for it |
+| `--provider` | pig resolves a provider and an id together (`ModelResolver`), so there is nothing for a second flag to disambiguate |
 
 ### A message typed while the conversation was being summarised was lost with a red line
 

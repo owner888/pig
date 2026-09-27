@@ -169,7 +169,8 @@ whatever a new one would open with. `--model` still wins if you name one.
 upgrade (not when you resume a conversation).
 
 `/export` writes the conversation out as one self-contained HTML file — markdown rendered,
-code highlighted, no JavaScript in it at all.
+code highlighted, no JavaScript in it at all. `pig --export <session.jsonl> [out.html]` does the
+same to a session on disk without opening it.
 
 A turn that fails because the provider is busy — a 429, a 503, a socket that died — is
 **waited out and sent again**, doubling from two seconds, up to three times, with what the
@@ -297,7 +298,8 @@ also `~/.claude/skills`, `.claude/skills`, `~/.codex/skills`, `~/.pi/agent/skill
 so a skill written for another agent — or for pi, before the move — works here unchanged. Two folders
 holding the same name is an override rather than an error: `pig > pi > claude > codex`, a project
 folder beats the home one, and `--skills-dir` beats all of them. `/skills` lists what was found and
-where each one came from, and the startup says which file an override took the name from.
+where each one came from, and the startup says which file an override took the name from;
+`--no-skills` loads none of them, as `--no-hooks` and `--no-tools` do for theirs.
 
 `Rpc\RpcClient` is the other end of `--mode rpc`: it starts the agent, sends the twenty-two commands
 and hands back events, with every call suspending its own fiber rather than returning a promise — so

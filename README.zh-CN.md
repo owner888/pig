@@ -147,6 +147,7 @@ label entry，所以在哪边起的名字另一边都看得见。
 `/changelog` 按版本列出改动，升级之后新增的那几条会自动显示一次（接着上次的会话时不显示）。
 
 `/export` 把整段对话导出成一个自包含的 HTML 文件——markdown 渲染好、代码高亮好，里面一行 JS 都没有。
+已经存在磁盘上的会话不用打开也能导：`pig --export <session.jsonl> [out.html]`。
 
 一轮因为服务端忙而失败——429、503、半路断掉的 socket——会**等一下再发一次**：从两秒开始翻倍，
 最多三次，屏幕上写着服务端说了什么、还剩几秒、按 esc 停。服务端自己说了配额几时恢复的话，就等它说的那么久、
@@ -259,7 +260,8 @@ skill 就是一个带 `SKILL.md` 的文件夹。pig 读 `~/.pig/skills` 和 `.pi
 `~/.claude/skills`、`.claude/skills`、`~/.codex/skills`、`~/.pi/agent/skills` 和 `.pi/skills`——给别的
 agent 写的、或者迁过来之前给 pi 写的 skill，在这儿都直接能用。两个目录里有同名 skill 是**覆盖**而不是
 报错：`pig > pi > claude > codex`，项目目录盖过家目录，`--skills-dir` 盖过所有。`/skills` 列出找到了
-哪些、各自来自哪个目录，启动时也会说某次覆盖是从哪个文件手里拿走这个名字的。
+哪些、各自来自哪个目录，启动时也会说某次覆盖是从哪个文件手里拿走这个名字的。`--no-skills` 一个都不加载，
+跟 `--no-hooks`、`--no-tools` 对它们各自那摊一样。
 
 `Rpc\RpcClient` 是 `--mode rpc` 的另一端：启动 agent、发那二十二条命令、把事件交回来，每个方法都是
 挂起自己的 fiber 而不是返回 promise——所以宿主读起来像一个会阻塞的程序，而实际上什么都没阻塞。

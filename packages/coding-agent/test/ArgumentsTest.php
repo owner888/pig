@@ -22,6 +22,17 @@ final class ArgumentsTest extends TestCase
 
     // ---- options ------------------------------------------------------------------------
 
+    public function testExportTakesThePathAfterItAndNotTheOneAfterThat(): void
+    {
+        // The trap `TAKES_A_VALUE` exists for: a session path does not begin with a dash, so an
+        // `export` left off that list would have swallowed nothing and read the file as a message
+        // — the flag then means "export" with no file and the file means "say this to the model".
+        $parsed = Arguments::parse(['--export', 'a.jsonl', 'out.html']);
+
+        $this->assertSame('a.jsonl', $parsed->value('export'));
+        $this->assertSame(['out.html'], $parsed->messages, 'the second word is where it goes');
+    }
+
     public function testAnOptionWithAValueTakesTheNextArgument(): void
     {
         $this->assertSame('sonnet', $this->parse('--model', 'sonnet')->value('model'));
