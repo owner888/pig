@@ -38,6 +38,19 @@ class Tui extends Container
     /** The terminal was asked how big a cell is and has not answered yet. */
     private bool $awaitingCellSize = false;
 
+    /**
+     * Something else owned the screen, so the next frame clears before it draws.
+     *
+     * Not the same fact as an empty `previousLines`, which is also true of the very first frame —
+     * and that one must *not* clear, or starting pig would wipe whatever the shell had printed.
+     *
+     * `commit()` puts it back to false, which no test can see today and is kept anyway: the only
+     * thing that empties the record is the force that sets this, so the two always travel together.
+     * The line is what makes the field mean "the screen is lost *now*" rather than "was lost once",
+     * and the day something else empties the record it is what stops a stale clear.
+     */
+    private bool $screenIsLost = false;
+
     /** Input held back while that answer might still be arriving. */
     private string $cellSizeBuffer = '';
 
@@ -154,9 +167,20 @@ class Tui extends Container
     /**
      * Draw on the next turn of the loop.
      *
-     * Deferred rather than immediate so that a burst of events — a token arriving, a key
-     * pressed, a resize — costs one frame instead of three. $force throws away what the
-     * screen is believed to hold, which is what a resize needs.
+     * Deferred rather than immediate so that a burst of events — a token arriving, a key pressed,
+     * a resize — costs one frame instead of three.
+     *
+     * **`$force` means "the screen is not ours any more"**, and the only callers that can say that
+     * are the ones coming back from a program that owned it: `$VISUAL`, or a suspend. It is *not*
+     * what a resize needs, which is what this used to say: the resize handler asks for a plain
+     * render and the width-changed path clears by itself — see the trap in CLAUDE.md, which is
+     * where that correction came from.
+     *
+     * So it throws away what the screen is believed to hold **and asks for a clear**. Emptying the
+     * record alone is not enough: the renderer reads an empty `previousLines` as the first frame
+     * ever, which writes every line from wherever the cursor is with nothing cleared — and a
+     * full-screen editor restores what it found on the way out, so what is there is pig's own last
+     * frame and the new one lands underneath it.
      */
     public function requestRender(bool $force = false): void
     {
@@ -164,6 +188,7 @@ class Tui extends Container
             $this->previousLines = [];
             $this->previousWidth = 0;
             $this->cursorRow = 0;
+            $this->screenIsLost = true;
         }
 
         if ($this->renderRequested) {
@@ -211,7 +236,7 @@ class Tui extends Container
         $widthChanged = $this->previousWidth !== 0 && $this->previousWidth !== $width;
 
         if ($this->previousLines === []) {
-            $this->drawAll($lines, $width, clear: false);
+            $this->drawAll($lines, $width, clear: $this->screenIsLost);
             $this->placeCaret($width);
 
             return;
@@ -352,6 +377,7 @@ class Tui extends Container
         $this->cursorRow = count($lines) - 1;
         $this->previousLines = $lines;
         $this->previousWidth = $width;
+        $this->screenIsLost = false;
     }
 
     /**

@@ -328,6 +328,37 @@ final class TuiTest extends TestCase
         );
     }
 
+    public function testAForcedRenderClearsTheScreenItNoLongerOwns(): void
+    {
+        // `force` has one meaning left and it is not the resize the docblock used to claim: the
+        // resize handler asks for a plain render and the width-changed path clears by itself. What
+        // is left is coming back from something that owned the screen — `$VISUAL`, a suspend — and
+        // there the old frame is still up there, because a full-screen editor restores what it
+        // found on the way out. Emptying `previousLines` alone writes the new frame *under* it,
+        // which is the first-frame path doing exactly what it is for and exactly the wrong thing.
+        $this->tui->addChild(new TextComponent("one\ntwo"));
+        $this->tui->start();
+        $this->frame();
+
+        $this->terminal->clearWrites();
+        $this->tui->requestRender(true);
+        $this->frame();
+
+        $this->assertStringContainsString("\x1b[3J\x1b[2J\x1b[H", $this->terminal->output());
+    }
+
+    public function testTheVeryFirstFrameDoesNotClearWhatTheShellPrinted(): void
+    {
+        // The other half, and the reason the two facts cannot be one: an empty `previousLines` is
+        // also true before anything has been drawn, and clearing there would wipe whatever was in
+        // the terminal before pig started.
+        $this->tui->addChild(new TextComponent("one\ntwo"));
+        $this->tui->start();
+        $this->frame();
+
+        $this->assertStringNotContainsString("\x1b[2J", $this->terminal->output());
+    }
+
     public function testTheCellSizeReplyDoesNotRedrawTheWholeFrameOverItself(): void
     {
         // The reply arrives as input on an image-capable terminal, and it used to force the

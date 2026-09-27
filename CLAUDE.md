@@ -2823,21 +2823,20 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 89 | 38,200 |
+| read difference by difference | 90 | 38,500 |
 | ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **25** | **3,100** |
+| **not yet read** | **24** | **2,800** |
 
-Those figures go stale; the queue does not. **Three files are 300 lines or more and they are
-where the remaining risk is** — every one of them is ported and none has been read end to end:
+Those figures go stale; the queue does not. **Two files are 300 lines or more and they are
+where the remaining risk is** — both are ported and neither has been read end to end:
 
 ```
- 351  tui/tui.ts                                           → Tui
  344  tui/components/input.ts                              → Components\Input
  340  tui/terminal-image.ts                                → Images\TerminalImage
 ```
 
 The remaining 22 are under 300 lines each and almost all components — the biggest of them is
-`ai/types.ts` at 217, and nine of the rest are under 50. The count is rebuilt by listing the sweep's
+`ai/types.ts` at 217, and eight of the rest are under 50. The count is rebuilt by listing the sweep's
 output and striking off what this file records as read, not by editing these numbers.
 
 **`markdown.ts` was the one a surface map could not read**, and the corpus is what read it — see the
@@ -3784,7 +3783,29 @@ frame one. Upstream asks for a plain render there, for the same reason the resiz
 
 Two things about the shape of it. It is **the trap this file already described, in the caller it did
 not name** — a written-down rule is only as good as the audit of who obeys it, and "force stays for
-callers who know" is a sentence about callers that lists none. And it was invisible to every test in
+callers who know" is a sentence about callers that lists none.
+
+**It happened a third time, and then the rule itself turned out to be wrong.** `/theme` forced the
+render too, and nothing had overwritten that screen: a theme switch changes what components draw, so
+there is a previous frame to diff against and only the lines whose colours changed need rewriting. It
+asks for a plain render now. Finding it took a byte-level assertion rather than a visible one, because
+`requestRender()` **coalesces** — the plain render `say()` asked for and the forced one become a
+single draw, so counting how many times the banner is written cannot tell the two paths apart. What
+can: a differential update clears each line it rewrites (`\e[2K`) and the first-frame path emits
+none.
+
+And with `/theme` gone, every caller left says the same thing — coming back from `$VISUAL`, from a
+suspend, from a hook's editor — so **`force` means "the screen is not ours any more", which is not
+what a resize needs and is what the docblock claimed.** That meaning wants a clear, and emptying the
+record does not give one: the renderer reads an empty `previousLines` as the first frame ever and
+writes from wherever the cursor is with nothing cleared. A full-screen editor restores what it found
+on the way out, so what is there is pig's own last frame and the new one lands underneath it — the
+same doubling, arriving by the one door nobody had checked. `Tui::$screenIsLost` is the second fact
+that an empty record cannot carry: the very first frame has an empty record too, and clearing *there*
+would wipe whatever the shell had printed before pig started. Both halves have a test
+(`TuiTest::testAForcedRenderClearsTheScreenItNoLongerOwns` and
+`testTheVeryFirstFrameDoesNotClearWhatTheShellPrinted`), and
+`InteractiveModeTest::testSwitchingThemeDoesNotWriteTheWholeFrameUnderItself` holds the caller. And it was invisible to every test in
 the suite, because `FakeTerminal` records what was written and nothing compares two frames drawn
 over each other; what a test can see is that *nothing at all* should be written when the answer
 changes nothing on screen, which is what

@@ -2581,7 +2581,15 @@ final class InteractiveMode
         // messages this session does not keep. New output comes out in the new theme.
         $this->editor->setTheme($this->palette->editorTheme());
         $this->say("Theme: {$wanted} — already-drawn output keeps its colours");
-        $this->tui->requestRender(true);
+
+        // **Not forced**, which it was: nothing has overwritten this screen, so there is a previous
+        // frame to diff against and the lines whose colours changed are the only ones to rewrite.
+        // Forcing empties what the screen is believed to hold, and the renderer reads that as
+        // "first frame ever" — every line written with no clear, from wherever the cursor is, which
+        // is the bottom of the frame already there. The trap in CLAUDE.md about the forced render,
+        // third caller. `force` is for after something else owned the screen: coming back from
+        // `$VISUAL`, or from a suspend.
+        $this->tui->requestRender();
     }
 
     // ---- what the agent is doing ----------------------------------------------------------

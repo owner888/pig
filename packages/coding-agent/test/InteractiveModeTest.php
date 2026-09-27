@@ -448,6 +448,34 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('claude-sonnet-4-5', $narrowed);
     }
 
+    public function testSwitchingThemeDoesNotWriteTheWholeFrameUnderItself(): void
+    {
+        // `requestRender(true)` empties what the screen is believed to hold, and the renderer
+        // reads an empty `previousLines` as "first frame ever" — so it writes every line with no
+        // clear, starting from wherever the cursor is, which is the bottom of the frame already
+        // there. That is the trap in CLAUDE.md about the forced render, and `/theme` is the third
+        // caller to make it: nothing overwrote this screen, so there is a previous frame to diff
+        // against and a plain render rewrites only the lines whose colours changed.
+        $this->start();
+        $this->settle();
+
+        $this->terminal->clearWrites();
+        $this->type('/theme');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $written = $this->terminal->output();
+
+        $this->assertStringContainsString('Theme: light', Ansi::strip($written), 'it did switch');
+
+        // The bytes, because `FakeTerminal` records writes and not a screen: a differential update
+        // clears each line it rewrites (`\e[2K`), and the first-frame path — which is what an
+        // emptied `previousLines` selects — emits none of those and no cursor move either. Counting
+        // how often the banner is written cannot tell them apart, because `requestRender()`
+        // coalesces: the plain render `say()` asked for and the forced one become a single draw.
+        $this->assertStringContainsString("\x1b[2K", $written, 'a differential update, not a fresh frame');
+    }
+
     public function testEveryKeyTheEditorAnswersToIsNamedSomewhere(): void
     {
         // `Editor` answers to all of these and pig named none of them: the application keys were
