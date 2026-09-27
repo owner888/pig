@@ -194,8 +194,10 @@ final class SettingsList implements Component, InputHandler
     private function row(SettingItem $item, bool $isSelected, int $labelWidth, int $width): string
     {
         $cursor = $isSelected ? $this->theme->cursor : str_repeat(' ', Width::visible($this->theme->cursor));
-        $label = Width::truncate($item->label, $labelWidth, '');
-        $label .= str_repeat(' ', max(0, $labelWidth - Width::visible($label)));
+        // Truncate first, then pad: the column is fixed, so a long label is cut to it and a short
+        // one is filled to it. `Width::pad()` is the padding, in columns — `str_pad()` here is the
+        // trap on it, and 主题 is 6 bytes and 4 columns.
+        $label = Width::pad(Width::truncate($item->label, $labelWidth, ''), $labelWidth);
 
         $room = $width - Width::visible($cursor) - $labelWidth - 2 - self::RIGHT_MARGIN;
         $value = $room < 1 ? '' : Width::truncate($this->current[$item->id], $room, '');

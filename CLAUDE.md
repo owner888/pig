@@ -2897,6 +2897,21 @@ are only 41 of them. The other three came back clean: `str_split` is `mb_str_spl
 walks text (the two byte ones walk a key sequence and a base64 blob), `ucfirst` is applied to a
 `ThinkingLevel` enum value, and every `strtolower` on something a person typed is `mb_strtolower`.
 
+**Then the two that were already right were mutated, and only one of them had a test.**
+`SettingsList` has `testACjkLabelIsMeasuredInColumnsNotCharacters`, which goes red the moment its
+padding counts bytes. `SelectList` had nothing: swapping `Width::visible()` for `strlen()` in its gap
+broke no test at all — and the case that looks like it should have caught it,
+`testAWideLabelDoesNotPushTheDescriptionOffTheScreen`, cannot, because measuring in bytes makes the
+gap **smaller**. The row still fits; the description just starts in the wrong column. *A test that
+asks "did it overflow" cannot see a rule about where things line up*, which is the same shape as the
+`grep` test that asserted `'ripgrep exited'` and thereby pinned the shortfall. Both consumers assert
+the column now, and `SettingsList`'s inline three lines are `Width::pad()` like everybody else's.
+
+`SelectList`'s gap is **not** `Width::pad()` and should not become it: `max(1, …)` there keeps at
+least one space between a label and its description, which is a separator and not a fill to a fixed
+width. Two lines that look alike and answer different questions — the thing this file says to check
+before sharing one.
+
 Regression tests: `WidthTest::testPadFillsToTheColumnAndNotToTheByte` (six shapes),
 `InteractiveModeTest::testTheDescriptionColumnLinesUpForASkillNamedInAnotherAlphabet`,
 `ModelListTest::testTheColumnsLineUpWhenAModelIsNamedInAnotherAlphabet`.

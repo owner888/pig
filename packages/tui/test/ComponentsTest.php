@@ -10,6 +10,7 @@ use Pig\Tui\Components\Box;
 use Pig\Tui\Components\CancellableLoader;
 use Pig\Tui\Components\Loader;
 use Pig\Tui\Components\SelectItem;
+use Pig\Tui\Ansi;
 use Pig\Tui\Components\SelectList;
 use Pig\Tui\Components\Rule;
 use Pig\Tui\Components\SelectListTheme;
@@ -268,6 +269,31 @@ final class ComponentsTest extends TestCase
         // Upstream measures the label with JavaScript's .length; here it is columns, so
         // eight CJK characters count as sixteen and the gap shrinks to match.
         $this->assertLessThanOrEqual(70, Width::visible($list->render(70)[0]));
+    }
+
+    public function testTheDescriptionColumnIsTheSameForACjkLabelAsForAnAsciiOne(): void
+    {
+        $list = new SelectList(
+            [
+                new SelectItem('ascii', 'review', 'what it does'),
+                new SelectItem('cjk', '代码审查', 'what it does'),
+            ],
+            theme: SelectListTheme::default(),
+        );
+
+        $columns = [];
+
+        foreach (array_slice($list->render(70), 0, 2) as $line) {
+            $plain = Ansi::strip($line);
+            $at = mb_strpos($plain, 'what it does', 0, 'UTF-8');
+
+            $columns[] = Width::visible(mb_substr($plain, 0, (int) $at, 'UTF-8'));
+        }
+
+        // The case the width assertion above cannot see: measuring the label with `strlen()` makes
+        // the gap *smaller*, so the row still fits and the description simply starts in the wrong
+        // place. A test that only asks "did it overflow" holds a half-fix in place.
+        $this->assertSame($columns[0], $columns[1]);
     }
 
     public function testTheLoaderAnimatesOnTheEventLoop(): void
