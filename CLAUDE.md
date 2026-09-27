@@ -1121,6 +1121,30 @@ someone forgot they wrote cannot shadow `/help`; and `$@` is substituted **befor
 numbered placeholders, or an argument that happens to contain `$1` would have an argument
 substituted into it.
 
+**Audited against its 216 upstream lines difference by difference, and it found no bug** — which
+is worth the words only with the list attached, since four of the nine differences had no reason
+written beside them and now do. Five already did: the byte walk in `arguments()` (the same answer
+as upstream's code-unit walk, because the four characters it looks for are all below 0x80),
+`str_replace` for `$@` rather than `String.replace` (whose replacement treats `$&` and `$1` as
+special, so an argument spelled `$&` would insert the match), dotted names skipped (upstream
+recurses into a `.git` in a commands folder), `expand()` answering **null** rather than the text it
+was given, and `is_readable()` where upstream wraps the read in a `try`.
+
+The four that did not, all now on the code:
+
+- **The frontmatter key pattern is `Skills`', not this file's upstream** — `skills.ts` matches
+  `\w[\w-]*` and `slash-commands.ts` only `\w+`, so **upstream has two answers to one question**,
+  and a hyphen in a key is ordinary (`allowed-tools`). Nothing reads such a key yet, so the two
+  behave alike today; taking the wider one in both places is what keeps that from being luck.
+- **CRLF is normalised once at the top**, where upstream survives it by accident and then leans on
+  `.trim()` per value.
+- **`scandir()` sorts and `readdirSync` does not**, and the first of two same-named commands wins —
+  so without it, which file answers `/review` could differ between two machines.
+- **`firstLine()` trimmed in one of its two branches.** Invisible, because the body is trimmed one
+  method away, so the first line with anything on it cannot start with a space. Trimmed once now:
+  *a rule that holds because of a `trim()` somewhere else is a rule that breaks when that
+  somewhere else changes* — the same thing `SessionManager::opening()`'s test exists to say.
+
 `Prompt\Skills` is upstream's `core/skills.ts`. A skill is a folder with a `SKILL.md` whose
 frontmatter says what it is for; only the name and description reach the prompt, and the
 instructions are a file the model reads when a task matches. That is what makes many skills

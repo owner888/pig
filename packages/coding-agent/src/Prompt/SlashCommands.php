@@ -150,6 +150,14 @@ final class SlashCommands
     // ---- looking -------------------------------------------------------------------------
 
     /**
+     * Every `.md` under $directory, and under its folders.
+     *
+     * `scandir()` sorts, which upstream's `readdirSync` does not, and the reason is
+     * `CustomToolLoader::discover()`'s: two commands of one name is decided by load order, and
+     * readdir order is not an order. Here the first one found wins in `expand()`, so without this
+     * which of two files answers `/review` could differ between two machines holding the same
+     * folders.
+     *
      * @return list<FileCommand>
      */
     private static function scan(string $directory, string $source, string $under = ''): array
@@ -222,14 +230,24 @@ final class SlashCommands
         );
     }
 
-    /** The first line with something on it, as a description, cut to fit a list. */
+    /**
+     * The first line with something on it, as a description, cut to fit a list.
+     *
+     * Trimmed once rather than in one of the two branches. Upstream trims in neither and gets an
+     * indented description; this trimmed the short one and not the cut one, which is only invisible
+     * because `frontmatter()` trims the whole body, so the first line with anything on it cannot
+     * start with a space. A rule that holds because of a `trim()` in another method is a rule that
+     * breaks when that method changes.
+     */
     private static function firstLine(string $content): string
     {
         foreach (explode("\n", $content) as $line) {
-            if (trim($line) !== '') {
+            $line = trim($line);
+
+            if ($line !== '') {
                 return mb_strlen($line) > self::DESCRIPTION_LENGTH
                     ? mb_substr($line, 0, self::DESCRIPTION_LENGTH) . '...'
-                    : trim($line);
+                    : $line;
             }
         }
 
@@ -241,6 +259,16 @@ final class SlashCommands
      *
      * The same hand-rolled reader as `Skills`: key-and-scalar lines, because that is all
      * either format uses and pig has no YAML parser to reach for.
+     *
+     * **The key pattern is `Skills`', not this file's upstream.** Upstream has two readers and two
+     * answers — `skills.ts` matches `\w[\w-]*` and `slash-commands.ts` only `\w+` — and a
+     * hyphen in a frontmatter key is ordinary (`allowed-tools`, `argument-hint`). Nothing here
+     * reads such a key yet, so today the two spellings behave the same; taking the wider one in
+     * both places is what stops that from being luck the day one of them does.
+     *
+     * CRLF is normalised first, which upstream does not do. `indexOf("\n---")` survives a CRLF
+     * file by accident — `\r\n---` contains `\n---` — and every value then carries a trailing
+     * `\r` that only `.trim()` removes. Doing it once at the top is the same fact in one place.
      *
      * @return array{0: array<string, string>, 1: string} fields, then the body
      */

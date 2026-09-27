@@ -1956,26 +1956,6 @@ final class InteractiveMode
         return count($leaving) === 1 ? '1 message' : count($leaving) . ' messages';
     }
 
-    /** One message, short enough to pick from a list. */
-    private static function describe(mixed $message): string
-    {
-        $text = match (true) {
-            $message instanceof UserMessage, $message instanceof AssistantMessage => self::textOf($message),
-            $message instanceof BashExecution => '$ ' . $message->command,
-            $message instanceof ToolResultMessage => $message->toolName . ' result',
-            $message instanceof CompactionSummary => 'compacted',
-            default => '',
-        };
-
-        $text = trim((string) preg_replace('/\s+/u', ' ', $text));
-
-        if ($text === '') {
-            return '(nothing said)';
-        }
-
-        return mb_strlen($text) > 60 ? mb_substr($text, 0, 60) . '...' : $text;
-    }
-
     /**
      * Which subscription to sign in with, or which sign-in to forget.
      *
