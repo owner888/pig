@@ -8,11 +8,31 @@ namespace Pig\Tui\Markdown;
  * Markdown, as much of it as a terminal can draw.
  *
  * Headings, paragraphs, fenced and indented code, lists with nesting, block quotes,
- * rules, and GFM tables and strikethrough. Not CommonMark: no reference links, no setext
- * headings, no HTML parsing, no loose/tight list distinction. Anything it does not
- * recognise stays a paragraph and is drawn as the text it was, which is the behaviour
- * that matters — this renders whatever a model wrote, and being wrong should look like
- * plain text rather than like mangled markup.
+ * rules, and GFM tables and strikethrough. Not CommonMark. Anything it does not recognise stays a
+ * paragraph and is drawn as the text it was, which is the behaviour that matters — this renders
+ * whatever a model wrote, and being wrong should look like plain text rather than like mangled
+ * markup.
+ *
+ * **Run against `marked` 15 over a corpus of 54 documents**, which is where the two list bugs below
+ * came from, and these are what is left. Each is a difference with a reason rather than a gap
+ * nobody looked at:
+ *
+ * - **No setext headings.** `Another` over `-------` is a paragraph and then a rule, because the
+ *   underline is a rule on its own — which is worth knowing, since on screen that reads like a
+ *   divider somebody meant.
+ * - **No reference links.** `[ref][1]` stays as written and the `[1]: …` definition is *drawn*,
+ *   where `marked` consumes it as a definition. A model that writes them gets its footnotes shown.
+ * - **No HTML parsing**, and upstream ends up in the same place: its `html` token is rendered as
+ *   its own raw text, which is what a paragraph of it looks like here.
+ * - **A change of bullet marker does not start a new list.** `*`, then `+`, then `-` is three lists
+ *   to CommonMark and one of three items here. Three lists of one item read as three paragraphs
+ *   with bullets, and nobody writing them meant that.
+ * - **A task item keeps its box.** `- [x] done` draws `[x]` as part of the text; `marked` lifts it
+ *   into a `checked` flag that **upstream's renderer never reads**, so there the box disappears and
+ *   a done item is indistinguishable from an undone one.
+ * - **An unclosed fence keeps its last newline**, so it draws one blank line that `marked` does not.
+ *   The alternative is trimming a fence's content, which would eat a deliberate blank line at the
+ *   end of a closed one.
  */
 final class Lexer
 {
@@ -237,6 +257,8 @@ final class Lexer
 
         $indent = $first[0];
         $ordered = $first[2];
+        $start = $first[3];
+        $loose = false;
         $items = [];
         $current = null;
         $cursor = $index;
@@ -246,6 +268,9 @@ final class Lexer
             $line = $lines[$cursor];
             $marker = self::itemMarker($line);
 
+            // The same indent and the same kind, and deliberately **not** the same marker
+            // character: `*` then `+` then `-` is three lists to CommonMark and one here. See the
+            // class docblock.
             if ($marker !== null && $marker[0] === $indent && $marker[2] === $ordered) {
                 if ($current !== null) {
                     $items[] = new ListItem(self::blocks($current));
@@ -262,12 +287,29 @@ final class Lexer
             }
 
             // A blank line only ends the list if the line after it is not indented under
-            // the item — that is what lets an item hold two paragraphs.
+            // the item — that is what lets an item hold two paragraphs — **and is not another
+            // item**, which is the case this used to get wrong. A blank line between two items
+            // is one *loose* list to every other markdown reader, and reading it as two lists
+            // renumbers an ordered one: each list starts again at its own first number, so
+            // `1.` `2.` `3.` with blank lines between came out `1.` `1.` `1.`. That is the
+            // commonest thing a model writes.
             if (trim($line) === '') {
                 $next = $lines[$cursor + 1] ?? '';
+                $after = self::itemMarker($next);
+                $continues = $after !== null && $after[0] === $indent && $after[2] === $ordered;
 
-                if (trim($next) === '' || self::leadingSpaces($next) <= $indent) {
+                // Two blank lines still end it, as they do everywhere else.
+                if (!$continues && (trim($next) === '' || self::leadingSpaces($next) <= $indent)) {
                     break;
+                }
+
+                if ($continues) {
+                    // Remembered rather than left in the item: the blank line belongs *between*
+                    // two items, and an item that ends in one draws a trailing gap instead.
+                    $loose = true;
+                    $cursor++;
+
+                    continue;
                 }
 
                 $current[] = '';
@@ -290,13 +332,14 @@ final class Lexer
             $items[] = new ListItem(self::blocks($current));
         }
 
-        return $items === [] ? null : [new ListBlock($items, $ordered), $cursor - $index];
+        return $items === [] ? null : [new ListBlock($items, $ordered, $start, $loose), $cursor - $index];
     }
 
     /**
      * Whether a line starts an item, and with what.
      *
-     * @return array{0: int, 1: string, 2: bool}|null indent, the text after the marker, ordered
+     * @return array{0: int, 1: string, 2: bool, 3: int}|null indent, the text after the marker,
+     *                                                        whether it is ordered, and its number
      */
     private static function itemMarker(string $line): ?array
     {
@@ -309,7 +352,9 @@ final class Lexer
             return null;
         }
 
-        return [strlen($match[1]), $match[4], !in_array($match[2], ['-', '*', '+'], true)];
+        $ordered = !in_array($match[2], ['-', '*', '+'], true);
+
+        return [strlen($match[1]), $match[4], $ordered, $ordered ? (int) $match[2] : 1];
     }
 
     private static function leadingSpaces(string $line): int

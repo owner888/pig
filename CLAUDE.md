@@ -2823,15 +2823,14 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 86 | 36,500 |
+| read difference by difference | 87 | 37,100 |
 | ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **28** | **4,800** |
+| **not yet read** | **27** | **4,200** |
 
-Those figures go stale; the queue does not. **Six files are 300 lines or more and they are
+Those figures go stale; the queue does not. **Five files are 300 lines or more and they are
 where the remaining risk is** — every one of them is ported and none has been read end to end:
 
 ```
- 646  tui/components/markdown.ts                           → Components\Markdown + Markdown\Lexer, Inline
  576  tui/autocomplete.ts                                  → Autocomplete\CombinedAutocompleteProvider
  469  coding-agent/modes/rpc/rpc-mode.ts                   → Rpc\RpcMode
  351  tui/tui.ts                                           → Tui
@@ -2843,11 +2842,10 @@ The remaining 22 are under 300 lines each and almost all components — the bigg
 `ai/types.ts` at 217, and nine of the rest are under 50. The count is rebuilt by listing the sweep's
 output and striking off what this file records as read, not by editing these numbers.
 
-**`markdown.ts` is the one left that a surface map cannot read**, and it is worth saying why before
-somebody tries: upstream hands the parsing to `marked` and walks its tokens, where `Markdown\Lexer`
-and `Inline` are the parser as well, so there are no two lists of methods to line up. What that file
-wants is the treatment `EditDiff`, `Truncate`, `EditTool`, `ReadTool`, `Keys` and `PartialJson` got —
-a corpus, run against the real thing, with the count written down.
+**`markdown.ts` was the one a surface map could not read**, and the corpus is what read it — see the
+trap on the two list bugs it found. The rule it confirms: where upstream leans on a package pig had to
+replace, there are no two lists of methods to line up, and the only honest comparison is a corpus run
+against the package itself.
 
 **The two largest files came off that list together, and both were read by surface rather than top
 to bottom** — `agent-session.ts`, 74 upstream methods against pig's 66, and `interactive-mode.ts`,
@@ -5660,6 +5658,47 @@ that pin the ends separately — dropping the `await`, dropping `startRetrying()
 `startBackgroundWork()` on the overflow path, and dropping the release at the tail. The last of those
 fails as `The event loop ran out of work while the root coroutine was still suspended`, which is the
 honest shape of a handle nobody completes.
+
+### Every numbered list a model wrote with spaces in it came out numbered 1, 1, 1
+
+`markdown.ts` is the one remaining file a surface map cannot read — upstream hands the parsing to
+`marked` and walks its tokens, where `Markdown\Lexer` and `Inline` **are** the parser. So it got the
+treatment `EditDiff`, `Truncate`, `Keys` and `PartialJson` got: **`marked` 15 installed, a corpus of
+54 documents, both sides' block structure dumped and compared.** Two bugs, in the commonest thing a
+model writes.
+
+**A list's own numbers were thrown away.** `ListBlock` held its items and whether it was ordered, and
+nothing else — so `3. three` / `4. four`, which is how anybody quotes steps three and four of a
+procedure, was drawn as `1.` and `2.`. `marked` carries a `start` for this and **upstream ignores it
+too**: its `renderList` is `${i + 1}. `, so this is a divergence in pig's favour, like `EditDiff`'s
+numbering and the image token count.
+
+**And a blank line between items ended the list.** `1. one` / blank / `2. two` / blank / `3. three` —
+a numbered list whose items are paragraphs, which is most of them — was read as *three lists of one
+item*, and each one started again at its own number. With all the items written `1.`, the idiom that
+lets the renderer do the counting, it came out `1.` `1.` `1.` and no `start` could have saved it.
+Every other markdown reader calls this one **loose** list.
+
+**The mutation check is the story here.** Fixing `start` alone made the first test pass *and* the
+second one, because three lists of one item each carry their own start — so mutating the lexer change
+back broke nothing, and by this file's usual rule it was dead code to delete. Rendering both ways is
+what showed it was not: without it the blank lines the author put between the items **disappear**,
+because the list ends and the next one begins with no gap between. So the lexer half was doing
+something, and the something was undoing the author's spacing — a regression hidden behind a passing
+test. *A mutation that changes no test can still change the output; render it and look.*
+
+What it wanted was the whole distinction, which the `Lexer` docblock used to disclaim: `ListBlock`
+carries `loose`, the lexer sets it when it walks over a blank line between two items, and the
+renderer puts one line between items — never before the first or after the last, because that
+spacing belongs to the block and not to the list. Three tests, one per fact: the numbers, the
+blank lines, and a tight list staying tight; each of the three ends fails on its own mutation.
+
+**Ten differences survive the corpus and each now has a reason on the `Lexer`**, which is the other
+half of the run: four are the harness comparing `marked`'s raw text against pig's parsed inline text,
+three are the subset pig states (setext headings, reference links, HTML), and three are pig's own
+calls — a change of bullet marker does not start a new list, a task item keeps its `[x]` (which
+`marked` lifts into a flag **upstream never reads**, so the box vanishes there), and an unclosed fence
+keeps its last newline.
 
 ### A compaction refunded the bill
 

@@ -46,6 +46,45 @@ final class MarkdownTest extends TestCase
 
     // ---- the block lexer -----------------------------------------------------------
 
+    public function testANumberedListKeepsItsOwnNumbers(): void
+    {
+        // Found by running pig's lexer against `marked` over a corpus. `ListBlock` had no idea
+        // where a list started, so every ordered list was drawn from 1 — a model quoting steps
+        // three and four of a procedure had them silently renamed one and two.
+        $lines = implode("\n", $this->rows("3. three\n4. four\n"));
+
+        $this->assertStringContainsString('3. three', $lines);
+        $this->assertStringContainsString('4. four', $lines);
+    }
+
+    public function testABlankLineBetweenItemsIsOneLooseListAndNotThree(): void
+    {
+        // The commonest thing a model writes — a numbered list whose items are paragraphs — and
+        // pig read each item as a list of its own. Every other markdown reader calls this one
+        // *loose* list, and the difference shows in two places at once: the numbering, and whether
+        // the blank lines the author put between the items survive.
+        $this->assertSame(
+            ['1. one', '', '2. two', '', '3. three', ''],
+            $this->rows("1. one\n\n2. two\n\n3. three\n"),
+        );
+    }
+
+    public function testALooseListNumberedAllOnesIsStillCountedUp(): void
+    {
+        // The idiom where you let the renderer do the counting. Read as three lists it came out
+        // `1.` `1.` `1.`, and a `start` per list cannot save it — they each start at one.
+        $this->assertSame(
+            ['1. one', '', '2. two', '', '3. three', ''],
+            $this->rows("1. one\n\n1. two\n\n1. three\n"),
+        );
+    }
+
+    public function testATightListKeepsItsItemsTogether(): void
+    {
+        // The other half of the distinction: no blank lines in, none out.
+        $this->assertSame(['1. one', '2. two', ''], $this->rows("1. one\n2. two\n"));
+    }
+
     public function testHeadingsCarryTheirLevel(): void
     {
         $tokens = Lexer::lex("# One\n## Two\n###### Six");

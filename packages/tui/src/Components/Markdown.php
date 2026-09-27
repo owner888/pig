@@ -255,7 +255,19 @@ final class Markdown implements Component
         $indent = str_repeat('  ', $depth);
 
         foreach ($token->items as $number => $item) {
-            $bullet = $token->ordered ? ($number + 1) . '. ' : '- ';
+            // A blank line *between* items, which is what makes a loose list loose. Never before
+            // the first or after the last: that spacing is the block's business, not the list's.
+            if ($token->loose && $number > 0) {
+                $lines[] = '';
+            }
+
+            // From the list's own first number, not from one: `3. three` is step three of
+            // somebody's procedure, and renumbering it is rewriting what the model said.
+            // **Upstream renumbers**: its `renderList` is `${i + 1}. ` and never reads the `start`
+            // its own lexer hands it, so a list beginning at three is drawn beginning at one there.
+            // Found by running pig's lexer against `marked` over a corpus; the other half of that
+            // run is the loose-list note in `Lexer`.
+            $bullet = $token->ordered ? ($token->start + $number) . '. ' : '- ';
             $body = $this->listItem($item, $depth, $width);
 
             if ($body === []) {
