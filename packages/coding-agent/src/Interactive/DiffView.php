@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Interactive;
 
 use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Tools\Shell;
 use Pig\Tui\Style;
 
 /**
@@ -16,7 +17,7 @@ use Pig\Tui\Style;
  *
  * Which makes this the diff's display boundary, and therefore where the bytes are made safe:
  * a diff is built from a *file's* own bytes, so `edit` is the one tool that can hand the
- * renderer something it cannot draw with no tool output involved at all — see `SafeText`. The
+ * renderer something it cannot draw with no tool output involved at all — see `Shell::sanitize()`. The
  * tool's own text is left alone: it goes to the model and into the session file, which have
  * their own answers.
  *
@@ -32,7 +33,7 @@ final class DiffView
      */
     public static function render(string $diff, Palette $palette): string
     {
-        $lines = explode("\n", SafeText::of($diff));
+        $lines = explode("\n", Shell::sanitize($diff));
         $output = [];
         $at = 0;
 

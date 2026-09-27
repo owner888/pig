@@ -11,7 +11,6 @@ use Pig\Ai\TextContent;
 use Pig\Async\AbortSignal;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
-use Pig\CodingAgent\Interactive\SafeText;
 use Pig\Tui\Process;
 
 /**
@@ -168,7 +167,7 @@ final class Run
         // An escape split across two reads survives, because each chunk is cleaned on its own.
         // Upstream has that too, for the same reason, and the alternative is holding bytes back
         // in case more of a sequence arrives — which would stop the output being live.
-        $chunk = SafeText::of($chunk);
+        $chunk = Shell::sanitize($chunk);
 
         if ($chunk === '') {
             return;

@@ -10,22 +10,23 @@ use Pig\Agent\AgentToolResult;
 use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\Ai\Utils\Utf8;
+use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\Theme\Highlight;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\EditDiff;
 use Pig\CodingAgent\Tools\Paths;
+use Pig\CodingAgent\Tools\Shell;
 use Pig\Tui\Ansi;
+use Pig\Tui\Component;
 use Pig\Tui\Components\Box;
 use Pig\Tui\Components\Image;
 use Pig\Tui\Components\ImageTheme;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
+use Pig\Tui\Container;
 use Pig\Tui\Images\ImageDimensions;
 use Pig\Tui\Images\TerminalImage;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\RenderOptions;
-use Pig\Tui\Component;
-use Pig\Tui\Container;
 use Pig\Tui\Style;
 use Throwable;
 
@@ -665,7 +666,7 @@ final class ToolExecutionComponent extends Container
     /**
      * What the tool said, as text a frame can hold.
      *
-     * Every byte of it came from a file or a subprocess, so it goes through `SafeText`, whose
+     * Every byte of it came from a file or a subprocess, so it goes through `Shell::sanitize()`, whose
      * docblock is where the three reasons are — and the reason there is a class rather than
      * three copies of the rule is that this was the only one of the three sites that had it.
      */
@@ -679,7 +680,7 @@ final class ToolExecutionComponent extends Container
 
         foreach ($this->result->content as $block) {
             if ($block instanceof TextContent) {
-                $parts[] = SafeText::of($block->text);
+                $parts[] = Shell::sanitize($block->text);
 
                 continue;
             }

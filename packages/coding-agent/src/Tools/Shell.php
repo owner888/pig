@@ -5,17 +5,34 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Tools;
 
 use Pig\Agent\AgentError;
+use Pig\Ai\Utils\Utf8;
+use Pig\Tui\Ansi;
 use Pig\Tui\Process;
 
 /**
- * Which shell to run commands with, and how to stop them.
+ * Which shell to run commands with, how to stop them, and how to read what they printed.
  *
  * bash rather than whatever `$SHELL` says: the model writes bash, and a command that
  * works when the person happens to use bash and fails when they use fish is worse than
  * one that always behaves the same.
+ *
+ * The three things in here are upstream's `utils/shell.ts`, which exports exactly these three:
+ * `getShellConfig`, `killProcessTree` and `sanitizeBinaryOutput`. The third lived in
+ * `Interactive\SafeText` while its only callers drew on a screen, and moved here when `Run` needed
+ * it too — which is the arrangement upstream had all along, and see `sanitize()` for why the two
+ * belong in one place.
  */
 final class Shell
 {
+    /**
+     * The control characters a terminal acts on, which is all of them but tab and newline.
+     *
+     * Byte-oriented on purpose: every character in the class is below 0x80, so it cannot appear
+     * inside a multi-byte sequence, and a pattern with no `/u` has no way to fail on the input
+     * this exists to handle.
+     */
+    private const string ACTED_ON = '/[\x00-\x08\x0b-\x1f]/';
+
     private static ?string $bash = null;
 
     private static ?string $configured = null;
@@ -77,6 +94,52 @@ final class Shell
     {
         self::$bash = null;
         self::$configured = null;
+    }
+
+    /**
+     * What a command printed, made safe to keep.
+     *
+     * **Cleaned where the bytes arrive, not where they are drawn**, which is upstream's own comment
+     * on the line that does it — *"Sanitize once at the source"*. Everything downstream then holds
+     * the same text: the model, the session file, the spill file the truncation notice points at,
+     * and the screen. Cleaning at the display boundary instead leaves the escapes in the two places
+     * nobody looks at until a conversation is replayed, and a build log is mostly escapes.
+     *
+     * Three steps, none of them tidiness:
+     *
+     * - **Escape sequences out.** A command that prints its own colours would otherwise paint over
+     *   the component's, including the background that says whether it succeeded — and `npm`,
+     *   `cargo` and `docker` colour their output whether or not anybody is watching. A file with a
+     *   captured log committed into it does the same through a diff.
+     * - **Bytes that are not UTF-8 out.** Everything that measures a line goes through
+     *   `Graphemes::split()`, which is `preg_match_all('/\X/u')` and answers **false** on malformed
+     *   UTF-8 — so one stray byte threw out of `render()`, inside the loop's own input callback, and
+     *   took the session with it. `!cat` of a binary file reaches this, so does an `edit` to a
+     *   latin-1 file, so does a hook that sends a build log.
+     * - **Every other control character out.** This is the `Tui::checkWidth()` failure arriving by
+     *   the one route that check cannot see: `\p{Cc}` is **zero columns wide**, so a line carrying a
+     *   form feed measures exactly right, passes, and is written to a terminal that then drops a row
+     *   — putting every later cursor move one row low, which is the silent screen corruption the
+     *   check exists to make loud. A backspace leaves the padding measuring a column that is no
+     *   longer there. A bell is worse in its own way: the transcript is redrawn as the conversation
+     *   grows, so one `\x07` in a build log beeps again on every redraw.
+     *
+     * Upstream's `sanitizeBinaryOutput` is the last two steps and each of its three callers adds the
+     * first by hand — with two spellings between them, one of which also turns `\r` into a newline
+     * and skips the binary step. One composition here, for the reason that keeps coming up in this
+     * file. Two deliberate differences from it: **`\r` goes** and stays gone — a bare CR returns the
+     * cursor to column 0 and the rest of the line overwrites what was drawn, which upstream gets
+     * away with only because its renderer is not differential — and **U+FFF9–FFFB stay**, though
+     * upstream strips them, because that is a crash in `string-width` where `Width` reads them as
+     * `\p{Cf}` and measures them at nothing, which is what they are.
+     *
+     * An escape split across two reads survives, because a caller reading a pipe cleans each chunk
+     * on its own. Upstream has that too, and the alternative is holding bytes back in case the rest
+     * of a sequence arrives, which would stop the output being live.
+     */
+    public static function sanitize(string $text): string
+    {
+        return (string) preg_replace(self::ACTED_ON, '', Ansi::strip(Utf8::sanitize($text)));
     }
 
     /**

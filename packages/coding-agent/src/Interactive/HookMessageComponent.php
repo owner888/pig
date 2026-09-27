@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Interactive;
 
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Tools\Shell;
 use Pig\Tui\Components\DefaultTextStyle;
 use Pig\Tui\Components\Markdown;
 use Pig\Tui\Components\Spacer;
@@ -47,7 +48,7 @@ final class HookMessageComponent extends Container
         // A hook's message is usually output it just captured, so it is no more pig's own
         // words than a tool's result is — and this was the one of the three that had no
         // guard at all: one stray byte from a build log threw out of `render()`.
-        $this->text = SafeText::of($message->toText());
+        $this->text = Shell::sanitize($message->toText());
         $this->heading = new Text('', 1, 0);
 
         $this->setExpanded($expanded);

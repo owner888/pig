@@ -3125,8 +3125,20 @@ control-character half was never missed.
 Three transcript paths carry text that is not pig's own words, and **all three were different**: the
 tool view sanitised UTF-8, `DiffView` gained it a batch later, and `HookMessageComponent` had
 neither — so a hook that sent a build log with one stray byte in it took the session down, which is
-the same killer a third time. `Interactive\SafeText` is the one rule now: escape sequences out,
+the same killer a third time. `Tools\Shell::sanitize()` is the one rule now: escape sequences out,
 malformed UTF-8 out, every control character but tab and newline out.
+
+**There was a fourth path, and counting them as three is how it stayed hidden for four batches.**
+`BashOutputComponent` — what a typed `!command` is drawn with — has no guard of its own, so
+`!head -c 400 /dev/urandom`, or a `!cat` of anything that is not text, took the session down in
+exactly the way above. Measured, with and without the fix: 200 bytes in, `valid utf-8 = false`,
+`TuiError: Grapheme split failed`. It is not a missing guard, though, and that is the useful part —
+**upstream's `bash-execution.ts` has no guard either, and is safe, because its command runner cleans
+at the source.** Two files, one design: the entry on cleaning at the source is the other half of this
+one, and until it landed pig had copied the component's half and not the runner's.
+
+Regression tests: `BashOutputTest`, which is that component's first — three cases, and removing the
+cleaning in `Run::read()` turns two of them red.
 
 Two deliberate differences from upstream's version, and the second is the more useful one to
 remember:
@@ -3605,14 +3617,14 @@ line too early. The line after it is upstream's own comment:
 const text = sanitizeBinaryOutput(stripAnsi(data.toString())).replace(/\r/g, "");
 ```
 
-pig cleaned the same text, with the same three rules, in `Interactive\SafeText` — **at the display
+pig cleaned the same text, with the same three rules, in what was then `Interactive\SafeText` — **at the display
 boundary**. So the screen was right and the two readers nobody looks at until later were not: the
 **model** got `\e[32m` and the `\r` that redraws a progress line, and so did the **session file**,
 which is pi's file. `npm`, `cargo` and `docker` colour their output whether or not anybody is
 watching, and anything with a progress bar writes `\r` by the hundred — so what the model read of a
 failed build was a line overwritten twenty times and a third of its tokens spent on escapes.
 
-`Run::read()` cleans each chunk now, through the same `SafeText`, so the model, the session file,
+`Run::read()` cleans each chunk now, through the same one rule, so the model, the session file,
 the spill file and the screen all get one text. Three things about it:
 
 - **It is a deliberate step past upstream for the `bash` *tool*.** Upstream cleans at the source in
@@ -3627,9 +3639,29 @@ the spill file and the screen all get one text. Three things about it:
   model can go and read the part that was cut, so it has to be the same text as the part that was
   not.
 
-`SafeText` lives in `Interactive\` and now has a caller in `Tools\`, which is one namespace too
-narrow for what it is — its own docblock already calls it "the one rule for text from outside".
-Moving it is a rename with four call sites and is the developer's to approve; it is not done.
+**Where upstream keeps this rule is what decided where pig keeps it.** `utils/shell.ts` exports
+exactly three things — `getShellConfig`, `killProcessTree` and `sanitizeBinaryOutput` — and the first
+two are `Tools\Shell::bash()` and `Tools\Shell::killTree()`. So pig's `Tools\Shell` **is** that file,
+and it was missing the third: it sat in `Interactive\SafeText`, which was the right home for as long
+as every caller drew on a screen and one namespace too narrow the moment `Run` needed it. It is
+`Tools\Shell::sanitize()` now, and `Run` was already using `Shell` for the other two.
+
+That the two belong together is not a filing convenience. Killing a command's process tree and
+reading what the command printed are the two things you cannot do by asking the shell politely, and
+the second is only safe to skip downstream **because** it happened at the source — which is the same
+sentence as the entry above and as the fourth killer path below.
+
+What upstream does *not* have is one composition: each of its three readers writes the steps out, and
+the three do not agree. `bash-executor.ts` and `tool-execution.ts` both spell
+`sanitizeBinaryOutput(stripAnsi(x)).replace(/\r/g, "")`, while `bash-execution.ts` is
+`stripAnsi(chunk).replace(/\r\n/g, "\n").replace(/\r/g, "\n")` — no `sanitizeBinaryOutput`, and `\r`
+turned into a newline rather than dropped. That third spelling is safe only because the runner had
+already cleaned what it was handed, which is worth knowing before anybody reads it as the intended
+rule.
+
+| pig had | now |
+|---|---|
+| `Interactive\SafeText::of()` | `Tools\Shell::sanitize()` |
 
 Regression tests: `AgentSessionTest::testWhatACommandPrintedIsCleanedAtTheSourceAndNotOnlyOnScreen`
 for `!command`, `BashToolTest::testWhatTheModelReadsHasNoEscapesOrProgressLinesInIt` for the tool,

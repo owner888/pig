@@ -427,7 +427,7 @@ final class Skills
      *
      * `ENT_SUBSTITUTE` was the other candidate and is worse here: it would put U+FFFD in front
      * of the model, where dropping the byte leaves the sentence readable. The terminal's
-     * equivalent of this decision is `Interactive\SafeText`, which strips more because a
+     * equivalent of this decision is `Tools\Shell::sanitize()`, which strips more because a
      * terminal acts on what it is sent; a prompt does not.
      */
     private static function escape(string $text): string
