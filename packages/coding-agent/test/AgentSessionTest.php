@@ -674,6 +674,47 @@ final class AgentSessionTest extends TestCase
         $this->assertSame(0.5, $stats->cost);
     }
 
+    public function testACompactionDoesNotRefundWhatTheSessionSpent(): void
+    {
+        // Summed over the messages in memory, a compaction *erased* the bill: what it replaces
+        // them with is one summary carrying no usage, so the footer and `/session` both dropped
+        // back towards zero at exactly the point a session has been long enough to be expensive.
+        // Upstream's footer sums the session file for this reason; its own `/session` does not,
+        // which is two answers to one question in one tool.
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['the summary'], store: $store, settings: self::quickRetries(['keepRecentTokens' => 1]));
+
+        foreach (range(1, 3) as $turn) {
+            $session->agent->appendMessage(new UserMessage(str_repeat('x', 20_000)));
+            $session->agent->appendMessage(new AssistantMessage(
+                [new TextContent("answer {$turn}")],
+                Api::AnthropicMessages,
+                'anthropic',
+                'test-model',
+                new Usage(1_000, 200, 0, 0, 1_200, new Cost(total: 0.25)),
+                StopReason::Stop,
+            ));
+            $store->append($session->messages()[count($session->messages()) - 2]);
+            $store->append($session->messages()[count($session->messages()) - 1]);
+        }
+
+        $before = $session->stats();
+        $this->assertSame(0.75, $before->cost);
+        $this->assertSame(3_000, $before->input);
+
+        Async::run(static fn () => $session->compact());
+
+        $after = $session->stats();
+
+        $this->assertSame(0.75, $after->cost, 'the money was spent whatever the conversation now looks like');
+        $this->assertSame(3_000, $after->input);
+
+        // The counts are the other question and stay on the conversation: after a compaction it
+        // *is* one summary and whatever was kept, and saying "you said 3 things" about a
+        // transcript showing one is the answer to a question nobody asked.
+        $this->assertLessThan($before->userMessages, $after->userMessages);
+    }
+
     public function testTheLastAssistantTextIsWhatCopyWouldTake(): void
     {
         $session = $this->session(['the answer']);

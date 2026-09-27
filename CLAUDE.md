@@ -2823,27 +2823,31 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 84 | 35,500 |
+| read difference by difference | 86 | 36,500 |
 | ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **30** | **5,800** |
+| **not yet read** | **28** | **4,800** |
 
-Those figures go stale; the queue does not. **Eight files are 300 lines or more and they are
+Those figures go stale; the queue does not. **Six files are 300 lines or more and they are
 where the remaining risk is** — every one of them is ported and none has been read end to end:
 
 ```
  646  tui/components/markdown.ts                           → Components\Markdown + Markdown\Lexer, Inline
- 630  coding-agent/modes/interactive/components/tool-execution.ts → Interactive\ToolExecutionComponent
  576  tui/autocomplete.ts                                  → Autocomplete\CombinedAutocompleteProvider
  469  coding-agent/modes/rpc/rpc-mode.ts                   → Rpc\RpcMode
  351  tui/tui.ts                                           → Tui
  344  tui/components/input.ts                              → Components\Input
  340  tui/terminal-image.ts                                → Images\TerminalImage
- 324  coding-agent/modes/interactive/components/footer.ts   → Interactive\FooterComponent
 ```
 
 The remaining 22 are under 300 lines each and almost all components — the biggest of them is
 `ai/types.ts` at 217, and nine of the rest are under 50. The count is rebuilt by listing the sweep's
 output and striking off what this file records as read, not by editing these numbers.
+
+**`markdown.ts` is the one left that a surface map cannot read**, and it is worth saying why before
+somebody tries: upstream hands the parsing to `marked` and walks its tokens, where `Markdown\Lexer`
+and `Inline` are the parser as well, so there are no two lists of methods to line up. What that file
+wants is the treatment `EditDiff`, `Truncate`, `EditTool`, `ReadTool`, `Keys` and `PartialJson` got —
+a corpus, run against the real thing, with the count written down.
 
 **The two largest files came off that list together, and both were read by surface rather than top
 to bottom** — `agent-session.ts`, 74 upstream methods against pig's 66, and `interactive-mode.ts`,
@@ -5657,6 +5661,32 @@ that pin the ends separately — dropping the `await`, dropping `startRetrying()
 fails as `The event loop ran out of work while the root coroutine was still suspended`, which is the
 honest shape of a handle nobody completes.
 
+### A compaction refunded the bill
+
+`/session` prints what this conversation has cost and the footer keeps a running total, and both
+came from `AgentSession::stats()`, which summed **the messages in memory**. Compaction replaces what
+it summarises with one `CompactionSummary` carrying no usage — so the moment a conversation got long
+enough to need compacting, the number that says what it cost dropped back towards zero. Reproduced:
+three turns at 0.25 each read `$0.750`, and one `compact()` later they read `$0.000`.
+
+**Upstream has both answers and does not notice.** Its footer sums `sessionManager.getEntries()` —
+the file — and its own `getSessionStats()`, which is what `/session` prints, sums `state.messages`.
+Two readers of one question, in one tool, disagreeing exactly after a compaction; pig had copied the
+wrong one into both places.
+
+The split that settles it: **the counts are about the conversation and the money is about the
+session.** After a compaction the conversation *is* one summary and whatever was kept, so "you said
+three things" about a transcript showing one answers a question nobody asked — counts stay on
+`messages()`. The money is what a provider charged, and every assistant message in the file came
+back from one, including on a branch later walked away from. Neither compacting nor changing your
+mind is a refund, so the total comes from `SessionManager::everyMessage()` — every entry, file order,
+no branch to walk. With no file at all (`--no-save`) there is nothing else to count and the two
+questions share an answer again.
+
+Regression test: `AgentSessionTest::testACompactionDoesNotRefundWhatTheSessionSpent`, which asserts
+the money survives *and* that the counts do not — the second half is what stops the fix being
+"sum everything over the file" and calling a two-message transcript six messages long.
+
 ### A session on disk could not be exported, and skills were the one loader with no off switch
 
 `main.ts` is 451 lines and almost all of it is pig's already, in `CodingAgent::session()` and
@@ -5737,6 +5767,33 @@ Regression test: `InteractiveModeTest::testEnterDuringAnAutoCompactionKeepsWhatY
 whose two halves fail separately when each end of the flag is removed. The harness gained one thing
 for it — `holdTheAgent(letThrough: 3)`, so the call that is held can be the *summariser* rather than
 the first turn.
+
+### Three components read against their upstream, and the one thing PHP cannot have
+
+`tool-execution.ts` (630) and `footer.ts` (324) were mapped member by member like the two big files
+before them, and both came back matching — which is worth the words only with the list attached.
+`ToolExecutionComponent` agrees with upstream on `read`'s `path:start-end` heading and its
+arithmetic, `edit`'s `path:firstChangedLine` from the preview and then from the result, `write`
+drawn from the arguments rather than the result, the `~` shortening, the tab width, and the per-tool
+line limits; `FooterComponent` agrees on the five token bands, the 70/90 colour thresholds, the
+aborted-turn skip when reading the context, `(auto)`, `(sub)`, and the path elision. pig's
+`invalidate()` clears the cached branch exactly as upstream's does, with the same reason written on
+it.
+
+Three differences, each deliberate:
+
+- **`file_path ||` is not ported.** Upstream's component reads `args.file_path || args.path` for
+  `read`, `write` and `edit` while its own tool schemas say `path` — a fallback to a name it does
+  not use. pig reads what its schemas declare.
+- **`grep`'s pattern is drawn as `/pattern/` and carries its glob**, where upstream shows it bare.
+  pig's own, and the delimiters are what tell a pattern from a path at a glance.
+- **The git branch is not watched.** Upstream keeps an `fs.watch` on `.git/HEAD` and disposes of it,
+  so an idle session notices a checkout made in another terminal; pig re-reads on `invalidate()`,
+  which fires on every agent event, so it notices the next time anything happens. **This is the
+  usual "PHP has what JavaScript reaches for" the other way round**: `fs.watch` is free in Node and
+  PHP has no portable file watcher at all without an extension — `Loop::onReadable()` watches
+  streams, not directories. The cost is a branch name that is one event stale on a screen nobody is
+  looking at, and the alternative is an fd, a `dispose()` and an extension.
 
 ### The prompt answered to eleven keys that were named nowhere
 

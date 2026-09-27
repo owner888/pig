@@ -1691,6 +1691,22 @@ final class AgentSession
                     $calls++;
                 }
             }
+        }
+
+        // **The counts are about the conversation and the money is about the session**, which are
+        // two questions and were one sum. Summed over `messages()`, a compaction erased the bill:
+        // it replaces what it summarised with one summary carrying no usage, so the footer and
+        // `/session` both dropped back towards zero at exactly the point a conversation has been
+        // long enough to be expensive. The file is what was paid for — every assistant message in
+        // it came back from a provider that charged, including on a branch later abandoned, and
+        // neither compacting nor walking away is a refund. Upstream's footer sums the file too;
+        // its own `/session` sums the messages, which is two answers to one question in one tool.
+        //
+        // With no file there is nothing else to count, and then the two questions share an answer.
+        foreach ($this->store?->everyMessage() ?? $this->messages() as $message) {
+            if (!$message instanceof AssistantMessage) {
+                continue;
+            }
 
             $input += $message->usage->input;
             $output += $message->usage->output;

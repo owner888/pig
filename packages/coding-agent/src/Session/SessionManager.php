@@ -312,6 +312,29 @@ final class SessionManager
     }
 
     /**
+     * Every message in the file, on any branch and before any compaction.
+     *
+     * The answer to a different question from `messages()`, and the only one that is right about
+     * money: a compaction replaces what it summarises, and a branch that was walked away from is
+     * still in the file — but every assistant message here came back from a provider that charged
+     * for it, and neither of those two things is a refund. `messages()` is what the conversation
+     * *is*; this is what happened.
+     *
+     * File order, not branch order, because there is no branch to walk: every entry is included,
+     * so the order is the order they arrived in. Upstream's `getEntries()`, which its footer sums
+     * for the same reason.
+     *
+     * @return list<mixed>
+     */
+    public function everyMessage(): array
+    {
+        return array_values(array_map(
+            static fn (array $entry): mixed => $entry['message'],
+            $this->entries,
+        ));
+    }
+
+    /**
      * Which entry the message at $index of `messages()` came from.
      *
      * The join between the conversation and the file, and the reason it has to exist: a
