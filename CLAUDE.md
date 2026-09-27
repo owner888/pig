@@ -2725,16 +2725,16 @@ needs decide the shapes.
 
 | Upstream command | Why not |
 |---|---|
-| `queue_message`, `set_queue_mode` | the anchor commit split the one queue into `steer()` and `followUp()`; `steer` and `follow_up` are the two commands that replace them, rather than guessing which one a `queue_message` meant |
+| `queue_message` | the anchor commit split the one queue into `steer()` and `followUp()`; `steer` and `follow_up` are the two commands that replace it, rather than guessing which one a `queue_message` meant. **`set_queue_mode` used to be on this row and did not belong**: the split is about queuing a message and says nothing about the mode — see the trap below |
 | `cycle_model` | `get_available_models` and `set_model` are what it is made of |
 | `branch` | upstream forks a conversation into a second session file; pig branches inside one, as `go_to` with `get_branch` for the points to go to |
 | `export_html` | it is `export` here, and it honours `outputPath` |
 
-Twenty-three commands are there: `prompt`, `steer`, `follow_up`, `abort`, `get_state`,
+Twenty-four commands are there: `prompt`, `steer`, `follow_up`, `abort`, `get_state`,
 `get_messages`, `get_last_assistant_text`, `get_session_stats`, `get_available_models`,
 `set_model`, `set_thinking_level`, `cycle_thinking_level`, `compact`, `set_auto_compaction`,
-`set_auto_retry`, `abort_retry`, `bash`, `abort_bash`, `get_branch`, `go_to`, `new_session`,
-`switch_session` and `export`.
+`set_auto_retry`, `abort_retry`, `set_queue_mode`, `bash`, `abort_bash`, `get_branch`, `go_to`,
+`new_session`, `switch_session` and `export`.
 
 Every failure is a `success: false` response rather than a disconnection: a host asking for
 something impossible should be told, not dropped. Warnings that the interactive mode would
@@ -2823,15 +2823,14 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 88 | 37,700 |
+| read difference by difference | 89 | 38,200 |
 | ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **26** | **3,600** |
+| **not yet read** | **25** | **3,100** |
 
-Those figures go stale; the queue does not. **Four files are 300 lines or more and they are
+Those figures go stale; the queue does not. **Three files are 300 lines or more and they are
 where the remaining risk is** — every one of them is ported and none has been read end to end:
 
 ```
- 469  coding-agent/modes/rpc/rpc-mode.ts                   → Rpc\RpcMode
  351  tui/tui.ts                                           → Tui
  344  tui/components/input.ts                              → Components\Input
  340  tui/terminal-image.ts                                → Images\TerminalImage
@@ -5657,6 +5656,31 @@ that pin the ends separately — dropping the `await`, dropping `startRetrying()
 `startBackgroundWork()` on the overflow path, and dropping the release at the tail. The last of those
 fails as `The event loop ran out of work while the root coroutine was still suspended`, which is the
 honest shape of a handle nobody completes.
+
+### A host could read the queue mode and never set it
+
+`rpc-mode.ts` is 469 lines and almost all of it lines up: pig's field names are upstream's wherever
+they overlap — `message`, `images`, `modelId`, `provider`, `level`, `mode`, `customInstructions`,
+`enabled`, `command`, `outputPath`, `sessionPath`, `entryId` — and its response shapes are upstream's
+keys with pig's own extras beside them (`sessionFile` and `messageCount` on a switch, `thinkingLevel`
+beside a cycled model). Two divergences in pig's favour while reading it: an unknown command comes
+back **with the id it was sent with**, where upstream answers `error(undefined, …)` so a host cannot
+match the failure to the command; and a thrown argument error is a `success: false` response rather
+than the process dying.
+
+One command was missing, and the interesting part is that **this file's own table explained it away**.
+`set_queue_mode` sat on the row about the anchor commit's queue split, beside `queue_message` — but
+that split is about *queuing a message*, which `steer` and `follow_up` replace, and it says nothing
+about the *mode*. So the mode had `AgentSession::setQueueMode()`, a row in `/settings`, and a field in
+`get_state` — everything except the way a host changes it. *A reason that covers one thing does not
+cover the thing filed next to it.*
+
+Left out of `rpc-mode.ts` with reasons rather than by oversight:
+
+| Upstream | Why not |
+|---|---|
+| `get_branch_messages` | `getUserMessagesForBranching()` feeds the twelfth selector, which is `/branch`'s list — the fork into a second session file pig does not do. `get_branch` is pig's answer: the tree, which is where pig's branches are |
+| `new_session`'s `parentSession` | a field pi writes into the session **header** for lineage and **nothing in either tool reads back** — not the migrations, not the picker, not the export. pig's header is otherwise pi's field for field, so this is the one gap in that claim, and it is recorded here rather than filled because filling it threads a value through `create()`, `startNew()` and the command for a fact no reader wants yet. A pi file that carries one is read fine: an unknown header key is ignored |
 
 ### `/model son` offered file names, and the one method that knew better had no caller
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Rpc;
 
+use Pig\Agent\QueueMode;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\ImageContent;
@@ -297,6 +298,8 @@ final class RpcMode
             'set_model' => $this->setModel($command),
             'cycle_model' => $this->cycleModel($command),
 
+            'set_queue_mode' => $this->setQueueMode($command),
+
             'set_thinking_level' => $this->setThinking($command),
             'cycle_thinking_level' => ['level' => $this->session->cycleThinkingLevel()?->value],
 
@@ -476,6 +479,29 @@ final class RpcMode
     }
 
     /** @param array<string, mixed> $command */
+    /**
+     * Whether messages typed mid-run are handed over together or one at a time.
+     *
+     * Upstream's command, and the one the left-out table used to explain away: the anchor commit's
+     * queue split accounts for `queue_message` — `steer` and `follow_up` replace it — and accounts
+     * for nothing about the *mode*. `get_state` reports it and `/settings` has a row for it, so
+     * without this a host could read the fact and never change it.
+     *
+     * @param array<string, mixed> $command
+     */
+    private function setQueueMode(array $command): ?array
+    {
+        $wanted = self::text($command, 'mode');
+
+        $this->session->setQueueMode(
+            QueueMode::tryFrom($wanted)
+                ?? throw new \RuntimeException("No such queue mode: '{$wanted}'. There is "
+                    . implode(' and ', array_map(static fn (QueueMode $m): string => $m->value, QueueMode::cases())) . '.'),
+        );
+
+        return null;
+    }
+
     private function setThinking(array $command): ?array
     {
         $wanted = ThinkingLevel::tryFrom(self::text($command, 'level'))

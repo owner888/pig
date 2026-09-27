@@ -445,6 +445,32 @@ final class RpcModeTest extends TestCase
         $this->assertStringEndsWith('.jsonl', $state['sessionFile']);
     }
 
+    public function testAHostCanSetTheQueueModeAndNotOnlyReadIt(): void
+    {
+        // `get_state` reports it, `/settings` has a row for it, `AgentSession::setQueueMode()`
+        // writes it through to the settings — and there was no command, so a host could see the
+        // mode and never change it. Upstream has one; the table that explained its absence lumped
+        // it in with `queue_message`, which the anchor commit's queue split really does account
+        // for, and this is about the *mode* rather than about queuing anything.
+        $this->start(store: true);
+
+        $this->assertSame('one-at-a-time', $this->data(['type' => 'get_state'])['queueMode']);
+
+        $response = $this->response(['type' => 'set_queue_mode', 'mode' => 'all']);
+
+        $this->assertTrue($response['success']);
+        $this->assertSame('all', $this->data(['type' => 'get_state'])['queueMode']);
+    }
+
+    public function testAQueueModeThatIsNotOneOfTheTwoIsNamedRatherThanIgnored(): void
+    {
+        $this->start();
+        $response = $this->response(['type' => 'set_queue_mode', 'mode' => 'whenever']);
+
+        $this->assertFalse($response['success']);
+        $this->assertStringContainsString('whenever', $response['error']);
+    }
+
     public function testAnUnsavedSessionHasNoSessionFileRatherThanAMadeUpOne(): void
     {
         $this->start();
