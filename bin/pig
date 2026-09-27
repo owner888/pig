@@ -70,8 +70,11 @@ if (isset($options['help'])) {
       --model <id>      which model to talk to (default: claude-sonnet-4-5).
                         A part of the name will do: `sonnet`, `haiku`, `opus 4.1`.
                         Add a thinking level with a colon: `sonnet:high`.
-      --models [search] list the models there is a key for, and stop. With a search
-                        it is fuzzy over provider and id: `--models gem pro`
+      --models <list>   narrow this session to these models, comma-separated: the first
+                        is what it opens on, and ctrl+p cycles within them. A pattern
+                        may be a glob and may carry a level: `sonnet:high,'anthropic/*'`
+      --list-models [s] list the models there is a key for, and stop. With a search
+                        it is fuzzy over provider and id: `--list-models gem pro`
       --api-key <key>   use this key for the model's provider, this run only.
                         Not saved; beats the environment and any stored sign-in.
       --proxy <url>     reach providers through this proxy, this run only:
@@ -239,13 +242,17 @@ Timings::mark('customModels');
 // just added to `models.json` is a listing they will not trust about the rest either. It
 // costs a settings read and a file read to get here, which nobody notices on a command that
 // prints and exits.
-if (isset($options['models'])) {
-    echo ModelList::render($options['models'], $auth), "\n";
+//
+// `--list-models` is upstream's name for it, and pig's `--models` used to be. They had to swap:
+// upstream's `--models` takes patterns and *scopes* the session, so the same word meant two
+// different things in the two tools — one of which prints and exits.
+if (isset($options['list-models'])) {
+    echo ModelList::render($options['list-models'], $auth), "\n";
 
     exit(0);
 }
 
-// Prints and exits, like `--models`, and for the same reason it sits this far down: the theme
+// Prints and exits, like `--list-models`, and for the same reason it sits this far down: the theme
 // decides what the page looks like, and the theme comes from the settings. A session on disk and
 // no wish to reopen it had no way out until this — `/export` needs a running session and the RPC
 // `export` command needs a host.
@@ -282,6 +289,18 @@ if (!in_array($theme, Palette::names(), true)) {
 // Which built-in tools the model gets. Checked here rather than inside the assembly for the same
 // reason the theme is: a name that matches nothing should be one line on the shell, before anything
 // has been loaded, and it should list what the names are.
+// Split here rather than in `session()`, which is the same division `--tools` follows: the flag's
+// spelling is the command line's business and what it resolves to is the library's.
+$modelPatterns = isset($options['models'])
+    ? array_values(array_filter(array_map('trim', explode(',', $options['models']))))
+    : null;
+
+if ($modelPatterns === []) {
+    fwrite(STDERR, Style::red("--models needs at least one model or pattern after it.\n"));
+
+    exit(1);
+}
+
 $toolNames = null;
 
 if (isset($options['tools'])) {
@@ -359,6 +378,7 @@ try {
         withTools: !isset($options['no-tools']),
         skillsDir: $options['skills-dir'] ?? null,
         tools: $toolNames,
+        models: $modelPatterns,
     );
 } catch (CodingAgentError $error) {
     // Almost always a model name that matches nothing or a missing API key, both worth saying

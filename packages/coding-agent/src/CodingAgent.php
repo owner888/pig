@@ -131,8 +131,8 @@ final class CodingAgent
      *
      * What stays with the caller, and why:
      *
-     * - **`Auth` and the custom models** arrive built, because `--models` prints the registry and
-     *   exits, and it has to see a model somebody just declared without a session file being
+     * - **`Auth` and the custom models** arrive built, because `--list-models` prints the registry
+     *   and exits, and it has to see a model somebody just declared without a session file being
      *   created on the way past.
      * - **The session picker**, which draws a list on a terminal. `$resume` is a path by the time
      *   it gets here, or null.
@@ -150,6 +150,8 @@ final class CodingAgent
      * @param list<string>|null $tools which built-in tools the model gets, as `ToolSet` names them.
      *        Null means the default set — upstream's four — and `--read-only` swaps that for the
      *        read-only four rather than narrowing this one.
+     * @param list<string>|null $models what `--models` said, already split on commas: the patterns
+     *        this session is narrowed to, whose first entry is what it opens on
      *
      * @throws CodingAgentError with a sentence worth showing as-is
      */
@@ -170,19 +172,39 @@ final class CodingAgent
         bool $withSkills = true,
         ?string $skillsDir = null,
         ?array $tools = null,
+        ?array $models = null,
     ): StartedSession {
         $warnings = [];
 
-        // The order stated at the top of `bin/pig`: what was typed, then the environment, then what
-        // was chosen last time, then the built-in default.
-        $wanted = $model
-            ?? self::fromEnvironment($environment, 'PIG_MODEL')
-            ?? $settings->defaultModel()
-            ?? 'claude-sonnet-4-5';
-        $choice = ModelResolver::parse($wanted);
+        // `--models sonnet:high,'anthropic/*'` narrows the session, which is what upstream's
+        // `--models` means. Resolved against the models a key reaches, because a scope holding
+        // one that cannot be spoken to is a scope ctrl+p walks into and fails on.
+        [$scope, $scopeWarnings] = $models === null || $models === []
+            ? [[], []]
+            : ModelResolver::scope($models, $auth->availableModels());
 
-        if ($choice === null) {
-            throw new CodingAgentError("No model matches '{$wanted}'. Try --models for the list.");
+        foreach ($scopeWarnings as $problem) {
+            $warnings[] = $problem;
+        }
+
+        if ($model === null && $scope !== []) {
+            // The first of the scope is what the session opens on, which is upstream's rule and
+            // sits exactly here in the order: below `--model`, which is somebody naming one
+            // model, and above the environment. A resumed conversation still wins over both —
+            // `restoreSettings()` below puts the file's model back unless `--model` was typed.
+            $choice = $scope[0];
+        } else {
+            // The order stated at the top of `bin/pig`: what was typed, then the environment, then
+            // what was chosen last time, then the built-in default.
+            $wanted = $model
+                ?? self::fromEnvironment($environment, 'PIG_MODEL')
+                ?? $settings->defaultModel()
+                ?? 'claude-sonnet-4-5';
+            $choice = ModelResolver::parse($wanted);
+
+            if ($choice === null) {
+                throw new CodingAgentError("No model matches '{$wanted}'. Try --list-models for the list.");
+            }
         }
 
         if ($choice->warning !== null) {
@@ -305,7 +327,7 @@ final class CodingAgent
         );
         Timings::mark('agent');
 
-        $session = new AgentSession($agent, $cwd, $store, $settings, $hooks);
+        $session = new AgentSession($agent, $cwd, $store, $settings, $hooks, $fileCommands, $scope);
 
         // What the hooks and the custom tools are told about the session is wired by the mode, not
         // here: the interactive one is what has a screen to draw a dialog on, and upstream says the

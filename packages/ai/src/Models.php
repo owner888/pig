@@ -572,7 +572,7 @@ final class Models
         }
 
         // Last, so the table reads direct providers first — which is not what decides a bare
-        // id (`RESOLD` is), but does decide the order `--models` and `/model` list them in.
+        // id (`RESOLD` is), but does decide the order `--list-models` and `/model` list them in.
         foreach (self::COPILOT_MODELS as $id => [$name, $api, $window, $maxTokens, $reasoning, $images]) {
             $models[self::COPILOT . '/' . $id] = new Model(
                 $id,

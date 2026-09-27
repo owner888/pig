@@ -180,6 +180,85 @@ final class ModelResolverTest extends TestCase
         $this->assertNull(ModelResolver::next([], null));
     }
 
+    // ---- the scope `--models` sets ----------------------------------------------------------
+
+    public function testEachPatternResolvesTheWayModelWouldAndTheOrderIsKept(): void
+    {
+        [$scope, $warnings] = ModelResolver::scope(['haiku', 'opus 4.1'], Models::all());
+
+        $this->assertSame([], $warnings);
+        $this->assertSame(['claude-haiku-4-5', 'claude-opus-4-1'], array_map(
+            static fn (object $choice): string => $choice->model->id,
+            $scope,
+        ));
+    }
+
+    public function testAGlobTakesEveryModelItMatches(): void
+    {
+        [$scope, $warnings] = ModelResolver::scope(['anthropic/claude-opus-*'], Models::all());
+
+        $this->assertSame([], $warnings);
+        $this->assertGreaterThan(1, count($scope));
+
+        foreach ($scope as $choice) {
+            $this->assertSame('anthropic', $choice->model->provider);
+            $this->assertStringStartsWith('claude-opus-', $choice->model->id);
+        }
+    }
+
+    public function testAGlobMatchesTheBareIdAsWellAsProviderSlashId(): void
+    {
+        // So `*sonnet*` works without anybody having to write `anthropic/*sonnet*`, which is
+        // `minimatch`'s two attempts upstream.
+        [$scope] = ModelResolver::scope(['*claude-sonnet-4-5*'], Models::all());
+
+        $this->assertNotSame([], $scope);
+        $this->assertContains('claude-sonnet-4-5', array_map(
+            static fn (object $choice): string => $choice->model->id,
+            $scope,
+        ));
+    }
+
+    public function testAThinkingLevelOnAGlobReachesEveryModelItMatched(): void
+    {
+        [$scope] = ModelResolver::scope(['anthropic/claude-opus-*:high'], Models::all());
+
+        $this->assertNotSame([], $scope);
+
+        foreach ($scope as $choice) {
+            $this->assertSame(ThinkingLevel::High, $choice->thinking);
+        }
+    }
+
+    public function testASuffixThatIsNoLevelStaysPartOfTheGlob(): void
+    {
+        // An id can hold a colon — OpenRouter's `:exacto` — so a suffix is only stripped when it
+        // is a level. `claude-*:nonsense` is therefore a pattern matching nothing, not a pattern
+        // for `claude-*` with a bad level tacked on.
+        [$scope, $warnings] = ModelResolver::scope(['anthropic/claude-*:nonsense'], Models::all());
+
+        $this->assertSame([], $scope);
+        $this->assertSame(['No model matches "anthropic/claude-*:nonsense".'], $warnings);
+    }
+
+    public function testTheSameModelReachedTwoWaysIsInTheScopeOnce(): void
+    {
+        [$scope] = ModelResolver::scope(['claude-sonnet-4-5', 'anthropic/claude-sonnet-4-5'], Models::all());
+
+        $this->assertCount(1, $scope);
+    }
+
+    public function testOneTypoCostsItsOwnPatternAndNotTheRest(): void
+    {
+        [$scope, $warnings] = ModelResolver::scope(['haiku', 'no-such-model-anywhere'], Models::all());
+
+        // A session is still worth having: the other pattern is a scope, and the warning names
+        // the one that found nothing.
+        $this->assertCount(1, $scope);
+        $this->assertSame('claude-haiku-4-5', $scope[0]->model->id);
+        $this->assertSame(['No model matches "no-such-model-anywhere".'], $warnings);
+    }
+
     public function testAModelThatIsNotOnTheListCountsAsBeingAtTheStart(): void
     {
         [$sonnet, $haiku, $opus] = self::three();

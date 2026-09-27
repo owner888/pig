@@ -47,7 +47,6 @@ use Pig\CodingAgent\Hooks\RegisteredCommand;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
-use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Session\SessionCodec;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\HookMessage;
@@ -895,17 +894,46 @@ final class InteractiveMode
     /** ctrl+p, and shift+ctrl+p the other way: the next model along, without opening the list. */
     private function cycleModel(bool $backward = false): void
     {
-        $next = ModelResolver::next($this->auth?->availableModels() ?? Models::all(), $this->session->model(), $backward);
-
-        if ($next === null) {
-            // Which is a real state on a machine with one key: a keystroke that does nothing
-            // needs to say why, or it reads as pig having missed it.
-            $this->say('Only one model has a key here.');
+        try {
+            $choice = $this->session->cycleModel($this->modelsWithAKey(), $backward);
+        } catch (Throwable $error) {
+            $this->sayError($error->getMessage());
 
             return;
         }
 
-        $this->useModel($next);
+        if ($choice === null) {
+            // Which is a real state on a machine with one key, and a different one under
+            // `--models`: a keystroke that does nothing needs to say why, or it reads as pig
+            // having missed it.
+            $this->say($this->session->modelScope() === []
+                ? 'Only one model has a key here.'
+                : 'Only one model in the scope --models set.');
+
+            return;
+        }
+
+        $this->footer->invalidate();
+        $this->paintBorder();
+
+        // The level is said too, because switching models can change it under you — a scope
+        // entry may name its own — and finding that out from a bill is worse than reading it here.
+        $this->say($choice->thinking === ThinkingLevel::Off
+            ? "Model: {$choice->model->id}"
+            : "Model: {$choice->model->id} · thinking {$choice->thinking->value}");
+    }
+
+    /**
+     * The models this session offers, which `--models` may have narrowed.
+     *
+     * This half is the terminal's: which models a key reaches, from `Auth`. The narrowing is the
+     * session's, so a scope cannot be applied here and forgotten there.
+     *
+     * @return list<Model>
+     */
+    private function modelsWithAKey(): array
+    {
+        return $this->session->modelsOnOffer($this->auth?->availableModels() ?? Models::all());
     }
 
     private function cycleThinking(): void
@@ -1315,32 +1343,41 @@ final class InteractiveMode
     }
 
     /**
-     * A command a hook registered, or a prompt kept as a file, or neither.
+     * A command a hook registered, or a prompt kept as a file.
      *
-     * Hooks first: a hook command is code and a file command is a prompt, and the one
-     * that can look at the arguments should get the chance to.
+     * Both are the session's to carry out — `AgentSession::prompt()` runs the one and expands
+     * the other — because a command that only worked in front of a screen is a command
+     * `pig -p` and RPC could not reach. What is left here is which door the text goes in by,
+     * and that is a question about this screen:
+     *
+     * - **A hook's command is code and runs now**, whatever the agent is doing. Spawned,
+     *   because a handler may open a dialog and the submit handler is inside the loop's own
+     *   input callback.
+     * - **A file command is a stored prompt** and takes the ordinary path: queued while the
+     *   agent is working, sent otherwise.
      */
     private function runAddedCommand(string $text, string $name): void
     {
-        $command = $this->hookCommands[$name] ?? null;
-
-        if ($command === null) {
-            $this->runFileCommand($text, $name);
+        if (isset($this->hookCommands[$name])) {
+            Async::spawn(function () use ($text): void {
+                $this->session->prompt($text);
+                $this->tui->requestRender();
+            });
 
             return;
         }
 
-        $arguments = trim(substr($text, strlen($name) + 1));
+        if ($this->session->isStreaming()) {
+            $this->session->followUp($text);
+            $this->showQueue();
+            $this->tui->requestRender();
 
-        try {
-            ($command->handler)($arguments, $this->hooks?->context() ?? new HookContext($this->cwd));
-        } catch (Throwable $error) {
-            // Not fatal: a command that failed is one command, and the session it failed
-            // in is still a session.
-            $this->hooks?->emitError(new HookError($command->hookPath, "/{$name}", $error->getMessage()));
+            return;
         }
 
-        $this->tui->requestRender();
+        // Not drawn here: `onMessageStart` draws every user message, and drawing it twice is
+        // what happens to anything that helpfully draws its own.
+        $this->send($text);
     }
 
     /** What hooks loaded, where from, and what each one is listening for. */
@@ -1410,38 +1447,6 @@ final class InteractiveMode
         }
 
         Async::spawn(fn () => $this->compact($instructions === '' ? null : $instructions));
-    }
-
-    /**
-     * Send a prompt kept as a file, or say there is no such command.
-     *
-     * The expansion is sent as if it had been typed, because that is what it is: a
-     * command here is a stored prompt, not a program.
-     */
-    private function runFileCommand(string $text, string $name): void
-    {
-        $expanded = SlashCommands::expand($text, $this->fileCommands);
-
-        if ($expanded === null) {
-            // Unreachable: `commandName()` resolved this name against the same list. Said
-            // rather than thrown, because a session is worth more than a stack trace — and
-            // said as the bug it would be rather than as something the person did wrong.
-            $this->sayError("/{$name} is in the command list but has no prompt behind it.");
-
-            return;
-        }
-
-        if ($this->session->isStreaming()) {
-            $this->session->followUp($expanded);
-            $this->showQueue();
-            $this->tui->requestRender();
-
-            return;
-        }
-
-        // Not drawn here: `onMessageStart` draws every user message, and drawing it
-        // twice is what happens to anything that helpfully draws its own.
-        $this->send($expanded);
     }
 
     /**
@@ -1602,7 +1607,7 @@ final class InteractiveMode
 
         // Measured from the labels, not a constant: `shift+enter` is eleven columns and the old
         // `12` left it one space from its description while `esc` had nine. The same rule as
-        // `--models`' columns, and measured with `Width` for the same reason.
+        // `--list-models`' columns, and measured with `Width` for the same reason.
         $column = max(array_map(Width::visible(...), $labels)) + 2;
 
         $rows = [];
@@ -1755,7 +1760,7 @@ final class InteractiveMode
      * The same list `/model` with nothing after it draws and for the same reason — the models there
      * is a key for — so the two cannot come to disagree about what is on offer. Matched as a
      * substring over `provider/id` rather than fuzzily: a completion list is read while typing and
-     * a subsequence match puts `moonshotai/kimi-k2-instruct` under `haiku`, which `--models`
+     * a subsequence match puts `moonshotai/kimi-k2-instruct` under `haiku`, which `--list-models`
      * documents as the price of fuzzy matching on a *listing* nobody is choosing from with Tab.
      *
      * @return list<AutocompleteItem>
@@ -1765,7 +1770,7 @@ final class InteractiveMode
         $wanted = mb_strtolower(trim($typed));
         $items = [];
 
-        foreach ($this->auth?->availableModels() ?? Models::all() as $model) {
+        foreach ($this->modelsWithAKey() as $model) {
             if ($wanted !== '' && !str_contains(mb_strtolower("{$model->provider}/{$model->id}"), $wanted)) {
                 continue;
             }
@@ -1791,9 +1796,11 @@ final class InteractiveMode
         }
 
         // The models there is a key for, which is upstream's `getAvailable()` and what the word
-        // "available" means everywhere else in pig now. A picker that offers a model whose every
-        // turn will fail is a picker that teaches people not to read it.
-        $models = $this->auth?->availableModels() ?? Models::all();
+        // "available" means everywhere else in pig now — narrowed by `--models` when that was
+        // given. A picker that offers a model whose every turn will fail is a picker that teaches
+        // people not to read it, and one that offers models ctrl+p cannot reach is the same thing
+        // one step milder.
+        $models = $this->modelsWithAKey();
         $current = $this->session->model();
         $items = [];
 
@@ -1839,8 +1846,8 @@ final class InteractiveMode
     {
         // Over the models there is a key for, as upstream's model selector resolves: `/model
         // gemini` with no Google key should say there is no such model here rather than switch to
-        // one and fail on the next turn.
-        $choice = ModelResolver::parse($pattern, $this->auth?->availableModels());
+        // one and fail on the next turn. And over the scope when `--models` set one.
+        $choice = ModelResolver::parse($pattern, $this->modelsWithAKey());
 
         if ($choice === null) {
             $this->sayError("No model matches \"{$pattern}\". Try /model on its own for the list.");

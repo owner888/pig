@@ -11,7 +11,7 @@ use Pig\CodingAgent\Utils\Fuzzy;
 use Pig\Tui\Width;
 
 /**
- * `--models`, and `--models <search>`.
+ * `--list-models`, and `--list-models <search>`.
  *
  * Upstream's `cli/list-models.ts`. Here rather than inline in `bin/pig` for the reason
  * `Arguments` gives: a script that calls `exit()` is not something a test can call twice. So

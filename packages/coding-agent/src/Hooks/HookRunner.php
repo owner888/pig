@@ -207,6 +207,20 @@ final class HookRunner
     }
 
     /**
+     * The command that answers to this name, or null.
+     *
+     * Upstream's `getCommand()`, and it is `commands()` asked one question rather than a second
+     * walk over the hooks: the first-one-wins rule has one implementation, so a lookup and a
+     * listing cannot come to disagree about which of two `/deploy`s is the live one.
+     */
+    public function command(string $name): ?RegisteredCommand
+    {
+        [$commands] = $this->commands();
+
+        return $commands[$name] ?? null;
+    }
+
+    /**
      * @param Closure(HookError): void $listener
      * @return Closure(): void call it to stop listening
      */

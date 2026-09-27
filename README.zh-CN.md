@@ -105,10 +105,15 @@ Ctrl+G 把 prompt 里现在的内容丢进 `$VISUAL` 或 `$EDITOR`，改完再�
 「用哪个」上，而用 `bash` 里的 `rg` 搜索本来就是 prompt 让它做的事。
 
 `--model` 不用写全 id，写一部分就行——`--model sonnet`、`--model 'opus 4.1'`——`--model sonnet:high`
-还能顺手把思考档位一起设了。`--models` 把**有 key 的**那些列出来，带上下文窗口和输出上限；
-`--models gem pro` 再筛一遍，模糊匹配，provider 和 id 当一整串来搜。`/model` 给的是同一份列表，
+还能顺手把思考档位一起设了。`--list-models` 把**有 key 的**那些列出来，带上下文窗口和输出上限；
+`--list-models gem pro` 再筛一遍，模糊匹配，provider 和 id 当一整串来搜。`/model` 给的是同一份列表，
 切到没有 key 的模型会直接被拒绝并说清是哪个，而不是等下一轮请求才失败。不想开列表的话，Ctrl+P
 往后跳一个模型，Shift+Ctrl+P 往前跳一个。
+
+`--models` 把这一次会话**收窄**到其中几个，逗号分隔，之后 Ctrl+P 只在这几个里转：
+`--models sonnet,haiku` 从 sonnet 开始，两个来回切；`--models 'anthropic/*:high'` 把 Anthropic
+的模型全收进来，每个都设成 high。每一项可以是 glob，也可以是名字的一部分，结尾加 `:档位` 就是给
+这一项单独设档。`/model` 给的也是这份收窄后的列表——列表和快捷键说的是同一件事。
 
 内置 171 个模型：Anthropic 的、OpenAI 自家走 Responses API 的、Gemini，加上 Groq、Cerebras、xAI、
 Zai、Mistral——这五家说的都是 OpenAI chat-completions。设好对应的 `*_API_KEY`，`--model` 就能指过去。
@@ -157,7 +162,7 @@ label entry，所以在哪边起的名字另一边都看得见。
 叫起来的还是上下文满了自己起来的。设置里 `retry.enabled: false` 关掉前者。
 
 pig 不认识的 provider 写在 `~/.pig/models.json` 里——自己的机器、代理、本地服务——之后它的模型
-在所有用得到内置模型的地方都能用，`--model`、`/model`、`--models` 都算：
+在所有用得到内置模型的地方都能用，`--model`、`/model`、`--list-models` 都算：
 
 ```json
 { "providers": { "my-box": {
@@ -179,7 +184,8 @@ pig 不认识的 provider 写在 `~/.pig/models.json` 里——自己的机器�
 跑到一半打的话是一条一条递过去还是一起递、自动压缩、自动重试——每一项后面写着现在是什么。回车改光标那一行，列表不关；改完按 esc。
 
 `~/.pig/commands/` 或 `.pig/commands/` 下的一个 md 文件就是一条斜杠命令：`review.md` 就是
-`/review`，正文就是 prompt，`$1`、`$@` 由后面跟的参数填进去。
+`/review`，正文就是 prompt，`$1`、`$@` 由后面跟的参数填进去。这些和 hook 注册的那些在终端之外一样
+好用——`pig -p "/review src/Foo.php"` 发的是那段 prompt，`pig -p "/deploy staging"` 跑的是 hook 的命令。
 
 `~/.pig/hooks/` 或 `.pig/hooks/` 下一个「返回 callable」的 PHP 文件就是一个 hook。它能收到十六个
 事件——每次工具调用和它的结果、每一轮、发给模型之前的上下文、压缩、`/tree`、启动和退出——可以拦下

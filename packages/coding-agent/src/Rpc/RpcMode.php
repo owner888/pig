@@ -19,7 +19,6 @@ use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionCodec;
@@ -452,30 +451,28 @@ final class RpcMode
      *
      * Ported after all: the docblock at the top of this file said `get_available_models` and
      * `set_model` were what it is made of, and that was true for a host — but not for pig, which
-     * had the keys reserved in the editor and no method behind them. Now that
-     * `ModelResolver::next()` exists for those keys, a host doing it by hand would be a second
-     * implementation of a rotation, and this audit's whole subject is what that costs.
+     * had the keys reserved in the editor and no method behind them. A host doing the rotation by
+     * hand would be a second implementation of it, and this audit's whole subject is what that
+     * costs — which is why the rotation, the key check and the thinking level a `--models` scope
+     * entry carries are all `AgentSession::cycleModel()`'s.
      *
-     * `null` for a machine with one usable model, as upstream answers.
+     * `null` for a machine with one usable model, or one model in the scope, as upstream answers.
      *
      * @param array<string, mixed> $command
      * @return array<string, mixed>|null
      */
     private function cycleModel(array $command): ?array
     {
-        $next = ModelResolver::next(
+        $choice = $this->session->cycleModel(
             $this->auth?->availableModels() ?? Models::all(),
-            $this->session->model(),
             isset($command['direction']) && $command['direction'] === 'backward',
         );
 
-        if ($next === null) {
+        if ($choice === null) {
             return null;
         }
 
-        $this->session->setModel($next);
-
-        return ['model' => self::model($next), 'thinkingLevel' => $this->session->thinkingLevel()->value];
+        return ['model' => self::model($choice->model), 'thinkingLevel' => $choice->thinking->value];
     }
 
     /** @param array<string, mixed> $command */

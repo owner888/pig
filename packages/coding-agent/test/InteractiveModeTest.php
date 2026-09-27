@@ -35,6 +35,7 @@ use Pig\CodingAgent\Hooks\HookedTool;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Interactive\InteractiveMode;
+use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
@@ -170,6 +171,7 @@ final class InteractiveModeTest extends TestCase
         ?Auth $auth = null,
         ?string $changelog = null,
         array $tools = ['read'],
+        array $modelScope = [],
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->settings = $settings ?? Settings::inMemory();
@@ -204,8 +206,18 @@ final class InteractiveModeTest extends TestCase
         // The settings go to the session as well as to the mode, because that is what `bin/pig`
         // does — and the session reads them for the queue mode, auto-compaction and auto-retry.
         // Passing null here meant three settings that were live in production and inert in
-        // every test.
-        $this->session = new AgentSession($agent, $this->cwd, $saved, $this->settings, $hooks);
+        // every test. The file commands are the same shape and arrived the same way: the session
+        // is what expands one now, so a list given only to the mode would leave the expansion
+        // inert here too.
+        $this->session = new AgentSession(
+            $agent,
+            $this->cwd,
+            $saved,
+            $this->settings,
+            $hooks,
+            $fileCommands,
+            $modelScope,
+        );
 
         if ($resume !== null && $saved !== null) {
             $this->session->restore($saved->messages());
@@ -1666,6 +1678,67 @@ final class InteractiveModeTest extends TestCase
         $this->assertSame($first, $this->session->model()?->id, 'shift+ctrl+p goes back');
     }
 
+    public function testCtrlPStaysInsideTheScopeAndCarriesItsThinkingLevel(): void
+    {
+        $auth = Auth::inMemory();
+        $auth->setRuntimeApiKey('anthropic', 'for-this-run');
+        [$scope, $warnings] = ModelResolver::scope(
+            ['claude-haiku-4-5', 'claude-opus-4-1:high'],
+            $auth->availableModels(),
+        );
+        $this->assertSame([], $warnings);
+
+        $this->start(auth: $auth, reasoning: true, modelScope: $scope);
+
+        $this->type("\x10");
+
+        // Two models in the scope and the current one is in neither — the test model is
+        // `claude-test` — so the first press lands on the second entry, which is upstream's
+        // `indexOf` quirk. What matters here is the level: `--models opus:high` says how hard
+        // *that* model thinks, and a cycle that applied the model and forgot the level would be
+        // the wired-at-one-end shape again.
+        $this->assertSame('claude-opus-4-1', $this->session->model()?->id);
+        $this->assertSame(ThinkingLevel::High, $this->session->thinkingLevel());
+        $this->assertStringContainsString('thinking high', $this->screen());
+
+        $this->type("\x10");
+
+        $this->assertSame('claude-haiku-4-5', $this->session->model()?->id, 'and round the end of the scope');
+    }
+
+    public function testThePickerOffersTheScopeAndNothingElse(): void
+    {
+        $auth = Auth::inMemory();
+        $auth->setRuntimeApiKey('anthropic', 'for-this-run');
+        [$scope] = ModelResolver::scope(['claude-haiku-4-5'], $auth->availableModels());
+
+        $this->start(auth: $auth, modelScope: $scope);
+
+        $this->type('/model');
+        $this->type(self::ENTER);
+
+        $screen = $this->screen();
+
+        // A picker offering twenty models ctrl+p cannot reach is the same fault as a picker
+        // offering a model whose every turn fails, one step milder — so the scope narrows every
+        // list, not only the cycling.
+        $this->assertStringContainsString('claude-haiku-4-5', $screen);
+        $this->assertStringNotContainsString('claude-opus-4-1', $screen);
+    }
+
+    public function testWithOneModelInTheScopeCtrlPSaysSoRatherThanNothing(): void
+    {
+        $auth = Auth::inMemory();
+        $auth->setRuntimeApiKey('anthropic', 'for-this-run');
+        [$scope] = ModelResolver::scope(['claude-haiku-4-5'], $auth->availableModels());
+
+        $this->start(auth: $auth, modelScope: $scope);
+
+        $this->type("\x10");
+
+        $this->assertStringContainsString('Only one model in the scope --models set.', $this->screen());
+    }
+
     public function testPickingFromTheListSwitches(): void
     {
         $this->start();
@@ -1890,6 +1963,36 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
     }
 
+    public function testAFileCommandQueuedMidTurnReachesTheModelAsItsPromptAndComesBackAsItsName(): void
+    {
+        $this->start(['first done', 'reviewed'], fileCommands: [
+            new FileCommand('review', 'Review a file', 'Please review $1 closely.', '(user)'),
+        ]);
+
+        $held = $this->holdTheAgent();
+
+        $this->type('first');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('/review src/Foo.php');
+        $this->type(self::ENTER);
+
+        // Two halves of one decision. What is *waiting* is the line as typed, because that list
+        // is what escape hands back to the editor — a forty-line stored prompt in front of
+        // somebody who typed `/review foo.php` is not putting their text back.
+        $this->assertSame(['/review src/Foo.php'], $this->session->queued());
+        $this->assertStringContainsString('Queued: /review src/Foo.php', $this->screen());
+
+        $held();
+        $this->settle();
+
+        // And what the *model* is handed is the prompt. Upstream queues the raw line at both
+        // ends, so a file command typed during a turn reaches the model there as the eight
+        // characters `/review `.
+        $this->assertStringContainsString('Please review src/Foo.php closely.', $this->screen());
+    }
+
     public function testInterruptingGivesTheQueuedTextBack(): void
     {
         $this->start(['done']);
@@ -1950,6 +2053,9 @@ final class InteractiveModeTest extends TestCase
         $this->start(hooks: $this->runner($api));
         $this->type('/deploy staging --now');
         $this->type(self::ENTER);
+        // Settled, because the command runs inside `AgentSession::prompt()` in a fiber of its
+        // own now — a handler that opens a dialog must not be run inside the input callback.
+        $this->settle();
 
         $this->assertSame('staging --now', $seen);
     }
@@ -1964,6 +2070,7 @@ final class InteractiveModeTest extends TestCase
         $this->start(hooks: $this->runner($api));
         $this->type('/deploy');
         $this->type(self::ENTER);
+        $this->settle();
 
         $this->assertStringContainsString('Warning: hook deploy.php (/deploy): no credentials', $this->screen());
     }
@@ -2011,6 +2118,34 @@ final class InteractiveModeTest extends TestCase
 
         $this->assertStringContainsString('the answer', $screen);
         $this->assertStringContainsString('Warning: hook watcher.php (turn_end)', $screen);
+    }
+
+    public function testAHookCommandStillRunsWhileTheAgentIsWorking(): void
+    {
+        $seen = null;
+        $api = new HookApi($this->cwd, 'deploy.php');
+        $api->registerCommand('deploy', static function (string $arguments) use (&$seen): void {
+            $seen = $arguments;
+        });
+
+        $this->start(['answered'], hooks: $this->runner($api));
+        $release = $this->holdTheAgent();
+
+        $this->type('hi');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // A hook's command is code, not a message, so there is nothing for it to wait behind —
+        // which is why the dispatch in `prompt()` sits in front of the "already working" throw.
+        // Upstream's own comment says the same and its code throws there.
+        $this->type('/deploy now');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertSame('now', $seen);
+
+        $release();
+        $this->settle();
     }
 
     private function runner(HookApi $api, string $path = 'deploy.php'): HookRunner

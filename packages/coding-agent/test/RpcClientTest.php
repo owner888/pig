@@ -433,6 +433,33 @@ final class RpcClientTest extends TestCase
         $this->assertArrayHasKey('thinkingLevel', $first);
     }
 
+    public function testTheModelsFlagNarrowsWhatTheAgentOpensOnAndCyclesThrough(): void
+    {
+        $this->serveOneTurn('unused');
+        $client = $this->client(
+            ['--models', 'claude-haiku-4-5,claude-opus-4-1:high'],
+            environment: ['ANTHROPIC_API_KEY' => 'not-called-here'],
+        );
+
+        [$opened, $next, $round] = Async::run(static function () use ($client): array {
+            $client->start();
+            $opened = $client->state();
+            $next = $client->cycleModel();
+            $round = $client->cycleModel();
+            $client->stop();
+
+            return [$opened, $next, $round];
+        });
+
+        // Through the real binary, because `bin/pig` is where the flag is split on commas and
+        // handed to `session()` — a mutation removing that pass-through broke nothing at all until
+        // this case existed, which is the wired-at-one-end shape from `CLAUDE.md`'s index.
+        $this->assertSame('claude-haiku-4-5', $opened['model']['id'], 'the first of the scope');
+        $this->assertSame('claude-opus-4-1', $next['model']['id'] ?? null);
+        $this->assertSame('high', $next['thinkingLevel'] ?? null, 'and the level that entry named');
+        $this->assertSame('claude-haiku-4-5', $round['model']['id'] ?? null, 'round the end of the scope');
+    }
+
     public function testTheModelListIsTheModelsThereIsAKeyFor(): void
     {
         $this->serveOneTurn('unused');

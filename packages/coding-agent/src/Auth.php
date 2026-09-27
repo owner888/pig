@@ -189,7 +189,7 @@ final class Auth
      *
      * Upstream's `ModelRegistry::getAvailable()`, and `Auth` is what pig has instead of a
      * registry: the credentials are here, and the models are a static list in `Pig\Ai`. Every
-     * listing goes through this one method — `--models`, `/model`, and RPC's
+     * listing goes through this one method — `--list-models`, `/model`, and RPC's
      * `get_available_models` — because the audit's recurring find is a rule that lives in one
      * place and is absent in its sibling, and three lists filtered three ways is that shape
      * waiting to happen.

@@ -203,7 +203,7 @@ final class CodingAgentSessionTest extends TestCase
         );
 
         $this->assertStringContainsString("No model matches 'gpt-9-ultra'", $error->getMessage());
-        $this->assertStringContainsString('--models', $error->getMessage(), 'and where to look');
+        $this->assertStringContainsString('--list-models', $error->getMessage(), 'and where to look');
     }
 
     public function testTheResolversOwnWarningIsAWarningAndNotARefusal(): void
@@ -258,6 +258,61 @@ final class CodingAgentSessionTest extends TestCase
 
         $this->assertFalse($started->model->reasoning);
         $this->assertSame(ThinkingLevel::Off, $started->thinking);
+    }
+
+    // ---- the scope `--models` sets --------------------------------------------------------------
+
+    public function testTheFirstOfTheScopeIsWhatTheSessionOpensOn(): void
+    {
+        putenv('ANTHROPIC_API_KEY=sk-test');
+
+        try {
+            $started = $this->start([], ['models' => ['haiku', 'opus 4.1']]);
+
+            // Upstream's rule: below `--model`, above the environment and the settings. So
+            // `pig --models haiku,opus` opens on haiku, and ctrl+p reaches opus and nothing else.
+            $this->assertSame('claude-haiku-4-5', $started->model->id);
+            $this->assertSame(['claude-haiku-4-5', 'claude-opus-4-1'], array_map(
+                static fn (object $choice): string => $choice->model->id,
+                $started->session->modelScope(),
+            ));
+        } finally {
+            putenv('ANTHROPIC_API_KEY');
+        }
+    }
+
+    public function testAModelNamedOutrightStillBeatsTheScope(): void
+    {
+        putenv('ANTHROPIC_API_KEY=sk-test');
+
+        try {
+            $started = $this->start([], ['models' => ['haiku'], 'model' => 'claude-opus-4-1']);
+
+            // The scope is still the scope — it is what ctrl+p walks — but what the session opens
+            // on is the one model somebody named.
+            $this->assertSame('claude-opus-4-1', $started->model->id);
+            $this->assertCount(1, $started->session->modelScope());
+        } finally {
+            putenv('ANTHROPIC_API_KEY');
+        }
+    }
+
+    public function testAPatternThatMatchesNothingIsAWarningAndTheSessionStartsAnyway(): void
+    {
+        putenv('ANTHROPIC_API_KEY=sk-test');
+
+        try {
+            $started = $this->start([], ['models' => ['no-such-model-anywhere']]);
+
+            $this->assertSame(['No model matches "no-such-model-anywhere".'], $started->warnings);
+
+            // And with nothing in the scope the ordinary order decides, rather than a session that
+            // refuses to start over one typo in a flag that is a preference.
+            $this->assertSame('claude-sonnet-4-5', $started->model->id);
+            $this->assertSame([], $started->session->modelScope());
+        } finally {
+            putenv('ANTHROPIC_API_KEY');
+        }
     }
 
     // ---- the key for this run ------------------------------------------------------------------

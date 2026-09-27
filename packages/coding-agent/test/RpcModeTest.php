@@ -14,6 +14,7 @@ use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\Model;
+use Pig\Ai\Models;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
@@ -22,6 +23,7 @@ use Pig\Ai\TextDeltaEvent;
 use Pig\Ai\TextEndEvent;
 use Pig\Ai\TextStartEvent;
 use Pig\Ai\Usage;
+use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -33,6 +35,8 @@ use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookedTool;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
+use Pig\CodingAgent\ModelResolver;
+use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Rpc\RpcMode;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
@@ -118,7 +122,8 @@ final class RpcModeTest extends TestCase
     }
 
     /**
-     * @param list<string> $answers
+     * @param list<string>      $answers
+     * @param list<FileCommand> $fileCommands
      */
     private function start(
         array $answers = [],
@@ -128,6 +133,8 @@ final class RpcModeTest extends TestCase
         ?HookRunner $hooks = null,
         ?CustomToolSet $customTools = null,
         ?Settings $settings = null,
+        array $fileCommands = [],
+        array $modelScope = [],
     ): void {
         $this->answers = $answers;
         [$this->in, $this->peer] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
@@ -158,7 +165,15 @@ final class RpcModeTest extends TestCase
 
         // With the settings, as `CodingAgent::session()` builds it: the session is what writes
         // the chosen model and thinking level down for next time.
-        $this->session = new AgentSession($agent, $this->cwd, $saved, $settings, $hooks);
+        $this->session = new AgentSession(
+            $agent,
+            $this->cwd,
+            $saved,
+            $settings,
+            $hooks,
+            $fileCommands,
+            $modelScope,
+        );
 
         if ($resume !== null && $saved !== null) {
             $this->session->restore($saved->messages());
@@ -583,6 +598,49 @@ final class RpcModeTest extends TestCase
         $this->assertTrue($this->response(['type' => 'follow_up', 'message' => 'b'])['success']);
     }
 
+    public function testAHostsSlashCommandsReachTheSameDispatchTheTerminalDoes(): void
+    {
+        $api = new HookApi($this->cwd, 'deploy.php');
+        $seen = null;
+        $api->registerCommand('deploy', static function (string $arguments) use (&$seen): void {
+            $seen = $arguments;
+        });
+
+        $this->start(
+            answers: ['reviewed'],
+            hooks: new HookRunner([new LoadedHook('deploy.php', 'deploy.php', $api)], $this->cwd),
+            fileCommands: [new FileCommand('review', 'Review', 'Please review $1 closely.', '(user)')],
+        );
+
+        // A hook's command runs, and nothing is asked of the model.
+        $this->assertTrue($this->response(['type' => 'prompt', 'message' => '/deploy staging'])['success']);
+        $this->assertSame('staging', $seen);
+        $this->assertSame([], $this->session->messages());
+
+        // A stored prompt is expanded, through `prompt` and through both queueing commands —
+        // the three doors text comes in by, which is why the expansion is on all three. The
+        // queued two only join the conversation when a run starts, so the prompt is what
+        // flushes them.
+        $this->assertTrue($this->response(['type' => 'steer', 'message' => '/review a.php'])['success']);
+        $this->assertTrue($this->response(['type' => 'follow_up', 'message' => '/review b.php'])['success']);
+        $this->assertTrue($this->response(['type' => 'prompt', 'message' => '/review c.php'])['success']);
+
+        $texts = array_map(
+            static fn (mixed $message): string => $message->content[0]->text,
+            array_values(array_filter(
+                $this->session->messages(),
+                static fn (mixed $message): bool => $message instanceof UserMessage,
+            )),
+        );
+
+        sort($texts);
+        $this->assertSame([
+            'Please review a.php closely.',
+            'Please review b.php closely.',
+            'Please review c.php closely.',
+        ], $texts);
+    }
+
     public function testAbortWithNothingRunningIsStillASuccess(): void
     {
         $this->start();
@@ -660,6 +718,28 @@ final class RpcModeTest extends TestCase
 
         $this->assertSame($first, $back);
         $this->assertSame($first, $this->data(['type' => 'get_state'])['model']['id'], 'and the session is on it');
+    }
+
+    public function testAHostCyclesInsideTheScopeToo(): void
+    {
+        [$scope, $warnings] = ModelResolver::scope(
+            ['claude-haiku-4-5', 'claude-opus-4-1:high'],
+            Models::all(),
+        );
+        $this->assertSame([], $warnings);
+
+        $this->start(reasoning: true, modelScope: $scope);
+
+        $first = $this->data(['type' => 'cycle_model']);
+        $second = $this->data(['type' => 'cycle_model']);
+
+        // Both ends of the wire go through `AgentSession::cycleModel()`, so a host gets the scope
+        // and the thinking level that comes with each entry — which is the whole reason the
+        // rotation moved off `ModelResolver` and onto the session.
+        $this->assertSame('claude-opus-4-1', $first['model']['id']);
+        $this->assertSame('high', $first['thinkingLevel']);
+        $this->assertSame('claude-haiku-4-5', $second['model']['id']);
+        $this->assertSame('off', $second['thinkingLevel']);
     }
 
     public function testAModelThatDoesNotExistIsAnErrorNotASilentNoChange(): void

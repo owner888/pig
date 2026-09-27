@@ -19,10 +19,9 @@ use Pig\Ai\Models;
  * `:high` on the end sets the thinking level in the same breath, which is the only place
  * a person wants to say it — at the moment they choose the model.
  *
- * Ported from upstream's `core/model-resolver.ts`. Not ported: the glob patterns and
- * multi-model scopes (`--model 'anthropic/*:high'`), which exist for running several
- * models against one task; PHP's `fnmatch()` is the whole of what `minimatch` was doing
- * there, so they are rows of work rather than a dependency when something wants them.
+ * Ported from upstream's `core/model-resolver.ts`, `resolveModelScope()` included — see
+ * `scope()`. `fnmatch()` is the whole of what `minimatch` was doing there, which is why that
+ * half was rows of work rather than a dependency.
  */
 final class ModelResolver
 {
@@ -74,14 +73,115 @@ final class ModelResolver
     }
 
     /**
+     * What `--models sonnet:high,'anthropic/*'` narrows the session to.
+     *
+     * Upstream's `resolveModelScope()`. A pattern is a glob when it holds `*`, `?` or `[`, and
+     * anything else goes through `parse()` — so the two spellings of "which model" are one
+     * implementation and `--models sonnet` means what `--model sonnet` means.
+     *
+     * Three things worth knowing:
+     *
+     * - **A glob is matched against `provider/id` and against the bare id**, so `'*sonnet*'`
+     *   works without anybody having to write `'anthropic/*sonnet*'`. Case-insensitively, as
+     *   `minimatch`'s `nocase` there.
+     * - **A thinking level is only stripped off a glob when it is one.** `strrpos` finds the
+     *   last colon, and an id can contain one — OpenRouter's `:exacto` — so a suffix that is
+     *   not a level stays part of the pattern rather than being thrown away. `parse()` handles
+     *   the non-glob case and already has this rule.
+     * - **A pattern that matches nothing is a warning, not a refusal.** One typo in a list of
+     *   four should not stop a session; the other three are still a scope, and the warning
+     *   names the pattern.
+     *
+     * @param list<string> $patterns already split on commas by whoever read the flag
+     * @param list<Model>  $available the models a key actually reaches
+     * @return array{0: list<ModelChoice>, 1: list<string>} the scope in the order given, and
+     *         one warning per pattern that found nothing or was understood differently
+     */
+    public static function scope(array $patterns, array $available): array
+    {
+        $scope = [];
+        $warnings = [];
+
+        foreach ($patterns as $pattern) {
+            $matched = self::glob($pattern, $available);
+
+            if ($matched === null) {
+                $one = self::parse($pattern, $available);
+                $matched = $one === null ? [] : [$one];
+            }
+
+            if ($matched === []) {
+                $warnings[] = "No model matches \"{$pattern}\".";
+
+                continue;
+            }
+
+            foreach ($matched as $choice) {
+                if ($choice->warning !== null) {
+                    $warnings[] = $choice->warning;
+                }
+
+                foreach ($scope as $already) {
+                    if ($already->model->is($choice->model)) {
+                        continue 2;
+                    }
+                }
+
+                $scope[] = $choice;
+            }
+        }
+
+        return [$scope, $warnings];
+    }
+
+    /**
+     * Every model a glob pattern matches, or null when the pattern is not a glob.
+     *
+     * Null rather than an empty list, so the caller can tell "not a glob, try a name" from
+     * "a glob that matched nothing" — which are different answers with different messages.
+     *
+     * @param list<Model> $available
+     * @return list<ModelChoice>|null
+     */
+    private static function glob(string $pattern, array $available): ?array
+    {
+        if (!str_contains($pattern, '*') && !str_contains($pattern, '?') && !str_contains($pattern, '[')) {
+            return null;
+        }
+
+        $level = ThinkingLevel::Off;
+        $colon = strrpos($pattern, ':');
+
+        if ($colon !== false) {
+            $suffix = ThinkingLevel::tryFrom(substr($pattern, $colon + 1));
+
+            if ($suffix !== null) {
+                $level = $suffix;
+                $pattern = substr($pattern, 0, $colon);
+            }
+        }
+
+        $matched = [];
+
+        foreach ($available as $model) {
+            if (
+                fnmatch($pattern, "{$model->provider}/{$model->id}", FNM_CASEFOLD)
+                || fnmatch($pattern, $model->id, FNM_CASEFOLD)
+            ) {
+                $matched[] = new ModelChoice($model, $level);
+            }
+        }
+
+        return $matched;
+    }
+
+    /**
      * The next model along, wrapping round at either end.
      *
-     * Upstream's `cycleModel()` is what ctrl+p and shift+ctrl+p do, and it is the model half of
-     * `cycleThinkingLevel()`: a keystroke to move along the list rather than a picker to open.
-     * Here rather than on `AgentSession` because everything else it needs is already done for it
-     * — `setModel()` checks the key, writes the file and remembers the choice — so what is left
-     * is which model comes next, and that is arithmetic over a list that both the terminal and
-     * RPC have to do the same way.
+     * The arithmetic under `AgentSession::cycleModel()`, which is what ctrl+p, shift+ctrl+p and
+     * RPC's `cycle_model` all go through. Only the arithmetic: which list, whether a key reaches
+     * the answer, and the thinking level a scope entry carries are the session's, because a
+     * caller that had to remember the level is a caller that will not.
      *
      * Null when there is nowhere to go: one model, or none. A current model that is not in the
      * list at all — pinned with `--model` for a provider whose key has since gone — counts as

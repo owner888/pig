@@ -23,6 +23,7 @@ use Pig\Ai\TextEndEvent;
 use Pig\Ai\TextStartEvent;
 use Pig\Ai\ThinkingContent;
 use Pig\Ai\Usage;
+use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -35,6 +36,7 @@ use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\PrintMode;
+use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
@@ -116,6 +118,7 @@ final class PrintModeTest extends TestCase
     /**
      * @param list<string>       $messages
      * @param list<ImageContent> $images
+     * @param list<FileCommand>  $fileCommands
      * @return int the exit code
      */
     private function run(
@@ -126,6 +129,7 @@ final class PrintModeTest extends TestCase
         ?CustomToolSet $customTools = null,
         bool $store = false,
         ?Settings $settings = null,
+        array $fileCommands = [],
     ): int {
         $this->out = fopen('php://temp', 'w+') ?: throw new RuntimeException('no temp stream');
         $this->err = fopen('php://temp', 'w+') ?: throw new RuntimeException('no temp stream');
@@ -149,6 +153,7 @@ final class PrintModeTest extends TestCase
             $store ? SessionManager::create($this->cwd) : null,
             $settings,
             $hooks,
+            $fileCommands,
         );
 
         $printing = new PrintMode($this->session, $mode, $hooks, $customTools, $this->out, $this->err);
@@ -545,6 +550,59 @@ final class PrintModeTest extends TestCase
         // so what this pins is that the tool is handed the runner's context at all rather than
         // a stub, which is where every other field comes from too.
         $this->assertFalse($seen->hasUi, 'and there is nobody to ask in this mode');
+    }
+
+    // ---- slash commands ------------------------------------------------------------------
+
+    public function testAHookCommandRunsHereRatherThanReachingTheModelAsText(): void
+    {
+        $api = new HookApi('.', 'test.php');
+        $ran = null;
+        $api->registerCommand('deploy', function (string $arguments) use (&$ran): void {
+            $ran = $arguments;
+        });
+
+        $this->answers = ['the model should never be asked'];
+        $code = $this->run(['/deploy staging'], hooks: new HookRunner(
+            [new LoadedHook('test.php', 'test.php', $api)],
+            $this->cwd,
+        ));
+
+        $this->assertSame('staging', $ran, 'the command ran, with what was typed after it');
+        $this->assertSame(0, $code);
+
+        // And nothing was asked of the model: a hook's command is code, not a message. This is
+        // what `pig -p "/deploy"` did before the dispatch moved into `prompt()` — the command
+        // was sent as the text it is, and the model was left to guess what it meant.
+        $this->assertSame([], $this->session->messages());
+        $this->assertSame('', $this->printed());
+    }
+
+    public function testAFileCommandIsExpandedHereTooRatherThanSentAsItsOwnName(): void
+    {
+        $this->answers = ['reviewed'];
+        $this->run(['/review src/Foo.php'], fileCommands: [
+            new FileCommand('review', 'Review a file', 'Review $1 and say what is wrong.', '(user)'),
+        ]);
+
+        $said = $this->session->messages()[0];
+        $this->assertInstanceOf(UserMessage::class, $said);
+        $this->assertSame('Review src/Foo.php and say what is wrong.', $said->content[0]->text);
+    }
+
+    public function testATextThatOnlyLooksLikeACommandIsSentAsTheTextItIs(): void
+    {
+        $this->answers = ['ok'];
+        $this->run(['/review src/Foo.php'], fileCommands: [
+            new FileCommand('deploy', 'Deploy', 'Deploy it.', '(user)'),
+        ]);
+
+        // No command answers to `review` here, so the line is a message. The expansion is exact
+        // for the same reason the terminal's dispatch is: deciding that a near miss was meant
+        // as a command means guessing.
+        $said = $this->session->messages()[0];
+        $this->assertInstanceOf(UserMessage::class, $said);
+        $this->assertSame('/review src/Foo.php', $said->content[0]->text);
     }
 
     /** @param array<string, callable> $handlers */

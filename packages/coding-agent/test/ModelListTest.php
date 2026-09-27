@@ -15,7 +15,7 @@ use Pig\Test\WithoutProviderKeys;
 use Pig\Tui\Ansi;
 use Pig\Tui\Width;
 
-/** `--models`, and `--models <search>`. */
+/** `--list-models`, and `--list-models <search>`. */
 final class ModelListTest extends TestCase
 {
     use WithoutProviderKeys;

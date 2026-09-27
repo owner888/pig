@@ -969,9 +969,9 @@ unchanged is the evidence for. A move that needed a test changed would have been
 finds it and sets the thinking level. When several match, the alias beats the dated build
 behind it — someone typing `sonnet` wants the current one, not the June 2024 build that sorts
 first. The pattern is tried whole before it is split on a colon, because an id can contain one
-(OpenRouter's `:exacto`). Not ported: the glob scopes (`--model 'anthropic/*:high'`) for
-running several models against one task — `fnmatch()` is the whole of what `minimatch` was
-doing there, so that is rows of work rather than a dependency when something wants it.
+(OpenRouter's `:exacto`). `scope()` is upstream's `resolveModelScope()` — what `--models
+sonnet:high,'anthropic/*'` narrows a session to, `fnmatch()` in place of `minimatch` — and the
+trap entry on the two flags swapping names says what porting it decided.
 
 `Export\HtmlExport` and `Export\MarkdownHtml` are upstream's `core/export-html/`, with the
 rendering moved from the browser into PHP. Upstream's export is 211 lines of logic, 65KB of
@@ -1800,7 +1800,7 @@ Five things decided here:
   and pig's four extra flags are accepted too — a file using those is a pig file, which is the
   trade and it is stated.
 
-`--models` moved to **after** this loads, which it had to: a listing that cannot show the model
+`--list-models` moved to **after** this loads, which it had to: a listing that cannot show the model
 somebody just declared is a listing they will not trust about the rest either. It costs a
 settings read on a command that prints and exits.
 
@@ -2046,7 +2046,7 @@ Three rules make it testable, and they are worth keeping when it grows:
   JSON-lines host and a test.
 - **What needs a screen stays with the caller.** `--resume` with no value draws a list, so
   `bin/pig` resolves that to a path first; `session()` takes a path or nothing. The theme is the
-  caller's too, and so are `Auth` and the custom models — because `--models` prints the registry and
+  caller's too, and so are `Auth` and the custom models — because `--list-models` prints the registry and
   exits, and it has to see a model somebody just declared without a session file being created on
   the way past.
 
@@ -2606,8 +2606,8 @@ Enter with nothing matching does nothing at all — it does not close the picker
 found nothing has nothing to choose, and closing on Enter would throw away the query somebody
 is half way through typing.
 
-`Cli\ModelList` is `Fuzzy`'s second reader and upstream's `cli/list-models.ts`: `--models`
-lists the registry, `--models gem pro` narrows it, fuzzily, over `"{provider} {id}"` as one
+`Cli\ModelList` is `Fuzzy`'s second reader and upstream's `cli/list-models.ts`: `--list-models`
+lists the registry, `--list-models gem pro` narrows it, fuzzily, over `"{provider} {id}"` as one
 string — which is what makes naming the provider the way to narrow an id several of them
 resell. Two things it does *not* do, both upstream's:
 
@@ -2625,9 +2625,9 @@ provider column already answers. Widths are measured from the values, so `google
 does not push every row after it out of line, and the last column is trimmed so no row ends in
 spaces.
 
-`--models` became a value-taking option to get there, which is the thing `Arguments`' docblock
+`--list-models` became a value-taking option to get there, which is the thing `Arguments`' docblock
 warns about — an option that eats the next word. It is safe here for a reason worth writing
-down rather than assuming: `--models` prints and exits, so there is no prompt left for it to
+down rather than assuming: `--list-models` prints and exits, so there is no prompt left for it to
 eat. `--resume` is the same shape and was the precedent: a value opens that one, nothing opens
 the list.
 
@@ -2853,13 +2853,10 @@ the twelve unmatched names in `interactive-mode.ts`, three were bugs, one was a 
 its merits, four were arrangements pig differs on deliberately, and four were pig's own code under
 another name.
 
-Three of its gaps are fixed in the traps below — `isCompacting`/`abortCompaction`, `waitForRetry` at
-both ends of `prompt()`, and the `isStreaming()` guards in front of `abort()`. **One is left, and it
-needs a decision rather than a fix:**
-
-| Upstream | What pig is missing | Consequence |
-|---|---|---|
-| `_tryExecuteHookCommand`, called from inside `prompt()` | pig dispatches hook commands in `InteractiveMode` | a hook's slash command works in the terminal and nowhere else: `pig -p "/deploy"` and RPC's `prompt` send it to the model as text. Where the fix belongs is the real question — pig's exact-match dispatch knows the built-ins and the file commands too (see the trap on that), so moving only the hook half into `prompt()` would split one decision across two places, which is the shape half these traps have. Upstream is itself split this way: hook commands in `prompt()`, file commands in its UI |
+All four of its gaps are fixed in the traps below — `isCompacting`/`abortCompaction`, `waitForRetry`
+at both ends of `prompt()`, the `isStreaming()` guards in front of `abort()`, and
+`_tryExecuteHookCommand`, which is the entry on a slash command that only worked in front of a
+screen.
 
 `get_state` gained `isCompacting` and `queueMode`; `sessionId` stays out, since pig has no session
 identity apart from the file and `sessionFile` already is that.
@@ -3053,14 +3050,14 @@ review        strlen= 6  columns= 6   padded to 24: 24 columns  aligned
 column after it starts early — which means this cannot trip `Tui::checkWidth()` and nothing ever
 failed. It just reads as a table pig cannot draw. Where it shows: `/skills` (a skill's name is a
 folder name, and a folder can be called 代码审查), `/hooks` and `/help` (a hook registers its own
-command name), and `--models`, whose provider and model names come out of a hand-written
+command name), and `--list-models`, whose provider and model names come out of a hand-written
 `models.json`. A name with a combining mark or an emoji in it is off by its own amount.
 
 `Width::pad()` is the one implementation now, beside `visible()` and `truncate()` where it belongs,
 and `Width::background()` — which had the same three lines inline — delegates to it. Two things
 worth keeping:
 
-- **`--models` was self-consistent and still wrong.** It measured with `strlen()` *and* padded with
+- **`--list-models` was self-consistent and still wrong.** It measured with `strlen()` *and* padded with
   `str_pad()`, so the arithmetic agreed with itself and disagreed with the terminal. A pair of calls
   that cancel out is harder to spot than a single wrong one, and `testTheColumnsLineUpDownTheWholeTable`
   passed throughout because every name in the built-in registry is ASCII.
@@ -4179,6 +4176,53 @@ Regression tests: `InteractiveModeTest::testAPastedPathIsAMessageAndNotABadComma
 `testCompletingFromABareSlashKeepsTheSlash` — the last being the one that fails if the
 non-empty check goes back in.
 
+### A slash command only worked in front of a screen
+
+The whole of `commandName()` above lived in `InteractiveMode`, and so did what happened next: a
+hook's command was *run* there, and a command kept as a file was *expanded* there. So both worked
+in the terminal and nowhere else — `pig -p "/deploy"` and RPC's `prompt` handed the model the line
+as text and left it to guess what `/deploy` meant. Reproduced from both doors before it was fixed:
+`-p "/deploy staging"` never called the handler, and `-p "/review src/Foo.php"` sent eight
+characters where a stored prompt should have gone.
+
+Upstream does both inside `AgentSession.prompt()`, and the reason the fix waited a batch is that
+the *question* looked split: pig's exact-match dispatch also knows the built-ins, so moving one
+half in would put one decision in two places. It is not split. **The built-ins are the screen's and
+the other two are the conversation's**, which is upstream's line exactly: `/help` draws on a
+terminal and has nothing to do in `-p`, where a hook's command is code the session should run and a
+file command is text the session should send. So `prompt()` gained both halves and
+`InteractiveMode` kept only which door the text goes in by.
+
+Four things decided on the way, and the first is the one to remember:
+
+- **The hook half goes in front of the "already working" throw.** Upstream's comment says *"Hook
+  commands always run immediately, even during streaming"* and its code throws there, so the two
+  disagree — and pig takes the half with the reason attached, as it does for the image token count
+  and the `data:` prefix. A hook's command is not a message; there is nothing for it to wait behind.
+  `testAHookCommandStillRunsWhileTheAgentIsWorking` is the only test that fails when the dispatch
+  moves one block down.
+- **The expansion is on all three doors** — `prompt()`, `steer()` and `followUp()` — because a
+  stored prompt typed during a turn goes in by one of the other two, and upstream queues the raw
+  line at both, so `/review foo.php` reaches the model there as `/review foo.php`. Two of those
+  three ends were silent to the mutation check until a test typed a file command mid-turn.
+- **The queue keeps the line as it was typed and the agent gets the expansion.** `clearQueue()`
+  hands that list back to the editor, and putting a forty-line stored prompt in front of somebody
+  who typed `/review foo.php` is not putting their text back.
+- **There is no `expandSlashCommands: false`.** Upstream declares the option and nothing in either
+  tree passes it — a branch for a caller that does not exist, which is the standard the whole
+  `rpc-types.ts` note is held to.
+
+And the harness had the gap this file has now named twice: `InteractiveModeTest` handed the file
+commands to the **mode** and not to the **session**, exactly as it once handed the settings to one
+and not the other. The expansion would have been live in production and inert in every test.
+
+Regression tests: `PrintModeTest::testAHookCommandRunsHereRatherThanReachingTheModelAsText`,
+`testAFileCommandIsExpandedHereTooRatherThanSentAsItsOwnName`,
+`testATextThatOnlyLooksLikeACommandIsSentAsTheTextItIs`,
+`RpcModeTest::testAHostsSlashCommandsReachTheSameDispatchTheTerminalDoes`, and in
+`InteractiveModeTest` the two above plus
+`testAFileCommandQueuedMidTurnReachesTheModelAsItsPromptAndComesBackAsItsName`.
+
 ### Whatever holds the focus must be in a container only its own opener clears
 
 Found by being asked the right question about a field I had just deleted. `InteractiveMode` had
@@ -5196,7 +5240,7 @@ the turn goes out. That is the wrong place for it:
 - **`restoreSettings()`** restored such a model from the file, so `--continue` on an afternoon spent
   under a borrowed `--api-key` reopened onto a model whose every turn fails. Upstream's
   `restoreModelFromSession()` checks the key as well as the model and falls back on either.
-- **Three listings** — `--models`, `/model`, and RPC's `get_available_models` — showed every model
+- **Three listings** — `--list-models`, `/model`, and RPC's `get_available_models` — showed every model
   pig knows of. Upstream's word for all three is `getAvailable()`, and it means *there is a key*: a
   host drawing a menu from that list offered twenty models with nineteen of them broken, and
   `/model gemini` with no Google key switched to Gemini instead of saying there is no such model
@@ -5716,7 +5760,7 @@ space a completion means a path, so `/model son` offered whatever files in the p
 `/model` is the one built-in whose argument is a known list rather than free text, so it has the
 closure now — the same `availableModels()` list `/model` with nothing after it draws, so the two
 cannot come to disagree about what is on offer. Matched as a **substring** over `provider/id` and not
-fuzzily, which is the one place `--models`' own trade-off does not apply: a subsequence match puts
+fuzzily, which is the one place `--list-models`' own trade-off does not apply: a subsequence match puts
 `moonshotai/kimi-k2-instruct` under `haiku`, which is tolerable in a listing somebody is reading and
 not in a list they are choosing from with one keystroke.
 
@@ -5827,13 +5871,50 @@ taken no value and the path would have been sent to the model as a message.
 line and one without, which reads as "this one cannot be turned off for one run". `withSkills` on
 `session()`, and the settings still decide when nothing was typed.
 
-**The third is a name collision, and it is the developer's call rather than a fix.** pig's
-`--models` *lists* the registry; upstream's `--models` takes glob patterns and **scopes the session**
-to them for ctrl+P cycling, and its listing flag is `--list-models`. So the same word does two
-different things in the two tools, and pig's glob scopes are deliberately unported (see
-`ModelResolver`). Renaming pig's to `--list-models` would match upstream and leave the door open for
-the scope to arrive under its own name later; keeping `--models` as it is means anybody moving
-between the two tools gets a listing where they asked for a scope. Neither is free, so it waits.
+**The third was a name collision, and the developer's call was to follow upstream, so the two flags
+swapped.** pig's `--models` *listed* the registry; upstream's `--models` takes patterns and **scopes
+the session**, with `--list-models` as the listing flag. The same word meaning two different things
+in the two tools is the worst of the three outcomes — one of them prints and exits — so the listing
+is `--list-models` now and `--models` is the scope, which brought upstream's
+`resolveModelScope()` with it.
+
+`ModelResolver::scope()` is that function, and the half the old note called "rows of work rather
+than a dependency" was exactly that: `fnmatch()` for the globs, `parse()` for everything else, so
+`--models sonnet` means what `--model sonnet` means. Five things came out of porting it, and the
+third is the one worth remembering:
+
+- **A pattern is a glob when it holds `*`, `?` or `[`**, and a thinking level is only stripped off
+  one when the suffix really is a level — an id can hold a colon (OpenRouter's `:exacto`), so
+  `claude-*:nonsense` is a pattern matching nothing rather than `claude-*` with a bad level on it.
+- **The first entry of the scope is what the session opens on**, one step below `--model` in the
+  order and above the environment. A resumed conversation still beats it, and needs no condition of
+  its own: `restoreSettings()` already puts the file's model back unless `--model` was typed.
+- **The cycling moved from `ModelResolver` to `AgentSession`, and the reason is the thinking
+  level.** `next()`'s docblock used to argue the opposite — *"everything else it needs is already
+  done for it, so what is left is which model comes next"* — which held for exactly as long as the
+  answer was only a model. `--models sonnet:high,haiku:low` makes it a model **and** a level, and a
+  rotation that left the level to its two callers is the wired-at-one-end shape with two ends to
+  forget. `ModelResolver::next()` is the arithmetic; the list, the key check and the level are the
+  session's.
+- **`modelsOnOffer()` is the one answer to "which models are on offer"**, and the first draft had
+  two: the terminal narrowed to the scope *and* `cycleModel()` narrowed again, so the mutation check
+  that made `cycleModel()` ignore the scope broke only the RPC test. Two answers to one question, in
+  the fix for a find about two answers to one question. It narrows the `/model` picker, its
+  completions, `/model <pattern>` and the cycling.
+- **A host's `get_available_models` is not narrowed**, as upstream does not narrow it, and
+  `set_model` takes any model a key reaches in both tools. A scope is what the keys in front of
+  somebody walk through, not a restriction — which is worth stating, because the other reading is
+  just as plausible and would need `set_model` to refuse.
+
+One pattern that matches nothing is a **warning** naming it, and the session starts on the ordinary
+order: a typo in a flag that is a preference should not be a refusal to start, and the other three
+patterns are still a scope. `bin/pig` splits on commas — the flag's spelling is the command line's
+business and what it resolves to is the library's, which is `--tools`' division — and a `--models`
+with nothing after it is refused there by name.
+
+`RpcClientTest::testTheModelsFlagNarrowsWhatTheAgentOpensOnAndCyclesThrough` is the one that holds
+`bin/pig`'s end: it is the only test in the suite that starts the binary, and removing the
+pass-through broke **nothing at all** before it existed.
 
 Left out of `main.ts` with reasons, so the flag list is not compared twice:
 
@@ -5937,7 +6018,7 @@ Two things fell out of adding it, both about the column:
   them would have got the third table. `keysAndCommands()` is the one implementation.
 - **The column was the constant `12`** and `shift+enter` is eleven columns, so it would have sat one
   space from its description while `esc` sat nine away. It is measured from the widest label now,
-  with `Width::visible()`, which is `--models`' rule and for `--models`' reason.
+  with `Width::visible()`, which is `--list-models`' rule and for `--list-models`' reason.
 
 ### `/debug` was three-quarters ported and did nothing
 

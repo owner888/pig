@@ -48,7 +48,12 @@ use Pig\CodingAgent\Hooks\Events\SessionSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionTreeEvent;
 use Pig\CodingAgent\Hooks\Events\TurnEndEvent as HookTurnEnd;
 use Pig\CodingAgent\Hooks\Events\TurnStartEvent as HookTurnStart;
+use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\ModelChoice;
+use Pig\CodingAgent\ModelResolver;
+use Pig\CodingAgent\Prompt\FileCommand;
+use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Tools\Run;
 use Pig\CodingAgent\Tools\Truncate;
@@ -116,13 +121,44 @@ final class AgentSession
      */
     private ?AbortController $compacting = null;
 
+    /**
+     * Prompts kept as files, so `/review foo.php` is the prompt in `review.md` with `$1` filled in.
+     *
+     * Here rather than only in the terminal, which is where they used to live: a stored prompt
+     * that only expands in front of a person is a stored prompt `pig -p "/review foo.php"` sends
+     * to the model as the six characters `/review`. See `prompt()`.
+     *
+     * @var list<FileCommand>
+     */
+    private array $fileCommands;
+
+    /**
+     * What `--models` narrowed this session to, or empty for the whole registry.
+     *
+     * Upstream's `scopedModels`. Each entry carries a thinking level, because
+     * `--models sonnet:high,haiku:low` says one per model — which is the reason cycling lives
+     * here rather than in each mode: a caller that had to remember to apply the level is a
+     * caller that will forget in one of the two places.
+     *
+     * @var list<ModelChoice>
+     */
+    private array $modelScope;
+
+    /**
+     * @param list<FileCommand> $fileCommands
+     * @param list<ModelChoice> $modelScope
+     */
     public function __construct(
         public readonly Agent $agent,
         private readonly string $cwd = '.',
         private ?SessionManager $store = null,
         private readonly ?Settings $settings = null,
         private readonly ?HookRunner $hooks = null,
+        array $fileCommands = [],
+        array $modelScope = [],
     ) {
+        $this->fileCommands = $fileCommands;
+        $this->modelScope = $modelScope;
         $this->unsubscribeAgent = $this->agent->subscribe($this->onAgentEvent(...));
 
         // What was chosen last time, applied here rather than by whoever built the agent: this
@@ -361,6 +397,84 @@ final class AgentSession
     }
 
     /**
+     * What `--models` narrowed this session to, empty when nothing did.
+     *
+     * For a caller that needs to say *that* there is a scope — the terminal's "only one model in
+     * the scope" — rather than to draw one. Drawing goes through `modelsOnOffer()`.
+     *
+     * @return list<ModelChoice>
+     */
+    public function modelScope(): array
+    {
+        return $this->modelScope;
+    }
+
+    /**
+     * The models this session offers: the scope when there is one, the whole list otherwise.
+     *
+     * One home for "which models are on offer", which is what the cycling, the `/model` picker,
+     * its completions and `/model <pattern>` all need — and the first draft had this rule twice,
+     * once here and once in the terminal, so the mutation check found a scope that could be
+     * ignored in `cycleModel()` with only the RPC test noticing. Two answers to one question is
+     * the shape every other entry in `CLAUDE.md`'s traps has.
+     *
+     * The full list is a parameter because `Auth` lives with the modes, and it is deliberately
+     * not reached from here: `Auth::apiKey()` renews an expiring token on the way past, and a
+     * list being drawn is not a turn being sent.
+     *
+     * **A host's `get_available_models` is not narrowed**, as upstream does not narrow it: a
+     * scope is what the keys in front of somebody walk through, not a restriction — `set_model`
+     * takes any model a key reaches, here and upstream both.
+     *
+     * @param list<Model> $available
+     * @return list<Model>
+     */
+    public function modelsOnOffer(array $available): array
+    {
+        return $this->modelScope === []
+            ? $available
+            : array_map(static fn (ModelChoice $choice): Model => $choice->model, $this->modelScope);
+    }
+
+    /**
+     * The next model along, applied.
+     *
+     * Upstream's `cycleModel()`, and it is on the session for the reason its docblock on
+     * `ModelResolver::next()` used to deny: with `--models sonnet:high,haiku:low` the answer is
+     * not only *which* model but *how hard it thinks*, so the two have to be applied together.
+     * ctrl+p, shift+ctrl+p and RPC's `cycle_model` all come through here.
+     *
+     * The list is the scope when there is one and everything a key reaches otherwise — which is
+     * why the available models are a parameter: `Auth` is deliberately not asked from in here,
+     * because `Auth::apiKey()` renews an expiring token on the way past and a list being drawn
+     * is not a turn being sent.
+     *
+     * @param list<Model> $available in the order a list of them would show
+     * @return ModelChoice|null null when there is nowhere to go: one model in the scope, or none
+     * @throws AgentError when no key reaches the model that comes next
+     */
+    public function cycleModel(array $available, bool $backward = false): ?ModelChoice
+    {
+        $scope = [];
+
+        foreach ($this->modelScope as $choice) {
+            $scope["{$choice->model->provider}/{$choice->model->id}"] = $choice;
+        }
+
+        $next = ModelResolver::next($this->modelsOnOffer($available), $this->model(), $backward);
+
+        if ($next === null) {
+            return null;
+        }
+
+        // A scope entry's own level, and the current one outside a scope — where ctrl+p means
+        // "the same question of a different model" and re-choosing the level is not part of it.
+        $this->setModel($next, $scope["{$next->provider}/{$next->id}"]->thinking ?? null);
+
+        return new ModelChoice($next, $this->thinkingLevel());
+    }
+
+    /**
      * Switch models, and keep the thinking level honest about the new one.
      *
      * A level the new model cannot do is not carried over: leaving `high` set on a model
@@ -449,11 +563,33 @@ final class AgentSession
     /**
      * Send something and run until the agent is done.
      *
+     * A slash command is dealt with here rather than by whoever is drawing a screen, which is
+     * upstream's arrangement and was the one gap left in `agent-session.ts`' surface map. A
+     * **hook's** command is code and is run; a command kept as a **file** is a stored prompt and
+     * is expanded into the text that gets sent. Both used to happen in `InteractiveMode`, so both
+     * worked in the terminal and nowhere else: `pig -p "/deploy"` and RPC's `prompt` handed the
+     * model the line as text and left it to guess.
+     *
+     * The hook half goes **before** the streaming check, because a hook's command is not a
+     * message and there is nothing for it to wait behind — upstream's own comment says so
+     * ("Hook commands always run immediately, even during streaming") while its code throws
+     * there, and pig takes the half with the reason attached, as it does elsewhere when
+     * upstream disagrees with itself.
+     *
+     * There is no `expandSlashCommands: false` here. Upstream declares that option and nothing
+     * in either tree passes it, so it would be a branch existing for a caller that does not
+     * exist; a caller that ever needs to send a line beginning with a slash verbatim is what
+     * decides its shape.
+     *
      * @param list<ImageContent> $images
      * @throws AgentError if the agent is already working, or there is no model
      */
     public function prompt(string $text, array $images = []): void
     {
+        if ($this->runHookCommand($text)) {
+            return;
+        }
+
         // A retry that is sleeping is not "streaming", so nothing above would have stopped
         // this — and sending now would race the retry into the same agent. Wait it out: it is
         // seconds, and what the person typed goes after whatever the retry was rescuing.
@@ -466,6 +602,8 @@ final class AgentSession
         if ($this->model() === null) {
             throw new AgentError('No model selected.');
         }
+
+        $text = $this->expandFileCommand($text);
 
         // A hook may put a note in front of the prompt. It goes in as its own user
         // message rather than being pasted onto the front of theirs, so the transcript
@@ -490,6 +628,48 @@ final class AgentSession
         // a second later would have worked. The three modes that stay running were only
         // cosmetically wrong: the answer arrived, just after the call that asked for it.
         $this->settled?->future->await();
+    }
+
+    /**
+     * Run a hook's slash command, and say whether there was one.
+     *
+     * A handler that throws is reported as a hook error and still counts as handled: the command
+     * was found and it ran, and sending the line to the model afterwards would ask it to make
+     * sense of `/deploy`. Not fatal, because a command that failed is one command and the session
+     * it failed in is still a session.
+     */
+    private function runHookCommand(string $text): bool
+    {
+        if ($this->hooks === null || !str_starts_with($text, '/')) {
+            return false;
+        }
+
+        $name = strtok(substr($text, 1), " \t") ?: '';
+        $command = $this->hooks->command($name);
+
+        if ($command === null) {
+            return false;
+        }
+
+        try {
+            ($command->handler)(trim(substr($text, strlen($name) + 1)), $this->hooks->context());
+        } catch (Throwable $error) {
+            $this->hooks->emitError(new HookError($command->hookPath, "/{$name}", $error->getMessage()));
+        }
+
+        return true;
+    }
+
+    /**
+     * A stored prompt in place of its own name, or the text unchanged.
+     *
+     * `SlashCommands::expand()` answers null for a line that names no file command, where
+     * upstream's hands back the text it was given — so the `??` here is the translation and not
+     * a fallback papering over a failure.
+     */
+    private function expandFileCommand(string $text): string
+    {
+        return SlashCommands::expand($text, $this->fileCommands) ?? $text;
     }
 
     /**
@@ -561,11 +741,17 @@ final class AgentSession
      *
      * Delivered after the tool that is running now, which is what someone means by
      * typing "no, the other file" mid-run.
+     *
+     * A file command is expanded on the way to the agent and **kept as it was typed** in the
+     * queue: the list is what `clearQueue()` hands back to the editor, and putting a forty-line
+     * stored prompt in front of somebody who typed `/review foo.php` is not putting their text
+     * back. Upstream queues the raw line at both ends, so the model there is handed the literal
+     * `/review foo.php` whenever the command was typed during a turn.
      */
     public function steer(string $text): void
     {
         $this->steering[] = $text;
-        $this->agent->steer(new UserMessage($text));
+        $this->agent->steer(new UserMessage($this->expandFileCommand($text)));
     }
 
     /**
@@ -586,11 +772,11 @@ final class AgentSession
         $this->settings?->setQueueMode($mode);
     }
 
-    /** Queue something for after the agent has finished the request it is on. */
+    /** Queue something for after the agent has finished the request it is on. `steer()` on the expansion. */
     public function followUp(string $text): void
     {
         $this->followUps[] = $text;
-        $this->agent->followUp(new UserMessage($text));
+        $this->agent->followUp(new UserMessage($this->expandFileCommand($text)));
     }
 
     /** @return list<string> everything waiting, steering first */

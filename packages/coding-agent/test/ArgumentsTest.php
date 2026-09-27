@@ -302,6 +302,26 @@ final class ArgumentsTest extends TestCase
         $this->assertSame(['fix the bug'], $parsed->messages);
     }
 
+    public function testModelsAndListModelsAreTwoDifferentOptions(): void
+    {
+        $scope = $this->parse('--models', "sonnet,anthropic/*", 'fix the bug');
+
+        // `--models` narrows the session and leaves the prompt alone; it is safe in the list for
+        // the ordinary reason rather than the `--list-models` one: a comma-separated list of
+        // patterns is never the message.
+        $this->assertSame('sonnet,anthropic/*', $scope->options['models']);
+        $this->assertSame(['fix the bug'], $scope->messages);
+
+        // And `--list-models` prints and exits, so there is no prompt left for it to eat — the
+        // same argument `--export` and `--resume` rest on. They swapped names with upstream's:
+        // pig's `--models` used to be the listing.
+        $listing = $this->parse('--list-models', 'gem pro');
+
+        $this->assertSame('gem pro', $listing->options['list-models']);
+        $this->assertSame([], $listing->messages);
+        $this->assertFalse(isset($listing->options['models']));
+    }
+
     public function testNoProxyIsAFlagAndNotAnOptionWithAValue(): void
     {
         $parsed = $this->parse('--no-proxy', 'fix the bug');

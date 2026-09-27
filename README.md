@@ -121,11 +121,17 @@ Fewer tools is deliberate: a model with seven spends part of every turn choosing
 searching through `bash` with `rg` is what the prompt already asks for.
 
 `--model` takes a part of a name rather than a whole id — `--model sonnet`, `--model 'opus 4.1'` —
-and `--model sonnet:high` sets the thinking level at the same time. `--models` lists the ones
-you have a key for, with their context and output limits; `--models gem pro` narrows that,
+and `--model sonnet:high` sets the thinking level at the same time. `--list-models` lists the ones
+you have a key for, with their context and output limits; `--list-models gem pro` narrows that,
 fuzzily, over the provider and the id together. `/model` offers the same list, and switching to
 a model with no key is refused by name rather than failing on the next turn. Ctrl+P steps to the
 next model on that list without opening it, Shift+Ctrl+P back to the previous one.
+
+`--models` narrows the session to a few of them, comma-separated, and then Ctrl+P walks only
+those: `--models sonnet,haiku` opens on sonnet and cycles between the two, and
+`--models 'anthropic/*:high'` takes every Anthropic model with thinking set high for each. A
+pattern may be a glob or a part of a name, and `:level` on the end sets the level for that entry.
+`/model` offers the scope too, so the list and the keystroke agree about what is on offer.
 
 171 models are known: Anthropic's, OpenAI's own on the Responses API, Gemini, and Groq,
 Cerebras, xAI, Zai and Mistral, which all speak OpenAI chat-completions. Set the matching
@@ -185,7 +191,7 @@ or a full window. `retry.enabled: false` in the settings turns the first off.
 
 A provider pig has never heard of goes in `~/.pig/models.json` — your own box, a proxy, a
 local server — and its models then work everywhere a built-in one does, including `--model`,
-`/model` and `--models`:
+`/model` and `--list-models`:
 
 ```json
 { "providers": { "my-box": {
@@ -211,7 +217,9 @@ a time or together, auto-compact, auto-retry — with what each one is set to no
 the row you are on and the list stays open; escape closes it.
 
 A markdown file in `~/.pig/commands/` or `.pig/commands/` becomes a slash command: `review.md`
-is `/review`, its body is the prompt, and `$1` and `$@` are filled from what follows.
+is `/review`, its body is the prompt, and `$1` and `$@` are filled from what follows. Those and
+the ones a hook registers work outside the terminal too — `pig -p "/review src/Foo.php"` sends the
+prompt, and `pig -p "/deploy staging"` runs the hook's command.
 
 A PHP file in `~/.pig/hooks/` or `.pig/hooks/` that returns a callable is a hook. It gets
 sixteen events — every tool call and result, every turn, the context on its way to the model,
