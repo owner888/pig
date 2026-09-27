@@ -187,6 +187,52 @@ final class InputTest extends TestCase
         $this->assertSame('pasted!', $this->input->value());
     }
 
+    public function testTwoPastesInOneReadBothArrive(): void
+    {
+        // Paste twice in quick succession and the terminal writes both bracketed blocks before
+        // anything reads: one chunk, two complete pastes. Stripping *every* start marker ran them
+        // together, so the first end marker closed the pair and the second paste's text was
+        // dropped — silently, which is the worst way for a paste to go missing.
+        $this->type("\x1b[200~first \x1b[201~\x1b[200~second\x1b[201~");
+
+        $this->assertSame('first second', $this->input->value());
+    }
+
+    public function testAStartMarkerInsideAPasteIsNotTextAndIsNotTheEndOfIt(): void
+    {
+        // xterm does not escape the markers in what it sends, so a paste can carry one. Upstream
+        // inserts it verbatim — an escape sequence in the prompt, which is exactly what
+        // `Chars::isPrintable()` keeps out of every other door — and if it arrives in a later
+        // chunk, upstream's check runs before its in-paste branch and throws away everything
+        // collected so far.
+        $this->type("\x1b[200~before \x1b[200~after\x1b[201~");
+        $this->assertSame('before after', $this->input->value());
+
+        $this->input = new Input();
+        $this->type(["\x1b[200~first half ", "\x1b[200~second half\x1b[201~"]);
+        $this->assertSame('first half second half', $this->input->value());
+    }
+
+    public function testSettingAShorterValueLeavesTheCursorOnACharacterAndNotInsideOne(): void
+    {
+        $this->given('abcdef');
+        $this->type(["\x1b[D", "\x1b[D"]);
+        $this->assertSame(4, $this->input->cursor());
+
+        // Four bytes into `你好` is the middle of `好`. The class docblock promises the cursor is
+        // only ever on a grapheme boundary, and every method here relies on it: `Graphemes::split`
+        // of half a character answers false, which `Width` and this component both raise as
+        // `Grapheme split failed` — out of `render()` or out of a key handler, where nothing
+        // catches it. So the clamp snaps back to the start of the character the offset landed in.
+        $this->input->setValue('你好');
+
+        $this->assertSame(3, $this->input->cursor());
+        $this->assertSame(1, Width::visible(substr('你好', 0, $this->input->cursor())) / 2);
+        $this->assertNotNull($this->input->caret(20));
+        $this->type("\x7f");
+        $this->assertSame('好', $this->input->value());
+    }
+
     public function testTheLineIsAlwaysExactlyTheTerminalWidth(): void
     {
         $this->given(str_repeat('中', 30));

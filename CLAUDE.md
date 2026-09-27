@@ -2823,15 +2823,14 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 90 | 38,500 |
+| read difference by difference | 91 | 38,900 |
 | ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **24** | **2,800** |
+| **not yet read** | **23** | **2,400** |
 
-Those figures go stale; the queue does not. **Two files are 300 lines or more and they are
-where the remaining risk is** — both are ported and neither has been read end to end:
+Those figures go stale; the queue does not. **One file is 300 lines or more and it is where the
+remaining risk is** — it is ported and has not been read end to end:
 
 ```
- 344  tui/components/input.ts                              → Components\Input
  340  tui/terminal-image.ts                                → Images\TerminalImage
 ```
 
@@ -3224,7 +3223,63 @@ where upstream answers false. Both are now on the method; the second is the inte
 **The lesson of the five runs is the same one: a hand-rolled replacement for a package is worth a
 corpus, and the corpus is worth keeping the count of.** "It matched on the cases I thought of" is
 what reading gives you — and a run that finds nothing is only worth having if the count is written
-down, or the next reader has to take it on trust.
+down, or the next reader has to take it on trust. The sixth is the entry below, and it adds a
+second half to that: **a corpus is worth re-reading for the question it never asked.**
+
+### Two pastes in one read, and only the first one arrived
+
+`Components\Input` was read against `input.ts` with the corpus that had already been built for it —
+and **extended, which is where the find came from**. The first run asked about keys: every editing
+key from every cursor position, 500 random walks, wide text, emoji, and a paste split across chunks.
+It did not ask what happens when a chunk holds *two* pastes, and that is the shape a terminal
+produces on its own: paste twice in quick succession and both bracketed blocks are written before
+anything reads.
+
+`buffer()` took the start marker off with `str_replace`, which replaces **every** occurrence. So the
+two blocks ran together — `first ␛[201~second␛[201~` — the first end marker closed the pair, and the
+rest went back through `handleInput()` as `second␛[201~`, which is not printable and was dropped. A
+paste the person watched themselves make, gone, with nothing on screen to say so. Removing only the
+first marker leaves the second block whole for the `$rest` recursion that already exists for input
+typed after a paste, and pig then agrees with upstream on the case.
+
+**And the two shapes where upstream is the one losing text are kept as pig's own**, because xterm
+does not escape the markers in what it sends, so a paste really can carry one:
+
+| in one chunk | upstream | pig |
+|---|---|---|
+| `␛[200~abc␛[200~def␛[201~` | pastes `abc␛[200~def` — an escape sequence into the prompt | `abcdef` |
+| `␛[200~one` then `␛[200~two␛[201~` | `two`: its start check runs in front of its in-paste branch, so the marker **resets the buffer** and `one` is thrown away | `onetwo` |
+
+An escape sequence in the prompt is the one thing `Chars::isPrintable()` keeps out of every other
+door, and discarding half of what somebody pasted is worse than keeping both halves.
+
+**The second find is a promise the class made and did not keep.** Its docblock says the cursor
+"only ever lands on a grapheme boundary", and every method there leans on it — and `setValue()`
+clamped with `min($cursor, strlen($value))`, which is upstream's line and cannot hold in bytes.
+Cursor 4 in `abcdef`, then `setValue('你好')`: four bytes in is the middle of `好`,
+`Graphemes::split()` of half a character answers false, and what comes out is
+`Grapheme split failed` — from `caret()`, inside the renderer, or from the next keystroke, inside
+the loop's input callback, where nothing catches it. Measured rather than reasoned about: the probe
+prints `valid utf-8: NO` and then three throws.
+
+Upstream clamps UTF-16 code units, where the same slip lands between surrogate halves and
+JavaScript carries a lone surrogate around without complaint. **`setValue()` has no production
+caller in either tree**, so this is a latent hazard on public surface rather than a live bug — and
+the reason to fix it rather than note it is that the invariant is what the other twelve methods are
+written against. `boundaryAt()` snaps back to the start of the character the offset fell inside,
+because the cursor sits *in front of* a character and Backspace there should take the whole of it.
+
+The rest of the file matched, and the numbers are the point of saying so: 1,714 sequences, both
+sides' value, cursor, submissions and rendered lines compared at nine widths — 15,426 renders. What
+survives is five differences, all on the methods they belong to, and one of them is upstream's bug
+rather than a difference of opinion: **upstream draws lines of the wrong width on wide text**,
+because it slices its scroll window by character index — 79 of those renders at the three ordinary
+widths and 211 more at narrow ones, against pig's 0 at every width above one column, where the
+`> ` prompt is wider than the terminal in both and the whole package overflows anyway.
+
+Regression tests: `InputTest::testTwoPastesInOneReadBothArrive`,
+`testAStartMarkerInsideAPasteIsNotTextAndIsNotTheEndOfIt`,
+`testSettingAShorterValueLeavesTheCursorOnACharacterAndNotInsideOne`.
 
 ### An edit was approved with nothing on screen but a path
 

@@ -18,9 +18,31 @@ use Pig\Tui\Width;
  *
  * The cursor is a byte offset into the value, and it only ever lands on a grapheme
  * boundary — every movement steps by whole clusters, so Backspace on `👨‍👩‍👧‍👦` removes the
- * family rather than one of its four people and half a joiner.
+ * family rather than one of its four people and half a joiner. `setValue()` is the one door that
+ * could put it elsewhere, and says what it does about that.
  *
  * Longer text than fits scrolls horizontally, keeping the cursor in view.
+ *
+ * **Run against upstream's `input.ts`**: 1,714 keystroke and paste sequences, both sides' value,
+ * cursor, submissions and rendered lines compared at nine widths — 15,426 renders. Five
+ * differences survive, and each has its reason on the method it belongs to:
+ *
+ * - `scrollStart()` reserves the cursor's cell unconditionally, so a scrolled line shows one
+ *   character fewer than upstream's would and does not shift sideways as the cursor reaches the
+ *   end. That accounts for every render difference at the widths anybody uses.
+ * - **Upstream draws lines of the wrong width on wide text**, because it slices its window by
+ *   character index: 79 of those renders at the three ordinary widths, 211 more at narrow ones,
+ *   and pig's count is 0 at every width above one column, where the prompt itself is wider than
+ *   the terminal in both.
+ * - Two pastes in one read both land here — see `buffer()` — and a start marker inside a paste is
+ *   dropped rather than inserted as text, which is the entry in `handlePaste`'s comment.
+ * - Escape and Ctrl+C answer, through `setCancelHandler()`. Upstream's input cannot be left
+ *   without an answer at all, which in front of a parked turn is a session nobody can get out of.
+ * - `caret()` exists, so an input method composes at the box being typed into.
+ *
+ * Home and End do what Ctrl+A and Ctrl+E do, which **upstream has in `editor.ts` and not here** —
+ * a rule present in one of two siblings, the commonest shape in `CLAUDE.md`'s traps, on upstream's
+ * side of the line. Both of pig's editors answer to both.
  */
 final class Input implements Caret, Component, InputHandler
 {
@@ -58,11 +80,43 @@ final class Input implements Caret, Component, InputHandler
      *
      * Upstream's behaviour, kept: a caller that wants the cursor at the end says so,
      * and one restoring a draft mid-edit would not want it moved.
+     *
+     * **And snapped to a grapheme boundary, which upstream's clamp cannot be.** The docblock at
+     * the top of this class promises the cursor is only ever on one, and every other method here
+     * leans on it — `min()` alone breaks that promise the moment the new value is a different
+     * shape: cursor 4 in `abcdef`, then `setValue('你好')`, and 4 is the middle of `好`.
+     * `Graphemes::split()` of half a character answers false, which comes back as
+     * `Grapheme split failed` out of `caret()` or out of the next keystroke — inside the
+     * renderer or the loop's input callback, where nothing catches it. Upstream is clamping
+     * UTF-16 code units, where the same slip lands between surrogate halves and JavaScript
+     * tolerates it; PHP's bytes do not.
      */
     public function setValue(string $value): void
     {
         $this->value = $value;
-        $this->cursor = min($this->cursor, strlen($value));
+        $this->cursor = self::boundaryAt($value, min($this->cursor, strlen($value)));
+    }
+
+    /**
+     * The grapheme boundary at or before a byte offset.
+     *
+     * Before rather than after, because the cursor sits *in front of* a character: an offset
+     * inside one belongs at that character's start, where a Backspace deletes the whole of what
+     * is behind it rather than a fragment.
+     */
+    private static function boundaryAt(string $text, int $offset): int
+    {
+        $at = 0;
+
+        foreach (Graphemes::split($text) as $grapheme) {
+            if ($at + strlen($grapheme) > $offset) {
+                return $at;
+            }
+
+            $at += strlen($grapheme);
+        }
+
+        return $at;
     }
 
     public function cursor(): int
@@ -162,13 +216,24 @@ final class Input implements Caret, Component, InputHandler
      *
      * A paste comes in whatever chunks the terminal felt like, so it is collected whole
      * before being inserted — otherwise a 200-line paste would be read as 200 Enters.
+     *
+     * **Only the first start marker is taken off**, where this used to `str_replace` every one of
+     * them. Two whole pastes can arrive in one read — paste twice quickly and the terminal writes
+     * both bracketed blocks before anything reads — and with both markers gone the two ran
+     * together, so the first end marker closed the pair and the second paste's text was dropped
+     * without a word. Removing one leaves the second block intact for the `$rest` recursion below,
+     * which is the same path input typed after a paste already takes.
      */
     private function buffer(string $data): void
     {
         if (!$this->pasting) {
             $this->pasting = true;
             $this->pasteBuffer = '';
-            $data = str_replace(self::PASTE_START, '', $data);
+            $start = strpos($data, self::PASTE_START);
+
+            if ($start !== false) {
+                $data = substr($data, 0, $start) . substr($data, $start + strlen(self::PASTE_START));
+            }
         }
 
         $this->pasteBuffer .= $data;
@@ -186,7 +251,14 @@ final class Input implements Caret, Component, InputHandler
 
         // Newlines are dropped rather than submitted: this is a one-line field, and a
         // pasted paragraph should land as one line, not fire Enter in the middle of itself.
-        $this->insert(str_replace(["\r\n", "\r", "\n"], '', $pasted));
+        //
+        // A start marker left inside the content goes too, and that is a deliberate difference:
+        // xterm does not escape the markers in what it sends, so a paste can carry one, and
+        // upstream inserts it verbatim — an escape sequence in the prompt, which is the one thing
+        // `Chars::isPrintable()` keeps out of every other door. Arriving in a *later* chunk it
+        // costs upstream more than that: its start check runs in front of its in-paste branch, so
+        // the marker resets the buffer and throws away everything collected before it.
+        $this->insert(str_replace([self::PASTE_START, "\r\n", "\r", "\n"], '', $pasted));
 
         if ($rest !== '') {
             $this->handleInput($rest);
