@@ -1104,6 +1104,68 @@ final class InteractiveModeTest extends TestCase
         $this->assertSame(3, $this->session->messages()[0]->exitCode);
     }
 
+    public function testTheExitCodeIsOnScreenAndNotOnlyInTheConversation(): void
+    {
+        $this->start();
+
+        $this->type('!exit 3');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // The colour says something went wrong and the number says what. 137 against 1 is the whole
+        // point of the entry about signal numbers, and it is worth as much to a person as to a
+        // model. The test above this one asserted the colour and then read the code off the
+        // *message*, which is exactly where it was present.
+        $this->assertStringContainsString('(exit 3)', $this->screen());
+    }
+
+    public function testACancelledCommandSaysItWasCancelledRatherThanJustFailing(): void
+    {
+        $this->start();
+
+        $this->type('!sleep 5');
+        $this->type(self::ENTER);
+
+        // Turned rather than settled, and this is why the first version of this test could not
+        // fail: `settle()` polls with no timeout, so with the command's pipes the only thing to
+        // wait on it sat through the whole five seconds and escape arrived after the command had
+        // already finished cleanly. `turnTheLoop()` arms a timer of its own, so the poll comes
+        // back at once and the command is still running when the key goes in.
+        self::turnTheLoop(5);
+        $this->assertTrue($this->session->isBashRunning(), 'the command is still going');
+
+        $this->type(self::ESC);
+
+        for ($tick = 0; $tick < 400 && $this->session->isBashRunning(); $tick++) {
+            Loop::get()->delay(0.005, static fn () => null);
+            Loop::get()->tick();
+        }
+
+        self::turnTheLoop(5);
+
+        // Escape stopping a command and a command failing are different things, and the block is
+        // coloured the same for both.
+        $this->assertStringContainsString('(cancelled)', $this->screen());
+    }
+
+    public function testTruncatedOutputSaysSoAndWhereTheRestIs(): void
+    {
+        $this->start();
+
+        // Over `Truncate::MAX_LINES`, so `Run` spills the whole of it to a file and the tail is what
+        // is kept. The model is told — `BashExecution::toText()` appends the sentence — and the
+        // person watching it happen was told nothing, which is the notice's two readers with only
+        // one of them served.
+        $this->type('!seq 2500');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('Output truncated', $screen);
+        $this->assertStringContainsString('/pig-bash-', $screen, 'and the file to read the rest in');
+    }
+
     public function testACommandIsNotSentToTheModel(): void
     {
         // No scripted answers: if this reached the provider the test would blow up on

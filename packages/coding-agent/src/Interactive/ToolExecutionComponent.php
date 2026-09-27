@@ -430,18 +430,62 @@ final class ToolExecutionComponent extends Container
 
         $output = trim($this->output());
 
-        if ($output === '') {
-            return;
+        if ($output !== '') {
+            $this->bash->setRows($this->expanded ? PHP_INT_MAX : $this->bashLines);
+            $this->bash->setText(implode("\n", array_map(
+                fn (string $line): string => $this->palette->fg('toolOutput', self::tabs($line)),
+                explode("\n", $output),
+            )));
+
+            $this->box->addChild(new Spacer(1));
+            $this->box->addChild($this->bash);
         }
 
-        $this->bash->setRows($this->expanded ? PHP_INT_MAX : $this->bashLines);
-        $this->bash->setText(implode("\n", array_map(
-            fn (string $line): string => $this->palette->fg('toolOutput', self::tabs($line)),
-            explode("\n", $output),
-        )));
+        // Outside that, which is where upstream keeps its own status parts: `exit 3` and a command
+        // escape stopped both print nothing at all, and those are exactly the two runs whose status
+        // is the only thing there is to say about them. An early return on empty output is how the
+        // first version of this lost them.
+        $this->drawBashStatus();
+    }
 
-        $this->box->addChild(new Spacer(1));
-        $this->box->addChild($this->bash);
+    /**
+     * What happened to the command, under its output.
+     *
+     * Upstream's `bash-execution.ts` builds this as a list of status parts and pig had nowhere to
+     * put them, because pig draws a typed `!command` with the same component as the model's `bash`
+     * calls — one component where upstream has two. That sharing is worth keeping and it cost these
+     * three facts: `executeBash()` returns the exit code, whether escape stopped it and where the
+     * whole output went, and `runCommand()` had no way to hand any of them over. So an `!exit 3`
+     * block was the right colour and silent about the 3, escape-stopping a command looked like a
+     * command that failed, and a `!make` over the line limit was cut on screen with nothing saying
+     * so — while `BashExecution::toText()` told the *model* all three. The notice has two readers
+     * and only one of them was being served.
+     *
+     * Read out of `details` rather than taken as constructor arguments, because the model's `bash`
+     * already puts `fullOutputPath` there under pi's own name — so its truncated calls gain the same
+     * line, which is what upstream shows for both.
+     */
+    private function drawBashStatus(): void
+    {
+        $details = $this->result?->details;
+        $details = is_array($details) ? $details : [];
+        $parts = [];
+
+        if (($details['cancelled'] ?? false) === true) {
+            $parts[] = $this->palette->fg('warning', '(cancelled)');
+        } elseif (is_int($details['exitCode'] ?? null) && $details['exitCode'] !== 0) {
+            $parts[] = $this->palette->fg('error', "(exit {$details['exitCode']})");
+        }
+
+        $path = $details['fullOutputPath'] ?? null;
+
+        if ($path !== null && is_string($path) && ($details['truncation'] ?? null) !== null) {
+            $parts[] = $this->palette->fg('warning', "Output truncated. Full output: {$path}");
+        }
+
+        if ($parts !== []) {
+            $this->box->addChild(new Text(implode("\n", $parts), 0, 0));
+        }
     }
 
     // ---- everything else -------------------------------------------------------------

@@ -1097,8 +1097,22 @@ final class InteractiveMode
                     },
                 );
 
+                // The details are what `drawBash()` reads its status line out of: the exit code,
+                // whether escape stopped it, and where the whole output went when it was cut. All
+                // three are on the execution already and none of them reached the screen —
+                // `BashExecution::toText()` was telling the model and nothing was telling the
+                // person. `truncation` and `fullOutputPath` are pi's own key names, the same two
+                // the `bash` tool writes.
                 $shown->updateResult(
-                    new AgentToolResult([new TextContent($execution->output)]),
+                    new AgentToolResult(
+                        [new TextContent($execution->output)],
+                        details: [
+                            'exitCode' => $execution->exitCode,
+                            'cancelled' => $execution->cancelled,
+                            'truncation' => $execution->truncated ? true : null,
+                            'fullOutputPath' => $execution->spillPath,
+                        ],
+                    ),
                     $execution->cancelled || ($execution->exitCode ?? 0) !== 0,
                 );
 

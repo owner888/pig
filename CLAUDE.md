@@ -695,7 +695,9 @@ two: `BASH_LINES = 5` for a command the model ran, `TYPED_BASH_LINES = 20` for o
 `!`. Upstream's numbers live in `tool-execution.ts` and `bash-execution.ts` respectively, and the
 difference has a reason worth keeping — a `!` command is the thing the person just asked for and
 is looking at, where a model's is one step inside something else. pig reuses one component for
-both, so the number is a constructor argument rather than a second class.
+both, so the number is a constructor argument rather than a second class — and the trap entry on
+what that sharing cost is below, because a component with two callers needs somewhere to put what
+only one of them knows.
 
 **A truncation notice has two readers, so it is said twice.** Every tool that cuts its own output
 ends the text with a line saying so — `[Showing lines 1-2000 of 8431. Use offset=2001 to
@@ -2823,20 +2825,20 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 93 | 39,400 |
+| read difference by difference | 94 | 39,600 |
 | ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **21** | **1,900** |
+| **not yet read** | **20** | **1,700** |
 
-Those figures go stale; the queue does not. **Nothing over 200 lines is left, and 19 of the 21 are
-components**, which is the narrowest the remaining risk has been: the four largest files —
-`tui.ts`, `components/input.ts`, `terminal-image.ts` and `ai/types.ts` — each have an entry below.
-The two that are not components:
+Those figures go stale; the queue does not. **Nothing over 190 lines is left, and 18 of the 20 are
+components**, which is the narrowest the remaining risk has been: the five largest files —
+`tui.ts`, `components/input.ts`, `terminal-image.ts`, `ai/types.ts` and `bash-execution.ts` — each
+have an entry below. The two that are not components:
 
 ```
  138  tui/terminal.ts                       28  coding-agent/utils/clipboard.ts
 ```
 
-and the components run from 196 lines (`bash-execution.ts`) down to 18 (`user-message.ts`). The
+and the components run from 188 lines (`settings-list.ts`) down to 18 (`user-message.ts`). The
 count is rebuilt by listing the sweep's output and striking off what this file records as read, not
 by editing these numbers.
 
@@ -4125,6 +4127,53 @@ rule.
 Regression tests: `AgentSessionTest::testWhatACommandPrintedIsCleanedAtTheSourceAndNotOnlyOnScreen`
 for `!command`, `BashToolTest::testWhatTheModelReadsHasNoEscapesOrProgressLinesInIt` for the tool,
 and `testTheFullOutputFileIsCleanToo` for the file the notice points at.
+
+### The model was told the command was cut and the person watching it was not
+
+`bash-execution.ts` is upstream's component for a typed `!command` — its own bordered block, its own
+`$ cmd` header, its own loader, and a status line it builds out of up to four parts: how many lines
+are hidden, `(cancelled)`, `(exit N)`, and `Output truncated. Full output: …`. pig draws a typed
+command with the **same** `ToolExecutionComponent` the model's `bash` calls use, which is the
+arrangement the note about the two preview sizes describes and is worth keeping.
+
+What it cost is the last three of those parts. `AgentSession::executeBash()` returns a
+`BashExecution` carrying the exit code, whether escape stopped it, whether the output was cut and
+where the whole of it was spilled — and `runCommand()` handed the component the output text and one
+boolean. So:
+
+- **`!exit 3` was the right colour and silent about the 3.** Which number it is, is the entire point
+  of the entry on signal numbers: 137 is a thing a person recognises and `1` is not.
+- **A command escape stopped looked like a command that failed**, same colour, no word.
+- **`!seq 2500` was cut on screen with nothing saying so**, while `BashExecution::toText()` appended
+  `[Output truncated. Full output: /tmp/pig-bash-…]` for the **model**. The notice has two readers —
+  this file says so a few entries up — and here exactly one of them was being served, the one that
+  cannot ask.
+
+The facts are read out of `details` rather than taken as new constructor arguments, because the
+model's `bash` tool already writes `fullOutputPath` there under pi's own name; so its truncated calls
+gain the same line, which is what upstream shows for both.
+
+**And the first version of the fix lost two of the three, in a way the mutation check named
+exactly:** `drawBash()` returns early when the output is empty, and `exit 3` and an escape-stopped
+`sleep` are precisely the two runs that print nothing at all — so the status went above that return.
+Upstream keeps its status parts outside its own output branch for the same reason.
+
+**The harder half was the test, and it is the "ask whether the assertion could fail" rule again.**
+The cancellation case ended in `settle()` before pressing escape, and `settle()` polls with no
+timeout: with the command's pipes the only thing to wait on, it sat through the whole five seconds,
+so escape arrived at a command that had already finished cleanly — `cancelled: false, exit: 0`, and
+a test that could never have gone red for the right reason. `turnTheLoop()` arms an expired timer of
+its own, so the poll comes back at once and the command is still running when the key goes in; the
+test asserts that too, before it presses anything.
+
+Also worth knowing, since the file was read for this: the existing `testAFailingCommandIsMarkedAsOne`
+checked the error colour on screen and then read the exit code off the **message**. That is the
+shape that let this survive — *a fact checked where it is present is not a fact checked where it is
+read.*
+
+Regression tests: `InteractiveModeTest::testTheExitCodeIsOnScreenAndNotOnlyInTheConversation`,
+`testACancelledCommandSaysItWasCancelledRatherThanJustFailing`,
+`testTruncatedOutputSaysSoAndWhereTheRestIs`.
 
 ### Output truncated by line count also needs somewhere to look
 
