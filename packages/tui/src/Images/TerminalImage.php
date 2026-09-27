@@ -49,6 +49,13 @@ final class TerminalImage
      *
      * At least one: a picture shorter than a line still has to have a line to be on, or
      * the renderer's idea of where the cursor is goes wrong by one from then on.
+     *
+     * **The two divisors are guarded because this takes an `ImageSize` rather than reading one.**
+     * `ImageDimensions` refuses a header that says zero, so nothing that came off a file arrives
+     * here with one; a caller that built its own can, and dividing by it is a `DivisionByZeroError`
+     * thrown out of a render. A cell height of zero is the same shape from the other side —
+     * `parseCellSizeReply()` refuses one, a constructor does not. Upstream divides either way and
+     * gets `Infinity`, which then travels as a row count.
      */
     public static function rows(ImageSize $image, int $widthCells, ?CellSize $cell = null): int
     {
@@ -69,16 +76,15 @@ final class TerminalImage
     {
         $params = ['a=T', 'f=100', 'q=2'];
 
-        if ($columns !== null) {
-            $params[] = "c={$columns}";
-        }
-
-        if ($rows !== null) {
-            $params[] = "r={$rows}";
-        }
-
-        if ($imageId !== null) {
-            $params[] = "i={$imageId}";
+        // Only when it is a number the protocol can use. Upstream's `if (options.columns)` skips a
+        // zero because JavaScript reads it as absent, and `!== null` did not — so a caller asking
+        // for no columns sent `c=0` and one asking for a negative sent `c=-5`, which is not a size
+        // at all. Left out, kitty draws the picture at its natural size, which is what a caller
+        // with no width in mind meant.
+        foreach (['c' => $columns, 'r' => $rows, 'i' => $imageId] as $key => $value) {
+            if ($value !== null && $value > 0) {
+                $params[] = "{$key}={$value}";
+            }
         }
 
         $header = implode(',', $params);
@@ -130,7 +136,9 @@ final class TerminalImage
             $params[] = "height={$height}";
         }
 
-        if ($name !== null) {
+        // An empty name is not a name: `name=` with nothing after it is a base64 field holding
+        // nothing, which iTerm2 has no reading for. Upstream's `if (options.name)` skips it.
+        if ($name !== null && $name !== '') {
             $params[] = 'name=' . base64_encode($name);
         }
 
@@ -172,10 +180,16 @@ final class TerminalImage
         };
     }
 
-    /** What to show where a picture cannot be drawn. */
+    /**
+     * What to show where a picture cannot be drawn.
+     *
+     * An empty filename is left out rather than joined, which is the same falsiness rule as the two
+     * encoders above and the only one of the three anybody reads: `[Image:  [image/png]]`, with two
+     * spaces, looks like the name went missing rather than never existing.
+     */
     public static function fallback(string $mimeType, ?ImageSize $size = null, ?string $filename = null): string
     {
-        $parts = $filename === null ? [] : [$filename];
+        $parts = $filename === null || $filename === '' ? [] : [$filename];
         $parts[] = "[{$mimeType}]";
 
         if ($size !== null) {

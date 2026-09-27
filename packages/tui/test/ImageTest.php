@@ -201,6 +201,60 @@ final class ImageTest extends TestCase
         );
     }
 
+    public function testASizeThatIsNotASizeIsLeftOutRatherThanSentAsOne(): void
+    {
+        // JavaScript's `if (options.columns)` skips 0, and `!== null` did not — so a caller asking
+        // for no columns got `c=0`, and one asking for a negative number got `c=-5`: a kitty
+        // parameter that is not a size at all. Left out instead, which is what the protocol reads
+        // as "draw it at its natural size".
+        $this->assertSame("\x1b_Ga=T,f=100,q=2;AAAA\x1b\\", TerminalImage::kitty('AAAA', 0, 0, 0));
+        $this->assertSame("\x1b_Ga=T,f=100,q=2;AAAA\x1b\\", TerminalImage::kitty('AAAA', -5, -1, -2));
+        $this->assertSame("\x1b_Ga=T,f=100,q=2,c=1,r=1,i=1;AAAA\x1b\\", TerminalImage::kitty('AAAA', 1, 1, 1));
+    }
+
+    public function testAnEmptyNameIsNotAName(): void
+    {
+        // `name=` with nothing after it is a base64 field holding nothing, which iTerm2 has no
+        // reading for. Upstream's `if (options.name)` skips it and `!== null` did not.
+        $this->assertStringNotContainsString('name=', TerminalImage::iterm2('AAAA', name: ''));
+        $this->assertStringContainsString('name=' . base64_encode('a'), TerminalImage::iterm2('AAAA', name: 'a'));
+    }
+
+    public function testAnEmptyFilenameDoesNotLeaveASpaceWhereANameWouldBe(): void
+    {
+        // Same shape, on the line somebody actually reads: `[Image:  [image/png]]`, with two
+        // spaces, is a label that looks like the name went missing rather than never existing.
+        $this->assertSame('[Image: [image/png]]', TerminalImage::fallback('image/png', null, ''));
+        $this->assertSame('[Image: cat.png [image/png]]', TerminalImage::fallback('image/png', null, 'cat.png'));
+    }
+
+    public function testAHeaderSayingZeroIsNotASize(): void
+    {
+        // A zero cannot be scaled to a width, and what it produced was a picture 0 wide and 20480
+        // tall asking the renderer for 150,000 lines — every frame, for as long as that tool result
+        // was on screen. The bytes come from outside: a model's image, a hook's screenshot, a
+        // custom tool. So a header that says zero is read as no header at all, and the component
+        // falls back to the size it assumes for one it could not read.
+        $this->assertNull(ImageDimensions::png(self::png(0, 20480)));
+        $this->assertNull(ImageDimensions::png(self::png(0, 0)));
+        $this->assertNull(ImageDimensions::png(self::png(100, 0)));
+        $this->assertNotNull(ImageDimensions::png(self::png(1, 1)));
+
+        $image = new Image(self::png(0, 20480), 'image/png');
+
+        $this->assertSame(800, $image->size()->widthPx);
+        $this->assertLessThan(60, count($image->render(80)));
+    }
+
+    public function testRowsStillAnswersForASizeACallerMadeUpItself(): void
+    {
+        // `rows()` is public and takes an `ImageSize` rather than reading one, so the divisors are
+        // guarded here as well: dividing by zero is a `DivisionByZeroError` out of a render, and a
+        // cell size of zero is something `parseCellSizeReply()` refuses but a caller can construct.
+        $this->assertSame(1, TerminalImage::rows(new ImageSize(0, 0), 80, new CellSize(9, 18)));
+        $this->assertGreaterThan(0, TerminalImage::rows(new ImageSize(10, 10), 80, new CellSize(9, 0)));
+    }
+
     public function testRenderPicksTheProtocolTheTerminalSpeaks(): void
     {
         $this->drawsWith(ImageProtocol::Kitty);

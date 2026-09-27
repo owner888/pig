@@ -13,6 +13,17 @@ namespace Pig\Tui\Images;
  *
  * Every reader takes base64, because that is the form an image arrives in from a model
  * and the form it goes back out to the terminal in.
+ *
+ * **A header that says zero is read as no header at all**, which upstream does not do: it hands
+ * back `{0, 0}` and lets whoever gets it divide by it. What that cost here is a picture 0 wide and
+ * 20,480 tall asking the renderer for 150,000 lines, on every frame, for as long as that tool
+ * result was on screen — and these bytes come from outside, so a malformed PNG is a hang somebody
+ * else chose. Null instead, and `Components\Image` already has the path for it: the size it
+ * assumes for a header it could not read.
+ *
+ * Verified against upstream over 136 payloads — every format at its edges, truncated,
+ * wrong-magic, zero-sized, random bytes — and the four readers agree everywhere but three:
+ * that rule, and the two below about what counts as base64 and as a GIF.
  */
 final class ImageDimensions
 {
@@ -36,7 +47,7 @@ final class ImageDimensions
             return null;
         }
 
-        return new ImageSize(self::uint32be($bytes, 16), self::uint32be($bytes, 20));
+        return self::size(self::uint32be($bytes, 16), self::uint32be($bytes, 20));
     }
 
     /**
@@ -67,7 +78,7 @@ final class ImageDimensions
             $marker = ord($bytes[$offset + 1]);
 
             if ($marker >= 0xc0 && $marker <= 0xc2) {
-                return new ImageSize(self::uint16be($bytes, $offset + 7), self::uint16be($bytes, $offset + 5));
+                return self::size(self::uint16be($bytes, $offset + 7), self::uint16be($bytes, $offset + 5));
             }
 
             $segment = self::uint16be($bytes, $offset + 2);
@@ -82,6 +93,12 @@ final class ImageDimensions
         return null;
     }
 
+    /**
+     * The signature is compared byte for byte, where upstream reads it as ASCII.
+     *
+     * Node's `toString("ascii")` masks the high bit, so `\xc7IF87a` is `GIF87a` to upstream and a
+     * miss here — one byte wrong in a file it then reports a size for.
+     */
     public static function gif(string $base64): ?ImageSize
     {
         $bytes = self::decode($base64, 10);
@@ -91,7 +108,7 @@ final class ImageDimensions
             return null;
         }
 
-        return new ImageSize(self::uint16le($bytes, 6), self::uint16le($bytes, 8));
+        return self::size(self::uint16le($bytes, 6), self::uint16le($bytes, 8));
     }
 
     /**
@@ -110,18 +127,32 @@ final class ImageDimensions
         }
 
         return match (substr($bytes, 12, 4)) {
-            'VP8 ' => new ImageSize(self::uint16le($bytes, 26) & 0x3fff, self::uint16le($bytes, 28) & 0x3fff),
+            'VP8 ' => self::size(self::uint16le($bytes, 26) & 0x3fff, self::uint16le($bytes, 28) & 0x3fff),
             'VP8L' => self::losslessWebp($bytes),
-            'VP8X' => new ImageSize(self::uint24le($bytes, 24) + 1, self::uint24le($bytes, 27) + 1),
+            'VP8X' => self::size(self::uint24le($bytes, 24) + 1, self::uint24le($bytes, 27) + 1),
             default => null,
         };
     }
 
-    private static function losslessWebp(string $bytes): ImageSize
+    private static function losslessWebp(string $bytes): ?ImageSize
     {
         $bits = self::uint32le($bytes, 21);
 
-        return new ImageSize(($bits & 0x3fff) + 1, (($bits >> 14) & 0x3fff) + 1);
+        return self::size(($bits & 0x3fff) + 1, (($bits >> 14) & 0x3fff) + 1);
+    }
+
+    /**
+     * A size, or null when either half of it is zero.
+     *
+     * One helper for all four readers rather than the check written out four times: a rule about
+     * what counts as a size belongs in one place, or the next format added here gets it wrong.
+     * The lossless WebP shape cannot produce a zero at all — it stores each side minus one — and it
+     * goes through this too, because a reader that is the exception is a reader somebody has to
+     * check before trusting.
+     */
+    private static function size(int $width, int $height): ?ImageSize
+    {
+        return $width > 0 && $height > 0 ? new ImageSize($width, $height) : null;
     }
 
     /** Decoded bytes, or null when there are not even enough for a header. */

@@ -2823,20 +2823,23 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 91 | 38,900 |
+| read difference by difference | 92 | 39,200 |
 | ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **23** | **2,400** |
+| **not yet read** | **22** | **2,100** |
 
-Those figures go stale; the queue does not. **One file is 300 lines or more and it is where the
-remaining risk is** — it is ported and has not been read end to end:
+Those figures go stale; the queue does not. **Nothing over 300 lines is left**, which is the first
+time that has been true: the three that were — `tui.ts`, `components/input.ts` and
+`terminal-image.ts` — each have an entry below. What remains is 22 files under 220 lines, all but
+three of them components:
 
 ```
- 340  tui/terminal-image.ts                                → Images\TerminalImage
+ 217  ai/types.ts                          188  tui/components/settings-list.ts
+ 196  coding-agent/…/bash-execution.ts      184  tui/components/select-list.ts
+ 147  coding-agent/…/diff.ts                138  tui/terminal.ts
 ```
 
-The remaining 22 are under 300 lines each and almost all components — the biggest of them is
-`ai/types.ts` at 217, and eight of the rest are under 50. The count is rebuilt by listing the sweep's
-output and striking off what this file records as read, not by editing these numbers.
+…and sixteen more from 134 lines down to 18. The count is rebuilt by listing the sweep's output and
+striking off what this file records as read, not by editing these numbers.
 
 **`markdown.ts` was the one a surface map could not read**, and the corpus is what read it — see the
 trap on the two list bugs it found. The rule it confirms: where upstream leans on a package pig had to
@@ -3223,8 +3226,10 @@ where upstream answers false. Both are now on the method; the second is the inte
 **The lesson of the five runs is the same one: a hand-rolled replacement for a package is worth a
 corpus, and the corpus is worth keeping the count of.** "It matched on the cases I thought of" is
 what reading gives you — and a run that finds nothing is only worth having if the count is written
-down, or the next reader has to take it on trust. The sixth is the entry below, and it adds a
-second half to that: **a corpus is worth re-reading for the question it never asked.**
+down, or the next reader has to take it on trust. The sixth and seventh are the two entries below,
+and they add a second half to it: **a corpus is worth re-reading for the question it never asked** —
+which is where "two pastes in one read" came from — and a file of pure functions is worth one even
+when reading it finds nothing, which is where the 150,000-line PNG came from.
 
 ### Two pastes in one read, and only the first one arrived
 
@@ -3280,6 +3285,74 @@ widths and 211 more at narrow ones, against pig's 0 at every width above one col
 Regression tests: `InputTest::testTwoPastesInOneReadBothArrive`,
 `testAStartMarkerInsideAPasteIsNotTextAndIsNotTheEndOfIt`,
 `testSettingAShorterValueLeavesTheCursorOnACharacterAndNotInsideOne`.
+
+### A PNG that said it was nothing wide asked for 150,000 lines
+
+`terminal-image.ts` is six pure functions and four header readers, which is the shape a corpus
+answers completely, so it got one: 136 payloads — every format at its edges, truncated, wrong-magic,
+zero-sized, random bytes, and base64 that is not base64 — plus 462 row calculations over a grid of
+image, cell and target sizes, and 1,384 encoder calls across both protocols. Two finds, and they
+are the same question asked of two different zeroes.
+
+**The first is a hang from a file somebody else wrote.** A PNG's IHDR is four bytes of width and
+four of height, and nothing says they cannot be zero. Upstream hands back `{0, 0}`; pig did the
+same, and `rows()` then divides by the width. Measured through the real component:
+
+```
+png     0x0     header=0x0      lines in the frame=1
+png     0x100   header=0x100    lines in the frame=3000
+png     0x5000  header=0x5000   lines in the frame=150000
+```
+
+150,000 lines, handed to a renderer that diffs every line against the last frame, **on every frame
+for as long as that tool result is on screen**. And the bytes come from outside — a model's image, a
+hook's screenshot, a custom tool's result — so this is a hang somebody else gets to choose. Upstream
+divides by zero instead and gets `Infinity`, which its own component turns into an array of that
+length.
+
+The fix is at the source rather than in the arithmetic: **a header that says zero is read as no
+header at all.** `Components\Image` already had the path for it — the size it assumes for a header it
+could not read — so a malformed PNG now draws at 800×600 and takes 23 lines. One private `size()`
+helper for all four readers, because a rule about what counts as a size belongs in one place; the
+lossless WebP shape cannot produce a zero at all and goes through it anyway, since a reader that is
+the exception is a reader somebody has to check before trusting.
+
+`rows()`' two `max(1, …)` divisors stay and now say what they are for, which the conventions ask of
+every clamp: the method takes an `ImageSize` rather than reading one, so a caller can still build a
+zero, and dividing by it is a `DivisionByZeroError` thrown out of a render.
+
+**The second find is JavaScript's falsiness, in three places at once** — the third shape from the
+index, and the one this file already has an entry for under `getenv()` answering `''`. Upstream
+guards its optional parameters with `if (options.x)`, which skips `0` and `''`; pig had `!== null`,
+which does not:
+
+| | upstream | pig had |
+|---|---|---|
+| `kitty(columns: 0)` | no `c` at all | `c=0` — and `columns: -5` gave `c=-5`, which is not a size |
+| `iterm2(name: '')` | no `name` | `name=`, a base64 field holding nothing |
+| `fallback(filename: '')` | `[Image: [image/png]]` | `[Image:  [image/png]]`, which reads as a name that went missing |
+
+None of the three was reachable from pig's own callers — `Image::render()` clamps the cell count to
+at least one, and nothing passes a name or a filename — so this is fidelity on public surface rather
+than a live bug, and the corpus is what found it: **1,384 encoder calls, 320 of which differed, all
+of them one rule.** With it fixed the encoders and the fallback agree with upstream on every one.
+
+What is left differing is four rows, each pig's own with the reason on the method: the zero rule
+above (nine payloads), the two divisor guards (147 row calculations, all of them a zero on one side
+or the other), strict base64 where upstream's `Buffer.from` salvages what it can from junk (two
+payloads), and the GIF signature compared byte for byte where Node's `toString("ascii")` **masks the
+high bit** — so `\xc7IF87a` is a GIF to upstream and reports a size.
+
+Read rather than run, and both are dead ends in upstream: `maxHeightCells` is declared in
+`ImageRenderOptions` and in `image.ts` and read in neither, and the `offset + 3 >= buffer.length`
+guard inside the JPEG segment walk cannot fire, because the loop it sits in already stops at
+`length - 9`. Neither is ported, and the second is worth knowing before somebody adds it back as a
+missing check.
+
+Regression tests: `ImageTest::testAHeaderSayingZeroIsNotASize`,
+`testRowsStillAnswersForASizeACallerMadeUpItself`,
+`testASizeThatIsNotASizeIsLeftOutRatherThanSentAsOne`, `testAnEmptyNameIsNotAName`,
+`testAnEmptyFilenameDoesNotLeaveASpaceWhereANameWouldBe`.
 
 ### An edit was approved with nothing on screen but a path
 
