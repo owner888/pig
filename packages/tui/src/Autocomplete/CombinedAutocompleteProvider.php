@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\Tui\Autocomplete;
 
+use Closure;
+
 use Pig\Tui\Env;
 use Pig\Tui\Paths;
 use Pig\Tui\Process;
@@ -97,7 +99,15 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
      */
     public function shouldCompleteFiles(array $lines, int $cursorLine, int $cursorCol): bool
     {
-        $trimmed = trim(substr($lines[$cursorLine] ?? '', 0, $cursorCol));
+        $before = substr($lines[$cursorLine] ?? '', 0, $cursorCol);
+
+        // A command that knows what its own argument can be answers for it, so Tab there means
+        // "complete that" and not "complete a path".
+        if ($this->argumentCompleter($before) !== null) {
+            return false;
+        }
+
+        $trimmed = trim($before);
 
         return str_contains($trimmed, ' ') || !self::couldBeACommandName($trimmed);
     }
@@ -193,19 +203,41 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
             return self::offer($items, $before);
         }
 
+        $completer = $this->argumentCompleter($before);
+
+        if ($completer === null) {
+            return null;
+        }
+
+        $argument = substr($before, (int) $space + 1);
+
+        return self::offer(array_values($completer($argument)), $argument);
+    }
+
+    /**
+     * The closure that completes this line's argument, or null when nothing does.
+     *
+     * Asked by two readers — the automatic list and `shouldCompleteFiles()`, which decides what Tab
+     * means — and it has to be one answer. `/model n` offering **file names** was what asking two
+     * questions cost: the list knew the command had no completions and said nothing, and Tab knew
+     * only that there was a space and went to the filesystem.
+     *
+     * @return Closure(string): list<AutocompleteItem>|null
+     */
+    private function argumentCompleter(string $before): ?Closure
+    {
+        $space = strpos($before, ' ');
+
+        if (!str_starts_with($before, '/') || $space === false) {
+            return null;
+        }
+
         $name = substr($before, 1, $space - 1);
-        $argument = substr($before, $space + 1);
 
         foreach ($this->commands as $command) {
-            if (!$command instanceof SlashCommand || $command->name !== $name) {
-                continue;
+            if ($command instanceof SlashCommand && $command->name === $name) {
+                return $command->argumentCompletions;
             }
-
-            if ($command->argumentCompletions === null) {
-                return null;
-            }
-
-            return self::offer(array_values(($command->argumentCompletions)($argument)), $argument);
         }
 
         return null;

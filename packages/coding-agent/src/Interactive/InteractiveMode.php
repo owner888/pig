@@ -65,6 +65,7 @@ use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ExternalTool;
 use Pig\Tui\Autocomplete\CombinedAutocompleteProvider;
+use Pig\Tui\Autocomplete\AutocompleteItem;
 use Pig\Tui\Autocomplete\SlashCommand;
 use Pig\Tui\Clipboard\Clipboard;
 use Pig\Tui\Component;
@@ -933,7 +934,16 @@ final class InteractiveMode
         $this->editor->setAutocompleteProvider(new CombinedAutocompleteProvider(
             [
                 ...array_map(
-                    static fn (array $command): SlashCommand => new SlashCommand($command[0], $command[1]),
+                    fn (array $command): SlashCommand => new SlashCommand(
+                        $command[0],
+                        $command[1],
+                        // The one built-in whose argument is a known list rather than free text.
+                        // `SlashCommand::$argumentCompletions` has been read by the provider since
+                        // it was ported and supplied by nobody, and its own docblock named this
+                        // very example — so `/model son` offered **file names**, because past the
+                        // first space Tab means a path unless something says otherwise.
+                        $command[0] === 'model' ? $this->modelCompletions(...) : null,
+                    ),
                     self::COMMANDS,
                 ),
                 ...array_map(
@@ -1739,6 +1749,33 @@ final class InteractiveMode
      *
      * @param string $pattern from `/model sonnet` — switches without opening the list
      */
+    /**
+     * The models `/model <something>` could mean, for the completion list.
+     *
+     * The same list `/model` with nothing after it draws and for the same reason — the models there
+     * is a key for — so the two cannot come to disagree about what is on offer. Matched as a
+     * substring over `provider/id` rather than fuzzily: a completion list is read while typing and
+     * a subsequence match puts `moonshotai/kimi-k2-instruct` under `haiku`, which `--models`
+     * documents as the price of fuzzy matching on a *listing* nobody is choosing from with Tab.
+     *
+     * @return list<AutocompleteItem>
+     */
+    private function modelCompletions(string $typed): array
+    {
+        $wanted = mb_strtolower(trim($typed));
+        $items = [];
+
+        foreach ($this->auth?->availableModels() ?? Models::all() as $model) {
+            if ($wanted !== '' && !str_contains(mb_strtolower("{$model->provider}/{$model->id}"), $wanted)) {
+                continue;
+            }
+
+            $items[] = new AutocompleteItem($model->id, $model->id, $model->provider);
+        }
+
+        return $items;
+    }
+
     private function showModels(string $pattern = ''): void
     {
         if ($this->session->isStreaming()) {

@@ -2823,15 +2823,14 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 87 | 37,100 |
+| read difference by difference | 88 | 37,700 |
 | ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **27** | **4,200** |
+| **not yet read** | **26** | **3,600** |
 
-Those figures go stale; the queue does not. **Five files are 300 lines or more and they are
+Those figures go stale; the queue does not. **Four files are 300 lines or more and they are
 where the remaining risk is** — every one of them is ported and none has been read end to end:
 
 ```
- 576  tui/autocomplete.ts                                  → Autocomplete\CombinedAutocompleteProvider
  469  coding-agent/modes/rpc/rpc-mode.ts                   → Rpc\RpcMode
  351  tui/tui.ts                                           → Tui
  344  tui/components/input.ts                              → Components\Input
@@ -5658,6 +5657,39 @@ that pin the ends separately — dropping the `await`, dropping `startRetrying()
 `startBackgroundWork()` on the overflow path, and dropping the release at the tail. The last of those
 fails as `The event loop ran out of work while the root coroutine was still suspended`, which is the
 honest shape of a handle nobody completes.
+
+### `/model son` offered file names, and the one method that knew better had no caller
+
+`SlashCommand::$argumentCompletions` is upstream's optional hook for a command that knows what its
+own argument can be. pig reads it — `slashSuggestions()` has always called it — and **nothing ever
+supplied one**, in either project: upstream declares the field, calls it, and no command implements
+it. So its own docblock's example, *"`argumentCompletions` is what makes `/model <tab>` list models
+rather than files"*, was a claim about the repository that the repository did not keep. Past the first
+space a completion means a path, so `/model son` offered whatever files in the project happen to have
+`son` in the name.
+
+`/model` is the one built-in whose argument is a known list rather than free text, so it has the
+closure now — the same `availableModels()` list `/model` with nothing after it draws, so the two
+cannot come to disagree about what is on offer. Matched as a **substring** over `provider/id` and not
+fuzzily, which is the one place `--models`' own trade-off does not apply: a subsequence match puts
+`moonshotai/kimi-k2-instruct` under `haiku`, which is tolerable in a listing somebody is reading and
+not in a list they are choosing from with one keystroke.
+
+**And then the fix did not work from the keyboard, which is the more interesting half.**
+`CombinedAutocompleteProvider::shouldCompleteFiles()` is the method that answers "does a completion
+here mean a path", and it is **public with no production caller** — `Editor::completeOnTab()` spelled
+the rule out itself, `starts with a slash and has no space`. That is the *fourth* hand-spelling of the
+predicate the trap below about a line starting with `/` is entirely about: that entry gave the rule
+one home and this reader never started asking it. The editor asks now, and the provider answers with
+the one thing only it can know — which commands exist, and which of them answer for their own
+argument.
+
+Three ends, three mutations, and the third took three goes to pin. Removing the completer from
+`/model` breaks it; making the editor spell the rule again breaks it; but the check inside
+`shouldCompleteFiles()` is redundant for `/model ` with nothing typed (the trailing space is trimmed,
+so the line still reads as a bare command name) and unreachable while a list is open, because Tab
+there means "accept this one". The sequence that needs it is the ordinary one: type an argument,
+**escape** to dismiss the list, then Tab — and that is what the test does.
 
 ### Every numbered list a model wrote with spaces in it came out numbered 1, 1, 1
 

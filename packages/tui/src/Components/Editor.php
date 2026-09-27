@@ -1046,17 +1046,20 @@ final class Editor implements Caret, Component, InputHandler
             return;
         }
 
-        $before = substr($this->lines[$this->cursorLine], 0, $this->cursorCol);
-        $trimmed = ltrim($before);
-
-        // Mid-command, Tab means the command list; anywhere else it means files.
-        if (str_starts_with($trimmed, '/') && !str_contains($trimmed, ' ')) {
+        if (!$this->provider instanceof CombinedAutocompleteProvider) {
             $this->openSuggestions();
 
             return;
         }
 
-        if (!$this->provider instanceof CombinedAutocompleteProvider) {
+        // **The provider decides**, because it is the thing that knows what completes here: which
+        // commands exist, and which of them answer for their own argument. This used to spell the
+        // rule out again — "starts with a slash and has no space" — which made
+        // `shouldCompleteFiles()` a public method with no caller but its own tests, and left Tab
+        // after `/model ` going to the filesystem while typing there offered models. The trap in
+        // CLAUDE.md about a line starting with `/` is this same predicate; that entry gave it one
+        // home and this is the reader that never started using it.
+        if (!$this->provider->shouldCompleteFiles($this->lines, $this->cursorLine, $this->cursorCol)) {
             $this->openSuggestions();
 
             return;

@@ -384,6 +384,70 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringNotContainsString('/debug', $this->screen());
     }
 
+    public function testTypingAfterSlashModelOffersModelsRatherThanFileNames(): void
+    {
+        // `SlashCommand::$argumentCompletions` is read by the provider and was supplied by nobody,
+        // so the docblock's own example — "`/model <tab>` lists models rather than files" — was a
+        // claim about the repository that the repository did not keep: past the first space Tab
+        // means a path, so `/model s` offered whatever files happen to sit in the project.
+        file_put_contents($this->cwd . '/sonnet-notes-for-the-picker.txt', 'x');
+
+        $this->start();
+        // No Tab: a command's own completions are the *automatic* list, offered as you type, and
+        // Tab is then how you take one. Tab before the list exists means a path, and past a
+        // command that answers for its argument it means neither — which is the fix.
+        // The last keystroke on its own, because one chunk is one key: a `type()` of the whole
+        // string arrives as a single seventeen-character key, and what opens the list is a typed
+        // *letter or digit* inside a line that starts with a slash.
+        $this->type('/model sonnet-4-');
+        $this->type('5');
+        $this->settle();
+
+        $screen = $this->screen();
+
+        // A real model id, which can only be on screen because a list of models was offered — the
+        // footer says `claude-test`, so asserting on that would be an assertion that cannot fail.
+        $this->assertStringContainsString('claude-sonnet-4-5', $screen);
+        $this->assertStringNotContainsString('sonnet-notes-for-the-picker.txt', $screen);
+    }
+
+    public function testTabAfterACommandThatAnswersForItsArgumentIsNotAPath(): void
+    {
+        // The other door, and the one that made `shouldCompleteFiles()` a public method with no
+        // caller: a space closes the automatic list, so the next Tab had nothing open and went
+        // straight to the filesystem. `Editor::completeOnTab()` spelled the rule itself instead of
+        // asking the provider, which is the only thing that knows `/model` answers for its own
+        // argument.
+        file_put_contents($this->cwd . '/notes-after-a-space.txt', 'x');
+
+        $this->start();
+        $this->type('/model');
+        $this->type(' ');
+        $this->type("\t");
+        $this->settle();
+
+        $screen = $this->screen();
+
+        $this->assertStringNotContainsString('notes-after-a-space.txt', $screen);
+        // A provider name, which is the description on each offered model and appears nowhere else
+        // on this screen — the footer carries the model id alone.
+        $this->assertStringContainsString('anthropic', $screen, 'the whole list, since nothing narrows it');
+
+        // And once something *has* been typed after the space. Escape first, because a list that is
+        // already open takes Tab as "accept this one" and never reaches the question — dismissing it
+        // and pressing Tab is the one way back to asking, and the way a file name got in.
+        $this->type('sonnet-4-');
+        $this->type('5');
+        $this->type(self::ESC);
+        $this->type("\t");
+        $this->settle();
+
+        $narrowed = $this->screen();
+
+        $this->assertStringNotContainsString('notes-after-a-space.txt', $narrowed);
+        $this->assertStringContainsString('claude-sonnet-4-5', $narrowed);
+    }
+
     public function testEveryKeyTheEditorAnswersToIsNamedSomewhere(): void
     {
         // `Editor` answers to all of these and pig named none of them: the application keys were
