@@ -66,7 +66,8 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 或者单独写个 `-r`/`--resume` 从列表里挑一个——在那个列表里直接打字就是搜索，搜的是整段对话里
 说过的话，不只是开头那一句。在那儿按 esc 是「不挑了，开个新的」，ctrl+c 是「不用了」，直接退出。
 进去之后 `/resume` 也是同一个列表，同样能搜。`-h` 看所有旗标，`-v` 看版本。进去之后 `/help`
-列出所有按键。
+列出所有按键——包括输入框自己那些编辑键——和所有命令。按 shift+ctrl+d 写一份 debug log：当前这一帧、
+每行实际占多少列、以及整段对话，报 bug 就附这个。
 
 有 Claude Pro 或 Max 订阅的话不用配 key：`/login` 给你一个网址，打开点同意，把回来的 code 粘回来
 就行。GitHub Copilot 的订阅也一样走 `/login`——它给你一个码，去 github.com 输进去，pig 这边等着，

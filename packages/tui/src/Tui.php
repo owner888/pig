@@ -396,15 +396,46 @@ class Tui extends Container
         }
 
         $log = sys_get_temp_dir() . '/pig-render-' . getmypid() . '.log';
-        $dump = ["Terminal width: {$width}", "Line {$index} is {$visible} columns wide", ''];
+        $dump = "Line {$index} is {$visible} columns wide\n" . self::widths($lines, $width);
 
-        foreach ($lines as $number => $dumped) {
-            $dump[] = "[{$number}] (w=" . Width::visible($dumped) . ") {$dumped}";
-        }
-
-        file_put_contents($log, implode("\n", $dump) . "\n");
+        file_put_contents($log, $dump);
 
         throw new TuiError("Rendered line {$index} is {$visible} columns wide, terminal is {$width}. Lines written to {$log}");
+    }
+
+    /**
+     * The frame as it stands, line by line, with the columns each one takes.
+     *
+     * **Two readers, which is why this is a method.** `checkWidth()` writes it when a line is too
+     * wide to draw, and the application's debug key writes it on demand — the same question asked
+     * after a fault and before one. Every width bug in this repository was found by looking at
+     * exactly this, and until now the only way to see it was to cause the fault.
+     */
+    public function frame(): string
+    {
+        $width = $this->terminal->columns();
+
+        return self::widths($this->render($width), $width);
+    }
+
+    /**
+     * One line per rendered line, with its width and its bytes.
+     *
+     * The escapes are kept as escapes — `\e` and not an escape that moves the cursor of whatever
+     * is reading the log. A column count next to a line whose codes are invisible is the pair that
+     * makes a padding bug obvious.
+     *
+     * @param list<string> $lines
+     */
+    private static function widths(array $lines, int $width): string
+    {
+        $dump = ["Terminal width: {$width}", 'Lines: ' . count($lines), ''];
+
+        foreach ($lines as $number => $line) {
+            $dump[] = "[{$number}] (w=" . Width::visible($line) . ') ' . json_encode($line);
+        }
+
+        return implode("\n", $dump) . "\n";
     }
 
     /** Image protocols put their payload inline, where a column count means nothing. */

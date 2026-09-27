@@ -76,7 +76,9 @@ a list — type in that list to search it, and the search matches anything said 
 conversation, not just the line it opened with. Escape there starts a new conversation instead;
 ctrl+c leaves without starting one. `/resume` inside a session shows the same list, search and
 all. `-h` for the flags, `-v` for the version.
-`/help` inside lists the keys.
+`/help` inside lists every key, the prompt's own editing keys included, and every command.
+Shift+ctrl+d writes a debug log — the frame, how wide each line came out, and the conversation —
+which is the thing to attach to a bug report.
 
 With a Claude Pro or Max subscription there is no key to set: `/login` gives you a URL to open
 and takes the code that comes back. A GitHub Copilot subscription works the same way — it shows

@@ -2723,6 +2723,7 @@ What is left unported, across every package, each for a reason:
 |---|---|
 | eleven of the selector components, as files | every one of them is here as something else, and the audit that checked it is below: `hook-selector`, `hook-editor` and `hook-input` are `TerminalUi::select()`, `editor()` and `input()`; `queue-mode`, `show-images`, `thinking` and `settings-selector` are `/settings`' rows plus `thinkingSubmenu()`; `theme-selector` is that list's theme row; `oauth-selector` is `showSignIns()`; `session-selector` is `Cli\SessionPicker`; `model-selector` is `showModels()`. **`tree-selector.ts` is no longer among them** — it is `Interactive\TreeList` |
 | `coding-agent/modes/interactive/components/user-message-selector.ts` | the **twelfth** selector, and the one that is not here as something else: it is `/branch`'s list, and `/branch` forks a conversation into a second session file, which pig does not do. `/tree` is pig's answer to the same wish and has its own list. Upstream also opens this one on a **double Escape** with an empty prompt; pig's Escape stops whatever is running and does nothing when nothing is, so that gesture has no meaning here. If a key for "go back to something I said" is ever wanted, `/tree` is what it should open and this row is where to start |
+| `/share`, in `interactive-mode.ts` | **Deliberate, and the one command left out on its merits rather than for want of a subsystem.** It runs `gh gist create --public=false` on the exported HTML and prints a URL on upstream's own viewer domain. Two reasons: a "secret" gist is unlisted and not private, so a conversation — which holds whatever the model read — goes to GitHub behind a link anyone with it can open; and the URL hands it to a third party's JavaScript viewer, which is the dependency `HtmlExport` was written to avoid. `/export` already writes the file, and `gh gist create` on it is one command with the person looking at what they are uploading. If it is ever wanted, the piece pig lacks is nothing: `BorderedLoader` is ported and already cancellable |
 | `ai/utils/typebox-helpers.ts` (24) | `StringEnum`, a TypeBox helper that emits `{type:"string", enum:[…]}` because TypeBox's own `Type.Enum` emits `anyOf`/`const` and Google's API rejects that. In PHP a schema **is** an array, so there is nothing to help with — you write the array, and `JsonSchemaTest` says so where the enum is tested |
 | `coding-agent/modes/rpc/rpc-types.ts` | 203 lines of types for JSON that arrives from outside the process, where a static type guarantees nothing and the runtime checks are the contract — the long version is in the RPC section, including the two things that *would* be worth typing and why neither is done yet. `RpcMode`'s docblock plus `RpcEvents` is where the wire shape is written down. Its `rpc-client.ts` **is** ported, as `Rpc\RpcClient` |
 | every `index.ts` | barrel re-exports, which is what an autoloader does here |
@@ -5624,6 +5625,70 @@ that pin the ends separately — dropping the `await`, dropping `startRetrying()
 `startBackgroundWork()` on the overflow path, and dropping the release at the tail. The last of those
 fails as `The event loop ran out of work while the root coroutine was still suspended`, which is the
 honest shape of a handle nobody completes.
+
+### The prompt answered to eleven keys that were named nowhere
+
+`Editor` has handled ctrl+w, ctrl+u, ctrl+k, alt+backspace, ctrl+a/home, ctrl+e/end,
+alt+left/right, ctrl+left/right, shift+enter, alt+enter, tab completion and the prompt history
+since it was ported. **Not one of them appeared on any screen.** `KEYS` holds the keys the
+*application* binds — esc, ctrl+c, ctrl+o and the rest — and upstream's `/hotkeys` is where the
+editing ones are written down, and pig had ported the keys and not the table.
+
+So `/help`, whose own row reads `Show the keys and commands`, showed some of the keys. That is the
+claim-not-kept shape rather than a missing nicety, which is why it is a fix and not a note: the keys
+worked, and the only way to find them was to already know them.
+
+`EDITING_KEYS` is that table, **beside `KEYS` rather than as a second command**, because pig already
+prints the keys in two places — `/help` and the banner under ctrl+o — and upstream's own two lists
+disagree with each other. It is kept by hand, as upstream's is, and the test is what notices: when
+`Editor::editingKey()` grows an arm, `testEveryKeyTheEditorAnswersToIsNamedSomewhere` is where it
+gets its name.
+
+Two things fell out of adding it, both about the column:
+
+- **The two printers were the same ten lines twice.** `banner()`'s expanded branch and
+  `commandHelp()` each looped over `KEYS` and then `COMMANDS`. They could not have disagreed about
+  the tables; they could and immediately would have disagreed about the column, since only one of
+  them would have got the third table. `keysAndCommands()` is the one implementation.
+- **The column was the constant `12`** and `shift+enter` is eleven columns, so it would have sat one
+  space from its description while `esc` sat nine away. It is measured from the widest label now,
+  with `Width::visible()`, which is `--models`' rule and for `--models`' reason.
+
+### `/debug` was three-quarters ported and did nothing
+
+`Tui` has had `setDebugHandler()`, the `$onDebug` field and a shift+ctrl+d intercept in
+`handleInput()` since it was ported, `Keys::isShiftCtrlD()` answers, and **nothing in the repository
+ever called the setter.** So the one key that works whatever holds the focus — which is the whole
+point of a key that captures the screen — did nothing at all. The same shape as ctrl+p taken off the
+editor and bound to nothing, one package over.
+
+What it was missing is upstream's `handleDebugCommand()`, and the argument for porting it rather
+than deleting the hook is that **pig already has the interesting end**: `Tui::checkWidth()` writes
+`[n] (w=N) <line>` for every line of the frame when one is too wide to draw, and *every width bug in
+this file was found by reading exactly that* — `str_pad` lining up an ASCII-only column,
+`BashOutputComponent`'s 22-column note, the frame drawn twice over itself. Each time it had to be
+got at with a probe written outside the repository, because from inside a real session there was no
+way to ask. `Tui::frame()` is that dump on demand, shared with `checkWidth()` — the same question
+before a fault and after one.
+
+Four decisions in it:
+
+- **Known and not listed**, beside `quit` and `arminsayshi`, because `COMMANDS` is what `/help`
+  prints and what the autocomplete offers, and this is for reporting a fault rather than for using
+  pig. The **key** is what `KEYS` names, since working regardless of focus is its advantage.
+- **The escapes stay escapes.** The lines go through `json_encode`, so a log holding a cursor
+  sequence cannot move the cursor of whatever opens it — and a column count beside a line whose
+  codes are invisible is the pair that makes a padding bug obvious.
+- **The conversation goes in as the session file's own shape**, through `SessionCodec`, rather than
+  as a second notion of what a message looks like.
+- **`0600`, and the mode is set before there is anything to read.** Not the file's own importance:
+  a conversation holds whatever the model read, which on a bad day is somebody's `.env`. The session
+  file it duplicates is inside a `0700` directory; this one sits at a predictable name in the home
+  directory, so it says so itself. Set first rather than chmodded after, as `Auth::save()` does it.
+
+Regression tests: `InteractiveModeTest::testTheDebugKeyWritesTheFrameAndTheConversation` and
+`testTheDebugCommandWritesTheSameThingWithoutBeingListed` — one per route, and each stays green when
+the other's end is removed.
 
 ### Two loaders said escape worked and the key reached neither
 

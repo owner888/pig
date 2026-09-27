@@ -325,6 +325,85 @@ final class InteractiveModeTest extends TestCase
 
     // ---- the first frame ------------------------------------------------------------
 
+    public function testTheDebugKeyWritesTheFrameAndTheConversation(): void
+    {
+        // `Tui` has intercepted shift+ctrl+d and offered `setDebugHandler()` since it was ported,
+        // and nothing ever called the setter — so the key that works whatever holds the focus did
+        // nothing, and the frame dump `checkWidth()` writes on a fault could only be got by
+        // causing one. Both ends are here now.
+        $this->start(answers: ['an answer of some length']);
+        $this->type('say something');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // Shift+ctrl has no control character; only a kitty terminal can report it.
+        $this->type("\e[100;6u");
+        $this->settle();
+
+        $path = getenv('PIG_HOME') . '/pig-debug.log';
+        $this->assertFileExists($path);
+
+        $written = (string) file_get_contents($path);
+
+        // The frame, with a width per line, which is the pair that makes a padding bug obvious.
+        $this->assertStringContainsString('=== the frame ===', $written);
+        $this->assertMatchesRegularExpression('/\[0\] \(w=\d+\)/', $written);
+
+        // And what was said, as the session file's own shape rather than a second one.
+        $this->assertStringContainsString('=== the conversation ===', $written);
+        $this->assertStringContainsString('say something', $written);
+        $this->assertStringContainsString('an answer of some length', $written);
+
+        // A conversation holds whatever the model read.
+        $this->assertSame('0600', substr(sprintf('%o', fileperms($path)), -4));
+    }
+
+    public function testTheDebugCommandWritesTheSameThingWithoutBeingListed(): void
+    {
+        $this->start();
+        $this->type('/debug');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertFileExists(getenv('PIG_HOME') . '/pig-debug.log');
+
+        // Known and not offered, like `quit`: `COMMANDS` is what `/help` prints and what the
+        // autocomplete lists, and this is for reporting a fault rather than for using pig.
+        $this->type('/help');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringNotContainsString('/debug', $this->screen());
+    }
+
+    public function testEveryKeyTheEditorAnswersToIsNamedSomewhere(): void
+    {
+        // `Editor` answers to all of these and pig named none of them: the application keys were
+        // in `KEYS` and the *editing* keys — upstream's own `/hotkeys` table — were listed
+        // nowhere, so ctrl+w, ctrl+u, ctrl+k, word movement and the prompt history all worked and
+        // could only be found by guessing. `/help` says "the keys and commands", which is a claim.
+        $this->start();
+        $this->type('/help');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screen();
+
+        foreach ([
+            'ctrl+w',
+            'ctrl+u',
+            'ctrl+k',
+            'ctrl+a',
+            'ctrl+e',
+            'alt+left',
+            'shift+enter',
+            'tab',
+            'up',
+        ] as $key) {
+            $this->assertStringContainsString($key, $screen, "{$key} is not named anywhere");
+        }
+    }
+
     public function testTheBannerIsThreeLinesUntilAskedForMore(): void
     {
         $this->start();

@@ -31,6 +31,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Changelog;
+use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Cli\SessionList;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Export\HtmlExport;
@@ -47,6 +48,7 @@ use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\SlashCommands;
+use Pig\CodingAgent\Session\SessionCodec;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\AutoCompactionEndEvent;
@@ -520,21 +522,7 @@ final class InteractiveMode
             return implode("\n", $lines);
         }
 
-        $lines[] = '';
-
-        foreach (self::KEYS as $key => $does) {
-            $lines[] = $this->palette->fg('dim', Width::pad($key, 12)) . $this->palette->fg('muted', $does);
-        }
-
-        $lines[] = '';
-
-        foreach (self::COMMANDS as [$name, $does]) {
-            $lines[] = $this->palette->fg('dim', Width::pad('/' . $name, 12)) . $this->palette->fg('muted', $does);
-        }
-
-        $loaded = $this->loaded();
-
-        return implode("\n", $lines) . ($loaded === '' ? '' : "\n\n" . $loaded);
+        return implode("\n", [...$lines, '', $this->keysAndCommands()]);
     }
 
     /**
@@ -597,6 +585,7 @@ final class InteractiveMode
         'ctrl+v' => 'paste, including an image from the clipboard',
         'ctrl+g' => 'edit the prompt in $VISUAL or $EDITOR',
         'shift+tab' => 'cycle the thinking level',
+        'shift+ctrl+d' => 'write a debug log: this frame, its line widths, the conversation',
         'ctrl+p' => 'next model, shift+ctrl+p for the previous one',
         'ctrl+o' => 'show more: tool output, and this list',
         'ctrl+t' => 'show or hide thinking',
@@ -606,10 +595,45 @@ final class InteractiveMode
         '!!' => 'run a command and keep it out of the conversation',
     ];
 
+    /**
+     * What the prompt itself answers to, which is upstream's `/hotkeys` table.
+     *
+     * **Every one of these worked before it was written down, and that is why it is here.**
+     * `Editor` has answered to all of them since it was ported; `KEYS` above holds the keys the
+     * *application* binds, so the editing ones were listed in neither place — a person had ctrl+w,
+     * ctrl+u, ctrl+k, word movement and the prompt history and no way to find out. `/help` says it
+     * shows "the keys and commands", and a claim a screen does not keep is the thing this
+     * repository treats as a defect rather than as a missing nicety.
+     *
+     * One table rather than upstream's second command, because pig already prints the keys in two
+     * places — `/help` and ctrl+o — and a third list of keys is a third thing to keep in step.
+     * Kept by hand, as upstream's is: when `Editor::editingKey()` grows an arm, this is where it
+     * gets its name, and `testEveryKeyTheEditorAnswersToIsNamedSomewhere` is what notices.
+     */
+    private const array EDITING_KEYS = [
+        'enter' => 'send',
+        'shift+enter' => 'a new line, and alt+enter',
+        'up' => 'the previous thing you said, from an empty prompt',
+        'tab' => 'complete a path, or take what is offered',
+        'ctrl+a' => 'start of the line, and home',
+        'ctrl+e' => 'end of the line, and end',
+        'alt+left' => 'back a word, and ctrl+left',
+        'alt+right' => 'on a word, and ctrl+right',
+        'ctrl+w' => 'delete the word behind, and alt+backspace',
+        'ctrl+u' => 'delete back to the start of the line',
+        'ctrl+k' => 'delete on to the end of the line',
+    ];
+
     // ---- keys ---------------------------------------------------------------------------
 
     private function bindKeys(): void
     {
+        // `Tui` has intercepted shift+ctrl+d since it was ported — the predicate, the field and the
+        // setter were all there — and nothing ever called the setter, so the one key that works
+        // whatever holds the focus did nothing. The same shape as ctrl+p: machinery wired at one
+        // end. Not on the editor, because the point of it is that the editor may not be listening.
+        $this->tui->setDebugHandler($this->writeDebugLog(...));
+
         $this->editor->on('escape', $this->interrupt(...));
         $this->editor->on('ctrl+c', $this->onCtrlC(...));
         $this->editor->on('ctrl+d', $this->stop(...));
@@ -1222,7 +1246,10 @@ final class InteractiveMode
         // what the autocomplete offers: `quit` is an alias for one that is listed, and
         // `arminsayshi` is an easter egg — upstream leaves it out of its own command list too,
         // and something you have to already know about is the whole idea.
-        if ($name === 'quit' || $name === 'arminsayshi') {
+        // `debug` is a third: it is for reporting a fault rather than for using pig, and
+        // shift+ctrl+d is the route worth advertising — it works whatever holds the focus, which
+        // is the whole point of a key that captures the screen.
+        if ($name === 'quit' || $name === 'arminsayshi' || $name === 'debug') {
             return true;
         }
 
@@ -1266,6 +1293,7 @@ final class InteractiveMode
             'settings' => $this->showSettings(),
             'changelog' => $this->showChangelog(),
             'arminsayshi' => $this->sayHi(),
+            'debug' => $this->writeDebugLog(),
             'hooks' => $this->say($this->hookList()),
             'tools' => $this->say($this->toolList()),
             'exit', 'quit' => $this->stop(),
@@ -1446,6 +1474,59 @@ final class InteractiveMode
      * The last thing the *assistant* said, not the last thing on screen: what someone
      * wants after reading an answer is the answer, not the status line under it.
      */
+    /**
+     * Write down what is on the screen and what was said, for somebody to look at later.
+     *
+     * Upstream's `/debug`, on upstream's key, and the reason to port it rather than leave it is
+     * that **pig already has every other end of it**: `Tui::frame()` is the dump `checkWidth()`
+     * writes when a line is too wide, and every width bug in CLAUDE.md was found by reading
+     * exactly that — from outside the repository, with a probe written for the occasion, because
+     * from inside a real session there was no way to ask.
+     *
+     * `0600`, and the reason is not the file's own: a conversation holds whatever the model read,
+     * which on a bad day is somebody's `.env`. The session file it duplicates lives in a `0700`
+     * directory; this one sits at a predictable name in the home directory, so it says so itself.
+     */
+    private function writeDebugLog(): void
+    {
+        $path = Config::home() . '/pig-debug.log';
+
+        if (!is_dir(dirname($path)) && !mkdir(dirname($path), 0o700, true) && !is_dir(dirname($path))) {
+            $this->sayError("Could not make {$path}'s directory.");
+
+            return;
+        }
+
+        $lines = [
+            "pig {$this->version} — " . date('c'),
+            '',
+            '=== the frame ===',
+            $this->tui->frame(),
+            '=== the conversation ===',
+        ];
+
+        foreach ($this->session->messages() as $message) {
+            $encoded = SessionCodec::encode($message);
+            $lines[] = $encoded === null
+                ? '(a message this session has no encoding for: ' . get_debug_type($message) . ')'
+                : (string) json_encode($encoded, JSON_INVALID_UTF8_SUBSTITUTE);
+        }
+
+        // The mode is set before there is anything to read, as `Auth::save()` does it, rather than
+        // written and then chmodded — which leaves the file world-readable for as long as those
+        // two calls take.
+        touch($path);
+        chmod($path, 0o600);
+
+        if (file_put_contents($path, implode("\n", $lines) . "\n") === false) {
+            $this->sayError("Could not write {$path}.");
+
+            return;
+        }
+
+        $this->say('Debug log written to ' . $path);
+    }
+
     private function copyLastAnswer(): void
     {
         $text = $this->session->lastAssistantText();
@@ -1493,23 +1574,49 @@ final class InteractiveMode
         return implode("\n", $lines);
     }
 
-    private function commandHelp(): string
+    /**
+     * The three tables and what is loaded, as one block.
+     *
+     * One implementation because there are two readers — `/help` and the banner under ctrl+o —
+     * and they were the same ten lines twice. They could not have disagreed about the tables;
+     * they could and would have disagreed about the column, which is the thing that moved when
+     * the editing keys arrived with labels wider than the old hardcoded twelve.
+     */
+    private function keysAndCommands(): string
     {
-        $lines = [];
+        $labels = [
+            ...array_keys(self::KEYS),
+            ...array_keys(self::EDITING_KEYS),
+            ...array_map(static fn (array $row): string => '/' . $row[0], self::COMMANDS),
+        ];
 
-        foreach (self::KEYS as $key => $does) {
-            $lines[] = $this->palette->fg('dim', Width::pad($key, 12)) . $this->palette->fg('muted', $does);
+        // Measured from the labels, not a constant: `shift+enter` is eleven columns and the old
+        // `12` left it one space from its description while `esc` had nine. The same rule as
+        // `--models`' columns, and measured with `Width` for the same reason.
+        $column = max(array_map(Width::visible(...), $labels)) + 2;
+
+        $rows = [];
+
+        foreach ([self::KEYS, self::EDITING_KEYS] as $table) {
+            foreach ($table as $key => $does) {
+                $rows[] = $this->palette->fg('dim', Width::pad($key, $column)) . $this->palette->fg('muted', $does);
+            }
+
+            $rows[] = '';
         }
 
-        $lines[] = '';
-
         foreach (self::COMMANDS as [$name, $does]) {
-            $lines[] = $this->palette->fg('dim', Width::pad('/' . $name, 12)) . $this->palette->fg('muted', $does);
+            $rows[] = $this->palette->fg('dim', Width::pad('/' . $name, $column)) . $this->palette->fg('muted', $does);
         }
 
         $loaded = $this->loaded();
 
-        return implode("\n", $lines) . ($loaded === '' ? '' : "\n\n" . $loaded);
+        return implode("\n", $rows) . ($loaded === '' ? '' : "\n\n" . $loaded);
+    }
+
+    private function commandHelp(): string
+    {
+        return $this->keysAndCommands();
     }
 
     private function newSession(): void
