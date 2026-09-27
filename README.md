@@ -177,7 +177,8 @@ quota that resets in forty is three more refusals. Past a minute it is not waite
 turn ends with what the provider said, because a retry that resumes after lunch is not a retry. A turn that fails because the
 conversation outgrew the model's window is a different thing and is treated as one: it is
 summarised first, then sent again, because the same request would be exactly as long in four
-seconds. `retry.enabled: false` in the settings turns the first off.
+seconds. Escape stops that summarising as well, and stops it whether it was `/compact` that asked
+or a full window. `retry.enabled: false` in the settings turns the first off.
 
 A provider pig has never heard of goes in `~/.pig/models.json` — your own box, a proxy, a
 local server — and its models then work everywhere a built-in one does, including `--model`,

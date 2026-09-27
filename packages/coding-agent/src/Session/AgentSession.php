@@ -106,6 +106,16 @@ final class AgentSession
     /** Completed when the retrying is over, so `prompt()` can wait for it. */
     private ?Deferred $settled = null;
 
+    /**
+     * Set while a summariser is running, so escape can call it off.
+     *
+     * Both compactions, the one somebody typed and the one an overflow started, because there is
+     * one `compact()` here where upstream has two paths and two controllers. A caller may pass a
+     * signal of its own as well; `compact()` forwards it into this one, so what goes downstream is
+     * a single signal that either end can raise.
+     */
+    private ?AbortController $compacting = null;
+
     public function __construct(
         public readonly Agent $agent,
         private readonly string $cwd = '.',
@@ -466,14 +476,20 @@ final class AgentSession
 
         if ($note === null || trim($note->text) === '') {
             $this->agent->prompt($text, $images);
-
-            return;
+        } else {
+            $this->agent->prompt([
+                new UserMessage($note->text),
+                new UserMessage([new TextContent($text), ...$images]),
+            ]);
         }
 
-        $this->agent->prompt([
-            new UserMessage($note->text),
-            new UserMessage([new TextContent($text), ...$images]),
-        ]);
+        // And again on the way out, which is upstream's `await this.waitForRetry()` and is the
+        // half pig was missing: a turn that ended in a 503 has a retry spawned behind it, so a
+        // `prompt()` that returns here returns *before the answer exists*. `bin/pig -p` printed
+        // the 503 and exited 1 — and exiting took the retry with it — where the second attempt
+        // a second later would have worked. The three modes that stay running were only
+        // cosmetically wrong: the answer arrived, just after the call that asked for it.
+        $this->settled?->future->await();
     }
 
     /**
@@ -605,9 +621,13 @@ final class AgentSession
     /** Stop the current run; resolves once the agent is idle. */
     public function abort(): Future
     {
-        // Before the agent, because a retry that is sleeping has no agent to interrupt: the
-        // run is already over and the next one has not started. Escape has to reach both.
+        // Before the agent, because neither of these has an agent to interrupt: a retry that is
+        // sleeping and a summariser that is running both happen *between* runs, with the last one
+        // over and the next one not started. Escape has to reach all three, and reaching them from
+        // here rather than from each caller is what stops a caller reaching two and stopping.
+        // Upstream's escape handler calls `abortCompaction()` itself, beside `abort()`.
         $this->abortRetry();
+        $this->abortCompaction();
         $this->agent->abort();
 
         return $this->agent->waitForIdle();
@@ -768,10 +788,12 @@ final class AgentSession
         // saving.
         $fresh = $previous === null ? null : SessionManager::create($this->cwd);
 
-        if ($this->isStreaming()) {
-            $this->abort()->await();
-        }
-
+        // Unconditionally, as upstream does, because `isStreaming()` is the narrower question:
+        // a retry that is sleeping is not streaming, and `abort()`'s own docblock says why it
+        // has to reach both. Asked only when streaming, a `/new` pressed during those seconds
+        // left the retry running — and what it woke up to rescue was a turn from the
+        // conversation just walked away from, in an agent that had since been emptied.
+        $this->abort()->await();
         $this->clearQueue();
 
         if ($fresh !== null) {
@@ -811,10 +833,8 @@ final class AgentSession
 
         $opened = SessionManager::open($path);
 
-        if ($this->isStreaming()) {
-            $this->abort()->await();
-        }
-
+        // Unconditional, for `startNew()`'s reason: a sleeping retry is not streaming either.
+        $this->abort()->await();
         $this->clearQueue();
 
         // The file that was opened is the one written to from here on. Without this the
@@ -1056,18 +1076,27 @@ final class AgentSession
         $last = $messages === [] ? null : $messages[count($messages) - 1];
 
         if (!$last instanceof AssistantMessage) {
+            $this->finishBackgroundWork();
+
             return;
         }
 
         $window = $this->model()?->contextWindow;
 
         if (Overflow::happened($last, $window)) {
+            $this->startBackgroundWork();
             $this->inTheBackground(fn () => $this->compactAndCarryOn($last));
 
             return;
         }
 
         if ($this->retryEnabled() && Retry::worthRetrying($last, $window)) {
+            // Created here rather than one line into `waitAndCarryOn()`, because that runs a
+            // tick later and `prompt()` awaits this on its way out of *this* call: a `Deferred`
+            // that does not exist yet cannot be waited for. It also closes the same window the
+            // controller's own move closed — the moment after a retry is decided and before
+            // anything can be told it is happening.
+            $this->startRetrying();
             $this->inTheBackground(fn () => $this->waitAndCarryOn($last));
 
             return;
@@ -1078,8 +1107,12 @@ final class AgentSession
             $attempts = $this->attempt;
             $this->attempt = 0;
             $this->announce(new RetryEndEvent(true, $attempts));
-            $this->finishRetrying();
         }
+
+        // Nothing more is coming, so this is where a `prompt()` still waiting is let go —
+        // including after an auto-compaction that worked, whose own carry-on never touches the
+        // retry counter above and so has no other ending to be released by.
+        $this->finishBackgroundWork();
     }
 
     /**
@@ -1101,7 +1134,7 @@ final class AgentSession
                 $attempts = $this->attempt;
                 $this->attempt = 0;
                 $this->announce(new RetryEndEvent(false, $attempts, $problem->getMessage()));
-                $this->finishRetrying();
+                $this->finishBackgroundWork();
             }
         });
     }
@@ -1115,16 +1148,16 @@ final class AgentSession
      */
     private function waitAndCarryOn(AssistantMessage $failed): void
     {
-        $this->attempt++;
-
-        // Both together, and for the whole retry rather than just the sleep. Created only
-        // around the sleep, there was a window — after `isRetrying()` became true and before
-        // the controller existed — where `abortRetry()` had nothing to abort: it said the
-        // retrying was cancelled and the retrying carried on anyway.
-        if ($this->settled === null) {
-            $this->settled = new Deferred();
-            $this->retrying = new AbortController();
+        // Called off between the decision to retry and this fiber's first tick, which is a real
+        // window: `afterTheRun()` decides synchronously and this runs a tick later, and
+        // `abortRetry()` in between clears both halves. Making a fresh pair here would start a
+        // retry with a controller nobody holds — a sleep that escape has already been answered
+        // for and cannot reach again.
+        if ($this->retrying === null) {
+            return;
         }
+
+        $this->attempt++;
 
         $max = $this->settings?->retryMaxAttempts(Retry::MAX_ATTEMPTS) ?? Retry::MAX_ATTEMPTS;
         $error = $failed->errorMessage ?? 'Unknown error';
@@ -1132,7 +1165,7 @@ final class AgentSession
         if ($this->attempt > $max) {
             $this->attempt = 0;
             $this->announce(new RetryEndEvent(false, $max, $error));
-            $this->finishRetrying();
+            $this->finishBackgroundWork();
 
             return;
         }
@@ -1165,6 +1198,10 @@ final class AgentSession
      * The turn failed because the conversation outgrew the window, so the summary is the fix
      * and the retry is the point of doing it. A summary that fails or is cancelled ends it —
      * sending the same oversized request again would fail the same way.
+     *
+     * Those two endings call `finishRetrying()`, which looks like a no-op and is not: a retry
+     * whose second attempt overflows arrives here with `settled` already pending, and whoever
+     * is waiting on it — `prompt()`, on its way out — would wait for a run that is not coming.
      */
     private function compactAndCarryOn(AssistantMessage $failed): void
     {
@@ -1177,12 +1214,14 @@ final class AgentSession
             $summary = $this->compact();
         } catch (Throwable $problem) {
             $this->announce(new AutoCompactionEndEvent(false, false, null, $problem->getMessage()));
+            $this->finishBackgroundWork();
 
             return;
         }
 
         if ($summary === null) {
             $this->announce(new AutoCompactionEndEvent(false, false, null, 'Summarising was cancelled.'));
+            $this->finishBackgroundWork();
 
             return;
         }
@@ -1206,7 +1245,7 @@ final class AgentSession
             // happen; this one is over.
             $this->attempt = 0;
             $this->announce(new RetryEndEvent(false, $this->attempt, $problem->getMessage()));
-            $this->finishRetrying();
+            $this->finishBackgroundWork();
         }
     }
 
@@ -1271,10 +1310,16 @@ final class AgentSession
         return $this->settings?->retryEnabled() ?? true;
     }
 
-    /** Whether a retry is being waited out right now. */
+    /**
+     * Whether a retry is being waited out right now.
+     *
+     * The controller and not `$settled`, which the two were interchangeable for until the waiting
+     * handle came to cover auto-compaction as well. A summarisation is not a retry, and a field
+     * that answered for both would have this method lying on the overflow path.
+     */
     public function isRetrying(): bool
     {
-        return $this->settled !== null;
+        return $this->retrying !== null;
     }
 
     /**
@@ -1286,7 +1331,9 @@ final class AgentSession
      */
     public function abortRetry(): void
     {
-        if ($this->settled === null) {
+        // The controller, not the waiting handle: that is pending for an auto-compaction too, and
+        // escape during one must not announce a retry ending that no retry was having.
+        if ($this->retrying === null) {
             return;
         }
 
@@ -1294,7 +1341,7 @@ final class AgentSession
         $this->attempt = 0;
         $this->retrying?->abort();
         $this->announce(new RetryEndEvent(false, $attempts, 'Retrying was cancelled.'));
-        $this->finishRetrying();
+        $this->finishBackgroundWork();
     }
 
     /** Whether escape has reached the retry that is running. */
@@ -1303,7 +1350,34 @@ final class AgentSession
         return $this->retrying?->signal->aborted() ?? false;
     }
 
-    private function finishRetrying(): void
+    /**
+     * `afterTheRun()` has started something, and `prompt()` may now wait for it.
+     *
+     * One handle for both kinds — a retry and an auto-compaction — because to whoever is waiting
+     * they are the same fact: the turn is not over yet. `bin/pig -p` is the caller that has to
+     * know, since when it stops waiting the process exits.
+     */
+    private function startBackgroundWork(): void
+    {
+        $this->settled ??= new Deferred();
+    }
+
+    /**
+     * The retry is on, and both halves of it exist from this moment.
+     *
+     * Both together, and for the whole retry rather than just the sleep. Created only around
+     * the sleep, there was a window — after `isRetrying()` became true and before the
+     * controller existed — where `abortRetry()` had nothing to abort: it said the retrying was
+     * cancelled and the retrying carried on anyway.
+     */
+    private function startRetrying(): void
+    {
+        $this->startBackgroundWork();
+        $this->retrying ??= new AbortController();
+    }
+
+    /** Nothing more is coming from `afterTheRun()`, so release whoever is waiting. */
+    private function finishBackgroundWork(): void
     {
         $waiting = $this->settled;
         $this->settled = null;
@@ -1333,6 +1407,49 @@ final class AgentSession
             throw new AgentError('Agent is working. Let it finish, or press esc, then compact.');
         }
 
+        // One controller for both doors, so `isCompacting()` and `abortCompaction()` answer for a
+        // summarisation whoever started it. A signal the caller brought is *forwarded* into it
+        // rather than carried alongside: what goes downstream then has one `aborted()` to ask, and
+        // pig has no combinator for two — see the note on `Future` in CLAUDE.md.
+        $this->compacting = new AbortController();
+
+        if ($signal?->aborted() === true) {
+            $this->compacting->abort('Cancelled');
+        }
+
+        $listener = $signal?->onAbort(fn () => $this->compacting?->abort('Cancelled'));
+
+        try {
+            return $this->summariseAndSwapIn($instructions, $this->compacting->signal);
+        } finally {
+            $this->compacting = null;
+
+            if ($listener !== null) {
+                $signal?->removeListener($listener);
+            }
+        }
+    }
+
+    /** Whether a summariser is running right now, from either door. */
+    public function isCompacting(): bool
+    {
+        return $this->compacting !== null;
+    }
+
+    /**
+     * Stop the summariser. Does nothing when none is running.
+     *
+     * Upstream's `abortCompaction()`, which its escape handler calls beside `abort()`; here
+     * `abort()` calls this itself, so one call reaches everything escape has to stop.
+     */
+    public function abortCompaction(): void
+    {
+        $this->compacting?->abort('Cancelled');
+    }
+
+    /** The body of `compact()`, with the signal already settled. */
+    private function summariseAndSwapIn(?string $instructions, AbortSignal $signal): ?CompactionSummary
+    {
         $model = $this->model();
 
         if ($model === null) {

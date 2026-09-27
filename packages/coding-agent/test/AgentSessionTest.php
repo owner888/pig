@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Test;
 use Closure;
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\Agent;
+use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentOptions;
@@ -30,7 +31,9 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Async\AbortController;
 use Pig\Async\Async;
+use Pig\Async\Deferred;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Session\AgentSession;
@@ -928,13 +931,9 @@ final class AgentSessionTest extends TestCase
             }
         });
 
-        Async::run(static function () use ($session): void {
-            $session->prompt('hi');
-        });
-
         // Parked on the timer rather than waiting it out — the delay is the subject, so the
         // test must not sit through it.
-        self::tickWithoutWaiting();
+        self::startTurnAndParkOnTheRetry($session);
 
         $this->assertCount(1, $starts);
         $this->assertSame(31.0, $starts[0]->delaySeconds, 'thirty seconds as asked, plus the clock-skew second');
@@ -959,13 +958,7 @@ final class AgentSessionTest extends TestCase
             }
         });
 
-        Async::run(static function () use ($session): void {
-            $session->prompt('hi');
-        });
-
-        // One tick to start the spawned retry and park it on its timer, without waiting the
-        // timer out — see `tickWithoutWaiting()`.
-        self::tickWithoutWaiting();
+        self::startTurnAndParkOnTheRetry($session);
 
         $this->assertTrue($session->isRetrying());
 
@@ -986,10 +979,7 @@ final class AgentSessionTest extends TestCase
             settings: self::quickRetries(['baseDelayMs' => 30_000]),
         );
 
-        Async::run(static function () use ($session): void {
-            $session->prompt('hi');
-        });
-        self::tickWithoutWaiting();
+        self::startTurnAndParkOnTheRetry($session);
 
         $this->assertTrue($session->isRetrying());
 
@@ -1000,6 +990,186 @@ final class AgentSessionTest extends TestCase
         });
         self::settle();
 
+        $this->assertFalse($session->isRetrying());
+    }
+
+    public function testStartingANewSessionStopsARetryThatWasStillWaiting(): void
+    {
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky(array_fill(0, 4, ['error' => 'Anthropic returned 503: overloaded'])),
+            settings: self::quickRetries(['baseDelayMs' => 30_000]),
+        );
+
+        self::startTurnAndParkOnTheRetry($session);
+
+        $this->assertTrue($session->isRetrying());
+
+        // No settling afterwards, deliberately: the sleep is half a minute, so a `settle()`
+        // here would wait it out and watch the retry end *by itself* — green whatever
+        // `startNew()` did, which is how the first version of this test passed.
+        Async::run(static function () use ($session): void {
+            $session->startNew();
+        });
+
+        // A sleeping retry is not "streaming", so a guard on that alone leaves it running —
+        // and what it is rescuing is a turn from the conversation just walked away from.
+        $this->assertFalse($session->isRetrying());
+    }
+
+    public function testSwitchingSessionStopsARetryThatWasStillWaiting(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $other = SessionManager::create(sys_get_temp_dir());
+        $other->append(new UserMessage('something else entirely'));
+        $other->append(new AssistantMessage(
+            [new TextContent('and its answer')],
+            Api::AnthropicMessages,
+            'anthropic',
+            'test-model',
+            new Usage(),
+            StopReason::Stop,
+        ));
+
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky(array_fill(0, 4, ['error' => 'Anthropic returned 503: overloaded'])),
+            store: $store,
+            settings: self::quickRetries(['baseDelayMs' => 30_000]),
+        );
+
+        self::startTurnAndParkOnTheRetry($session);
+
+        $this->assertTrue($session->isRetrying());
+
+        Async::run(static function () use ($session, $other): void {
+            $session->switchTo($other->path);
+        });
+
+        $this->assertFalse($session->isRetrying());
+    }
+
+    public function testARetryDoesNotCarryOnIntoTheSessionThatReplacedIt(): void
+    {
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky(array_fill(0, 4, ['error' => 'Anthropic returned 503: overloaded'])),
+            settings: self::quickRetries(['baseDelayMs' => 2]),
+        );
+
+        self::startTurnAndParkOnTheRetry($session);
+
+        Async::run(static function () use ($session): void {
+            $session->startNew();
+        });
+
+        // Everything after the switch belongs to the new conversation, so nothing the old
+        // one's retry has to say may arrive here: left running, it wakes from its sleep and
+        // asks the *emptied* agent to carry on, which comes back as "Retry failed: cannot
+        // continue, no messages in context" in a conversation nobody has said anything in.
+        $after = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$after): void {
+            $after[] = $event::class;
+        });
+        self::settle();
+
+        $this->assertSame([], $after);
+        $this->assertSame([], $session->messages());
+    }
+
+    public function testATurnAbortedByANewSessionLeavesNothingBehindInIt(): void
+    {
+        // Upstream unsubscribes from the agent for the length of the abort in all three places
+        // that throw a conversation away (`_disconnectFromAgent`), so none of the aborted
+        // turn's events reach its session object at all. pig has no such shield, and this is
+        // what says it does not need one: the events *are* delivered, and every one of them is
+        // filed against the conversation being left, which is where the aborted half of a turn
+        // belongs. If this ever goes red, the shield is the thing to port.
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session([], null, null, self::parksUntilAborted(), $store);
+
+        $switched = false;
+        $seen = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$seen, &$switched): void {
+            $seen[] = ($switched ? 'after:' : 'before:') . $event::class;
+        });
+
+        Async::run(function () use ($session, &$switched): void {
+            Async::spawn(static fn () => $session->prompt('hi'));
+
+            // Long enough for the turn to be in flight and short enough that it still is.
+            Async::delay(0.01);
+            $this->assertTrue($session->isStreaming());
+
+            $session->startNew();
+            $switched = true;
+        });
+        self::settle();
+
+        $after = array_values(array_filter($seen, static fn (string $s): bool => str_starts_with($s, 'after:')));
+
+        // The other half of the claim, and what stops `$after` being empty for the trivial
+        // reason: the events of the aborted turn were delivered, all of them before the reset.
+        $this->assertContains('before:' . AgentEndEvent::class, $seen);
+
+        // No second turn — the scripted provider would throw if it were asked again — and no
+        // retry, no auto-compaction and no held-back command arriving in the new conversation.
+        $this->assertSame([], $after);
+        $this->assertSame([], $session->messages());
+        $this->assertFalse($session->isRetrying());
+
+        // And the half a turn that did happen is in the file it happened in, not in the new
+        // one, which is the half upstream drops on the floor.
+        $this->assertNotSame($store->path, $session->store()?->path);
+        $this->assertNotSame([], $store->messages());
+
+        // Nothing at all in the new one — not even a file, since nothing is written until the
+        // first assistant message, and the new conversation has had none.
+        $this->assertFileDoesNotExist((string) $session->store()?->path);
+    }
+
+    public function testARetryCalledOffBeforeItBeganDoesNotBeginAfterAll(): void
+    {
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky(array_fill(0, 4, ['error' => 'Anthropic returned 503: overloaded'])),
+            settings: self::quickRetries(['baseDelayMs' => 30_000]),
+        );
+
+        $starts = $ends = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$starts, &$ends): void {
+            if ($event instanceof RetryStartEvent) {
+                $starts[] = $event;
+            }
+
+            if ($event instanceof RetryEndEvent) {
+                $ends[] = $event;
+            }
+        });
+
+        // Stopped at the *decision* rather than at the sleep, which is a tick of its own:
+        // `afterTheRun()` makes both halves of the retry synchronously and the fiber that
+        // announces it and parks on the timer runs afterwards. So this is the one moment where
+        // `abortRetry()` has something to clear and nothing yet to interrupt.
+        Async::run(static function () use ($session): void {
+            Async::spawn(static fn () => $session->prompt('hi'));
+        });
+
+        for ($tick = 0; $tick < 200 && !$session->isRetrying(); $tick++) {
+            self::tickWithoutWaiting();
+        }
+
+        $session->abortRetry();
+
+        for ($tick = 0; $tick < 50; $tick++) {
+            self::tickWithoutWaiting();
+        }
+
+        // Never began: the fiber found both halves cleared and stopped. Making a fresh pair
+        // there would have armed a half-minute sleep against a controller nobody holds — escape
+        // answered, and then unreachable for the rest of it.
+        $this->assertSame([], $starts);
+        $this->assertCount(1, $ends);
         $this->assertFalse($session->isRetrying());
     }
 
@@ -1063,6 +1233,180 @@ final class AgentSessionTest extends TestCase
 
         $messages = $session->messages();
         $this->assertSame('answered after summarising', self::textOf($messages[count($messages) - 1]));
+    }
+
+    public function testEscapeReachesASummarisationNobodyAskedFor(): void
+    {
+        // The screen says "esc to cancel" while this runs, and for the *auto* compaction there was
+        // nothing behind the label: `compactAndCarryOn()` called `compact()` with no signal at all,
+        // so the summariser's own turn — a whole conversation, at high reasoning — could not be
+        // stopped. Which is the failure `Retry`'s abortable sleep exists to prevent, one method
+        // over: a wait that escape cannot reach looks exactly like a hang.
+        $session = $this->overflowingIntoASummariserThatParks();
+
+        $starts = $ends = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$starts, &$ends): void {
+            if ($event instanceof AutoCompactionStartEvent) {
+                $starts[] = $event;
+            }
+
+            if ($event instanceof AutoCompactionEndEvent) {
+                $ends[] = $event;
+            }
+        });
+
+        self::runUntilTheSummariserIsGoing($session);
+
+        $this->assertCount(1, $starts);
+        $this->assertTrue($session->isCompacting());
+
+        // And not a retry: the waiting handle `prompt()` parks on is pending for both, so keying
+        // this off it would have the session claiming to retry every time it summarises.
+        $this->assertFalse($session->isRetrying());
+
+        $session->abortCompaction();
+
+        for ($tick = 0; $tick < 200 && $ends === []; $tick++) {
+            self::tickWithoutWaiting();
+        }
+
+        $this->assertCount(1, $ends);
+        $this->assertFalse($ends[0]->succeeded);
+        $this->assertStringContainsString('cancelled', $ends[0]->error ?? '');
+        $this->assertFalse($session->isCompacting());
+    }
+
+    public function testStoppingTheRunStopsASummarisationWithIt(): void
+    {
+        // One call reaches all three things escape has to stop — the run, a sleeping retry and a
+        // summarisation — so a caller cannot reach two of them and believe it has finished.
+        $session = $this->overflowingIntoASummariserThatParks();
+
+        $ends = $retries = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$ends, &$retries): void {
+            if ($event instanceof AutoCompactionEndEvent) {
+                $ends[] = $event;
+            }
+
+            if ($event instanceof RetryEndEvent) {
+                $retries[] = $event;
+            }
+        });
+
+        self::runUntilTheSummariserIsGoing($session);
+
+        Async::run(static function () use ($session): void {
+            $session->abort()->await();
+        });
+
+        for ($tick = 0; $tick < 200 && $ends === []; $tick++) {
+            self::tickWithoutWaiting();
+        }
+
+        $this->assertCount(1, $ends);
+        $this->assertFalse($ends[0]->succeeded);
+
+        // `abort()` calls `abortRetry()` first, and there is no retry here — so it has to say
+        // nothing rather than announce one ending. Its guard is the controller for that reason.
+        $this->assertSame([], $retries);
+    }
+
+    public function testATypedCompactionCanBeStoppedFromEitherEnd(): void
+    {
+        // `/compact` brings a signal of its own, and `abortCompaction()` has to reach that
+        // summariser too — otherwise there are two facts about one summarisation and only the
+        // caller holds the one that works. The forwarding in `compact()` is what makes it one.
+        foreach (['the caller', 'the session'] as $who) {
+            $session = $this->session(
+                [],
+                null,
+                null,
+                self::parksUntilAborted(),
+                settings: self::quickRetries(['keepRecentTokens' => 1]),
+            );
+
+            foreach (range(1, 6) as $ignored) {
+                $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+            }
+
+            $mine = new AbortController();
+            $answer = 'not yet';
+
+            Async::run(static function () use ($session, $mine, &$answer): void {
+                Async::spawn(static function () use ($session, $mine, &$answer): void {
+                    $answer = $session->compact(null, $mine->signal);
+                });
+            });
+
+            for ($tick = 0; $tick < 200 && !$session->isCompacting(); $tick++) {
+                self::tickWithoutWaiting();
+            }
+
+            $this->assertTrue($session->isCompacting(), $who);
+
+            if ($who === 'the caller') {
+                $mine->abort('Cancelled');
+            } else {
+                $session->abortCompaction();
+            }
+
+            for ($tick = 0; $tick < 200 && $session->isCompacting(); $tick++) {
+                self::tickWithoutWaiting();
+            }
+
+            $this->assertNull($answer, "stopped by {$who}");
+            $this->assertFalse($session->isCompacting(), $who);
+        }
+    }
+
+    /**
+     * Two answered turns, a third that overflows, and a summariser that never finishes.
+     *
+     * Two real turns first because a compaction has to be *worth making*: `cutPoint()` works in
+     * tokens, and a conversation of one failed message is refused as "too small" before the
+     * summariser is ever reached — which is how the first version of these two tests came back
+     * green about something that had not happened.
+     */
+    private function overflowingIntoASummariserThatParks(): AgentSession
+    {
+        $at = 0;
+
+        return $this->session(
+            [],
+            streamFn: function (
+                Model $model,
+                Context $context,
+                SimpleStreamOptions $options,
+            ) use (&$at): AssistantMessageEventStream {
+                $at++;
+
+                return match (true) {
+                    $at === 1 => $this->replay('first answer'),
+                    $at === 2 => $this->replay('second answer'),
+                    $at === 3 => $this->fails('prompt is too long: 213462 tokens > 200000 maximum'),
+                    default => (self::parksUntilAborted())($model, $context, $options),
+                };
+            },
+            settings: self::quickRetries(['keepRecentTokens' => 1]),
+        );
+    }
+
+    /** Three turns, spawned, and the loop turned until the summariser is actually running. */
+    private static function runUntilTheSummariserIsGoing(AgentSession $session): void
+    {
+        Async::run(static function () use ($session): void {
+            Async::spawn(static function () use ($session): void {
+                $session->prompt('one');
+                $session->prompt('two');
+                $session->prompt('three');
+            });
+        });
+
+        // `isCompacting()` and not the start event: that is announced before `compact()` is
+        // called, so it says the overflow was noticed rather than that a summariser exists.
+        for ($tick = 0; $tick < 400 && !$session->isCompacting(); $tick++) {
+            self::tickWithoutWaiting();
+        }
     }
 
     public function testASummaryThatFailsEndsItRatherThanSendingTheSameThingAgain(): void
@@ -1531,6 +1875,39 @@ final class AgentSessionTest extends TestCase
         ]);
     }
 
+    /**
+     * Send something that will fail, and come back with the retry parked on its timer.
+     *
+     * `Async::run()` will not do: `prompt()` does not return until the retries behind its turn
+     * are finished too — which is the whole point of it, and which leaves a test that ran it
+     * that way looking at a retry that is already over, or sitting through the delay it was
+     * written to measure. So the turn is spawned and the loop is turned until the retry
+     * exists, each tick with an expired timer of its own so the retry's own timer is never
+     * waited out.
+     */
+    private static function startTurnAndParkOnTheRetry(AgentSession $session, string $text = 'hi'): void
+    {
+        $parked = false;
+        $stop = $session->subscribe(static function (AgentEvent $event) use (&$parked): void {
+            if ($event instanceof RetryStartEvent) {
+                $parked = true;
+            }
+        });
+
+        Async::run(static function () use ($session, $text): void {
+            Async::spawn(static fn () => $session->prompt($text));
+        });
+
+        // The `RetryStartEvent` and not `isRetrying()`: the retry is decided synchronously, one
+        // tick before the fiber that announces it and parks on the timer exists, so waiting for
+        // the flag would come back too early to see either.
+        for ($tick = 0; $tick < 200 && !$parked; $tick++) {
+            self::tickWithoutWaiting();
+        }
+
+        $stop();
+    }
+
     /** Turn the loop until nothing is left, so a spawned retry gets to happen. */
     private static function settle(int $ticks = 200): void
     {
@@ -1571,6 +1948,53 @@ final class AgentSessionTest extends TestCase
             }
 
             return $this->replay($answers[$index++] ?? throw new RuntimeException('out of scripted answers'));
+        };
+    }
+
+    /**
+     * A turn that goes on until escape reaches it, which is what a provider's socket does.
+     *
+     * The seam for anything that has to happen *while* the agent is working: the scripted
+     * providers above finish within the tick they are asked in, so there is no window.
+     */
+    private static function parksUntilAborted(): Closure
+    {
+        return static function (Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream {
+            $stream = new AssistantMessageEventStream();
+            $partial = new AssistantMessage(
+                [new TextContent('half of an ans')],
+                Api::AnthropicMessages,
+                'anthropic',
+                'test-model',
+                new Usage(),
+                StopReason::Aborted,
+            );
+
+            Async::spawn(static function () use ($stream, $partial, $options): void {
+                $stream->push(new StartEvent($partial));
+
+                // Parked on the signal rather than polling it: a poll only notices between ticks,
+                // and a test that drives the loop by hand can get through fifty of them inside the
+                // millisecond the poll was waiting for — which reads as an abort that did not
+                // arrive.
+                $stopped = new Deferred();
+                $options->signal?->onAbort(static function () use ($stopped): void {
+                    if (!$stopped->isComplete()) {
+                        $stopped->complete(null);
+                    }
+                });
+
+                if ($options->signal?->aborted() === true && !$stopped->isComplete()) {
+                    $stopped->complete(null);
+                }
+
+                $stopped->future->await();
+
+                $stream->push(new DoneEvent(StopReason::Aborted, $partial));
+                $stream->end();
+            });
+
+            return $stream;
         };
     }
 

@@ -2792,16 +2792,15 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 80 | 29,900 |
+| read difference by difference | 81 | 31,800 |
 | ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **34** | **11,400** |
+| **not yet read** | **33** | **9,500** |
 
-Those figures go stale; the queue does not. **Twelve files are 300 lines or more and they are
+Those figures go stale; the queue does not. **Eleven files are 300 lines or more and they are
 where the remaining risk is** — every one of them is ported and none has been read end to end:
 
 ```
 2439  coding-agent/modes/interactive/interactive-mode.ts   → Interactive\InteractiveMode
-1901  coding-agent/core/agent-session.ts                   → Session\AgentSession
  866  coding-agent/modes/interactive/components/tree-selector.ts → Interactive\TreeList
  646  tui/components/markdown.ts                           → Components\Markdown + Markdown\Lexer, Inline
  630  coding-agent/modes/interactive/components/tool-execution.ts → Interactive\ToolExecutionComponent
@@ -2816,6 +2815,23 @@ where the remaining risk is** — every one of them is ported and none has been 
 
 The remaining 22 are under 300 lines each and mostly components; the count is rebuilt by listing the
 sweep's output and striking off what this file records as read.
+
+**`agent-session.ts` came off that list, and it was read by surface rather than top to bottom** —
+74 upstream methods against pig's 66, mapped name by name, then every unmatched one chased down. That
+is what the traps below about `/new` during a retry and about `pig -p` and the 503 came out of, and it
+is a method worth reusing on `interactive-mode.ts`: a file that large is not read line by line by
+anybody, and the gaps are all in the names that have no pair.
+
+Three of its gaps are fixed in the traps below — `isCompacting`/`abortCompaction`, `waitForRetry` at
+both ends of `prompt()`, and the `isStreaming()` guards in front of `abort()`. **One is left, and it
+needs a decision rather than a fix:**
+
+| Upstream | What pig is missing | Consequence |
+|---|---|---|
+| `_tryExecuteHookCommand`, called from inside `prompt()` | pig dispatches hook commands in `InteractiveMode` | a hook's slash command works in the terminal and nowhere else: `pig -p "/deploy"` and RPC's `prompt` send it to the model as text. Where the fix belongs is the real question — pig's exact-match dispatch knows the built-ins and the file commands too (see the trap on that), so moving only the hook half into `prompt()` would split one decision across two places, which is the shape half these traps have. Upstream is itself split this way: hook commands in `prompt()`, file commands in its UI |
+
+`get_state` gained `isCompacting` and `queueMode`; `sessionId` stays out, since pig has no session
+identity apart from the file and `sessionFile` already is that.
 
 **Two things this scoreboard is not.** It is not a measure of quality — `theme.ts` was read this way
 and found nothing, and `bash-executor.ts` was not on anybody's list at all until a sweep turned it
@@ -5436,24 +5452,30 @@ broken by a line somewhere else entirely.** `RpcClientTest` is now the one test 
 spawns `bin/pig`, and that is the point of it — it also caught `RpcClient` sending `path` where the
 wire wants `sessionPath`, which no amount of reading would have.
 
-**One test in it has failed twice in a full run and never on its own**, and it is written down here
-rather than fixed because the root cause is not established. Both times it was
-`testAgentThatCannotStartSaysWhatItWroteToStandardError`, both on the 8.3 pass, and both times the
-message was `The agent closed its output` with **no trailer** where it should carry
-`No model matches 'no-such-model-anywhere'`. Nine runs of the file alone and three more full 8.3
-runs since: green.
+**One test in it failed three times in a full run and never on its own, and the third time is what
+fixed it.** Each time it was `testAgentThatCannotStartSaysWhatItWroteToStandardError`, each time on
+the 8.3 pass, and each time the message was `The agent closed its output` with **no trailer** where it
+should carry `No model matches 'no-such-model-anywhere'` — the sentence whose whole job is to name the
+reason, naming none.
 
-The reading that fits is that the child's two pipes become readable in one `stream_select()`, and the
-stdout watcher is registered first — so `readOut()` sees EOF and calls `fail()` with `$this->stderr`
-still empty, one poll before the stderr watcher would have filled it. What is *not* established is
-why that ordering happens only under a full run: a stand-in that writes to stderr and exits at once
-(`testTheReasonSurvivesWhenBothPipesEndInTheSameBreath`, which is what the `binary:` seam is for)
-passes, so the obvious construction of it is already handled somewhere.
+The reading, which was right: the child's two pipes become readable in one `stream_select()`, the
+stdout watcher is registered first, so `readOut()` sees EOF and words the failure with
+`$this->stderr` still empty — and `fail()` then cancels the watcher that would have filled it in.
+`trailer()` **reads the pipe itself** now, before it words anything. Every one of its six callers is
+already reporting a failure, so a non-blocking read nobody is waiting on is free, and it does not
+depend on which watcher the loop happened to reach first.
 
-Draining stderr inside that EOF branch is the fix this points at, and it is **not applied**, because
-a guard added on a reading rather than on reproduced data is the thing this file's conventions
-forbid. If it happens a third time, that is the fix to reach for — and the elapsed-time trick from
-`Process::runAsync()` applies here too: assert on what arrived, not on how long it took.
+**The part worth keeping is how long the wrong test held the fix up.**
+`testTheReasonSurvivesWhenBothPipesEndInTheSameBreath` was written for exactly this and *passes
+either way*: a stand-in that writes its reason and exits immediately gets its stderr drained on some
+other path, so for three appearances the evidence said "the obvious construction is already handled
+somewhere" and the fix stayed unapplied. What reproduces it every time is one line different — the
+stand-in closes standard output and **stays alive** (`fclose(STDOUT); usleep(400000);`), so the poll
+that finds stdout at EOF finds standard error readable and unread, and the registration order decides
+the rest. *A test built from the shape a race is guessed to have is not a test of the race.*
+
+Regression test: `RpcClientTest::testTheReasonIsReadOffThePipeRatherThanHopedFor`, which fails with
+the drain removed. The older one stays as the non-regression guard for the shape it does cover.
 
 ### A new session recorded no thinking level, so `--continue` came back on `off`
 
@@ -5537,6 +5559,165 @@ as the reasoning in it, and that one had none.
 Regression tests: `InteractiveModeTest::testWhatIsSaidAfterResumingIsWrittenToTheFileThatWasResumed`,
 `testANewSessionGetsAFileOfItsOwn`, `testANewSessionWritesNothingWhenNothingWasBeingWritten`.
 All three were checked against the old code and fail on it.
+
+### `pig -p` printed the 503 and exited, while the retry that would have worked went with it
+
+Upstream's `AgentSession.prompt()` ends with two lines and pig had ported one:
+
+```ts
+await this.agent.prompt(messages);
+await this.waitForRetry();
+```
+
+pig waited for a retry **on the way in** — `prompt()`'s first statement, with the reason beside it —
+and not on the way out. So `prompt()` returned the moment the agent's run ended, which for a turn
+that failed with a 503 is *before the answer exists*: `afterTheRun()` has spawned the retry and it
+has not slept yet.
+
+Three of the four modes were only cosmetically wrong — the answer arrives, just after the call that
+asked for it, and the events carry it to the screen or the host. **`-p` is the one that ends the
+process.** `PrintMode::run()` loops `prompt()`, then prints the last assistant message, then
+`bin/pig` exits — so with `retry.enabled` on by default, `pig -p "…"` against a busy provider printed
+`Anthropic returned 503: overloaded` on standard error and exited 1, and the second attempt two
+seconds later, which would have worked, never happened. A script's whole answer, lost to a pause.
+
+Two things had to move for the one line to work:
+
+- **The `Deferred` is made in `afterTheRun()`, not one line into `waitAndCarryOn()`.** That body runs
+  a tick later, so at the moment `prompt()` wants to await it there was nothing there — upstream
+  creates its `_retryPromise` synchronously in the `agent_end` handler for the same reason.
+  `startRetrying()` is the one place both halves are made now, and making them at the decision also
+  closes the window the controller's own move closed once before: the moment after a retry is decided
+  and before anything can be told it is happening.
+- **And that window turned out to be reachable**, which is the find inside the find. With the pair
+  made a tick early, an `abortRetry()` arriving in that tick cleared both — and the spawned body then
+  made *fresh* ones and slept against a controller nobody holds. Escape answered, and unreachable for
+  the next half minute. `waitAndCarryOn()` returns instead when it finds them gone.
+  `compactAndCarryOn()`'s two failure endings gained a `finishRetrying()` for the mirror of it: a
+  retry whose next attempt overflows arrives there with somebody waiting on a run that is not coming.
+
+**Five retry tests had to change shape, and that is the real cost of the fix being in the right
+place.** `Async::run(fn () => $session->prompt('hi'))` was how every one of them got control back
+with a retry still in flight, and `prompt()` now does not return until the retries are done — so
+those tests either sat through a half-minute sleep or came back to a retry that was already over.
+They spawn now, through one documented helper, `startTurnAndParkOnTheRetry()`; and it waits for the
+**`RetryStartEvent`** rather than for `isRetrying()`, because the retry is decided a tick before the
+fiber that announces it and parks on the timer exists, so the flag arrives too early to see either.
+
+*One of them had been passing for the wrong reason all along*: `testAbortingStopsTheWaiting` aborted
+in that same one-tick window, so the sleep it is named after had never been reached, and the
+parked-sleep abort it was written to cover was untested. Both moments have a test now —
+`testARetryCalledOffBeforeItBeganDoesNotBeginAfterAll` for the decision and that one for the sleep.
+
+**And the overflow half is the same bug by the other door**, closed in the entry below once there was
+a name for the thing to wait on: a turn that outgrew the window comes back as an error too,
+`afterTheRun()` spawns the summarisation that fixes it, and `-p` printed `prompt is too long` and
+exited while that was still being spawned. `$settled` is now made before *either* kind of background
+work and released once nothing more is coming — which is at the tail of `afterTheRun()`, because an
+auto-compaction's carry-on never touches the retry counter and so had no other ending to be released
+by. `isRetrying()` moved onto `$retrying` in the same change, or it would have answered true every
+time the session summarised.
+
+Regression tests: `PrintModeTest::testA503IsWaitedOutRatherThanPrintedAsTheAnswer` and
+`testAnOverflowIsSummarisedRatherThanPrintedAsTheAnswer` for what the person sees, and four mutations
+that pin the ends separately — dropping the `await`, dropping `startRetrying()`, dropping
+`startBackgroundWork()` on the overflow path, and dropping the release at the tail. The last of those
+fails as `The event loop ran out of work while the root coroutine was still suspended`, which is the
+honest shape of a handle nobody completes.
+
+### Two loaders said escape worked and the key reached neither
+
+`onRetryStart()` draws `… — trying again in 30s (1/3, esc to stop)` and `onOverflow()` draws
+`Context is full — summarising, then trying again. (esc to cancel)`. Both labels are upstream's and
+both were true of nothing: `InteractiveMode::interrupt()` ended with
+
+```php
+$this->session->agent->abort();
+```
+
+— **the agent's abort, not the session's.** A sleeping retry and a running summariser both happen
+*between* runs, where `$this->agent` has no controller to raise, so escape moved the queued text back
+into the editor and then did nothing at all. Reproduced through the real screen: the countdown says
+"esc to stop", escape arrives, and thirty seconds later the turn goes again.
+
+`AgentSession::abort()` is what reaches all three, and it now reaches the third as well —
+`abortCompaction()` beside `abortRetry()`, for the reason already written on it: *neither of these has
+an agent to interrupt.* Upstream's escape handler calls `abortCompaction()` itself, beside `abort()`;
+one call here is the same choice as `startNew()`'s, and it is what stops a caller reaching two of the
+three and believing it has finished.
+
+**The summariser had nothing behind the label either**, which is the second half of this and the
+worse one. `compactAndCarryOn()` called `compact()` with **no signal at all**, so the *auto*
+compaction — a whole conversation, at high reasoning, on a full context window — could not be stopped
+by anything, and its own `Summarising was cancelled.` branch was unreachable on that path. That is
+precisely the failure `Retry`'s abortable sleep exists to prevent, one method over: a wait escape
+cannot reach is indistinguishable from a hang.
+
+pig has one `compact()` where upstream has two paths and two controllers, so there is one
+`$compacting` here, made inside `compact()` — which gives `isCompacting()` and `abortCompaction()`
+one answer whoever started the summarisation. A signal the caller brought (the terminal's, for
+`/compact`) is **forwarded into** it rather than carried alongside, so what goes downstream has a
+single `aborted()` to ask: pig has no combinator for two signals, and the reason it has none is the
+note on `Future` above. Both directions are tested, and each is a separate mutation — the forwarding
+listener, and which signal goes down.
+
+Two smaller things fell out of the same read, both on `get_state`: upstream's `RpcSessionState`
+declares `isCompacting` and `queueMode` and pig's answer carried neither, so a host could not see a
+summarisation at all and could set the queue mode without ever reading it back — the
+wired-at-one-end shape, on a field rather than a key.
+
+Regression tests: `InteractiveModeTest::testEscapeStopsTheRetryTheScreenSaysItCanStop` for the label
+and the key, `AgentSessionTest::testEscapeReachesASummarisationNobodyAskedFor`,
+`testStoppingTheRunStopsASummarisationWithIt`, `testATypedCompactionCanBeStoppedFromEitherEnd` (two
+cases, one per end), and `RpcModeTest::testGetStateDescribesTheModelAndWhatItIsDoing` for the fields.
+
+### `/new` during a retry left the old conversation's retry running in the new one
+
+`startNew()` and `switchTo()` stop whatever is in flight before they throw the conversation away,
+and both asked the wrong question first:
+
+```php
+if ($this->isStreaming()) { $this->abort()->await(); }
+```
+
+**A retry that is sleeping is not streaming.** `abort()`'s own docblock says so, two hundred lines
+down — *"a retry that is sleeping has no agent to interrupt: the run is already over and the next
+one has not started. Escape has to reach both"* — and `prompt()` says it a third time and deals
+with it a third way, by waiting the retry out. So the rule was written down twice, with its reason,
+and the two methods in front of it asked `isStreaming()` instead. Upstream calls `await this.abort()`
+unconditionally in both.
+
+What it cost: press `/new` in the two-to-eight seconds a retry is waiting, and the retry wakes up in
+the conversation that replaced the one it was rescuing. The agent has been emptied by then, so
+`continue()` refuses and `carryOn()` turns the refusal into `RetryEndEvent` — **"Retry failed:
+cannot continue, no messages in context", in a brand new conversation nobody has said anything in
+yet.** Type something first and it is worse: the retry lands mid-turn, `continue()` refuses for
+being busy, and the same red line arrives on top of an answer that is still streaming.
+
+Both call `abort()` unconditionally now, which needs no `isStreaming()` of its own: `abort()` on an
+idle agent does nothing, `abortRetry()` returns early when nothing is being retried, and
+`waitForIdle()` on an idle agent hands back a completed future — so the `await()` does not even
+require a fiber, and no caller changed.
+
+**The two tests that were written first passed while doing the wrong thing**, which is the part
+worth keeping. Both ended in `self::settle()`, and the sleep in them is half a minute: the loop had
+nothing else to poll, so `tick()` slept the timer out, the retry ended **by itself**, and
+`assertFalse($session->isRetrying())` was true whatever `startNew()` had done. Thirty seconds per
+case, green either way. They assert straight after the call now, with no settle at all — the same
+failure as the `/label` test that asked about the leaf, and the same fix: *ask whether the assertion
+could fail.*
+
+Read in the same pass and **left alone**, so nobody re-derives it: `goTo()` and `compact()` have the
+same `isStreaming()` guard and neither is this bug. Upstream's `navigateTree()` does not abort — it
+has no streaming guard at all, pig's being its own — and `compact()` cannot, because pig reuses it
+for auto-compaction (`compactAndCarryOn()` calls it from inside the retry machinery, so aborting the
+retry there would kill its own caller) where upstream has a second implementation for that path.
+Neither has a reproduced consequence; if one turns up, this is the entry.
+
+Regression tests: `AgentSessionTest::testStartingANewSessionStopsARetryThatWasStillWaiting`,
+`testSwitchingSessionStopsARetryThatWasStillWaiting` — one per method, and each stays green when the
+other's guard is put back — and `testARetryDoesNotCarryOnIntoTheSessionThatReplacedIt`, which is the
+one that reproduces what the person actually sees.
 
 ### A `before_*` hook result is only heard if the runner thinks it decisive
 

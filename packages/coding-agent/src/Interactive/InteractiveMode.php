@@ -726,7 +726,14 @@ final class InteractiveMode
 
         $this->editor->setText($text);
         $this->showQueue();
-        $this->session->agent->abort();
+
+        // The session's and not the agent's, which is what this was and what made two labels on
+        // this screen promise something the key did not do: a retry counting down says "esc to
+        // stop" and a summariser says "esc to cancel", and both of them happen *between* runs,
+        // where `$this->agent` has no controller to raise. `AgentSession::abort()` reaches all
+        // three. The future is not awaited on purpose — this runs inside the loop's own input
+        // callback, and waiting here would suspend the loop that has to deliver the next key.
+        $this->session->abort();
     }
 
     private function onCtrlC(): void

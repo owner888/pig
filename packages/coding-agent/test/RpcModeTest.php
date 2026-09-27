@@ -438,6 +438,8 @@ final class RpcModeTest extends TestCase
         $this->assertSame('claude-test', $state['model']['id']);
         $this->assertSame('anthropic', $state['model']['provider']);
         $this->assertFalse($state['isStreaming']);
+        $this->assertFalse($state['isCompacting']);
+        $this->assertSame('one-at-a-time', $state['queueMode'], 'the default a host can now read back');
         $this->assertFalse($state['isBashRunning']);
         $this->assertSame(0, $state['messageCount']);
         $this->assertStringEndsWith('.jsonl', $state['sessionFile']);

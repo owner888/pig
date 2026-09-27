@@ -286,6 +286,35 @@ final class InteractiveModeTest extends TestCase
         return implode("\n", array_map(Ansi::strip(...), $this->mode->screen()->render(80)));
     }
 
+    /**
+     * Turn the loop without waiting out whatever timer is pending.
+     *
+     * `settle()` polls with no timeout of its own, so with a retry's half-minute timer armed and
+     * nothing to read it `usleep()`s for the whole of it. An expired timer of our own makes the
+     * poll return at once, which is what lets a test look at a countdown rather than sit through it.
+     */
+    private static function turnTheLoop(int $ticks = 100): void
+    {
+        for ($tick = 0; $tick < $ticks; $tick++) {
+            Loop::get()->delay(0.0, static fn () => null);
+            Loop::get()->tick();
+        }
+    }
+
+    /** A turn that comes back as a provider failure, which is what auto-retry is for. */
+    private static function failed(string $error): AssistantMessage
+    {
+        return new AssistantMessage(
+            [],
+            Api::AnthropicMessages,
+            'anthropic',
+            'claude-test',
+            new Usage(),
+            StopReason::Error,
+            $error,
+        );
+    }
+
     /** Run the loop until it has nothing left to do, so a spawned prompt can finish. */
     private function settle(): void
     {
@@ -1995,6 +2024,31 @@ final class InteractiveModeTest extends TestCase
         $this->assertTrue($result->stopped());
         $this->assertStringContainsString('guarding', $result->stdout);
         $this->assertLessThan(3.0, microtime(true) - $started, 'escape did not reach the command');
+    }
+
+    public function testEscapeStopsTheRetryTheScreenSaysItCanStop(): void
+    {
+        // Two loaders on this screen name escape — the retry countdown and the summariser — and
+        // `interrupt()`'s last branch called `$this->session->agent->abort()`, which reaches
+        // neither: a sleeping retry and a running summariser both happen between runs, where the
+        // agent has no controller to raise. So the label said "esc to stop" and the key did not.
+        $this->start(
+            answers: [self::failed('Anthropic returned 503: overloaded'), 'here you go'],
+            settings: Settings::inMemory(['retry' => ['baseDelayMs' => 30_000]]),
+        );
+
+        $this->type('hi');
+        $this->type(self::ENTER);
+        self::turnTheLoop();
+
+        $this->assertTrue($this->session->isRetrying());
+        $this->assertStringContainsString('esc to stop', $this->screen());
+
+        $this->type(self::ESC);
+        self::turnTheLoop();
+
+        $this->assertFalse($this->session->isRetrying());
+        $this->assertStringContainsString('cancelled', $this->screen());
     }
 
     // ---- what a hook says -------------------------------------------------------------

@@ -668,12 +668,49 @@ final class RpcClient
         $this->watchers = [];
     }
 
-    /** Standard error on the end of a message, because that is where the reason usually is. */
+    /**
+     * Standard error on the end of a message, because that is where the reason usually is.
+     *
+     * **Read here rather than trusted to the watcher**, and that is the whole of a flake that took
+     * three appearances to pin down: a child that writes a complaint and exits leaves both pipes
+     * readable in the same `stream_select()`, and the stdout watcher is registered first — so
+     * `readOut()` sees EOF and words the failure while `$this->stderr` is still empty, one poll
+     * before the watcher that would have filled it. What came out was
+     * `The agent closed its output` with nothing after it: the sentence that exists to name the
+     * reason, naming none. Every caller of this is already reporting a failure, so draining what
+     * is there costs a read nobody is waiting on.
+     */
     private function trailer(): string
     {
+        $this->drainStderr();
+
         $stderr = trim($this->stderr);
 
         return $stderr === '' ? '' : ". The agent said: {$stderr}";
+    }
+
+    /**
+     * Take whatever is on standard error now.
+     *
+     * The pipe is non-blocking, so this stops at the first read with nothing in it and does not
+     * wait for the child to write more. It is called where the watcher may not have run yet, and
+     * after `fail()` has cancelled the watchers, so it is the only reader left.
+     */
+    private function drainStderr(): void
+    {
+        if (!isset($this->pipes[2]) || !is_resource($this->pipes[2])) {
+            return;
+        }
+
+        while (true) {
+            $chunk = fread($this->pipes[2], self::CHUNK);
+
+            if (!is_string($chunk) || $chunk === '') {
+                return;
+            }
+
+            $this->stderr .= $chunk;
+        }
     }
 
     private function cleanUp(): void

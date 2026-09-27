@@ -594,6 +594,39 @@ final class RpcClientTest extends TestCase
         unlink($agent);
     }
 
+    public function testTheReasonIsReadOffThePipeRatherThanHopedFor(): void
+    {
+        // The test above is the shape the flake was *guessed* to have, and it passes either way,
+        // which is why three full-suite failures went unexplained. This is the shape that
+        // reproduces it every time: the stand-in writes its reason and closes standard output
+        // while staying alive, so the poll that finds stdout at EOF finds standard error readable
+        // and unread — and the stdout watcher is registered first, so `readOut()` words the
+        // failure and `fail()` cancels the watcher that would have filled the trailer in.
+        $agent = $this->root . '/closes-stdout-and-lingers.php';
+        file_put_contents(
+            $agent,
+            "<?php\nfwrite(STDERR, \"the reason nobody saw\\n\");\nfclose(STDOUT);\nusleep(400000);\nexit(1);\n",
+        );
+
+        $client = new RpcClient(cwd: $this->cwd, binary: $agent);
+
+        $error = $this->assertThrows(RpcError::class, static function () use ($client): void {
+            Async::run(static function () use ($client): void {
+                $client->start();
+
+                try {
+                    $client->state();
+                } finally {
+                    $client->stop();
+                }
+            });
+        });
+
+        $this->assertStringContainsString('the reason nobody saw', $error->getMessage());
+
+        unlink($agent);
+    }
+
     public function testStoppingTwiceIsHarmless(): void
     {
         $this->serveOneTurn('unused');

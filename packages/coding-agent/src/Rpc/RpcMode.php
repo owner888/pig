@@ -388,6 +388,13 @@ final class RpcMode
             'model' => $model === null ? null : self::model($model),
             'thinkingLevel' => $this->session->thinkingLevel()->value,
             'isStreaming' => $this->session->isStreaming(),
+            // Upstream's `RpcSessionState` declares both of these and pig's answer carried
+            // neither: a host had no way to know a summarisation was running, and could set the
+            // queue mode without ever being able to read it back. `sessionId` is the third field
+            // on that interface and stays out — pig has no session identity apart from the file,
+            // which `sessionFile` already is.
+            'isCompacting' => $this->session->isCompacting(),
+            'queueMode' => $this->session->queueMode()->value,
             'isBashRunning' => $this->session->isBashRunning(),
             'sessionFile' => $this->session->store()?->path,
             'messageCount' => count($this->session->messages()),

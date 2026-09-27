@@ -37,6 +37,7 @@ use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\PrintMode;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Settings;
 use RuntimeException;
 
 /**
@@ -65,6 +66,9 @@ final class PrintModeTest extends TestCase
     /** Set to make the next answer an error rather than a completion. */
     private ?string $failure = null;
 
+    /** One error per entry, consumed before `$failure` — a turn that fails and then does not. */
+    private array $failures = [];
+
     /** Blocks on the content of each answer. */
     private bool $thinking = false;
 
@@ -76,6 +80,7 @@ final class PrintModeTest extends TestCase
         mkdir($this->cwd, 0o755, true);
         putenv('PIG_HOME=' . $this->cwd . '-home');
         $this->failure = null;
+        $this->failures = [];
         $this->thinking = false;
     }
 
@@ -120,6 +125,7 @@ final class PrintModeTest extends TestCase
         ?HookRunner $hooks = null,
         ?CustomToolSet $customTools = null,
         bool $store = false,
+        ?Settings $settings = null,
     ): int {
         $this->out = fopen('php://temp', 'w+') ?: throw new RuntimeException('no temp stream');
         $this->err = fopen('php://temp', 'w+') ?: throw new RuntimeException('no temp stream');
@@ -141,7 +147,7 @@ final class PrintModeTest extends TestCase
             $agent,
             $this->cwd,
             $store ? SessionManager::create($this->cwd) : null,
-            null,
+            $settings,
             $hooks,
         );
 
@@ -154,7 +160,7 @@ final class PrintModeTest extends TestCase
     {
         $text = array_shift($this->answers) ?? throw new RuntimeException('out of scripted answers');
         $stream = new AssistantMessageEventStream();
-        $failure = $this->failure;
+        $failure = array_shift($this->failures) ?? $this->failure;
         $thinking = $this->thinking;
 
         Async::spawn(function () use ($stream, $text, $failure, $thinking): void {
@@ -283,6 +289,38 @@ final class PrintModeTest extends TestCase
         // Not on stdout: a pipe reading the answer must not be handed an error as if it
         // were one.
         $this->assertSame('', $this->printed());
+    }
+
+    public function testA503IsWaitedOutRatherThanPrintedAsTheAnswer(): void
+    {
+        // Auto-retry is on by default, so a 503 here is a pause and not an outcome — and this
+        // mode has to be the thing that waits, because when it returns the process exits and
+        // the retry goes with it.
+        $this->answers = ['ignored', 'here you go'];
+        $this->failures = ['Anthropic returned 503: overloaded'];
+        $code = $this->run(['ask'], settings: Settings::inMemory(['retry' => ['baseDelayMs' => 1]]));
+
+        $this->assertSame(0, $code);
+        $this->assertSame("here you go\n", $this->printed());
+        $this->assertStringNotContainsString('503', $this->complained());
+    }
+
+    public function testAnOverflowIsSummarisedRatherThanPrintedAsTheAnswer(): void
+    {
+        // The retry half of this is the test above; this is the same bug by the other door. A turn
+        // that outgrew the window comes back as an error, `afterTheRun()` spawns the summarisation
+        // that fixes it, and `prompt()` returning before that happens means the error is printed
+        // and the process exits — taking the compaction with it.
+        $this->answers = ['first', 'second', 'ignored', 'the summary', 'answered after summarising'];
+        $this->failures = [null, null, 'prompt is too long: 213462 tokens > 200000 maximum'];
+        $code = $this->run(
+            ['one', 'two', 'three'],
+            settings: Settings::inMemory(['compaction' => ['keepRecentTokens' => 1]]),
+        );
+
+        $this->assertSame(0, $code);
+        $this->assertSame("answered after summarising\n", $this->printed());
+        $this->assertStringNotContainsString('too long', $this->complained());
     }
 
     public function testAProviderThatThrowsIsAFailedTurnRatherThanAHang(): void
