@@ -97,7 +97,14 @@ final class Editor implements Caret, Component, InputHandler
     /** @var Closure(string): void|null */
     private ?Closure $onChange = null;
 
-    /** While the agent is working, Enter should not start another turn. */
+    /**
+     * Enter does nothing while this is set, and the text stays where it is.
+     *
+     * Not "while the agent is working", which is what this said and what the application does
+     * *not* use it for: a message typed mid-run is queued rather than refused, because the person
+     * watching a tool run is exactly who has something to add. What it is for is the window where
+     * a message cannot be queued either — a conversation being summarised out from under it.
+     */
     public bool $disableSubmit = false;
 
     private EditorTheme $theme;

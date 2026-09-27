@@ -86,6 +86,9 @@ final class InteractiveModeTest extends TestCase
 
     private bool $holding = false;
 
+    /** Model calls to let through before the next one is held. */
+    private int $letThrough = 0;
+
     private string $cwd;
 
     private string $home;
@@ -100,6 +103,7 @@ final class InteractiveModeTest extends TestCase
         Loop::reset();
         $this->held = null;
         $this->holding = false;
+        $this->letThrough = 0;
         $this->terminal = new FakeTerminal(80, 24);
         $this->cwd = sys_get_temp_dir() . '/pig-interactive-' . bin2hex(random_bytes(4));
         $this->home = $this->cwd . '-home';
@@ -238,10 +242,14 @@ final class InteractiveModeTest extends TestCase
         // Held open: the two tests about typing mid-run need the agent to still be
         // working when the next key arrives, which an instant answer never is.
         if ($this->held === null && $this->holding) {
-            $this->held = $stream;
-            $this->answers[] = $answer;
+            if ($this->letThrough > 0) {
+                $this->letThrough--;
+            } else {
+                $this->held = $stream;
+                $this->answers[] = $answer;
 
-            return $stream;
+                return $stream;
+            }
         }
 
         Async::spawn(static function () use ($stream, $message): void {
@@ -2105,6 +2113,59 @@ final class InteractiveModeTest extends TestCase
         $this->assertLessThan(3.0, microtime(true) - $started, 'escape did not reach the command');
     }
 
+    public function testEnterDuringAnAutoCompactionKeepsWhatYouTypedRatherThanLosingIt(): void
+    {
+        // `Editor::$disableSubmit` is honoured, `CustomEditor::disableSubmit()` is public, and
+        // nothing in pig ever called either — upstream's one use is exactly this window. Without
+        // it the submit handler clears the editor and spawns a turn that parks on the
+        // compaction; when the compaction's own carry-on starts a run, that turn wakes up to
+        // `Agent is already working` and the message is gone, with a red line where it went.
+        $this->start(
+            answers: [
+                'first',
+                'second',
+                self::failed('prompt is too long: 213462 tokens > 200000 maximum'),
+                'the summary',
+                'answered after summarising',
+                'and one more',
+            ],
+            settings: Settings::inMemory(['compaction' => ['keepRecentTokens' => 1]]),
+        );
+
+        // Two answered turns first, because a compaction has to be worth making — and the fourth
+        // model call, the summariser, is the one held.
+        $release = $this->holdTheAgent(letThrough: 3);
+
+        foreach (['one', 'two', 'three'] as $said) {
+            $this->type($said);
+            $this->type(self::ENTER);
+            $this->settle();
+        }
+
+        $this->assertStringContainsString('summarising', strtolower($this->screen()));
+
+        $this->type('a question I was half way through');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('a question I was half way through', $this->screen());
+        $this->assertStringNotContainsString('already working', $this->screen());
+
+        $release();
+        $this->settle();
+
+        // And Enter works again afterwards, which nothing else asserts: leaving the flag set is a
+        // prompt that has quietly stopped sending, and it breaks no other test in this file.
+        $this->type(' — and now the rest of it');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // The *answer* and not the text: with submit still disabled the typed line is on screen
+        // either way — in the editor rather than in the transcript — so asserting on it is an
+        // assertion that cannot fail. What only happens if the turn ran is the reply.
+        $this->assertStringContainsString('and one more', $this->screen());
+    }
+
     public function testEscapeStopsTheRetryTheScreenSaysItCanStop(): void
     {
         // Two loaders on this screen name escape — the retry countdown and the summariser — and
@@ -2380,9 +2441,10 @@ final class InteractiveModeTest extends TestCase
      * The scripted provider answers instantly, which is right for every other test and
      * useless for the two about what happens while it is still working.
      */
-    private function holdTheAgent(): Closure
+    private function holdTheAgent(int $letThrough = 0): Closure
     {
         $this->holding = true;
+        $this->letThrough = $letThrough;
 
         return function (): void {
             $this->holding = false;

@@ -615,8 +615,38 @@ components it draws with are `UserMessageComponent`, `AssistantMessageComponent`
 `InteractiveMode` is ~1200 lines against upstream's 2439, and the difference is almost entirely
 selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
 trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
-an agent you can talk to, fourteen slash commands plus whatever the hooks add, the keys, and
+an agent you can talk to, nineteen slash commands plus whatever the hooks add, the keys, and
 the dialogs a hook or a custom tool can open mid-turn (`Interactive\TerminalUi`).
+
+**Audited against its 2439 lines by surface** — 68 upstream methods mapped name by name against
+pig's 88, then every unmatched one chased down, which is the method `agent-session.ts` was read
+with and the only one that works on a file this size. It found three things to fix, each its own
+trap below (the editing keys named nowhere, `/debug` three-quarters ported, a message lost to an
+auto-compaction), one command left out on its merits (`/share`, in the table above), and four
+places where pig's arrangement differs on purpose. Those four, so nobody re-derives them:
+
+- **A status line is appended, not replaced.** Upstream's `showStatus()` overwrites the previous
+  one when it is still the last thing in the chat, so toggling ctrl+t twice leaves one line there
+  and not two. pig has one `say()` where upstream has `showStatus` *and* `showError`/`showWarning`,
+  and `say()` also prints `/help`, `/skills` and the hook list — replacing those would make
+  `/help` vanish when the next thing is said. Splitting it in two is the fix if the duplicate
+  lines ever matter; the payoff is cosmetic and the cost is deciding, per caller, which kind each
+  `say()` is.
+- **Compaction leaves the transcript where it is**, in both paths, with the reason on the code: it
+  is what was said, and the summary is a note about it rather than a replacement for anyone's
+  memory of reading it. Upstream clears the chat and rebuilds it from the compacted messages, in
+  the manual path and the automatic one both, so its screen matches the model's view and its
+  scrollback loses what was summarised. pig's two paths agree with each other, which is the part
+  that matters.
+- **A `!command`'s output goes straight into the transcript**, so there is nothing to flush.
+  Upstream draws it in the pending area and moves it into the chat when the next message is
+  submitted (`flushPendingBashComponents`), because its component and its *message* arrive at
+  different moments. pig's message still joins the conversation on `AgentEndEvent` —
+  `AgentSession::flushBash()` — and only the drawing is immediate.
+- **A picker goes in the overlay, above the editor, not in place of it.** Upstream's
+  `showSelector()` clears the editor's own container; the trap below on `$overlay` is why pig does
+  not, and it is the arrangement that made pig's "focus on an invisible list" bug possible in the
+  first place.
 
 `/copy` needed a clipboard *writer*, which nothing had: `SystemClipboard` could only read.
 `Process::feed()` is the piece under it — a command with text on its standard input, which is
@@ -2793,15 +2823,14 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 81 | 31,800 |
+| read difference by difference | 82 | 34,200 |
 | ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **33** | **9,500** |
+| **not yet read** | **32** | **7,100** |
 
-Those figures go stale; the queue does not. **Eleven files are 300 lines or more and they are
+Those figures go stale; the queue does not. **Ten files are 300 lines or more and they are
 where the remaining risk is** — every one of them is ported and none has been read end to end:
 
 ```
-2439  coding-agent/modes/interactive/interactive-mode.ts   → Interactive\InteractiveMode
  866  coding-agent/modes/interactive/components/tree-selector.ts → Interactive\TreeList
  646  tui/components/markdown.ts                           → Components\Markdown + Markdown\Lexer, Inline
  630  coding-agent/modes/interactive/components/tool-execution.ts → Interactive\ToolExecutionComponent
@@ -2817,11 +2846,14 @@ where the remaining risk is** — every one of them is ported and none has been 
 The remaining 22 are under 300 lines each and mostly components; the count is rebuilt by listing the
 sweep's output and striking off what this file records as read.
 
-**`agent-session.ts` came off that list, and it was read by surface rather than top to bottom** —
-74 upstream methods against pig's 66, mapped name by name, then every unmatched one chased down. That
-is what the traps below about `/new` during a retry and about `pig -p` and the 503 came out of, and it
-is a method worth reusing on `interactive-mode.ts`: a file that large is not read line by line by
-anybody, and the gaps are all in the names that have no pair.
+**The two largest files came off that list together, and both were read by surface rather than top
+to bottom** — `agent-session.ts`, 74 upstream methods against pig's 66, and `interactive-mode.ts`,
+68 against 88: mapped name by name, then every unmatched one chased down. Six of the traps below came
+out of those two reads. The method is the finding as much as the bugs are: **a file of two thousand
+lines is not read line by line by anybody, and the gaps are all in the names that have no pair.** Of
+the twelve unmatched names in `interactive-mode.ts`, three were bugs, one was a command left out on
+its merits, four were arrangements pig differs on deliberately, and four were pig's own code under
+another name.
 
 Three of its gaps are fixed in the traps below — `isCompacting`/`abortCompaction`, `waitForRetry` at
 both ends of `prompt()`, and the `isStreaming()` guards in front of `abort()`. **One is left, and it
@@ -5625,6 +5657,44 @@ that pin the ends separately — dropping the `await`, dropping `startRetrying()
 `startBackgroundWork()` on the overflow path, and dropping the release at the tail. The last of those
 fails as `The event loop ran out of work while the root coroutine was still suspended`, which is the
 honest shape of a handle nobody completes.
+
+### A message typed while the conversation was being summarised was lost with a red line
+
+`Editor::$disableSubmit` is honoured, `CustomEditor::disableSubmit()` is public, and **nothing in
+pig ever called either** — the third piece of dormant machinery found in one read, after
+`setDebugHandler()` and ctrl+p before it. Upstream has exactly one use for it, and it is the one
+window where a message can neither be sent nor queued: a conversation being summarised out from
+under it.
+
+What it cost, reproduced through the real screen: the submit handler clears the editor and spawns
+the turn, `prompt()` parks on the compaction's own handle, and then the compaction's carry-on starts
+a run — so the parked turn wakes up to `Agent is already working. Use steer() or followUp().`, which
+`sendAndWait()` draws as a red line. **The text was already gone from the editor, so what the person
+typed is nowhere at all.**
+
+Before `prompt()` learned to wait, the same keystroke was wrong the other way round: the turn went
+out *during* the summarisation and the compaction's own `continue()` was the thing refused. Two
+arrangements, two losses; the flag is the answer that loses nothing, because the keystroke never
+becomes a submit and the line stays where it was typed.
+
+Wired on `AutoCompactionStartEvent` and off on `AutoCompactionEndEvent`, which is upstream's pair.
+Not on the manual `/compact`, and upstream does not either: that one was started by somebody who is
+at the keyboard and just typed it, where the auto one arrives in the middle of their sentence.
+
+**The flag's own docblock said it was for "while the agent is working", which pig does not use it
+for and never did** — a message typed mid-run is *queued*, because the person watching a tool run is
+exactly who has something to add. The fourth shape from the index, on a field.
+
+The mutation check took three goes here, and the third one is the lesson. Removing the *re-enable*
+broke nothing at first; then it broke nothing again, because the test asserted the typed line was
+on screen — and with submit still disabled it is on screen, in the editor instead of in the
+transcript. **An assertion that holds either way is not an assertion.** What only happens if the
+turn ran is the model's reply, so that is what it asserts now.
+
+Regression test: `InteractiveModeTest::testEnterDuringAnAutoCompactionKeepsWhatYouTypedRatherThanLosingIt`,
+whose two halves fail separately when each end of the flag is removed. The harness gained one thing
+for it — `holdTheAgent(letThrough: 3)`, so the call that is held can be the *summariser* rather than
+the first turn.
 
 ### The prompt answered to eleven keys that were named nowhere
 

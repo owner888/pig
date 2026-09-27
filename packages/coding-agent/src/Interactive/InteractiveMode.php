@@ -2748,6 +2748,14 @@ final class InteractiveMode
 
     private function onOverflow(): void
     {
+        // Enter does nothing for the length of it, which is upstream's one use of this flag and
+        // the only answer that does not lose the message. Without it the submit handler clears
+        // the editor and spawns a turn that parks on the compaction — and when the compaction's
+        // own carry-on starts a run, that turn wakes up to `Agent is already working` and what
+        // was typed is gone, with a red line where it went. The text stays where it is and the
+        // next Enter sends it.
+        $this->editor->disableSubmit(true);
+
         $this->working?->stop();
         $this->status->clear();
 
@@ -2763,6 +2771,8 @@ final class InteractiveMode
 
     private function onOverflowHandled(AutoCompactionEndEvent $event): void
     {
+        $this->editor->disableSubmit(false);
+
         $this->working?->stop();
         $this->working = null;
         $this->status->clear();
