@@ -289,6 +289,43 @@ built on `pig/tui` (done — `Interactive\`), `core/hooks/` (done — `Hooks\`),
 types under `Session\`), `modes/rpc/` (done — `Rpc\`) and `modes/print-mode.ts` (done —
 `PrintMode`). The rest is left out until something needs it.
 
+### A replayed summary had no end the model could find
+
+`messages.ts` is 189 lines and four of them are the constants that wrap a summary when it is
+replayed:
+
+```ts
+COMPACTION_SUMMARY_PREFIX = "…compacted into the following summary:\n\n<summary>\n"
+BRANCH_SUMMARY_PREFIX     = "…a summary of a branch that this conversation came back from:\n\n<summary>\n"
+```
+
+pig had **its own sentence and no tags at all** on both — `"The conversation so far, summarised:"`
+and a preamble of its own. A summary is prose a model wrote *about a conversation*, so it contains
+lines like `Assistant: I reverted it` and, if the model was thorough, instructions it found in what
+it was summarising. Replayed with a sentence in front and nothing behind it, **where the summary
+stopped and the live conversation resumed was something the next model had to work out** — and pig
+already wraps its summarisation *request* in `<conversation>` tags for exactly this reason, which is
+the same fact one direction over.
+
+Both are upstream's constants now, word for word, with pig's `<read-files>` and `<modified-files>`
+after the close, because a file list is not part of the prose. **Upstream's two suffixes disagree
+about a leading newline** and that is kept: it reaches a prompt either way, and a port that tidies
+one of two literals is a port whose next diff shows a change nobody made on purpose.
+
+The branch preamble's own docblock said **"Upstream's wording"** and it was not — the fourth shape
+from the index, in the one place where the claim was the whole justification for the deviation. It
+went with the constant rather than being corrected in place, and the reason it gave (that the
+sentence should say *the user* went somewhere else, so the model does not read the summary as its own
+last turn) survives in upstream's sentence anyway: "a branch that this conversation came back from"
+says the same thing.
+
+Regression test: `CompactionTest::testAReplayedSummaryIsWrappedSoItsEndIsFindable`, over both
+message types, which also asserts the file lists are outside the tags.
+
+The rest of `messages.ts` matched, and one difference is pig's own with a reason: `toText()` rtrims
+the command output before fencing it, so `"hi\n"` does not come out as a fence with a blank line in
+it and an output of nothing but newlines reads as `(no output)` rather than an empty fence.
+
 `AgentSession` is 1901 lines upstream and ~1000 here, because the one thing it coordinates that
 is not ported is not there to coordinate: branching to a second session file.
 What is left is the conversation, the event fan-out,
@@ -2650,8 +2687,8 @@ What is left unported, across every package, each for a reason:
 
 | Upstream | Why not |
 |---|---|
-| nine of the selector components, as files | every one of them is here as something else, and the audit that checked it is below: `hook-selector`, `hook-editor` and `hook-input` are `TerminalUi::select()`, `editor()` and `input()`; `queue-mode`, `show-images`, `thinking` and `settings-selector` are `/settings`' rows plus `thinkingSubmenu()`; `theme-selector` is that list's theme row; `oauth-selector` is `showSignIns()`; `session-selector` is `Cli\SessionPicker`; `model-selector` is `showModels()`. **`tree-selector.ts` is no longer among them** — it is `Interactive\TreeList` |
-| `coding-agent/modes/interactive/components/user-message-selector.ts` | the **tenth** selector, and the one that is not here as something else: it is `/branch`'s list, and `/branch` forks a conversation into a second session file, which pig does not do. `/tree` is pig's answer to the same wish and has its own list. Upstream also opens this one on a **double Escape** with an empty prompt; pig's Escape stops whatever is running and does nothing when nothing is, so that gesture has no meaning here. If a key for "go back to something I said" is ever wanted, `/tree` is what it should open and this row is where to start |
+| eleven of the selector components, as files | every one of them is here as something else, and the audit that checked it is below: `hook-selector`, `hook-editor` and `hook-input` are `TerminalUi::select()`, `editor()` and `input()`; `queue-mode`, `show-images`, `thinking` and `settings-selector` are `/settings`' rows plus `thinkingSubmenu()`; `theme-selector` is that list's theme row; `oauth-selector` is `showSignIns()`; `session-selector` is `Cli\SessionPicker`; `model-selector` is `showModels()`. **`tree-selector.ts` is no longer among them** — it is `Interactive\TreeList` |
+| `coding-agent/modes/interactive/components/user-message-selector.ts` | the **twelfth** selector, and the one that is not here as something else: it is `/branch`'s list, and `/branch` forks a conversation into a second session file, which pig does not do. `/tree` is pig's answer to the same wish and has its own list. Upstream also opens this one on a **double Escape** with an empty prompt; pig's Escape stops whatever is running and does nothing when nothing is, so that gesture has no meaning here. If a key for "go back to something I said" is ever wanted, `/tree` is what it should open and this row is where to start |
 | `ai/utils/typebox-helpers.ts` (24) | `StringEnum`, a TypeBox helper that emits `{type:"string", enum:[…]}` because TypeBox's own `Type.Enum` emits `anyOf`/`const` and Google's API rejects that. In PHP a schema **is** an array, so there is nothing to help with — you write the array, and `JsonSchemaTest` says so where the enum is tested |
 | `coding-agent/modes/rpc/rpc-types.ts` | 203 lines of types for JSON that arrives from outside the process, where a static type guarantees nothing and the runtime checks are the contract — the long version is in the RPC section, including the two things that *would* be worth typing and why neither is done yet. `RpcMode`'s docblock plus `RpcEvents` is where the wire shape is written down. Its `rpc-client.ts` **is** ported, as `Rpc\RpcClient` |
 | every `index.ts` | barrel re-exports, which is what an autoloader does here |
@@ -2712,6 +2749,46 @@ done
 Read it against pig's own tree, and anything with no counterpart belongs in this table or in the
 code. It is worth running after a run of porting, not during one — during one, every second file
 is legitimately absent.
+
+### How much of it has been read against upstream
+
+The sweep above answers "is anything missing". This is the other question: **which ported files have
+been read against their upstream line by line**, which is what every find in the traps at the bottom
+came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` barrels:
+
+| | files | lines |
+|---|---|---|
+| read difference by difference | 78 | 28,200 |
+| ruled out, reason on record | 13 | 1,400 |
+| **not yet read** | **36** | **13,100** |
+
+Those figures go stale; the queue does not. **Fourteen files are 300 lines or more and they are
+where the remaining risk is** — every one of them is ported and none has been read end to end:
+
+```
+2439  coding-agent/modes/interactive/interactive-mode.ts   → Interactive\InteractiveMode
+1901  coding-agent/core/agent-session.ts                   → Session\AgentSession
+1129  coding-agent/core/session-manager.ts                 → Session\SessionManager
+ 866  coding-agent/modes/interactive/components/tree-selector.ts → Interactive\TreeList
+ 646  tui/components/markdown.ts                           → Components\Markdown + Markdown\Lexer, Inline
+ 630  coding-agent/modes/interactive/components/tool-execution.ts → Interactive\ToolExecutionComponent
+ 576  tui/autocomplete.ts                                  → Autocomplete\CombinedAutocompleteProvider
+ 547  tui/keys.ts                                          → Keys
+ 469  coding-agent/modes/rpc/rpc-mode.ts                   → Rpc\RpcMode
+ 451  coding-agent/main.ts                                 → bin/pig
+ 351  tui/tui.ts                                           → Tui
+ 344  tui/components/input.ts                              → Components\Input
+ 340  tui/terminal-image.ts                                → Images\TerminalImage
+ 324  coding-agent/modes/interactive/components/footer.ts   → Interactive\FooterComponent
+```
+
+The remaining 22 are under 300 lines each and mostly components; the count is rebuilt by listing the
+sweep's output and striking off what this file records as read.
+
+**Two things this scoreboard is not.** It is not a measure of quality — `theme.ts` was read this way
+and found nothing, and `bash-executor.ts` was not on anybody's list at all until a sweep turned it
+up. And a file being *ported and working* says nothing about whether it has been read: every entry in
+the traps section below came from a file that was already passing its tests.
 
 `examples/agent.php` runs the whole stack without a UI, read-only unless given `--write`.
 
@@ -5313,6 +5390,25 @@ The general rule: **a mode that nothing starts the way a person starts it is a m
 broken by a line somewhere else entirely.** `RpcClientTest` is now the one test in the suite that
 spawns `bin/pig`, and that is the point of it — it also caught `RpcClient` sending `path` where the
 wire wants `sessionPath`, which no amount of reading would have.
+
+**One test in it has failed twice in a full run and never on its own**, and it is written down here
+rather than fixed because the root cause is not established. Both times it was
+`testAgentThatCannotStartSaysWhatItWroteToStandardError`, both on the 8.3 pass, and both times the
+message was `The agent closed its output` with **no trailer** where it should carry
+`No model matches 'no-such-model-anywhere'`. Nine runs of the file alone and three more full 8.3
+runs since: green.
+
+The reading that fits is that the child's two pipes become readable in one `stream_select()`, and the
+stdout watcher is registered first — so `readOut()` sees EOF and calls `fail()` with `$this->stderr`
+still empty, one poll before the stderr watcher would have filled it. What is *not* established is
+why that ordering happens only under a full run: a stand-in that writes to stderr and exits at once
+(`testTheReasonSurvivesWhenBothPipesEndInTheSameBreath`, which is what the `binary:` seam is for)
+passes, so the obvious construction of it is already handled somewhere.
+
+Draining stderr inside that EOF branch is the fix this points at, and it is **not applied**, because
+a guard added on a reading rather than on reproduced data is the thing this file's conventions
+forbid. If it happens a third time, that is the fix to reach for — and the elapsed-time trick from
+`Process::runAsync()` applies here too: assert on what arrived, not on how long it took.
 
 ### A new session recorded no thinking level, so `--continue` came back on `off`
 

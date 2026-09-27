@@ -25,6 +25,18 @@ use Pig\Ai\Timestamp;
  */
 final readonly class BranchSummary
 {
+    /**
+     * Upstream's `BRANCH_SUMMARY_PREFIX` and `_SUFFIX`, word for word — see
+     * `CompactionSummary::PREFIX` for why the tags are the part that matters.
+     *
+     * Note the asymmetry, which is upstream's and is kept: the compaction suffix opens with a
+     * newline and this one does not. It reaches a prompt either way, and a port that tidies one of
+     * two literals is a port whose next diff shows a change nobody made on purpose.
+     */
+    public const string PREFIX = "The following is a summary of a branch that this conversation came back from:\n\n<summary>\n";
+
+    public const string SUFFIX = '</summary>';
+
     public int $timestamp;
 
     /**
@@ -49,7 +61,7 @@ final readonly class BranchSummary
     /** The summary as the model reads it, with the file lists tagged on. */
     public function toText(): string
     {
-        $text = BranchSummarization::PREAMBLE . $this->summary;
+        $text = self::PREFIX . $this->summary . self::SUFFIX;
 
         if ($this->readFiles !== []) {
             $text .= "\n\n<read-files>\n" . implode("\n", $this->readFiles) . "\n</read-files>";

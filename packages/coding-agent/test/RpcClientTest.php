@@ -565,6 +565,35 @@ final class RpcClientTest extends TestCase
         $this->assertStringContainsString("No model matches 'no-such-model-anywhere'", $error->getMessage());
     }
 
+    public function testTheReasonSurvivesWhenBothPipesEndInTheSameBreath(): void
+    {
+        // The real `--model no-such-model-anywhere` case above passes because `bin/pig` is slow
+        // enough that its complaint lands a poll before it exits. A stand-in that writes the reason
+        // and exits immediately puts both events in one `stream_select()`, and the stdout watcher is
+        // registered first — so `readOut()` saw EOF and reported it with an empty trailer. Measured
+        // as one full-suite failure in two runs before this; deterministic here.
+        $agent = $this->root . '/quick-exit.php';
+        file_put_contents($agent, "<?php\nfwrite(STDERR, \"the reason nobody saw\\n\");\nexit(1);\n");
+
+        $client = new RpcClient(cwd: $this->cwd, binary: $agent);
+
+        $error = $this->assertThrows(RpcError::class, static function () use ($client): void {
+            Async::run(static function () use ($client): void {
+                $client->start();
+
+                try {
+                    $client->state();
+                } finally {
+                    $client->stop();
+                }
+            });
+        });
+
+        $this->assertStringContainsString('the reason nobody saw', $error->getMessage());
+
+        unlink($agent);
+    }
+
     public function testStoppingTwiceIsHarmless(): void
     {
         $this->serveOneTurn('unused');

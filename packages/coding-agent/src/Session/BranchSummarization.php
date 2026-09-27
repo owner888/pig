@@ -26,20 +26,6 @@ final class BranchSummarization
     public const int MAX_TOKENS = 2_048;
 
     /**
-     * What the model is told before the summary, when it reads one back.
-     *
-     * Upstream's wording. It matters that this says *the user* went somewhere else: without
-     * it a model reads the summary as its own last turn and carries on from work that is
-     * not on this branch.
-     */
-    public const string PREAMBLE = <<<'TEXT'
-        The user explored a different conversation branch before returning here.
-        Summary of that exploration:
-
-
-        TEXT;
-
-    /**
      * Upstream's prompt, format and all.
      *
      * A handover rather than a recap: what was being attempted, what got done, what is

@@ -23,6 +23,20 @@ use Pig\Ai\Timestamp;
  */
 final readonly class CompactionSummary
 {
+    /**
+     * What the model is told before the summary, and after it.
+     *
+     * Upstream's `COMPACTION_SUMMARY_PREFIX` and `_SUFFIX`, word for word. The wording is theirs on
+     * purpose, and the **tags** are the part that matters: a summary is prose a model wrote about a
+     * conversation, so it contains lines like `Assistant: I reverted it` — and replayed with a
+     * sentence in front and nothing behind it, where the summary stopped and the conversation
+     * resumed was something the next model had to guess. pig already wraps its summarisation
+     * *request* in `<conversation>` tags for this reason; this is the same fact one direction over.
+     */
+    public const string PREFIX = "The conversation history before this point was compacted into the following summary:\n\n<summary>\n";
+
+    public const string SUFFIX = "\n</summary>";
+
     public int $timestamp;
 
     /**
@@ -60,7 +74,7 @@ final readonly class CompactionSummary
     /** The summary as the model reads it, with the file lists tagged on. */
     public function toText(): string
     {
-        $text = "The conversation so far, summarised:\n\n" . $this->summary;
+        $text = self::PREFIX . $this->summary . self::SUFFIX;
 
         if ($this->readFiles !== []) {
             $text .= "\n\n<read-files>\n" . implode("\n", $this->readFiles) . "\n</read-files>";

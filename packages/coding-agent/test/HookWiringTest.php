@@ -438,7 +438,9 @@ final class HookWiringTest extends TestCase
 
         $this->assertInstanceOf(UserMessage::class, $last);
         $this->assertStringContainsString('what happened over there', $last->content[0]->text);
-        $this->assertStringContainsString('explored a different conversation branch', $last->content[0]->text);
+        // Upstream's own sentence, and the tags that say where the summary ends.
+        $this->assertStringContainsString('summary of a branch that this conversation came back from', $last->content[0]->text);
+        $this->assertStringContainsString('</summary>', $last->content[0]->text);
 
         unlink($store->path);
     }
