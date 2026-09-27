@@ -85,6 +85,7 @@ use Pig\Tui\ProcessTerminal;
 use Pig\Tui\Style;
 use Pig\Tui\Terminal;
 use Pig\Tui\Tui;
+use Pig\Tui\Width;
 use Throwable;
 
 /**
@@ -522,13 +523,13 @@ final class InteractiveMode
         $lines[] = '';
 
         foreach (self::KEYS as $key => $does) {
-            $lines[] = $this->palette->fg('dim', str_pad($key, 12)) . $this->palette->fg('muted', $does);
+            $lines[] = $this->palette->fg('dim', Width::pad($key, 12)) . $this->palette->fg('muted', $does);
         }
 
         $lines[] = '';
 
         foreach (self::COMMANDS as [$name, $does]) {
-            $lines[] = $this->palette->fg('dim', str_pad('/' . $name, 12)) . $this->palette->fg('muted', $does);
+            $lines[] = $this->palette->fg('dim', Width::pad('/' . $name, 12)) . $this->palette->fg('muted', $does);
         }
 
         $loaded = $this->loaded();
@@ -1314,7 +1315,7 @@ final class InteractiveMode
             $lines[] = '';
 
             foreach ($this->hookCommands as $name => $command) {
-                $lines[] = $this->palette->fg('dim', str_pad('/' . $name, 12))
+                $lines[] = $this->palette->fg('dim', Width::pad('/' . $name, 12))
                     . $this->palette->fg('muted', $command->description);
             }
         }
@@ -1342,7 +1343,7 @@ final class InteractiveMode
         foreach ($this->session->state()->tools as $tool) {
             $name = $tool->definition()->name;
 
-            $lines[] = $this->palette->fg('dim', str_pad($name, 14))
+            $lines[] = $this->palette->fg('dim', Width::pad($name, 14))
                 . $this->palette->fg('muted', $tool->label() . ' · ' . ($custom[$name] ?? 'built-in'));
         }
 
@@ -1477,7 +1478,7 @@ final class InteractiveMode
         $lines = [];
 
         foreach ($this->skills as $skill) {
-            $lines[] = $this->palette->fg('dim', str_pad($skill->name, 24))
+            $lines[] = $this->palette->fg('dim', Width::pad($skill->name, 24))
                 . $this->palette->fg('muted', $skill->description);
             $lines[] = $this->palette->fg('dim', str_repeat(' ', 24) . $skill->source . ' · ' . $skill->path);
         }
@@ -1490,13 +1491,13 @@ final class InteractiveMode
         $lines = [];
 
         foreach (self::KEYS as $key => $does) {
-            $lines[] = $this->palette->fg('dim', str_pad($key, 12)) . $this->palette->fg('muted', $does);
+            $lines[] = $this->palette->fg('dim', Width::pad($key, 12)) . $this->palette->fg('muted', $does);
         }
 
         $lines[] = '';
 
         foreach (self::COMMANDS as [$name, $does]) {
-            $lines[] = $this->palette->fg('dim', str_pad('/' . $name, 12)) . $this->palette->fg('muted', $does);
+            $lines[] = $this->palette->fg('dim', Width::pad('/' . $name, 12)) . $this->palette->fg('muted', $does);
         }
 
         $loaded = $this->loaded();

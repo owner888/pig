@@ -8,6 +8,7 @@ use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Utils\Fuzzy;
+use Pig\Tui\Width;
 
 /**
  * `--models`, and `--models <search>`.
@@ -72,11 +73,15 @@ final class ModelList
             ];
         }
 
+        // Measured and padded in **columns**, not bytes. A `models.json` is written by hand, so a
+        // provider or a model can be called 本地模型 — 12 bytes and 8 columns — and `strlen()` with
+        // `str_pad()` is self-consistent and wrong about what the terminal gives, which moved that
+        // row's `model` column four to the left of every other row's.
         $widths = [];
 
         foreach ($rows as $row) {
             foreach ($row as $column => $value) {
-                $widths[$column] = max($widths[$column] ?? 0, strlen($value));
+                $widths[$column] = max($widths[$column] ?? 0, Width::visible($value));
             }
         }
 
@@ -86,7 +91,7 @@ final class ModelList
             $cells = [];
 
             foreach ($row as $column => $value) {
-                $cells[] = str_pad($value, $widths[$column]);
+                $cells[] = Width::pad($value, $widths[$column]);
             }
 
             // The last column is padded like the others and then trimmed off, so no row ends

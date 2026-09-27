@@ -2855,6 +2855,52 @@ while (true) {
 }
 ```
 
+### `str_pad()` counts bytes, so every column it lines up is ASCII-only
+
+Eight sites, two of them already right, and the two right ones are what make this the first shape
+from the index rather than a new find. `SelectList` and `SettingsList` both measure their label
+column with `Width::visible()` and pad with `str_repeat(' ', …)` — that correction is written down
+twice in this file, against upstream's `.length`. The other six used `str_pad()`:
+
+```
+review        strlen= 6  columns= 6   padded to 24: 24 columns  aligned
+代码审查      strlen=12  columns= 8   padded to 24: 20 columns  off by 4
+データ整理    strlen=15  columns=10   padded to 24: 19 columns  off by 5
+émoji-🎉      strlen=11  columns= 8   padded to 24: 21 columns  off by 3
+```
+
+`strlen` is never *smaller* than the column count, so the padding always falls **short** and the
+column after it starts early — which means this cannot trip `Tui::checkWidth()` and nothing ever
+failed. It just reads as a table pig cannot draw. Where it shows: `/skills` (a skill's name is a
+folder name, and a folder can be called 代码审查), `/hooks` and `/help` (a hook registers its own
+command name), and `--models`, whose provider and model names come out of a hand-written
+`models.json`. A name with a combining mark or an emoji in it is off by its own amount.
+
+`Width::pad()` is the one implementation now, beside `visible()` and `truncate()` where it belongs,
+and `Width::background()` — which had the same three lines inline — delegates to it. Two things
+worth keeping:
+
+- **`--models` was self-consistent and still wrong.** It measured with `strlen()` *and* padded with
+  `str_pad()`, so the arithmetic agreed with itself and disagreed with the terminal. A pair of calls
+  that cancel out is harder to spot than a single wrong one, and `testTheColumnsLineUpDownTheWholeTable`
+  passed throughout because every name in the built-in registry is ASCII.
+- **`pad()` cuts nothing**, as `str_pad()` cuts nothing. The two lists truncate first and then pad,
+  which is the order that fits a fixed column; a caller that pads without truncating gets a wide row,
+  which is a different bug with a different fix.
+
+The mutation check is the one that says the extraction held: putting `str_pad()` back inside
+`Width::pad()` turns **nine** tests red across all three consumers plus `background()`'s own two.
+
+Found by sweeping for it rather than by anybody looking at a crooked table — `str_pad`, `str_split`,
+`ucfirst` and `strtolower` are the calls that have no business touching text from outside, and there
+are only 41 of them. The other three came back clean: `str_split` is `mb_str_split` everywhere it
+walks text (the two byte ones walk a key sequence and a base64 blob), `ucfirst` is applied to a
+`ThinkingLevel` enum value, and every `strtolower` on something a person typed is `mb_strtolower`.
+
+Regression tests: `WidthTest::testPadFillsToTheColumnAndNotToTheByte` (six shapes),
+`InteractiveModeTest::testTheDescriptionColumnLinesUpForASkillNamedInAnotherAlphabet`,
+`ModelListTest::testTheColumnsLineUpWhenAModelIsNamedInAnotherAlphabet`.
+
 ### A line wider than the terminal is fatal here, so a hint upstream lets overflow is a crash
 
 `/settings` on a terminal 32 columns or narrower took the session down:
@@ -5029,15 +5075,21 @@ opposite directions — and the disagreement is invisible until a value crosses 
 | `uniqueItems` and whole floats | `json_encode(1.0)` is `1`, so nothing was wrong — the branch written to fix it did nothing | — |
 | `Utf8::sanitize` exists at all | UTF-8 bytes; the failure is a truncated sequence | UTF-16; the failure is an unpaired surrogate |
 | Up in the editor landed inside a character | a string offset counts **bytes**, so `2` is two thirds of `你` | a string offset counts code units, so `2` is two characters |
+| `str_pad()` lined up an ASCII-only column | a *length* is bytes, so 代码审查 is 12 | a length is code units, so it is 4 — and the terminal gives 8, which is neither |
 
 So PHP splits numbers **finer** and arrays **coarser**. Copying upstream's comparison faithfully is
 how the first one happened: `!==` is the honest translation of `!==` and the wrong answer anyway,
 because the question is not "is this the same PHP value" but "is this the same JSON document". The
 reading that finds these is not "does this line match upstream" but **"is this value the same thing
 in both languages"** — and the place to look is every boundary: `json_decode`, `json_encode`, and
-any comparison of two things that came through one. The last row widens that: a **string offset** is
-a value too, so the same question has to be asked of every number carried over from a `length`,
+any comparison of two things that came through one. The last two rows widen that: a **string offset**
+is a value too, so the same question has to be asked of every number carried over from a `length`,
 `slice` or `indexOf` — see the trap entry, which is the one member of this family that crashes.
+
+And the last row adds a **third** unit, which is the one a terminal program actually needs: columns.
+Bytes, code units and columns are three different numbers for 代码审查 — 12, 4 and 8 — so "port the
+unit" is not a choice between two. Anything lining text up wants the third, which is `Width::visible()`
+and `Width::pad()`; anything indexing into it wants characters; and only a byte buffer wants bytes.
 
 ### Compaction counted an image as nothing, so a conversation of screenshots could not be compacted
 

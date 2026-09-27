@@ -191,6 +191,25 @@ final class Width
     }
 
     /**
+     * Spaces after $text until it is $width columns wide.
+     *
+     * **`str_pad()` counts bytes**, so a name in an alphabet that spends more than one byte per
+     * character is padded short and whatever follows it starts early: 代码審查 is 12 bytes and 8
+     * columns, so `str_pad($name, 24)` leaves 20 columns of it and the next column lands four to
+     * the left of every other row's. A name with a combining mark or an emoji in it is off by its
+     * own amount. That is the same correction `SelectList` and `SettingsList` already make to
+     * upstream's `.length` for their label columns; this is it in one place.
+     *
+     * Nothing is cut, exactly as `str_pad()` cuts nothing — text already wider than $width comes
+     * back whole. A caller that needs it to fit asks `truncate()` first, which is what the two
+     * lists do.
+     */
+    public static function pad(string $text, int $width): string
+    {
+        return $text . str_repeat(' ', max(0, $width - self::visible($text)));
+    }
+
+    /**
      * Pad to $width and run the result through $background.
      *
      * The padding goes inside the background, which is the whole point: a background that
@@ -200,9 +219,7 @@ final class Width
      */
     public static function background(string $line, int $width, Closure $background): string
     {
-        $padding = max(0, $width - self::visible($line));
-
-        return $background($line . str_repeat(' ', $padding));
+        return $background(self::pad($line, $width));
     }
 
     /** @internal Tests measure the same strings repeatedly; the cache would hide a change. */

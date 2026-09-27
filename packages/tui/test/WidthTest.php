@@ -126,4 +126,46 @@ final class WidthTest extends TestCase
 
         $this->assertSame('[hello]', $painted);
     }
+    /** @return array<string, array{0: string, 1: int}> */
+    public static function names(): array
+    {
+        return [
+            'ascii' => ['review', 6],
+            'chinese' => ['代码审查', 8],
+            'japanese' => ['データ整理', 10],
+            'a combining mark' => ["e\u{0301}tude", 5],
+            'an emoji' => ['ship 🚀', 7],
+            'already wider' => ['a-very-long-name-indeed', 23],
+        ];
+    }
+
+    /**
+     * Padding is measured in columns, which `str_pad()` cannot do.
+     *
+     * Every one of these is a name that can be in a `/skills` listing or a `models.json`, and every
+     * one but the first is padded short by `str_pad()` — so the column after it starts early and
+     * the table reads as broken.
+     */
+    #[DataProvider('names')]
+    public function testPadFillsToTheColumnAndNotToTheByte(string $text, int $columns): void
+    {
+        $padded = Width::pad($text, 12);
+
+        $this->assertSame(max(12, $columns), Width::visible($padded));
+        $this->assertStringStartsWith($text, $padded);
+    }
+
+    public function testPadCutsNothingThatIsAlreadyTooWide(): void
+    {
+        // As `str_pad()` cuts nothing. A caller that needs it to fit asks `truncate()` first.
+        $this->assertSame('hello', Width::pad('hello', 3));
+    }
+
+    public function testPadCountsWhatIsDrawnAndNotTheEscapes(): void
+    {
+        $padded = Width::pad("\e[32mhi\e[0m", 5);
+
+        $this->assertSame(5, Width::visible($padded));
+        $this->assertSame("\e[32mhi\e[0m   ", $padded);
+    }
 }

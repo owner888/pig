@@ -51,6 +51,7 @@ use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Test\WithoutProviderKeys;
 use Pig\Tui\Ansi;
+use Pig\Tui\Width;
 use Pig\Tui\Components\Text;
 use Pig\Tui\Test\FakeClipboard;
 use Pig\Tui\Test\FakeTerminal;
@@ -1262,6 +1263,42 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('tidy', $screen);
         $this->assertStringContainsString('claude-user', $screen);
         $this->assertStringContainsString('/s/tidy/SKILL.md', $screen);
+    }
+
+    public function testTheDescriptionColumnLinesUpForASkillNamedInAnotherAlphabet(): void
+    {
+        $this->start(skills: [
+            new Skill('tidy', 'tidy up a file', '/s/tidy/SKILL.md', '/s/tidy', 'user'),
+            new Skill('代码审查', 'review the diff', '/s/review/SKILL.md', '/s/review', 'user'),
+        ]);
+
+        $this->type('/skills');
+        $this->type(self::ENTER);
+
+        $columns = [];
+
+        foreach (explode("\n", $this->screen()) as $line) {
+            $plain = Ansi::strip($line);
+
+            foreach (['tidy up a file', 'review the diff'] as $description) {
+                $at = mb_strpos($plain, $description, 0, 'UTF-8');
+
+                if ($at !== false) {
+                    $columns[$description] = Width::visible(mb_substr($plain, 0, $at, 'UTF-8'));
+                }
+            }
+        }
+
+        // `str_pad` counts bytes, so a name in an alphabet that spends more than one per character
+        // is padded short and its description starts early — 代码审查 is 12 bytes and 8 columns, so
+        // the column was four to the left of every other row's. `SelectList` and `SettingsList`
+        // already measure their label columns in columns for this reason.
+        $this->assertCount(2, $columns);
+        $this->assertSame(
+            $columns['tidy up a file'],
+            $columns['review the diff'],
+            'the two descriptions should start in the same column',
+        );
     }
 
     public function testWithNoSkillsTheCommandSaysWhereToPutOne(): void

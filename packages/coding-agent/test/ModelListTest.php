@@ -6,9 +6,14 @@ namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Pig\Ai\Api;
+use Pig\Ai\Model;
+use Pig\Ai\Models;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Cli\ModelList;
 use Pig\Test\WithoutProviderKeys;
+use Pig\Tui\Ansi;
+use Pig\Tui\Width;
 
 /** `--models`, and `--models <search>`. */
 final class ModelListTest extends TestCase
@@ -52,6 +57,32 @@ final class ModelListTest extends TestCase
             // The widths are measured from the values, so one long provider name does not
             // push every row after it out of line.
             $this->assertSame($at, strpos($line, explode('  ', trim(substr($line, (int) $at)))[0]));
+        }
+    }
+
+    public function testTheColumnsLineUpWhenAModelIsNamedInAnotherAlphabet(): void
+    {
+        // `models.json` is a file somebody writes by hand, so a provider or a model can be called
+        // whatever they call it. The widths were measured with `strlen()` and the cells padded with
+        // `str_pad()` — self-consistent, and both wrong about what a terminal gives: 本地模型 is 12
+        // bytes and 8 columns, so its row's `model` column was four to the left of every other's
+        // and the whole table read as broken.
+        Models::register([
+            new Model('本地模型', '本地模型', Api::OpenAiCompletions, '我的机器', 'http://127.0.0.1:8080/v1', 8192, 2048),
+        ]);
+
+        try {
+            $columns = [];
+
+            foreach ($this->lines() as $line) {
+                // Where the second field starts, in columns — which is what the eye reads.
+                preg_match('/^(\S+\s+)/', Ansi::strip($line), $match);
+                $columns[Width::visible($match[1])][] = trim(Ansi::strip($line));
+            }
+
+            $this->assertCount(1, $columns, 'the model column starts in ' . count($columns) . ' places');
+        } finally {
+            Models::forgetRegistered();
         }
     }
 
