@@ -422,4 +422,118 @@ final class JsonSchemaTest extends TestCase
         $this->assertValid($read, ['path' => 'a.php']);
         $this->assertValid($read, ['path' => 'a.php', 'offset' => 10]);
     }
+
+    // ---- the bounds, from inside ------------------------------------------------------------
+
+    /**
+     * A value sitting exactly on its bound satisfies it.
+     *
+     * Every bound above is checked from **outside** itself — `minimum: 1` against 0, `maxItems: 3`
+     * against four items — and a test that proves a bound rejects what is out of range says nothing
+     * about whether it accepts what is in range. So a mutation sweep walked straight through
+     * `minimum`, `maximum`, `minLength`, `maxItems` and `maxProperties`: `<` for `<=` and `>` for
+     * `>=` broke nothing.
+     *
+     * Which matters here more than it would in most places, because of who reads the message. This
+     * file's whole standard is that a correction has to be one the **model** can act on, and
+     * "must NOT have more than 3 items" against a list of exactly three is a correction it cannot:
+     * every edit it makes is still wrong, and the one thing it cannot do is disbelieve the
+     * validator. An off-by-one that rejects a valid document is worse than one that accepts an
+     * invalid one — the invalid one fails at the provider with the provider's own words.
+     *
+     * @param array<string, mixed> $schema
+     */
+    #[DataProvider('valuesExactlyOnTheirBound')]
+    public function testAValueExactlyOnItsBoundSatisfiesIt(array $schema, mixed $value): void
+    {
+        $this->assertValid($schema, $value);
+    }
+
+    /** @return array<string, array{0: array<string, mixed>, 1: mixed}> */
+    public static function valuesExactlyOnTheirBound(): array
+    {
+        return [
+            'minimum' => [['minimum' => 1], 1],
+            'maximum' => [['maximum' => 10], 10],
+            'minimum as a float' => [['minimum' => 0.5], 0.5],
+            'minLength' => [['minLength' => 2], 'xy'],
+            'maxLength' => [['maxLength' => 2], 'xy'],
+            'minItems' => [['type' => 'array', 'minItems' => 2], [1, 2]],
+            'maxItems' => [['type' => 'array', 'maxItems' => 3], [1, 2, 3]],
+            'minProperties' => [['type' => 'object', 'minProperties' => 1], ['a' => 1]],
+            'maxProperties' => [['type' => 'object', 'maxProperties' => 2], ['a' => 1, 'b' => 2]],
+        ];
+    }
+
+    public function testATypeNameThisHasNeverHeardOfIsIgnoredRatherThanRejected(): void
+    {
+        // The same rule as an unimplemented keyword, one level down: `type` is the keyword a
+        // schema is most likely to carry something unexpected in, and a `default` arm that
+        // answered false would make every value fail against it — so adding a type to a tool's
+        // schema would break the tool rather than tighten it.
+        $this->assertValid(['type' => 'integer64'], 5);
+        $this->assertValid(['type' => 'integer64'], 'not even a number');
+
+        // And it carries into a union, which is the consequence worth seeing written down: a
+        // `type` list is satisfied by any one arm, so an unknown name in it satisfies everything
+        // and the names beside it stop narrowing. That is the rule and not a hole in it — the
+        // alternative is a schema that gained a type pig has not heard of rejecting values the
+        // types it *has* heard of accept.
+        $this->assertValid(['type' => ['string', 'idl-blob']], 5);
+        $this->assertSame(['root: must be string'], $this->errors(['type' => ['string']], 5));
+    }
+
+    public function testAMultipleOfThatCannotDivideIsIgnoredRatherThanFatal(): void
+    {
+        // `multipleOf: 0` is a schema somebody wrote wrong, and the keyword is skipped for the
+        // reason every unknown keyword is: the value is not what is broken. Dividing by it is a
+        // DivisionByZeroError out of the validator, which reaches the model as no message at all.
+        $this->assertValid(['multipleOf' => 0], 7);
+        $this->assertValid(['multipleOf' => 0.0], 7);
+        $this->assertValid(['multipleOf' => -2], 7);
+    }
+
+    public function testWithoutUniqueItemsDuplicatesAreFine(): void
+    {
+        // A list of the same string twice is an ordinary argument — two edits to the same file,
+        // two occurrences of a flag. Uniqueness is only ever asked for.
+        $this->assertValid(['type' => 'array'], [1, 1, 1]);
+        $this->assertValid(['type' => 'array', 'uniqueItems' => false], ['a', 'a']);
+    }
+
+    public function testAConstOfTheWrongKindIsAComplaintRatherThanACrash(): void
+    {
+        // The commonest thing this file exists to catch is a value of the wrong kind, so the
+        // comparison has to survive being handed two kinds at once. Both sides have to be arrays
+        // before the recursive walk starts: `count()` on an int is a TypeError out of the
+        // validator, which reaches the model as no message at all — and "no message" is the one
+        // outcome worse than a wrong one, because there is nothing to act on.
+        $this->assertSame(['root: must be equal to constant'], $this->errors(['const' => [1, 2]], 5));
+        $this->assertSame(['root: must be equal to constant'], $this->errors(['const' => 5], [1, 2]));
+        $this->assertSame(
+            ['root: must be equal to one of the allowed values'],
+            $this->errors(['enum' => [[1, 2], 'x']], 5),
+        );
+    }
+
+    public function testANullIsNotComparedAgainstANumericBound(): void
+    {
+        // `{"type": ["integer", "null"], "minimum": 1}` is an ordinary optional number, and the
+        // guard in front of the bounds is what keeps `null` out of the comparison — PHP is happy
+        // to tell you that `null < 1`, which would make every omitted number too small.
+        $this->assertValid(['type' => ['integer', 'null'], 'minimum' => 1], null);
+        $this->assertValid(['type' => ['integer', 'null'], 'maximum' => 10], null);
+        $this->assertValid(['minimum' => 1, 'maximum' => 10], 'not a number at all');
+        $this->assertValid(['minimum' => 1], true);
+    }
+
+    public function testThreeIdenticalItemsAreOneComplaintAboutTheFirstTwo(): void
+    {
+        // Not one complaint per pair: the model is being told where to look, and a list of ten
+        // identical items would otherwise arrive as nine messages saying the same thing.
+        $this->assertSame(
+            ['root: must NOT have duplicate items (items ## 0 and 1 are identical)'],
+            $this->errors(['type' => 'array', 'uniqueItems' => true], [1, 1, 1]),
+        );
+    }
 }

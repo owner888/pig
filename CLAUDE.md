@@ -5980,10 +5980,76 @@ six documents and every prefix of each, and
 `OverflowTest::testAPromptThatExactlyFillsTheWindowIsNotAnOverflow`, which asserts both sides of the
 boundary so the fix cannot become "never mind the silent case".
 
-**`JsonSchema`'s 40 are not triaged yet**, and the shape to expect is this one again: the AJV corpus
-is gone, the file is 528 lines of validation with 38 tests over it, and the survivors cluster in the
-bounds (`lt`/`gt` on `minimum`, `maxItems`, `maxLength`) — which is precisely where an off-by-one is
-a correction a model cannot act on.
+### Every bound in `JsonSchema` was checked from outside itself
+
+`JsonSchema`'s 40, triaged, and they are one sentence: **the bounds were all tested on the wrong side
+of themselves.** `minimum: 1` against 0, `maximum: 10` against 11, `minLength: 2` against one
+character, `maxItems: 3` against four items, `maxProperties: 2` against three — every one of them
+proves the bound rejects what is out of range, and not one of them says whether it accepts what is
+*in* range. So `<` for `<=` and `>` for `>=` walked through all five, and `minimum: 1` rejecting the
+value 1 would have been a green suite.
+
+*A test that a bound rejects what is out of range is not a test of the bound.* The lower bounds were
+pinned here by accident — `minItems: 2` has a valid case at exactly two items, so its own mutation
+dies — which is the tell worth keeping: when one half of a symmetric pair is killed and the other
+survives, the difference is usually the fixture and not the code.
+
+**It matters more in this file than it would in most, because of who reads the message.** The whole
+standard here is that a correction has to be one the model can act on, which is the argument the
+`multipleOf` note already makes about refusing 0.3 as a multiple of 0.1. "must NOT have more than 3
+items" against a list of exactly three is a correction nothing can act on: every edit the model makes
+is still wrong, and the one thing it cannot do is disbelieve the validator. So an off-by-one that
+rejects a **valid** document is the worse direction — an invalid one that slips through fails at the
+provider, in the provider's own words, which is a sentence somebody can read.
+
+Four more rules had no test, and two of them end in no message at all rather than a wrong one:
+
+- **`isType()`'s `default => true` could have been `false`.** That is "an unknown keyword is ignored,
+  never a failure" — the docblock's most important line — one level down, on the keyword a schema is
+  likeliest to carry something unexpected in. And writing the test surfaced the consequence worth
+  having on record: a `type` list is satisfied by any one arm, so an unknown name **in a union**
+  satisfies everything and the names beside it stop narrowing. That is the rule rather than a hole in
+  it, and it is now asserted rather than discovered.
+- **`same()` handed two different kinds crashed under the mutation.** Both sides have to be arrays
+  before the recursive walk starts; with `||` there instead of `&&`, `const: 5` against `[1,2]` is
+  `count(5)` — a `TypeError` out of the validator. And a value of the wrong kind is the commonest
+  thing this file exists to catch.
+- **`multipleOf: 0` divided by zero**, once its guard was loosened by one operator. A schema somebody
+  wrote wrong, and the keyword is skipped for the reason every unknown keyword is: the value is not
+  what is broken.
+- **`null` against a numeric bound.** `{"type": ["integer", "null"], "minimum": 1}` is an ordinary
+  optional number, and PHP is perfectly happy to tell you that `null < 1` — so without the guard in
+  front of the comparison every omitted number is too small. The same guard covers `true` and a
+  string.
+
+Plus two about the wording: **`uniqueItems` was only ever asked for and never absent**, so enforcing
+uniqueness on every array broke nothing — where a list of the same string twice is an ordinary
+argument. And **three identical items are one complaint, not two**: without the `break` the walk
+reports each successive pair, so ten identical items arrive as nine messages saying the same thing.
+
+That took 40 survivors to 27, and the 27 have reasons. Twenty-one are `?? null` turned into `?? ''`
+in front of an `is_int()`, `is_string()` or `is_array()`, which `''` fails exactly as `null` does. One
+is the `1e-9` tolerance, which differs only at exactly 1e-9. One is a `continue` that is genuinely
+redundant, being the last statement before a branch its own condition has already excluded. And four
+are initialisers and the `set_error_handler` pair, which **warn** when deleted — probed rather than
+argued, `preg_match(): Compilation failed` and `Undefined variable $seen` — so `failOnWarning` kills
+them where the shim does not, which is the shim caveat two entries up arriving for the third time.
+
+Regression tests: `JsonSchemaTest::testAValueExactlyOnItsBoundSatisfiesIt` over nine bounds,
+`testATypeNameThisHasNeverHeardOfIsIgnoredRatherThanRejected`,
+`testAConstOfTheWrongKindIsAComplaintRatherThanACrash`, `testANullIsNotComparedAgainstANumericBound`,
+`testAMultipleOfThatCannotDivideIsIgnoredRatherThanFatal`, `testWithoutUniqueItemsDuplicatesAreFine`,
+`testThreeIdenticalItemsAreOneComplaintAboutTheFirstTwo`. Each of the thirteen mutations was
+re-applied afterwards to confirm it dies.
+
+**Both halves of this sweep say the same thing about the two files**, and it is worth stating once
+rather than twice: `PartialJson` and `JsonSchema` are the two hand-written stand-ins for npm packages
+in `packages/ai`, both were verified by a corpus against the real package, both corpora found real
+bugs, and **neither corpus was kept**. What the suite had afterwards was 3 test methods for one and
+38 for the other, over 785 lines that a provider's 400 is the only other check on. The traps above
+already say a corpus is worth running and worth keeping the count of; the third clause is that it is
+worth keeping as a **test**, because a count in this document is evidence about the day it was
+written and a test is evidence every day.
 
 ### A space that is not U+0020 emptied the search box
 
