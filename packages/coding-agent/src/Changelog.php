@@ -18,9 +18,11 @@ namespace Pig\CodingAgent;
  * edit by hand — an `## Unreleased` section is a section nobody has versioned yet, and folding it
  * into the release above would put unreleased notes under a released number.
  *
- * pig has no `CHANGELOG.md` yet, so every one of these answers nothing today. That is the same
- * answer the machinery gives a person who deleted theirs, which is why it is worth having working
- * before there is a file rather than written the day the file appears.
+ * **There is a `CHANGELOG.md` now**, at the root, and `Cli\UpdateCheck` is the other half of it:
+ * the version in `composer.json` decides which entries are new here and is what Packagist is asked
+ * about. This paragraph said the file did not exist for as long as it did not, which is how the one
+ * test of `/changelog` came to be pinning that absence rather than the command — see the entry in
+ * `CLAUDE.md`. The empty answer is still a real one: it is what somebody who deleted theirs gets.
  */
 final readonly class Changelog
 {

@@ -9,6 +9,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Rpc\RpcClient;
 use Pig\CodingAgent\Rpc\RpcError;
+use Pig\CodingAgent\Version;
 use Pig\Test\AssertsThrows;
 
 /**
@@ -810,4 +811,60 @@ final class RpcClientTest extends TestCase
         $this->assertSame(0, $state['queuedMessageCount'] ?? null);
     }
 
+    // ---- what the binary says about itself -------------------------------------------
+
+    /**
+     * `bin/pig <arguments>`, run to completion, standard output.
+     *
+     * Not through `RpcClient`: these two arguments print and exit, so there is no protocol to
+     * speak. The reason they are in this file anyway is the reason the file exists — **it is the
+     * only place that starts the binary**, and `bin/pig` is where both of these facts live.
+     *
+     * @param list<string> $arguments
+     */
+    private function saidBy(array $arguments): string
+    {
+        $binary = RpcClient::defaultBinary();
+
+        if (!is_file($binary) || !is_file(dirname($binary) . '/../vendor/autoload.php')) {
+            self::markTestSkipped('bin/pig needs to be there with its autoloader');
+        }
+
+        $process = proc_open(
+            [PHP_BINARY, $binary, ...$arguments],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+        );
+
+        $this->assertTrue(is_resource($process), 'bin/pig would not start');
+
+        $said = (string) stream_get_contents($pipes[1]);
+
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+
+        return $said;
+    }
+
+    public function testTheVersionTheBinaryPrintsIsTheOneInTheManifest(): void
+    {
+        // **The other end of `Version`, and it had nothing.** `bin/pig` does
+        // `define('VERSION', Version::current())`, and replacing that with a literal broke no test
+        // in the suite — the class was pinned and the one consumer that matters was not, which is
+        // the wired-at-one-end shape this repository keeps paying for. What it would cost is the
+        // whole point of the class: a version printed here that Packagist has never heard of, and
+        // an update check comparing against it every start.
+        $this->assertSame('pig ' . Version::current(), trim($this->saidBy(['--version'])));
+    }
+
+    public function testTheHelpNamesTheFlagThatTurnsTheUpdateCheckOff(): void
+    {
+        // A flag nobody can find is a flag that is not there, and this one is the only way to skip
+        // the check for a single run. Spelled exactly, because `Arguments` matches it exactly —
+        // help text that says `--no-update-checks` is a flag that parses as nothing.
+        $help = $this->saidBy(['--help']);
+
+        $this->assertStringContainsString('--no-update-check ', $help);
+    }
 }

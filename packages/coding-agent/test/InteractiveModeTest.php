@@ -28,6 +28,7 @@ use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\CustomTools\LoadedCustomTool;
@@ -49,6 +50,7 @@ use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
+use Pig\CodingAgent\Version;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Test\ProbeModels;
@@ -2897,17 +2899,24 @@ final class InteractiveModeTest extends TestCase
 
     // ---- /changelog ------------------------------------------------------------------
 
-    public function testSlashChangelogSaysSoWhenThereIsNoChangelog(): void
+    public function testSlashChangelogShowsPigsOwnFileAndNotTheInjectedNote(): void
     {
         $this->start();
 
         $this->type('/changelog');
         $this->type(self::ENTER);
 
-        // pig has no `CHANGELOG.md`, so this is the answer today — and it is the same answer
-        // somebody who deleted theirs gets.
-        $this->assertStringContainsString('No changelog entries found.', $this->screen());
-        $this->assertStringContainsString("What's New", $this->screen());
+        $screen = $this->screen();
+
+        // **This used to assert `No changelog entries found.` and passed because pig had no
+        // `CHANGELOG.md`.** The constructor's changelog is the upgrade note only; `/changelog`
+        // calls `Changelog::parse()`, which reads the file at the root of the repository — so for
+        // as long as that file was missing, the one test of this command was pinning the absence
+        // of a file rather than the command. The empty answer has its case in `ChangelogTest`,
+        // against a path that is not there, which is where a question about the file belongs.
+        $this->assertStringContainsString("What's New", $screen);
+        $this->assertStringContainsString(Version::current(), $screen);
+        $this->assertStringNotContainsString('No changelog entries found.', $screen);
     }
 
     public function testAnUpgradeNoteIsDrawnUnderTheConversationItIsAbout(): void
@@ -2927,6 +2936,48 @@ final class InteractiveModeTest extends TestCase
         // The common case by far, and a title with nothing under it would be worse than
         // nothing at all.
         $this->assertStringNotContainsString("What's New", $this->screen());
+    }
+
+    // ---- there is a newer pig --------------------------------------------------------
+
+    public function testTheUpdateNoticeNamesBothVersionsAndTheCommandToRun(): void
+    {
+        $this->start();
+        $this->mode->sayNewVersion('9.9.9');
+
+        $screen = $this->screen();
+
+        // All three facts, because each of them is the reason one of the others is worth
+        // reading: which version is out, which one this is, and the one line that closes the
+        // gap. A block naming two of the three is a block that sends somebody to a search
+        // engine.
+        $this->assertStringContainsString('Update Available', $screen);
+        $this->assertStringContainsString('9.9.9', $screen);
+        $this->assertStringContainsString(UpdateCheck::COMMAND, $screen);
+    }
+
+    public function testTheVersionItSaysYouHaveIsTheOneTheBannerDrew(): void
+    {
+        $this->start();
+
+        // One fact, one source. `sayNewVersion()` read `Version::current()` for a batch, which
+        // is the manifest rather than the string this session was started as — so the banner
+        // said one number and the notice said another three lines below it, about the very
+        // comparison the block exists to make.
+        $this->assertStringContainsString('pig v0.0.0', $this->screen());
+
+        $this->mode->sayNewVersion('9.9.9');
+
+        $this->assertStringContainsString('you have 0.0.0', $this->screen());
+    }
+
+    public function testNothingIsSaidAboutAVersionUntilSomethingSaysThereIsOne(): void
+    {
+        $this->start();
+
+        // The answer arrives from a spawned check that is null nearly every time, so a start
+        // that drew this block by itself would be a warning every morning.
+        $this->assertStringNotContainsString('Update Available', $this->screen());
     }
 
     // ---- /settings -------------------------------------------------------------------

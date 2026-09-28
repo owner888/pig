@@ -302,6 +302,19 @@ final class ArgumentsTest extends TestCase
         $this->assertSame(['fix the bug'], $parsed->messages);
     }
 
+    public function testNoUpdateCheckIsAFlagAndLeavesThePromptAlone(): void
+    {
+        $parsed = $this->parse('--no-update-check', 'fix the bug');
+
+        // The fourth of the `--no-…` switches, and the one whose value-taking sibling does not
+        // exist: there is nothing to say about the check except whether to make it, so it is a
+        // flag and `TAKES_A_VALUE` must never learn its name — that list is what decides whether
+        // an option eats the word after it, which here is the whole prompt.
+        $this->assertTrue($parsed->has('no-update-check'));
+        $this->assertSame(['fix the bug'], $parsed->messages);
+        $this->assertNotContains('no-update-check', Arguments::TAKES_A_VALUE);
+    }
+
     public function testModelsAndListModelsAreTwoDifferentOptions(): void
     {
         $scope = $this->parse('--models', "sonnet,anthropic/*", 'fix the bug');

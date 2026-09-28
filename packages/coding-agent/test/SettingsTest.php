@@ -167,6 +167,43 @@ final class SettingsTest extends TestCase
         $this->assertTrue($this->load()->retryEnabled(), 'on unless turned off, like compaction');
     }
 
+    public function testTheUpdateCheckIsOnUnlessTheFileTurnsItOff(): void
+    {
+        // `retry.enabled` and `compaction.enabled`'s rule, on the third of the three: **only an
+        // explicit `false` turns it off.** A missing key, a `null`, and a file that is not there
+        // at all all mean on, because the default is on and a key nobody wrote is not an opinion.
+        $this->assertTrue($this->load()->updateCheckEnabled(), 'no file at all');
+
+        $this->writeGlobal(['update' => ['check' => false]]);
+
+        $this->assertFalse($this->load()->updateCheckEnabled());
+    }
+
+    public function testAnUpdateKeyThatSaysSomethingElseDoesNotTurnItOff(): void
+    {
+        // The other half, and the reason the comparison is `!== false` rather than a truthiness
+        // test: an empty `update` block is somebody who set a sibling key, and reading that as
+        // "off" is a feature turning itself off because a neighbouring setting was written.
+        $this->writeGlobal(['update' => []]);
+
+        $this->assertTrue($this->load()->updateCheckEnabled());
+
+        $this->writeGlobal(['update' => ['check' => true]]);
+
+        $this->assertTrue($this->load()->updateCheckEnabled());
+    }
+
+    public function testAProjectCanTurnTheUpdateCheckOffForEverybodyInIt(): void
+    {
+        // The project file wins, which is the point of it being separate: a repository can say
+        // "not here" without touching anyone's preferences, and the person's own file is what
+        // they keep.
+        $this->writeGlobal(['update' => ['check' => true]]);
+        $this->writeProject(['update' => ['check' => false]]);
+
+        $this->assertFalse($this->load()->updateCheckEnabled());
+    }
+
     public function testAFileThatIsNotJsonIsNamedRatherThanIgnored(): void
     {
         file_put_contents($this->home . '/settings.json', '{ oops');

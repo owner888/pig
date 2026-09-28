@@ -80,6 +80,13 @@ all. `-h` for the flags, `-v` for the version.
 Shift+ctrl+d writes a debug log — the frame, how wide each line came out, and the conversation —
 which is the thing to attach to a bug report.
 
+A start asks Packagist once, in the background, whether there is a newer pig, and says so under
+the conversation if there is — with the command to run, because pig does not update itself.
+Nothing is said when the answer is no, when the network is not there, or when anything else goes
+wrong. `--no-update-check` skips the asking for one run, and `"update": {"check": false}` in
+`~/.pig/settings.json` turns it off for good. `/changelog` shows what changed, and the entries
+newer than the version you last saw are shown once, by themselves, after an upgrade.
+
 With a Claude Pro or Max subscription there is no key to set: `/login` gives you a URL to open
 and takes the code that comes back. A GitHub Copilot subscription works the same way — it shows
 a code to type at github.com and waits, and escape stops the waiting. Gemini CLI (Google Cloud

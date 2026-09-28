@@ -69,6 +69,11 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 列出所有按键——包括输入框自己那些编辑键——和所有命令。按 shift+ctrl+d 写一份 debug log：当前这一帧、
 每行实际占多少列、以及整段对话，报 bug 就附这个。
 
+每次启动会在后台问 Packagist 一次「有没有更新的 pig」，有就在对话下面说一声，并给出要跑的命令——
+pig 自己不会去更新。答案是「没有」、网络不通、或者中间出了任何别的问题，都一个字不说。
+`--no-update-check` 让这一次不问，`~/.pig/settings.json` 里写 `"update": {"check": false}` 就是
+彻底关掉。`/changelog` 看改了什么；比你上次看到的版本更新的那几条，升级之后会单独给你看一次。
+
 有 Claude Pro 或 Max 订阅的话不用配 key：`/login` 给你一个网址，打开点同意，把回来的 code 粘回来
 就行。GitHub Copilot 的订阅也一样走 `/login`——它给你一个码，去 github.com 输进去，pig 这边等着，
 按 esc 可以不等了。Gemini CLI（Google Cloud Code Assist）会开浏览器、在 `localhost:8085` 接回跳，

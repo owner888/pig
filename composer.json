@@ -2,6 +2,11 @@
     "name": "pig/pig",
     "description": "pi, ported to PHP: agent core, unified LLM API, terminal UI, coding agent CLI",
     "type": "project",
+    "version": "0.1.0",
+    "bin": [
+        "bin/pig",
+        "bin/pig-ai"
+    ],
     "license": "MIT",
     "require": {
         "php": ">=8.3",

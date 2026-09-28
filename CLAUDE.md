@@ -1156,9 +1156,11 @@ Four things in it, three of which are upstream's and one of which is arithmetic:
   showed nothing does not mark them as seen. `-c` and `-r` skip it: somebody picking a
   conversation back up is in the middle of something.
 
-**pig has no `CHANGELOG.md`**, so all of this answers nothing today — which was the reason it went
-unported, and is the wrong reason: it is the same answer somebody who deleted theirs gets, and the
-machinery is worth having working before the file exists rather than written the day it appears.
+**There is a `CHANGELOG.md` now**, and the machinery was ported before it existed on the grounds
+that "it is the same answer somebody who deleted theirs gets" — which was right, and cost two tests
+that were pinning the absence of the file rather than the behaviour. See
+[A changelog and a version, and two tests that were pinning the absence of the file](#a-changelog-and-a-version-and-two-tests-that-were-pinning-the-absence-of-the-file).
+The empty answer is still a real one and still has a case, against a path that is not there.
 
 `Session\BranchSummarization` is upstream's `core/compaction/branch-summarization.ts`, and
 ### Where compaction cuts, and the half-turn upstream drops
@@ -1666,8 +1668,11 @@ Two things about it, and the first is the reason the logic is in `Cli\` rather t
   `pig` and `pi` both read, with the mode that file gets. The usage text says which file, because
   that is the one thing somebody on a fresh machine needs to know.
 
-Not added: a `bin` key in `composer.json`. `bin/pig` has never had one either — pig has never
-shipped — and declaring executables is a packaging decision rather than part of this port.
+**`composer.json` declares `bin` now**, and a `version` with it. This paragraph used to say the
+opposite — "declaring executables is a packaging decision rather than part of this port" — and the
+decision has since been taken, because the update check needs a version to compare and the command
+it prints (`composer global update pig/pig`) needs an install that puts `pig` on the PATH. The entry
+below has what that turned out to cost.
 
 ### Tidying pi's directory, which is pig's problem
 
@@ -8669,6 +8674,109 @@ And the timeout has to be nonzero if a subprocess is involved. Forty ticks at a 
 over in microseconds — long before `echo hello` has written anything — so a `bash` command over
 the protocol looked like it had produced nothing at all. A millisecond each gives the poll
 something to wait with.
+
+### A changelog and a version, and two tests that were pinning the absence of the file
+
+Asked for directly: *一打开就可以看到是否有更新* — a start that says whether there is a newer pig, the way
+pi's does. Three things were missing and the developer named all three: no `CHANGELOG.md`, no `bin`
+key or `version` in `composer.json`, and no executable bit on `bin/pig` in git. Three answers
+settled the shape — the version comes from **Packagist**, the notice **prints the command and
+updates nothing** (which is pi's behaviour, and `pi update` is for *extensions*), and the check is
+**on by default with a way off**.
+
+What that produced: `CHANGELOG.md`, `"version"` and `"bin"` in `composer.json`,
+`CodingAgent\Version` (the manifest is the one source — `Version::current()`, cached, throwing by
+name when the file or the key is missing), `Cli\UpdateCheck`, `Settings::updateCheckEnabled()`,
+`--no-update-check`, and `InteractiveMode::sayNewVersion()`. `bin/pig`'s `const VERSION = '0.1.0'`
+is `define('VERSION', Version::current())`, because **a `const` needs a compile-time value** and a
+second copy of the number is the thing `Version` exists to prevent.
+
+Five things in it are decisions rather than code:
+
+- **Every way the check can go wrong is silence.** A 404 — which is what Packagist answers until pig
+  is published, so it is today's ordinary case — a 500, a body of the wrong shape, a proxy that
+  refuses, a machine with no network: all null, nothing on screen. Not a silent fallback, because no
+  value is being invented; the alternative is a warning every morning, which is how people learn to
+  skip warnings.
+- **It is spawned, inside the one `Async::run()` the interactive start already has.** A network call
+  in front of the first frame is a start that hangs on a bad network, and the answer arriving while
+  somebody is already typing is exactly what `sayNewVersion()` being public is for.
+- **Pre-releases are skipped**, and `version_compare()` does the comparing — `Changelog`'s rule, for
+  `Changelog`'s reason.
+- **The version lives in `composer.json` and nowhere else**, and `CHANGELOG.md` says so at the top:
+  bump it in the tag's own commit, or a copy installed from that tag reports itself out of date for
+  ever.
+- **"you have" is `$this->version`, not `Version::current()`.** The component already holds the
+  string the banner drew, and reading the manifest a second time made the screen contradict itself
+  three lines apart — banner `v0.0.0`, notice `you have 0.1.0` — about the one comparison the block
+  exists to make.
+
+**And the two tests that had to change are the entry.** Both went red on the *existence* of
+`CHANGELOG.md`, having been written when there was none:
+
+| | asserted | why it passed |
+|---|---|---|
+| `InteractiveModeTest::testSlashChangelogSaysSoWhenThereIsNoChangelog` | `No changelog entries found.` | `/changelog` calls `Changelog::parse()`, which reads the file at the repository root. The constructor's `$changelog` is the **upgrade note** only, so injecting nothing was never "no changelog" |
+| `ChangelogTest::testPigsOwnPathIsBesideTheReadme` | `Changelog::parse() === []` | same file, and the assertion would have been green for a `path()` pointing anywhere at all |
+
+So the one test of `/changelog` and the one test of the default path were both pinning that a file
+did not exist. *A test whose subject is a file is worth asking what it asserts on the day the file
+appears* — and the tell is the same one this document keeps naming: **an assertion that holds either
+way is not an assertion.** `parse() === []` holds for a correct path to a missing file and for a
+wrong path, which is two facts sharing one green. Both assert the pair now — `path()` names a file
+this parser can read, and the version this pig is has an entry in it — and the empty answer keeps
+its own case against a path that is not there, which is where a question about a missing file
+belongs. Two docblocks asserting "pig has no `CHANGELOG.md`" went with them, in `Changelog` and in
+two places in this document: the fourth shape from the index, on the file the feature is about.
+
+**Each end was mutated separately**, which is the rule this feature had four chances to break and
+broke twice. Eleven mutations: the `<=` (the version you have offered as an upgrade), the
+pre-release skip, the `v` strip, the swallowed `Throwable`, `Version::path()`, both facts in the
+notice, `Changelog::path()`, and `bin/pig`'s two. Nine die. **Two survived and one of them was a
+real gap**: `Settings::updateCheckEnabled()` could `return true;` with the whole suite green — the
+setting had no test at all, so a switch that works in production was inert in every test, which is
+this document's commonest shape. Three `SettingsTest` cases close it, and the `!== false` is
+deliberate rather than tidy: an empty `update` block is somebody who set a sibling key, and reading
+that as "off" is a feature turning itself off because a neighbour was written.
+
+Two things stay unpinned and the reason is on record rather than guessed:
+
+- **`bin/pig`'s `$checkForUpdates` line.** Replacing it with `true` kills nothing, because the only
+  consumer is the interactive branch, which needs a terminal, and the check's whole observable
+  effect is a network call the container cannot make plus a block `sayNewVersion()` draws on its
+  own. `--help` naming the flag is what there is. If this is ever worth closing, the piece to move
+  is the decision — a `bin/pig` that asked something testable which check to make would be
+  pinnable, and that is new surface rather than an audit's call.
+- **`Version`'s cache.** `return self::$current = …` → `return …` survives: the answer is identical
+  and the cost is one extra `file_get_contents` per call, with no seam to observe the peak through.
+  The same standing as `HttpClient::follow()`'s `body->close()`.
+
+**And the harness bit back, for the fifth time, in the fifth shape.** A mutation run hit my own
+two-minute limit, the python was killed with SIGTERM mid-mutation, **its `finally` never ran**, and
+the tree kept `$version = $version;` where the `v` strip had been. The next batch then measured two
+mutations against a tree carrying a third — so one kill was partly somebody else's and the survivor
+could have been anything. Caught by grepping for `ltrim` in a file I had just read and finding none.
+The four earlier bugs were a worker race, reused trees, a replacement that never matched and a
+filter missing a consumer; this one is **the harness being killed from outside**, and the fix is
+that the restore copy is written to disk *before* the mutation is applied, the run gets a timeout
+well inside mine, and the script asserts the file is byte-identical afterwards. *A `finally` is not
+a guarantee when the signal comes from outside the process — the only durable undo is a copy on
+disk made first.*
+
+**What is left for the developer, and it is not a code change.** `bin/pig` and `bin/pig-ai` have no
+executable bit in git and the container copy is not a git repository, so that one is one command on
+the Mac: `git update-index --chmod=+x bin/pig bin/pig-ai`.
+
+**And publishing has a consequence this document leans on in two places.** The back-compatibility
+row says *"pig has never shipped, so there is nobody with an old file"*, and the session-format
+section says there is *"no reader for the old shape, on purpose"* because *"a reader for it would be
+compatibility with nothing"*. Both are arguments from having no users, and **the day `pig/pig` is on
+Packagist they expire** — the rule they rest on is already stated correctly ("back-compatibility is a
+debt to real users, and there are none until there is a release"), so nothing in it is wrong, but
+the release is what starts the debt. Related and smaller: the root package is a path-repository
+monorepo, so `composer global require pig/pig` cannot install it as it stands — the five
+`packages/*` have to be published too, or the root has to stop depending on them by path. That is a
+packaging decision and it is the developer's.
 
 ## Version floor: PHP >= 8.3
 

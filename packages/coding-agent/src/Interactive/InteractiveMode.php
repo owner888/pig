@@ -31,6 +31,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Changelog;
+use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Cli\SessionList;
 use Pig\CodingAgent\ModelResolver;
@@ -2449,6 +2450,39 @@ final class InteractiveMode
         $this->chat->addChild(new Text($this->palette->fg('accent', Style::bold('What\'s New')), 1, 0));
         $this->chat->addChild(new Markdown($markdown, 1, 1, $this->palette->markdownTheme()));
         $this->chat->addChild(new Rule($this->palette->of('border')));
+        $this->tui->requestRender();
+    }
+
+    /**
+     * There is a newer pig, drawn where the changelog is drawn.
+     *
+     * Upstream's `showNewVersionNotification()`: a bordered block naming the version and the
+     * command, and nothing more — pi does not update itself and neither does pig, which is the
+     * developer's call and `Cli\UpdateCheck`'s docblock has the reasoning.
+     *
+     * **Public, because the caller arrives late.** The check is spawned so it cannot slow the
+     * start, so the answer lands while the person is already typing and has to be able to draw
+     * itself then. Everything else the chat says goes through `say()`, `sayError()` or
+     * `sayWarning()`; this is a block rather than a line, like the changelog it sits next to.
+     *
+     * **"you have" is `$this->version`, which is the same string the banner drew.** It was
+     * `Version::current()` for a batch, which reads the manifest a second time — so on any screen
+     * where the two could differ they *did*: the banner said one number and the notice said
+     * another, three lines apart, which is a screen contradicting itself about the one fact this
+     * block exists to compare.
+     */
+    public function sayNewVersion(string $version): void
+    {
+        $this->chat->addChild(new Spacer(1));
+        $this->chat->addChild(new Rule($this->palette->of('warning')));
+        $this->chat->addChild(new Text(
+            $this->palette->fg('warning', Style::bold('Update Available')) . "\n"
+            . $this->palette->fg('muted', "pig {$version} is out — you have {$this->version}. Run: ")
+            . $this->palette->fg('accent', UpdateCheck::COMMAND),
+            1,
+            0,
+        ));
+        $this->chat->addChild(new Rule($this->palette->of('warning')));
         $this->tui->requestRender();
     }
 

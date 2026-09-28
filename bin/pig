@@ -27,6 +27,7 @@ use Pig\Ai\Http\Proxy;
 use Pig\Async\Async;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Cli\Arguments;
+use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\Cli\FileArguments;
 use Pig\CodingAgent\Cli\ModelList;
 use Pig\CodingAgent\Auth;
@@ -44,9 +45,15 @@ use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\CodingAgent\Timings;
+use Pig\CodingAgent\Version;
 use Pig\Tui\Style;
 
-const VERSION = '0.1.0';
+// **Read from `composer.json` rather than written here as well.** Packagist derives a package's
+// version from its tag and the update check below compares against Packagist, so a second copy of
+// the number is a copy that can disagree — and the way it disagrees is the worst one available: a
+// build installed from tag 0.2.0 whose constant still says 0.1.0 reports itself as out of date
+// for ever. One source, bumped in the commit that carries the tag.
+define('VERSION', Version::current());
 
 // The first mark is an anchor and costs nothing; every one after it is the gap since the
 // last. All of them are no-ops unless `PIG_TIMING=1`, which is why they can sit in the flow
@@ -100,6 +107,7 @@ if (isset($options['help'])) {
       --no-skills       start without loading any skills, wherever they live
       --no-hooks        start without loading ~/.pig/hooks or .pig/hooks
       --no-tools        start without loading ~/.pig/tools or .pig/tools
+      --no-update-check do not ask Packagist whether there is a newer pig
       -p, --print       say it, print the answer, exit — the same as --mode text
       --mode <m>        text, json or rpc. Any of them leaves the terminal behind:
                         text prints the last answer, json prints every event as it
@@ -480,7 +488,30 @@ if ($mode === 'rpc') {
         changelog: $changelog,
     );
 
-    Async::run(static fn () => $running->run());
+    // **Spawned, and inside the one `Async::run()` that owns the program.** It is one HTTPS
+    // request to Packagist and nobody is waiting for it, so it must not be able to delay the
+    // first frame: spawning puts it on the loop beside the keyboard, and the box draws itself
+    // whenever the answer arrives — which is upstream's arrangement, where the promise is
+    // started before the mode and read after it. Every way it can fail is null and nothing
+    // drawn, including the 404 Packagist answers until pig is published.
+    //
+    // Interactive only. `-p`, `--mode json` and `--mode rpc` have somebody parsing standard
+    // output, and upstream notifies in its interactive mode alone for the same reason.
+    $checkForUpdates = !isset($options['no-update-check']) && $settings->updateCheckEnabled();
+
+    Async::run(static function () use ($running, $checkForUpdates): void {
+        if ($checkForUpdates) {
+            Async::spawn(static function () use ($running): void {
+                $newer = (new UpdateCheck())->newerThan(VERSION);
+
+                if ($newer !== null) {
+                    $running->sayNewVersion($newer);
+                }
+            });
+        }
+
+        $running->run();
+    });
 
     // The first thing a person sees after quitting is their own shell, so the screen is
     // handed back the way it was found.

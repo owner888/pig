@@ -266,6 +266,19 @@ final class Settings
         return $this->get('retry.enabled') !== false;
     }
 
+    /**
+     * Whether to ask Packagist at startup whether there is a newer pig.
+     *
+     * On unless turned off, like compaction and retries — the developer's call, and the switch is
+     * what makes it defensible: reaching for the network at every start is a habit this project
+     * refuses elsewhere, so the person who does not want it has a way to say so. `--no-update-check`
+     * is the same answer for one run.
+     */
+    public function updateCheckEnabled(): bool
+    {
+        return $this->get('update.check') !== false;
+    }
+
     public function setRetryEnabled(bool $enabled): void
     {
         $this->set('retry.enabled', $enabled);
