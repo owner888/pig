@@ -308,7 +308,12 @@ so a skill written for another agent — or for pi, before the move — works he
 holding the same name is an override rather than an error: `pig > pi > claude > codex`, a project
 folder beats the home one, and `--skills-dir` beats all of them. `/skills` lists what was found and
 where each one came from, and the startup says which file an override took the name from;
-`--no-skills` loads none of them, as `--no-hooks` and `--no-tools` do for theirs.
+`--no-skills` loads none of them, as `--no-hooks` and `--no-tools` do for theirs. The five folders
+another tool owns can also be turned off one at a time, under upstream's own settings keys —
+`skills.enableCodexUser`, `enableClaudeUser`, `enableClaudeProject`, `enablePiUser`,
+`enablePiProject` — which is what to reach for when a large `~/.claude/skills` does not belong in
+front of the model. pig's own two folders have no such key: `skills.enabled` and `--no-skills` are
+the switch for those, and `skills.ignoredSkills` takes glob patterns for anything narrower.
 
 `Rpc\RpcClient` is the other end of `--mode rpc`: it starts the agent, sends the twenty-two commands
 and hands back events, with every call suspending its own fiber rather than returning a promise — so

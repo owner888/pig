@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\Skills;
@@ -71,9 +72,16 @@ final class SkillsTest extends TestCase
         return $path;
     }
 
-    /** @return array{0: list<Skill>, 1: list<\Pig\CodingAgent\Prompt\SkillWarning>} */
-    private function load(array $extraDirs = [], array $ignored = [], array $only = []): array
-    {
+    /**
+     * @param array<string, bool> $roots
+     * @return array{0: list<Skill>, 1: list<\Pig\CodingAgent\Prompt\SkillWarning>}
+     */
+    private function load(
+        array $extraDirs = [],
+        array $ignored = [],
+        array $only = [],
+        array $roots = [],
+    ): array {
         return Skills::load(
             $this->cwd,
             $this->home . '/.pig',
@@ -81,6 +89,7 @@ final class SkillsTest extends TestCase
             $ignored,
             $only,
             piHome: $this->home . '/.pi/agent',
+            roots: $roots,
         );
     }
 
@@ -113,6 +122,77 @@ final class SkillsTest extends TestCase
             'pi-project',
             'pig-project',
         ], $names);
+    }
+
+    /**
+     * Each of the five roots another tool owns can be turned off on its own.
+     *
+     * Upstream's `enableCodexUser`, `enableClaudeUser`, `enableClaudeProject`, `enablePiUser` and
+     * `enablePiProject`. One case per root rather than one case turning all five off: the whole
+     * point is that turning one off leaves the other six alone, and a test that switches
+     * everything off at once cannot tell a working switch from a `continue` in the wrong place.
+     */
+    #[DataProvider('everyRootThatCanBeTurnedOff')]
+    public function testARootAnotherToolOwnsCanBeTurnedOffOnItsOwn(string $source, string $skipped): void
+    {
+        $this->skill('home/.codex/skills/from-codex', "name: from-codex\ndescription: one");
+        $this->skill('home/.claude/skills/from-claude', "name: from-claude\ndescription: two");
+        $this->skill('project/.claude/skills/claude-project', "name: claude-project\ndescription: three");
+        $this->skill('home/.pi/agent/skills/from-pi', "name: from-pi\ndescription: four");
+        $this->skill('project/.pi/skills/pi-project', "name: pi-project\ndescription: five");
+        $this->skill('home/.pig/skills/from-pig', "name: from-pig\ndescription: six");
+        $this->skill('project/.pig/skills/pig-project', "name: pig-project\ndescription: seven");
+
+        [$skills] = $this->load(roots: [$source => false]);
+        $names = array_map(static fn (Skill $s): string => $s->name, $skills);
+
+        $this->assertNotContains($skipped, $names);
+        $this->assertCount(6, $names);
+
+        // pig's own two are never affected by one of these.
+        $this->assertContains('from-pig', $names);
+        $this->assertContains('pig-project', $names);
+    }
+
+    /** @return iterable<string, array{0: string, 1: string}> */
+    public static function everyRootThatCanBeTurnedOff(): iterable
+    {
+        yield 'enableCodexUser' => ['codex-user', 'from-codex'];
+        yield 'enableClaudeUser' => ['claude-user', 'from-claude'];
+        yield 'enableClaudeProject' => ['claude-project', 'claude-project'];
+        yield 'enablePiUser' => ['pi-user', 'from-pi'];
+        yield 'enablePiProject' => ['pi-project', 'pi-project'];
+    }
+
+    /** A root that is off is not scanned, so a broken skill in it is not complained about. */
+    public function testARootThatIsOffIsNotReadAtAll(): void
+    {
+        // No description, which is the one problem that both warns and skips the skill.
+        $this->skill('home/.claude/skills/broken', 'name: broken');
+
+        [$skills, $warnings] = $this->load(roots: ['claude-user' => false]);
+
+        $this->assertSame([], $skills);
+        $this->assertSame([], $warnings);
+    }
+
+    /**
+     * Any root can be switched off here, including pig's own — the loader is mechanism.
+     *
+     * Which of them a *settings file* can reach is `CodingAgent::session()`'s business, and it
+     * passes upstream's five and nothing else; `CodingAgentSessionTest` is where that half is
+     * pinned. A name this table does not use is ignored rather than refused, because the caller
+     * decides what it means and a throw here would be the loader policing its own caller.
+     */
+    public function testAnyRootCanBeSwitchedOffHereAndAnUnknownNameIsIgnored(): void
+    {
+        $this->skill('home/.pig/skills/from-pig', "name: from-pig\ndescription: six");
+        $this->skill('project/.pig/skills/pig-project', "name: pig-project\ndescription: seven");
+
+        [$skills] = $this->load(roots: ['user' => false, 'nonsense' => false]);
+        $names = array_map(static fn (Skill $s): string => $s->name, $skills);
+
+        $this->assertSame(['pig-project'], $names);
     }
 
     public function testPisOwnSkillsAreOneLevelDeeperThanTheFolderNameSuggests(): void

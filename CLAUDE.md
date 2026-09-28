@@ -1267,6 +1267,35 @@ and silently dropping their skills is the half-migration that is worse than none
 `getAgentDir()` upstream is `join(homedir(), ".pi", "agent")`, so a root pointed at `~/.pi/skills`
 would find nothing — there is a test whose only job is to say so.
 
+**Each of the five another tool owns can be turned off on its own**, under upstream's own key names:
+`skills.enableCodexUser`, `enableClaudeUser`, `enableClaudeProject`, `enablePiUser`,
+`enablePiProject`. The developer's call, and the case for it is the one `ignoredSkills` cannot serve —
+a large `~/.claude/skills` that does not belong in front of the model, without naming every skill in
+it. Three things about the shape:
+
+- **`Skills::load()` takes mechanism, `CodingAgent::session()` holds policy.** The loader's `$roots`
+  switches off *any* root by its source name and knows no settings keys at all, the same way it takes
+  `$ignored` as patterns rather than reading `ignoredSkills` itself. The join between upstream's five
+  key names and the five roots they govern is written once, where the settings are read.
+- **A root that is off is not scanned**, rather than scanned and filtered: it should cost nothing to
+  have, and a malformed skill in a folder nobody asked to read is not worth a warning.
+- **pig's own two roots have no key, and that is a naming problem rather than a missing feature.**
+  Upstream's own root *is* `~/.pi/agent/skills`, so its `enablePiUser` and pig's name the same
+  directory and no upstream key is left over for `~/.pig/skills`. Inventing `enablePigUser` would put
+  a key in a settings file that only pig understands — the `models.json` `compat` trade, which this
+  file already argues the other way. `skills.enabled` and `--no-skills` are the switch for those two,
+  `ignoredSkills` for anything narrower.
+
+Regression tests, one per end so the wire is covered rather than the two sides:
+`SkillsTest::testARootAnotherToolOwnsCanBeTurnedOffOnItsOwn` (one case per root, because turning all
+five off at once cannot tell a working switch from a `continue` in the wrong place),
+`testARootThatIsOffIsNotReadAtAll`, `testAnyRootCanBeSwitchedOffHereAndAnUnknownNameIsIgnored`, and
+in `CodingAgentSessionTest` the two that go through a real settings file —
+`testAClaudeRootTurnedOffInTheSettingsIsNotRead` and
+`testThereIsNoSettingThatTurnsOffPigsOwnSkills`. Dropping the `roots:` argument in
+`CodingAgent::session()` leaves every `SkillsTest` case green and turns the end-to-end one red, which
+is the split working as intended.
+
 **Order is precedence, lowest first: a later root overrides an earlier one of the same name.** So
 `pig > pi > claude > codex`, a project folder beats the home one of the same tool, and `--skills-dir`
 beats all of them because it was typed. `SkillsTest` proves the whole chain at once rather than one
@@ -1996,14 +2025,13 @@ naming because the check was not a grep:
 - **A `session_compact` event fires after the summary is saved**, which is upstream's *"should include
   entries in compact event after compaction is saved"*.
 
-**One absence is a decision rather than a find**, so it is recorded and not implemented: upstream has
+**One absence was a decision rather than a find, and the decision has since been taken**: upstream's
 five per-root skill switches — `skills.enableCodexUser`, `enableClaudeUser`, `enableClaudeProject`,
-`enablePiUser`, `enablePiProject` — and two of its tests exercise them (*"should load from
+`enablePiUser`, `enablePiProject`, which two of its tests exercise (*"should load from
 customDirectories only when built-ins disabled"*, *"should return empty when all sources disabled and
-no custom dirs"*). pig has `--no-skills`, which is all seven roots or none, and `ignoredSkills` by
-name. Five booleans on `Skills::load()` is new public surface, so it is the developer's call; the
-argument for is that somebody with a large `~/.claude/skills` may want it out of pig's prompt without
-naming every skill in it, and the argument against is the rule at the top of this file.
+no custom dirs"*). pig had `--no-skills`, all seven roots or none, and `ignoredSkills` by name. Five
+switches is new public surface, so it was the developer's to call and the answer was yes; the shape it
+took, and why pig's own two roots still have no key, is in the skills section above.
 
 ### `tui`'s tests, where the specification was the find
 

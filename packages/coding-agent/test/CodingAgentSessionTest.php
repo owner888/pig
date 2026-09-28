@@ -526,6 +526,66 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertSame([], $this->start()->skills);
     }
 
+    /**
+     * One of upstream's five per-root switches, read from a settings file end to end.
+     *
+     * `Skills::load()` can switch any root off; which ones a settings file can *reach* is decided
+     * here, and this is the half that pins it — the loader's own tests prove the mechanism and say
+     * nothing about which keys are wired to it. Claude's user root is the case worth spending a
+     * test on: a large `~/.claude/skills` in front of the model is the reason somebody wants this.
+     */
+    public function testAClaudeRootTurnedOffInTheSettingsIsNotRead(): void
+    {
+        mkdir($this->root . '/user/.claude/skills/theirs', 0o755, true);
+        file_put_contents(
+            $this->root . '/user/.claude/skills/theirs/SKILL.md',
+            "---\nname: theirs\ndescription: A skill another tool owns\n---\n\nDo it.\n",
+        );
+        mkdir($this->cwd . '/.pig/skills/ours', 0o755, true);
+        file_put_contents(
+            $this->cwd . '/.pig/skills/ours/SKILL.md',
+            "---\nname: ours\ndescription: A skill of our own\n---\n\nDo it.\n",
+        );
+
+        $names = static fn (object $started): array
+            => array_map(static fn (object $s): string => $s->name, $started->skills);
+
+        $both = $names($this->start());
+        sort($both);
+        $this->assertSame(['ours', 'theirs'], $both, 'both are there to begin with');
+
+        $this->writeSettings(['skills' => ['enableClaudeUser' => false]]);
+
+        // Theirs is gone and pig's own is untouched, which is the whole point of a per-root switch
+        // rather than `skills.enabled`.
+        $this->assertSame(['ours'], $names($this->start()));
+    }
+
+    /** And pig's own root has no such key, so nothing in a settings file can turn it off. */
+    public function testThereIsNoSettingThatTurnsOffPigsOwnSkills(): void
+    {
+        mkdir($this->home . '/skills/ours', 0o755, true);
+        file_put_contents(
+            $this->home . '/skills/ours/SKILL.md',
+            "---\nname: ours\ndescription: A skill of our own\n---\n\nDo it.\n",
+        );
+
+        // Every one of upstream's five off at once. pig's own root is not one of them — upstream's
+        // `enablePiUser` names `~/.pi/agent/skills`, which is a different directory.
+        $this->writeSettings(['skills' => [
+            'enableCodexUser' => false,
+            'enableClaudeUser' => false,
+            'enableClaudeProject' => false,
+            'enablePiUser' => false,
+            'enablePiProject' => false,
+        ]]);
+
+        $this->assertSame(
+            ['ours'],
+            array_map(static fn (object $s): string => $s->name, $this->start()->skills),
+        );
+    }
+
     public function testAHookThatDoesNotLoadIsAWarningAndNotAFailedStartup(): void
     {
         mkdir($this->home . '/hooks', 0o755, true);

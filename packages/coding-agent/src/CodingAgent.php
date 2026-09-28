@@ -261,6 +261,17 @@ final class CodingAgent
                 extraDirs: array_filter([$skillsDir, ...$settings->skillList('customDirectories')]),
                 ignored: $settings->skillList('ignoredSkills'),
                 only: $settings->skillList('includeSkills'),
+                // Upstream's five per-root switches. The join between its key names and the root
+                // each one governs is written here, once, because this is where the settings are
+                // read — `Skills` takes plain values and knows no key names, the same way it takes
+                // `ignored` rather than reading `ignoredSkills` itself.
+                roots: [
+                    'codex-user' => $settings->skillRoot('enableCodexUser'),
+                    'claude-user' => $settings->skillRoot('enableClaudeUser'),
+                    'claude-project' => $settings->skillRoot('enableClaudeProject'),
+                    'pi-user' => $settings->skillRoot('enablePiUser'),
+                    'pi-project' => $settings->skillRoot('enablePiProject'),
+                ],
             )
             : [[], []];
         Timings::mark('skills');

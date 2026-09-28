@@ -347,6 +347,19 @@ final class Settings
         return is_array($value) ? array_values(array_map(strval(...), $value)) : [];
     }
 
+    /**
+     * Whether one of the standard skill roots is read, by upstream's own key name.
+     *
+     * `enableCodexUser`, `enableClaudeUser`, `enableClaudeProject`, `enablePiUser`,
+     * `enablePiProject` — the five directories pig reads because another tool owns them. On
+     * unless the file says `false`, which is `skillsEnabled()`'s rule and stops a key somebody
+     * typed as `"no"` from quietly turning a root off.
+     */
+    public function skillRoot(string $key): bool
+    {
+        return $this->get("skills.{$key}") !== false;
+    }
+
     // ---- everything else -----------------------------------------------------------------
 
     /**

@@ -72,10 +72,13 @@ final class Skills
     /**
      * Every skill this machine offers, by name.
      *
-     * @param list<string> $extraDirs  scanned after the standard roots, recursively
-     * @param list<string> $ignored    fnmatch patterns; a skill whose name matches is left out
-     * @param list<string> $only       fnmatch patterns; when given, nothing else is loaded
-     * @param string|null  $piHome     pi's agent directory, `~/.pi/agent` unless told otherwise
+     * @param list<string>        $extraDirs scanned after the standard roots, recursively
+     * @param list<string>        $ignored   fnmatch patterns; a skill whose name matches is left out
+     * @param list<string>        $only      fnmatch patterns; when given, nothing else is loaded
+     * @param string|null         $piHome    pi's agent directory, `~/.pi/agent` unless told otherwise
+     * @param array<string, bool> $roots     by source name; a root set to false is not read at all,
+     *        and one that is not mentioned is. Which of them a settings file can reach is the
+     *        caller's business — see the note on the table below.
      * @return array{0: list<Skill>, 1: list<SkillWarning>}
      */
     public static function load(
@@ -85,6 +88,7 @@ final class Skills
         array $ignored = [],
         array $only = [],
         ?string $piHome = null,
+        array $roots = [],
     ): array {
         $home ??= Config::home();
         $piHome ??= Config::piHome();
@@ -104,7 +108,20 @@ final class Skills
         // `$piHome` is `~/.pi/agent`, not `~/.pi`: upstream's `getAgentDir()` is
         // `join(homedir(), ".pi", "agent")`, so its skills are one level deeper than the folder
         // name suggests. The project one is `<cwd>/.pi/skills`, pi's own `CONFIG_DIR_NAME`.
-        $roots = [
+        // `$roots` can switch any of these off by its source name, and which ones a *settings file*
+        // can reach is `CodingAgent::session()`'s business rather than this method's — mechanism
+        // here, policy there, the same split as `$ignored` being a list of patterns rather than a
+        // settings key. What it passes today is upstream's five, one per directory another tool
+        // owns: `enableCodexUser`, `enableClaudeUser`, `enableClaudeProject`, `enablePiUser`,
+        // `enablePiProject`.
+        //
+        // **pig's own two have no settings key**, which is the one place this differs from
+        // upstream, and it is a naming problem rather than a decision about features: upstream's
+        // own root *is* `~/.pi/agent/skills`, so its `enablePiUser` and pig's name the same
+        // directory, and no upstream key is left over for `~/.pig/skills`. Inventing one would put
+        // a key in a settings file that only pig understands. The all-or-nothing switch already
+        // exists twice — `skills.enabled` and `--no-skills` — with `ignoredSkills` for narrower.
+        $table = [
             [$user . '/.codex/skills', 'codex-user', self::RECURSIVE],
             [$user . '/.claude/skills', 'claude-user', self::ONE_LEVEL],
             [$cwd . '/.claude/skills', 'claude-project', self::ONE_LEVEL],
@@ -115,14 +132,21 @@ final class Skills
         ];
 
         foreach ($extraDirs as $directory) {
-            $roots[] = [Paths::expand($directory), 'custom', self::RECURSIVE];
+            $table[] = [Paths::expand($directory), 'custom', self::RECURSIVE];
         }
 
         $skills = [];
         $warnings = [];
         $seenFiles = [];
 
-        foreach ($roots as [$directory, $source, $format]) {
+        foreach ($table as [$directory, $source, $format]) {
+            // Not scanned rather than scanned-and-filtered: a root that is off should cost nothing
+            // to have, and a malformed skill in it is not worth a warning about a folder nobody
+            // asked to read.
+            if (($roots[$source] ?? true) === false) {
+                continue;
+            }
+
             [$found, $complaints] = self::scan($directory, $source, $format);
             $warnings = [...$warnings, ...$complaints];
 

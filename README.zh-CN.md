@@ -267,7 +267,10 @@ skill 就是一个带 `SKILL.md` 的文件夹。pig 读 `~/.pig/skills` 和 `.pi
 agent 写的、或者迁过来之前给 pi 写的 skill，在这儿都直接能用。两个目录里有同名 skill 是**覆盖**而不是
 报错：`pig > pi > claude > codex`，项目目录盖过家目录，`--skills-dir` 盖过所有。`/skills` 列出找到了
 哪些、各自来自哪个目录，启动时也会说某次覆盖是从哪个文件手里拿走这个名字的。`--no-skills` 一个都不加载，
-跟 `--no-hooks`、`--no-tools` 对它们各自那摊一样。
+跟 `--no-hooks`、`--no-tools` 对它们各自那摊一样。别的工具的那五个目录还能一个一个单独关掉，用的是上游
+自己的设置键——`skills.enableCodexUser`、`enableClaudeUser`、`enableClaudeProject`、`enablePiUser`、
+`enablePiProject`——`~/.claude/skills` 太大、不该整份摆到模型面前时就用这个。pig 自己那两个目录没有对应的
+键：那两个归 `skills.enabled` 和 `--no-skills` 管，更细的用 `skills.ignoredSkills` 写 glob。
 
 `Rpc\RpcClient` 是 `--mode rpc` 的另一端：启动 agent、发那二十二条命令、把事件交回来，每个方法都是
 挂起自己的 fiber 而不是返回 promise——所以宿主读起来像一个会阻塞的程序，而实际上什么都没阻塞。
