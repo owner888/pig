@@ -19,16 +19,45 @@ use Closure;
  * `foo` prefers `foobar` to `f_o_o` and prefers a file called `foo.php` to one that merely
  * mentions it near the end.
  *
- * One deliberate difference from upstream, and it is the only one: the walk is over
- * **characters, not bytes**. JavaScript indexes a string by UTF-16 code unit, which for
- * everything either project searches is one unit per character; PHP's `$text[$i]` is a byte,
- * so a Chinese query would compare thirds of characters against each other and score
- * nonsense. `mb_str_split()` makes the two agree.
+ * ### Where this differs from upstream, measured rather than reasoned about
+ *
+ * A corpus of 3,078 comparisons against `fuzzy.ts` — every query against every haystack, 600
+ * random slices used as their own query, and the ordering both produce — leaves **36 score
+ * differences and no disagreement about whether anything matches**, and every one of the 36 is
+ * one of these two:
+ *
+ * **The walk is over characters, and upstream's is over UTF-16 code units.** `$text[$i]` in PHP
+ * is a byte, so `mb_str_split()` is not optional — a Chinese query would otherwise compare thirds
+ * of characters. This docblock used to add that code units and characters are the same thing "for
+ * everything either project searches", and the corpus says otherwise: an **astral** character is
+ * two code units and one character, so every position after one differs. `math 𝐀𝐁𝐂 astral
+ * letters` searched for `math 𝐀𝐁` scores −241.4 upstream and −157.9 here. Emoji are astral and a
+ * conversation's text is full of them. **pig's is the better answer** — the score is built out of
+ * gaps and positions, and a family emoji inflating a gap by eight where a reader sees one
+ * character is upstream measuring the encoding rather than the text — so this is kept and the
+ * claim that used to hide it is gone.
+ *
+ * **U+FEFF is whitespace to JavaScript and not to PCRE.** The two classes differ by exactly three
+ * codepoints, checked one by one over the whole BMP: `﻿` is in JavaScript's `\s` and not in
+ * PCRE's, while U+0085 (NEL) and U+180E are in PCRE's and not in JavaScript's. Only the first is
+ * a mistake to inherit — a zero-width no-break space is invisible, so a word after one is still
+ * at the start of a word — so it is added here and the other two are left, which makes pig's
+ * class the **union**. Same reasoning as `version_compare()` replacing upstream's arithmetic:
+ * where JavaScript is the one missing a case, the port does not copy the gap.
  */
 final class Fuzzy
 {
+    /**
+     * Whitespace, as JavaScript means it.
+     *
+     * PCRE's `\s` under `/u` is the White_Space property, which leaves out `﻿` because it is
+     * a format character rather than a separator. JavaScript's `\s` includes it, and for both
+     * readers below that is the answer worth having — see the class docblock.
+     */
+    private const string SPACE = '\s\x{FEFF}';
+
     /** What counts as the start of a word, when the character before a match is one of these. */
-    private const string BOUNDARY = '/[\s\-_.\/]/u';
+    private const string BOUNDARY = '/[' . self::SPACE . '\-_.\/]/u';
 
     /**
      * Does the query match, and how well.
@@ -113,7 +142,14 @@ final class Fuzzy
      */
     public static function filter(array $items, string $query, Closure $text): array
     {
-        $tokens = preg_split('/\s+/', trim($query), -1, PREG_SPLIT_NO_EMPTY);
+        // **`/u`, and it is the whole entry in the traps about this.** This was
+        // `preg_split('/\s+/', trim($query), …)` — an ASCII-only split after an ASCII-only trim —
+        // so a space that is not U+0020 was a character in the query rather than a gap between
+        // tokens. `tls　handshake` typed with a full-width IME, which is what pressing space on a
+        // Chinese keyboard produces, became one token nothing could match, and the list somebody
+        // was searching went empty. `PREG_SPLIT_NO_EMPTY` already drops the ends, so the `trim()`
+        // that used to be here was doing nothing the split does not.
+        $tokens = preg_split('/[' . self::SPACE . ']+/u', $query, -1, PREG_SPLIT_NO_EMPTY);
 
         if ($tokens === false || $tokens === []) {
             return $items;

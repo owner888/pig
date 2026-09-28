@@ -93,6 +93,20 @@ final class FuzzyTest extends TestCase
         }
     }
 
+    public function testASpaceThatIsNotU0020StartsAWordToo(): void
+    {
+        // A conversation's text is whatever was pasted into it, so these arrive without anybody
+        // typing them: a full-width space from a Chinese IME, a non-breaking space from a web
+        // page, and a byte-order mark from the front of a file.
+        foreach (["\u{3000}", "\u{00A0}", "\u{FEFF}", "\u{2009}"] as $separator) {
+            $this->assertLessThan(
+                Fuzzy::match('b', 'ab')->score,
+                Fuzzy::match('b', 'a' . $separator . 'b')->score,
+                sprintf('U+%04X should start a word', mb_ord($separator, 'UTF-8')),
+            );
+        }
+    }
+
     // ---- characters, not bytes ----------------------------------------------------------
 
     public function testPositionIsCountedInCharactersNotBytes(): void
@@ -126,6 +140,30 @@ final class FuzzyTest extends TestCase
 
         $this->assertSame($items, $this->filter($items, ''));
         $this->assertSame($items, $this->filter($items, '   '));
+
+        // And a space that is not U+0020 is still nothing typed. Before the split was `/u`, a
+        // lone full-width space was a *character to match*, so the list came back holding
+        // whichever item happened to contain one — usually none.
+        foreach (["\u{3000}", "\u{00A0}", "\u{FEFF}", "\u{3000}\u{00A0} "] as $blank) {
+            $this->assertSame($items, $this->filter($items, $blank), sprintf('%s is still blank', bin2hex($blank)));
+        }
+    }
+
+    public function testASpaceThatIsNotU0020SeparatesTokens(): void
+    {
+        // **The bug this pins, and it is not exotic**: pressing space on a Chinese keyboard in
+        // full-width mode produces U+3000, and pasting from a web page brings U+00A0. The split
+        // was ASCII-only, so `tls　handshake` was a single token with a character in the middle
+        // that no conversation contains — and the `/resume` search box went empty on the one
+        // keystroke somebody uses to narrow it.
+        $items = ['debug the tls handshake', 'the markdown lexer'];
+
+        foreach (["tls\u{3000}handshake", "tls\u{00A0}handshake", "tls\u{2009}handshake"] as $query) {
+            $this->assertSame(['debug the tls handshake'], $this->filter($items, $query), bin2hex($query));
+        }
+
+        // A mark on the front of a pasted query is not part of the first token either.
+        $this->assertSame(['debug the tls handshake'], $this->filter($items, "\u{FEFF}tls"));
     }
 
     public function testOnlyTheMatchesComeBack(): void

@@ -2895,14 +2895,19 @@ the start of a word is worth a lot, and a late match costs a little. A space-sep
 several searches over the same text and all of them have to hit, which is what makes a
 transcript-sized haystack narrowable at all.
 
-Four things about it:
+Five things about it, and all of them have now been **run** against `fuzzy.ts` rather than read —
+3,078 comparisons, which is where the entry on the search box came from:
 
-- **The walk is over characters, not bytes** — the one deliberate difference from upstream, and
-  the only one. JavaScript indexes a string by UTF-16 code unit, which for everything either
-  project searches is one per character; `$text[$i]` in PHP is a byte, so a Chinese query would
-  compare thirds of characters and score nonsense: `好` is the second *character* of `你好` and
-  its fourth, fifth and sixth bytes, which a byte walk reads as a three-character run near the
-  end of the string and scores about -13.8 instead of 0.1.
+- **The walk is over characters, not bytes, and not code units either.** `$text[$i]` in PHP is a
+  byte, so a Chinese query would compare thirds of characters and score nonsense: `好` is the second
+  *character* of `你好` and its fourth, fifth and sixth bytes, which a byte walk reads as a
+  three-character run near the end of the string and scores about -13.8 instead of 0.1. This used to
+  say code units and characters are the same "for everything either project searches" and **the
+  corpus refuted it**: an astral character is two code units and one character, so every position
+  after an emoji differs. pig's is the better answer and the reason is on the class.
+- **The whitespace class is the union of PCRE's and JavaScript's**, which differ by exactly three
+  codepoints — see the trap entry, and the bug that was hiding behind the tokenizer not being `/u`
+  at all.
 - **Ties keep the order they arrived in.** `usort` has been stable since PHP 8.0, as
   `Array.prototype.sort` is in JavaScript. That is load-bearing rather than incidental: the
   list is sorted newest-first before it gets here, and ties coming back shuffled would look
@@ -3617,6 +3622,12 @@ is the one that is wrong.*
 `generateDiffString`, so the question was not "does pig match upstream" but "do upstream's two copies
 match each other" — and the answer is no, in the line numbers. Nothing here changed; what changed is
 that pig's numbering is now known to be the right one of two rather than the only one on offer.
+
+**The tenth is `Fuzzy`, and it found a live bug in the one place the corpus was overdue.** 3,078
+comparisons against `fuzzy.ts`; the four notes on that file had all been read rather than run, and
+one of them was a claim the run refuted. What it cost until then was the `/resume` search box going
+empty on a full-width space — see [A space that is not U+0020 emptied the search
+box](#a-space-that-is-not-u0020-emptied-the-search-box). *Reading that file found nothing, twice.*
 
 ### `--continue` opened the conversation you were not working on
 
@@ -5681,6 +5692,69 @@ Regression tests: `OpenAiCompletionsTest::testDeepSeekGetsItUnderTheOlderNameToo
 that nothing *else* about the endpoint is treated as strict — it takes `store`, the `developer` role
 and `reasoning_effort` without complaint, so the one row is the whole difference. Taking
 `deepseek.com` off the row turns it red.
+
+### A space that is not U+0020 emptied the search box
+
+`Utils\Fuzzy` is what `/resume`'s searchable session list and `--list-models` filter through, and
+`filter()` split the query into tokens with
+
+```php
+preg_split('/\s+/', trim($query), -1, PREG_SPLIT_NO_EMPTY)
+```
+
+**No `/u`, after an ASCII-only `trim()`.** So a space that is not U+0020 was never a gap between
+tokens — it was a character the query demanded to find. Measured against upstream over the same
+inputs:
+
+| typed | upstream keeps | pig kept |
+|---|---|---|
+| `tls␣handshake` with U+3000 | 1 | **0** |
+| `tls␣handshake` with U+00A0 | 1 | **0** |
+| `␣tls` with a leading U+FEFF | 2 | **0** |
+| U+3000 on its own | 2 (nothing typed yet) | **0** |
+
+**None of those is exotic.** U+3000 is what pressing space produces on a Chinese keyboard in
+full-width mode, U+00A0 is what pasting from a web page brings, and a byte-order mark rides on the
+front of anything copied out of a file. So the one keystroke somebody uses to narrow a list of
+thirty conversations emptied it, and a lone full-width space — which upstream reads as *nothing
+typed* and answers with the whole list — answered with nothing at all. It looked like the list had
+lost its contents, which is the failure mode `Cli\SessionList` exists to prevent.
+
+`PREG_SPLIT_NO_EMPTY` already drops the ends, so the `trim()` in front of it was doing nothing the
+split does not; it is gone with the ASCII-only pattern.
+
+**The whitespace class is now the union of PCRE's and JavaScript's, which took a codepoint-by-codepoint
+check rather than a guess.** Over the whole BMP the two differ by exactly three: `﻿` is in
+JavaScript's `\s` and not in PCRE's (it is a format character, not a separator), while U+0085 and
+U+180E are in PCRE's and not in JavaScript's. Only the first is a mistake to inherit — a zero-width
+no-break space is invisible, so a word after one is still at the start of a word — so `Fuzzy::SPACE`
+adds it and keeps the other two. Same rule as `version_compare()` replacing upstream's arithmetic:
+**where JavaScript is the one missing a case, the port does not copy the gap.**
+
+Found by the ninth corpus run: **3,078 comparisons against `fuzzy.ts`** — every query against every
+haystack, 600 random slices of a haystack used as their own query, and the ordering both produce.
+43 differed before the fix and 36 after, and *the 36 are all one deliberate thing*.
+
+**That thing is the second find, and it is a claim this file was making.** `Fuzzy`'s docblock said
+the character walk was "the one deliberate difference" and that code units and characters are the
+same "for everything either project searches". An **astral** character is two code units and one
+character, so every position after one differs: `math 𝐀𝐁𝐂 astral letters` searched for `math 𝐀𝐁`
+scores −241.4 upstream and −157.9 here. Emoji are astral and a conversation's text is full of them —
+pig's own test corpus has ✅ and 🎉 in it. pig's answer is the **better** one, because the score is
+built out of gaps and positions and a family emoji inflating a gap by eight where a reader sees one
+character is upstream measuring the encoding rather than the text. So nothing changed except the
+sentence that hid it, which is the fourth shape from the index found by running the thing the
+sentence was about.
+
+*The four notes about this file had all been read rather than run*, which is what the rule at the top
+of the traps says to fix: **a hand-rolled replacement for a package is worth a corpus, and a file of
+pure functions is worth one even when reading finds nothing.** Reading found nothing here twice.
+
+Regression tests: `FuzzyTest::testASpaceThatIsNotU0020SeparatesTokens` (three separators plus a
+leading mark), `testASpaceThatIsNotU0020StartsAWordToo` (four, the score half), and the two blank
+cases added to `testABlankQueryGivesTheListBackInItsOwnOrder`. Each rule fails on its own mutation:
+putting the ASCII split back turns two red, dropping `\x{FEFF}` from the class turns three red, and a
+byte walk instead of `mb_str_split()` turns three red.
 
 ### The registry was a transcription of a generated file
 
