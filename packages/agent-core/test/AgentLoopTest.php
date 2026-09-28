@@ -91,7 +91,7 @@ final class AgentLoopTest extends TestCase
 
     public function testAPlainAnswerRunsOneTurn(): void
     {
-        [$events, $messages] = $this->run(
+        [$events, $messages] = $this->drive(
             [$this->answer('hello there')],
             [new UserMessage('hi')],
         );
@@ -120,7 +120,7 @@ final class AgentLoopTest extends TestCase
             details: ['bytes' => 120],
         ));
 
-        [$events, $messages] = $this->run(
+        [$events, $messages] = $this->drive(
             [$this->wantsTool('read', ['path' => '/tmp/a.php']), $this->answer('it is a php file')],
             [new UserMessage('what is in a.php?')],
             tools: [$tool],
@@ -153,7 +153,7 @@ final class AgentLoopTest extends TestCase
     {
         $tool = new ScriptedTool('read', static fn (): AgentToolResult => throw new RuntimeException('no such file'));
 
-        [, $messages] = $this->run(
+        [, $messages] = $this->drive(
             [$this->wantsTool('read', ['path' => '/nope']), $this->answer('sorry')],
             [new UserMessage('read it')],
             tools: [$tool],
@@ -169,7 +169,7 @@ final class AgentLoopTest extends TestCase
 
     public function testAToolThatIsNotThereIsReportedTheSameWay(): void
     {
-        [, $messages] = $this->run(
+        [, $messages] = $this->drive(
             [$this->wantsTool('write', ['path' => '/tmp/a']), $this->answer('ok')],
             [new UserMessage('write it')],
             tools: [],
@@ -183,7 +183,7 @@ final class AgentLoopTest extends TestCase
     {
         $tool = new ScriptedTool('read', static fn (): AgentToolResult => new AgentToolResult([new TextContent('ok')]));
 
-        [, $messages] = $this->run(
+        [, $messages] = $this->drive(
             // No `path`, and `limit` is a string where the schema says integer.
             [$this->wantsTool('read', ['limit' => 'ten']), $this->answer('let me retry')],
             [new UserMessage('read it')],
@@ -211,7 +211,7 @@ final class AgentLoopTest extends TestCase
 
         $steering = [new UserMessage('stop, do something else')];
 
-        [, $messages] = $this->run(
+        [, $messages] = $this->drive(
             [$this->wantsTools('read', [['path' => '/a'], ['path' => '/b'], ['path' => '/c']]), $this->answer('ok')],
             [new UserMessage('read all three')],
             tools: [$tool],
@@ -245,7 +245,7 @@ final class AgentLoopTest extends TestCase
     {
         $followUps = [new UserMessage('and one more thing')];
 
-        [$events, $messages] = $this->run(
+        [$events, $messages] = $this->drive(
             [$this->answer('first'), $this->answer('second')],
             [new UserMessage('hi')],
             getFollowUpMessages: static function () use (&$followUps): array {
@@ -262,7 +262,7 @@ final class AgentLoopTest extends TestCase
 
     public function testAFailedResponseEndsTheRunThere(): void
     {
-        [$events, $messages] = $this->run(
+        [$events, $messages] = $this->drive(
             [$this->failure('the provider fell over')],
             [new UserMessage('hi')],
         );
@@ -274,7 +274,7 @@ final class AgentLoopTest extends TestCase
 
     public function testTheModelNeverSeesTheAppsOwnMessages(): void
     {
-        $this->run(
+        $this->drive(
             [$this->answer('ok')],
             [new Notice('the user opened a file'), new UserMessage('what is this?')],
         );
@@ -490,7 +490,7 @@ final class AgentLoopTest extends TestCase
      * @param list<AgentTool>        $tools
      * @return array{0: list<string>, 1: list<mixed>}
      */
-    private function run(
+    private function drive(
         array $turns,
         array $prompts,
         array $tools = [],

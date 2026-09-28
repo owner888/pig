@@ -83,7 +83,7 @@ final class SearchToolsTest extends ToolTestCase
             // With downloading off, what the model gets is one command a person can run.
             $error = $this->assertThrows(
                 AgentError::class,
-                fn () => $this->run(new FindTool($this->cwd), ['pattern' => '*']),
+                fn () => $this->execute(new FindTool($this->cwd), ['pattern' => '*']),
                 'not installed',
             );
 
@@ -104,7 +104,7 @@ final class SearchToolsTest extends ToolTestCase
         try {
             $error = $this->assertThrows(
                 AgentError::class,
-                fn () => $this->run(new GrepTool($this->cwd), ['pattern' => 'x']),
+                fn () => $this->execute(new GrepTool($this->cwd), ['pattern' => 'x']),
                 'ripgrep',
             );
 
@@ -122,7 +122,7 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsFd();
         $this->project();
 
-        $found = $this->lines($this->output($this->run(new FindTool($this->cwd), ['pattern' => '*.php'])));
+        $found = $this->lines($this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => '*.php'])));
         sort($found);
 
         $this->assertSame(['src/Main.php', 'src/Tools/Read.php', 'src/Tools/Walk.php', 'test/MainTest.php'], $found);
@@ -136,7 +136,7 @@ final class SearchToolsTest extends ToolTestCase
         // fd matches a glob against the file name unless told otherwise, so this shipped
         // once matching nothing at all: every pattern the model wrote with a directory in
         // it came back "No files found", and it fell back to walking the tree with `ls`.
-        $found = $this->lines($this->output($this->run(new FindTool($this->cwd), ['pattern' => 'src/*.php'])));
+        $found = $this->lines($this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => 'src/*.php'])));
 
         $this->assertSame(['src/Main.php'], $found);
     }
@@ -146,8 +146,8 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsFd();
         $this->project();
 
-        $shallow = $this->lines($this->output($this->run(new FindTool($this->cwd), ['pattern' => 'src/*.php'])));
-        $deep = $this->lines($this->output($this->run(new FindTool($this->cwd), ['pattern' => 'src/**/*.php'])));
+        $shallow = $this->lines($this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => 'src/*.php'])));
+        $deep = $this->lines($this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => 'src/**/*.php'])));
         sort($deep);
 
         $this->assertNotContains('src/Tools/Read.php', $shallow);
@@ -162,7 +162,7 @@ final class SearchToolsTest extends ToolTestCase
 
         // 'src/*.php' means "in any src directory", not "in the src directory at the
         // root" — the anchoring a --full-path glob would otherwise have.
-        $found = $this->lines($this->output($this->run(new FindTool($this->cwd), ['pattern' => 'src/*.php'])));
+        $found = $this->lines($this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => 'src/*.php'])));
         sort($found);
 
         $this->assertSame(['src/Main.php', 'vendor-ish/src/Deep.php'], $found);
@@ -173,7 +173,7 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsFd();
         $this->project();
 
-        $found = $this->lines($this->output($this->run(new FindTool($this->cwd), ['pattern' => '**/Tools/*.php'])));
+        $found = $this->lines($this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => '**/Tools/*.php'])));
         sort($found);
 
         $this->assertSame(['src/Tools/Read.php', 'src/Tools/Walk.php'], $found);
@@ -188,7 +188,7 @@ final class SearchToolsTest extends ToolTestCase
         // hid every real error behind an answer the model had no reason to doubt.
         $error = $this->assertThrows(
             AgentError::class,
-            fn () => $this->run(new FindTool($this->cwd), ['pattern' => '[unclosed']),
+            fn () => $this->execute(new FindTool($this->cwd), ['pattern' => '[unclosed']),
             'unclosed character class',
         );
 
@@ -200,7 +200,7 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsFd();
         $this->project();
 
-        foreach ($this->lines($this->output($this->run(new FindTool($this->cwd), ['pattern' => '*.php']))) as $line) {
+        foreach ($this->lines($this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => '*.php']))) as $line) {
             // fd prints absolute paths because it was given one; the model wants them
             // the way it would type them.
             $this->assertStringStartsNotWith('/', $line);
@@ -212,7 +212,7 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsFd();
         $this->project();
 
-        $found = $this->output($this->run(new FindTool($this->cwd), ['pattern' => '*.php', 'path' => 'test']));
+        $found = $this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => '*.php', 'path' => 'test']));
 
         $this->assertSame('MainTest.php', $found);
     }
@@ -224,7 +224,7 @@ final class SearchToolsTest extends ToolTestCase
 
         $this->assertSame(
             'No files found matching pattern',
-            $this->output($this->run(new FindTool($this->cwd), ['pattern' => '*.rs'])),
+            $this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => '*.rs'])),
         );
     }
 
@@ -236,9 +236,9 @@ final class SearchToolsTest extends ToolTestCase
             $this->file("f{$index}.php");
         }
 
-        $result = $this->run(new FindTool($this->cwd), ['pattern' => '*.php', 'limit' => 4]);
+        $result = $this->execute(new FindTool($this->cwd), ['pattern' => '*.php', 'limit' => 4]);
 
-        $this->assertStringContainsString('[4 result limit reached. Use limit=8 for more', $this->output($result));
+        $this->assertStringContainsString('[4 result limit reached. Use limit=8 for more', $this->textOf($result));
 
         // And as data, for the collapsed tool view, which keeps the front of the output and
         // never shows the line at the end of it. `resultLimitReached` is upstream's key, which
@@ -253,7 +253,7 @@ final class SearchToolsTest extends ToolTestCase
 
         $this->assertThrows(
             AgentError::class,
-            fn () => $this->run(new FindTool($this->cwd), ['pattern' => '*', 'path' => 'nope']),
+            fn () => $this->execute(new FindTool($this->cwd), ['pattern' => '*', 'path' => 'nope']),
             'No such directory',
         );
     }
@@ -266,7 +266,7 @@ final class SearchToolsTest extends ToolTestCase
         $this->file('vendor/huge/thing.php');
         $this->file('debug.log');
 
-        $found = $this->output($this->run(new FindTool($this->cwd), ['pattern' => '*']));
+        $found = $this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => '*']));
 
         $this->assertStringNotContainsString('vendor', $found);
         $this->assertStringNotContainsString('debug.log', $found);
@@ -283,7 +283,7 @@ final class SearchToolsTest extends ToolTestCase
 
         // fd honours nested .gitignore files on its own only inside a repository;
         // --no-require-git makes it do so anywhere, with the ordinary nesting rules.
-        $found = $this->output($this->run(new FindTool($this->cwd), ['pattern' => '*.php']));
+        $found = $this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => '*.php']));
 
         $this->assertStringNotContainsString('src/generated', $found);
         $this->assertStringContainsString('other/generated/Kept.php', $found);
@@ -296,7 +296,7 @@ final class SearchToolsTest extends ToolTestCase
         $this->file('.gitignore', "secret.php\n");
         $this->file('secret.php');
 
-        $found = $this->output($this->run(new FindTool($this->cwd), ['pattern' => '*.php']));
+        $found = $this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => '*.php']));
 
         // A dotfile is often exactly what is being looked for; an ignored file never is.
         $this->assertStringContainsString('.config.php', $found);
@@ -310,7 +310,7 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsRipgrep();
         $this->file('src/Main.php', "<?php\n\nclass Main\n{\n}\n");
 
-        $output = $this->output($this->run(new GrepTool($this->cwd), ['pattern' => 'class Main']));
+        $output = $this->textOf($this->execute(new GrepTool($this->cwd), ['pattern' => 'class Main']));
 
         $this->assertSame('src/Main.php:3: class Main', $this->lines($output)[0]);
     }
@@ -320,7 +320,7 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsRipgrep();
         $this->file('a.txt', "foo123\nbar\nfoo456\n");
 
-        $found = $this->lines($this->output($this->run(new GrepTool($this->cwd), ['pattern' => 'foo\d+'])));
+        $found = $this->lines($this->textOf($this->execute(new GrepTool($this->cwd), ['pattern' => 'foo\d+'])));
 
         $this->assertCount(2, $found);
     }
@@ -330,8 +330,8 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsRipgrep();
         $this->file('a.txt', "price is \$5.00\nprice is 1x00\n");
 
-        $found = $this->lines($this->output(
-            $this->run(new GrepTool($this->cwd), ['pattern' => '$5.00', 'literal' => true]),
+        $found = $this->lines($this->textOf(
+            $this->execute(new GrepTool($this->cwd), ['pattern' => '$5.00', 'literal' => true]),
         ));
 
         // As a regex, `$5.00` would match neither; as text it matches one.
@@ -344,12 +344,12 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsRipgrep();
         $this->file('a.txt', "Hello\nHELLO\nhello\n");
 
-        $this->assertCount(1, $this->lines($this->output(
-            $this->run(new GrepTool($this->cwd), ['pattern' => 'hello']),
+        $this->assertCount(1, $this->lines($this->textOf(
+            $this->execute(new GrepTool($this->cwd), ['pattern' => 'hello']),
         )));
 
-        $this->assertCount(3, $this->lines($this->output(
-            $this->run(new GrepTool($this->cwd), ['pattern' => 'hello', 'ignoreCase' => true]),
+        $this->assertCount(3, $this->lines($this->textOf(
+            $this->execute(new GrepTool($this->cwd), ['pattern' => 'hello', 'ignoreCase' => true]),
         )));
     }
 
@@ -359,7 +359,7 @@ final class SearchToolsTest extends ToolTestCase
         $this->file('a.php', "needle\n");
         $this->file('b.txt', "needle\n");
 
-        $found = $this->output($this->run(new GrepTool($this->cwd), ['pattern' => 'needle', 'glob' => '*.php']));
+        $found = $this->textOf($this->execute(new GrepTool($this->cwd), ['pattern' => 'needle', 'glob' => '*.php']));
 
         $this->assertSame('a.php:1: needle', $found);
     }
@@ -369,8 +369,8 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsRipgrep();
         $this->file('a.txt', "one\ntwo\nNEEDLE\nfour\nfive\n");
 
-        $found = $this->lines($this->output(
-            $this->run(new GrepTool($this->cwd), ['pattern' => 'NEEDLE', 'context' => 1]),
+        $found = $this->lines($this->textOf(
+            $this->execute(new GrepTool($this->cwd), ['pattern' => 'NEEDLE', 'context' => 1]),
         ));
 
         // `:` for the match and `-` for context, the way grep has always done it.
@@ -382,7 +382,7 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsRipgrep();
         $this->file('a.txt', "nothing here\n");
 
-        $this->assertSame('No matches found', $this->output($this->run(new GrepTool($this->cwd), ['pattern' => 'zzz'])));
+        $this->assertSame('No matches found', $this->textOf($this->execute(new GrepTool($this->cwd), ['pattern' => 'zzz'])));
     }
 
     public function testGrepStopsOnceItHasEnough(): void
@@ -390,8 +390,8 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsRipgrep();
         $this->file('a.txt', str_repeat("needle\n", 500));
 
-        $result = $this->run(new GrepTool($this->cwd), ['pattern' => 'needle', 'limit' => 5]);
-        $output = $this->output($result);
+        $result = $this->execute(new GrepTool($this->cwd), ['pattern' => 'needle', 'limit' => 5]);
+        $output = $this->textOf($result);
 
         $this->assertCount(5, $this->lines($output));
         $this->assertStringContainsString('[5 match limit reached. Use limit=10 for more', $output);
@@ -404,8 +404,8 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsRipgrep();
         $this->file('bundle.js', 'x' . str_repeat('y', 2000) . "needle\n");
 
-        $result = $this->run(new GrepTool($this->cwd), ['pattern' => 'needle']);
-        $output = $this->output($result);
+        $result = $this->execute(new GrepTool($this->cwd), ['pattern' => 'needle']);
+        $output = $this->textOf($result);
 
         $chars = Truncate::MAX_MATCH_CHARS;
         $this->assertStringContainsString('... [truncated]', $output);
@@ -420,7 +420,7 @@ final class SearchToolsTest extends ToolTestCase
         $this->needsRipgrep();
         $this->file('src/deep/a.txt', "needle\n");
 
-        $output = $this->output($this->run(new GrepTool($this->cwd), [
+        $output = $this->textOf($this->execute(new GrepTool($this->cwd), [
             'pattern' => 'needle',
             'path' => 'src/deep/a.txt',
         ]));
@@ -435,8 +435,8 @@ final class SearchToolsTest extends ToolTestCase
         $this->file('src/Main.php', "needle\n");
         $this->file('vendor/dep.php', "needle\n");
 
-        $this->assertSame('src/Main.php:1: needle', $this->output(
-            $this->run(new GrepTool($this->cwd), ['pattern' => 'needle']),
+        $this->assertSame('src/Main.php:1: needle', $this->textOf(
+            $this->execute(new GrepTool($this->cwd), ['pattern' => 'needle']),
         ));
     }
 
@@ -446,7 +446,7 @@ final class SearchToolsTest extends ToolTestCase
 
         $this->assertThrows(
             AgentError::class,
-            fn () => $this->run(new GrepTool($this->cwd), ['pattern' => 'x', 'path' => 'nope']),
+            fn () => $this->execute(new GrepTool($this->cwd), ['pattern' => 'x', 'path' => 'nope']),
             'No such file or directory',
         );
     }
@@ -463,7 +463,7 @@ final class SearchToolsTest extends ToolTestCase
         // assert the code-number message, which is what there was rather than what was wanted.
         $error = $this->assertThrows(
             AgentError::class,
-            fn () => $this->run(new GrepTool($this->cwd), ['pattern' => '[unclosed']),
+            fn () => $this->execute(new GrepTool($this->cwd), ['pattern' => '[unclosed']),
             'unclosed character class',
         );
 

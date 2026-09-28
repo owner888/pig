@@ -21,7 +21,7 @@ final class EditToolTest extends ToolTestCase
     /** @param array<string, mixed> $arguments */
     private function apply(array $arguments): string
     {
-        $this->run($this->edit(), $arguments);
+        $this->execute($this->edit(), $arguments);
 
         return (string) file_get_contents($this->cwd . '/' . $arguments['path']);
     }
@@ -52,7 +52,7 @@ final class EditToolTest extends ToolTestCase
 
         $error = $this->assertThrows(
             AgentError::class,
-            fn () => $this->run($this->edit(), ['path' => 'a.php', 'oldText' => 'nope', 'newText' => 'x']),
+            fn () => $this->execute($this->edit(), ['path' => 'a.php', 'oldText' => 'nope', 'newText' => 'x']),
             'Could not find',
         );
 
@@ -66,7 +66,7 @@ final class EditToolTest extends ToolTestCase
 
         $error = $this->assertThrows(
             AgentError::class,
-            fn () => $this->run($this->edit(), ['path' => 'a.php', 'oldText' => 'return null;', 'newText' => 'return 1;']),
+            fn () => $this->execute($this->edit(), ['path' => 'a.php', 'oldText' => 'return null;', 'newText' => 'return 1;']),
             'Found 2 occurrences',
         );
 
@@ -81,7 +81,7 @@ final class EditToolTest extends ToolTestCase
 
         $this->assertThrows(
             AgentError::class,
-            fn () => $this->run($this->edit(), ['path' => 'a.php', 'oldText' => 'same', 'newText' => 'same']),
+            fn () => $this->execute($this->edit(), ['path' => 'a.php', 'oldText' => 'same', 'newText' => 'same']),
             'identical',
         );
     }
@@ -90,7 +90,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->assertThrows(
             AgentError::class,
-            fn () => $this->run($this->edit(), ['path' => 'nope.php', 'oldText' => 'a', 'newText' => 'b']),
+            fn () => $this->execute($this->edit(), ['path' => 'nope.php', 'oldText' => 'a', 'newText' => 'b']),
             'File not found',
         );
     }
@@ -102,7 +102,7 @@ final class EditToolTest extends ToolTestCase
         // It matches everywhere, so "exactly once" would be meaningless.
         $this->assertThrows(
             AgentError::class,
-            fn () => $this->run($this->edit(), ['path' => 'a.php', 'oldText' => '', 'newText' => 'x']),
+            fn () => $this->execute($this->edit(), ['path' => 'a.php', 'oldText' => '', 'newText' => 'x']),
             'oldText is empty',
         );
     }
@@ -208,7 +208,7 @@ final class EditToolTest extends ToolTestCase
 
         // And it is the diff, not an approximation of it: the edit goes through the same
         // `apply()`, so the preview cannot show one change and the tool make another.
-        $result = $this->run($this->edit(), ['path' => 'a.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'two', 'newText' => 'TWO']);
         $this->assertSame($diff, $result->details['diff']);
         $this->assertSame($line, $result->details['firstChangedLine']);
     }
@@ -225,7 +225,7 @@ final class EditToolTest extends ToolTestCase
 
         $attempted = $this->assertThrows(
             AgentError::class,
-            fn () => $this->run($this->edit(), ['path' => 'a.txt', 'oldText' => 'same', 'newText' => 'other']),
+            fn () => $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'same', 'newText' => 'other']),
         );
 
         // One sentence, not two that can drift — upstream's have already drifted.
@@ -247,7 +247,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.txt', "one\ntwo\nthree\n");
 
-        $result = $this->run($this->edit(), ['path' => 'a.txt', 'oldText' => 'two', 'newText' => 'TWO']);
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'two', 'newText' => 'TWO']);
 
         $this->assertSame(2, $result->details['firstChangedLine']);
         $this->assertSame(
@@ -260,10 +260,10 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.txt', "one\n");
 
-        $result = $this->run($this->edit(), ['path' => 'a.txt', 'oldText' => 'one', 'newText' => 'two']);
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'one', 'newText' => 'two']);
 
         // Two audiences: the model gets the outcome, the UI gets the diff.
-        $this->assertSame('Replaced text in a.txt.', $this->output($result));
+        $this->assertSame('Replaced text in a.txt.', $this->textOf($result));
     }
 
     public function testDistantContextIsElidedWithAnEllipsis(): void
@@ -271,7 +271,7 @@ final class EditToolTest extends ToolTestCase
         $lines = array_map(static fn (int $n): string => "line{$n}", range(1, 30));
         $this->file('a.txt', implode("\n", $lines));
 
-        $result = $this->run($this->edit(), ['path' => 'a.txt', 'oldText' => 'line15', 'newText' => 'CHANGED']);
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'line15', 'newText' => 'CHANGED']);
         $diff = explode("\n", $result->details['diff']);
 
         // Four lines of context either side, and an ellipsis for the rest.
@@ -287,7 +287,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.txt', implode("\n", array_fill(0, 120, 'x')) . "\nneedle\n");
 
-        $result = $this->run($this->edit(), ['path' => 'a.txt', 'oldText' => 'needle', 'newText' => 'found']);
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'needle', 'newText' => 'found']);
 
         // Three digits in the file, so every number is three wide and the gutter lines up.
         $this->assertStringContainsString('-121 needle', $result->details['diff']);
@@ -298,7 +298,7 @@ final class EditToolTest extends ToolTestCase
     {
         $this->file('a.txt', "a\nb\nc\n");
 
-        $result = $this->run($this->edit(), ['path' => 'a.txt', 'oldText' => 'b', 'newText' => "x\ny\nz"]);
+        $result = $this->execute($this->edit(), ['path' => 'a.txt', 'oldText' => 'b', 'newText' => "x\ny\nz"]);
 
         $this->assertSame("a\nx\ny\nz\nc\n", file_get_contents($this->cwd . '/a.txt'));
         $this->assertSame(

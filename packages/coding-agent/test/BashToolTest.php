@@ -42,19 +42,19 @@ final class BashToolTest extends ToolTestCase
 
     public function testRunsACommandAndReturnsItsOutput(): void
     {
-        $this->assertSame("hello\n", $this->output($this->bash(['command' => 'echo hello'])));
+        $this->assertSame("hello\n", $this->textOf($this->bash(['command' => 'echo hello'])));
     }
 
     public function testRunsInTheWorkingDirectory(): void
     {
         $this->file('marker.txt');
 
-        $this->assertStringContainsString('marker.txt', $this->output($this->bash(['command' => 'ls'])));
+        $this->assertStringContainsString('marker.txt', $this->textOf($this->bash(['command' => 'ls'])));
     }
 
     public function testStderrComesBackWithStdout(): void
     {
-        $output = $this->output($this->bash(['command' => 'echo out; echo err >&2']));
+        $output = $this->textOf($this->bash(['command' => 'echo out; echo err >&2']));
 
         // The model wants what the command said, not which pipe it said it on.
         $this->assertStringContainsString('out', $output);
@@ -63,7 +63,7 @@ final class BashToolTest extends ToolTestCase
 
     public function testWhatTheModelReadsHasNoEscapesOrProgressLinesInIt(): void
     {
-        $output = $this->output($this->bash(['command' => "printf 'a\\033[32mb\\033[0m\\rc\\n'"]));
+        $output = $this->textOf($this->bash(['command' => "printf 'a\\033[32mb\\033[0m\\rc\\n'"]));
 
         // A deliberate step past upstream, which cleans a command's output at the source in
         // `bash-executor.ts` — the `!command` path — and not in `bash.ts`, where only the
@@ -90,7 +90,7 @@ final class BashToolTest extends ToolTestCase
 
     public function testACommandWithNoOutputSaysSo(): void
     {
-        $this->assertSame('(no output)', $this->output($this->bash(['command' => 'true'])));
+        $this->assertSame('(no output)', $this->textOf($this->bash(['command' => 'true'])));
     }
 
     public function testAFailingCommandThrowsWithItsOutputAttached(): void
@@ -228,7 +228,7 @@ final class BashToolTest extends ToolTestCase
             // macOS ships bash 3.2 as `/bin/bash`, and `bash()` prefers it — so somebody with a
             // homebrew bash 5 had no way to be given it. pig stored this setting and read it
             // nowhere.
-            $this->assertStringContainsString('ran by a stand-in', $this->output($this->bash(['command' => 'anything'])));
+            $this->assertStringContainsString('ran by a stand-in', $this->textOf($this->bash(['command' => 'anything'])));
         } finally {
             Shell::forget();
         }
@@ -257,7 +257,7 @@ final class BashToolTest extends ToolTestCase
     {
         // A command that decides to prompt would otherwise wait for a person who is not
         // watching it, and the agent would hang until the timeout.
-        $this->assertSame('(no output)', $this->output($this->bash(['command' => 'cat'])));
+        $this->assertSame('(no output)', $this->textOf($this->bash(['command' => 'cat'])));
     }
 
     public function testOutputArrivesWhileTheCommandIsStillRunning(): void
@@ -369,13 +369,13 @@ final class BashToolTest extends ToolTestCase
 
     public function testACommandThatFinishesInTimeIsNotAffectedByTheTimeout(): void
     {
-        $this->assertSame("ok\n", $this->output($this->bash(['command' => 'echo ok', 'timeout' => 10])));
+        $this->assertSame("ok\n", $this->textOf($this->bash(['command' => 'echo ok', 'timeout' => 10])));
     }
 
     public function testOutputIsCutFromTheTopNotTheBottom(): void
     {
         $total = Truncate::MAX_LINES + 100;
-        $output = $this->output($this->bash(['command' => "seq 1 {$total}"]));
+        $output = $this->textOf($this->bash(['command' => "seq 1 {$total}"]));
 
         // The interesting part of a failed build is the error at the bottom.
         $this->assertStringContainsString((string) $total, $output);

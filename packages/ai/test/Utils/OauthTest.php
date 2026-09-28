@@ -57,7 +57,7 @@ final class OauthTest extends TestCase
         ]);
     }
 
-    private function run(callable $work): mixed
+    private function onTheLoop(callable $work): mixed
     {
         return Async::run($work);
     }
@@ -117,7 +117,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['access_token' => 'sk-ant-oat-x', 'refresh_token' => 'r1', 'expires_in' => 3600]);
 
-        $credentials = $this->run(fn (): Credentials => (new Anthropic(new HttpClient(), $url))
+        $credentials = $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))
             ->exchange('the-code#the-state', 'the-verifier'));
 
         $sent = $this->server->receivedJson();
@@ -136,7 +136,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 60]);
 
-        $this->run(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->exchange("  c#s\n", 'v'));
+        $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->exchange("  c#s\n", 'v'));
 
         // A code pasted out of a terminal arrives with a newline on it about half the time,
         // and a trailing newline inside the code is a 400 that says `invalid_grant`.
@@ -150,7 +150,7 @@ final class OauthTest extends TestCase
 
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->run(fn (): Credentials => (new Anthropic(new HttpClient(), $url))
+            fn (): mixed => $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))
                 ->exchange('just-the-code', 'v')),
         );
 
@@ -165,7 +165,7 @@ final class OauthTest extends TestCase
         $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 3600]);
 
         $before = (int) (microtime(true) * 1000);
-        $credentials = $this->run(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->exchange('c#s', 'v'));
+        $credentials = $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->exchange('c#s', 'v'));
 
         // An hour, less the five minutes upstream subtracts. A token that expires in flight
         // fails the request it was attached to rather than the next one.
@@ -179,7 +179,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['access_token' => 'a2', 'refresh_token' => 'r2', 'expires_in' => 60]);
 
-        $credentials = $this->run(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->refresh('r1'));
+        $credentials = $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->refresh('r1'));
 
         $sent = $this->server->receivedJson();
 
@@ -200,7 +200,7 @@ final class OauthTest extends TestCase
 
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->run(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->refresh('r1')),
+            fn (): mixed => $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->refresh('r1')),
         );
 
         $this->assertStringContainsString('400', $problem->getMessage());
@@ -215,7 +215,7 @@ final class OauthTest extends TestCase
 
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->run(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->refresh('r1')),
+            fn (): mixed => $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->refresh('r1')),
         );
 
         // A credential built from half an answer is a session that fails later, elsewhere,
@@ -229,7 +229,7 @@ final class OauthTest extends TestCase
 
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->run(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->refresh('r1')),
+            fn (): mixed => $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->refresh('r1')),
         );
 
         $this->assertStringContainsString('not JSON', $problem->getMessage());
@@ -433,7 +433,7 @@ final class OauthTest extends TestCase
             'expires_in' => 900,
         ]);
 
-        $device = $this->run(fn (): DeviceCode => $this->copilot($url)->start('github.com'));
+        $device = $this->onTheLoop(fn (): DeviceCode => $this->copilot($url)->start('github.com'));
 
         $sent = $this->server->receivedJson();
 
@@ -453,7 +453,7 @@ final class OauthTest extends TestCase
 
         $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->run(fn (): DeviceCode => $this->copilot($url)->start()),
+            fn (): mixed => $this->onTheLoop(fn (): DeviceCode => $this->copilot($url)->start()),
             'without the codes',
         );
     }
@@ -462,7 +462,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['access_token' => 'gho_abc']);
 
-        $token = $this->run(fn (): ?string => $this->copilot($url)
+        $token = $this->onTheLoop(fn (): ?string => $this->copilot($url)
             ->poll('github.com', new DeviceCode('dev-1', 'ABCD', 'https://x', 1, 900)));
 
         $this->assertSame('gho_abc', $token);
@@ -481,7 +481,7 @@ final class OauthTest extends TestCase
         // second of life on the code means the deadline is what ends it.
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->run(fn (): ?string => $this->copilot($url)
+            fn (): mixed => $this->onTheLoop(fn (): ?string => $this->copilot($url)
                 ->poll('github.com', new DeviceCode('dev-1', 'ABCD', 'https://x', 1, 1))),
         );
 
@@ -496,7 +496,7 @@ final class OauthTest extends TestCase
         // minute wait for an answer that has already arrived is the wrong behaviour.
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->run(fn (): ?string => $this->copilot($url)
+            fn (): mixed => $this->onTheLoop(fn (): ?string => $this->copilot($url)
                 ->poll('github.com', new DeviceCode('dev-1', 'ABCD', 'https://x', 1, 900))),
         );
 
@@ -507,7 +507,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['error' => 'authorization_pending']);
 
-        $token = $this->run(function () use ($url): ?string {
+        $token = $this->onTheLoop(function () use ($url): ?string {
             $controller = new AbortController();
 
             Loop::get()->delay(0.05, static fn () => $controller->abort('Cancelled'));
@@ -536,7 +536,7 @@ final class OauthTest extends TestCase
         // With the five it is 6.0s and there is only ever one. **Measured both ways** — a
         // 150ms window sees one ask whatever the code does, which is what the first version of
         // this test asserted and why it held a mutation in place.
-        $this->run(function () use ($url): ?string {
+        $this->onTheLoop(function () use ($url): ?string {
             $controller = new AbortController();
             Loop::get()->delay(1.3, static fn () => $controller->abort('enough'));
 
@@ -565,7 +565,7 @@ final class OauthTest extends TestCase
         // `allowEmpty` on the prompt is what makes blank an answer, and the guard in front of
         // the refusal is the other half of it: the two conditions are "something was typed" and
         // "it is not a host", and either one on its own turns pressing Enter into an error.
-        $answer = $this->run(function () use ($url): ?Credentials {
+        $answer = $this->onTheLoop(function () use ($url): ?Credentials {
             $controller = new AbortController();
             Loop::get()->delay(0.15, static fn () => $controller->abort('enough'));
 
@@ -589,7 +589,7 @@ final class OauthTest extends TestCase
 
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->run(fn (): ?Credentials => $this->copilot($url)->login(
+            fn (): mixed => $this->onTheLoop(fn (): ?Credentials => $this->copilot($url)->login(
                 // `???` rather than something with a space in it, which `parse_url()` hands back
                 // as a host where upstream's `new URL()` throws — see the entry in CLAUDE.md.
                 static fn (): string => '???',
@@ -610,7 +610,7 @@ final class OauthTest extends TestCase
         $expires = (int) (microtime(true)) + 3600;
         $url = $this->serve(['token' => 'tid=x;proxy-ep=proxy.individual.githubcopilot.com', 'expires_at' => $expires]);
 
-        $credentials = $this->run(fn (): Credentials => $this->copilot($url)->refresh('gho_abc'));
+        $credentials = $this->onTheLoop(fn (): Credentials => $this->copilot($url)->refresh('gho_abc'));
 
         $head = $this->server->receivedHead();
 
@@ -632,7 +632,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['token' => 'tid=x', 'expires_at' => 1_800_000_000]);
 
-        $credentials = $this->run(fn (): Credentials => $this->copilot($url)->refresh('gho_abc', 'company.ghe.com'));
+        $credentials = $this->onTheLoop(fn (): Credentials => $this->copilot($url)->refresh('gho_abc', 'company.ghe.com'));
 
         // Kept, because renewing has to go back to the same GitHub and nothing else in the
         // file says which one it was.
@@ -645,7 +645,7 @@ final class OauthTest extends TestCase
 
         $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->run(fn (): Credentials => $this->copilot($url)->refresh('gho_abc')),
+            fn (): mixed => $this->onTheLoop(fn (): Credentials => $this->copilot($url)->refresh('gho_abc')),
             'without a token',
         );
     }
@@ -657,7 +657,7 @@ final class OauthTest extends TestCase
         $url = $this->serve(['message' => 'no'], 403, 'Forbidden');
         $seen = [];
 
-        $this->run(function () use ($url, &$seen): void {
+        $this->onTheLoop(function () use ($url, &$seen): void {
             $this->copilot($url)->enableModels(
                 'tok',
                 ['claude-sonnet-4.5', 'grok-code-fast-1'],
@@ -718,7 +718,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['access_token' => 'ya29.a', 'refresh_token' => '1//r', 'expires_in' => 3599]);
 
-        $tokens = $this->run(fn (): array => $this->gemini($url)
+        $tokens = $this->onTheLoop(fn (): array => $this->gemini($url)
             ->exchange('the-code', 'the-verifier', 'http://localhost:8085/oauth2callback'));
 
         $sent = $this->server->received();
@@ -743,7 +743,7 @@ final class OauthTest extends TestCase
 
         $problem = $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->run(fn (): array => $this->gemini($url)->exchange('c', 'v', 'http://x/cb')),
+            fn (): mixed => $this->onTheLoop(fn (): array => $this->gemini($url)->exchange('c', 'v', 'http://x/cb')),
         );
 
         // Named separately from a missing access token because it has a cause somebody can act
@@ -755,7 +755,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['access_token' => 'ya29.b', 'expires_in' => 3599]);
 
-        $credentials = $this->run(fn (): Credentials => $this->gemini($url)->refresh('1//keep-me', 'proj-1'));
+        $credentials = $this->onTheLoop(fn (): Credentials => $this->gemini($url)->refresh('1//keep-me', 'proj-1'));
 
         $this->assertStringContainsString('grant_type=refresh_token', $this->server->received());
 
@@ -773,7 +773,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['cloudaicompanionProject' => 'existing-project']);
 
-        $project = $this->run(fn (): ?string => $this->gemini($url)->project('ya29.a'));
+        $project = $this->onTheLoop(fn (): ?string => $this->gemini($url)->project('ya29.a'));
 
         $this->assertSame('existing-project', $project);
         // One request: asking to be onboarded when there is already a project is how you end up
@@ -792,7 +792,7 @@ final class OauthTest extends TestCase
             'response' => ['cloudaicompanionProject' => ['id' => 'made-one']],
         ]);
 
-        $project = $this->run(fn (): ?string => $this->gemini($url)->project('ya29.a'));
+        $project = $this->onTheLoop(fn (): ?string => $this->gemini($url)->project('ya29.a'));
 
         $this->assertSame('made-one', $project);
         // The tier Google marked default, not the first one in the list.
@@ -806,7 +806,7 @@ final class OauthTest extends TestCase
         // in, the wait is what this ends on.
         $url = $this->serve(['response' => ['cloudaicompanionProject' => ['id' => 'not-yet']]]);
 
-        $project = $this->run(function () use ($url): ?string {
+        $project = $this->onTheLoop(function () use ($url): ?string {
             $controller = new AbortController();
             Loop::get()->delay(0.05, static fn () => $controller->abort('Cancelled'));
 
@@ -822,7 +822,7 @@ final class OauthTest extends TestCase
         $url = $this->serve(['response' => ['cloudaicompanionProject' => ['id' => 'x']]]);
         $said = [];
 
-        $this->run(function () use ($url, &$said): void {
+        $this->onTheLoop(function () use ($url, &$said): void {
             $controller = new AbortController();
             Loop::get()->delay(0.05, static fn () => $controller->abort('Cancelled'));
 
@@ -846,7 +846,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['email' => 'me@example.com']);
 
-        $this->assertSame('me@example.com', $this->run(fn (): ?string => $this->gemini($url)->email('ya29.a')));
+        $this->assertSame('me@example.com', $this->onTheLoop(fn (): ?string => $this->gemini($url)->email('ya29.a')));
     }
 
     public function testAnEmailGoogleWillNotSayIsNotAFailure(): void
@@ -855,7 +855,7 @@ final class OauthTest extends TestCase
 
         // Upstream ignores every failure here and so does this: it is a label on the credential,
         // and an account that will not answer this is not one that cannot use Gemini.
-        $this->assertNull($this->run(fn (): ?string => $this->gemini($url)->email('ya29.a')));
+        $this->assertNull($this->onTheLoop(fn (): ?string => $this->gemini($url)->email('ya29.a')));
     }
 
     // ---- Gemini CLI: the state check ------------------------------------------------------
@@ -867,7 +867,7 @@ final class OauthTest extends TestCase
         $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 60]);
 
         $problem = $this->assertThrows(OauthError::class, function () use ($url, $server, $port): void {
-            $this->run(function () use ($url, $server, $port): void {
+            $this->onTheLoop(function () use ($url, $server, $port): void {
                 Loop::get()->defer(function () use ($port): void {
                     self::pretendBrowser($port, '/oauth2callback?code=c&state=not-the-verifier');
                 });
@@ -997,7 +997,7 @@ final class OauthTest extends TestCase
         // `prompt=consent` is there to stop happening in the first place.
         $this->assertThrows(
             OauthError::class,
-            fn (): mixed => $this->run(fn (): array => $this->antigravity($url)->exchange('c', 'v', 'http://x/cb')),
+            fn (): mixed => $this->onTheLoop(fn (): array => $this->antigravity($url)->exchange('c', 'v', 'http://x/cb')),
             'no refresh token',
         );
     }
@@ -1006,7 +1006,7 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['access_token' => 'ya29.new', 'expires_in' => 3599]);
 
-        $renewed = $this->run(fn (): Credentials => $this->antigravity($url)->refresh('1//r', 'proj-1'));
+        $renewed = $this->onTheLoop(fn (): Credentials => $this->antigravity($url)->refresh('1//r', 'proj-1'));
 
         $sent = $this->server->received();
 
@@ -1025,7 +1025,7 @@ final class OauthTest extends TestCase
 
         $this->assertSame(
             'somebody-elses-project',
-            $this->run(fn (): string => $this->antigravity($url)->project('ya29.a')),
+            $this->onTheLoop(fn (): string => $this->antigravity($url)->project('ya29.a')),
         );
 
         // Not Gemini CLI's headers: the sandbox checks who is asking.
@@ -1040,7 +1040,7 @@ final class OauthTest extends TestCase
         // inconsistency rather than a guess about the shape.
         $this->assertSame(
             'proj-from-object',
-            $this->run(fn (): string => $this->antigravity($url)->project('ya29.a')),
+            $this->onTheLoop(fn (): string => $this->antigravity($url)->project('ya29.a')),
         );
     }
 
@@ -1053,7 +1053,7 @@ final class OauthTest extends TestCase
         // Gemini CLI's, nothing is provisioned and nothing is waited for.
         $this->assertSame(
             Antigravity::FALLBACK_PROJECT,
-            $this->run(fn (): string => $this->antigravity($url)->project('ya29.a')),
+            $this->onTheLoop(fn (): string => $this->antigravity($url)->project('ya29.a')),
         );
     }
 

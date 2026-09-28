@@ -18,15 +18,15 @@ final class FileToolsTest extends ToolTestCase
 
     public function testWriteCreatesAFile(): void
     {
-        $result = $this->run(new WriteTool($this->cwd), ['path' => 'out.txt', 'content' => 'hello']);
+        $result = $this->execute(new WriteTool($this->cwd), ['path' => 'out.txt', 'content' => 'hello']);
 
         $this->assertSame('hello', file_get_contents($this->cwd . '/out.txt'));
-        $this->assertStringContainsString('Wrote 5 bytes to out.txt', $this->output($result));
+        $this->assertStringContainsString('Wrote 5 bytes to out.txt', $this->textOf($result));
     }
 
     public function testWriteMakesTheDirectoriesItNeeds(): void
     {
-        $this->run(new WriteTool($this->cwd), ['path' => 'a/b/c/deep.txt', 'content' => 'x']);
+        $this->execute(new WriteTool($this->cwd), ['path' => 'a/b/c/deep.txt', 'content' => 'x']);
 
         $this->assertSame('x', file_get_contents($this->cwd . '/a/b/c/deep.txt'));
     }
@@ -35,7 +35,7 @@ final class FileToolsTest extends ToolTestCase
     {
         $this->file('out.txt', 'old content that is longer');
 
-        $this->run(new WriteTool($this->cwd), ['path' => 'out.txt', 'content' => 'new']);
+        $this->execute(new WriteTool($this->cwd), ['path' => 'out.txt', 'content' => 'new']);
 
         // Overwrites outright, which is what the model is told; changing part of a file
         // is the edit tool's job.
@@ -44,13 +44,13 @@ final class FileToolsTest extends ToolTestCase
 
     public function testTheByteCountIsBytesAndNotCharacters(): void
     {
-        $result = $this->run(new WriteTool($this->cwd), ['path' => 'out.txt', 'content' => '你好世界']);
+        $result = $this->execute(new WriteTool($this->cwd), ['path' => 'out.txt', 'content' => '你好世界']);
 
         // Upstream reports `content.length` — UTF-16 code units — in a sentence that says
         // bytes, so this file is 12 bytes and the model is told 4. The number here is what
         // was written.
         $this->assertSame(12, strlen((string) file_get_contents($this->cwd . '/out.txt')));
-        $this->assertStringContainsString('Wrote 12 bytes to out.txt', $this->output($result));
+        $this->assertStringContainsString('Wrote 12 bytes to out.txt', $this->textOf($result));
     }
 
     public function testWritingOverADirectoryIsRefused(): void
@@ -59,7 +59,7 @@ final class FileToolsTest extends ToolTestCase
 
         $this->assertThrows(
             AgentError::class,
-            fn () => $this->run(new WriteTool($this->cwd), ['path' => 'adir', 'content' => 'x']),
+            fn () => $this->execute(new WriteTool($this->cwd), ['path' => 'adir', 'content' => 'x']),
             'is a directory',
         );
     }
@@ -72,7 +72,7 @@ final class FileToolsTest extends ToolTestCase
         $this->file('sub/nested.txt');
         $this->file('.hidden');
 
-        $output = $this->output($this->run(new LsTool($this->cwd), []));
+        $output = $this->textOf($this->execute(new LsTool($this->cwd), []));
 
         // Dotfiles included: a model looking for config needs to see them.
         $this->assertSame([".hidden", "b.txt", "sub/"], explode("\n", $output));
@@ -86,7 +86,7 @@ final class FileToolsTest extends ToolTestCase
 
         $this->assertSame(
             ['apple', 'Banana', 'Zebra'],
-            explode("\n", $this->output($this->run(new LsTool($this->cwd), []))),
+            explode("\n", $this->textOf($this->execute(new LsTool($this->cwd), []))),
         );
     }
 
@@ -94,22 +94,22 @@ final class FileToolsTest extends ToolTestCase
     {
         $this->file('sub/one.txt');
 
-        $this->assertSame('one.txt', $this->output($this->run(new LsTool($this->cwd), ['path' => 'sub'])));
+        $this->assertSame('one.txt', $this->textOf($this->execute(new LsTool($this->cwd), ['path' => 'sub'])));
     }
 
     public function testAnEmptyDirectorySaysSo(): void
     {
         mkdir($this->cwd . '/empty');
 
-        $this->assertSame('(empty directory)', $this->output($this->run(new LsTool($this->cwd), ['path' => 'empty'])));
+        $this->assertSame('(empty directory)', $this->textOf($this->execute(new LsTool($this->cwd), ['path' => 'empty'])));
     }
 
     public function testLsOfAFileOrAMissingPathIsAnError(): void
     {
         $this->file('a.txt');
 
-        $this->assertThrows(AgentError::class, fn () => $this->run(new LsTool($this->cwd), ['path' => 'a.txt']), 'Not a directory');
-        $this->assertThrows(AgentError::class, fn () => $this->run(new LsTool($this->cwd), ['path' => 'nope']), 'No such directory');
+        $this->assertThrows(AgentError::class, fn () => $this->execute(new LsTool($this->cwd), ['path' => 'a.txt']), 'Not a directory');
+        $this->assertThrows(AgentError::class, fn () => $this->execute(new LsTool($this->cwd), ['path' => 'nope']), 'No such directory');
     }
 
     public function testLsSaysWhenItStoppedEarly(): void
@@ -118,8 +118,8 @@ final class FileToolsTest extends ToolTestCase
             $this->file("file{$index}.txt");
         }
 
-        $result = $this->run(new LsTool($this->cwd), ['limit' => 3]);
-        $output = $this->output($result);
+        $result = $this->execute(new LsTool($this->cwd), ['limit' => 3]);
+        $output = $this->textOf($result);
 
         $this->assertStringContainsString('[3 entry limit reached. Use limit=6 for more]', $output);
         $this->assertCount(3, explode("\n", explode("\n\n", $output)[0]));

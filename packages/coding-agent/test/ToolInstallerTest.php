@@ -120,7 +120,7 @@ final class ToolInstallerTest extends ToolTestCase
         try {
             $error = $this->assertThrows(
                 AgentError::class,
-                fn () => $this->run(new FindTool($this->cwd), ['pattern' => '*']),
+                fn () => $this->execute(new FindTool($this->cwd), ['pattern' => '*']),
                 'not installed',
             );
 

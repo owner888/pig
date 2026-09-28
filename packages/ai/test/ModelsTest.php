@@ -190,7 +190,7 @@ final class ModelsTest extends TestCase
 
     public function testAnUnknownIdIsNullRatherThanAGuess(): void
     {
-        $model = self::any(Models::ANTHROPIC);
+        $model = self::anyFrom(Models::ANTHROPIC);
 
         $this->assertNull(Models::get('no-such-model'));
         $this->assertNull(Models::find('openai', $model->id));
@@ -221,7 +221,7 @@ final class ModelsTest extends TestCase
 
     public function testAProviderAndIdTogetherFindExactlyOneModel(): void
     {
-        $groq = self::any('groq');
+        $groq = self::anyFrom('groq');
 
         $this->assertSame($groq->id, Models::find('groq', $groq->id)?->id);
         $this->assertNull(Models::find('anthropic', $groq->id));
@@ -243,7 +243,7 @@ final class ModelsTest extends TestCase
         $urls = [];
 
         foreach (['cerebras', 'groq', 'mistral', 'xai', 'zai'] as $provider) {
-            $model = self::any($provider);
+            $model = self::anyFrom($provider);
 
             $this->assertSame(Api::OpenAiCompletions, $model->api, $provider);
             $this->assertNotSame('', $model->baseUrl, $provider);
@@ -282,7 +282,7 @@ final class ModelsTest extends TestCase
 
     public function testTheUsageHandedInIsNotRewritten(): void
     {
-        $model = self::any(Models::ANTHROPIC);
+        $model = self::anyFrom(Models::ANTHROPIC);
         $usage = new Usage(1_000_000, 0, 0, 0, 0, new Cost());
 
         Models::cost($model, $usage);
@@ -368,7 +368,7 @@ final class ModelsTest extends TestCase
         return $models;
     }
 
-    private static function any(string $provider): Model
+    private static function anyFrom(string $provider): Model
     {
         return self::of($provider)[0];
     }

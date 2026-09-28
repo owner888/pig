@@ -8768,6 +8768,50 @@ disk made first.*
 executable bit in git and the container copy is not a git repository, so that one is one command on
 the Mac: `git update-index --chmod=+x bin/pig bin/pig-ai`.
 
+### Ten test files could not be loaded by PHPUnit at all, and the shim could not see it
+
+The first real `vendor/bin/phpunit` run in a long while did not fail a test. It **could not build the
+suite**:
+
+```
+PHP Fatal error: Cannot override final method PHPUnit\Framework\TestCase::run()
+  in packages/ai/test/GenerateModelsTest.php on line 218
+```
+
+`TestCase::run()` is `final`, and overriding a final method is a fatal error **at class-load time** —
+so PHPUnit's `TestSuiteLoader` died on the first file that did it and **no test in the repository
+ran.** Not the file's tests: none of them, in any package.
+
+`GenerateModelsTest` had a private `run()` that shells out to the generator. Renamed, and then the
+question worth asking was not "is that file fixed" but **who else does this** — the first shape from
+the index, pointed at a rule PHPUnit owns. `TestCase` has **70 final instance methods**, and nine
+more collisions were sitting behind the first one:
+
+| | |
+|---|---|
+| `AgentLoopTest::run()` → `drive()` | 9 call sites |
+| `ModelsTest::any()` → `anyFrom()` | 4 |
+| `OauthTest::run()` → `onTheLoop()` | 36 |
+| `BashOutputTest::output()` → `outputOf()` | 2 |
+| `PrintModeTest::run()` → `execute()` | 22 |
+| `SignInTest::run()`/`output()` → `signIn()`/`said()` | 12 + 10 |
+| `ToolTestCase::run()`/`output()` → `execute()`/`textOf()` | **77 + 56**, across six subclasses |
+
+`ToolTestCase` is the base class the tool tests extend, so that pair alone is most of
+`coding-agent`'s suite. `run` and `output` are the obvious names for "run the thing" and "what came
+out", which is exactly why they were chosen six separate times and exactly why they are taken.
+
+**The shim is why this survived**, and it is a new entry in the list of ways it is more permissive
+than the real runner. The known ones were `failOnWarning`, `failOnNotice` and `failOnDeprecation` —
+a mutation that only warns survives the shim and dies under PHPUnit. This one is worse in kind: the
+shim's own `TestCase` has no `run()` to be final, so it ran, green, a suite PHPUnit **could not
+load**. *A stand-in runner tells you about the tests; it does not tell you the real runner can start.*
+So the shim now sweeps for it before running anything and refuses with the list, which was checked by
+putting one collision back and watching it refuse.
+
+The neighbouring PHPUnit 12 rule was swept at the same time and is clean: every method named by a
+`#[DataProvider]` is `public static`, which that version requires and older ones did not.
+
 ### Packaging for Packagist, and the version field that was the wrong answer to the right question
 
 The entry above got `Version` right in principle and wrong in fact. Its reasoning — *one written-down

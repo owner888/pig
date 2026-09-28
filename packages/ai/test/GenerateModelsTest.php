@@ -51,7 +51,7 @@ final class GenerateModelsTest extends TestCase
     {
         // Upstream's filter, and it is not cosmetic: pig is an agent, so a model with no tool
         // calling cannot do the one thing it would be chosen for.
-        $output = $this->run();
+        $output = $this->generated();
 
         self::assertStringNotContainsString('no-tools', $output);
         self::assertStringContainsString("'takes-tools' => [", $output);
@@ -60,14 +60,14 @@ final class GenerateModelsTest extends TestCase
     public function testARetiredCopilotModelIsNotOffered(): void
     {
         // Copilot marks one rather than removing it, so the row stays in the catalogue.
-        $output = $this->run();
+        $output = $this->generated();
 
         self::assertStringNotContainsString('retired', $output);
     }
 
     public function testCopilotsApiIsDecidedByTheIdBecauseTheCatalogueDoesNotSay(): void
     {
-        $output = $this->run();
+        $output = $this->generated();
 
         self::assertStringContainsString("'gpt-5' => ['GPT-5', Api::OpenAiResponses,", $output);
         self::assertStringContainsString("'oswe-thing' => ['OSWE Thing', Api::OpenAiResponses,", $output);
@@ -76,7 +76,7 @@ final class GenerateModelsTest extends TestCase
 
     public function testCopilotRowsCarryNoPricesBecauseASubscriptionIsNotMeteredPerToken(): void
     {
-        $output = $this->run();
+        $output = $this->generated();
 
         // Six cells and no money: name, api, window, output, reasoning, images.
         self::assertStringContainsString(
@@ -87,7 +87,7 @@ final class GenerateModelsTest extends TestCase
 
     public function testACorrectionIsAppliedAndSaysWhy(): void
     {
-        $output = $this->run();
+        $output = $this->generated();
 
         // A context window is where compaction fires, so a Copilot model reported at a fifth of
         // its real window is a conversation summarised with four times the room it thought.
@@ -101,7 +101,7 @@ final class GenerateModelsTest extends TestCase
 
     public function testAModelTheCatalogueDoesNotCarryIsAddedAndSaysSo(): void
     {
-        $output = $this->run();
+        $output = $this->generated();
 
         self::assertStringContainsString('openai/gpt-5-chat-latest added by hand', $output);
         self::assertStringContainsString("'gpt-5-chat-latest' => ['GPT-5 Chat Latest',", $output);
@@ -112,7 +112,7 @@ final class GenerateModelsTest extends TestCase
         // Upstream's `|| 4096` turns a missing window into a number small enough to make every
         // conversation look nearly full. The default is kept so the row is usable; the complaint
         // is what gets somebody to look.
-        $output = $this->run();
+        $output = $this->generated();
 
         self::assertStringContainsString('openai/no-limits has no context window', $output);
         self::assertStringContainsString('openai/no-limits has no output limit', $output);
@@ -123,14 +123,14 @@ final class GenerateModelsTest extends TestCase
     {
         // `ANTHROPIC_MODELS` has no images column, so the assumption behind it is checked rather
         // than left to be wrong silently one day.
-        $output = $this->run();
+        $output = $this->generated();
 
         self::assertStringContainsString('anthropic/text-only takes no images', $output);
     }
 
     public function testImagesAndReasoningAreReadOffTheCatalogueAndNotGuessed(): void
     {
-        $output = $this->run();
+        $output = $this->generated();
 
         // Google's row: reasoning true, images true, prices through.
         self::assertStringContainsString(
@@ -151,7 +151,7 @@ final class GenerateModelsTest extends TestCase
         // The regeneration that needed this is in the traps — an `add` override for this very id
         // had never fired, and the first time it did it replaced a good row with its own stale
         // fallback.
-        $output = $this->run();
+        $output = $this->generated();
 
         self::assertStringContainsString('xai/grok-code-fast-1 is listed and not offered', $output);
         self::assertStringNotContainsString("'grok-code-fast-1' => [", $output);
@@ -171,7 +171,7 @@ final class GenerateModelsTest extends TestCase
         $catalogue['github-copilot']['models']['claude-sonnet-4.6']['limit']['context'] = 1_000_000;
         file_put_contents($this->fixture, (string) json_encode($catalogue));
 
-        $output = $this->run();
+        $output = $this->generated();
 
         self::assertStringContainsString(
             'the override for github-copilot/claude-sonnet-4.6 changes nothing any more',
@@ -183,7 +183,7 @@ final class GenerateModelsTest extends TestCase
     public function testADryRunWritesNothing(): void
     {
         $before = (string) file_get_contents(__DIR__ . '/../src/Models.php');
-        $this->run();
+        $this->generated();
 
         self::assertSame($before, (string) file_get_contents(__DIR__ . '/../src/Models.php'));
     }
@@ -197,7 +197,7 @@ final class GenerateModelsTest extends TestCase
         unset($catalogue['mistral']);
         file_put_contents($this->fixture, (string) json_encode($catalogue));
 
-        $output = $this->run();
+        $output = $this->generated();
 
         self::assertStringContainsString('mistral is not in this catalogue at all', $output);
         self::assertStringContainsString('nothing to write for mistral, so its table is left as it is', $output);
@@ -215,7 +215,15 @@ final class GenerateModelsTest extends TestCase
         self::assertStringContainsString('unknown argument --nonsense', implode("\n", $lines));
     }
 
-    private function run(): string
+    /**
+     * The generator's own report, from a dry run against the fixture.
+     *
+     * **Not `run()`, which is `final` on `TestCase`.** It was, and overriding a final method is a
+     * fatal error *at class-load time* — so PHPUnit could not build the suite at all and no test in
+     * the repository ran, which is a far worse failure than the one file being wrong. It survived
+     * because the verification shim has no such method to be final.
+     */
+    private function generated(): string
     {
         exec(
             sprintf(

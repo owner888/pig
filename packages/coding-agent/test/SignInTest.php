@@ -43,7 +43,7 @@ final class SignInTest extends TestCase
     }
 
     /** @param list<string> $arguments */
-    private function run(array $arguments, ?Auth $auth = null): int
+    private function signIn(array $arguments, ?Auth $auth = null): int
     {
         $signIn = new SignIn(
             $auth ?? Auth::inMemory(),
@@ -64,7 +64,7 @@ final class SignInTest extends TestCase
         return (int) Async::run(static fn (): int => $signIn->run($arguments));
     }
 
-    private function output(): string
+    private function said(): string
     {
         return implode("\n", $this->said);
     }
@@ -73,8 +73,8 @@ final class SignInTest extends TestCase
 
     public function testNoArgumentsIsTheUsage(): void
     {
-        $this->assertSame(0, $this->run([]));
-        $this->assertStringContainsString('pig-ai login <provider>', $this->output());
+        $this->assertSame(0, $this->signIn([]));
+        $this->assertStringContainsString('pig-ai login <provider>', $this->said());
     }
 
     public function testHelpInAllThreeSpellings(): void
@@ -82,27 +82,27 @@ final class SignInTest extends TestCase
         foreach (['help', '--help', '-h'] as $spelling) {
             $this->said = [];
 
-            $this->assertSame(0, $this->run([$spelling]), $spelling);
-            $this->assertStringContainsString('pig-ai list', $this->output(), $spelling);
+            $this->assertSame(0, $this->signIn([$spelling]), $spelling);
+            $this->assertStringContainsString('pig-ai list', $this->said(), $spelling);
         }
     }
 
     public function testTheUsageSaysWhereTheTokenGoes(): void
     {
-        $this->run(['help']);
+        $this->signIn(['help']);
 
         // Which is the one thing somebody reading this on a fresh machine needs, and the one
         // place this differs from upstream — whose own writes `auth.json` into the current
         // directory.
-        $this->assertStringContainsString('~/.pi/agent/auth.json', $this->output());
-        $this->assertStringContainsString('~/.pig/auth.json', $this->output());
+        $this->assertStringContainsString('~/.pi/agent/auth.json', $this->said());
+        $this->assertStringContainsString('~/.pig/auth.json', $this->said());
     }
 
     public function testListNamesEveryProviderByIdAndLabel(): void
     {
-        $this->assertSame(0, $this->run(['list']));
+        $this->assertSame(0, $this->signIn(['list']));
 
-        $listed = $this->output();
+        $listed = $this->said();
 
         foreach (Provider::cases() as $provider) {
             $this->assertStringContainsString($provider->value, $listed, $provider->value);
@@ -112,7 +112,7 @@ final class SignInTest extends TestCase
 
     public function testACommandThatIsNotOneIsNamedAndFails(): void
     {
-        $this->assertSame(1, $this->run(['frobnicate']));
+        $this->assertSame(1, $this->signIn(['frobnicate']));
         $this->assertStringContainsString("No command called 'frobnicate'", implode("\n", $this->warned));
     }
 
@@ -120,7 +120,7 @@ final class SignInTest extends TestCase
 
     public function testAProviderThatIsNotOneIsNamedAndFails(): void
     {
-        $this->assertSame(1, $this->run(['login', 'nonsense']));
+        $this->assertSame(1, $this->signIn(['login', 'nonsense']));
         $this->assertStringContainsString("No provider called 'nonsense'", implode("\n", $this->warned));
         $this->assertSame([], $this->asked, 'and nothing was asked');
     }
@@ -129,15 +129,15 @@ final class SignInTest extends TestCase
     {
         $this->answers = ['2'];
 
-        $this->run(['login']);
+        $this->signIn(['login']);
 
-        $this->assertStringContainsString('1. Anthropic (Claude Pro/Max)', $this->output());
-        $this->assertStringContainsString('4. Antigravity', $this->output());
+        $this->assertStringContainsString('1. Anthropic (Claude Pro/Max)', $this->said());
+        $this->assertStringContainsString('4. Antigravity', $this->said());
         $this->assertStringContainsString('(1-4)', $this->asked[0], 'the numbered one comes first');
 
         // Two is Copilot, and reaching its own first question — which is what the second entry in
         // `asked` is — proves the number resolved to a flow rather than to a label.
-        $this->assertStringContainsString('Signing in to GitHub Copilot', $this->output());
+        $this->assertStringContainsString('Signing in to GitHub Copilot', $this->said());
         $this->assertCount(2, $this->asked, 'and then the flow asked something of its own');
     }
 
@@ -145,7 +145,7 @@ final class SignInTest extends TestCase
     {
         $this->answers = ['9'];
 
-        $this->assertSame(1, $this->run(['login']));
+        $this->assertSame(1, $this->signIn(['login']));
         $this->assertStringContainsString('pig-ai login <provider>', implode("\n", $this->warned));
     }
 
@@ -154,7 +154,7 @@ final class SignInTest extends TestCase
         // A pipe that closed, which is what happens to a `pig-ai login` in a script.
         $this->answers = [null];
 
-        $this->assertSame(1, $this->run(['login']));
+        $this->assertSame(1, $this->signIn(['login']));
         $this->assertSame([], array_filter($this->said, static fn (string $l): bool => str_contains($l, 'Signed in')));
     }
 
@@ -166,10 +166,10 @@ final class SignInTest extends TestCase
         // first flow to ask a question called null. Escaping the paste box reaches it.
         $this->answers = [''];
 
-        $this->assertSame(1, $this->run(['login', 'anthropic']));
+        $this->assertSame(1, $this->signIn(['login', 'anthropic']));
 
-        $this->assertStringContainsString('Open this in your browser:', $this->output());
-        $this->assertStringContainsString('claude.ai/oauth/authorize', $this->output());
+        $this->assertStringContainsString('Open this in your browser:', $this->said());
+        $this->assertStringContainsString('claude.ai/oauth/authorize', $this->said());
         $this->assertCount(1, $this->asked);
         $this->assertStringContainsString('code#state', $this->asked[0]);
         $this->assertStringContainsString('Nothing was signed in.', implode("\n", $this->warned));
@@ -181,14 +181,14 @@ final class SignInTest extends TestCase
         // testable without a server.
         $this->answers = [null];
 
-        $this->assertSame(1, $this->run(['login', 'github-copilot']));
+        $this->assertSame(1, $this->signIn(['login', 'github-copilot']));
         $this->assertNotSame([], $this->asked);
         $this->assertStringContainsString('Nothing was signed in.', implode("\n", $this->warned));
     }
 
     public function testAFlowWithNoClientCredentialsSaysWhatIsMissing(): void
     {
-        $this->assertSame(1, $this->run(['login', 'google-gemini-cli']));
+        $this->assertSame(1, $this->signIn(['login', 'google-gemini-cli']));
 
         $warned = implode("\n", $this->warned);
 

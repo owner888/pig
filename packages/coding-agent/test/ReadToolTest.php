@@ -25,21 +25,21 @@ final class ReadToolTest extends ToolTestCase
     {
         $this->file('notes.txt', "one\ntwo\nthree");
 
-        $this->assertSame("one\ntwo\nthree", $this->output($this->run($this->read(), ['path' => 'notes.txt'])));
+        $this->assertSame("one\ntwo\nthree", $this->textOf($this->execute($this->read(), ['path' => 'notes.txt'])));
     }
 
     public function testAnAbsolutePathIsUsedAsGiven(): void
     {
         $path = $this->file('deep/inside.txt', 'found');
 
-        $this->assertSame('found', $this->output($this->run($this->read(), ['path' => $path])));
+        $this->assertSame('found', $this->textOf($this->execute($this->read(), ['path' => $path])));
     }
 
     public function testAMissingFileIsAnErrorTheModelCanRead(): void
     {
         $error = $this->assertThrows(
             AgentError::class,
-            fn () => $this->run($this->read(), ['path' => 'nope.txt']),
+            fn () => $this->execute($this->read(), ['path' => 'nope.txt']),
             'No such file',
         );
 
@@ -51,14 +51,14 @@ final class ReadToolTest extends ToolTestCase
     {
         mkdir($this->cwd . '/adir');
 
-        $this->assertThrows(AgentError::class, fn () => $this->run($this->read(), ['path' => 'adir']), 'No such file');
+        $this->assertThrows(AgentError::class, fn () => $this->execute($this->read(), ['path' => 'adir']), 'No such file');
     }
 
     public function testOffsetAndLimitSelectARange(): void
     {
         $this->file('numbers.txt', implode("\n", range(1, 100)));
 
-        $output = $this->output($this->run($this->read(), ['path' => 'numbers.txt', 'offset' => 10, 'limit' => 3]));
+        $output = $this->textOf($this->execute($this->read(), ['path' => 'numbers.txt', 'offset' => 10, 'limit' => 3]));
 
         $this->assertStringStartsWith("10\n11\n12", $output);
     }
@@ -67,7 +67,7 @@ final class ReadToolTest extends ToolTestCase
     {
         $this->file('numbers.txt', implode("\n", range(1, 100)));
 
-        $output = $this->output($this->run($this->read(), ['path' => 'numbers.txt', 'limit' => 3]));
+        $output = $this->textOf($this->execute($this->read(), ['path' => 'numbers.txt', 'limit' => 3]));
 
         // A next step, not a dead end.
         $this->assertStringContainsString('[97 more lines in file. Use offset=4 to continue]', $output);
@@ -77,7 +77,7 @@ final class ReadToolTest extends ToolTestCase
     {
         $this->file('short.txt', "a\nb");
 
-        $this->assertSame("a\nb", $this->output($this->run($this->read(), ['path' => 'short.txt', 'limit' => 10])));
+        $this->assertSame("a\nb", $this->textOf($this->execute($this->read(), ['path' => 'short.txt', 'limit' => 10])));
     }
 
     /** @return iterable<string, array{0: array<string, mixed>, 1: string}> */
@@ -103,7 +103,7 @@ final class ReadToolTest extends ToolTestCase
     {
         $this->file('short.txt', "a\nb\nc\nd");
 
-        $this->assertSame($expected, $this->output($this->run($this->read(), ['path' => 'short.txt', ...$range])));
+        $this->assertSame($expected, $this->textOf($this->execute($this->read(), ['path' => 'short.txt', ...$range])));
     }
 
     public function testAFileThatIsNotUtf8IsHandedOverAsItIs(): void
@@ -115,7 +115,7 @@ final class ReadToolTest extends ToolTestCase
         // and the display path has its own guard. Reading is not the place for either.
         $this->assertSame(
             "header\n\x80stray\nfooter\n",
-            $this->output($this->run($this->read(), ['path' => 'binary.log'])),
+            $this->textOf($this->execute($this->read(), ['path' => 'binary.log'])),
         );
     }
 
@@ -125,7 +125,7 @@ final class ReadToolTest extends ToolTestCase
 
         $this->assertThrows(
             AgentError::class,
-            fn () => $this->run($this->read(), ['path' => 'short.txt', 'offset' => 99]),
+            fn () => $this->execute($this->read(), ['path' => 'short.txt', 'offset' => 99]),
             'past the end',
         );
     }
@@ -135,7 +135,7 @@ final class ReadToolTest extends ToolTestCase
         $total = Truncate::MAX_LINES + 500;
         $this->file('big.txt', implode("\n", array_fill(0, $total, 'x')));
 
-        $output = $this->output($this->run($this->read(), ['path' => 'big.txt']));
+        $output = $this->textOf($this->execute($this->read(), ['path' => 'big.txt']));
 
         $limit = Truncate::MAX_LINES;
         $next = $limit + 1;
@@ -147,7 +147,7 @@ final class ReadToolTest extends ToolTestCase
         // Two hundred lines of 1KB is over the byte limit and under the line limit.
         $this->file('wide.txt', implode("\n", array_fill(0, 200, str_repeat('x', 1024))));
 
-        $output = $this->output($this->run($this->read(), ['path' => 'wide.txt']));
+        $output = $this->textOf($this->execute($this->read(), ['path' => 'wide.txt']));
 
         $this->assertStringContainsString('limit). Use offset=', $output);
         $this->assertStringContainsString('of 200', $output);
@@ -157,7 +157,7 @@ final class ReadToolTest extends ToolTestCase
     {
         $this->file('minified.js', str_repeat('a', Truncate::MAX_BYTES + 10));
 
-        $output = $this->output($this->run($this->read(), ['path' => 'minified.js']));
+        $output = $this->textOf($this->execute($this->read(), ['path' => 'minified.js']));
 
         // Nothing whole fits, so what comes back is a way forward rather than half a line.
         $this->assertStringContainsString('Use bash:', $output);
@@ -168,7 +168,7 @@ final class ReadToolTest extends ToolTestCase
     {
         $this->file('big.txt', implode("\n", array_fill(0, Truncate::MAX_LINES + 10, 'x')));
 
-        $result = $this->run($this->read(), ['path' => 'big.txt']);
+        $result = $this->execute($this->read(), ['path' => 'big.txt']);
 
         $this->assertTrue($result->details['truncation']->truncated);
         $this->assertSame('lines', $result->details['truncation']->truncatedBy);
@@ -182,7 +182,7 @@ final class ReadToolTest extends ToolTestCase
         );
         $this->assertStringEndsWith(
             "[{$result->details['notice']}]",
-            $this->output($result),
+            $this->textOf($result),
         );
     }
 
@@ -190,19 +190,19 @@ final class ReadToolTest extends ToolTestCase
     {
         $this->file('small.txt', "one\ntwo\n");
 
-        $result = $this->run($this->read(), ['path' => 'small.txt']);
+        $result = $this->execute($this->read(), ['path' => 'small.txt']);
 
         // Upstream's shape: a read that fitted says nothing about truncation rather than
         // recording that none happened.
         $this->assertNull($result->details);
-        $this->assertStringNotContainsString('[', $this->output($result));
+        $this->assertStringNotContainsString('[', $this->textOf($result));
     }
 
     public function testALimitThatStopsShortIsRecordedForTheTranscript(): void
     {
         $this->file('hundred.txt', implode("\n", array_fill(0, 100, 'x')));
 
-        $result = $this->run($this->read(), ['path' => 'hundred.txt', 'limit' => 5]);
+        $result = $this->execute($this->read(), ['path' => 'hundred.txt', 'limit' => 5]);
 
         // Nothing was *truncated* — the model asked for five lines and got five — so there is
         // no truncation record, which is upstream's shape. The notice is pig's: the collapsed
@@ -216,7 +216,7 @@ final class ReadToolTest extends ToolTestCase
         $png = "\x89PNG\r\n\x1a\n" . pack('N', 13) . 'IHDR' . pack('NN', 4, 3) . "\x08\x06\x00\x00\x00";
         $this->file('shot.png', $png);
 
-        $result = $this->run($this->read(), ['path' => 'shot.png']);
+        $result = $this->execute($this->read(), ['path' => 'shot.png']);
 
         $this->assertCount(2, $result->content);
         $this->assertInstanceOf(ImageContent::class, $result->content[1]);
@@ -230,7 +230,7 @@ final class ReadToolTest extends ToolTestCase
         // and the provider rejects the whole request.
         $this->file('lying.png', "\xff\xd8\xff\xe0" . str_repeat("\x00", 20));
 
-        $result = $this->run($this->read(), ['path' => 'lying.png']);
+        $result = $this->execute($this->read(), ['path' => 'lying.png']);
 
         $this->assertSame('image/jpeg', $result->content[1]->mimeType);
     }
@@ -239,7 +239,7 @@ final class ReadToolTest extends ToolTestCase
     {
         $this->file('notes.png', 'this is not a picture');
 
-        $this->assertSame('this is not a picture', $this->output($this->run($this->read(), ['path' => 'notes.png'])));
+        $this->assertSame('this is not a picture', $this->textOf($this->execute($this->read(), ['path' => 'notes.png'])));
     }
 
     // ---- paths ---------------------------------------------------------------------
@@ -262,7 +262,7 @@ final class ReadToolTest extends ToolTestCase
 
         // A path pasted out of a browser or a chat window carries U+00A0, which looks
         // exactly like a space and matches nothing.
-        $this->assertSame('found', $this->output($this->run($this->read(), ['path' => "my\u{00A0}file.txt"])));
+        $this->assertSame('found', $this->textOf($this->execute($this->read(), ['path' => "my\u{00A0}file.txt"])));
     }
 
     public function testAMacScreenshotNameIsTriedWithItsOwnNarrowSpace(): void

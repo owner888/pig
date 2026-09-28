@@ -27,7 +27,7 @@ final class BashOutputTest extends TestCase
         Loop::reset();
     }
 
-    private function output(string $command): string
+    private function outputOf(string $command): string
     {
         return Async::run(static function () use ($command): string {
             $run = new Run(sys_get_temp_dir(), $command, null);
@@ -40,7 +40,7 @@ final class BashOutputTest extends TestCase
 
     public function testABinaryCommandsOutputIsDrawnRatherThanFatal(): void
     {
-        $output = $this->output('head -c 400 /dev/urandom');
+        $output = $this->outputOf('head -c 400 /dev/urandom');
 
         // `!head -c 400 /dev/urandom`, or a `!cat` of anything that is not text, used to end the
         // session: `Graphemes::split()` answers false on malformed UTF-8, and this component is
@@ -63,7 +63,7 @@ final class BashOutputTest extends TestCase
     {
         // `\r` redraws the line it is on, so a download or a build step writes the same row over
         // and over. Kept, it is a hundred rows of transcript; the runner takes it out.
-        $output = $this->output("printf 'step 1\\rstep 2\\rstep 3\\n'");
+        $output = $this->outputOf("printf 'step 1\\rstep 2\\rstep 3\\n'");
 
         $this->assertSame("step 1step 2step 3\n", $output);
     }

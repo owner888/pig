@@ -62,13 +62,13 @@ abstract class ToolTestCase extends TestCase
     }
 
     /** @param array<string, mixed> $arguments */
-    protected function run(AgentTool $tool, array $arguments): AgentToolResult
+    protected function execute(AgentTool $tool, array $arguments): AgentToolResult
     {
         return $tool->execute('call-1', $arguments);
     }
 
     /** Everything the model would be shown, as one string. */
-    protected function output(AgentToolResult $result): string
+    protected function textOf(AgentToolResult $result): string
     {
         $text = '';
 

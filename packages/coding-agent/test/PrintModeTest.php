@@ -121,7 +121,7 @@ final class PrintModeTest extends TestCase
      * @param list<FileCommand>  $fileCommands
      * @return int the exit code
      */
-    private function run(
+    private function execute(
         array $messages,
         string $mode = 'text',
         array $images = [],
@@ -252,7 +252,7 @@ final class PrintModeTest extends TestCase
     public function testTheAnswerGoesToStandardOutputAndNothingElseDoes(): void
     {
         $this->answers = ['the sky is blue'];
-        $code = $this->run(['why is the sky blue?']);
+        $code = $this->execute(['why is the sky blue?']);
 
         $this->assertSame(0, $code);
         $this->assertSame("the sky is blue\n", $this->printed());
@@ -262,7 +262,7 @@ final class PrintModeTest extends TestCase
     public function testOnlyTheLastAnswerIsPrinted(): void
     {
         $this->answers = ['first answer', 'second answer'];
-        $this->run(['one', 'two']);
+        $this->execute(['one', 'two']);
 
         // Every turn happened — the conversation has both — but a script asked one question
         // at a time and wants the answer to the last one, not a transcript.
@@ -274,7 +274,7 @@ final class PrintModeTest extends TestCase
     {
         $this->answers = ['the answer'];
         $this->thinking = true;
-        $this->run(['ask']);
+        $this->execute(['ask']);
 
         // The model talking to itself is not what was asked for, and a script would have to
         // strip it.
@@ -286,7 +286,7 @@ final class PrintModeTest extends TestCase
     {
         $this->answers = ['ignored'];
         $this->failure = 'the provider said no';
-        $code = $this->run(['ask']);
+        $code = $this->execute(['ask']);
 
         $this->assertSame(1, $code);
         $this->assertStringContainsString('the provider said no', $this->complained());
@@ -303,7 +303,7 @@ final class PrintModeTest extends TestCase
         // the retry goes with it.
         $this->answers = ['ignored', 'here you go'];
         $this->failures = ['Anthropic returned 503: overloaded'];
-        $code = $this->run(['ask'], settings: Settings::inMemory(['retry' => ['baseDelayMs' => 1]]));
+        $code = $this->execute(['ask'], settings: Settings::inMemory(['retry' => ['baseDelayMs' => 1]]));
 
         $this->assertSame(0, $code);
         $this->assertSame("here you go\n", $this->printed());
@@ -318,7 +318,7 @@ final class PrintModeTest extends TestCase
         // and the process exits — taking the compaction with it.
         $this->answers = ['first', 'second', 'ignored', 'the summary', 'answered after summarising'];
         $this->failures = [null, null, 'prompt is too long: 213462 tokens > 200000 maximum'];
-        $code = $this->run(
+        $code = $this->execute(
             ['one', 'two', 'three'],
             settings: Settings::inMemory(['compaction' => ['keepRecentTokens' => 1]]),
         );
@@ -334,7 +334,7 @@ final class PrintModeTest extends TestCase
         // connection or a missing key would, and before the fix the stream never closed and
         // the caller waited forever for a reason it was never given.
         $this->answers = [];
-        $code = $this->run(['ask']);
+        $code = $this->execute(['ask']);
 
         $this->assertSame(1, $code);
         $this->assertStringContainsString('out of scripted answers', $this->complained());
@@ -345,7 +345,7 @@ final class PrintModeTest extends TestCase
     {
         $this->answers = ['ok', 'ok again'];
         $image = new ImageContent(base64_encode('bytes'), 'image/png');
-        $this->run(['look', 'and again'], images: [$image]);
+        $this->execute(['look', 'and again'], images: [$image]);
 
         $messages = $this->session->messages();
         $this->assertCount(2, $messages[0]->content, 'the text and the image');
@@ -356,14 +356,14 @@ final class PrintModeTest extends TestCase
     {
         $this->answers = [];
 
-        $this->assertSame(0, $this->run([]));
+        $this->assertSame(0, $this->execute([]));
         $this->assertSame('', $this->printed());
     }
 
     public function testTheSessionIsStillWrittenToDisk(): void
     {
         $this->answers = ['saved'];
-        $this->run(['ask'], store: true);
+        $this->execute(['ask'], store: true);
 
         // `-p` is not a reason to forget the conversation: `--continue` afterwards should
         // find it, which is why the store is wired the same as in the other two modes.
@@ -375,7 +375,7 @@ final class PrintModeTest extends TestCase
     public function testJsonPrintsEveryEventAndNoAnswerOfItsOwn(): void
     {
         $this->answers = ['hello'];
-        $code = $this->run(['hi'], mode: 'json');
+        $code = $this->execute(['hi'], mode: 'json');
 
         $this->assertSame(0, $code);
         $types = array_column($this->events(), 'type');
@@ -394,7 +394,7 @@ final class PrintModeTest extends TestCase
     public function testTheJsonIsTheSameShapeRpcModeSends(): void
     {
         $this->answers = ['hello'];
-        $this->run(['hi'], mode: 'json');
+        $this->execute(['hi'], mode: 'json');
 
         foreach ($this->events() as $event) {
             // Not the first `message_end`: the prompt gets a start and an end of its own, so
@@ -414,7 +414,7 @@ final class PrintModeTest extends TestCase
     {
         $this->answers = ['ignored'];
         $this->failure = 'the provider said no';
-        $code = $this->run(['ask'], mode: 'json');
+        $code = $this->execute(['ask'], mode: 'json');
 
         // The caller is reading events, and the failing turn arrived as one. Exiting 1 as
         // well would be telling them twice, and the second telling has no detail in it.
@@ -441,7 +441,7 @@ final class PrintModeTest extends TestCase
         ]);
 
         $this->answers = ['ok'];
-        $this->run(['ask'], hooks: $hooks);
+        $this->execute(['ask'], hooks: $hooks);
 
         $this->assertSame(['start', 'shutdown'], $seen);
     }
@@ -458,7 +458,7 @@ final class PrintModeTest extends TestCase
         }]);
 
         $this->answers = ['ok'];
-        $this->run(['ask'], hooks: $hooks);
+        $this->execute(['ask'], hooks: $hooks);
 
         // Fail-safe: a `tool_call` guard that cannot reach a person blocks the call. And
         // `hasUi` is false, so a hook that would rather behave differently can tell.
@@ -470,7 +470,7 @@ final class PrintModeTest extends TestCase
         $hooks = $this->hooks(['session_start' => static fn (): mixed => throw new RuntimeException('bad hook')]);
 
         $this->answers = ['still answered'];
-        $code = $this->run(['ask'], hooks: $hooks);
+        $code = $this->execute(['ask'], hooks: $hooks);
 
         $this->assertSame(0, $code);
         $this->assertStringContainsString('bad hook', $this->complained());
@@ -482,7 +482,7 @@ final class PrintModeTest extends TestCase
         $hooks = $this->hooks(['session_start' => static fn (): mixed => throw new RuntimeException('bad hook')]);
 
         $this->answers = ['ok'];
-        $this->run(['ask'], mode: 'json', hooks: $hooks);
+        $this->execute(['ask'], mode: 'json', hooks: $hooks);
 
         // The assertion is `events()` not failing: it decodes every line and a yellow
         // sentence among them would stop it.
@@ -509,7 +509,7 @@ final class PrintModeTest extends TestCase
         );
 
         $this->answers = ['ok'];
-        $this->run(['ask'], customTools: new CustomToolSet([new LoadedCustomTool('t/index.php', 't', $tool)]));
+        $this->execute(['ask'], customTools: new CustomToolSet([new LoadedCustomTool('t/index.php', 't', $tool)]));
 
         $this->assertSame(['start', 'shutdown'], $told);
         $this->assertStringContainsString('cannot start', $this->complained());
@@ -532,7 +532,7 @@ final class PrintModeTest extends TestCase
         );
 
         $this->answers = ['ok'];
-        $this->run(
+        $this->execute(
             ['ask'],
             hooks: $this->hooks([]),
             customTools: new CustomToolSet([new LoadedCustomTool('t/index.php', 't', $tool)]),
@@ -563,7 +563,7 @@ final class PrintModeTest extends TestCase
         });
 
         $this->answers = ['the model should never be asked'];
-        $code = $this->run(['/deploy staging'], hooks: new HookRunner(
+        $code = $this->execute(['/deploy staging'], hooks: new HookRunner(
             [new LoadedHook('test.php', 'test.php', $api)],
             $this->cwd,
         ));
@@ -581,7 +581,7 @@ final class PrintModeTest extends TestCase
     public function testAFileCommandIsExpandedHereTooRatherThanSentAsItsOwnName(): void
     {
         $this->answers = ['reviewed'];
-        $this->run(['/review src/Foo.php'], fileCommands: [
+        $this->execute(['/review src/Foo.php'], fileCommands: [
             new FileCommand('review', 'Review a file', 'Review $1 and say what is wrong.', '(user)'),
         ]);
 
@@ -593,7 +593,7 @@ final class PrintModeTest extends TestCase
     public function testATextThatOnlyLooksLikeACommandIsSentAsTheTextItIs(): void
     {
         $this->answers = ['ok'];
-        $this->run(['/review src/Foo.php'], fileCommands: [
+        $this->execute(['/review src/Foo.php'], fileCommands: [
             new FileCommand('deploy', 'Deploy', 'Deploy it.', '(user)'),
         ]);
 
