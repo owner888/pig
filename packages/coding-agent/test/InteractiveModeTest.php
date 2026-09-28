@@ -16,6 +16,7 @@ use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
+use Pig\Ai\Models;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
@@ -50,6 +51,7 @@ use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ToolSet;
+use Pig\Test\ProbeModels;
 use Pig\Test\WithoutProviderKeys;
 use Pig\Tui\Ansi;
 use Pig\Tui\Width;
@@ -67,6 +69,7 @@ use RuntimeException;
  */
 final class InteractiveModeTest extends TestCase
 {
+    use ProbeModels;
     use WithoutProviderKeys;
 
     private const string ESC = "\e";
@@ -114,6 +117,10 @@ final class InteractiveModeTest extends TestCase
         // `/model` lists the models there is a key for when this mode is given an `Auth`, and what
         // the shell running the suite exports is not something an assertion should turn on.
         $this->forgetProviderKeys();
+
+        // The scope cases need two models with known ids; which ones providers sell is not
+        // what they are about — see `ProbeModels`.
+        self::registerProbeModels();
     }
 
     #[\Override]
@@ -122,6 +129,7 @@ final class InteractiveModeTest extends TestCase
         $this->mode->stop();
         putenv('PIG_HOME');
         $this->restoreProviderKeys();
+        Models::forgetRegistered();
         self::remove($this->home);
         self::remove($this->cwd);
     }
@@ -1757,7 +1765,7 @@ final class InteractiveModeTest extends TestCase
         $auth = Auth::inMemory();
         $auth->setRuntimeApiKey('anthropic', 'for-this-run');
         [$scope, $warnings] = ModelResolver::scope(
-            ['claude-haiku-4-5', 'claude-opus-4-1:high'],
+            ['zzp-plain', 'zzp-alpha:high'],
             $auth->availableModels(),
         );
         $this->assertSame([], $warnings);
@@ -1771,13 +1779,13 @@ final class InteractiveModeTest extends TestCase
         // `indexOf` quirk. What matters here is the level: `--models opus:high` says how hard
         // *that* model thinks, and a cycle that applied the model and forgot the level would be
         // the wired-at-one-end shape again.
-        $this->assertSame('claude-opus-4-1', $this->session->model()?->id);
+        $this->assertSame('zzp-alpha', $this->session->model()?->id);
         $this->assertSame(ThinkingLevel::High, $this->session->thinkingLevel());
         $this->assertStringContainsString('thinking high', $this->screen());
 
         $this->type("\x10");
 
-        $this->assertSame('claude-haiku-4-5', $this->session->model()?->id, 'and round the end of the scope');
+        $this->assertSame('zzp-plain', $this->session->model()?->id, 'and round the end of the scope');
     }
 
     public function testThePickerOffersTheScopeAndNothingElse(): void
@@ -1821,9 +1829,13 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
         $this->type(self::ENTER);
 
-        // The first row of the list, whichever it is — what matters is that choosing
-        // one actually changes the model and closes the picker.
-        $this->assertSame('claude-3-5-haiku-20241022', $this->session->model()?->id);
+        // **The first row of the list, whichever it is** — which is what the assertion says
+        // now. It used to name the row, and the first regeneration of the registry from
+        // models.dev put a different model at the top, so a case whose own comment said the id
+        // did not matter failed because the id had changed. What matters is that choosing one
+        // actually changes the model and closes the picker.
+        $this->assertNotSame('claude-test', $this->session->model()?->id);
+        $this->assertNotNull($this->session->model());
         $this->assertStringNotContainsString('Pick a model', $this->screen());
     }
 

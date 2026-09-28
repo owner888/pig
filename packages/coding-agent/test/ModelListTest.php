@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
+use Pig\Ai\Pricing;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Cli\ModelList;
 use Pig\Test\WithoutProviderKeys;
@@ -130,15 +131,33 @@ final class ModelListTest extends TestCase
 
     public function testTheSearchIsFuzzyAndTakesItsPunctuationLiterally(): void
     {
-        $rows = array_slice($this->lines('sonnet 4.5'), 1);
+        // Worth pinning because it surprises twice over: `Fuzzy` matches a **subsequence**, so a
+        // search finds more than a substring would — but a `.` is still a `.`, so a dotted
+        // version number does not find a hyphenated one.
+        //
+        // The two models are registered rather than named. This case used to search `sonnet 4.5`
+        // and rely on Copilot selling `claude-sonnet-4.5` while Anthropic sold
+        // `claude-sonnet-4-5`; the first regeneration of the registry from models.dev retired
+        // Copilot's, so the search found nothing and a rule about punctuation failed for a reason
+        // that had nothing to do with punctuation.
+        Models::register([
+            new Model('zzp-dotted-4.5', 'Probe Dotted', Api::OpenAiResponses, 'openai',
+                'https://probe.invalid', 200_000, 64_000, true, ['text'], new Pricing(1.0, 2.0)),
+            new Model('zzp-hyphened-4-5', 'Probe Hyphened', Api::AnthropicMessages, 'anthropic',
+                'https://probe.invalid', 200_000, 64_000, true, ['text'], new Pricing(1.0, 2.0)),
+        ]);
 
-        // Worth pinning because it surprises twice over. `Fuzzy` matches a **subsequence**,
-        // so a search finds more than a substring would — but a `.` is still a `.`, so this
-        // finds Copilot's `claude-sonnet-4.5` and not Anthropic's `claude-sonnet-4-5`.
-        $this->assertNotSame([], $rows);
+        try {
+            $rows = preg_grep('/zzp-/', array_slice($this->lines('zzp 4.5'), 1)) ?: [];
 
-        foreach ($rows as $row) {
-            $this->assertStringContainsString('4.5', $row);
+            $this->assertNotSame([], $rows);
+
+            foreach ($rows as $row) {
+                $this->assertStringContainsString('zzp-dotted-4.5', $row);
+                $this->assertStringNotContainsString('zzp-hyphened', $row);
+            }
+        } finally {
+            Models::forgetRegistered();
         }
     }
 

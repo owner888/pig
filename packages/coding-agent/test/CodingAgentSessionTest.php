@@ -23,6 +23,7 @@ use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\StartedSession;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Test\AssertsThrows;
+use Pig\Test\ProbeModels;
 use Pig\Test\WithoutProviderKeys;
 
 /**
@@ -37,6 +38,7 @@ use Pig\Test\WithoutProviderKeys;
 final class CodingAgentSessionTest extends TestCase
 {
     use AssertsThrows;
+    use ProbeModels;
     use WithoutProviderKeys;
 
     private string $root;
@@ -71,6 +73,10 @@ final class CodingAgentSessionTest extends TestCase
         // and `Auth` reads the environment last. Whether the machine running these tests happens
         // to have a provider key set is not something an assertion should turn on.
         $this->forgetProviderKeys();
+
+        // Which model each precedence case gets is a fact about the order, not about what
+        // Anthropic sells this week — see `ProbeModels`.
+        self::registerProbeModels();
     }
 
     #[\Override]
@@ -81,6 +87,7 @@ final class CodingAgentSessionTest extends TestCase
         putenv($this->realHome === false ? 'HOME' : 'HOME=' . $this->realHome);
 
         $this->restoreProviderKeys();
+        Models::forgetRegistered();
         self::remove($this->root);
     }
 
@@ -153,27 +160,27 @@ final class CodingAgentSessionTest extends TestCase
 
     public function testWhatWasTypedWins(): void
     {
-        $this->writeSettings(['defaultModel' => 'claude-opus-4-1', 'defaultProvider' => 'anthropic']);
+        $this->writeSettings(['defaultModel' => 'zzp-alpha', 'defaultProvider' => 'anthropic']);
 
-        $started = $this->start(['PIG_MODEL' => 'haiku'], ['model' => 'claude-sonnet-4-5']);
+        $started = $this->start(['PIG_MODEL' => 'plain'], ['model' => 'zzp-beta-20250101']);
 
-        $this->assertSame('claude-sonnet-4-5', $started->model->id);
+        $this->assertSame('zzp-beta-20250101', $started->model->id);
     }
 
     public function testTheEnvironmentComesNext(): void
     {
-        $this->writeSettings(['defaultModel' => 'claude-opus-4-1', 'defaultProvider' => 'anthropic']);
+        $this->writeSettings(['defaultModel' => 'zzp-alpha', 'defaultProvider' => 'anthropic']);
 
-        $started = $this->start(['PIG_MODEL' => 'claude-sonnet-4-5']);
+        $started = $this->start(['PIG_MODEL' => 'zzp-beta-20250101']);
 
-        $this->assertSame('claude-sonnet-4-5', $started->model->id);
+        $this->assertSame('zzp-beta-20250101', $started->model->id);
     }
 
     public function testThenWhatWasChosenLastTime(): void
     {
-        $this->writeSettings(['defaultModel' => 'claude-opus-4-1', 'defaultProvider' => 'anthropic']);
+        $this->writeSettings(['defaultModel' => 'zzp-alpha', 'defaultProvider' => 'anthropic']);
 
-        $this->assertSame('claude-opus-4-1', $this->start()->model->id);
+        $this->assertSame('zzp-alpha', $this->start()->model->id);
     }
 
     public function testAndFinallyTheBuiltInDefault(): void
@@ -184,15 +191,15 @@ final class CodingAgentSessionTest extends TestCase
     public function testAnEmptyEnvironmentVariableIsOffRatherThanAModelCalledNothing(): void
     {
         // `PIG_MODEL= pig …` is how somebody turns it off for one command.
-        $this->writeSettings(['defaultModel' => 'claude-opus-4-1', 'defaultProvider' => 'anthropic']);
+        $this->writeSettings(['defaultModel' => 'zzp-alpha', 'defaultProvider' => 'anthropic']);
 
-        $this->assertSame('claude-opus-4-1', $this->start(['PIG_MODEL' => ''])->model->id);
-        $this->assertSame('claude-opus-4-1', $this->start(['PIG_MODEL' => false])->model->id);
+        $this->assertSame('zzp-alpha', $this->start(['PIG_MODEL' => ''])->model->id);
+        $this->assertSame('zzp-alpha', $this->start(['PIG_MODEL' => false])->model->id);
     }
 
     public function testAPartOfTheNameIsEnough(): void
     {
-        $this->assertSame('claude-opus-4-1', $this->start([], ['model' => 'opus 4.1'])->model->id);
+        $this->assertSame('zzp-alpha', $this->start([], ['model' => 'Probe Alpha'])->model->id);
     }
 
     public function testAModelThatMatchesNothingRefusesToStart(): void
@@ -210,9 +217,9 @@ final class CodingAgentSessionTest extends TestCase
     {
         // `sonnet:veryhard` names a model and then a thinking level that is not one. The model was
         // understood, so the run goes on — with a sentence saying what was dropped.
-        $started = $this->start([], ['model' => 'sonnet:veryhard']);
+        $started = $this->start([], ['model' => 'zzp-alpha:veryhard']);
 
-        $this->assertSame('claude-sonnet-4-5', $started->model->id);
+        $this->assertSame('zzp-alpha', $started->model->id);
         $this->assertSame(ThinkingLevel::Off, $started->thinking);
         $this->assertStringContainsString('veryhard', $started->warnings[0]);
     }
@@ -221,7 +228,7 @@ final class CodingAgentSessionTest extends TestCase
 
     public function testThinkingFromTheFlagBeatsTheSuffixOnTheModel(): void
     {
-        $started = $this->start([], ['model' => 'sonnet:low', 'thinking' => 'high']);
+        $started = $this->start([], ['model' => 'zzp-alpha:low', 'thinking' => 'high']);
 
         $this->assertSame(ThinkingLevel::High, $started->thinking);
     }
@@ -254,7 +261,7 @@ final class CodingAgentSessionTest extends TestCase
     {
         // A request that asks a non-reasoning model to think is one the provider rejects, and
         // nobody typing `--thinking high` meant to be told no.
-        $started = $this->start([], ['model' => 'claude-3-5-haiku-latest', 'thinking' => 'high']);
+        $started = $this->start([], ['model' => 'zzp-plain', 'thinking' => 'high']);
 
         $this->assertFalse($started->model->reasoning);
         $this->assertSame(ThinkingLevel::Off, $started->thinking);
@@ -267,12 +274,12 @@ final class CodingAgentSessionTest extends TestCase
         putenv('ANTHROPIC_API_KEY=sk-test');
 
         try {
-            $started = $this->start([], ['models' => ['haiku', 'opus 4.1']]);
+            $started = $this->start([], ['models' => ['zzp-plain', 'zzp-alpha']]);
 
             // Upstream's rule: below `--model`, above the environment and the settings. So
             // `pig --models haiku,opus` opens on haiku, and ctrl+p reaches opus and nothing else.
-            $this->assertSame('claude-haiku-4-5', $started->model->id);
-            $this->assertSame(['claude-haiku-4-5', 'claude-opus-4-1'], array_map(
+            $this->assertSame('zzp-plain', $started->model->id);
+            $this->assertSame(['zzp-plain', 'zzp-alpha'], array_map(
                 static fn (object $choice): string => $choice->model->id,
                 $started->session->modelScope(),
             ));
@@ -286,11 +293,11 @@ final class CodingAgentSessionTest extends TestCase
         putenv('ANTHROPIC_API_KEY=sk-test');
 
         try {
-            $started = $this->start([], ['models' => ['haiku'], 'model' => 'claude-opus-4-1']);
+            $started = $this->start([], ['models' => ['zzp-plain'], 'model' => 'zzp-alpha']);
 
             // The scope is still the scope — it is what ctrl+p walks — but what the session opens
             // on is the one model somebody named.
-            $this->assertSame('claude-opus-4-1', $started->model->id);
+            $this->assertSame('zzp-alpha', $started->model->id);
             $this->assertCount(1, $started->session->modelScope());
         } finally {
             putenv('ANTHROPIC_API_KEY');
@@ -359,18 +366,18 @@ final class CodingAgentSessionTest extends TestCase
         // Upstream's two lines, and they were missing: the model survived by luck because
         // `SessionManager::settings()` falls back to the last assistant message, but the thinking
         // level has no such fallback — so `--thinking high` came back as `off` after `--continue`.
-        $started = $this->start([], ['model' => 'opus 4.1:high']);
+        $started = $this->start([], ['model' => 'zzp-alpha:high']);
         self::converse($started, 'hello');
 
         $recorded = $started->store?->settings() ?? [];
 
-        $this->assertSame('claude-opus-4-1', $recorded['model']?->modelId);
+        $this->assertSame('zzp-alpha', $recorded['model']?->modelId);
         $this->assertSame('high', $recorded['thinking']?->level);
     }
 
     public function testAResumedSessionComesBackOnTheLevelItWasHadOn(): void
     {
-        $first = $this->start([], ['model' => 'opus 4.1:high']);
+        $first = $this->start([], ['model' => 'zzp-alpha:high']);
         self::converse($first, 'earlier');
 
         // A key, because coming back to the model a conversation was on now needs one: without it
@@ -378,7 +385,7 @@ final class CodingAgentSessionTest extends TestCase
         // falls back instead. The test below is that fallback.
         $again = $this->start([], ['continue' => true, 'apiKey' => 'not-called-here']);
 
-        $this->assertSame('claude-opus-4-1', $again->session->agent->state->model?->id);
+        $this->assertSame('zzp-alpha', $again->session->agent->state->model?->id);
         $this->assertSame(ThinkingLevel::High, $again->session->agent->state->thinkingLevel);
     }
 
@@ -386,7 +393,7 @@ final class CodingAgentSessionTest extends TestCase
     {
         // A key for the run that had the conversation, and none for the run that reopens it: an
         // afternoon on somebody's borrowed `--api-key`, picked up the next morning.
-        $first = $this->start([], ['model' => 'opus 4.1', 'apiKey' => 'not-called-here']);
+        $first = $this->start([], ['model' => 'zzp-alpha', 'apiKey' => 'not-called-here']);
         self::converse($first, 'earlier');
 
         $again = $this->start([], ['continue' => true]);
@@ -647,10 +654,10 @@ final class CodingAgentSessionTest extends TestCase
     {
         file_put_contents($this->cwd . '/AGENTS.md', 'Use tabs, obviously.');
 
-        $started = $this->start([], ['model' => 'sonnet:high']);
+        $started = $this->start([], ['model' => 'zzp-alpha:high']);
         $agent = $started->session->agent;
 
-        $this->assertSame('claude-sonnet-4-5', $agent->state->model?->id);
+        $this->assertSame('zzp-alpha', $agent->state->model?->id);
         $this->assertSame(ThinkingLevel::High, $agent->state->thinkingLevel);
         // The working directory in the prompt as well as in the tools, which is the whole of what
         // `create()` adds — and a project's own instructions inside it.

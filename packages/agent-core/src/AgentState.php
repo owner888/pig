@@ -27,7 +27,20 @@ final class AgentState
      */
     public const string DEFAULT_PROVIDER = 'google';
 
-    public const string DEFAULT_MODEL = 'gemini-2.5-flash-lite-preview-06-17';
+    /**
+     * **This id dates, and the first regeneration of the registry proved it.**
+     *
+     * It was `gemini-2.5-flash-lite-preview-06-17`, which models.dev has since dropped, so
+     * `Models::find()` answered null and an `Agent` nobody configured was back to throwing
+     * `No model configured` — the exact thing these two constants were added to stop. The default
+     * has to be an id the registry carries, and the registry is generated now, so
+     * `AgentTest::testAnAgentNobodyConfiguredStillHasAModel` is the tripwire rather than a
+     * formality: a regeneration that retires this model is supposed to turn it red.
+     *
+     * The rule for replacing it is the rule that chose it — **the cheapest thing Google sells**,
+     * because five lines of library code should not pick an expensive model on somebody's behalf.
+     */
+    public const string DEFAULT_MODEL = 'gemini-2.5-flash-lite';
 
     /**
      * @param Model|null      $model             null takes the default above; still nullable

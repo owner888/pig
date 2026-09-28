@@ -511,9 +511,9 @@ Four things about it:
   conversation with.
 - **A level the restored model cannot do is clamped**, for the same reason `setModel()` clamps:
   the person resuming did not ask for it, the file did, and a provider would reject it.
-- **A model this pig has no entry for is not an error.** pig's registry is 166 of pi's models
-  and excludes OpenRouter's 236, so a pi session on one of those restores to whatever pig had.
-  The conversation still opens, and the footer says which model is answering.
+- **A model this pig has no entry for is not an error.** pig's registry carries only the models
+  whose protocol is ported and excludes OpenRouter's, so a pi session on one of those restores to
+  whatever pig had. The conversation still opens, and the footer says which model is answering.
 
 Recorded only when something actually changed: `setModel()` is also how the thinking level gets
 clamped, and a line per call would be a file full of a model changing to itself.
@@ -841,14 +841,24 @@ a 256-colour terminal. The guard worth knowing about is that the grey ramp only 
 the colour was nearly neutral to begin with — without it every muted tone in the theme
 snaps to a pure grey and the theme loses its tint.
 
-`Ai\Models` is the registry. Upstream generates `models.generated.ts` from models.dev — 7105
-lines, 414 models, twelve providers — and what is here is the models whose *protocol* is
-ported: Anthropic's 21, OpenAI's own 33 on the Responses API, Google's 21, the 72 across
-Cerebras, Groq, Mistral, xAI and Zai that speak `openai-completions`, and GitHub Copilot's 19.
-Offering a model and then failing to send the request is a worse answer than "no such model",
-so the rest arrive with their protocols. OpenRouter's 236 speak a ported protocol and are still
-left out: that list is a directory of everyone else's models and goes stale fastest. The figures are upstream's *at the anchor commit*, not whatever models.dev says
-today: a port should agree with the thing it was ported from.
+`Ai\Models` is the registry, and what is in it is the models whose *protocol* is ported — offering
+a model and then failing to send the request is a worse answer than "no such model", so the rest
+arrive with their protocols. OpenRouter's speak a ported protocol and are still left out: that list
+is a directory of everyone else's models and goes stale fastest.
+
+**The rows are generated now, and the paragraph this replaces is why.** It read *"the figures are
+upstream's at the anchor commit, not whatever models.dev says today: a port should agree with the
+thing it was ported from"*, and quoted a count per provider. That is fidelity to the bytes and not
+to the mechanism: upstream has never kept this table by hand — the file pig transcribed opens with
+*"Do not edit manually - run 'npm run generate-models' to update"*, and by upstream HEAD the data is
+not in git at all, each provider's catalogue being fetched from models.dev at build time. pig froze
+a generator's output and then treated the freeze as a decision, and the counts in this file were the
+freeze quoted back. See [The registry was a transcription of a generated
+file](#the-registry-was-a-transcription-of-a-generated-file).
+
+So `scripts/generate-models.php` writes the rows and the counts are no longer quoted here: they are
+whatever the last regeneration found, and the run prints them. The anchor still decides every line
+of protocol; it never had anything useful to say about which models a provider sells this week.
 
 The table is keyed `provider/id`, and `get()` used to take an id alone because no two
 providers claimed the same one. **Copilot's table is the one that broke that**, exactly where
@@ -3348,6 +3358,8 @@ php test/lint.php       # php -l over every file (PHPUnit only parses what it lo
 vendor/bin/phpunit      # filter: vendor/bin/phpunit --filter Loop
 php test/live.php       # the providers against the real endpoints — costs money, needs keys
                         # `… google` for one provider, `… google/<model-id>` for one model
+php scripts/generate-models.php   # rewrite Ai\Models' rows from models.dev
+                        # `--dry-run` prints them instead; `--from <file>` reads a saved api.json
 ```
 
 PHPUnit 12 is the newest release that still runs on PHP 8.3, so it is what the floor allows.
@@ -5670,6 +5682,167 @@ that nothing *else* about the endpoint is treated as strict — it takes `store`
 and `reasoning_effort` without complaint, so the one row is the whole difference. Taking
 `deepseek.com` off the row turns it red.
 
+### The registry was a transcription of a generated file
+
+Two failures, months apart, with one cause. Groq answered `404 The model 'llama-3.3-70b-versatile'
+does not exist or you do not have access to it` for a row `--list-models` still offered; and
+`gemini-3.8-flash`, a real model, answered `no such model in the registry` and had to be
+hand-declared in `models.json` before pig could reach it at all. Both were read as the price of
+pinning the port to `d0a4c37`, which is a deliberate and defensible pin — and that reading was
+wrong about what the pin covered.
+
+**Upstream does not keep this table.** The file pig transcribed 178 rows out of opens with
+
+```
+// This file is auto-generated by scripts/generate-models.ts
+// Do not edit manually - run 'npm run generate-models' to update
+```
+
+and at upstream HEAD the data is not in the repository at all: `models.generated.ts` is 130 lines
+of imports, each provider's catalogue arriving from models.dev at build time (`git ls-tree` finds
+no `providers/data/` — only the `.d.ts` that types the JSON import). So the thing pig pinned was a
+generator's *output*, and `Models`' own docblock called the freeze fidelity: *"the figures are
+upstream's at the anchor commit, which is the source a port should agree with rather than whatever
+models.dev says today."*
+
+**The decisive consequence: moving the anchor would not have fixed either failure.** There is no
+newer table to port to. Porting the anchor forward is a separate, much larger question — 5,003
+commits, the four packages 139 → 616 non-test files, 505 files at HEAD that do not exist at the
+anchor — and it is *not* the answer to a stale registry. Conflating the two is what kept this
+unfixed through two reports.
+
+So `scripts/generate-models.php` is upstream's `generate-models.ts`, ported to the part pig needs:
+read models.dev, keep what `tool_call` says can be handed a tool, map per provider to an api and a
+base URL, and rewrite the rows. Five things about it are the decisions rather than the code:
+
+- **It writes rows, not files.** Each table carries a `>>> generated` / `<<< generated` pair and
+  only what lies between them is replaced, so every docblock, base URL, `RESOLD` entry and Copilot
+  header stays hand-written and a regeneration's diff is the rows and nothing else. The alternative
+  — emitting the whole file, as upstream does — would move all that prose into the generator.
+- **The two subscription tables stay hand-written**, because they are hand-written in *upstream's
+  generator too*: models.dev does not carry a Code Assist or Antigravity catalogue. That is a
+  verified reason and not an omission.
+- **Nothing is defaulted quietly.** Upstream writes `m.limit?.context || 4096`, which turns a
+  missing window into a number small enough to make every conversation look nearly full, and a
+  missing output cap into one that truncates every answer. The default is kept so the row is
+  usable and **the complaint is what gets somebody to look** — the same arrangement as every other
+  loader in this repository. Likewise a provider that has vanished from the catalogue is named and
+  its table is **left alone**, because writing the empty result would take every one of that
+  provider's models out of pig in silence.
+- **`ANTHROPIC_MODELS` has no images column**, and the assumption behind that is now checked: a
+  text-only Anthropic model is complained about rather than silently recorded as accepting images.
+- **Upstream's corrections are ported with their reasons**, not their values alone — models.dev
+  reports three times the real cache pricing for `claude-opus-4-5`, and two models it does not list
+  are supplied by hand. A number with no reason beside it is a number nobody can ever retire, so
+  each carries one, and an override whose row the catalogue has since started carrying **says so**
+  instead of shadowing it for ever.
+
+`--from <file>` reads a saved `api.json` and `--dry-run` prints the rows instead of writing them.
+Neither is a seam for a test: models.dev is unreachable from the dev container (`CONNECT tunnel
+failed, 403`, like every host but Anthropic's), a regeneration from somebody else's snapshot is the
+only way to reproduce a table, and a generator whose input cannot be pinned is one whose output
+cannot be explained.
+
+**Every run prints what moved** — added, gone, and each field that changed — against the table
+loaded before the rewrite, and it reloads the written file in a fresh process to build that
+comparison, because PHP cannot be told to forget a class it has already resolved. A regeneration
+nobody read is a registry nobody checked, which is the failure this whole entry is about.
+
+Regression tests: `GenerateModelsTest`, twelve cases, which **spawns the script** the way
+`RpcClientTest` spawns `bin/pig` and for the same reason. Four rules were mutated one at a time and
+each turns exactly one case red: the `tool_call` filter, the deprecated-Copilot skip, the api-by-id
+rule, and the empty-table guard. **The fourth appeared silent and was not** — the replacement text
+in the mutation script never matched the file, so nothing had been mutated at all; it went red once
+the substitution was checked. *A mutation that changes no test is only evidence once you have
+confirmed the mutation applied.*
+
+What this does **not** do: add providers. DeepSeek is the one worth naming — upstream ships it at
+HEAD, pig has no entry, and adding one is a decision about `OpenAiCompat` rather than a row in a
+table.
+
+### The first real regeneration, and what it cost
+
+Run against models.dev on a machine that can reach it: **99 added, 104 gone, 28 changed**, 178
+models down to 173. The generator did what it was written to do, and then **49 tests went red with
+nothing wrong in pig**. That is the bill for the decision, and it is worth itemising because most of
+it was a kind of test this repository had not named before.
+
+**Two of the 49 were real bugs.** Both had been latent for as long as the table was frozen, and both
+are the same shape: a hardcoded id that only stops working when the catalogue moves.
+
+- **`AgentState::DEFAULT_MODEL` named a retired model.** It was
+  `gemini-2.5-flash-lite-preview-06-17`, models.dev has dropped it, so `Models::find()` answered
+  null and an `Agent` nobody configured was back to throwing `No model configured` — the exact thing
+  those two constants were added to prevent. `bin/pig` never reaches them, so nothing in a coding
+  session would have shown it; `AgentTest::testAnAgentNobodyConfiguredStillHasAModel` did, which is
+  the test doing its job rather than a test to fix. It is `gemini-2.5-flash-lite` now, and the
+  docblock says the rule that picks a replacement (the cheapest thing Google sells) so the next
+  person is not guessing.
+- **An override replaced a good row with the stale fallback beside it.** `xai/grok-code-fast-1`
+  carried an anchor-era `add` override, on the grounds that models.dev did not list it. **It had
+  never fired**, because at the anchor the catalogue *did* carry the model — with a 256,000 window, a
+  10,000 output cap and reasoning on, which is what pig's transcribed row held. models.dev has since
+  dropped it, the override fired for the first time, and the diff read `window 256000 → 32768; output
+  10000 → 8192; reasoning yes → no`. *An override that has never been exercised is an override nobody
+  has checked.*
+
+Asking upstream what it thinks **now** is what settled the second one, and it is the cheap move worth
+remembering: HEAD carries `XAI_BUILTIN_EXCLUDED_MODEL_IDS`, and `grok-code-fast-1` is on it, with
+`grok-3`, `grok-3-fast` and two preview ids. So the catalogue dropping it and upstream excluding it
+agree, and re-adding it under any numbers would be offering a model that cannot be talked to — the
+Groq 404 again. The override is gone and that list is ported as `EXCLUDED`, which also drops three
+models this regeneration would otherwise have added.
+
+**And the override machinery gained the sentence it was missing.** A `fix` merged its values blind,
+so it reported "corrected" whether or not the catalogue still had the figure wrong — meaning the day
+models.dev fixes its own number, that row becomes a no-op nobody retires. The `add` arm already said
+when the catalogue had caught up; `fix` says it now too.
+
+**The other 47 were tests asserting what providers sell.** Sixteen in `ModelsTest` alone: 178 models,
+a count per provider, eleven named rows checked to the token and the cent. Those were *right* for a
+hand-transcribed table — the docblock on the count said exactly why, *"the way it goes wrong is a row
+quietly missing or doubled"* — and that reason expired the moment the rows were generated. What they
+assert now is what pig does: every row built whole, every provider pig claims present and nothing
+present that pig does not claim, the resale rule, the figures varying per model rather than one set
+for all. Where a case needs *a* model with some property it **finds one in the table**, and fails
+loudly if the table cannot supply it, because that absence is itself a finding — no reseller-only id
+means the fallback in `get()` is dead code.
+
+The rest named live ids as fixtures for rules that have nothing to do with which models exist: that
+an alias beats the dated build behind it, that a bare id means the direct provider, that a colon sets
+the thinking level, that a non-reasoning model gets its level clamped. `Pig\Test\ProbeModels` is the
+answer — a family registered under real providers with ids beginning `zzp-`, which no real id or
+display name contains, so substring matching cannot cross between them and the real table. Eleven
+cases in `ModelResolverTest`, eleven in `CodingAgentSessionTest`, two in `InteractiveModeTest` and one
+in `RpcModeTest` moved onto it.
+
+Four places could not use it and each says why in place:
+
+- **`AgentSessionTest` builds its models locally**, which that file already did — and the case that
+  needed a model that *cannot reason* had nothing left to look up, because every Anthropic model in
+  the table now reasons.
+- **`RpcClientTest` spawns `bin/pig`**, so a registration in the test process does not cross the
+  process boundary. It declares the pair in the child's `models.json` instead, which is the same door
+  a person uses for a model pig has no entry for — and `CustomModels` requiring an `apiKey` is what
+  makes the with-key and without-key cases work off one declaration.
+- **`ModelListTest`'s punctuation case** relied on Copilot selling `claude-sonnet-4.5` while Anthropic
+  sold `claude-sonnet-4-5`; Copilot's is gone, so a rule about a `.` being a `.` failed for a reason
+  that had nothing to do with punctuation. It registers a dotted and a hyphened id of its own.
+- **`InteractiveModeTest::testPickingFromTheListSwitches` named the first row of the list** while its
+  own comment said *"the first row of the list, whichever it is — what matters is that choosing one
+  actually changes the model"*. The regeneration put a different model at the top. The assertion says
+  what the comment said now. *A comment that describes a weaker assertion than the code makes is a
+  comment that will be right before the test is.*
+
+**`test/live.php`'s table had two dead rows** — `xai/grok-3-fast` and `github-copilot/gpt-4.1`, both
+gone from the catalogue — and a dead row there is only noticed when that provider is actually run,
+which is the argument for running the harness with no arguments after a regeneration.
+
+The rule the whole batch adds, and it is the same one as the documentation rule two entries up, one
+domain over: **a test that names a live model id has an expiry date.** Name one only when the
+assertion is about that model; otherwise register what the rule needs. The tell is the same as ever —
+if the test's own comment says the id does not matter, the assertion should not name it.
+
 ### Eighteen of Gemini's twenty finish reasons were an error with no words in it
 
 Reported from real use — *"新版 Gemini 和 DeepSeek 总是因为这个出错"* — and the half of it that could be
@@ -5732,31 +5905,48 @@ asserted `StopReason::Error` and nothing else, so it passed identically with a m
 one — *an assertion that holds either way is not an assertion*, for the fourth time this file has
 said so.
 
-### Two overflow wordings nobody here has seen, and what a miss costs
+### Google's overflow row, verified against a model released after the anchor
 
-Left open on purpose, so that the next person does not mistake the table's silence for coverage.
-Reported from real use: the new Gemini and DeepSeek both fail often enough to be noticed, and the
-`Ai\Utils\Overflow` rows that are supposed to catch them have never been read back from those
-endpoints.
+The entry this replaces was an open question: the new Gemini and DeepSeek both fail often enough to
+have been reported, and the `Ai\Utils\Overflow` rows meant to catch them had never been read back
+from those endpoints. The Google half is now answered, by declaring `gemini-3.8-flash` in
+`models.json` and running the harness at it — **eleven of eleven, and the sentence matches**:
 
-| Row | Written for | Verified against the real API |
-|---|---|---|
-| `/input token count.*exceeds the maximum/i` | Google | **no** — the example is `gemini-2.5`-era, and the reporter is on a newer model |
-| the usage branch | DeepSeek | the branch fires, but only if `models.json`'s `contextWindow` is the true one |
+```
+ok  overflow is recognised   ok, refused: google returned 400:
+    The input token count exceeds the maximum number of tokens allowed 1048576.
+```
 
-A miss here is not loud. `happened()` answers false, `worthRetrying()` then reads the same message,
-finds a status or a familiar word or neither, and the turn either dies with the provider's sentence on
-screen or is retried three times against a prompt that is exactly as long each time. Compaction — the
-one thing that would fix it — never runs. That is the failure the reporter describes, and it is
-indistinguishable from the entry above without the text.
+Worth keeping both wordings, because they are not the same sentence and only one of them was ever
+the example:
 
-**What closes it is one line of provider prose, and nothing else.** The class's own rule is that a
-pattern with no example beside it is a guess and a guess here compacts a conversation that was fine,
-so no row is added until the sentence is in hand. `php test/live.php google/<model-id>` is how to get
-it without waiting for it to happen again — the `overflow is recognised` scenario prints the
-provider's own words when they are not recognised, and naming a model on the command line is what
-that argument was added for. For a model newer than the anchor, declare it in `models.json` first;
-the section above measures that route.
+| | |
+|---|---|
+| the anchor-era example | `The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)` |
+| what `gemini-3.8-flash` says | `The input token count exceeds the maximum number of tokens allowed 1048576.` |
+
+Google dropped both parenthesised numbers. `/input token count.*exceeds the maximum/i` spans the gap
+because the `.*` sits exactly where the count used to be — **luck rather than design**, and the
+useful reading is that a pattern anchored on the *shape* of the numbers would have missed it. So the
+row holds, and the reason to write this down is that it was one `curl`-free command away from being
+known and was assumed for months instead.
+
+**Which also says the reported failures are not this.** A Gemini overflow is recognised and
+compacted; what was not recognised is the entry above — a finish reason with no message — and that
+is the one that had no way to say what it was.
+
+DeepSeek's half stays open in a different sense: the branch that catches it is the usage comparison,
+and **whether it fires at all depends on `models.json`'s `contextWindow` being the true window**. That
+number is hand-written, `CustomModels` can check it is a positive whole number and cannot check it is
+right, and it is an *input* to this very scenario — the oversized prompt is sized from it. Declared
+too large, the prompt may still fit and "the provider accepted an oversized request" is an artefact
+of the file; declared too small, an ordinary answer looks like a silent overflow. So for any declared
+provider, the window is the first thing to get right and the last thing to trust.
+
+The general rule, unchanged and now cheaper to follow: a pattern with no example beside it is a guess
+and a guess here compacts a conversation that was fine. `php test/live.php <provider>/<model-id>`
+prints the provider's own words when they are not recognised, which is what that argument was added
+for; for a model newer than the anchor, declare it in `models.json` first.
 
 ### The overflow pattern for Cerebras and Mistral could never match pig's own words
 
@@ -5863,9 +6053,9 @@ either way was caught by mutating the thing it was written for.
 ### A 404 for a model pig offers, and a cause that did not survive the second data point
 
 Groq answered every scenario with `404 The model 'llama-3.3-70b-versatile' does not exist or you do
-not have access to it` — and **that id is in pig's registry**. `Ai\Models` is 166 models as
-`models.generated.ts` had them at the anchor, 2026-01-02, so a provider that has retired one since
-answers 404 for a row pig still offers in `--list-models`, and `--model` still resolves.
+not have access to it` — and **that id is in pig's registry**. `Ai\Models` was then a transcription
+of `models.generated.ts` at the anchor, 2026-01-02, so a provider that had retired one since
+answered 404 for a row pig still offered in `--list-models`, and `--model` still resolved.
 
 **That was the reading, and the next run refuted it.** Swapping in `llama-3.1-8b-instant` — also in
 the registry, and a current Groq model as far as anything here can tell — produced the same 404. Two
@@ -5875,13 +6065,12 @@ So Groq is still untested, the cause is the credential, and the staleness above 
 this observation is not evidence for. *A cause that explains one data point is a hypothesis; the
 cheap way to find out is one more point, which cost a single run here.*
 
-The hazard is real anyway and is the price of pinning the registry, which is deliberate — a port
-should agree with the thing it was ported from, and the figures in this file are upstream's at the
-anchor rather than whatever models.dev says today. It is worth knowing rather than fixing: such a
-failure is legible, it costs one command to pick another id, and the alternative is a registry that
-drifts from the snapshot everything else here is checked against. If it ever becomes a nuisance the
-answer is `models.json`, which is exactly the file for "this endpoint has a model pig has never
-heard of".
+**The hazard was real anyway, and this entry used to call it the deliberate price of pinning the
+registry** — *"a port should agree with the thing it was ported from"*. It is fixed rather than
+priced now: the rows are regenerated from models.dev, which is where upstream's come from, and
+[the entry above](#the-registry-was-a-transcription-of-a-generated-file) has the argument. What
+stands from this one is the method rather than the diagnosis: two data points cost one run and
+turned a confident cause into the right one.
 
 What it cost here was a whole provider's live run, and the harness made it worse before it made it
 better: nine scenarios answered the same 404, and **two of them printed `ok`** — the empty-message

@@ -178,6 +178,40 @@ final class RpcClientTest extends TestCase
                         'maxTokens' => 1_000,
                     ]],
                 ],
+                // **Two models with known ids, for the cases about switching and cycling.**
+                // Those named live Anthropic ids until the registry became generated and the
+                // first regeneration retired them; `Pig\Test\ProbeModels` is how the rest of
+                // the suite answers that, and it cannot be used here because this test spawns
+                // `bin/pig` and a registration in this process does not cross a process
+                // boundary. Declaring them is the honest equivalent — and it is the same door a
+                // person uses for a model pig has no entry for.
+                'anthropic' => [
+                    'baseUrl' => 'http://127.0.0.1:' . $this->port,
+                    // The variable the two cases below turn on: with it set the switch is
+                    // allowed, and without it `hasKeyFor()` says no and the refusal is the one
+                    // being tested. `CustomModels` requires an `apiKey`, and an unset all-capitals
+                    // name resolves to no key rather than travelling as one.
+                    'apiKey' => 'ANTHROPIC_API_KEY',
+                    'api' => 'anthropic-messages',
+                    'models' => [
+                        [
+                            'id' => 'zzp-alpha',
+                            'name' => 'Probe Alpha',
+                            'reasoning' => true,
+                            'input' => ['text'],
+                            'contextWindow' => 200_000,
+                            'maxTokens' => 64_000,
+                        ],
+                        [
+                            'id' => 'zzp-plain',
+                            'name' => 'Probe Plain',
+                            'reasoning' => false,
+                            'input' => ['text'],
+                            'contextWindow' => 200_000,
+                            'maxTokens' => 8_192,
+                        ],
+                    ],
+                ],
             ],
         ]));
     }
@@ -377,15 +411,15 @@ final class RpcClientTest extends TestCase
 
         [$set, $state] = Async::run(static function () use ($client): array {
             $client->start();
-            $set = $client->setModel('anthropic', 'claude-3-5-haiku-latest');
+            $set = $client->setModel('anthropic', 'zzp-alpha');
             $state = $client->state();
             $client->stop();
 
             return [$set, $state];
         });
 
-        $this->assertSame('claude-3-5-haiku-latest', $set['id'] ?? null);
-        $this->assertSame('claude-3-5-haiku-latest', $state['model']['id'] ?? null);
+        $this->assertSame('zzp-alpha', $set['id'] ?? null);
+        $this->assertSame('zzp-alpha', $state['model']['id'] ?? null);
     }
 
     public function testAModelWithNoKeyIsRefusedByNameRatherThanFailingOnTheNextTurn(): void
@@ -397,7 +431,7 @@ final class RpcClientTest extends TestCase
             $client->start();
 
             try {
-                $client->setModel('anthropic', 'claude-3-5-haiku-latest');
+                $client->setModel('anthropic', 'zzp-alpha');
             } finally {
                 $client->stop();
             }
@@ -406,7 +440,7 @@ final class RpcClientTest extends TestCase
         // There is no anthropic key in this home. Before, the switch succeeded, was written into
         // the session file as the model this conversation is on, and failed on the next turn from
         // inside `Stream` — where it reads as the provider's fault.
-        $this->assertStringContainsString('No API key for anthropic/claude-3-5-haiku-latest', $error->getMessage());
+        $this->assertStringContainsString('No API key for anthropic/zzp-alpha', $error->getMessage());
     }
 
     public function testCyclingTheModelWalksTheListAHostCanSee(): void
@@ -437,7 +471,7 @@ final class RpcClientTest extends TestCase
     {
         $this->serveOneTurn('unused');
         $client = $this->client(
-            ['--models', 'claude-haiku-4-5,claude-opus-4-1:high'],
+            ['--models', 'zzp-plain,zzp-alpha:high'],
             environment: ['ANTHROPIC_API_KEY' => 'not-called-here'],
         );
 
@@ -454,10 +488,10 @@ final class RpcClientTest extends TestCase
         // Through the real binary, because `bin/pig` is where the flag is split on commas and
         // handed to `session()` — a mutation removing that pass-through broke nothing at all until
         // this case existed, which is the wired-at-one-end shape from `CLAUDE.md`'s index.
-        $this->assertSame('claude-haiku-4-5', $opened['model']['id'], 'the first of the scope');
-        $this->assertSame('claude-opus-4-1', $next['model']['id'] ?? null);
+        $this->assertSame('zzp-plain', $opened['model']['id'], 'the first of the scope');
+        $this->assertSame('zzp-alpha', $next['model']['id'] ?? null);
         $this->assertSame('high', $next['thinkingLevel'] ?? null, 'and the level that entry named');
-        $this->assertSame('claude-haiku-4-5', $round['model']['id'] ?? null, 'round the end of the scope');
+        $this->assertSame('zzp-plain', $round['model']['id'] ?? null, 'round the end of the scope');
     }
 
     public function testTheModelListIsTheModelsThereIsAKeyFor(): void

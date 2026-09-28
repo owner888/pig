@@ -387,7 +387,14 @@ composer install
 php test/lint.php      # php -l over every file
 vendor/bin/phpunit
 php test/live.php      # the providers against the real endpoints — costs money, needs keys
+php scripts/generate-models.php   # bring the model registry up to date from models.dev
 ```
+
+The model registry's rows are generated, as upstream's are: `scripts/generate-models.php` reads
+models.dev, keeps the models whose protocol is ported, and rewrites the tables in `Ai\Models` in
+place — `--dry-run` prints them instead, and every run reports what was added, removed and changed
+so a regeneration can be read rather than trusted. Everything around the rows — the base URLs, the
+two subscription catalogues, the collision rules — is hand-written and untouched.
 
 `test/live.php` is not part of the suite and never runs by itself: twelve scenarios per provider
 against the real API, which is the only way to answer whether a provider *accepts* what pig sends —

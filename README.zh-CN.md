@@ -330,7 +330,13 @@ composer install
 php test/lint.php      # 对每个文件跑 php -l
 vendor/bin/phpunit
 php test/live.php      # 对真实 API 跑一遍 provider —— 要花钱、要密钥
+php scripts/generate-models.php   # 从 models.dev 更新模型注册表
 ```
+
+模型注册表的行是生成出来的,跟上游一样:`scripts/generate-models.php` 读 models.dev、只留协议已经
+移植的那些模型、就地重写 `Ai\Models` 里的表 —— `--dry-run` 只打印不写,而且每次都会报出新增、消失
+和改动了哪些字段,这样一次重新生成是可以读的而不是只能信的。表以外的东西 —— base URL、两张订阅目录、
+撞名规则 —— 都是手写的,不会被动。
 
 `test/live.php` 不属于测试套件、也不会自己跑：每个 provider 十二个场景打真实 API，因为只有这样才能
 回答「provider 会不会**接受** pig 发出去的东西」—— 重放的 thinking 签名、为中断的调用编造出来的 tool

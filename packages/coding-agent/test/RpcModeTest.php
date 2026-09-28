@@ -58,6 +58,8 @@ use RuntimeException;
  */
 final class RpcModeTest extends TestCase
 {
+    use \Pig\Test\ProbeModels;
+
     /** @var resource */
     private $in;
 
@@ -88,6 +90,9 @@ final class RpcModeTest extends TestCase
         $this->cwd = sys_get_temp_dir() . '/pig-rpc-' . bin2hex(random_bytes(4));
         mkdir($this->cwd, 0o755, true);
         putenv('PIG_HOME=' . $this->cwd . '-home');
+
+        // The scope case needs two models with known ids — see `ProbeModels`.
+        self::registerProbeModels();
     }
 
     #[\Override]
@@ -95,6 +100,7 @@ final class RpcModeTest extends TestCase
     {
         $this->mode->stop();
         putenv('PIG_HOME');
+        Models::forgetRegistered();
         fclose($this->peer);
         fclose($this->in);
         fclose($this->out);
@@ -723,7 +729,7 @@ final class RpcModeTest extends TestCase
     public function testAHostCyclesInsideTheScopeToo(): void
     {
         [$scope, $warnings] = ModelResolver::scope(
-            ['claude-haiku-4-5', 'claude-opus-4-1:high'],
+            ['zzp-plain', 'zzp-alpha:high'],
             Models::all(),
         );
         $this->assertSame([], $warnings);
@@ -736,9 +742,9 @@ final class RpcModeTest extends TestCase
         // Both ends of the wire go through `AgentSession::cycleModel()`, so a host gets the scope
         // and the thinking level that comes with each entry — which is the whole reason the
         // rotation moved off `ModelResolver` and onto the session.
-        $this->assertSame('claude-opus-4-1', $first['model']['id']);
+        $this->assertSame('zzp-alpha', $first['model']['id']);
         $this->assertSame('high', $first['thinkingLevel']);
-        $this->assertSame('claude-haiku-4-5', $second['model']['id']);
+        $this->assertSame('zzp-plain', $second['model']['id']);
         $this->assertSame('off', $second['thinkingLevel']);
     }
 

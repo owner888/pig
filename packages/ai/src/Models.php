@@ -9,22 +9,47 @@ use Pig\Ai\Providers\GoogleGeminiCli;
 /**
  * Every model this can talk to, by provider and id.
  *
- * Upstream generates `models.generated.ts` from models.dev: 7105 lines, 414 models,
- * twelve providers. Here are the 178 whose protocol is ported — Anthropic's 21, OpenAI's own 33 on
- * the Responses API, Google's 21, the 72 across five providers that speak `openai-completions`,
- * GitHub Copilot's 19, Code Assist's 5 and Antigravity's 7. A model that could be selected and then
- * not talked to is a worse answer than "no such model". **What is left out is OpenRouter's 236**,
- * because that list is a directory of everyone else's models and goes stale fastest.
+ * Every model whose **protocol is ported** — a model that could be selected and then not talked to
+ * is a worse answer than "no such model". What is left out is OpenRouter's, because that list is a
+ * directory of everyone else's models and goes stale fastest.
  *
- * The figures are upstream's at the anchor commit, which is the source a port should
- * agree with rather than whatever models.dev says today. Every row was checked against that file
- * field for field — id, name, api, provider, base URL, reasoning, accepted input, context window,
- * max tokens and all four prices — and `ModelsTest` pins the per-provider counts and a row per
- * provider so a hand-transcribed table cannot drift quietly.
+ * ### The rows are generated; everything around them is not
  *
- * Adding a provider is adding a table and one line in `table()`, not changing the rest.
+ * Each table below carries a `>>> generated` / `<<< generated` pair, and
+ * `scripts/generate-models.php` replaces what lies between them from models.dev. Everything else
+ * here — the base URLs, `RESOLD`, Copilot's headers, the two subscription tables, `table()` — is
+ * hand-written and stays that way.
  *
- * Ported from upstream's `models.ts` plus the matching slices of `models.generated.ts`.
+ * **This used to be a transcription, and the docblock called the freeze fidelity**: *"the figures
+ * are upstream's at the anchor commit, which is the source a port should agree with rather than
+ * whatever models.dev says today"*. That is fidelity to the bytes and not to the mechanism.
+ * Upstream has never kept this table by hand — the file pig copied from opens with *"This file is
+ * auto-generated … Do not edit manually - run 'npm run generate-models' to update"*, and by
+ * upstream HEAD the data is not in git at all. So pig froze a generator's output and then treated
+ * the freeze as a decision, and the bill arrived twice: Groq answered `404 … does not exist` for a
+ * row `--list-models` still offered, and `gemini-3.8-flash` had to be hand-declared in
+ * `models.json` to be reachable. **Neither would have been fixed by moving the port anchor**,
+ * because upstream HEAD has no table to move to.
+ *
+ * So the pin that remains is the one that means something: `d0a4c37` decides every line of
+ * *protocol*, and the registry goes back to being what it always was — a directory of what
+ * providers currently sell, regenerated when somebody wants it current.
+ *
+ * ### What the tables can and cannot say
+ *
+ * Three shapes, and the generator writes what is there rather than widening them:
+ * `ANTHROPIC_MODELS` has no images column, because everything Anthropic sells takes images — an
+ * assumption the generator **checks and complains about** rather than leaving to be wrong one day;
+ * `COPILOT_MODELS` carries an api per row and no prices, because a subscription is not metered per
+ * token and Copilot serves both OpenAI shapes; the other six carry the full nine columns.
+ *
+ * Adding a provider is adding a table, one line in `table()` and one row in the generator's
+ * `DIRECT` — not changing the rest.
+ *
+ * `ModelsTest` pins a row per provider and the collision rule, so a regeneration that moved
+ * something load-bearing is a red test rather than a surprise.
+ *
+ * Ported from upstream's `models.ts`; the rows come from where upstream's come from.
  */
 final class Models
 {
@@ -139,129 +164,122 @@ final class Models
      * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: float, 5: float, 6: float, 7: float}>
      */
     private const array ANTHROPIC_MODELS = [
-        'claude-3-5-haiku-20241022' => ['Claude Haiku 3.5', 200_000, 8_192, false, 0.8, 4.0, 0.08, 1.0],
-        'claude-3-5-haiku-latest' => ['Claude Haiku 3.5 (latest)', 200_000, 8_192, false, 0.8, 4.0, 0.08, 1.0],
-        'claude-3-5-sonnet-20240620' => ['Claude Sonnet 3.5', 200_000, 8_192, false, 3.0, 15.0, 0.3, 3.75],
-        'claude-3-5-sonnet-20241022' => ['Claude Sonnet 3.5 v2', 200_000, 8_192, false, 3.0, 15.0, 0.3, 3.75],
-        'claude-3-7-sonnet-20250219' => ['Claude Sonnet 3.7', 200_000, 64_000, true, 3.0, 15.0, 0.3, 3.75],
-        'claude-3-7-sonnet-latest' => ['Claude Sonnet 3.7 (latest)', 200_000, 64_000, true, 3.0, 15.0, 0.3, 3.75],
-        'claude-3-haiku-20240307' => ['Claude Haiku 3', 200_000, 4_096, false, 0.25, 1.25, 0.03, 0.3],
-        'claude-3-opus-20240229' => ['Claude Opus 3', 200_000, 4_096, false, 15.0, 75.0, 1.5, 18.75],
-        'claude-3-sonnet-20240229' => ['Claude Sonnet 3', 200_000, 4_096, false, 3.0, 15.0, 0.3, 0.3],
+        // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        'claude-fable-5' => ['Claude Fable 5', 1_000_000, 128_000, true, 10.0, 50.0, 1.0, 12.5],
+        'claude-fable-5-1' => ['Claude Fable 5.1', 1_000_000, 128_000, true, 10.0, 50.0, 0.25, 12.5],
         'claude-haiku-4-5' => ['Claude Haiku 4.5 (latest)', 200_000, 64_000, true, 1.0, 5.0, 0.1, 1.25],
         'claude-haiku-4-5-20251001' => ['Claude Haiku 4.5', 200_000, 64_000, true, 1.0, 5.0, 0.1, 1.25],
-        'claude-opus-4-0' => ['Claude Opus 4 (latest)', 200_000, 32_000, true, 15.0, 75.0, 1.5, 18.75],
-        'claude-opus-4-1' => ['Claude Opus 4.1 (latest)', 200_000, 32_000, true, 15.0, 75.0, 1.5, 18.75],
-        'claude-opus-4-1-20250805' => ['Claude Opus 4.1', 200_000, 32_000, true, 15.0, 75.0, 1.5, 18.75],
-        'claude-opus-4-20250514' => ['Claude Opus 4', 200_000, 32_000, true, 15.0, 75.0, 1.5, 18.75],
         'claude-opus-4-5' => ['Claude Opus 4.5 (latest)', 200_000, 64_000, true, 5.0, 25.0, 0.5, 6.25],
         'claude-opus-4-5-20251101' => ['Claude Opus 4.5', 200_000, 64_000, true, 5.0, 25.0, 0.5, 6.25],
-        'claude-sonnet-4-0' => ['Claude Sonnet 4 (latest)', 200_000, 64_000, true, 3.0, 15.0, 0.3, 3.75],
-        'claude-sonnet-4-20250514' => ['Claude Sonnet 4', 200_000, 64_000, true, 3.0, 15.0, 0.3, 3.75],
-        'claude-sonnet-4-5' => ['Claude Sonnet 4.5 (latest)', 200_000, 64_000, true, 3.0, 15.0, 0.3, 3.75],
-        'claude-sonnet-4-5-20250929' => ['Claude Sonnet 4.5', 200_000, 64_000, true, 3.0, 15.0, 0.3, 3.75],
+        'claude-opus-4-6' => ['Claude Opus 4.6', 1_000_000, 128_000, true, 5.0, 25.0, 0.5, 6.25],
+        'claude-opus-4-7' => ['Claude Opus 4.7', 1_000_000, 128_000, true, 5.0, 25.0, 0.5, 6.25],
+        'claude-opus-4-8' => ['Claude Opus 4.8', 1_000_000, 128_000, true, 5.0, 25.0, 0.5, 6.25],
+        'claude-opus-5' => ['Claude Opus 5', 1_000_000, 128_000, true, 5.0, 25.0, 0.5, 6.25],
+        'claude-opus-5-5' => ['Claude Opus 5.5', 1_000_000, 128_000, true, 4.0, 20.0, 0.2, 5.0],
+        'claude-sonnet-4-5' => ['Claude Sonnet 4.5 (latest)', 1_000_000, 64_000, true, 3.0, 15.0, 0.3, 3.75],
+        'claude-sonnet-4-5-20250929' => ['Claude Sonnet 4.5', 1_000_000, 64_000, true, 3.0, 15.0, 0.3, 3.75],
+        'claude-sonnet-4-6' => ['Claude Sonnet 4.6', 1_000_000, 128_000, true, 3.0, 15.0, 0.3, 3.75],
+        'claude-sonnet-5' => ['Claude Sonnet 5', 1_000_000, 128_000, true, 2.0, 10.0, 0.2, 2.5],
+        // <<< generated
     ];
 
     /**
      * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float}>
      */
     private const array CEREBRAS_MODELS = [
-        'gpt-oss-120b' => ['GPT OSS 120B', 131_072, 32_768, true, false, 0.25, 0.69, 0.0, 0.0],
-        'qwen-3-235b-a22b-instruct-2507' => ['Qwen 3 235B Instruct', 131_000, 32_000, false, false, 0.6, 1.2, 0.0, 0.0],
-        'zai-glm-4.6' => ['Z.AI GLM-4.6', 131_072, 40_960, false, false, 0.0, 0.0, 0.0, 0.0],
+        // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        'gpt-oss-120b' => ['GPT OSS 120B', 131_072, 40_960, true, false, 0.35, 0.75, 0.0, 0.0],
+        'qwen-3.8-27b' => ['Qwen3.8 27B', 131_072, 40_960, true, true, 0.99, 1.49, 0.0, 0.0],
+        // <<< generated
     ];
 
     /**
      * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float}>
      */
     private const array GROQ_MODELS = [
-        'deepseek-r1-distill-llama-70b' => ['DeepSeek R1 Distill Llama 70B', 131_072, 8_192, true, false, 0.75, 0.99, 0.0, 0.0],
-        'gemma2-9b-it' => ['Gemma 2 9B', 8_192, 8_192, false, false, 0.2, 0.2, 0.0, 0.0],
-        'llama-3.1-8b-instant' => ['Llama 3.1 8B Instant', 131_072, 8_192, false, false, 0.05, 0.08, 0.0, 0.0],
-        'llama-3.3-70b-versatile' => ['Llama 3.3 70B Versatile', 131_072, 32_768, false, false, 0.59, 0.79, 0.0, 0.0],
-        'llama3-70b-8192' => ['Llama 3 70B', 8_192, 8_192, false, false, 0.59, 0.79, 0.0, 0.0],
-        'llama3-8b-8192' => ['Llama 3 8B', 8_192, 8_192, false, false, 0.05, 0.08, 0.0, 0.0],
-        'meta-llama/llama-4-maverick-17b-128e-instruct' => ['Llama 4 Maverick 17B', 131_072, 8_192, false, true, 0.2, 0.6, 0.0, 0.0],
-        'meta-llama/llama-4-scout-17b-16e-instruct' => ['Llama 4 Scout 17B', 131_072, 8_192, false, true, 0.11, 0.34, 0.0, 0.0],
-        'mistral-saba-24b' => ['Mistral Saba 24B', 32_768, 32_768, false, false, 0.79, 0.79, 0.0, 0.0],
-        'moonshotai/kimi-k2-instruct' => ['Kimi K2 Instruct', 131_072, 16_384, false, false, 1.0, 3.0, 0.0, 0.0],
-        'moonshotai/kimi-k2-instruct-0905' => ['Kimi K2 Instruct 0905', 262_144, 16_384, false, false, 1.0, 3.0, 0.0, 0.0],
-        'openai/gpt-oss-120b' => ['GPT OSS 120B', 131_072, 32_768, true, false, 0.15, 0.75, 0.0, 0.0],
-        'openai/gpt-oss-20b' => ['GPT OSS 20B', 131_072, 32_768, true, false, 0.1, 0.5, 0.0, 0.0],
-        'qwen-qwq-32b' => ['Qwen QwQ 32B', 131_072, 16_384, true, false, 0.29, 0.39, 0.0, 0.0],
-        'qwen/qwen3-32b' => ['Qwen3 32B', 131_072, 16_384, true, false, 0.29, 0.59, 0.0, 0.0],
+        // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        'llama-3.1-8b-instant' => ['Llama 3.1 8B', 131_072, 131_072, false, false, 0.05, 0.08, 0.0, 0.0],
+        'llama-3.3-70b-versatile' => ['Llama 3.3 70B', 131_072, 32_768, false, false, 0.59, 0.79, 0.0, 0.0],
+        'openai/gpt-oss-120b' => ['GPT OSS 120B', 131_072, 65_536, true, false, 0.15, 0.6, 0.075, 0.0],
+        'openai/gpt-oss-20b' => ['GPT OSS 20B', 131_072, 65_536, true, false, 0.075, 0.3, 0.0375, 0.0],
+        'openai/gpt-oss-safeguard-20b' => ['Safety GPT OSS 20B', 131_072, 65_536, true, false, 0.075, 0.3, 0.0, 0.0],
+        'qwen/qwen3.6-27b' => ['Qwen3.6 27B', 131_072, 16_384, true, true, 0.6, 3.0, 0.3, 0.0],
+        'qwen/qwen3.8-27b' => ['Qwen3.8 27B', 131_042, 16_384, true, true, 0.8, 4.0, 0.0, 0.0],
+        // <<< generated
     ];
 
     /**
      * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float}>
      */
     private const array MISTRAL_MODELS = [
-        'codestral-latest' => ['Codestral', 256_000, 4_096, false, false, 0.3, 0.9, 0.0, 0.0],
-        'devstral-2512' => ['Devstral 2', 262_144, 262_144, false, false, 0.0, 0.0, 0.0, 0.0],
-        'devstral-medium-2507' => ['Devstral Medium', 128_000, 128_000, false, false, 0.4, 2.0, 0.0, 0.0],
-        'devstral-medium-latest' => ['Devstral 2', 262_144, 262_144, false, false, 0.4, 2.0, 0.0, 0.0],
-        'devstral-small-2505' => ['Devstral Small 2505', 128_000, 128_000, false, false, 0.1, 0.3, 0.0, 0.0],
-        'devstral-small-2507' => ['Devstral Small', 128_000, 128_000, false, false, 0.1, 0.3, 0.0, 0.0],
-        'labs-devstral-small-2512' => ['Devstral Small 2', 256_000, 256_000, false, true, 0.0, 0.0, 0.0, 0.0],
-        'magistral-medium-latest' => ['Magistral Medium', 128_000, 16_384, true, false, 2.0, 5.0, 0.0, 0.0],
+        // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        'codestral-latest' => ['Codestral (latest)', 256_000, 4_096, false, false, 0.3, 0.9, 0.0, 0.0],
+        'magistral-medium-latest' => ['Magistral Medium (latest)', 128_000, 16_384, true, false, 2.0, 5.0, 0.0, 0.0],
         'magistral-small' => ['Magistral Small', 128_000, 128_000, true, false, 0.5, 1.5, 0.0, 0.0],
-        'ministral-3b-latest' => ['Ministral 3B', 128_000, 128_000, false, false, 0.04, 0.04, 0.0, 0.0],
-        'ministral-8b-latest' => ['Ministral 8B', 128_000, 128_000, false, false, 0.1, 0.1, 0.0, 0.0],
+        'ministral-3b-latest' => ['Ministral 3B (latest)', 128_000, 128_000, false, false, 0.04, 0.04, 0.0, 0.0],
+        'ministral-8b-latest' => ['Ministral 8B (latest)', 128_000, 128_000, false, false, 0.1, 0.1, 0.0, 0.0],
         'mistral-large-2411' => ['Mistral Large 2.1', 131_072, 16_384, false, false, 2.0, 6.0, 0.0, 0.0],
         'mistral-large-2512' => ['Mistral Large 3', 262_144, 262_144, false, true, 0.5, 1.5, 0.0, 0.0],
-        'mistral-large-latest' => ['Mistral Large', 262_144, 262_144, false, true, 0.5, 1.5, 0.0, 0.0],
+        'mistral-large-latest' => ['Mistral Large (latest)', 262_144, 262_144, false, true, 0.5, 1.5, 0.0, 0.0],
         'mistral-medium-2505' => ['Mistral Medium 3', 131_072, 131_072, false, true, 0.4, 2.0, 0.0, 0.0],
         'mistral-medium-2508' => ['Mistral Medium 3.1', 262_144, 262_144, false, true, 0.4, 2.0, 0.0, 0.0],
-        'mistral-medium-latest' => ['Mistral Medium', 128_000, 16_384, false, true, 0.4, 2.0, 0.0, 0.0],
+        'mistral-medium-2604' => ['Mistral Medium 3.5', 262_144, 262_144, true, true, 1.5, 7.5, 0.0, 0.0],
+        'mistral-medium-latest' => ['Mistral Medium (latest)', 262_144, 262_144, true, true, 1.5, 7.5, 0.0, 0.0],
         'mistral-nemo' => ['Mistral Nemo', 128_000, 128_000, false, false, 0.15, 0.15, 0.0, 0.0],
         'mistral-small-2506' => ['Mistral Small 3.2', 128_000, 16_384, false, true, 0.1, 0.3, 0.0, 0.0],
-        'mistral-small-latest' => ['Mistral Small', 128_000, 16_384, false, true, 0.1, 0.3, 0.0, 0.0],
+        'mistral-small-2603' => ['Mistral Small 4', 256_000, 256_000, true, true, 0.15, 0.6, 0.0, 0.0],
+        'mistral-small-latest' => ['Mistral Small (latest)', 256_000, 256_000, true, true, 0.15, 0.6, 0.0, 0.0],
         'open-mistral-7b' => ['Mistral 7B', 8_000, 8_000, false, false, 0.25, 0.25, 0.0, 0.0],
         'open-mixtral-8x22b' => ['Mixtral 8x22B', 64_000, 64_000, false, false, 2.0, 6.0, 0.0, 0.0],
         'open-mixtral-8x7b' => ['Mixtral 8x7B', 32_000, 32_000, false, false, 0.7, 0.7, 0.0, 0.0],
         'pixtral-12b' => ['Pixtral 12B', 128_000, 128_000, false, true, 0.15, 0.15, 0.0, 0.0],
-        'pixtral-large-latest' => ['Pixtral Large', 128_000, 128_000, false, true, 2.0, 6.0, 0.0, 0.0],
+        'pixtral-large-latest' => ['Pixtral Large (latest)', 128_000, 128_000, false, true, 2.0, 6.0, 0.0, 0.0],
+        'voxtral-small-latest' => ['Voxtral Small (latest)', 32_000, 32_000, false, false, 0.1, 0.3, 0.0, 0.0],
+        'zai-glm-5-2' => ['GLM-5.2', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.14, 0.0],
+        'zai-glm-5-3' => ['GLM-5.3', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.14, 0.0],
+        // <<< generated
     ];
 
     /**
      * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float}>
      */
     private const array XAI_MODELS = [
-        'grok-2' => ['Grok 2', 131_072, 8_192, false, false, 2.0, 10.0, 2.0, 0.0],
-        'grok-2-1212' => ['Grok 2 (1212)', 131_072, 8_192, false, false, 2.0, 10.0, 2.0, 0.0],
-        'grok-2-latest' => ['Grok 2 Latest', 131_072, 8_192, false, false, 2.0, 10.0, 2.0, 0.0],
-        'grok-2-vision' => ['Grok 2 Vision', 8_192, 4_096, false, true, 2.0, 10.0, 2.0, 0.0],
-        'grok-2-vision-1212' => ['Grok 2 Vision (1212)', 8_192, 4_096, false, true, 2.0, 10.0, 2.0, 0.0],
-        'grok-2-vision-latest' => ['Grok 2 Vision Latest', 8_192, 4_096, false, true, 2.0, 10.0, 2.0, 0.0],
-        'grok-3' => ['Grok 3', 131_072, 8_192, false, false, 3.0, 15.0, 0.75, 0.0],
-        'grok-3-fast' => ['Grok 3 Fast', 131_072, 8_192, false, false, 5.0, 25.0, 1.25, 0.0],
-        'grok-3-fast-latest' => ['Grok 3 Fast Latest', 131_072, 8_192, false, false, 5.0, 25.0, 1.25, 0.0],
-        'grok-3-latest' => ['Grok 3 Latest', 131_072, 8_192, false, false, 3.0, 15.0, 0.75, 0.0],
-        'grok-3-mini' => ['Grok 3 Mini', 131_072, 8_192, true, false, 0.3, 0.5, 0.075, 0.0],
-        'grok-3-mini-fast' => ['Grok 3 Mini Fast', 131_072, 8_192, true, false, 0.6, 4.0, 0.15, 0.0],
-        'grok-3-mini-fast-latest' => ['Grok 3 Mini Fast Latest', 131_072, 8_192, true, false, 0.6, 4.0, 0.15, 0.0],
-        'grok-3-mini-latest' => ['Grok 3 Mini Latest', 131_072, 8_192, true, false, 0.3, 0.5, 0.075, 0.0],
-        'grok-4' => ['Grok 4', 256_000, 64_000, true, false, 3.0, 15.0, 0.75, 0.0],
-        'grok-4-1-fast' => ['Grok 4.1 Fast', 2_000_000, 30_000, true, true, 0.2, 0.5, 0.05, 0.0],
-        'grok-4-1-fast-non-reasoning' => ['Grok 4.1 Fast (Non-Reasoning)', 2_000_000, 30_000, false, true, 0.2, 0.5, 0.05, 0.0],
-        'grok-4-fast' => ['Grok 4 Fast', 2_000_000, 30_000, true, true, 0.2, 0.5, 0.05, 0.0],
-        'grok-4-fast-non-reasoning' => ['Grok 4 Fast (Non-Reasoning)', 2_000_000, 30_000, false, true, 0.2, 0.5, 0.05, 0.0],
-        'grok-beta' => ['Grok Beta', 131_072, 4_096, false, false, 5.0, 15.0, 5.0, 0.0],
-        'grok-code-fast-1' => ['Grok Code Fast 1', 256_000, 10_000, true, false, 0.2, 1.5, 0.02, 0.0],
-        'grok-vision-beta' => ['Grok Vision Beta', 8_192, 4_096, false, true, 5.0, 15.0, 5.0, 0.0],
+        // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        'grok-4.20-0309-non-reasoning' => ['Grok 4.20 (Non-Reasoning)', 1_000_000, 30_000, false, true, 1.25, 2.5, 0.2, 0.0],
+        'grok-4.20-0309-reasoning' => ['Grok 4.20 (Reasoning)', 1_000_000, 30_000, true, true, 1.25, 2.5, 0.2, 0.0],
+        'grok-4.3' => ['Grok 4.3', 1_000_000, 30_000, true, true, 1.25, 2.5, 0.2, 0.0],
+        'grok-4.5' => ['Grok 4.5', 500_000, 500_000, true, true, 2.0, 6.0, 0.3, 0.0],
+        'grok-4.6' => ['Grok 4.6', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0],
+        'grok-4.7' => ['Grok 4.7', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0],
+        'grok-build-0.1' => ['Grok Build 0.1', 256_000, 256_000, true, true, 1.0, 2.0, 0.2, 0.0],
+        'grok-code-fast-1' => ['Grok Code Fast 1', 32_768, 8_192, false, false, 0.2, 1.5, 0.02, 0.0],
+        // <<< generated
     ];
 
     /**
      * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float}>
      */
     private const array ZAI_MODELS = [
+        // >>> generated from models.dev — rewritten by scripts/generate-models.php
         'glm-4.5' => ['GLM-4.5', 131_072, 98_304, true, false, 0.6, 2.2, 0.11, 0.0],
         'glm-4.5-air' => ['GLM-4.5-Air', 131_072, 98_304, true, false, 0.2, 1.1, 0.03, 0.0],
         'glm-4.5-flash' => ['GLM-4.5-Flash', 131_072, 98_304, true, false, 0.0, 0.0, 0.0, 0.0],
         'glm-4.5v' => ['GLM-4.5V', 64_000, 16_384, true, true, 0.6, 1.8, 0.0, 0.0],
         'glm-4.6' => ['GLM-4.6', 204_800, 131_072, true, false, 0.6, 2.2, 0.11, 0.0],
         'glm-4.6v' => ['GLM-4.6V', 128_000, 32_768, true, true, 0.3, 0.9, 0.0, 0.0],
+        'glm-4.6v-flash' => ['GLM-4.6V-Flash', 128_000, 32_768, true, true, 0.0, 0.0, 0.0, 0.0],
         'glm-4.7' => ['GLM-4.7', 204_800, 131_072, true, false, 0.6, 2.2, 0.11, 0.0],
+        'glm-4.7-flash' => ['GLM-4.7-Flash', 200_000, 131_072, true, false, 0.0, 0.0, 0.0, 0.0],
+        'glm-4.7-flashx' => ['GLM-4.7-FlashX', 200_000, 131_072, true, false, 0.07, 0.4, 0.01, 0.0],
+        'glm-5' => ['GLM-5', 204_800, 131_072, true, false, 1.0, 3.2, 0.2, 0.0],
+        'glm-5-turbo' => ['GLM-5-Turbo', 200_000, 131_072, true, false, 1.2, 4.0, 0.24, 0.0],
+        'glm-5.1' => ['GLM-5.1', 200_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0],
+        'glm-5.2' => ['GLM-5.2', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0],
+        'glm-5.3' => ['GLM-5.3', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0],
+        'glm-5.3-flash' => ['GLM-5.3-Flash', 1_000_000, 131_072, true, true, 0.15, 0.5, 0.03, 0.0],
+        'glm-5.3-flashx' => ['GLM-5.3-FlashX', 1_000_000, 131_072, true, true, 0.37, 1.25, 0.075, 0.0],
+        'glm-5v-turbo' => ['GLM-5V-Turbo', 200_000, 131_072, true, true, 1.2, 4.0, 0.24, 0.0],
+        // <<< generated
     ];
 
     /**
@@ -270,39 +288,42 @@ final class Models
      * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float}>
      */
     private const array OPENAI_MODELS = [
-        'codex-mini-latest' => ['Codex Mini', 200_000, 100_000, true, false, 1.5, 6.0, 0.375, 0.0],
-        'gpt-4' => ['GPT-4', 8_192, 8_192, false, false, 30.0, 60.0, 0.0, 0.0],
-        'gpt-4-turbo' => ['GPT-4 Turbo', 128_000, 4_096, false, true, 10.0, 30.0, 0.0, 0.0],
+        // >>> generated from models.dev — rewritten by scripts/generate-models.php
         'gpt-4.1' => ['GPT-4.1', 1_047_576, 32_768, false, true, 2.0, 8.0, 0.5, 0.0],
         'gpt-4.1-mini' => ['GPT-4.1 mini', 1_047_576, 32_768, false, true, 0.4, 1.6, 0.1, 0.0],
-        'gpt-4.1-nano' => ['GPT-4.1 nano', 1_047_576, 32_768, false, true, 0.1, 0.4, 0.03, 0.0],
         'gpt-4o' => ['GPT-4o', 128_000, 16_384, false, true, 2.5, 10.0, 1.25, 0.0],
-        'gpt-4o-2024-05-13' => ['GPT-4o (2024-05-13)', 128_000, 4_096, false, true, 5.0, 15.0, 0.0, 0.0],
         'gpt-4o-2024-08-06' => ['GPT-4o (2024-08-06)', 128_000, 16_384, false, true, 2.5, 10.0, 1.25, 0.0],
         'gpt-4o-2024-11-20' => ['GPT-4o (2024-11-20)', 128_000, 16_384, false, true, 2.5, 10.0, 1.25, 0.0],
-        'gpt-4o-mini' => ['GPT-4o mini', 128_000, 16_384, false, true, 0.15, 0.6, 0.08, 0.0],
-        'gpt-5' => ['GPT-5', 400_000, 128_000, true, true, 1.25, 10.0, 0.13, 0.0],
+        'gpt-4o-mini' => ['GPT-4o mini', 128_000, 16_384, false, true, 0.15, 0.6, 0.075, 0.0],
+        'gpt-5' => ['GPT-5', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0],
         'gpt-5-chat-latest' => ['GPT-5 Chat Latest', 128_000, 16_384, false, true, 1.25, 10.0, 0.125, 0.0],
-        'gpt-5-codex' => ['GPT-5-Codex', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0],
-        'gpt-5-mini' => ['GPT-5 Mini', 400_000, 128_000, true, true, 0.25, 2.0, 0.03, 0.0],
-        'gpt-5-nano' => ['GPT-5 Nano', 400_000, 128_000, true, true, 0.05, 0.4, 0.01, 0.0],
+        'gpt-5-mini' => ['GPT-5 Mini', 400_000, 128_000, true, true, 0.25, 2.0, 0.025, 0.0],
+        'gpt-5-nano' => ['GPT-5 Nano', 400_000, 128_000, true, true, 0.05, 0.4, 0.005, 0.0],
         'gpt-5-pro' => ['GPT-5 Pro', 400_000, 272_000, true, true, 15.0, 120.0, 0.0, 0.0],
-        'gpt-5.1' => ['GPT-5.1', 400_000, 128_000, true, true, 1.25, 10.0, 0.13, 0.0],
-        'gpt-5.1-chat-latest' => ['GPT-5.1 Chat', 128_000, 16_384, true, true, 1.25, 10.0, 0.125, 0.0],
-        'gpt-5.1-codex' => ['GPT-5.1 Codex', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0],
-        'gpt-5.1-codex-max' => ['GPT-5.1 Codex Max', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0],
-        'gpt-5.1-codex-mini' => ['GPT-5.1 Codex mini', 400_000, 128_000, true, true, 0.25, 2.0, 0.025, 0.0],
+        'gpt-5.1' => ['GPT-5.1', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0],
         'gpt-5.2' => ['GPT-5.2', 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0],
-        'gpt-5.2-chat-latest' => ['GPT-5.2 Chat', 128_000, 16_384, true, true, 1.75, 14.0, 0.175, 0.0],
         'gpt-5.2-pro' => ['GPT-5.2 Pro', 400_000, 128_000, true, true, 21.0, 168.0, 0.0, 0.0],
-        'o1' => ['o1', 200_000, 100_000, true, true, 15.0, 60.0, 7.5, 0.0],
-        'o1-pro' => ['o1-pro', 200_000, 100_000, true, true, 150.0, 600.0, 0.0, 0.0],
+        'gpt-5.3-codex' => ['GPT-5.3 Codex', 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0],
+        'gpt-5.3-codex-spark' => ['GPT-5.3 Codex Spark', 128_000, 32_000, true, true, 1.75, 14.0, 0.175, 0.0],
+        'gpt-5.4' => ['GPT-5.4', 1_050_000, 128_000, true, true, 2.5, 15.0, 0.25, 0.0],
+        'gpt-5.4-mini' => ['GPT-5.4 mini', 400_000, 128_000, true, true, 0.75, 4.5, 0.075, 0.0],
+        'gpt-5.4-nano' => ['GPT-5.4 nano', 400_000, 128_000, true, true, 0.2, 1.25, 0.02, 0.0],
+        'gpt-5.4-pro' => ['GPT-5.4 Pro', 1_050_000, 128_000, true, true, 30.0, 180.0, 0.0, 0.0],
+        'gpt-5.5' => ['GPT-5.5', 1_050_000, 128_000, true, true, 5.0, 30.0, 0.5, 0.0],
+        'gpt-5.5-pro' => ['GPT-5.5 Pro', 1_050_000, 128_000, true, true, 30.0, 180.0, 0.0, 0.0],
+        'gpt-5.6' => ['GPT-5.6', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0],
+        'gpt-5.6-luna' => ['GPT-5.6 Luna', 1_050_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25],
+        'gpt-5.6-sol' => ['GPT-5.6 Sol', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0],
+        'gpt-5.6-terra' => ['GPT-5.6 Terra', 1_050_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5],
+        'gpt-6-astra' => ['GPT-6 Astra', 1_050_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5],
+        'gpt-6-luna' => ['GPT-6 Luna', 1_050_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125],
+        'gpt-6-sol' => ['GPT-6 Sol', 1_050_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5],
+        'gpt-daybreak-blue-latest' => ['Daybreak Blue', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0],
+        'gpt-daybreak-red-latest' => ['Daybreak Red', 400_000, 128_000, true, true, 12.5, 75.0, 1.25, 15.625],
+        'gpt-realtime-2.1' => ['GPT-Realtime-2.1', 128_000, 32_000, true, true, 4.0, 24.0, 0.4, 0.0],
         'o3' => ['o3', 200_000, 100_000, true, true, 2.0, 8.0, 0.5, 0.0],
-        'o3-deep-research' => ['o3-deep-research', 200_000, 100_000, true, true, 10.0, 40.0, 2.5, 0.0],
-        'o3-mini' => ['o3-mini', 200_000, 100_000, true, false, 1.1, 4.4, 0.55, 0.0],
         'o3-pro' => ['o3-pro', 200_000, 100_000, true, true, 20.0, 80.0, 0.0, 0.0],
-        'o4-mini' => ['o4-mini', 200_000, 100_000, true, true, 1.1, 4.4, 0.28, 0.0],
-        'o4-mini-deep-research' => ['o4-mini-deep-research', 200_000, 100_000, true, true, 2.0, 8.0, 0.5, 0.0],
+        // <<< generated
     ];
 
     /**
@@ -311,27 +332,29 @@ final class Models
      * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float}>
      */
     private const array GOOGLE_MODELS = [
-        'gemini-1.5-flash' => ['Gemini 1.5 Flash', 1_000_000, 8_192, false, true, 0.075, 0.3, 0.01875, 0.0],
-        'gemini-1.5-flash-8b' => ['Gemini 1.5 Flash-8B', 1_000_000, 8_192, false, true, 0.0375, 0.15, 0.01, 0.0],
-        'gemini-1.5-pro' => ['Gemini 1.5 Pro', 1_000_000, 8_192, false, true, 1.25, 5.0, 0.3125, 0.0],
-        'gemini-2.0-flash' => ['Gemini 2.0 Flash', 1_048_576, 8_192, false, true, 0.1, 0.4, 0.025, 0.0],
-        'gemini-2.0-flash-lite' => ['Gemini 2.0 Flash Lite', 1_048_576, 8_192, false, true, 0.075, 0.3, 0.0, 0.0],
-        'gemini-2.5-flash' => ['Gemini 2.5 Flash', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.075, 0.0],
-        'gemini-2.5-flash-lite' => ['Gemini 2.5 Flash Lite', 1_048_576, 65_536, true, true, 0.1, 0.4, 0.025, 0.0],
-        'gemini-2.5-flash-lite-preview-06-17' => ['Gemini 2.5 Flash Lite Preview 06-17', 1_048_576, 65_536, true, true, 0.1, 0.4, 0.025, 0.0],
-        'gemini-2.5-flash-lite-preview-09-2025' => ['Gemini 2.5 Flash Lite Preview 09-25', 1_048_576, 65_536, true, true, 0.1, 0.4, 0.025, 0.0],
-        'gemini-2.5-flash-preview-04-17' => ['Gemini 2.5 Flash Preview 04-17', 1_048_576, 65_536, true, true, 0.15, 0.6, 0.0375, 0.0],
-        'gemini-2.5-flash-preview-05-20' => ['Gemini 2.5 Flash Preview 05-20', 1_048_576, 65_536, true, true, 0.15, 0.6, 0.0375, 0.0],
-        'gemini-2.5-flash-preview-09-2025' => ['Gemini 2.5 Flash Preview 09-25', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.075, 0.0],
-        'gemini-2.5-pro' => ['Gemini 2.5 Pro', 1_048_576, 65_536, true, true, 1.25, 10.0, 0.31, 0.0],
-        'gemini-2.5-pro-preview-05-06' => ['Gemini 2.5 Pro Preview 05-06', 1_048_576, 65_536, true, true, 1.25, 10.0, 0.31, 0.0],
-        'gemini-2.5-pro-preview-06-05' => ['Gemini 2.5 Pro Preview 06-05', 1_048_576, 65_536, true, true, 1.25, 10.0, 0.31, 0.0],
+        // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        'deep-research-max-preview-04-2026' => ['Deep Research Max Preview (Apr-21-2026)', 131_072, 65_536, true, true, 2.0, 12.0, 0.2, 0.0],
+        'deep-research-preview-04-2026' => ['Deep Research Preview (Apr-21-2026)', 131_072, 65_536, true, true, 2.0, 12.0, 0.2, 0.0],
+        'gemini-2.5-computer-use-preview-10-2025' => ['Gemini 2.5 Computer Use Preview 10-2025', 128_000, 64_000, true, true, 1.25, 10.0, 0.0, 0.0],
+        'gemini-2.5-flash' => ['Gemini 2.5 Flash', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0],
+        'gemini-2.5-flash-lite' => ['Gemini 2.5 Flash-Lite', 1_048_576, 65_536, true, true, 0.1, 0.4, 0.01, 0.0],
+        'gemini-2.5-pro' => ['Gemini 2.5 Pro', 1_048_576, 65_536, true, true, 1.25, 10.0, 0.125, 0.0],
         'gemini-3-flash-preview' => ['Gemini 3 Flash Preview', 1_048_576, 65_536, true, true, 0.5, 3.0, 0.05, 0.0],
-        'gemini-3-pro-preview' => ['Gemini 3 Pro Preview', 1_000_000, 64_000, true, true, 2.0, 12.0, 0.2, 0.0],
-        'gemini-flash-latest' => ['Gemini Flash Latest', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.075, 0.0],
-        'gemini-flash-lite-latest' => ['Gemini Flash-Lite Latest', 1_048_576, 65_536, true, true, 0.1, 0.4, 0.025, 0.0],
-        'gemini-live-2.5-flash' => ['Gemini Live 2.5 Flash', 128_000, 8_000, true, true, 0.5, 2.0, 0.0, 0.0],
-        'gemini-live-2.5-flash-preview-native-audio' => ['Gemini Live 2.5 Flash Preview Native Audio', 131_072, 65_536, true, false, 0.5, 2.0, 0.0, 0.0],
+        'gemini-3.1-flash-lite' => ['Gemini 3.1 Flash Lite', 1_048_576, 65_536, true, true, 0.25, 1.5, 0.025, 0.0],
+        'gemini-3.1-flash-lite-image' => ['Nano Banana 2 Lite', 65_536, 4_096, true, true, 0.25, 30.0, 0.0, 0.0],
+        'gemini-3.1-flash-live-preview' => ['Gemini 3.1 Flash Live Preview', 131_072, 65_536, true, true, 0.75, 4.5, 0.0, 0.0],
+        'gemini-3.1-pro-preview' => ['Gemini 3.1 Pro Preview', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0],
+        'gemini-3.1-pro-preview-customtools' => ['Gemini 3.1 Pro Preview Custom Tools', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0],
+        'gemini-3.5-flash' => ['Gemini 3.5 Flash', 1_048_576, 65_536, true, true, 1.5, 9.0, 0.15, 0.0],
+        'gemini-3.5-flash-lite' => ['Gemini 3.5 Flash Lite', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0],
+        'gemini-3.6-flash' => ['Gemini 3.6 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0],
+        'gemini-3.7-flash' => ['Gemini 3.7 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0],
+        'gemini-3.8-flash' => ['Gemini 3.8 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0],
+        'gemini-flash-latest' => ['Gemini Flash Latest', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0],
+        'gemini-flash-lite-latest' => ['Gemini Flash-Lite Latest', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0],
+        'gemma-4-26b-a4b-it' => ['Gemma 4 26B A4B IT', 262_144, 32_768, true, true, 0.0, 0.0, 0.0, 0.0],
+        'gemma-4-31b-it' => ['Gemma 4 31B IT', 262_144, 32_768, true, true, 0.0, 0.0, 0.0, 0.0],
+        // <<< generated
     ];
 
     /**
@@ -348,25 +371,40 @@ final class Models
      * @var array<string, array{0: string, 1: Api, 2: int, 3: int, 4: bool, 5: bool}>
      */
     private const array COPILOT_MODELS = [
-        'claude-haiku-4.5'       => ['Claude Haiku 4.5', Api::OpenAiCompletions, 128_000, 16_000, true, true],
-        'claude-opus-4.5'        => ['Claude Opus 4.5', Api::OpenAiCompletions, 128_000, 16_000, true, true],
-        'claude-sonnet-4'        => ['Claude Sonnet 4', Api::OpenAiCompletions, 128_000, 16_000, true, true],
-        'claude-sonnet-4.5'      => ['Claude Sonnet 4.5', Api::OpenAiCompletions, 128_000, 16_000, true, true],
-        'gemini-2.5-pro'         => ['Gemini 2.5 Pro', Api::OpenAiCompletions, 128_000, 64_000, false, true],
-        'gemini-3-flash-preview' => ['Gemini 3 Flash', Api::OpenAiCompletions, 128_000, 64_000, true, true],
-        'gemini-3-pro-preview'   => ['Gemini 3 Pro Preview', Api::OpenAiCompletions, 128_000, 64_000, true, true],
-        'gpt-4.1'                => ['GPT-4.1', Api::OpenAiCompletions, 128_000, 16_384, false, true],
-        'gpt-4o'                 => ['GPT-4o', Api::OpenAiCompletions, 64_000, 16_384, false, true],
-        'gpt-5'                  => ['GPT-5', Api::OpenAiResponses, 128_000, 128_000, true, true],
-        'gpt-5-codex'            => ['GPT-5-Codex', Api::OpenAiResponses, 128_000, 128_000, true, true],
-        'gpt-5-mini'             => ['GPT-5-mini', Api::OpenAiResponses, 128_000, 64_000, true, true],
-        'gpt-5.1'                => ['GPT-5.1', Api::OpenAiResponses, 128_000, 128_000, true, true],
-        'gpt-5.1-codex'          => ['GPT-5.1-Codex', Api::OpenAiResponses, 128_000, 128_000, true, true],
-        'gpt-5.1-codex-max'      => ['GPT-5.1-Codex-max', Api::OpenAiResponses, 128_000, 128_000, true, true],
-        'gpt-5.1-codex-mini'     => ['GPT-5.1-Codex-mini', Api::OpenAiResponses, 128_000, 100_000, true, true],
-        'gpt-5.2'                => ['GPT-5.2', Api::OpenAiResponses, 128_000, 64_000, true, true],
-        'grok-code-fast-1'       => ['Grok Code Fast 1', Api::OpenAiCompletions, 128_000, 64_000, true, false],
-        'oswe-vscode-prime'      => ['Raptor Mini (Preview)', Api::OpenAiResponses, 200_000, 64_000, true, true],
+        // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        'claude-fable-5' => ['Claude Fable 5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
+        'claude-fable-5.1' => ['Claude Fable 5.1', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
+        'claude-haiku-4.5' => ['Claude Haiku 4.5 (latest)', Api::OpenAiCompletions, 200_000, 64_000, true, true],
+        'claude-opus-4.7' => ['Claude Opus 4.7', Api::OpenAiCompletions, 200_000, 32_000, true, true],
+        'claude-opus-4.8' => ['Claude Opus 4.8', Api::OpenAiCompletions, 200_000, 64_000, true, true],
+        'claude-opus-5' => ['Claude Opus 5', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
+        'claude-opus-5.5' => ['Claude Opus 5.5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
+        'claude-sonnet-4.6' => ['Claude Sonnet 4.6', Api::OpenAiCompletions, 200_000, 32_000, true, true],
+        'claude-sonnet-5' => ['Claude Sonnet 5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
+        'gemini-3.5-flash' => ['Gemini 3.5 Flash', Api::OpenAiCompletions, 200_000, 64_000, true, true],
+        'gemini-3.6-flash' => ['Gemini 3.6 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
+        'gemini-3.7-flash' => ['Gemini 3.7 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
+        'gemini-3.8-flash' => ['Gemini 3.8 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
+        'gpt-5-mini' => ['GPT-5 Mini', Api::OpenAiResponses, 264_000, 64_000, true, true],
+        'gpt-5.3-codex' => ['GPT-5.3 Codex', Api::OpenAiResponses, 400_000, 128_000, true, true],
+        'gpt-5.4' => ['GPT-5.4', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
+        'gpt-5.4-mini' => ['GPT-5.4 mini', Api::OpenAiResponses, 400_000, 128_000, true, true],
+        'gpt-5.4-nano' => ['GPT-5.4 nano', Api::OpenAiResponses, 400_000, 128_000, true, true],
+        'gpt-5.5' => ['GPT-5.5', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
+        'gpt-5.6-luna' => ['GPT-5.6 Luna', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
+        'gpt-5.6-sol' => ['GPT-5.6 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
+        'gpt-5.6-terra' => ['GPT-5.6 Terra', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
+        'gpt-6-astra' => ['GPT-6 Astra', Api::OpenAiCompletions, 1_050_000, 128_000, true, true],
+        'gpt-6-luna' => ['GPT-6 Luna', Api::OpenAiCompletions, 1_050_000, 128_000, true, true],
+        'gpt-6-sol' => ['GPT-6 Sol', Api::OpenAiCompletions, 1_050_000, 128_000, true, true],
+        'grok-4.5' => ['Grok 4.5', Api::OpenAiCompletions, 500_000, 128_000, true, true],
+        'grok-4.6' => ['Grok 4.6', Api::OpenAiCompletions, 500_000, 128_000, true, true],
+        'grok-4.7' => ['Grok 4.7', Api::OpenAiCompletions, 500_000, 128_000, true, true],
+        'kimi-k2.7-code' => ['Kimi K2.7 Code', Api::OpenAiCompletions, 256_000, 32_000, true, true],
+        'kimi-k3' => ['Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true],
+        'mai-code-1-flash-picker' => ['MAI-Code-1-Flash', Api::OpenAiCompletions, 256_000, 128_000, true, false],
+        'mai-code-1.1-flash' => ['MAI-Code-1.1-Flash', Api::OpenAiCompletions, 256_000, 128_000, true, true],
+        // <<< generated
     ];
 
     /** @var array<string, Model>|null built once, on the first lookup that needs it */

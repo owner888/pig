@@ -579,7 +579,7 @@ final class AgentSessionTest extends TestCase
         $session = $this->session([], null, $this->thinkingModel());
         $session->setThinkingLevel(ThinkingLevel::High);
 
-        $session->setModel(Models::get('claude-3-haiku-20240307') ?? throw new RuntimeException('no model'));
+        $session->setModel($this->plainModel());
 
         // Left at `high`, the next turn asks a model without reasoning to reason, and the
         // person who changed model would have no idea why the request failed.
@@ -591,20 +591,17 @@ final class AgentSessionTest extends TestCase
         $session = $this->session([], null, $this->thinkingModel());
         $session->setThinkingLevel(ThinkingLevel::Medium);
 
-        $session->setModel(Models::get('claude-sonnet-4-5') ?? throw new RuntimeException('no model'));
+        $session->setModel($this->thinkingModel('test-thinker-2'));
 
         $this->assertSame(ThinkingLevel::Medium, $session->thinkingLevel());
-        $this->assertSame('claude-sonnet-4-5', $session->model()?->id);
+        $this->assertSame('test-thinker-2', $session->model()?->id);
     }
 
     public function testAskingForXhighOnAModelWithoutItFallsToOffRatherThanPretending(): void
     {
         $session = $this->session([]);
 
-        $session->setModel(
-            Models::get('claude-sonnet-4-5') ?? throw new RuntimeException('no model'),
-            ThinkingLevel::Xhigh,
-        );
+        $session->setModel($this->thinkingModel(), ThinkingLevel::Xhigh);
 
         // Anthropic has no xhigh. Silently sending `high` instead would be answering a
         // different question from the one asked.
@@ -1625,10 +1622,10 @@ final class AgentSessionTest extends TestCase
         $session = $this->session([], getApiKey: static fn (string $provider): ?string
             => $provider === 'anthropic' ? 'a-key' : null);
 
-        $session->setModel(Models::find('anthropic', 'claude-haiku-4-5') ?? throw new RuntimeException('no model'));
+        $session->setModel($this->thinkingModel());
 
         // The other half, so the test above cannot pass by `setModel()` refusing everything.
-        $this->assertSame('claude-haiku-4-5', $session->model()?->id);
+        $this->assertSame('test-thinker', $session->model()?->id);
     }
 
     // ---- going back ---------------------------------------------------------------------
@@ -2081,5 +2078,19 @@ final class AgentSessionTest extends TestCase
     private function thinkingModel(string $id = 'test-thinker'): Model
     {
         return new Model($id, 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000, true);
+    }
+
+    /**
+     * One that cannot reason, built here rather than looked up.
+     *
+     * It used to be `Models::get('claude-3-haiku-20240307')`, and the first regeneration of the
+     * registry from models.dev retired that model — along with every other Anthropic model that
+     * cannot reason, so there was nothing in that table left to look up. What the clamping rules
+     * need is a model without reasoning, which is one line to build and no longer anybody else's
+     * to discontinue.
+     */
+    private function plainModel(string $id = 'test-plain'): Model
+    {
+        return new Model($id, 'Test Plain', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 8_192, false);
     }
 }

@@ -7,17 +7,36 @@ namespace Pig\Ai\Test;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
 use Pig\Ai\Cost;
+use Pig\Ai\Model;
 use Pig\Ai\Models;
+use Pig\Ai\Pricing;
 use Pig\Ai\Usage;
 
-/** The table of models, and what it costs to run one. */
+/**
+ * The table of models, and what it costs to run one.
+ *
+ * **This file used to assert what the catalogue contained**: 178 models, a count per provider, and
+ * eleven named rows checked to the token and the cent. Those assertions were right for a table
+ * transcribed by hand — the docblock on the count said so, *"the way it goes wrong is a row quietly
+ * missing or doubled"* — and the first regeneration from models.dev turned sixteen of them red
+ * without a single thing being wrong with pig. A test that names `claude-opus-4-1` is a test that
+ * expires when Anthropic retires it.
+ *
+ * So what is asserted here now is what pig does, not what providers sell: every row is built whole,
+ * every provider pig claims is present, the resale rule holds, the figures are per model rather than
+ * one set for all, and the money arithmetic is the money arithmetic. Where a case needs *a* model
+ * with some property, it **finds one in the table** rather than naming one — and says so loudly if
+ * the table cannot supply it, because that absence is itself a finding.
+ */
 final class ModelsTest extends TestCase
 {
     public function testEveryModelInTheTableIsBuiltWhole(): void
     {
         $models = Models::all();
 
-        $this->assertCount(178, $models);
+        // No count, on purpose — see the class docblock. But an empty table has to fail, or every
+        // `foreach` below would pass by having nothing to walk.
+        $this->assertNotEmpty($models);
 
         foreach ($models as $model) {
             $this->assertNotSame('', $model->id, 'a model with no id cannot be selected');
@@ -30,14 +49,14 @@ final class ModelsTest extends TestCase
     }
 
     /**
-     * How many of each provider's models are here, which is upstream's count for every one.
+     * Every provider pig says it can talk to has something to talk to.
      *
-     * The whole table is transcribed by hand out of `models.generated.ts`, so the way it goes
-     * wrong is a row quietly missing or doubled — and nothing downstream would say so: a model
-     * that is not in the table is "no such model", which reads like a typo in what was asked for.
-     * The counts were checked against the anchor commit's generated file, provider by provider.
+     * This is the half of the old count test that is pig's business rather than models.dev's: a
+     * *whole provider* going missing is a bug — a regeneration that quietly emptied one, a
+     * renamed key in the catalogue, a table whose markers were lost — and it reads downstream as
+     * "no such model" for everything that provider sells.
      */
-    public function testEachProvidersCountIsUpstreams(): void
+    public function testEveryProviderPigClaimsCanBeTalkedToHasModels(): void
     {
         $counts = [];
 
@@ -45,81 +64,23 @@ final class ModelsTest extends TestCase
             $counts[$model->provider] = ($counts[$model->provider] ?? 0) + 1;
         }
 
-        ksort($counts);
+        foreach (Models::providers() as $provider) {
+            $this->assertArrayHasKey($provider, $counts, "{$provider} is listed and has no models");
+            $this->assertGreaterThan(0, $counts[$provider]);
+        }
 
-        $this->assertSame(
-            [
-                'anthropic' => 21,
-                'cerebras' => 3,
-                'github-copilot' => 19,
-                'google' => 21,
-                'google-antigravity' => 7,
-                'google-gemini-cli' => 5,
-                'groq' => 15,
-                'mistral' => 25,
-                'openai' => 33,
-                'xai' => 22,
-                'zai' => 7,
-            ],
-            $counts,
-        );
-    }
-
-    /**
-     * One model per provider, to the number.
-     *
-     * A context window that is wrong by a factor is not a cosmetic error: it is where
-     * compaction fires, so too small summarises a conversation that had room and too large
-     * lets the provider refuse the request instead. A price that is wrong is a bill that is
-     * wrong. Neither shows up as anything but a number nobody checks, which is why these
-     * eleven rows are checked.
-     *
-     * @return list<array{0: string, 1: string, 2: int, 3: int, 4: float, 5: float, 6: float, 7: float}>
-     */
-    public static function spotValues(): array
-    {
-        return [
-            ['anthropic', 'claude-opus-4-5', 200_000, 64_000, 5, 25, 0.5, 6.25],
-            ['openai', 'gpt-5.2', 400_000, 128_000, 1.75, 14, 0.175, 0],
-            ['google', 'gemini-3-pro-preview', 1_000_000, 64_000, 2, 12, 0.2, 0],
-            ['github-copilot', 'gpt-5', 128_000, 128_000, 0, 0, 0, 0],
-            ['google-gemini-cli', 'gemini-2.5-pro', 1_048_576, 65_535, 0, 0, 0, 0],
-            ['google-antigravity', 'gemini-3-pro-high', 1_048_576, 65_535, 0, 0, 0, 0],
-            ['groq', 'moonshotai/kimi-k2-instruct', 131_072, 16_384, 1, 3, 0, 0],
-            ['mistral', 'mistral-large-latest', 262_144, 262_144, 0.5, 1.5, 0, 0],
-            ['cerebras', 'zai-glm-4.6', 131_072, 40_960, 0, 0, 0, 0],
-            ['xai', 'grok-4', 256_000, 64_000, 3, 15, 0.75, 0],
-            ['zai', 'glm-4.6', 204_800, 131_072, 0.6, 2.2, 0.11, 0],
-        ];
-    }
-
-    #[\PHPUnit\Framework\Attributes\DataProvider('spotValues')]
-    public function testTheNumbersAreUpstreams(
-        string $provider,
-        string $id,
-        int $window,
-        int $maxTokens,
-        float $input,
-        float $output,
-        float $cacheRead,
-        float $cacheWrite,
-    ): void {
-        $model = Models::find($provider, $id);
-
-        $this->assertNotNull($model, "{$provider}/{$id}");
-        $this->assertSame($window, $model->contextWindow);
-        $this->assertSame($maxTokens, $model->maxTokens);
-        $this->assertSame($input, $model->pricing->input);
-        $this->assertSame($output, $model->pricing->output);
-        $this->assertSame($cacheRead, $model->pricing->cacheRead);
-        $this->assertSame($cacheWrite, $model->pricing->cacheWrite);
+        // And nothing in the table names a provider that is not on the list, which would be a
+        // model nothing knows how to authenticate.
+        foreach (array_keys($counts) as $provider) {
+            $this->assertContains($provider, Models::providers(), "{$provider} is in the table and not listed");
+        }
     }
 
     public function testEveryModelSpeaksAProtocolThatIsPorted(): void
     {
         foreach (Models::all() as $model) {
             // A model that can be selected and then not talked to is a worse answer than
-            // "no such model" — which is the whole reason the table is not all 414.
+            // "no such model" — which is the whole reason the table is not every model there is.
             $this->assertContains(
                 $model->api,
                 [
@@ -136,9 +97,7 @@ final class ModelsTest extends TestCase
 
     public function testAnthropicsOwnModelsAreAllPricedAndAllSpeakItsApi(): void
     {
-        $anthropic = array_filter(Models::all(), static fn ($m): bool => $m->provider === Models::ANTHROPIC);
-
-        $this->assertCount(21, $anthropic);
+        $anthropic = self::of(Models::ANTHROPIC);
 
         foreach ($anthropic as $model) {
             $this->assertSame(Api::AnthropicMessages, $model->api);
@@ -152,11 +111,13 @@ final class ModelsTest extends TestCase
     public function testAnIdTwoProvidersClaimMeansTheDirectOne(): void
     {
         // Unique ids were what made `get()` honest, and Copilot's table is where that stopped
-        // being true: it serves OpenAI's and Google's models under their own names. So the
-        // rule is written down instead — `Models::RESOLD` — and this is what it buys.
-        $this->assertSame('openai', Models::get('gpt-5')?->provider);
-        $this->assertSame('google', Models::get('gemini-2.5-pro')?->provider);
-        $this->assertSame('github-copilot', Models::find('github-copilot', 'gpt-5')?->provider);
+        // being true: it serves OpenAI's and Google's models under their own names. So the rule
+        // is written down instead — `Models::RESOLD` — and this is what it buys. The id is found
+        // rather than named, because which ids Copilot resells is the catalogue's business.
+        [$id, $direct] = self::sharedId();
+
+        $this->assertSame($direct, Models::get($id)?->provider, $id);
+        $this->assertSame('github-copilot', Models::find('github-copilot', $id)?->provider, $id);
     }
 
     public function testEveryDuplicatedIdIsOneOfTheResoldOnes(): void
@@ -180,38 +141,66 @@ final class ModelsTest extends TestCase
         }
     }
 
-    public function testAnIdOnlyTheResellerHasIsStillFound(): void
+    public function testAnIdOnlyAResellerHasIsStillFound(): void
     {
-        // Copilot's alone — it is VS Code's own preview model and no direct provider carries
-        // it. A resold id is never the first answer, but it is still an answer.
-        $this->assertSame('github-copilot', Models::get('oswe-vscode-prime')?->provider);
+        // A resold id is never the first answer, but it is still an answer. Which id that is
+        // changes with the catalogue — it was `oswe-vscode-prime` when this was written and that
+        // model is gone — so one is found.
+        $models = Models::all();
+        $direct = [];
 
-        // And one that looked Copilot-only and is not: `grok-code-fast-1` is in xAI's table
-        // too, so a bare id means xAI's.
-        $this->assertSame('xai', Models::get('grok-code-fast-1')?->provider);
+        foreach ($models as $model) {
+            if (!Models::isResold($model->provider)) {
+                $direct[$model->id] = true;
+            }
+        }
+
+        foreach ($models as $model) {
+            if (Models::isResold($model->provider) && !isset($direct[$model->id])) {
+                $this->assertSame($model->provider, Models::get($model->id)?->provider, $model->id);
+
+                return;
+            }
+        }
+
+        // Not a skip: every resold id also being a direct one would mean the fallback in `get()`
+        // is unreachable, which is worth knowing rather than passing over.
+        $this->fail('no reseller has an id of its own, so the fallback in get() is dead code');
     }
 
     public function testTheFiguresAreTheModelsOwnAndNotOneSetForAll(): void
     {
-        // The thing this table exists to fix: an invented 64k ceiling on a model that
-        // caps at 4096 is a request the provider rejects, from a flag that looked fine.
-        $this->assertSame(4_096, Models::get('claude-3-haiku-20240307')?->maxTokens);
-        $this->assertSame(64_000, Models::get('claude-sonnet-4-5')?->maxTokens);
-        $this->assertFalse(Models::get('claude-3-haiku-20240307')?->reasoning);
-        $this->assertTrue(Models::get('claude-sonnet-4-5')?->reasoning);
+        // The thing this table exists to fix: an invented 64k ceiling on a model that caps lower
+        // is a request the provider rejects, from a flag that looked fine. Asserted as spread
+        // rather than as two named models, since which models exist is not pig's to decide.
+        $windows = [];
+        $outputs = [];
+        $reasoning = [];
+
+        foreach (Models::all() as $model) {
+            $windows[$model->contextWindow] = true;
+            $outputs[$model->maxTokens] = true;
+            $reasoning[$model->reasoning ? 'yes' : 'no'] = true;
+        }
+
+        $this->assertGreaterThan(1, count($windows), 'every model has the same context window');
+        $this->assertGreaterThan(1, count($outputs), 'every model has the same output cap');
+        $this->assertCount(2, $reasoning, 'reasoning is the same for every model in the table');
     }
 
     public function testAnUnknownIdIsNullRatherThanAGuess(): void
     {
+        $model = self::any(Models::ANTHROPIC);
+
         $this->assertNull(Models::get('no-such-model'));
-        $this->assertNull(Models::find('openai', 'claude-sonnet-4-5'));
-        $this->assertNotNull(Models::find('anthropic', 'claude-sonnet-4-5'));
+        $this->assertNull(Models::find('openai', $model->id));
+        $this->assertNotNull(Models::find(Models::ANTHROPIC, $model->id));
     }
 
     public function testOnlyTheProvidersThatCanBeTalkedToAreListed(): void
     {
-        // Every provider here speaks a protocol that is ported. Google's and OpenAI's own
-        // arrive with theirs.
+        // Hand-written and not generated: which providers exist is a question about which
+        // protocols are ported, which is the anchor's business and not models.dev's.
         $this->assertSame(
             [
                 'anthropic',
@@ -232,31 +221,55 @@ final class ModelsTest extends TestCase
 
     public function testAProviderAndIdTogetherFindExactlyOneModel(): void
     {
-        $this->assertSame('llama-3.3-70b-versatile', Models::find('groq', 'llama-3.3-70b-versatile')?->id);
-        $this->assertNull(Models::find('anthropic', 'llama-3.3-70b-versatile'));
+        $groq = self::any('groq');
+
+        $this->assertSame($groq->id, Models::find('groq', $groq->id)?->id);
+        $this->assertNull(Models::find('anthropic', $groq->id));
     }
 
     public function testOpenAisOwnModelsSpeakTheResponsesApi(): void
     {
-        // The two OpenAI protocols are not interchangeable: gpt-5 is on the newer one,
-        // and everything else in the table that says "openai" is a different company.
-        $this->assertSame(Api::OpenAiResponses, Models::get('gpt-5.2')?->api);
-        $this->assertSame('openai', Models::get('gpt-5.2')?->provider);
-        $this->assertTrue(Models::get('gpt-5.2')?->supportsXhigh());
+        // The two OpenAI protocols are not interchangeable, and everything else in the table
+        // that speaks `openai-completions` is a different company.
+        foreach (self::of('openai') as $model) {
+            $this->assertSame(Api::OpenAiResponses, $model->api, $model->id);
+        }
     }
 
     public function testAnOpenAiCompatibleModelCarriesItsOwnEndpoint(): void
     {
-        $model = Models::get('grok-4');
+        // Each of the five has an endpoint of its own; a shared default would send every one of
+        // them to whichever was written first.
+        $urls = [];
 
-        $this->assertSame(Api::OpenAiCompletions, $model?->api);
-        $this->assertSame('https://api.x.ai/v1', $model?->baseUrl);
+        foreach (['cerebras', 'groq', 'mistral', 'xai', 'zai'] as $provider) {
+            $model = self::any($provider);
+
+            $this->assertSame(Api::OpenAiCompletions, $model->api, $provider);
+            $this->assertNotSame('', $model->baseUrl, $provider);
+
+            $urls[$model->baseUrl] = true;
+        }
+
+        $this->assertCount(5, $urls, 'two of the compatible providers share a base URL');
     }
 
     public function testCostIsPerMillionTokens(): void
     {
-        $model = Models::get('claude-sonnet-4-5');
-        $this->assertNotNull($model);
+        // Built here rather than taken from the table: the arithmetic is what is under test, and
+        // a model priced by somebody else is a fixture that changes when they change their prices.
+        $model = new Model(
+            'priced',
+            'Priced',
+            Api::AnthropicMessages,
+            'anthropic',
+            'https://example.invalid',
+            200_000,
+            64_000,
+            true,
+            ['text'],
+            new Pricing(3.0, 15.0, 0.3, 3.75),
+        );
 
         $cost = Models::cost($model, new Usage(1_000_000, 1_000_000, 1_000_000, 1_000_000));
 
@@ -269,10 +282,9 @@ final class ModelsTest extends TestCase
 
     public function testTheUsageHandedInIsNotRewritten(): void
     {
-        $model = Models::get('claude-sonnet-4-5');
-        $this->assertNotNull($model);
-
+        $model = self::any(Models::ANTHROPIC);
         $usage = new Usage(1_000_000, 0, 0, 0, 0, new Cost());
+
         Models::cost($model, $usage);
 
         // Upstream's `calculateCost()` mutates its argument. A function that quietly
@@ -282,23 +294,9 @@ final class ModelsTest extends TestCase
 
     // ---- GitHub Copilot ------------------------------------------------------------------
 
-    public function testCopilotsModelsAreUpstreamsNineteen(): void
-    {
-        $copilot = array_values(array_filter(
-            Models::all(),
-            static fn ($m): bool => $m->provider === 'github-copilot',
-        ));
-
-        $this->assertCount(19, $copilot);
-    }
-
     public function testEveryCopilotModelCarriesTheHeadersTheEndpointDemands(): void
     {
-        foreach (Models::all() as $model) {
-            if ($model->provider !== 'github-copilot') {
-                continue;
-            }
-
+        foreach (self::of(Models::COPILOT) as $model) {
             // The endpoint is VS Code's and answers a request that does not claim to be
             // VS Code with a 4xx. A model missing these is a model that cannot be used.
             $this->assertSame('vscode-chat', $model->headers['Copilot-Integration-Id'] ?? null, $model->id);
@@ -306,28 +304,33 @@ final class ModelsTest extends TestCase
         }
     }
 
-    public function testCopilotSpeaksBothOpenAiShapes(): void
+    public function testCopilotSpeaksBothOpenAiShapesAndTheIdDecidesWhich(): void
     {
         $apis = [];
 
-        foreach (Models::all() as $model) {
-            if ($model->provider === 'github-copilot') {
-                $apis[$model->api->value] = ($apis[$model->api->value] ?? 0) + 1;
-            }
+        foreach (self::of(Models::COPILOT) as $model) {
+            $apis[$model->api->value] = true;
+
+            // The generator's rule, because Copilot's catalogue does not say which shape a
+            // model speaks: `gpt-5…` and `oswe…` are on Responses and the rest on completions.
+            $expected = str_starts_with($model->id, 'gpt-5') || str_starts_with($model->id, 'oswe')
+                ? Api::OpenAiResponses
+                : Api::OpenAiCompletions;
+
+            $this->assertSame($expected, $model->api, $model->id);
         }
 
-        // Ten through completions and nine through Responses, which is why that table has an
-        // API column and none of the others does.
-        $this->assertSame(10, $apis['openai-completions'] ?? 0);
-        $this->assertSame(9, $apis['openai-responses'] ?? 0);
+        // Both shapes present, which is why that table has an API column and none of the
+        // others does. Counted as "both" rather than to a number — see the class docblock.
+        $this->assertArrayHasKey('openai-completions', $apis);
+        $this->assertArrayHasKey('openai-responses', $apis);
     }
 
     public function testCopilotsCompletionsModelsSayWhatCopilotRejects(): void
     {
-        $model = Models::find('github-copilot', 'claude-sonnet-4.5');
+        $model = self::copilotSpeaking(Api::OpenAiCompletions);
 
-        $this->assertNotNull($model);
-        $this->assertNotNull($model->compat);
+        $this->assertNotNull($model->compat, $model->id);
         // Attached to the model rather than detected from the host, because the base URL is
         // whatever the token says: an enterprise install answers at `copilot-api.<domain>`.
         $this->assertFalse($model->compat->store);
@@ -337,17 +340,73 @@ final class ModelsTest extends TestCase
 
     public function testCopilotsResponsesModelsHaveNoCompatBecauseItWouldMeanNothing(): void
     {
-        $this->assertNull(Models::find('github-copilot', 'gpt-5')?->compat);
+        $this->assertNull(self::copilotSpeaking(Api::OpenAiResponses)->compat);
     }
 
     public function testACopilotConversationCostsNothingToReport(): void
     {
-        $model = Models::find('github-copilot', 'gpt-5');
+        foreach (self::of(Models::COPILOT) as $model) {
+            // A subscription, so the prices are zeroes across the board. `/session` saying
+            // $0.00 is the truth and not a column nobody filled in.
+            $this->assertSame(0.0, $model->pricing->input, $model->id);
+            $this->assertSame(0.0, $model->pricing->output, $model->id);
+        }
+    }
 
-        $this->assertNotNull($model);
-        // A subscription, so upstream's table is zeroes across the board. `/session` saying
-        // $0.00 is the truth and not a column nobody filled in.
-        $this->assertSame(0.0, $model->pricing->input);
-        $this->assertSame(0.0, $model->pricing->output);
+    // ---- finding a model to make a point with --------------------------------------------
+
+    /** @return list<Model> */
+    private static function of(string $provider): array
+    {
+        $models = array_values(array_filter(
+            Models::all(),
+            static fn (Model $model): bool => $model->provider === $provider,
+        ));
+
+        self::assertNotEmpty($models, "the table has no {$provider} models at all");
+
+        return $models;
+    }
+
+    private static function any(string $provider): Model
+    {
+        return self::of($provider)[0];
+    }
+
+    private static function copilotSpeaking(Api $api): Model
+    {
+        foreach (self::of(Models::COPILOT) as $model) {
+            if ($model->api === $api) {
+                return $model;
+            }
+        }
+
+        self::fail("Copilot has no {$api->value} models, so the rule about them is untested");
+    }
+
+    /**
+     * An id a reseller and a direct provider both claim, and whose the direct one is.
+     *
+     * @return array{0: string, 1: string}
+     */
+    private static function sharedId(): array
+    {
+        $direct = [];
+
+        foreach (Models::all() as $model) {
+            if (!Models::isResold($model->provider)) {
+                $direct[$model->id] ??= $model->provider;
+            }
+        }
+
+        foreach (Models::all() as $model) {
+            if (Models::isResold($model->provider) && isset($direct[$model->id])) {
+                return [$model->id, $direct[$model->id]];
+            }
+        }
+
+        // Not a skip: no shared id means `RESOLD` has nothing to arbitrate and the rule it
+        // exists for is untested, which is worth failing over.
+        self::fail('no id is claimed by both a reseller and a direct provider');
     }
 }

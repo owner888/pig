@@ -67,27 +67,37 @@ use Pig\CodingAgent\CustomModels;
  * a larger model. What each model can do is read off `Ai\Models` rather than assumed, so a
  * scenario a model cannot reach comes back `--` rather than as a failure.
  *
- * **A `404 The model … does not exist` here is the registry being older than the provider**, not a
- * wrong id in this table: `Ai\Models` is 166 models pinned at the anchor commit, 2026-01-02, and
- * a provider that has retired one since answers 404 for a row pig still offers in `--list-models`.
- * Groq did exactly that to `llama-3.3-70b-versatile`. So the fix for such a line is another id —
- * on the command line rather than in this table, since the table is the cheap default and the
- * question is usually about one model. The thing worth knowing is that `--list-models` has the same
- * staleness — see the note in CLAUDE.md, because pinning the registry is deliberate and this is its
- * price. A model named on the command line still has to be *in* the registry: this harness reads
- * the window, the output cap and whether it can think off `Ai\Models`, and a model it has never
- * heard of is reached the way a session reaches one, through `models.json`.
+ * **A `404 The model … does not exist` here is usually the registry being older than the provider**,
+ * not a wrong id in this table — `Ai\Models`' rows come from models.dev and are as current as the
+ * last `scripts/generate-models.php` run, so a provider that has retired a model since then answers
+ * 404 for a row pig still offers. Groq did exactly that to `llama-3.3-70b-versatile`; regenerating
+ * is the fix, and naming another id on the command line is the way to get on with the question in
+ * the meantime. *Usually*, because it is not the only cause: the second data point on that Groq run
+ * pointed at the key's access rather than the catalogue, and Groq's own sentence says both.
+ *
+ * A model named on the command line still has to be *in* the registry: this harness reads the
+ * window, the output cap and whether it can think off `Ai\Models`, and one it has never heard of is
+ * reached the way a session reaches one, through `models.json`.
+ *
+ * **This table dates itself, and the first regeneration proved it.** `xai/grok-3-fast` and
+ * `github-copilot/gpt-4.1` were both gone from models.dev, so two of the nine rows named nothing —
+ * and a dead row is only noticed when that provider is actually run, which is why running with no
+ * arguments at all is worth doing after a regeneration. Deriving the row from the registry instead
+ * (cheapest per provider, which is the rule that was applied by hand here) would end the rot, and
+ * it is not done because "cheapest" today picks an open-weights model on Google's endpoint and a
+ * free preview on z.ai's — the right answer for two providers and an odd one for the rest. If it
+ * rots again, that is the thing to reach for rather than a third hand-edit.
  */
 const MODELS = [
     'anthropic' => 'claude-sonnet-4-5',
     'openai' => 'gpt-5-mini',
     'google' => 'gemini-2.5-flash',
     'groq' => 'llama-3.1-8b-instant',
-    'xai' => 'grok-3-fast',
+    'xai' => 'grok-4.3',
     'cerebras' => 'gpt-oss-120b',
     'zai' => 'glm-4.5-flash',
     'mistral' => 'mistral-small-latest',
-    'github-copilot' => 'gpt-4.1',
+    'github-copilot' => 'claude-haiku-4.5',
 ];
 
 /**
@@ -127,9 +137,9 @@ final class Live
             // to stop at "no such model", which is true and leaves somebody looking for the
             // mistake in what they typed.
             printf("\n%s — no such model in the registry: %s\n", $provider, $id);
-            printf("      the registry is pinned at the anchor commit (2026-01-02), so a model\n");
-            printf("      released since is not in it. Declare it in ~/.pig/models.json under\n");
-            printf("      this provider and it is reachable here and from bin/pig.\n");
+            printf("      the rows come from models.dev as of the last generation, so a newer\n");
+            printf("      model needs `php scripts/generate-models.php` — or declare it in\n");
+            printf("      ~/.pig/models.json, which reaches here and bin/pig alike.\n");
 
             return;
         }
