@@ -6,7 +6,8 @@
     "license": "MIT",
     "authors": [
         {
-            "name": "owner888"
+            "name": "owner888",
+            "homepage": "https://github.com/owner888"
         }
     ],
     "bin": [
