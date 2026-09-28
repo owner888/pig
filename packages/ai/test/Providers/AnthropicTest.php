@@ -532,12 +532,49 @@ final class AnthropicTest extends TestCase
     }
 
     /** @return array<string, mixed> the request body this provider sent */
-    private function sendAndCapture(Context $context): array
+    public function testATemperatureSomebodySetReachesTheRequest(): void
+    {
+        // **Nothing followed this option to the wire in any provider.** The mutation sweep over
+        // `packages/ai/src/Providers` deleted the line that sets it in all five and no test
+        // noticed, so `SimpleStreamOptions(temperature: …)` could have stopped reaching any
+        // endpoint without a single case going red.
+        $body = $this->sendAndCapture(new Context([new UserMessage('hi')]), 0.2);
+
+        $this->assertSame(0.2, $body['temperature']);
+
+        // And absent means absent, rather than a zero the provider would read as a setting.
+        $this->assertArrayNotHasKey('temperature', $this->sendAndCapture(new Context([new UserMessage('hi')])));
+    }
+
+    public function testAToolCallWithNoArgumentsGoesOutAsAnObject(): void
+    {
+        // `input: []` is a list to Anthropic and it refuses the request — which is the trap entry
+        // on an empty arguments list, whose fix touched four sites. **This one, on the provider
+        // that does the refusing, had no test**: mutating `=== []` to `!== []` here passed the
+        // whole suite.
+        $body = $this->sendAndCapture(new Context([
+            new UserMessage('hi'),
+            $this->fromAnthropic([new ToolCall('c1', 'now', [])]),
+            new ToolResultMessage('c1', 'now', [new TextContent('12:00')]),
+        ]));
+
+        $this->assertSame('tool_use', $body['messages'][1]['content'][0]['type']);
+
+        // **Asserted on the raw body, because the decode cannot tell them apart**: PHP has one
+        // array type, so `json_decode(assoc: true)` turns both `{}` and `[]` into the same value
+        // — which is the third shape from `CLAUDE.md`'s index, and the reason a test that only
+        // read `receivedJson()` would have passed either way.
+        $this->assertStringContainsString('"input":{}', $this->server->received());
+        $this->assertStringNotContainsString('"input":[]', $this->server->received());
+    }
+
+    private function sendAndCapture(Context $context, ?float $temperature = null): array
     {
         $url = $this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]]);
+        $options = new AnthropicOptions(apiKey: 'test-key', temperature: $temperature);
 
-        Async::run(function () use ($url, $context): void {
-            foreach ($this->anthropic()->stream($this->model($url), $context, $this->options()) as $ignored) {
+        Async::run(function () use ($url, $context, $options): void {
+            foreach ($this->anthropic()->stream($this->model($url), $context, $options) as $ignored) {
             }
         });
 

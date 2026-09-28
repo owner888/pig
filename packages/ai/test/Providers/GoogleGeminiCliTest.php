@@ -297,6 +297,25 @@ final class GoogleGeminiCliTest extends TestCase
         });
     }
 
+    public function testTemperatureAndTheOutputCapReachTheRequest(): void
+    {
+        // The mutation sweep deleted both lines and nothing noticed. The thinking budget here was
+        // already pinned, which is what made the other two visible as the gap rather than as the
+        // normal state of this file.
+        $url = $this->serve([['response' => ['candidates' => [['content' => ['parts' => [['text' => 'ok']]]]]]]]);
+
+        $this->send($url, new Context([new UserMessage('hi')]), new GoogleOptions(
+            temperature: 0.3,
+            maxTokens: 555,
+            apiKey: self::key(),
+        ));
+
+        $config = $this->server->receivedJson()['request']['generationConfig'];
+
+        $this->assertSame(0.3, $config['temperature']);
+        $this->assertSame(555, $config['maxOutputTokens']);
+    }
+
     private function send(
         string $url,
         Context $context,

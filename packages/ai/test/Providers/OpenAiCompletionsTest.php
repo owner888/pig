@@ -607,12 +607,32 @@ final class OpenAiCompletionsTest extends TestCase
     }
 
     /** Send one request against a server that answers with nothing, and keep what was sent. */
-    private function send(Context $context, ?Model $model = null, ?ReasoningEffort $reasoning = null): void
+    public function testATemperatureSomebodySetReachesTheRequest(): void
     {
+        // Found by the mutation sweep: deleting the line that sets it passed the whole suite, in
+        // this provider and in the other four. An option nothing follows to the wire is an option
+        // that can stop working without anybody hearing about it.
+        $this->send(new Context([new UserMessage('hi')]), temperature: 0.7);
+
+        $this->assertSame(0.7, $this->server->receivedJson()['temperature']);
+
+        // And absent means absent, not a default the caller never chose.
+        $this->server = new CannedServer();
+        $this->send(new Context([new UserMessage('hi')]));
+
+        $this->assertArrayNotHasKey('temperature', $this->server->receivedJson());
+    }
+
+    private function send(
+        Context $context,
+        ?Model $model = null,
+        ?ReasoningEffort $reasoning = null,
+        ?float $temperature = null,
+    ): void {
         $url = $this->serve([['choices' => [['delta' => ['content' => 'ok'], 'finish_reason' => 'stop']]]]);
         $model ??= $this->model();
 
-        Async::run(function () use ($url, $context, $model, $reasoning): void {
+        Async::run(function () use ($url, $context, $model, $reasoning, $temperature): void {
             $stream = (new OpenAiCompletions())->stream(
                 new Model(
                     $model->id,
@@ -629,7 +649,7 @@ final class OpenAiCompletionsTest extends TestCase
                     $model->compat,
                 ),
                 $context,
-                new OpenAiOptions(apiKey: 'test-key', reasoning: $reasoning),
+                new OpenAiOptions(temperature: $temperature, apiKey: 'test-key', reasoning: $reasoning),
             );
 
             foreach ($stream as $ignored) {

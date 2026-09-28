@@ -630,16 +630,57 @@ final class GoogleTest extends TestCase
         });
     }
 
-    private function send(Context $context, ?Model $model = null): void
+    public function testWhatTheTurnAsksForReachesTheRequest(): void
+    {
+        // Three options that the mutation sweep found nothing following to the wire here, while
+        // the Code Assist provider — the sibling that shares `GoogleShared` — had all three
+        // pinned. The first shape from `CLAUDE.md`'s index, on a request body.
+        $this->send(
+            new Context([new UserMessage('hi')]),
+            $this->model(reasoning: true),
+            new GoogleOptions(
+                temperature: 0.4,
+                maxTokens: 321,
+                apiKey: 'test-key',
+                thinkingEnabled: true,
+                thinkingBudget: 2048,
+            ),
+        );
+
+        $config = $this->server->receivedJson()['generationConfig'];
+
+        $this->assertSame(0.4, $config['temperature']);
+        $this->assertSame(321, $config['maxOutputTokens'], 'an output cap nobody sends is an unbounded answer');
+        $this->assertSame(2048, $config['thinkingConfig']['thinkingBudget']);
+
+        // Asking to think asks for the summaries with it, or the thoughts are billed and never
+        // arrive — and `includeThoughts` was asserted for Code Assist and not here.
+        $this->assertTrue($config['thinkingConfig']['includeThoughts']);
+    }
+
+    public function testNoneOfThemIsSentWhenNobodyAskedForOne(): void
+    {
+        // The other half, so the fix cannot become "always send a number": a default the
+        // provider never asked for is a setting somebody did not choose.
+        $this->send(new Context([new UserMessage('hi')]));
+
+        $config = $this->server->receivedJson()['generationConfig'];
+
+        $this->assertArrayNotHasKey('temperature', $config);
+        $this->assertArrayNotHasKey('maxOutputTokens', $config);
+    }
+
+    private function send(Context $context, ?Model $model = null, ?GoogleOptions $options = null): void
     {
         $url = $this->serve([['candidates' => [['content' => ['parts' => [['text' => 'ok']]], 'finishReason' => 'STOP']]]]);
         $model ??= $this->model(reasoning: true);
+        $options ??= new GoogleOptions(apiKey: 'test-key');
 
-        Async::run(function () use ($url, $context, $model): void {
+        Async::run(function () use ($url, $context, $model, $options): void {
             $stream = (new Google())->stream(
                 $this->model($url, $model->reasoning, $model->acceptsImages(), $model->id),
                 $context,
-                new GoogleOptions(apiKey: 'test-key'),
+                $options,
             );
 
             foreach ($stream as $ignored) {

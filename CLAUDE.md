@@ -5693,6 +5693,77 @@ that nothing *else* about the endpoint is treated as strict — it takes `store`
 and `reasoning_effort` without complaint, so the one row is the whole difference. Taking
 `deepseek.com` off the row turns it red.
 
+### 1,633 mutations over the five providers, and an option none of them sent
+
+The worry the provider-SDK section states — 4,977 lines of hand-written protocol whose every test
+answers a canned server pig wrote itself — has been answered by corpora for the pure functions and
+by `test/live.php` for the wire. This is the third instrument: **change one decision at a time and
+see whether any test notices.** Every file under `packages/ai/src/Providers`, one mutation at a
+time, against the 423 tests that could possibly catch one.
+
+Eleven operators (`===`↔`!==`, `&&`↔`||`, the four relational ones, `null`→`''`, `true`↔`false`)
+plus the one that earns its place — **delete a whole statement and ask whether it was load-bearing**:
+
+| | |
+|---|---|
+| mutations run | 1,633 |
+| killed outright | 1,292 |
+| hung the suite | 150 |
+| **survived** | **191** |
+
+A hang is a detection too — a mutant that stops the suite finishing is not a mutant that got past
+it — so the score is 1,442 of 1,633, and the 191 are the list worth reading. Most are equivalent
+mutants: `?? null` → `?? ''` in front of an `is_string()`, a `$signal =` line whose absence is the
+same as the null nothing passes, a `$stream->end()` whose consumers stop at the body's end anyway.
+**Eleven were not**, and they divide into three findings.
+
+**The big one: `temperature` reached no provider in any test.** Deleting the line that sets it
+passed the whole suite in **all five** — Anthropic, both OpenAI shapes, Gemini and Code Assist —
+and a grep confirms it: the word `temperature` appeared nowhere in `packages/ai/test`. So the one
+option that changes what every model does could have stopped reaching every endpoint without a
+single case going red. Nothing was broken; the point is that nothing would have said so.
+
+**The second is the first shape from the index, on a request body.** `GoogleGeminiCli` had its
+thinking budget, its output cap and `includeThoughts` pinned; `Google`, the sibling that shares
+`GoogleShared` with it, had **none of the three**. Deleting `maxOutputTokens` from the public
+endpoint's request passed — and an output cap nobody sends is an unbounded answer, which is
+precisely the DeepSeek `max_completion_tokens` bug this file records finding live. `includeThoughts`
+flipped to `false` passed too: the thoughts are then billed and never arrive.
+
+**The third is a documented trap with its own provider unpinned.** The entry on an empty arguments
+list says `input: []` is a list to Anthropic and that Anthropic **refuses the request**. Mutating
+`$content->arguments === []` to `!== []` in `Anthropic::messages()` — which sends `{}` for a call
+that has arguments and `[]` for one that does not, exactly inverting the fix — passed. The test for
+it had to assert on the **raw body**, because `json_decode(assoc: true)` turns `{}` and `[]` into
+the same PHP value: the third shape from the index, arriving in the test for a bug that was itself
+the third shape.
+
+Also fixed, smaller: `Copilot::headers()` reads the last message to decide who asked, and its own
+comment calls "nothing said yet counts as the person" upstream's default. No test sent it an empty
+conversation, so both mutations that break that answer survived.
+
+Regression tests, and each of the eleven mutations was re-applied afterwards to confirm it now
+dies: `AnthropicTest::testATemperatureSomebodySetReachesTheRequest`,
+`testAToolCallWithNoArgumentsGoesOutAsAnObject`, `GoogleTest::testWhatTheTurnAsksForReachesTheRequest`
+and `testNoneOfThemIsSentWhenNobodyAskedForOne`,
+`GoogleGeminiCliTest::testTemperatureAndTheOutputCapReachTheRequest`, the same temperature case in
+both OpenAI test classes, and `OpenAiResponsesTest::testNothingSaidYetCountsAsThePerson`.
+
+**Two things about the harness, because a measuring instrument is a claim like any other.**
+
+The first version bound the worker tree to the job index — `worker = i % 8` with eight threads — so
+job 8 could start in the tree job 0 was still using and two mutations shared one file. It
+manufactured **three false survivors out of fourteen** on the trial run, and one of them was a
+header `OpenAiResponsesTest` demonstrably asserts. Reproducing that one by hand is what exposed it;
+the worker now comes from a queue. *A survivor list is only as good as the isolation under it.*
+
+And `TransformMessages.php` came back **0 killed, 0 survived, 77 timeouts** — every mutation hangs
+the suite, including replacing the whole of `apply()` with `return $messages;`. So that file is
+**unmeasured** rather than unpinned: the instrument cannot tell whether its rules are held down,
+only that breaking them stops the tests finishing. Worth knowing before anybody reads its row as
+coverage, and worth chasing separately — a hang means no test *names* what went wrong, which is its
+own weaker signal.
+
 ### A space that is not U+0020 emptied the search box
 
 `Utils\Fuzzy` is what `/resume`'s searchable session list and `--list-models` filter through, and

@@ -633,6 +633,17 @@ final class OpenAiResponsesTest extends TestCase
         $this->assertStringNotContainsString('openai-intent', $head);
     }
 
+    public function testNothingSaidYetCountsAsThePerson(): void
+    {
+        // `Copilot::headers()` reads the *last* message to decide who asked, and an empty
+        // conversation has none — which its own comment calls upstream's default and which no
+        // test reached: swapping the `!== null` that answers it changed nothing in the suite.
+        // Copilot bills and rate-limits an agent call differently from something a person typed.
+        $this->sendAsCopilot(new Context([]));
+
+        $this->assertStringContainsString('x-initiator: user', $this->server->receivedHead());
+    }
+
     private function sendAsCopilot(Context $context): void
     {
         $url = $this->serve([['type' => 'response.completed', 'response' => ['status' => 'completed']]]);
@@ -663,16 +674,36 @@ final class OpenAiResponsesTest extends TestCase
         });
     }
 
-    private function send(Context $context, ?Model $model = null, ?ReasoningEffort $reasoning = null): void
+    public function testATemperatureSomebodySetReachesTheRequest(): void
     {
+        // Found by the mutation sweep: deleting the line that sets it passed the whole suite, in
+        // this provider and in the other four. An option nothing follows to the wire is an option
+        // that can stop working without anybody hearing about it.
+        $this->send(new Context([new UserMessage('hi')]), temperature: 0.7);
+
+        $this->assertSame(0.7, $this->server->receivedJson()['temperature']);
+
+        // And absent means absent, not a default the caller never chose.
+        $this->server = new CannedServer();
+        $this->send(new Context([new UserMessage('hi')]));
+
+        $this->assertArrayNotHasKey('temperature', $this->server->receivedJson());
+    }
+
+    private function send(
+        Context $context,
+        ?Model $model = null,
+        ?ReasoningEffort $reasoning = null,
+        ?float $temperature = null,
+    ): void {
         $url = $this->serve([['type' => 'response.completed', 'response' => ['status' => 'completed']]]);
         $model ??= $this->model();
 
-        Async::run(function () use ($url, $context, $model, $reasoning): void {
+        Async::run(function () use ($url, $context, $model, $reasoning, $temperature): void {
             $stream = (new OpenAiResponses())->stream(
                 $this->model($url, $model->reasoning, $model->acceptsImages(), $model->id),
                 $context,
-                new OpenAiOptions(apiKey: 'test-key', reasoning: $reasoning),
+                new OpenAiOptions(temperature: $temperature, apiKey: 'test-key', reasoning: $reasoning),
             );
 
             foreach ($stream as $ignored) {
