@@ -57,7 +57,23 @@ provider 的证书，所以代理只负责搬字节、读不到内容；域名�
 ## 跑一下
 
 ```bash
-composer install
+composer global require pigagent/pig
+ANTHROPIC_API_KEY=sk-ant-... pig
+```
+
+如果这里报 `command not found`，是 Composer 的全局 bin 目录不在 PATH 上——这是所有用 Composer 装的
+命令都要做一次的事，跟 pig 无关，每台机器只做一次：
+
+```bash
+echo "export PATH=\"$(composer global config bin-dir --absolute):\$PATH\"" >> ~/.zshrc
+exec $SHELL
+```
+
+想改 pig 本身就克隆下来，下面的内容两种装法完全一样，只是把
+`pig` 换成 `bin/pig`：
+
+```bash
+git clone https://github.com/owner888/pig && cd pig && composer install
 ANTHROPIC_API_KEY=sk-ant-... bin/pig
 ```
 

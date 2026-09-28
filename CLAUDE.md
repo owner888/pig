@@ -8977,6 +8977,37 @@ corrected to what `packages/*/composer.json` actually declare. *A generated file
 date and cost nothing until something regenerates a second file from it* — and collapsing to one
 package removes this whole class, since there will be no `pig/*` entries in anybody's lock.
 
+**Installed, and the first install failed on the one thing nothing warns about.**
+`composer global require pigagent/pig` locked and installed `v0.1.0` cleanly — which is the real
+acceptance test, since it exercises the `bin` declaration, the five namespaces' autoload and the
+`ext-*` requirements at once — and then `pig` answered `command not found`, because Composer's global
+bin directory is not on anybody's PATH until they put it there. Composer prints nothing about this.
+The README said `composer global require …` and then `pig`, so **the install instructions did not
+work as written**; both now name the one-time fix. It is a per-machine prerequisite shared by every
+Composer-installed command rather than anything about pig — and it is worth knowing that it is
+*not* the executable bit: a binary without one answers "permission denied", not "command not found".
+The bit was missing from git all the same (`100644`) and is `100755` now, which matters for whoever
+clones rather than installs.
+
+**And it is not what upstream's users go through, which is worth knowing before dismissing it as
+normal.** `npm install -g @earendil-works/pi-coding-agent` needs no PATH step, because **npm derives
+its global prefix from the `node` binary's own location**, so a global install lands in the directory
+that already holds `node` — and that directory is on PATH by definition, or you could not run `node`.
+Composer has no equivalent property: `composer` lives in one directory and `$COMPOSER_HOME/vendor/bin`
+is another, which nothing puts on PATH. So "every PHP CLI is like this" is true and is not the same
+claim as "this is as good as it gets"; the JS side of the same tool simply does not have the problem.
+Nothing pig ships can change it — a package cannot choose where Composer puts its bins.
+
+**No phar and no Homebrew tap, for now, and the reason is not effort.** A second install route is a
+second answer to *which version am I running* — the thing `Version` was just rebuilt to have exactly
+one of — and worse, a `brew`-installed copy would be told to run `composer global update
+pigagent/pig`, a command that does nothing for it. Closing that means `UpdateCheck::COMMAND` branching
+on how pig was installed, which is a real feature rather than a packaging chore. Both routes are
+feasible (box bundles `vendor/composer/installed.php`, so `InstalledVersions` answers inside a phar,
+and `Changelog::path()` resolves under `phar://` once the file is bundled); the developer's call was
+to wait, on the grounds that building a second distribution channel for friction that no user has hit
+yet is exactly the anticipation this project keeps declining. The entry to reopen is this one.
+
 **The vendor `pig` was taken, which is why the package is `pigagent/pig`.** Submitting answered what
 nothing here could check: `pig` on Packagist holds an unrelated `pig/router`, and vendor names there
 are first-come-first-served, so the claim route was closed and the name had to change before the

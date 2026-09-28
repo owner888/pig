@@ -65,7 +65,23 @@ keyword to a tool's schema can never break the tool.
 ## Try it
 
 ```bash
-composer install
+composer global require pigagent/pig
+ANTHROPIC_API_KEY=sk-ant-... pig
+```
+
+If that answers `command not found`, Composer's global bin directory is not on your PATH — a
+one-time setup that every Composer-installed command needs, not this one in particular:
+
+```bash
+echo "export PATH=\"$(composer global config bin-dir --absolute):\$PATH\"" >> ~/.zshrc
+exec $SHELL
+```
+
+To work on pig itself, clone it instead — everything below is the same either way, with `bin/pig` in
+place of `pig`:
+
+```bash
+git clone https://github.com/owner888/pig && cd pig && composer install
 ANTHROPIC_API_KEY=sk-ant-... bin/pig
 ```
 
