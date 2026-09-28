@@ -660,6 +660,166 @@ final class OpenAiCompletionsTest extends TestCase
         });
     }
 
+    public function testCopilotsOwnIdsAreRemadeForItsOtherApiAndTheResultFollows(): void
+    {
+        // **Copilot serves both OpenAI shapes, and the ids its Responses API mints are rejected
+        // by its own Completions API** — so crossing between them, a tool call's id is stripped
+        // to what the other side accepts and truncated to forty characters. The mutation sweep
+        // found this whole feature uncovered: every mutation in the rename block survived,
+        // including deleting the `$renamedIds` map that keeps the *result* pointing at the call.
+        //
+        // How somebody gets here: `/model` from `github-copilot/gpt-5` to a Copilot model on the
+        // other shape, mid-tool-use.
+        $long = 'fc_' . str_repeat('a', 50) . '|resp_68|weird';
+        $model = new Model(
+            'claude-x',
+            'Claude X',
+            Api::OpenAiCompletions,
+            'github-copilot',
+            'http://127.0.0.1:1',
+            128_000,
+            16_384,
+            true,
+            ['text'],
+            new Pricing(),
+        );
+
+        $context = new Context([
+            new UserMessage('hi'),
+            new AssistantMessage(
+                [new TextContent('let me look'), new ToolCall($long, 'read', ['path' => 'a.php'])],
+                Api::OpenAiResponses,
+                'github-copilot',
+                'gpt-5',
+                new Usage(),
+                StopReason::ToolUse,
+            ),
+            new ToolResultMessage($long, 'read', [new TextContent('contents')]),
+        ]);
+
+        // Sent by hand rather than through `send()`, and the empty key is the reason: with one,
+        // `endpoint()` asks `GithubCopilot::baseUrl()` where to go and the request leaves for the
+        // real Copilot API instead of the canned server. The first version of this case did
+        // exactly that and failed reading a body nothing had received.
+        $url = $this->serve([['choices' => [['delta' => ['content' => 'ok'], 'finish_reason' => 'stop']]]]);
+
+        Async::run(function () use ($url, $context, $model): void {
+            $stream = (new OpenAiCompletions())->stream(
+                new Model(
+                    $model->id,
+                    $model->name,
+                    $model->api,
+                    $model->provider,
+                    rtrim($url, '/'),
+                    $model->contextWindow,
+                    $model->maxTokens,
+                    $model->reasoning,
+                    $model->input,
+                    $model->pricing,
+                ),
+                $context,
+                new OpenAiOptions(apiKey: ''),
+            );
+
+            foreach ($stream as $ignored) {
+                // Drain it; what is under test is what went out.
+            }
+
+            $stream->result()->await();
+        });
+
+        $body = $this->server->receivedJson();
+        $sent = $body['messages'][1]['tool_calls'][0]['id'];
+
+        $this->assertNotSame($long, $sent, 'the id it arrived with is the one Copilot refuses');
+        $this->assertSame(40, strlen($sent), 'truncated to what the other API accepts');
+        $this->assertSame(1, preg_match('/^[a-zA-Z0-9_-]+$/', $sent), 'and nothing it rejects in it');
+
+        // **Renamed, not duplicated.** Without the `continue` after the rewrite, the original
+        // call goes out beside the new one and the provider is handed two calls where the model
+        // made one.
+        $this->assertCount(1, $body['messages'][1]['tool_calls']);
+
+        // And the rest of the message survives the crossing: everything that is not a tool call
+        // is copied across, which is one line that nothing used to notice the absence of.
+        $this->assertSame('let me look', $body['messages'][1]['content']);
+
+        // The half the `$renamedIds` map exists for: a result addressed to the old id is a result
+        // the provider cannot match to any call.
+        $this->assertSame($sent, $body['messages'][2]['tool_call_id']);
+    }
+
+    public function testOnlyCopilotsOwnTwoApisRenameAnything(): void
+    {
+        // The rename is for one provider serving both OpenAI shapes. Any other crossing leaves the
+        // id alone — a provider that did not mint it has no opinion about its shape, and rewriting
+        // one would break the result that points at it. Both halves of that three-part condition
+        // could be widened to `||` without a test noticing.
+        $id = 'call_' . str_repeat('z', 60) . '|weird';
+
+        $context = new Context([
+            new UserMessage('hi'),
+            new AssistantMessage(
+                [new ToolCall($id, 'read', ['path' => 'a.php'])],
+                Api::OpenAiResponses,
+                'openai',
+                'gpt-5',
+                new Usage(),
+                StopReason::ToolUse,
+            ),
+            new ToolResultMessage($id, 'read', [new TextContent('contents')]),
+        ]);
+
+        $url = $this->serve([['choices' => [['delta' => ['content' => 'ok'], 'finish_reason' => 'stop']]]]);
+
+        Async::run(function () use ($url, $context): void {
+            $stream = (new OpenAiCompletions())->stream($this->model($url), $context, new OpenAiOptions(apiKey: 'k'));
+
+            foreach ($stream as $ignored) {
+                // Drain it; what is under test is what went out.
+            }
+
+            $stream->result()->await();
+        });
+
+        $body = $this->server->receivedJson();
+
+        $this->assertSame($id, $body['messages'][1]['tool_calls'][0]['id'], 'left exactly as it arrived');
+        $this->assertSame($id, $body['messages'][2]['tool_call_id']);
+
+        // And the other way round, which is the half that survived on its own: a message Copilot
+        // *did* produce, going somewhere that is not Copilot. `/model` from
+        // `github-copilot/gpt-5` to `openai/gpt-5` is how somebody gets there, and mangling the
+        // id for a provider that has no opinion about its shape helps nobody.
+        $this->server = new CannedServer();
+        $fromCopilot = new Context([
+            new UserMessage('hi'),
+            new AssistantMessage(
+                [new ToolCall($id, 'read', ['path' => 'a.php'])],
+                Api::OpenAiResponses,
+                'github-copilot',
+                'gpt-5',
+                new Usage(),
+                StopReason::ToolUse,
+            ),
+            new ToolResultMessage($id, 'read', [new TextContent('contents')]),
+        ]);
+
+        $url = $this->serve([['choices' => [['delta' => ['content' => 'ok'], 'finish_reason' => 'stop']]]]);
+
+        Async::run(function () use ($url, $fromCopilot): void {
+            $stream = (new OpenAiCompletions())->stream($this->model($url), $fromCopilot, new OpenAiOptions(apiKey: 'k'));
+
+            foreach ($stream as $ignored) {
+                // Drain it; what is under test is what went out.
+            }
+
+            $stream->result()->await();
+        });
+
+        $this->assertSame($id, $this->server->receivedJson()['messages'][1]['tool_calls'][0]['id']);
+    }
+
     private function model(
         string $baseUrl = 'http://127.0.0.1:1',
         bool $reasoning = false,

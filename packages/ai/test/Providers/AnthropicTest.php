@@ -505,6 +505,57 @@ final class AnthropicTest extends TestCase
         $this->assertStringContainsString('No result provided', (string) json_encode($results[0]['content']));
     }
 
+    public function testTwoInterruptedTurnsGetOneInventedResultEach(): void
+    {
+        // `$flush()` empties what it flushed, and the mutation sweep found nothing noticing when
+        // it does not: every case had a single turn with a call in it, so the two lines that clear
+        // `$pending` and `$answered` between turns could both be deleted and the suite stayed
+        // green. Without them the first turn's call is flushed again on every later turn — three
+        // invented results for one interrupted call by the end of this conversation.
+        $body = $this->sendAndCapture(new Context([
+            new UserMessage('first'),
+            $this->fromAnthropic([new ToolCall('c1', 'read', ['path' => 'a.php'])]),
+            new UserMessage('never mind'),
+            $this->fromAnthropic([new ToolCall('c2', 'read', ['path' => 'b.php'])]),
+        ]));
+
+        $results = [];
+
+        foreach ($body['messages'] as $message) {
+            foreach ($message['content'] as $block) {
+                if (($block['type'] ?? null) === 'tool_result') {
+                    $results[] = $block['tool_use_id'];
+                }
+            }
+        }
+
+        $this->assertSame(['c1', 'c2'], $results, 'one each, in order, and no repeats');
+    }
+
+    public function testAConversationThatEndsOnADanglingCallGetsOneToo(): void
+    {
+        // **The one place this file deliberately does more than upstream, and it had no test.**
+        // Upstream inserts a synthetic result only when a *later* message arrives, so a
+        // conversation that ends on a dangling call is unsendable there; `fillOrphanedCalls()`
+        // flushes once more after the loop. The mutation sweep deleted that trailing `$flush();`
+        // and nothing in the suite noticed — the case above has a user message after the call, so
+        // it goes through the in-loop flush and says nothing about the end of the list.
+        //
+        // How somebody gets here: escape during a tool call, then `/model`, which sends the
+        // conversation exactly as it stands.
+        $body = $this->sendAndCapture(new Context([
+            new UserMessage('hi'),
+            $this->fromAnthropic([new ToolCall('c1', 'read', ['path' => 'a.php'])]),
+        ]));
+
+        $last = $body['messages'][count($body['messages']) - 1];
+
+        $this->assertSame('user', $last['role']);
+        $this->assertSame('tool_result', $last['content'][0]['type']);
+        $this->assertSame('c1', $last['content'][0]['tool_use_id']);
+        $this->assertTrue($last['content'][0]['is_error']);
+    }
+
     /** @param list<mixed> $content */
     private function fromGoogle(array $content): AssistantMessage
     {

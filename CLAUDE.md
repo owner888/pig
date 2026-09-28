@@ -5712,7 +5712,9 @@ plus the one that earns its place — **delete a whole statement and ask whether
 | **survived** | **191** |
 
 A hang is a detection too — a mutant that stops the suite finishing is not a mutant that got past
-it — so the score is 1,442 of 1,633, and the 191 are the list worth reading. Most are equivalent
+it — so the score is 1,442 of 1,633, and the 191 are the list worth reading. **Two of those rows
+were later found to be partly contamination**; see the second harness note at the bottom of this
+entry, and the entry after it for what the re-run found. Most are equivalent
 mutants: `?? null` → `?? ''` in front of an `is_string()`, a `$signal =` line whose absence is the
 same as the null nothing passes, a `$stream->end()` whose consumers stop at the body's end anyway.
 **Eleven were not**, and they divide into three findings.
@@ -5757,12 +5759,75 @@ manufactured **three false survivors out of fourteen** on the trial run, and one
 header `OpenAiResponsesTest` demonstrably asserts. Reproducing that one by hand is what exposed it;
 the worker now comes from a queue. *A survivor list is only as good as the isolation under it.*
 
-And `TransformMessages.php` came back **0 killed, 0 survived, 77 timeouts** — every mutation hangs
-the suite, including replacing the whole of `apply()` with `return $messages;`. So that file is
-**unmeasured** rather than unpinned: the instrument cannot tell whether its rules are held down,
-only that breaking them stops the tests finishing. Worth knowing before anybody reads its row as
-coverage, and worth chasing separately — a hang means no test *names* what went wrong, which is its
-own weaker signal.
+**And the second flaw was worse, because it produced a whole row of numbers that meant nothing.**
+`TransformMessages.php` came back `0 killed, 0 survived, 77 timeouts` — every mutation apparently
+hanging the suite, including replacing the whole of `apply()` with `return $messages;`. Chasing it
+found the cause was not in pig at all: the worker trees were **reused between runs**, an outer
+`timeout` had killed one run mid-mutation, and the worker threads died without running the `finally`
+that restores the file. The next two runs measured against trees with somebody else's mutation still
+applied. The pass-through takes six seconds and fails four tests when actually run.
+
+So `TransformMessages.php`'s 77 timeouts and `AssistantMessageBuilder.php`'s 47 were both suspect,
+and re-running them with trees recreated from scratch separated them: the transform's were entirely
+contamination, and **the builder's 47 are real** — mutating the accumulator genuinely stops the
+stream terminating. The trees are rebuilt every run now.
+
+The rule, for the third time in this session and the second in this entry: *a measuring instrument
+is a claim like any other.* Both of this harness's bugs produced **confident wrong output** rather
+than an error — three false survivors from the first, seventy-seven false timeouts from the second —
+and both were found by picking one number off it and reproducing that number by hand.
+
+### `TransformMessages` measured properly, and the divergence pig is proud of had no test
+
+The file the contaminated row above said was unmeasurable. Re-run with clean trees: **77 mutations,
+56 killed, 21 survived, no timeouts** — so it was measurable all along, and 21 of its decisions were
+not held down by anything. Writing four tests took that to **71 killed and 6 survivors, five of them
+genuinely equivalent**. Three findings, and the first is the one to remember.
+
+**The one place this file deliberately does more than upstream had no test.** The compaction section
+states it plainly: *"pig flushes pending calls at the end of the conversation as well as before each
+assistant or user message — upstream only inserts synthetic results when a later message arrives, so
+a conversation that ends on a dangling call is still unsendable there."* Deleting that trailing
+`$flush();` changed nothing in 2,480 tests. Every existing case put a user message *after* the
+dangling call, which exercises the in-loop flush and says nothing about the end of the list — and
+the end of the list is exactly where an interrupted turn leaves one. Escape during a tool call, then
+`/model`, and the conversation goes out as it stands.
+
+**A second flush bug the same tests could not see: `$pending` and `$answered` are emptied by
+`$flush()`, and nothing noticed when they are not.** Every case had one turn with a call in it. A
+conversation with two interrupted turns re-flushes the first turn's call on every later turn —
+three invented results for one call by the end of a four-message conversation.
+
+**The Copilot cross-API id rename had no coverage at all**: all of lines 86–110 survived, including
+the `$renamedIds` map that keeps the tool *result* pointing at the call it was renamed from. The
+rule is real — Copilot serves both OpenAI shapes and the ids its Responses API mints are refused by
+its own Completions API, so crossing between them an id is stripped to `[a-zA-Z0-9_-]` and cut to
+forty characters. `/model` from `github-copilot/gpt-5` to a Copilot model on the other shape,
+mid-tool-use, is the whole scenario, and nothing checked any of it: not the rename, not the
+truncation, not the result following it, not that the call is renamed *rather than duplicated*, not
+that the rest of the message survives the crossing, and not that a crossing which is **not**
+Copilot-to-Copilot leaves the id alone.
+
+Regression tests: `AnthropicTest::testAConversationThatEndsOnADanglingCallGetsOneToo`,
+`testTwoInterruptedTurnsGetOneInventedResultEach`,
+`OpenAiCompletionsTest::testCopilotsOwnIdsAreRemadeForItsOtherApiAndTheResultFollows` and
+`testOnlyCopilotsOwnTwoApisRenameAnything`. The second of those had to be sent by hand rather than
+through the `send()` helper, and the reason is on it: with a non-empty key `endpoint()` asks
+`GithubCopilot::baseUrl()` where to go and the request leaves for the real Copilot API — which the
+first version did, then failed reading a body nothing had received.
+
+**The five that survive have a reason, and the reason was measured rather than assumed.** Four are
+`$x = [];` initialisations and one is `$answered[…] = true` → `false`: `$x[] =` and `$x[k] =` create
+the array without complaint, and `$answered` is only ever read through `isset()`, so the value
+is irrelevant and undefined behaves as empty. `$answered`'s reset inside `$flush()` only matters if
+a tool call id repeats across turns, which providers do not do.
+
+*And the interesting part of checking that* is that the project's own runner is **stricter than the
+shim these numbers came from**: `phpunit.xml` sets `failOnWarning="true"`, so a mutation that only
+warns is killed there and survives here. Probed one by one rather than assumed — of the six, exactly
+one warns (`$pending`'s init, because `foreach` reads it), so PHPUnit kills 72 of 77 where the shim
+kills 71. Worth knowing in both directions: a survivor list from the shim is the pessimistic one,
+and a shim green is not quite a PHPUnit green.
 
 ### A space that is not U+0020 emptied the search box
 
