@@ -4,6 +4,11 @@
     "type": "library",
     "keywords": ["agent", "llm", "cli", "tui", "coding-agent", "anthropic", "openai", "gemini"],
     "license": "MIT",
+    "authors": [
+        {
+            "name": "owner888"
+        }
+    ],
     "bin": [
         "bin/pig",
         "bin/pig-ai"
