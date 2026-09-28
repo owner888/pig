@@ -185,6 +185,34 @@ final class OverflowTest extends TestCase
         $this->assertTrue(Overflow::happened($answer, 200_000));
     }
 
+    public function testAPromptThatExactlyFillsTheWindowIsNotAnOverflow(): void
+    {
+        $answer = new AssistantMessage(
+            [new TextContent('ok')],
+            Api::AnthropicMessages,
+            'anthropic',
+            'claude-test',
+            new Usage(input: 199_000, cacheRead: 1_000),
+            StopReason::Stop,
+        );
+
+        // The boundary, and it only goes one way: a conversation that fitted exactly was
+        // answered, and calling that an overflow summarises a conversation that was fine —
+        // which is the whole cost of a guess on this branch.
+        $this->assertFalse(Overflow::happened($answer, 200_000));
+
+        $overBySomething = new AssistantMessage(
+            [new TextContent('ok')],
+            Api::AnthropicMessages,
+            'anthropic',
+            'claude-test',
+            new Usage(input: 199_001, cacheRead: 1_000),
+            StopReason::Stop,
+        );
+
+        $this->assertTrue(Overflow::happened($overBySomething, 200_000));
+    }
+
     public function testWithNoWindowGivenTheSilentCaseCannotBeAsked(): void
     {
         $answer = new AssistantMessage(

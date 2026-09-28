@@ -5829,6 +5829,162 @@ one warns (`$pending`'s init, because `foreach` reads it), so PHPUnit kills 72 o
 kills 71. Worth knowing in both directions: a survivor list from the shim is the pessimistic one,
 and a shim green is not quite a PHPUnit green.
 
+### The sweep's filter decided which decisions counted as unpinned
+
+`packages/ai/src/Http` swept next — the three files this document calls **load-bearing in a way they
+are not upstream**, because "a bug in them shows up as tokens going missing rather than as an error,
+and there is no vendor implementation to fall back to". 530 mutations, and the loudest row read
+`HttpClient::follow()` is entirely unpinned: the loop bound, both statement deletions, all six
+mutations of the 3xx condition, the whole 307/308 block, and every line of `absolute()` — every
+decision in the redirect logic, surviving.
+
+**It was the harness, for the fourth time, and this is the fourth shape it has taken.** The sweep runs
+the tests once per mutation through one filter, and that filter is a list of class-name prefixes
+picked when the sweep was pointed at `Providers`. `follow()`'s four tests live in
+**`ToolInstallerTest`** — the method was added for the download and its tests went where the caller
+was — and `ToolInstaller` is not on the list. So the sweep was measuring `follow()` against a suite
+that never ran a single redirect. Adding the name to the filter turned 15 of those survivors into
+kills on the spot, with nothing in the repository changed.
+
+*A filter is an argument about what is being measured, and a name left out of it manufactures
+survivors exactly as a shared worker tree manufactures them.* The three earlier ones produced
+confident wrong output too — three false survivors from a worker race, seventy-seven false timeouts
+from a reused tree, one mutation whose replacement text never matched the file. **What separates them
+from a real find is the same one step every time: take one number off the harness and reproduce it by
+hand.** Here that step was `grep -rn -- '->follow(' --include='*.php' .`, which names the tests in
+thirteen characters.
+
+So the rule the instrument now carries, and the reason the Utils sweep below has a filter per file
+rather than one for the directory: **derive the filter from the file's consumers, never from the
+directory being swept.** `grep -rl` for the class over `packages/*/src` gives the consumers; their
+test classes are the filter. And check the cost of the widest one — a filter covering everything runs
+in 22 seconds here against a 30-second timeout, which is the *other* way to manufacture a row of
+detections that are nothing of the kind.
+
+**What survived the corrected run was worth having, and none of it was what the false row said.**
+Four rules with no test, in a method whose docblock states three of them:
+
+- **The 301/302/303-becomes-a-GET and 307/308-keeps-the-method rule had no coverage at all** — not
+  the method, not the body, not the `content-length` that goes with it. Five mutations and a
+  statement deletion, all silent. This is the one that matters: a redirected POST that keeps its
+  body is a request the far end answers twice.
+- **A `Location` with no slash on it was never resolved.** `absolute()`'s directory branch is the
+  one a real CDN uses — `Location: real.tar.gz` beside the file that was asked for — and deleting
+  the line that computes the directory changed nothing. The test named
+  `testARelativeLocationIsResolvedAgainstWhereItCameFrom` does not follow a redirect at all: its
+  canned server answers 200 with no `Location`, so `follow()` returns on its first line. *A test's
+  name is not a claim anybody checks.*
+- **`MAX_REDIRECTS` had no meaning.** `<=` and `<` both pass, so whether five means five redirects
+  or four was not written down anywhere the code could be held to.
+- **Three of `HttpClient`'s own error paths were unreachable from the suite**: a head past
+  `MAX_HEAD_BYTES`, a connection closed mid-head, and a header line with no colon in it. The
+  scheme check as well — mutating it to accept `ftp://` broke nothing.
+
+The boundary between the first two of those is one test rather than two: exactly `MAX_HEAD_BYTES` of
+head and then the hang-up must be refused for being **truncated** and not for being too big, which
+pins the guard's `>` and reaches the truncation message in the same breath.
+
+Two survivors stay, with the reason measured rather than argued. `$parts === false` in both
+`absolute()` and `resolve()` is redundant — `isset($parts['scheme'])` on `false` is already false, so
+the clause beside it throws anyway — though `parse_url()` does return false for real input
+(`http://x:8O8O`, a port typed with a letter in a hand-written `models.json`), so the guard is not
+dead, only doubled. And `$response->body->close()` between hops **is not a leak**: measured over four
+runs of a two-redirect chain, the open-stream count after `follow()` returns is the same with the
+call and without it, because reassigning `$response` drops the last reference and PHP closes the
+stream. What the line buys is what its comment says and nothing more — the old socket is shut
+*before* the next one is opened, rather than one line after, so a five-hop chain holds two sockets at
+a time instead of six. There is no seam to observe a peak through, so it is recorded here instead.
+
+Regression tests: eleven in `HttpClientTest`, and each of the twelve mutations above was re-applied
+afterwards to confirm it now dies — ten killed outright, two (the closed-mid-head read and the
+colonless header line) by hanging the suite, which is a detection. The four cases in
+`ToolInstallerTest` are left where they are; a method's tests living beside its first caller is worth
+raising rather than quietly moving, and putting the new ones under `HttpClientTest` is also what
+keeps the default filter honest about this file from here on.
+
+### A float took every argument off the screen for one byte
+
+`packages/ai/src/Utils` swept with a filter per file, derived as the entry above says. 456 mutations,
+354 killed, 13 detected by hanging the suite, 89 surviving — and the survivors are concentrated in
+the two files this document describes as hand-written stands-in for npm packages: `PartialJson` (32
+of 97) and `JsonSchema` (40 of 171).
+
+**Both are files whose verification was a corpus that was never kept.** `PartialJson`'s docblock
+records a run against `partial-json@0.1.7` "over every prefix of a corpus of realistic tool
+arguments", and `JsonSchema`'s records ~190 pairs against `ajv@8.20.0`. Those runs found real bugs
+and are why both files are trusted. What is in the suite is three test methods for the first and 38
+for the second. *A corpus is evidence about the day it ran; a test is evidence every day.* The traps
+above say a corpus is worth running and worth keeping the count of — this adds the third clause:
+**worth keeping as a test**, or the code it verified goes back to being unpinned the moment the
+corpus is deleted.
+
+Rebuilding `PartialJson`'s as a test found a live bug on its first run, at one byte of every float a
+model has ever sent:
+
+```
+{"path":"/tmp/a.php","temperature":0     => {"path":"/tmp/a.php","temperature":0}
+{"path":"/tmp/a.php","temperature":0.    => []
+{"path":"/tmp/a.php","temperature":0.7   => {"path":"/tmp/a.php","temperature":0.7}
+```
+
+**`is_numeric()` is not JSON's number grammar.** `isCompleteLiteral()` asked PHP whether a bare token
+was a number, and PHP says yes to `0.` and `-12.` where JSON says no — so the scanner recorded the
+safe end at the end of the input, built the repair `…"temperature":0.}`, `json_decode()` refused it,
+and with no candidate left the whole object came back empty. Not the value: **the object**, including
+the keys that had arrived thirty bytes earlier. On screen that is a blank frame in the middle of
+every tool call carrying a float, and if the turn is interrupted on that byte it is worse than a
+frame, because what a provider is then sent is `[]` — the empty arguments list that has an entry of
+its own two screens up.
+
+The grammar is written out (`/^-?(0|[1-9]\d*)(\.\d+)?([eE][-+]?\d+)?\z/`, `\z` for the reason that
+trap gives). The other places PHP and JSON disagree — `+12`, `.5`, `012`, whitespace on either side —
+are not prefixes of any valid JSON number, so no stream arrives at one, and refusing them leaves the
+earlier keys standing instead of building a repair that cannot parse.
+
+**Then the same test said the fix was half of one.** With the grammar corrected the object no longer
+collapses, and the pair still drops out for that byte — `{"a":1,"temperature":0.` read as `{"a":1}`
+where `{"a":1,"temperature":0}` is available and is what the byte before and the byte after both say.
+The end-of-input branch keeps a bare token only if the whole of it reads as a value; it walks back to
+the longest prefix that does now. Being briefly wrong about a value is this method's stated trade —
+its own comment says so about `12` of `125` — and taking a key off the screen and putting it back is
+not the same thing.
+
+**The corpus had "numbers cut mid-digit" in it and missed this**, which is the entry on two pastes in
+one read arriving in a second file: *a corpus is worth re-reading for the question it never asked.*
+Cut mid-digit is `12` of `125`, and the decimal point is the one cut where the two languages'
+notions of a number come apart.
+
+The second finding is a boundary, in the branch this document spends the most words on:
+**`Overflow::happened()` called a prompt that exactly filled the window an overflow.** `>` and `>=`
+both passed, so the one thing that branch must not do — "a guess here compacts a conversation that
+was fine" — was not written down. A conversation billed at exactly the window was answered; it fits.
+
+What the property test asserts, and why it is a property rather than another row in `fragments()`:
+for every prefix of a valid document, what comes back may hold less than the whole, and may hold a
+value still being written, and may hold nothing — but it may never invent a key or contradict one,
+which is exactly what a mis-placed safe end produces. The existing monotonic test could not see any
+of this: it counts keys, and a wrong safe end counts the same keys while holding the wrong values.
+*An assertion on how many is not an assertion on which.* The documents are chosen for the one shape
+`fragments()` has no row for — a bracket that **closes** mid-document, which is where `open()` and
+`close()` differ at all.
+
+That took `PartialJson` from 32 survivors to 23 and `Overflow` from 4 to 3, and every one of the 26
+left has a reason: four are `$x = false;` initialisers whose deletion **warns**, so `failOnWarning`
+kills them where the shim does not (probed, not assumed — `Undefined variable $inString` on the line
+that reads it); the rest are `?? null` against `''` in front of an `isset()`, and `>= 0` against
+`> 0` on an offset that can only be 0 for a document not starting with `{`, which `parse()` answers
+with `[]` either way.
+
+Regression tests: `PartialJsonTest::testEveryPrefixSaysPartOfWhatTheWholeCallSaysAndNothingElse` over
+six documents and every prefix of each, and
+`OverflowTest::testAPromptThatExactlyFillsTheWindowIsNotAnOverflow`, which asserts both sides of the
+boundary so the fix cannot become "never mind the silent case".
+
+**`JsonSchema`'s 40 are not triaged yet**, and the shape to expect is this one again: the AJV corpus
+is gone, the file is 528 lines of validation with 38 tests over it, and the survivors cluster in the
+bounds (`lt`/`gt` on `minimum`, `maxItems`, `maxLength`) — which is precisely where an off-by-one is
+a correction a model cannot act on.
+
 ### A space that is not U+0020 emptied the search box
 
 `Utils\Fuzzy` is what `/resume`'s searchable session list and `--list-models` filter through, and

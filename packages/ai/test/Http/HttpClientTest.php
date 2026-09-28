@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Test\Http;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\HttpError;
@@ -192,5 +193,164 @@ final class HttpClientTest extends TestCase
             'message_start|{"type":"message_start"}',
             'content_block_delta|{"text":"Hi"}',
         ], $events);
+    }
+
+    // ---- following a redirect ----------------------------------------------------
+    //
+    // `follow()` also has four cases in `ToolInstallerTest`, where the method was added
+    // for the download. What is here is what neither of the two callers happened to
+    // exercise, and the rules `follow()`'s own docblock states.
+
+    /**
+     * @param 'GET'|'POST' $method    what the second request should be made with
+     * @param bool         $keepsBody whether the body should still be attached to it
+     */
+    #[DataProvider('redirectsAndWhatTheyDoToTheMethod')]
+    public function testARedirectDecidesWhetherTheMethodAndItsBodySurvive(
+        int $status,
+        string $method,
+        bool $keepsBody,
+    ): void {
+        $target = new CannedServer();
+        $targetUrl = $target->start(["HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"]);
+
+        $url = $this->server->start(
+            ["HTTP/1.1 {$status} Redirect\r\nLocation: {$targetUrl}\r\nContent-Length: 0\r\n\r\n"],
+        );
+
+        $body = Async::run(static fn (): string => (new HttpClient(5.0))
+            ->follow(new Request('POST', $url, ['Content-Type' => 'application/json'], '{"a":1}'))
+            ->body->all());
+
+        $this->assertSame('ok', $body);
+        $this->assertStringContainsString("{$method} / HTTP/1.1", $target->receivedHead());
+
+        if ($keepsBody) {
+            $this->assertStringContainsString('{"a":1}', $target->received());
+            $this->assertStringContainsString('content-length: 7', $target->receivedHead());
+        } else {
+            $this->assertStringNotContainsString('{"a":1}', $target->received());
+            $this->assertStringNotContainsString('content-length:', $target->receivedHead());
+        }
+    }
+
+    /** @return iterable<string, array{int, string, bool}> */
+    public static function redirectsAndWhatTheyDoToTheMethod(): iterable
+    {
+        // What every browser does and every server expects: the first three turn a POST
+        // into a GET, and the two that exist to avoid that keep both method and body.
+        yield '301 moved permanently' => [301, 'GET', false];
+        yield '302 found' => [302, 'GET', false];
+        yield '303 see other' => [303, 'GET', false];
+        yield '307 temporary redirect' => [307, 'POST', true];
+        yield '308 permanent redirect' => [308, 'POST', true];
+    }
+
+    public function testALocationWithNoSlashOnItIsResolvedAgainstTheDirectory(): void
+    {
+        // `Location: real.tar.gz` against `/releases/download/v1/tool.tar.gz` is the
+        // sibling file, not the root — so the server answers every hop with the same
+        // redirect and what is being asserted is where the second request went.
+        $url = $this->server->start(
+            ["HTTP/1.1 302 Found\r\nLocation: real.tar.gz\r\nContent-Length: 0\r\n\r\n"],
+        );
+
+        $this->assertThrows(
+            HttpError::class,
+            static fn () => Async::run(static fn () => (new HttpClient(5.0))
+                ->follow(new Request('GET', $url . 'releases/download/v1/tool.tar.gz'))),
+            'Too many redirects',
+        );
+
+        $this->assertStringContainsString(
+            'GET /releases/download/v1/real.tar.gz HTTP/1.1',
+            $this->server->received(),
+        );
+    }
+
+    public function testFiveIsHowManyRedirectsAreFollowedAndNotHowManyRequestsGoOut(): void
+    {
+        $url = $this->server->start(["HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\n\r\n"]);
+
+        $this->assertThrows(
+            HttpError::class,
+            static fn () => Async::run(static fn () => (new HttpClient(5.0))->follow(new Request('GET', $url))),
+            'Too many redirects',
+        );
+
+        // MAX_REDIRECTS is five, so six requests leave: the original and five more.
+        $this->assertSame(6, substr_count($this->server->received(), ' HTTP/1.1'));
+    }
+
+    // ---- the failures that are the caller's fault, and the ones that are the wire's ----
+
+    public function testAUrlWithNoHostIsRefusedByName(): void
+    {
+        $this->assertThrows(
+            HttpError::class,
+            static fn () => Async::run(static fn () => (new HttpClient())->send(new Request('GET', '/just/a/path'))),
+            'Cannot parse URL: "/just/a/path"',
+        );
+    }
+
+    public function testASchemeThisCannotSpeakIsRefusedByName(): void
+    {
+        $this->assertThrows(
+            HttpError::class,
+            static fn () => Async::run(
+                static fn () => (new HttpClient())->send(new Request('GET', 'ftp://example.invalid/x')),
+            ),
+            'Unsupported scheme "ftp"',
+        );
+    }
+
+    public function testTheHostHeaderNamesThePortWhenItIsNotTheDefaultOne(): void
+    {
+        $url = $this->server->start(["HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"]);
+        $port = (int) substr($url, (int) strrpos(rtrim($url, '/'), ':') + 1);
+
+        Async::run(static fn () => (new HttpClient())->send(new Request('GET', $url))->body->all());
+
+        // The default-port half of the rule — a bare host for :80 and :443 — needs a
+        // server on one of those ports, which a test cannot bind.
+        $this->assertStringContainsString("host: 127.0.0.1:{$port}", $this->server->receivedHead());
+    }
+
+    public function testAHeaderLineWithNoColonInItIsRefused(): void
+    {
+        $url = $this->server->start(["HTTP/1.1 200 OK\r\nthis line has no colon\r\n\r\n"]);
+
+        $this->assertThrows(
+            HttpError::class,
+            static fn () => Async::run(static fn () => (new HttpClient())->send(new Request('GET', $url))),
+            'Malformed header line: "this line has no colon"',
+        );
+    }
+
+    public function testAResponseHeadBiggerThanTheLimitIsRefused(): void
+    {
+        // 80KB of header bytes and no end to them. In 4KB pieces because a single
+        // fwrite that size comes back short — the trap this file's own renderer has.
+        $url = $this->server->start(array_fill(0, 20, str_repeat('x', 4096)));
+
+        $this->assertThrows(
+            HttpError::class,
+            static fn () => Async::run(static fn () => (new HttpClient(5.0))->send(new Request('GET', $url))),
+            'Response head exceeds 65536 bytes',
+        );
+    }
+
+    public function testAHeadThatOnlyReachesTheLimitIsTruncatedRatherThanTooBig(): void
+    {
+        // Exactly MAX_HEAD_BYTES and then the hang-up. The size guard must not fire on
+        // the boundary, so what comes back names the truncation — which is also the only
+        // test that reaches the truncation message at all.
+        $url = $this->server->start(array_fill(0, 16, str_repeat('x', 4096)));
+
+        $this->assertThrows(
+            HttpError::class,
+            static fn () => Async::run(static fn () => (new HttpClient(5.0))->send(new Request('GET', $url))),
+            'Connection closed before the response head was complete',
+        );
     }
 }

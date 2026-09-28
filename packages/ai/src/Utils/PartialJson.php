@@ -27,6 +27,11 @@ namespace Pig\Ai\Utils;
  *   reads as `const ` here and `const` there. This value exists to be looked at while it fills up,
  *   the complete parse at the end is identical either way, and dropping what the model actually
  *   sent is the stranger of the two.
+ *
+ * That corpus had "numbers cut mid-digit" in it and still missed a number cut at its **decimal
+ * point**, which is the one prefix where PHP's idea of a number and JSON's disagree — see
+ * `isCompleteLiteral()`. It was found by a mutation sweep instead, and the lesson is the one the
+ * traps already state about corpora: a corpus answers the questions it was given.
  */
 final class PartialJson
 {
@@ -150,12 +155,25 @@ final class PartialJson
             };
         }
 
-        // A bare token running to the end: keep it if it already reads as a value. A number
-        // may still be growing — "12" of "125" — so the preview can be briefly wrong, which
-        // is the trade partial-json makes too, and the final parse corrects it.
-        if ($tokenStart >= 0 && self::isCompleteLiteral(substr($json, $tokenStart))) {
-            $safeEnd = $length;
-            $safeStack = $stack;
+        // A bare token running to the end: keep the longest prefix of it that already reads as
+        // a value. Usually that is the whole token. A number may still be growing — "12" of
+        // "125" — so the preview can be briefly wrong, which is the trade partial-json makes
+        // too, and the final parse corrects it.
+        //
+        // **Walking back matters for one byte of every float.** `0.` is not a JSON number, so
+        // without this the token contributes nothing and the pair it belongs to drops out of
+        // the object until the next digit lands — `{"a":1,"temperature":0.` read as `{"a":1}`
+        // where `{"a":1,"temperature":0}` is available and is what the byte before and the byte
+        // after both say. Being briefly wrong about a value is this method's stated trade;
+        // taking a key off the screen and putting it back is not.
+        if ($tokenStart >= 0) {
+            for ($size = $length - $tokenStart; $size > 0; $size--) {
+                if (self::isCompleteLiteral(substr($json, $tokenStart, $size))) {
+                    $safeEnd = $tokenStart + $size;
+                    $safeStack = $stack;
+                    break;
+                }
+            }
         }
 
         return [
@@ -246,12 +264,31 @@ final class PartialJson
         return strpos("-+.0123456789eEtrufalsn", $character) !== false;
     }
 
+    /**
+     * Is this bare token a value in its own right, or one still being written?
+     *
+     * **JSON's number grammar, not PHP's.** `is_numeric()` was here, and the two disagree on
+     * exactly one shape a real stream produces: a number cut at its decimal point. PHP reads
+     * `0.` and `-12.` as numbers and JSON does not, so the safe end advanced onto a document
+     * `json_decode()` then refused — and with no candidate left, the whole object came back as
+     * `[]`. `{"path":"/tmp/a.php","temperature":0.` read as nothing with the path already in
+     * hand. On screen that is one blank frame in the middle of every tool call carrying a
+     * float; if the turn is interrupted at that byte it is worse than a flicker, because the
+     * arguments a provider is then sent are `[]` rather than the keys that had arrived.
+     *
+     * The other places the two disagree — `+12`, `.5`, `012`, whitespace on either side — are
+     * not prefixes of any valid JSON number, so no stream arrives at one. Refusing them costs
+     * nothing and leaves the earlier keys standing instead of building a repair that cannot
+     * parse, which is the same trade the decimal point makes.
+     *
+     * `\z` and not `$`, because `$` forgives a trailing newline — the trap has its own entry.
+     */
     private static function isCompleteLiteral(string $token): bool
     {
         if ($token === 'true' || $token === 'false' || $token === 'null') {
             return true;
         }
 
-        return is_numeric($token);
+        return preg_match('/^-?(0|[1-9]\d*)(\.\d+)?([eE][-+]?\d+)?\z/', $token) === 1;
     }
 }
