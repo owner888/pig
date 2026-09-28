@@ -633,7 +633,8 @@ final class OpenAiResponses
 
                 $items[] = [
                     'type' => 'function_call',
-                    'id' => $itemId,
+                    // Left out for a call this API never issued — see `splitIds()`.
+                    ...($itemId === null ? [] : ['id' => $itemId]),
                     'call_id' => $callId,
                     'name' => $block->name,
                     // `{}` and not `[]` — see the same line in `OpenAiCompletions`.
@@ -714,14 +715,33 @@ final class OpenAiResponses
         return $callId . '|' . $itemId;
     }
 
-    /** @return array{0: string, 1: string} */
+    /**
+     * The call id, and the item's own id when this call came from here.
+     *
+     * **A call from another provider has one id, and the item id is then null rather than a copy
+     * of it** — because OpenAI validates the *shape* of `id`: it must begin with `fc`. Reusing the
+     * call id gets `400 Invalid 'input[1].id': 'toolu_…'. Expected an ID that begins with 'fc'`,
+     * which is a whole conversation refused, and it is what pig did until a live run said so. The
+     * sentence that used to be here — "reusing it for both is what upstream does, and OpenAI only
+     * ever compares it with itself" — was wrong in both halves.
+     *
+     * Upstream writes `id: toolCall.id.split("|")[1]`, and for an id with no `|` that is
+     * **`undefined`**, which `JSON.stringify` leaves out of the object entirely. So upstream sends
+     * no `id` at all here and OpenAI accepts the item. PHP has no `undefined` and no index that
+     * evaluates to a missing field, so the omission has to be deliberate — *the third shape from
+     * CLAUDE.md's index, on a value that does not exist in one of the two languages.*
+     *
+     * Which conversations this reaches: a dangling call `TransformMessages` invented a result for,
+     * and any history carried over from another provider — `/model` from Anthropic to gpt-5 with a
+     * tool call in it, which is the case `TransformMessages` exists to make possible.
+     *
+     * @return array{0: string, 1: string|null}
+     */
     private function splitIds(string $id): array
     {
         $at = strpos($id, '|');
 
-        // A call from another provider has one id. Reusing it for both is what upstream
-        // does, and OpenAI only ever compares it with itself.
-        return $at === false ? [$id, $id] : [substr($id, 0, $at), substr($id, $at + 1)];
+        return $at === false ? [$id, null] : [substr($id, 0, $at), substr($id, $at + 1)];
     }
 
     /**

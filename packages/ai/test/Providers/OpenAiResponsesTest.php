@@ -427,7 +427,20 @@ final class OpenAiResponsesTest extends TestCase
         $this->assertSame('call_1', $input[2]['call_id']);
     }
 
-    public function testACallFromAnotherProviderHasOneIdAndIsUsedTwice(): void
+    /**
+     * A call from another provider has one id, and the item id is left out rather than copied.
+     *
+     * OpenAI validates the *shape* of `id` — it must begin with `fc` — so sending the call id
+     * there is `400 Invalid 'input[1].id'` and the whole conversation is refused. Found by running
+     * `test/live.php` against the real API; the test that used to be here asserted the id was used
+     * twice, which is what the code did rather than what the caller needs, and it held the bug in
+     * place. Upstream sends `split("|")[1]`, which is `undefined` for a foreign id and disappears
+     * from the JSON — an omission PHP has to make on purpose.
+     *
+     * What this is the fix for: `/model` from Anthropic to gpt-5 with a tool call in the history,
+     * and a dangling call `TransformMessages` invented a result for.
+     */
+    public function testACallFromAnotherProviderSendsNoItemIdAtAll(): void
     {
         // What `/model` leaves behind when it switches mid-conversation.
         $context = new Context([
@@ -440,8 +453,10 @@ final class OpenAiResponsesTest extends TestCase
 
         $input = $this->server->receivedJson()['input'];
 
-        $this->assertSame('toolu_abc', $input[1]['id']);
+        $this->assertArrayNotHasKey('id', $input[1]);
         $this->assertSame('toolu_abc', $input[1]['call_id']);
+
+        // The result is addressed by `call_id` alone in both cases, so it is unaffected.
         $this->assertSame('toolu_abc', $input[2]['call_id']);
     }
 

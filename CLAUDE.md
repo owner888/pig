@@ -2138,18 +2138,44 @@ compaction going. That last one settles the question the canned-server read left
 earlier: pig drops an empty message and sends `messages: []`, exactly as upstream does, and Anthropic
 says no. Both halves were predicted; only the wording needed a call.
 
-Two things the run is *not*. It is **one provider of five**: from this container and from the
-desktop bridge alike, only `api.anthropic.com` is allowlisted — every other provider host answers
-`CONNECT tunnel failed, 403` — so OpenAI, Google, Groq, xAI, Cerebras, z.ai, Mistral and Copilot are
-untested against a real endpoint and their protocol code rests on canned servers alone. And it is
-**not a one-off**: the numbers above are worth re-running rather than quoting, which is what the
-script is for.
+**Then the developer ran it on a machine with three keys**, which is the half this container cannot
+reach: only `api.anthropic.com` is allowlisted here and on the desktop bridge alike, every other
+provider host answering `CONNECT tunnel failed, 403`. Anthropic, OpenAI and Google, 36 scenarios plus
+two handoffs, and **one real bug** — the entry below on a JavaScript index past the end, where a call
+from another provider reached the Responses API with an item id it validates the shape of, refusing
+the whole conversation. The two handoffs passed, which is what made it worth finding rather than
+obvious: `handoff anthropic → openai` carries no tool call, so the case that breaks is the one a
+conversation reaches by switching model *mid-tool-use*.
 
-One finding was the harness's own and is kept because of how it looked: a **1×1 PNG** is a valid
-PNG that Anthropic refuses with `400 Could not process image`. On screen that is indistinguishable
-from a provider rejecting pig's image encoding. 16×16 passes. *A live harness can fail for reasons
-that have nothing to do with the thing under test, and the first failure is worth suspecting in the
-harness before the port.*
+Two things the run said about pig that were not failures and are worth keeping: `gpt-5-mini` answers
+an empty message rather than refusing it, where Anthropic refuses — the two providers' own choice,
+reached by pig's faithful reproduction of upstream's split behaviour — and the Responses API reports
+no usage before the final chunk, so an aborted turn there has none, exactly as upstream's
+`tokens.test.ts` documents.
+
+**Three of the four failures were the harness**, and all three are the same lesson from different
+angles, so the fixes are commented where they are rather than quietly applied:
+
+- **A 1×1 PNG** is a valid PNG that Anthropic refuses with `400 Could not process image` — on screen
+  indistinguishable from a provider rejecting pig's image encoding. 16×16 passes.
+- **A fixed 1.1MB prompt** overflows Anthropic's 200k window and fits comfortably inside gpt-5-mini's
+  400k and Gemini's 1M, so two providers came back "accepted a prompt larger than its window" for a
+  prompt that was nothing of the kind. Sized from `$model->contextWindow` now — and with spaced
+  single letters rather than prose, because four characters per token is `Compaction`'s estimate for
+  English, which is about 4.5, so sizing that way errs *under* the window and would have reported the
+  wrong thing a second time.
+- **A 64-token budget** on a reasoning model is spent on thinking, so the turn stops at the limit with
+  no text in it and the scenario said `no text arrived as deltas` — a sentence that reads like a
+  protocol fault. 512 now, and the failure message names the stop reason and the block kinds, so the
+  next one cannot be mistaken the same way. (A one-token budget was the same mistake elsewhere: the
+  Responses API refuses `max_output_tokens` below 16 outright.)
+
+*A live harness can fail for reasons that have nothing to do with the thing under test, and the first
+failure is worth suspecting in the harness before the port.* Three of four, on the first run.
+
+Still untested against a real endpoint: Groq, xAI, Cerebras, z.ai, Mistral and Copilot — their
+protocol code rests on canned servers alone. And none of this is a one-off: the numbers here are
+worth re-running rather than quoting, which is what the script is for.
 
 ### Talking to a gateway instead of a provider
 
@@ -5588,6 +5614,43 @@ it is a separate entry point and a public one. The rule this is an instance of: 
 enough to turn any failure into a message has to be narrower than the argument checks**, or every
 programming error becomes conversation. Nothing in pig relied on the old behaviour; the suite was
 green before the tests for it were written, which is exactly why it had survived.
+
+### A JavaScript index past the end is a field that disappears, and PHP has no such thing
+
+The first find from running against a real API rather than a canned one, and it is the third shape
+from the index in a guise the six rows of that table do not cover: **`undefined`**.
+
+A tool call on the Responses API has two ids — `call_id` addresses the result, `id` is the item's own
+— so pig carries them joined as `call_id|id`. A call from *another* provider has one id, and
+`splitIds()` used it for both, with a sentence on it that was wrong in both halves: *"Reusing it for
+both is what upstream does, and OpenAI only ever compares it with itself."* What the live run said:
+
+```
+NO  dangling tool call   refused: openai returned 400:
+    Invalid 'input[1].id': 'call_abandoned_1'. Expected an ID that begins with 'fc'.
+```
+
+OpenAI validates the **shape** of `id`. And upstream does not reuse anything: it writes
+`id: toolCall.id.split("|")[1]`, which for an id with no `|` is `undefined` — and `JSON.stringify`
+**leaves an `undefined` field out of the object entirely**. So upstream sends no `id` at all and the
+item is accepted. PHP has no value that makes a key vanish, so the omission has to be written on
+purpose: `splitIds()` answers `null` for the item id and the emission spreads in nothing.
+
+**Which conversations this refused, whole:** `/model` from Anthropic to gpt-5 with a tool call in the
+history, and a dangling call `TransformMessages` invented a result for — that is, both of the cases
+`TransformMessages` exists to make possible, against the one API that checks. The result item is
+unaffected, because it is addressed by `call_id` alone.
+
+**A test was pinning it.** `testACallFromAnotherProviderHasOneIdAndIsUsedTwice` asserted the id
+appeared twice, which is what the code did rather than what the caller needs — the `'ripgrep exited'`
+shape, and the reason the canned suite was green while the API said no. It is
+`testACallFromAnotherProviderSendsNoItemIdAtAll` now, and putting the copied id back turns it red.
+
+The rule to carry: **when porting a JavaScript expression that can produce `undefined`, ask what the
+JSON looks like, not what the variable holds.** `split()` past the end, an array index out of range,
+a missing property and a function with no return all give `undefined`, and every one of them is an
+absent field once it is serialised. PHP's nearest equivalents — `null`, `''`, `false` — are all
+present fields with values, and a provider that validates its input can tell the difference.
 
 ### An empty arguments list went out as `[]`, which is not an object
 

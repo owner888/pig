@@ -66,10 +66,10 @@ const MODELS = [
     'google' => 'gemini-2.5-flash',
     'groq' => 'llama-3.3-70b-versatile',
     'xai' => 'grok-3-fast',
-    'cerebras' => 'llama3.1-8b',
+    'cerebras' => 'gpt-oss-120b',
     'zai' => 'glm-4.5-flash',
     'mistral' => 'mistral-small-latest',
-    'github-copilot' => 'gpt-4o',
+    'github-copilot' => 'gpt-4.1',
 ];
 
 /**
@@ -195,16 +195,21 @@ final class Live
     private function events(Model $model): string
     {
         $seen = [];
+        $message = null;
 
-        Async::run(function () use ($model, &$seen): void {
+        Async::run(function () use ($model, &$seen, &$message): void {
+            // **512 and not 64.** A reasoning model spends the budget on thinking first, so a tight
+            // one produces a turn that stops at the limit with no text in it at all — which the
+            // first version of this reported as "no text arrived as deltas", a sentence that reads
+            // like a protocol fault and was a budget.
             $stream = Stream::simple($model, new Context([new UserMessage('Count: one two three')]),
-                new SimpleStreamOptions(maxTokens: 64, apiKey: $this->key($model)));
+                new SimpleStreamOptions(maxTokens: 512, apiKey: $this->key($model)));
 
             foreach ($stream as $event) {
                 $seen[] = (new ReflectionClass($event))->getShortName();
             }
 
-            $stream->result()->await();
+            $message = $stream->result()->await();
         });
 
         $first = $seen[0] ?? '';
@@ -218,7 +223,20 @@ final class Live
             return "the last event was {$last}, not DoneEvent";
         }
 
-        return in_array('TextDeltaEvent', $seen, true) ? 'ok' : 'no text arrived as deltas';
+        if (in_array('TextDeltaEvent', $seen, true)) {
+            return 'ok';
+        }
+
+        // Say enough to tell a protocol fault from a turn that had nothing to say.
+        return sprintf(
+            'no text arrived as deltas — stopped as %s, blocks: %s, events: %s',
+            $message?->stopReason->value ?? 'nothing',
+            implode(', ', array_map(
+                static fn (object $b): string => (new ReflectionClass($b))->getShortName(),
+                $message?->content ?? [],
+            )) ?: 'none',
+            implode(' ', array_unique($seen)),
+        );
     }
 
     private function tools(Model $model): string
@@ -397,14 +415,18 @@ final class Live
 
     private function truncated(Model $model): string
     {
-        // One token of room, so the answer cannot finish. Every provider has its own word for it
-        // and `Stream` maps them all onto one `StopReason`; a provider whose word changed would
-        // otherwise come back as a plain stop and look like a model with nothing to say.
+        // Sixteen tokens of room, so the answer cannot finish. One was the first try and the
+        // Responses API refuses it outright — `max_output_tokens` has a minimum of 16 — so the
+        // scenario was answering a question about validation rather than about stop reasons.
+        //
+        // Every provider has its own word for a truncated answer and `Stream` maps them all onto
+        // one `StopReason`; a provider whose word changed would otherwise come back as a plain stop
+        // and look like a model with nothing to say.
         $message = Async::run(function () use ($model): AssistantMessage {
             $stream = Stream::simple(
                 $model,
                 new Context([new UserMessage('Write a paragraph about the sea.')]),
-                new SimpleStreamOptions(maxTokens: 1, apiKey: $this->key($model)),
+                new SimpleStreamOptions(maxTokens: 16, apiKey: $this->key($model)),
             );
 
             foreach ($stream as $ignored) {
@@ -415,8 +437,8 @@ final class Live
         });
 
         if ($message->stopReason === StopReason::Error) {
-            // Some providers refuse a one-token budget outright, which is an answer too.
-            return 'ok, refused a one-token budget: ' . self::oneLine((string) $message->errorMessage);
+            // A provider that refuses the budget itself is an answer too.
+            return 'ok, refused a sixteen-token budget: ' . self::oneLine((string) $message->errorMessage);
         }
 
         return $message->stopReason === StopReason::Length
@@ -499,7 +521,19 @@ final class Live
         // Costs nothing: it is refused before it is billed. `Ai\Utils\Overflow`'s table was built
         // from what each provider says when this happens, and a pattern with no live example
         // beside it is a guess that compacts a conversation which was fine.
-        $huge = str_repeat('The quick brown fox jumps over the lazy dog. ', 25_000);
+        //
+        // **Sized from the model's own window**, which the first version of this was not: a fixed
+        // 1.1MB string overflows Anthropic's 200k and sits comfortably inside gpt-5-mini's 400k and
+        // Gemini's 1M, so two providers came back "accepted a prompt larger than its window" when
+        // the prompt was nothing of the kind.
+        //
+        // Single letters rather than prose, because the estimate has to err the *safe* way. Ordinary
+        // English is about 4.5 characters to a token, so `Compaction`'s four-per-token would size a
+        // prompt **under** the window and this would report the wrong thing again; spaced letters
+        // are close to two, so three characters per token of window is comfortably over it — and it
+        // keeps a 1M-token model's prompt at 3MB rather than the 8MB prose would need to upload.
+        $run = 'a b c d e f g h i j ';
+        $huge = str_repeat($run, (int) ceil($model->contextWindow * 3 / strlen($run)));
         $message = $this->answer($model, new Context([new UserMessage($huge)]));
 
         if ($message->stopReason !== StopReason::Error) {
