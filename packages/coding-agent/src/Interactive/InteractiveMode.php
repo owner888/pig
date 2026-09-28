@@ -313,6 +313,7 @@ final class InteractiveMode
         $this->layout();
         $this->bindKeys();
         $this->bindEditor();
+        $this->reportLoopFailures();
         $this->session->subscribe($this->onEvent(...));
 
         $this->replay();
@@ -482,6 +483,40 @@ final class InteractiveMode
     }
 
     // ---- putting it on the screen ------------------------------------------------------
+
+    /**
+     * A throw out of a loop callback becomes a line in the transcript instead of the end.
+     *
+     * `Loop` rethrows by default, and this is the caller that says otherwise — the one place in
+     * pig with somewhere to report to. What it buys is the five entries in the traps that all
+     * begin the same way: a render that threw took the **whole session** with it, because
+     * `render()` runs inside the loop's own callback and there was nothing above it to catch.
+     * Each of those was fixed at its source; this is the net under the next one.
+     *
+     * **Deduplicated by message, and that is not a nicety.** A `render()` that throws throws
+     * again on the next tick, so without this the transcript fills with one line per frame and
+     * the thing it is trying to tell you scrolls away — the same reason
+     * `ToolExecutionComponent`'s renderer fallback reports once per call rather than per draw.
+     *
+     * The session stays up, which is the whole point and also the risk: a component that cannot
+     * draw will keep not drawing, and the person sees a red line rather than a crash. That is
+     * the trade the developer chose, and it is the one workerman makes.
+     */
+    private function reportLoopFailures(): void
+    {
+        $said = [];
+
+        Loop::get()->setErrorHandler(function (Throwable $error) use (&$said): void {
+            $message = $error->getMessage();
+
+            if (isset($said[$message])) {
+                return;
+            }
+
+            $said[$message] = true;
+            $this->sayError($message);
+        });
+    }
 
     private function layout(): void
     {

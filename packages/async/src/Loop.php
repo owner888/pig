@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\Async;
 
 use Closure;
+use Throwable;
 
 /**
  * Single-threaded event loop: stream readiness, timers, deferred callbacks.
@@ -37,6 +38,9 @@ final class Loop
     private int $nextId = 0;
 
     private bool $stopped = false;
+
+    /** @var Closure(Throwable): void|null */
+    private ?Closure $onError = null;
 
     public static function get(): self
     {
@@ -146,6 +150,34 @@ final class Loop
     }
 
     /**
+     * Where a throw out of a callback goes, instead of out of `run()`.
+     *
+     * workerman's `setErrorHandler()`, and the reason pig wants it is written five times over in
+     * the traps: "runs inside the loop's own input callback, so there is nothing above it to
+     * catch" is why one byte that is not UTF-8 in a tool's output, a `/settings` hint one column
+     * too wide, and a cursor left inside a character each ended **the whole session** rather than
+     * one frame. Every one of those was fixed at its source; the class stayed open, because a
+     * render is the one thing here that runs on every tick and is written by whoever added a
+     * component.
+     *
+     * **With no handler set a throw still escapes**, which is the behaviour every test in this
+     * suite was written against and the honest default: a library that swallows by itself is the
+     * silent fallback this project forbids. An application that sets one is saying it has
+     * somewhere to report to — `InteractiveMode` has a transcript — and that a drawn error beats
+     * a stack trace over a half-drawn screen.
+     *
+     * Upstream has no counterpart: there is no `uncaughtException` handler anywhere in the four
+     * ported packages, so a throw inside a render ends the process there too. This is pig's own
+     * answer, taken from workerman rather than from pi.
+     *
+     * @param Closure(Throwable): void|null $handler null puts the rethrow back
+     */
+    public function setErrorHandler(?Closure $handler): void
+    {
+        $this->onError = $handler;
+    }
+
+    /**
      * Keep the next poll from blocking.
      *
      * A tick runs deferred callbacks and only then polls, so anything that finishes
@@ -159,6 +191,31 @@ final class Loop
         $this->queue[] = static fn () => null;
     }
 
+    /**
+     * Run one callback, and hand a throw to the error handler rather than out of the loop.
+     *
+     * Every callback the loop invokes goes through here — deferred, readable, writable, timer —
+     * because a throw from any of them is the same accident with the same consequence, and a
+     * wrapper on three of the four is the shape this document keeps calling *a rule present in
+     * one place and absent in its sibling*.
+     */
+    private function safely(Closure $callback, mixed ...$arguments): void
+    {
+        if ($this->onError === null) {
+            $callback(...$arguments);
+
+            return;
+        }
+
+        try {
+            $callback(...$arguments);
+        } catch (Throwable $error) {
+            // Not caught: a handler that throws is the application's own bug, and there is
+            // nowhere better for it to go than where an unhandled throw already went.
+            ($this->onError)($error);
+        }
+    }
+
     private function runQueue(): void
     {
         // Snapshot: callbacks queued by these callbacks belong to the next tick,
@@ -167,7 +224,7 @@ final class Loop
         $this->queue = [];
 
         foreach ($queue as $callback) {
-            $callback();
+            $this->safely($callback);
         }
     }
 
@@ -273,13 +330,13 @@ final class Loop
         foreach (array_keys($read) as $id) {
             // A callback may have cancelled a later watcher in this same batch.
             if (isset($this->readers[$id])) {
-                ($this->readers[$id]['callback'])($this->readers[$id]['stream']);
+                $this->safely($this->readers[$id]['callback'], $this->readers[$id]['stream']);
             }
         }
 
         foreach (array_keys($write) as $id) {
             if (isset($this->writers[$id])) {
-                ($this->writers[$id]['callback'])($this->writers[$id]['stream']);
+                $this->safely($this->writers[$id]['callback'], $this->writers[$id]['stream']);
             }
         }
     }
@@ -294,7 +351,7 @@ final class Loop
             }
 
             unset($this->timers[$id]);
-            ($timer['callback'])();
+            $this->safely($timer['callback']);
         }
     }
 }

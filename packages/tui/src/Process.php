@@ -180,8 +180,121 @@ final class Process
             return self::run($command, $timeout, $cwd);
         }
 
+        $collected = ['', ''];
+
+        [$exit, $stopped] = self::pump(
+            $command,
+            $timeout,
+            $cwd,
+            $signal,
+            static function (int $fd, string $chunk) use (&$collected): bool {
+                $collected[$fd - 1] .= $chunk;
+
+                return true;
+            },
+        );
+
+        return [$stopped ? self::STOPPED : $exit, $collected[0], $collected[1]];
+    }
+
+    /**
+     * Run a command on the loop and hand its output to $onLine as the lines arrive.
+     *
+     * `stream()` on the loop, and the pair is `run()`/`runAsync()` over again: a tool runs inside
+     * the agent's fiber, so a poll with `usleep()` there stops the keyboard, the spinner and
+     * escape for as long as the command takes. Measured on a command lasting half a second with a
+     * 20ms timer armed: the blocking one let the loop tick **0** times and this one lets it tick
+     * 24 of ~25.
+     *
+     * Upstream's `grep.ts` is an async `spawn`, so this is the shape the port was missing rather
+     * than one pig invented — its `find.ts` is `spawnSync`, which is the opposite case and why
+     * `FindTool` says what it says.
+     *
+     * With no fiber to suspend this is `stream()`, so a test calling a tool directly still gets
+     * the blocking version and nothing outside a session changes.
+     *
+     * @param list<string>          $command
+     * @param Closure(string): bool $onLine false to stop reading and kill the command
+     * @return array{0: int, 1: string} the exit code — STOPPED when $onLine asked to stop, when
+     *         the deadline passed or when the signal was raised — and its standard error
+     */
+    public static function streamAsync(
+        array $command,
+        Closure $onLine,
+        float $timeout = self::DEFAULT_TIMEOUT,
+        ?AbortSignal $signal = null,
+    ): array {
+        if ($command === []) {
+            throw new TuiError('Process::streamAsync() needs a command');
+        }
+
+        if (Fiber::getCurrent() === null) {
+            return self::stream($command, $onLine, $timeout);
+        }
+
+        $buffer = '';
+        $errors = '';
+
+        [$exit, $stopped] = self::pump(
+            $command,
+            $timeout,
+            null,
+            $signal,
+            static function (int $fd, string $chunk) use (&$buffer, &$errors, $onLine): bool {
+                if ($fd === 2) {
+                    // Kept, not just drained: a command that fails has said why on this pipe.
+                    $errors .= $chunk;
+
+                    return true;
+                }
+
+                $buffer .= $chunk;
+
+                // Only whole lines are delivered; the tail of a half-read line waits for the
+                // rest, because a caller parsing JSON per line cannot do anything with half.
+                while (($newline = strpos($buffer, "\n")) !== false) {
+                    $line = substr($buffer, 0, $newline);
+                    $buffer = substr($buffer, $newline + 1);
+
+                    if (!$onLine($line)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            },
+        );
+
+        // A last line with no newline after it, which `stream()` delivers the same way.
+        if (!$stopped && $buffer !== '') {
+            $onLine($buffer);
+        }
+
+        return [$stopped ? self::STOPPED : $exit, $errors];
+    }
+
+    /**
+     * The loop-side scaffolding `runAsync()` and `streamAsync()` share.
+     *
+     * A watcher per pipe, a timeout timer, an abort listener, and the wait for the **process**
+     * rather than for its pipes — every one of those has a reason written on `runAsync()` or
+     * `awaitFinish()`, and two copies of them would be two things that can come to disagree
+     * about what killing a command means. Extracted from `runAsync()`, whose cases pass
+     * unchanged, which is the evidence that it was an extraction and not a rewrite.
+     *
+     * @param list<string>               $command
+     * @param Closure(int, string): bool $onChunk the fd and the bytes; false kills the command
+     * @return array{0: int, 1: bool} the exit code, and whether this is what stopped it
+     */
+    private static function pump(
+        array $command,
+        float $timeout,
+        ?string $cwd,
+        ?AbortSignal $signal,
+        Closure $onChunk,
+    ): array {
         if ($signal?->aborted() ?? false) {
-            return [self::STOPPED, '', ''];
+            return [self::STOPPED, true];
         }
 
         set_error_handler(static fn (): bool => true);
@@ -193,10 +306,9 @@ final class Process
         }
 
         if (!is_resource($process)) {
-            return [self::STOPPED, '', ''];
+            return [self::STOPPED, true];
         }
 
-        $collected = ['', ''];
         $open = 2;
         $watchers = [];
         $finished = new Deferred();
@@ -221,32 +333,6 @@ final class Process
             }
         };
 
-        foreach ([1, 2] as $fd) {
-            stream_set_blocking($pipes[$fd], false);
-            $watchers[$fd] = Loop::get()->onReadable(
-                $pipes[$fd],
-                static function () use ($fd, &$collected, &$pipes, $close): void {
-                    $pipe = $pipes[$fd] ?? null;
-
-                    if (!is_resource($pipe)) {
-                        return;
-                    }
-
-                    $chunk = fread($pipe, self::READ_CHUNK);
-
-                    if ($chunk === false || $chunk === '') {
-                        if (feof($pipe)) {
-                            $close($fd);
-                        }
-
-                        return;
-                    }
-
-                    $collected[$fd - 1] .= $chunk;
-                },
-            );
-        }
-
         $stopped = false;
         $kill = static function () use (&$stopped, $process, $finished): void {
             $stopped = true;
@@ -264,6 +350,36 @@ final class Process
                 $finished->complete(null);
             }
         };
+
+        // After `$kill`, because a closure captures by value: a reader armed before it existed
+        // would hold null, and a line asking to stop would call nothing.
+        foreach ([1, 2] as $fd) {
+            stream_set_blocking($pipes[$fd], false);
+            $watchers[$fd] = Loop::get()->onReadable(
+                $pipes[$fd],
+                static function () use ($fd, &$pipes, $close, $onChunk, $kill): void {
+                    $pipe = $pipes[$fd] ?? null;
+
+                    if (!is_resource($pipe)) {
+                        return;
+                    }
+
+                    $chunk = fread($pipe, self::READ_CHUNK);
+
+                    if ($chunk === false || $chunk === '') {
+                        if (feof($pipe)) {
+                            $close($fd);
+                        }
+
+                        return;
+                    }
+
+                    if (!$onChunk($fd, $chunk)) {
+                        $kill();
+                    }
+                },
+            );
+        }
 
         $listener = $signal?->onAbort($kill);
         $timer = $timeout > 0
@@ -294,7 +410,7 @@ final class Process
             }
         }
 
-        return [$stopped ? self::STOPPED : $exit, $collected[0], $collected[1]];
+        return [$exit, $stopped];
     }
 
     /**

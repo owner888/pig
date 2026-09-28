@@ -3135,4 +3135,42 @@ final class InteractiveModeTest extends TestCase
         $this->type('hello');
         $this->assertStringContainsString('hello', $this->screen());
     }
+
+    // ---- a throw out of a loop callback ---------------------------------------------------
+
+    public function testAThrowFromInsideTheLoopIsDrawnRatherThanEndingTheSession(): void
+    {
+        // The other end of `Loop::setErrorHandler()`, and the reason it exists: five entries in
+        // the traps begin "runs inside the loop's own input callback, so there is nothing above
+        // it to catch", and each one is a small thing that took the whole session. `Loop`
+        // rethrows unless an application says otherwise; `start()` is what says otherwise.
+        $this->start();
+
+        Loop::get()->defer(static fn () => throw new RuntimeException('a component could not draw'));
+
+        self::turnTheLoop(5);
+
+        $this->assertStringContainsString('Error: a component could not draw', $this->screen());
+
+        // And the session is still usable, which is the whole point of not crashing.
+        $this->type('h');
+        $this->type('i');
+        $this->assertStringContainsString('hi', $this->screen());
+    }
+
+    public function testTheSameFailureEveryTickSaysSoOnceAndNotEveryTime(): void
+    {
+        // A `render()` that throws throws again next tick, so reporting every one fills the
+        // transcript with the same line and scrolls away the thing it is trying to say — the
+        // same rule `ToolExecutionComponent`'s renderer fallback follows per call.
+        $this->start();
+
+        foreach (range(1, 4) as $ignored) {
+            Loop::get()->defer(static fn () => throw new RuntimeException('the same thing twice'));
+        }
+
+        self::turnTheLoop(5);
+
+        $this->assertSame(1, substr_count($this->screen(), 'the same thing twice'));
+    }
 }

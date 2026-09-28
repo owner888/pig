@@ -6324,6 +6324,107 @@ Ten of workerman's fifteen methods are here under the same names — `onReadable
 | `repeat()` / `offRepeat()` | a callback that re-arms itself — `BorderedLoader`'s spinner and `Process::runAsync`'s poll. A second way to say "again in a moment" is what the rule at the top of this file forbids |
 | `onSignal()` / `offSignal()` | `pcntl_async_signals(true)` plus `pcntl_signal()` where the signal is wanted — `ProcessTerminal` for SIGWINCH, `InteractiveMode` for SIGCONT. Two users, neither of which wants the loop to own the table |
 | `deleteAllTimer()` | `Loop::reset()`, which tests use and nothing else does |
+| the `channel` socket pair | the `usleep()` branch in `poll()` — see below, where the two were measured against each other |
+
+**And the comparison paid for itself somewhere else entirely: `grep` and `find` froze the screen.**
+workerman's answer to "wait without blocking" is `Timer::add()` — register a callback and give the
+loop back — which pig has as `Loop::delay()` plus a `Deferred`, and as `Process::runAsync()` for a
+subprocess. Asking which callers actually use it found that **two of the four search tools do not**.
+Measured with a 20ms timer armed and a command that takes half a second:
+
+```
+Process::stream   (grep tool)    ran 0.50s, loop ticked  0 times (a free loop would tick ~25)
+Process::run      (find tool)    ran 0.50s, loop ticked  0 times
+Process::runAsync (hooks)        ran 0.50s, loop ticked 24 times
+```
+
+So an `rg` or an `fd` over a large tree stopped the loop for as long as it took: **no keystrokes, no
+spinner, no escape** — which is the entry above on a hook's command freezing everything a person can
+see, in a tool instead of a hook. And `bash` was never affected, because `Tools\Run` is on the loop
+with an `onReadable` per pipe and a `Deferred`: **pig has two subprocess runners and only one of
+them was on the loop**, which is the first shape from the index at the worst possible call site,
+since searching is what the system prompt tells the model to do instead of giving it more tools.
+
+**Then the obvious question — what does upstream do — and the answer is three different things,
+which is why it was worth asking before calling any of this a port defect:**
+
+| | upstream | pig |
+|---|---|---|
+| `grep` | `spawn(rgPath, …)` — **async** | blocked, through `Process::stream()` |
+| `find` | `spawnSync(fdPath, …)` — **blocking** | blocked, now async |
+| `bash` | `spawn` | async, `Tools\Run` |
+| the `@` picker | `spawnSync` in `autocomplete.ts` | blocking, with pig's own 2s cap |
+
+So `find` is the odd one out in **both** trees, and pig's fix there is a deliberate divergence
+rather than a rule it had failed to port — the same standing as `version_compare()` and the
+picker's timeout. **`grep` is the other way round: upstream is async and pig is not, so that one is
+a genuine port defect**, and the strongest argument for fixing it is that `grep.ts` already says
+what the answer looks like.
+
+`FindTool` is fixed by the one-word swap to `Process::runAsync()`, whose no-fiber fallback means a
+test calling the tool directly still gets the blocking version and nothing outside a session
+changes. **`GrepTool` needed a streaming async runner, which is `Process::streamAsync()`** — the
+developer's call, since it is new public surface, and taken once upstream's `grep.ts` had settled
+what the answer looks like. Four things about it:
+
+- **`runAsync()` and `streamAsync()` share one `pump()`.** A watcher per pipe, a timeout timer, an
+  abort listener and the wait for the *process* rather than for its pipes each have a reason
+  written on them, and two copies of that are two things that can come to disagree about what
+  killing a command means. Extracted from `runAsync()` with its cases passing unchanged, which is
+  the same evidence `GoogleShared`'s extraction rests on.
+- **The contract is `stream()`'s**, because a tool moved from one to the other: whole lines only
+  with the tail held back, `false` stops the reading there and then, standard error is kept rather
+  than drained, and a last line with no newline after it is still a line. All four asserted, because
+  a difference in any of them is a difference in what the model is told.
+- **The abort goes to the runner, not into the callback.** `GrepTool` used to call
+  `$signal?->throwIfAborted()` per line, which was right while the call was blocking and is a hazard
+  now: a throw from in there escapes a *loop* callback. The signal is passed to `streamAsync()`
+  instead, so escape kills `rg` promptly rather than at its next match, and the caller still sees
+  the throw from a `throwIfAborted()` after the call.
+- **No fiber means the blocking one**, as `runAsync()` does, so a test calling a tool directly is
+  unaffected.
+
+Regression tests at both ends, and the tool end was the one that mattered: `ProcessTest` proves
+`streamAsync()` leaves the loop free and keeps `stream()`'s contract, and swapping either tool back
+to the blocking runner **broke nothing at all** until
+`SearchToolsTest::testASearchDoesNotStopTheLoopWhileItRuns` existed — *wired at one end only*, in
+the fix for a bug of exactly that shape. It asserts a 1ms timer ticking during a real search over
+this repository: six to ten ticks either tool, against none when blocked.
+
+Two smaller ones found in the same sweep and left alone, because each has a reason to think about
+first: the `@` picker's `fd` goes through `Process::run()` from inside an *input callback* with no
+fiber to suspend, so making it async means spawning per keystroke rather than swapping a call —
+and upstream is `spawnSync` there as well, so pig is already the stricter of the two; and
+`openUrl()` blocks for up to two seconds opening a browser, which happens once per `/login`.
+
+**The `channel` is the one to have an argument about, and the argument came out for pig's side.**
+workerman's `Select` opens a `stream_socket_pair()` in its constructor and keeps one end
+permanently in the read array, for the reason its author gives plainly: *"stream_select does not
+allow $read, $write, $e to simultaneously be empty, otherwise it will error."* That is the exact
+constraint `poll()`'s `usleep()` branch exists for — PHP 8 raises
+`ValueError("No stream arrays were passed")` — so the two are answers to one question, and
+workerman's is the asynchronous one: `stream_select()` does the timing, and writing a byte to the
+other end interrupts a wait already under way.
+
+pig keeps the sleep, and the reason is that **the branch is only reached when nothing can
+interrupt it**. It runs exactly when no stream is armed — so there is no socket that could become
+ready, no keystroke that could arrive, and no callback that could run to create a timer, because a
+single thread is inside the wait. The only thing that ends it is the timer it was sized to. That is
+not an argument from taste; the one case that could refute it was measured:
+
+```
+a timer 2.0s out, no streams armed, SIGWINCH delivered at 0.1s from a child
+  signal-queued callback ran at 0.103s
+  run() returned at        2.000s
+```
+
+**A signal does interrupt the sleep** — `usleep()` returns on EINTR and the loop picks the queued
+work up on the next tick — so the resize-and-redraw path is already prompt, which was the only
+latency the channel would have removed. What is left for it to buy is one code path instead of two,
+against three real costs: two file descriptors held for the life of the process, an `isIdle()` that
+has to exclude the channel or `bin/pig` never exits, and a `Loop::reset()` that has to close the
+pair or 2,500 tests leak 5,000 descriptors. Worth revisiting if a mode ever waits with no watcher
+armed *and* something outside the loop has to end that wait; nothing does today.
 
 **And on two things pig is ahead of both**, which is worth stating because it is the same
 `version_compare()` rule one package over — where the reference is working around something, the
@@ -6359,15 +6460,41 @@ hint one column too wide on a narrow terminal; a cursor left inside a character 
 Every one was fixed at its source, correctly. The *class* is still open, and the next throw inside
 a `render()` ends `bin/pig` with a stack trace over a half-drawn screen.
 
-It is **not added here**, for the reason `Future::all()` is not: it is new public surface in
-`Pig\Async` and the shape is the whole question, so it is the developer's call and the first caller
-should decide it. The shape has three real decisions in it, which is why it is not a one-liner —
-does the loop carry on after a callback throws, or stop; is the report drawn once or on every frame
-(a `render()` that throws throws again next tick, which is the problem
-`ToolExecutionComponent`'s renderer fallback already solves with a once-per-call latch); and does
-a handler that swallows breach the no-silent-fallback rule or satisfy it by reporting. **The
-argument for having it is the five entries above; the argument against is that a handler which
-hides a broken renderer is worse than a crash that gets reported.**
+**Upstream has no answer to this either, which was checked rather than assumed**: there is no
+`process.on("uncaughtException")` or `unhandledRejection` anywhere in the four ported packages —
+the only `process.on` handlers in the whole tree are SIGINT and SIGTERM in `mom` and `pods`, both
+outside pig's scope. So a throw inside a render ends the process there too, and "upstream does it"
+is not available as an argument for. workerman is the only precedent, which made this entirely
+pig's own call rather than a port question — **and the developer's call was to take workerman's.**
+
+`Loop::setErrorHandler(?Closure)` is that, with a private `safely()` that every callback the loop
+invokes goes through. Three decisions came with it:
+
+- **With no handler set a throw still escapes.** That is what every test in the suite was written
+  against, and it is the honest default: a library that swallows by itself is the silent fallback
+  this project forbids. Setting one is an application saying it has somewhere to report to.
+- **All four sites, not three.** Deferred, timer, readable and writable are one accident four ways,
+  and a wrapper on three of them is the shape this document keeps finding. `LoopTest` has a case
+  per kind for that reason.
+- **The report is deduplicated by message, in the caller.** A `render()` that throws throws again
+  on the next tick, so reporting every one fills the transcript with one line per frame and scrolls
+  away the thing it is trying to say — the same rule `ToolExecutionComponent`'s renderer fallback
+  follows per call. `Loop` hands over every throw, which is its job; `InteractiveMode` decides what
+  to draw.
+
+`InteractiveMode::reportLoopFailures()` is the one caller, installed in `start()`: the throw becomes
+`Error: …` in the transcript and the session stays usable. That is the whole point and also the
+risk, stated plainly because it is the trade that was chosen: a component that cannot draw will keep
+not drawing, and what the person sees is a red line rather than a crash.
+
+Regression tests, and each end was mutated separately because *after wiring anything through, mutate
+each end, not the middle*: `LoopTest::testWithNoHandlerAThrowStillEscapesTheLoop`,
+`testAHandlerTakesAThrowFromAnyCallbackAndTheLoopCarriesOn` (four kinds),
+`testTheSameFailureEveryFrameIsOneLineAndNotOnePerFrame`,
+`InteractiveModeTest::testAThrowFromInsideTheLoopIsDrawnRatherThanEndingTheSession` — which also
+types afterwards, because a session that survived and cannot be used has not survived — and
+`testTheSameFailureEveryTickSaysSoOnceAndNotEveryTime`. Six mutations, six kills: unwrapping each of
+the four sites, removing the caller, and removing the dedupe.
 
 ### 478 mutations over `packages/async`, and a wait that was a spin
 

@@ -93,7 +93,13 @@ final class GrepTool implements AgentTool
         $shortened = false;
         $cache = [];
 
-        [$exit, $errors] = Process::stream(
+        // **`streamAsync()`, not `stream()`.** A tool runs inside the agent's fiber, which the
+        // loop is driving, and `stream()` polls with `usleep()` — so an `rg` over a large tree
+        // stopped the loop for its whole run: no keystrokes, no spinner, no escape. Measured on a
+        // half-second command with a 20ms timer armed, the blocking call let the loop tick 0
+        // times against 24 of ~25. Upstream's `grep.ts` is an async `spawn`, so this was the
+        // shape the port was missing — unlike `find.ts`, which is `spawnSync` there too.
+        [$exit, $errors] = Process::streamAsync(
             $this->command($rg, $arguments, $root),
             function (string $line) use (
                 &$lines,
@@ -104,10 +110,7 @@ final class GrepTool implements AgentTool
                 $context,
                 $root,
                 $searchingDirectory,
-                $signal,
             ): bool {
-                $signal?->throwIfAborted();
-
                 $match = self::parse($line);
 
                 if ($match === null) {
@@ -124,7 +127,14 @@ final class GrepTool implements AgentTool
                 return $matches < $limit;
             },
             self::TIMEOUT,
+            // The abort goes to the runner rather than into the callback. A throw from in there
+            // now escapes a *loop* callback, where nothing catches it and the session ends; and
+            // the kill is prompt either way, where checking per line only noticed when `rg` had
+            // something to say. `throwIfAborted()` below is what the caller still sees.
+            $signal,
         );
+
+        $signal?->throwIfAborted();
 
         // 0 is matches, 1 is none, STOPPED is us having had enough. Anything else is rg
         // objecting to the pattern, which the model needs to hear about rather than see

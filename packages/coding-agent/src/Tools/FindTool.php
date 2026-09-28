@@ -99,7 +99,21 @@ final class FindTool implements AgentTool
             $root,
         ];
 
-        [$exit, $output, $errors] = Process::run($command, self::TIMEOUT);
+        // **`runAsync()`, not `run()`, and this is a deliberate divergence.** A tool runs inside
+        // the agent's fiber, which the loop is driving, and `run()` polls with `usleep()` — so an
+        // `fd` over a large tree stopped the whole loop for as long as it took: no keystrokes, no
+        // spinner, no escape. Measured with a 20ms timer armed and a command that takes half a
+        // second: `run()` let the loop tick **0** times and `runAsync()` let it tick 24 of ~25.
+        //
+        // Upstream's `find.ts` is `spawnSync(fdPath, …)`, so it freezes its own event loop here
+        // too — this is not a rule pig failed to port, it is one upstream does not have. Its
+        // `grep.ts` is async `spawn`, and `bash.ts` is too, which is what makes `find` the odd
+        // one out in *both* trees. pig's `bash` was never affected, because `Tools\Run` is on the
+        // loop with an `onReadable` per pipe.
+        //
+        // With no fiber to suspend — a test calling the tool directly — `runAsync()` is `run()`,
+        // so nothing outside a session changes.
+        [$exit, $output, $errors] = Process::runAsync($command, self::TIMEOUT);
 
         // fd exits 0 when it found nothing, so a non-zero code is a real failure — most
         // often a pattern it would not accept. Reporting that as "no files found" sends

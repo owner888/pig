@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Pig\Async\Test;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use Pig\Async\AsyncError;
 use Pig\Async\Loop;
 use PHPUnit\Framework\TestCase;
 use Pig\Test\AssertsThrows;
+use RuntimeException;
+use Throwable;
 
 final class LoopTest extends TestCase
 {
@@ -196,6 +199,96 @@ final class LoopTest extends TestCase
 
         $this->assertThrows(AsyncError::class, fn () => $loop->tick(), "Reader {$watcher} watches a closed stream");
         $this->assertTrue(is_resource($peer));
+    }
+
+    public function testWithNoHandlerAThrowStillEscapesTheLoop(): void
+    {
+        // The default, and every test in this suite was written against it: a library that
+        // swallows by itself is the silent fallback this project forbids.
+        Loop::get()->defer(static fn () => throw new RuntimeException('boom'));
+
+        $problem = $this->assertThrows(RuntimeException::class, fn () => Loop::get()->run());
+
+        $this->assertSame('boom', $problem->getMessage());
+    }
+
+    #[DataProvider('everyKindOfCallback')]
+    public function testAHandlerTakesAThrowFromAnyCallbackAndTheLoopCarriesOn(string $kind): void
+    {
+        // All four, because a wrapper on three of them is the shape this repository keeps
+        // finding: deferred, timer, readable and writable are one accident four ways.
+        $seen = [];
+        Loop::get()->setErrorHandler(static function (Throwable $error) use (&$seen): void {
+            $seen[] = $error->getMessage();
+        });
+
+        $thrower = static fn () => throw new RuntimeException("from a {$kind}");
+        $pair = null;
+
+        if ($kind === 'deferred callback') {
+            Loop::get()->defer($thrower);
+        } elseif ($kind === 'timer') {
+            Loop::get()->delay(0.0, $thrower);
+        } else {
+            $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+            $id = '';
+
+            // Cancelled from inside, before the throw: a watcher left armed fires on every tick
+            // and the loop would never run out of work.
+            $callback = static function () use ($thrower, &$id): void {
+                Loop::get()->cancel($id);
+                $thrower();
+            };
+
+            if ($kind === 'readable watcher') {
+                fwrite($pair[1], 'x');
+                $id = Loop::get()->onReadable($pair[0], $callback);
+            } else {
+                $id = Loop::get()->onWritable($pair[0], $callback);
+            }
+        }
+
+        // `run()` returning at all is the assertion: it cannot, if the throw escaped its tick.
+        Loop::get()->run();
+
+        $this->assertSame(["from a {$kind}"], $seen);
+
+        foreach (is_array($pair) ? $pair : [] as $stream) {
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+        }
+    }
+
+    /** @return array<string, array{0: string}> */
+    public static function everyKindOfCallback(): array
+    {
+        return [
+            'deferred callback' => ['deferred callback'],
+            'timer' => ['timer'],
+            'readable watcher' => ['readable watcher'],
+            'writable watcher' => ['writable watcher'],
+        ];
+    }
+
+    public function testTheSameFailureEveryFrameIsOneLineAndNotOnePerFrame(): void
+    {
+        // What the interactive mode's handler is deduplicating, stated where the mechanism is:
+        // a `render()` that throws throws again next tick, so a handler that reports every time
+        // fills the transcript with the same line. `Loop` hands over every throw — that is its
+        // job — and the caller decides; this pins that it really does hand over every one.
+        $seen = 0;
+        Loop::get()->setErrorHandler(static function () use (&$seen): void {
+            $seen++;
+        });
+
+        foreach (range(1, 3) as $ignored) {
+            Loop::get()->defer(static fn () => throw new RuntimeException('the same thing'));
+        }
+
+        Loop::get()->run();
+
+        $this->assertSame(3, $seen);
     }
 
     public function testWaitingOnATimerWithNoStreamsSleepsRatherThanSpinning(): void

@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use Pig\Agent\AgentError;
+use Pig\Async\Async;
+use Pig\Async\Loop;
 use Pig\CodingAgent\Tools\ExternalTool;
 use Pig\CodingAgent\Tools\FindTool;
 use Pig\CodingAgent\Tools\GrepTool;
@@ -465,5 +468,59 @@ final class SearchToolsTest extends ToolTestCase
         );
 
         $this->assertStringNotContainsString('exited with code', $error->getMessage());
+    }
+
+    // ---- neither of them may stop the loop ------------------------------------------------
+
+    /**
+     * A search runs on the loop, so everything else keeps running while it does.
+     *
+     * **The end of the wire that the `Process` tests cannot see.** `ProcessTest` proves
+     * `streamAsync()` and `runAsync()` leave the loop free; it says nothing about whether these
+     * two tools call them, and swapping either back to the blocking runner broke no test at all
+     * until this one — which is the *wired at one end only* shape, in the fix for a bug of
+     * exactly that shape.
+     *
+     * The assertion is on a timer ticking during the search, because time and output are
+     * identical either way: what a blocking `rg` costs is the keyboard, the spinner and escape
+     * for as long as it runs. Over this repository both searches take 10–20ms and tick a 1ms
+     * timer six to ten times; blocked, they tick none.
+     *
+     * @param 'grep'|'find' $tool
+     */
+    #[DataProvider('bothSearchTools')]
+    public function testASearchDoesNotStopTheLoopWhileItRuns(string $tool, array $arguments): void
+    {
+        Loop::reset();
+
+        $ticks = 0;
+        $arm = function () use (&$arm, &$ticks): void {
+            Loop::get()->delay(0.001, function () use (&$arm, &$ticks): void {
+                $ticks++;
+                $arm();
+            });
+        };
+        $arm();
+
+        $root = dirname(__DIR__, 3);
+        $search = $tool === 'grep' ? new GrepTool($root) : new FindTool($root);
+        $result = null;
+
+        Async::run(static function () use ($search, $arguments, &$result): void {
+            $result = $search->execute('t', $arguments);
+        });
+
+        // It really did search, so this cannot pass by failing to run.
+        $this->assertNotNull($result);
+        $this->assertGreaterThan(0, $ticks, "the loop was blocked while {$tool} ran");
+    }
+
+    /** @return array<string, array{0: string, 1: array<string, mixed>}> */
+    public static function bothSearchTools(): array
+    {
+        return [
+            'grep' => ['grep', ['pattern' => 'function']],
+            'find' => ['find', ['pattern' => '*.php']],
+        ];
     }
 }

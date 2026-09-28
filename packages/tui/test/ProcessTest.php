@@ -290,5 +290,111 @@ final class ProcessTest extends TestCase
     public function testAnEmptyCommandIsRefused(): void
     {
         $this->assertThrows(TuiError::class, static fn () => Process::runAsync([]), 'needs a command');
+        $this->assertThrows(TuiError::class, static fn () => Process::streamAsync([], static fn () => true), 'needs a command');
+    }
+
+    // ---- streaming on the loop ------------------------------------------------------------
+
+    public function testStreamingOnTheLoopLeavesItFreeToDoAnythingElse(): void
+    {
+        // The whole point of the method, and the only assertion that can see it: `stream()` and
+        // `streamAsync()` take the same wall-clock time and deliver the same lines, so nothing
+        // about the output tells them apart. What differs is whether anything *else* can run —
+        // measured on this command, 0 ticks against 24, which for a `grep` over a large tree is
+        // the keyboard, the spinner and escape all dead until it finishes.
+        $ticks = 0;
+        $arm = function () use (&$arm, &$ticks): void {
+            Loop::get()->delay(0.02, function () use (&$arm, &$ticks): void {
+                $ticks++;
+                $arm();
+            });
+        };
+        $arm();
+
+        $lines = [];
+        Async::run(static function () use (&$lines): void {
+            Process::streamAsync(
+                ['sh', '-c', 'sleep 0.3; printf "done\n"'],
+                static function (string $line) use (&$lines): bool {
+                    $lines[] = $line;
+
+                    return true;
+                },
+                5.0,
+            );
+        });
+
+        // The command really did take its time, so this cannot pass by returning early.
+        $this->assertSame(['done'], $lines);
+        $this->assertGreaterThan(5, $ticks, 'the loop was blocked while the command ran');
+    }
+
+    public function testStreamingAsyncSplitsLinesStopsEarlyAndKeepsStandardError(): void
+    {
+        // The same contract as `stream()`, because `GrepTool` was moved from one to the other and
+        // a difference in any of these is a difference in what the model is told.
+        Async::run(function (): void {
+            $seen = [];
+            [$exit, $errors] = Process::streamAsync(
+                ['sh', '-c', 'printf "a\nb\nc\n"; echo oops >&2'],
+                static function (string $line) use (&$seen): bool {
+                    $seen[] = $line;
+
+                    return true;
+                },
+                5.0,
+            );
+
+            $this->assertSame(['a', 'b', 'c'], $seen);
+            $this->assertSame(0, $exit);
+            $this->assertSame('oops', trim($errors), 'standard error is kept, not just drained');
+
+            $enough = [];
+            [$stopped] = Process::streamAsync(
+                ['sh', '-c', 'printf "1\n2\n3\n"'],
+                static function (string $line) use (&$enough): bool {
+                    $enough[] = $line;
+
+                    return count($enough) < 2;
+                },
+                5.0,
+            );
+
+            $this->assertSame(['1', '2'], $enough, 'false stops the reading there and then');
+            $this->assertSame(Process::STOPPED, $stopped);
+
+            $tail = [];
+            Process::streamAsync(
+                ['sh', '-c', 'printf "no-newline-at-the-end"'],
+                static function (string $line) use (&$tail): bool {
+                    $tail[] = $line;
+
+                    return true;
+                },
+                5.0,
+            );
+
+            // A last line with nothing after it is still a line, as `stream()` delivers it.
+            $this->assertSame(['no-newline-at-the-end'], $tail);
+        });
+    }
+
+    public function testWithNoFiberStreamingAsyncIsTheBlockingOne(): void
+    {
+        // A test that calls a tool directly has no fiber to suspend, so nothing outside a
+        // session changes — the same fallback `runAsync()` has, and for the same reason.
+        $seen = [];
+        [$exit] = Process::streamAsync(
+            ['sh', '-c', 'printf "x\n"'],
+            static function (string $line) use (&$seen): bool {
+                $seen[] = $line;
+
+                return true;
+            },
+            5.0,
+        );
+
+        $this->assertSame(['x'], $seen);
+        $this->assertSame(0, $exit);
     }
 }
