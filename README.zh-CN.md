@@ -172,7 +172,7 @@ pig 不认识的 provider 写在 `~/.pig/models.json` 里——自己的机器�
                "input": ["text"], "contextWindow": 262144, "maxTokens": 32768 }] } } }
 ```
 
-`apiKey` 如果有同名环境变量，那它就是**变量名**，key 本身不用写进文件；而一个全大写的名字、对应变量却没设，会被当成**没有 key**，启动时指名说出来，而不是把这个名字本身当 key 发给 endpoint。`api` 是
+`apiKey` 如果有同名环境变量，那它就是**变量名**，key 本身不用写进文件；而一个全大写的名字、对应变量却没设，会被当成**没有 key**，启动时指名说出来，而不是把这个名字本身当 key 发给 endpoint。模型可以带一个 `"cost": { "input": …, "output": …, "cacheRead": …, "cacheWrite": … }` 块，单位是**每百万 token 多少美元** —— 每百万三美元写 `3.0`，不是 `0.000003`；不写就是免费，本地模型就是这样。价格写成非数字会被指名、该模型跳过，而不是在 `/session` 和状态栏里悄悄变成零成本。`api` 是
 `openai-completions`、`openai-responses`、`anthropic-messages`、`google-generative-ai` 之一，
 写在 provider 上或每个模型上都行；`authHeader: true` 会把 key 以 `Authorization: Bearer …`
 发出去，给需要这样的代理用。文件里有问题的地方会打印出来然后跳过——同一个文件里没问题的部分、

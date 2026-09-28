@@ -1824,6 +1824,15 @@ Five things decided here:
   problem names the file, the provider and the model. That is `Settings`' rule — a file that is
   not JSON is named, not ignored — applied to a file with far more ways to be wrong. There is no
   AJV and no TypeBox; the checks are written out, which is `Agent\ToolArguments`' trade again.
+- **A `cost` block is read and is optional**, under upstream's four names and upstream's unit:
+  dollars per million tokens, so Sonnet's three dollars is `3.0` and not `0.000003`. Absent is free,
+  which is what a local model is — and a price that is **not a number is refused by name** rather
+  than read as free, because `/session`, the footer and `--list-models` all report money and a model
+  that silently costs nothing misreports it every turn. `"input": "0.28"` with the quotes left on is
+  the mistake to expect. Only the absent case had a test until a live run against a declared
+  endpoint reported `the model is priced at zero` and that was mistaken — in this file's own summary
+  of it — for the field not existing at all. *A claim about what this repository does is worth a
+  grep, which is the fourth shape from the index pointed at pig rather than at a docblock.*
 - **No `compat` block means null**, so `OpenAiCompat::detect()` still works it out from the URL.
   That is a better default than any set of flags: a local llama.cpp gets what it needs with
   nothing written. A block uses **all eight of upstream's key names** so files stay portable — the

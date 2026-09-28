@@ -272,6 +272,31 @@ final readonly class CustomModels
             return "{$where}, model \"{$id}\": \"maxTokens\" must be a positive whole number";
         }
 
+        // Refused rather than read as free, which is the rule every other typed field here
+        // follows and the one a price needs most: `/session`, the footer and `--list-models` all
+        // report money, and a model that silently costs nothing is a model that misreports it
+        // every turn. `"input": "0.28"` with the quotes left on is the mistake to expect, and it
+        // is a character to fix once somebody is told. Absent is still free — that is what a local
+        // endpoint is, and the whole block stays optional.
+        $cost = $entry['cost'] ?? null;
+
+        if ($cost !== null && !is_array($cost)) {
+            return "{$where}, model \"{$id}\": \"cost\" must be an object, or left out";
+        }
+
+        foreach (['input', 'output', 'cacheRead', 'cacheWrite'] as $field) {
+            $value = ($cost ?? [])[$field] ?? null;
+
+            if ($value === null) {
+                continue;
+            }
+
+            if ((!is_int($value) && !is_float($value)) || $value < 0) {
+                return "{$where}, model \"{$id}\": \"cost.{$field}\" must be dollars per million"
+                    . ' tokens as a number, or left out';
+            }
+        }
+
         $input = [];
 
         foreach (is_array($entry['input'] ?? null) ? $entry['input'] : ['text'] as $accepted) {
@@ -298,6 +323,12 @@ final readonly class CustomModels
 
     /**
      * Dollars per million tokens. Absent is free, which is what a local model is.
+     *
+     * The same four field names and the same unit as `Ai\Models`' own tables and as upstream's
+     * `cost` — so Sonnet's three dollars per million input tokens is `3.0` and not `0.000003`,
+     * and a `models.json` written for pi carries its prices over unchanged. Every value here has
+     * already been checked by `model()`, which refuses one that is not a number rather than
+     * letting it read as free.
      *
      * @param array<mixed> $cost
      */

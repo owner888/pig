@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
 use Pig\Ai\Models;
@@ -139,6 +140,54 @@ final class CustomModelsTest extends TestCase
 
         $this->assertSame(0.0, $model->pricing->input);
         $this->assertSame(0.0, $model->pricing->output);
+    }
+
+    /**
+     * And a `cost` block that *is* there is read, in dollars per million tokens.
+     *
+     * Only the absent case had a test, so the reading was right and nothing would have caught a
+     * regression in it — which is also how a live run reporting `the model is priced at zero` came
+     * to look like a missing feature rather than a `models.json` with no prices in it. The four
+     * names and the unit are upstream's, so a file written for pi carries its prices over.
+     */
+    public function testACostBlockIsReadInDollarsPerMillionTokens(): void
+    {
+        $model = $this->load(self::provider(['models' => [self::model([
+            'cost' => ['input' => 0.28, 'output' => 0.42, 'cacheRead' => 0.028, 'cacheWrite' => 1],
+        ])]]))->models[0];
+
+        $this->assertSame(0.28, $model->pricing->input);
+        $this->assertSame(0.42, $model->pricing->output);
+        $this->assertSame(0.028, $model->pricing->cacheRead);
+
+        // A whole number in the file is still a price.
+        $this->assertSame(1.0, $model->pricing->cacheWrite);
+    }
+
+    /**
+     * A price that is not a number is named, not read as free.
+     *
+     * `"input": "0.28"` with the quotes left on is the mistake to expect, and `/session`, the
+     * footer and `--list-models` all report money — so a model that silently costs nothing
+     * misreports it every turn. Refused the way every other typed field here is refused.
+     */
+    #[DataProvider('everyWayACostCanBeWrong')]
+    public function testAPriceThatIsNotANumberIsRefusedRatherThanReadAsFree(mixed $cost, string $says): void
+    {
+        $custom = $this->load(self::provider(['models' => [self::model(['cost' => $cost])]]));
+
+        $this->assertSame([], $custom->models);
+        $this->assertCount(1, $custom->problems);
+        $this->assertStringContainsString($says, $custom->problems[0]);
+    }
+
+    /** @return iterable<string, array{0: mixed, 1: string}> */
+    public static function everyWayACostCanBeWrong(): iterable
+    {
+        yield 'a quoted number' => [['input' => '0.28'], '"cost.input" must be dollars per million'];
+        yield 'a negative price' => [['output' => -1.0], '"cost.output" must be dollars per million'];
+        yield 'null in a field' => [['cacheRead' => []], '"cost.cacheRead" must be dollars per million'];
+        yield 'not an object' => ['0.28', '"cost" must be an object'];
     }
 
     public function testNoCompatBlockLeavesItToBeWorkedOutFromTheUrl(): void
