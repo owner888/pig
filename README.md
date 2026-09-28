@@ -124,8 +124,9 @@ searching through `bash` with `rg` is what the prompt already asks for.
 and `--model sonnet:high` sets the thinking level at the same time. `--list-models` lists the ones
 you have a key for, with their context and output limits; `--list-models gem pro` narrows that,
 fuzzily, over the provider and the id together. `/model` offers the same list, and switching to
-a model with no key is refused by name rather than failing on the next turn. Ctrl+P steps to the
-next model on that list without opening it, Shift+Ctrl+P back to the previous one.
+a model with no key is refused by name rather than failing on the next turn. Ctrl+L opens that
+list; Ctrl+P steps to the next model on it without opening it, Shift+Ctrl+P back to the previous
+one.
 
 `--models` narrows the session to a few of them, comma-separated, and then Ctrl+P walks only
 those: `--models sonnet,haiku` opens on sonnet and cycles between the two, and

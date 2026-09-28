@@ -1740,6 +1740,18 @@ final class InteractiveModeTest extends TestCase
         $this->assertSame($first, $this->session->model()?->id, 'shift+ctrl+p goes back');
     }
 
+    public function testCtrlLOpensTheModelPicker(): void
+    {
+        $this->start();
+
+        // `CustomEditor` has claimed ctrl+l since it was ported and nothing was listening, so the
+        // key was taken off the text field and did nothing at all — the third time that exact
+        // shape has turned up, after ctrl+p and `/debug`. Upstream binds it to its model selector.
+        $this->type("\x0c");
+
+        $this->assertStringContainsString('Pick a model', $this->screen());
+    }
+
     public function testCtrlPStaysInsideTheScopeAndCarriesItsThinkingLevel(): void
     {
         $auth = Auth::inMemory();

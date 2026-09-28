@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Session;
 
+use Pig\Ai\ToolResultMessage;
+
 /**
  * Turning an abandoned branch into a page of notes.
  *
@@ -72,6 +74,14 @@ final class BranchSummarization
      * whoever reads it to a file on disk that no longer matches. The prose can be partial;
      * the file lists cannot.
      *
+     * **Upstream's are not**, and this is the divergence worth knowing rather than a
+     * preference. `prepareBranchEntries()` calls `extractFileOpsFromMessage()` *inside* the
+     * newest-first loop, which `break`s at the budget — so its first pass collects only a
+     * nested branch summary's carried-forward lists, and every ordinary message older than the
+     * cut contributes nothing. Its own comment claims the opposite ("collect file ops from ALL
+     * entries"). So on upstream a long branch reports the files touched at its recent end and
+     * silently forgets the rest, which is the failure the paragraph above describes.
+     *
      * The second pass walks newest to oldest so a branch too long to fit keeps its recent
      * end, which is the part that says where the work got to.
      *
@@ -83,20 +93,26 @@ final class BranchSummarization
     {
         [$read, $modified] = Compaction::files($messages);
 
+        // A tool result's context is in the assistant message that asked for it, and results
+        // are the bulk of a long branch. Dropped **before** the budget is looked at, which is
+        // where upstream drops them and where the reason applies: it is a rule about what a
+        // handover is made of, not a way of saving room, so a model that declares no context
+        // window — budget 0, meaning no limit — must not get the whole branch *plus* the
+        // things that were never meant to be in it. Measured on one 28KB `read`: 28,808
+        // characters of request against 792 for the same branch with a budget.
+        $said = array_values(array_filter(
+            $messages,
+            static fn (mixed $message): bool => !$message instanceof ToolResultMessage,
+        ));
+
         if ($budget <= 0) {
-            return [$messages, $read, $modified];
+            return [$said, $read, $modified];
         }
 
         $kept = [];
         $tokens = 0;
 
-        foreach (array_reverse($messages) as $message) {
-            // A tool result's context is in the assistant message that asked for it, and
-            // results are the bulk of a long branch. Upstream drops them here too.
-            if ($message instanceof \Pig\Ai\ToolResultMessage) {
-                continue;
-            }
-
+        foreach (array_reverse($said) as $message) {
             $cost = Compaction::estimateTokens($message);
 
             if ($tokens + $cost > $budget) {

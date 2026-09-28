@@ -926,14 +926,37 @@ final class SessionManager
     {
         // pi's directory as well as pig's. The file format is the same now, so a
         // conversation started in one opens in the other — and somebody who has been using
-        // pi should not have to go and find the file by hand. Newest first across both,
-        // which the names sort into by themselves: they begin with an ISO timestamp.
+        // pi should not have to go and find the file by hand.
         $paths = [
             ...(glob(self::directory($cwd) . '/*.jsonl') ?: []),
             ...(glob(self::directory($cwd, Config::piHome()) . '/*.jsonl') ?: []),
         ];
 
-        usort($paths, static fn (string $a, string $b): int => basename($b) <=> basename($a));
+        // **Newest is when it was last written to, not when it was started**, which is
+        // upstream's `findMostRecentSession` and is the only reading of "newest" that answers
+        // what `--continue` asks. A file is named after the moment the conversation began and
+        // is never renamed, so the name says when it *started*: resume Monday's conversation on
+        // Wednesday and a name sort still puts Tuesday's in front of it, so `--continue` opens
+        // the one conversation somebody demonstrably was not working on.
+        //
+        // The name breaks a tie, so two files written in the same second have a fixed order
+        // rather than whatever the directory happened to hand over. A path that has gone
+        // between the glob and the stat is not a session to list.
+        $times = [];
+
+        foreach ($paths as $path) {
+            if (is_file($path)) {
+                $times[$path] = filemtime($path);
+            }
+        }
+
+        $paths = array_keys($times);
+
+        usort(
+            $paths,
+            static fn (string $a, string $b): int
+                => [$times[$b], basename($b)] <=> [$times[$a], basename($a)],
+        );
 
         $sessions = [];
 

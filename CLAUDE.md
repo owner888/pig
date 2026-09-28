@@ -1915,6 +1915,37 @@ not a spec pig can run; the one part of it that is not provider-specific — `Ag
 validation throws — is the find above it in this file, which upstream tests at the `Agent` level and
 pig had only in the loop.
 
+### `coding-agent`'s session-manager tests, read the same way
+
+The same sweep over `test/session-manager/` — five files, 1,098 lines, the suite that describes the
+file pig shares with pi. **Two of its `it()` names had no counterpart here and both were real**, and
+they are the two entries below: the `--continue` that opened the wrong conversation ("returns most
+recently modified session" — a claim about `mtime`, where pig sorted by name) and, from reading
+`branch-summarization.ts` alongside it, the handover that carried the files it was summarising.
+
+The rest lined up, and the four worth writing down are the ones where the answer is *not* a matching
+line:
+
+- **"uses last entry when leafId not found" has no case here.** Upstream's `buildSessionContext` is a
+  free function handed a leaf id from outside, so it needs a fallback; pig's is a method on the class
+  that owns both, and the leaf is always an entry that exists — `open()` sets it to the last line read
+  and `goTo()` refuses an id it does not have. A fallback for a state that cannot arise would be a
+  branch only a test could reach.
+- **"handles orphaned entries gracefully" already agrees.** `pathTo()` stops when a parent is not
+  there, so an entry whose parent is missing comes back as itself and nothing before it — upstream's
+  one message, for the same reason. It is the other half of the rule the file format section states:
+  *an entry you cannot use is still an entry other entries point at.*
+- **The label cases are pinned three ways already**: out of the conversation (`isSaid()`), last one
+  wins (read in file order), refused on an id nothing has.
+- **The `createBranchedSession` cases are not pig's**, being the fork into a second session file that
+  pig does not do — `/tree` is the answer to the same wish and has its own tests.
+
+`build-context.test.ts`'s remaining claims — the thinking level and model tracked from their own
+entries *and* from the last assistant message, a summary in front of the kept messages, the latest of
+several compactions winning, a branch summary appearing on the path — are each already a test here,
+which is what makes this read cheap: the expensive part of the file format was done when it became
+pi's.
+
 ### Talking to a gateway instead of a provider
 
 `Agent\StreamProxy` is upstream's `agent/proxy.ts`. **It is the second thing in this repository
@@ -2809,13 +2840,33 @@ being worked on.** One command does it:
 
 ```bash
 for p in ai agent tui coding-agent; do
-  find /tmp/pi/packages/$p/src -name '*.ts' -not -name '*.test.ts' | sort
+  find /tmp/pi/packages/$p/src -name '*.ts' -not -name '*.test.ts' -not -name 'index.ts' | sort
 done
 ```
 
 Read it against pig's own tree, and anything with no counterpart belongs in this table or in the
 code. It is worth running after a run of porting, not during one — during one, every second file
 is legitimately absent.
+
+**And the command names four packages where upstream has seven, which makes the command itself a
+claim.** Nobody had checked it, so it was checked: `mom` (4,440 lines, a Slack bot that delegates to
+the coding agent), `pods` (1,773, a CLI for vLLM deployments on GPU pods) and `web-ui` (14,524, lit
+components for a browser chat UI) are outside pig's scope, and the evidence rather than the reading
+is that **the dependency direction is one-way** — nothing in `ai`, `agent`, `tui` or `coding-agent`
+imports from any of the three, and all three import from them. So the four are the whole of what pig
+ports, and ~20,700 lines of upstream are deliberately not in the scoreboard below. The last run of
+the sweep also confirmed the scoreboard's own arithmetic exactly: 127 files, 42,644 lines, no file
+new and none gone, 114 audited + 13 ruled out with no overlap and no gap.
+
+**`mom` is still worth reading, and not as a port.** It re-implements five of the tools — `read`,
+`write`, `edit`, `bash` and `truncate` — against a sandbox executor rather than the filesystem, so it
+is upstream's own second answer to questions pig has already answered, which is the *first* shape
+from the index pointed at upstream instead of at pig. What that found is the entry below on the diff
+renderer. `truncate.ts` there is a strict subset of `coding-agent`'s (no `maxLines`/`maxBytes` on the
+result, no `truncateLine` for grep) with the same arithmetic, and the tools differ structurally
+because they shell out — mom's `read` even detects an image by *extension* where `coding-agent`'s
+reads the file's magic. pig ported the fuller copy in every case, which is worth knowing was a
+verified answer rather than the only one available.
 
 ### How much of it has been read against upstream
 
@@ -2825,22 +2876,39 @@ came out of. 127 upstream files, 42,644 lines, excluding tests and `index.ts` ba
 
 | | files | lines |
 |---|---|---|
-| read difference by difference | 94 | 39,600 |
-| ruled out, reason on record | 13 | 1,400 |
-| **not yet read** | **20** | **1,700** |
+| read difference by difference | 114 | 41,268 |
+| ruled out, reason on record | 13 | 1,376 |
+| **not yet read** | **0** | **0** |
 
-Those figures go stale; the queue does not. **Nothing over 190 lines is left, and 18 of the 20 are
-components**, which is the narrowest the remaining risk has been: the five largest files —
-`tui.ts`, `components/input.ts`, `terminal-image.ts`, `ai/types.ts` and `bash-execution.ts` — each
-have an entry below. The two that are not components:
+**The queue is empty.** Every upstream file that has a counterpart here has been read against it
+difference by difference, and the thirteen that do not have one have a reason on record in the table
+above. That is what the traps at the bottom of this file are: each one came out of a read, and the
+last of them — a key claimed and bound to nothing — came out of a 106-line component nobody expected
+anything from.
 
-```
- 138  tui/terminal.ts                       28  coding-agent/utils/clipboard.ts
-```
+**What the number does *not* mean**, and this matters more now that it is complete than it did while
+it was a queue:
 
-and the components run from 188 lines (`settings-list.ts`) down to 18 (`user-message.ts`). The
-count is rebuilt by listing the sweep's output and striking off what this file records as read, not
-by editing these numbers.
+- **It is not a claim that pig matches upstream.** It is a claim that every place the two differ has
+  either a reason written beside it or a trap entry. Several of those differences are pig being
+  *right* where upstream is not — `diffWords` drawing the wrong text on a removed line, a 0×0 PNG
+  asking for 150,000 rows, `input.ts` drawing lines of the wrong width on CJK.
+- **It is not a measure of quality.** `theme.ts` was read this way and found nothing;
+  `bash-executor.ts` was not on anybody's list at all until a file-list sweep turned it up. A file
+  being ported and passing its tests said nothing about whether it had been read — every entry below
+  came from one that was.
+- **It goes stale the moment upstream moves.** The anchor is `d0a4c37`; the count is against that
+  snapshot. Re-running it means re-running the sweep command above, not trusting this table.
+
+The reads that found nothing are worth as much as the ones that did, and only with the evidence
+attached: `theme.ts` (all 16,777,216 colours through `to256`, both palettes name by name),
+`terminal.ts` (every escape sequence and both size defaults), `box.ts`, `text.ts`, `spacer.ts`,
+`truncated-text.ts`, `loader.ts` and its two subclasses, `dynamic-border.ts`, `user-message.ts`,
+`assistant-message.ts`, `hook-message.ts`, `compaction-summary-message.ts`,
+`branch-summary-message.ts` and `bordered-loader.ts` — fifteen components that line up member for
+member. Two dead ends in upstream turned up in them and are not ported: `Text`'s `[""]` fallback for
+a render that produced no lines, which its own wrapper cannot produce, and `ImageOptions`'
+`maxHeightCells`, declared twice and read nowhere.
 
 **`markdown.ts` was the one a surface map could not read**, and the corpus is what read it — see the
 trap on the two list bugs it found. The rule it confirms: where upstream leans on a package pig had to
@@ -3019,6 +3087,15 @@ wired up at one end only**, and **PHP's value model is not JSON's** — all thre
 [A hook's compaction summary was indistinguishable from pig's own](#a-hooks-compaction-summary-was-indistinguishable-from-pigs-own).
 Before reading a file against upstream, ask the three questions there:
 who else does this, who is at the other end, and is this value the same thing in both languages.
+
+And ask the first of those three of **upstream** as well as of pig. Upstream carries second copies of
+its own code — `mom`'s five tools and its diff renderer, `bash-executor.ts` beside `bash.ts`,
+`google-gemini-cli.ts`'s event-stream reader beside `proxy.ts`' — and each pair is a corpus somebody
+already wrote: where the two disagree, one of them is wrong and the diff is short. Three of the finds
+below came out of exactly that — `proxy.ts`' event-stream reader dropping every `data:{…}` line its
+own sibling handles, `mom`'s diff renderer numbering the wrong lines, and the three disagreeing
+spellings of the sanitize composition, one of which is safe only because its caller had already
+cleaned the text.
 
 ### `stream_socket_enable_crypto()` returns `0`, not just `true`/`false`
 
@@ -3231,6 +3308,143 @@ down, or the next reader has to take it on trust. The sixth and seventh are the 
 and they add a second half to it: **a corpus is worth re-reading for the question it never asked** —
 which is where "two pastes in one read" came from — and a file of pure functions is worth one even
 when reading it finds nothing, which is where the 150,000-line PNG came from.
+
+**The eighth found the package wrong rather than pig**, and it is the one to reach for the argument
+from: `DiffView::words()` replaces `diffWords`, and reading it against `diff.ts` found nothing at all
+— the two are line for line. Run against `diff@8` over 436 edited line pairs, **106 of upstream's
+removed lines are drawn with text the file does not have.** `diffWords` ignores whitespace, so a
+whitespace-only change comes back as one unchanged part holding the *new* string and upstream
+appends it to both lines: re-indent a block and its `-` line shows the `+` line's indentation, with
+nothing marked. pig's is 0, and the run also paid for itself in the other direction — pig's
+tokenizer was splitting on whitespace alone, so `foo(bar, ⟨baz)⟩` marked a paren that did not
+change, and matching `diffWords`' granularity took the disagreements from 279 pairs to 177. *A
+corpus is worth running even when the reading found nothing, and the answer can be that the package
+is the one that is wrong.*
+
+**The ninth is upstream against itself, and it is the entry below.** `mom` has its own copy of
+`generateDiffString`, so the question was not "does pig match upstream" but "do upstream's two copies
+match each other" — and the answer is no, in the line numbers. Nothing here changed; what changed is
+that pig's numbering is now known to be the right one of two rather than the only one on offer.
+
+### `--continue` opened the conversation you were not working on
+
+The most-used flag in the tool, wrong in the most ordinary way there is. `listFor()` sorted the
+session files by **name**, with a comment arguing that the names sort themselves because they begin
+with an ISO timestamp. They do — the timestamp the conversation *began* at, and a session file is
+never renamed. So "newest" meant **most recently started**, where `--continue` asks for the one last
+worked on.
+
+Start A on Monday, start B on Tuesday, spend Wednesday in A. Measured through `latestFor()`:
+
+```
+A  2026-09-28T03-27-14-295Z_…jsonl   mtime=1790566095   ← worked on today
+B  2026-09-28T03-27-15-296Z_…jsonl   mtime=1790566035
+pig --continue picks:  B
+upstream would pick:   A
+```
+
+Upstream's `findMostRecentSession` stats each file and sorts by `mtime`. It also decides the order of
+the `--resume` picker, so the row under the cursor was the stale one — and `Utils\Fuzzy`'s own note
+leans on that order ("the list is sorted newest-first before it gets here, and ties coming back
+shuffled would look like the list had lost its order").
+
+Three things worth keeping:
+
+- **The name breaks a tie**, so two files written in the same second have a fixed order rather than
+  whatever the directory hands over. `usort` is stable, so mtime alone would fall back to glob order
+  — which is alphabetical, which is the bug again for exactly the files a tie affects.
+- **A path that has gone between the `glob()` and the `filemtime()` is skipped**, not stat-ed. `@` is
+  not allowed here and a file that vanished is not a session to list.
+- **Both READMEs already said the right thing** — "`--continue` picks up the last one", "pick up
+  where you left off", 「接上最近一次」 — so nothing there needed changing. *A sentence in the README
+  describing intent is a test nobody runs*: it had been false since the flag existed.
+
+Found by reading `session-manager/file-operations.test.ts` as a specification — the `it()` named
+"returns most recently modified session", which is a claim about `mtime` and was the one line in that
+file pig had no counterpart for.
+
+Regression tests: `SessionManagerTest::testContinueOpensTheOneLastWorkedOnRatherThanTheOneStartedLast`
+and `testSessionsWrittenInTheSameSecondDoNotShuffle` — one per end, and the second is what stops the
+fix becoming "sort by mtime and let ties shuffle".
+
+### A handover carried the files it was supposed to be summarising
+
+`BranchSummarization::prepare()` drops tool results, because a result's context is in the assistant
+message that asked for it and results are the bulk of a long branch. It dropped them **inside the
+budget walk**, and the method short-circuits when the budget is 0 — which means "no limit" — so a
+model that declares no context window got the whole branch *plus* every file it had read. Measured on
+one 28KB `read`:
+
+```
+budget=0       kept=4  tool results kept: YES  request chars=28808
+budget=100000  kept=3  tool results kept: no   request chars=792
+```
+
+36× the request, and with a real file the whole of it: the model is asked for a handover and handed a
+file dump to write it from. Upstream drops them in `getMessageFromEntry()`, before any budget is
+looked at, which is where the reason applies — **it is a rule about what a handover is made of, not a
+way of saving room.** A rule gated on a budget is a rule in the wrong place.
+
+Not reachable from `bin/pig` today: `CustomModels` refuses a `contextWindow` that is not positive and
+no built-in has one, so this is latent on public surface — the same standing as `Input::setValue()`'s
+cursor and the three image-encoder falsiness sites. The reason to fix it rather than note it is that
+`Compaction::shouldCompact()` already carries a `contextWindow > 0` guard *because* a model declaring
+no window is a case pig has acknowledged as real.
+
+**And upstream has the mirror bug in the same function, which pig does not.** `prepare()`'s docblock
+has always said the file lists come from every message while the prose comes from as much as fits.
+Upstream's first pass collects only a nested branch summary's carried-forward lists;
+`extractFileOpsFromMessage()` is in the **second** pass, inside the loop that `break`s at the budget
+— so every ordinary message older than the cut contributes no files at all, while its own comment
+says "collect file ops from ALL entries". A long branch there reports the files touched at its recent
+end and silently forgets the rest, which is exactly the failure pig's arrangement was written to
+avoid: a summary that forgets a file it edited sends whoever reads it to a file on disk that no longer
+matches.
+
+`prepare()` had **no direct test at all** — the same size of unchecked unit as `Config`'s path
+arithmetic and `Process`'s 370 lines. Regression tests:
+`CompactionTest::testAToolResultIsNeverPartOfAHandover` over three budgets including 0, and
+`testTheFileListSurvivesABudgetThatDropsTheMessageThatNamedIt`, which is the one that goes red if the
+file lists are ever moved behind the budget into upstream's arrangement.
+
+### Upstream has two diff renderers and the second one numbers the wrong lines
+
+Found by asking what the documented file-list sweep leaves out: it names four of upstream's seven
+packages, and `mom` — the Slack bot — carries its own copy of `generateDiffString` inside
+`tools/edit.ts`, beside second copies of `read`, `write`, `edit`, `bash` and `truncate`. Two copies of
+the function pig ran a 515-pair corpus against, by the same author in the same repository, which is
+the first shape from the index with upstream on both ends of it.
+
+They differ in **where the skipped leading context is added to the line counter**. `coding-agent`
+bumps `oldLineNum`/`newLineNum` by `skipStart` *before* printing the context lines; `mom` bumps them
+*after*. So mom's leading context is numbered from 1 however far into the file the edit is:
+
+```
+=== mom ===            === coding-agent ===
+    ...                    ...
+  1 line 17             17 line 17
+  2 line 18             18 line 18
+  3 line 19             19 line 19
+  4 line 20             20 line 20
+-21 target             -21 target
++21 TARGET             +21 TARGET
+```
+
+Measured rather than reasoned about — both functions run side by side over 200 single-line edits at
+every position in files of 5 to 44 lines: **151 of 200 disagree**, which is every edit far enough in
+for an ellipsis. The 49 that agree are the ones near the top, where `skipStart` is 0 and the two
+arrangements are the same arithmetic. What it costs mom is the one thing a diff has to get right for
+the reader it is shown to — pointing at the line — and the `-`/`+` lines are correct throughout,
+which is exactly what makes it hard to notice.
+
+**pig ported the right one and it is pinned**, which was checked the only way that counts: mutating
+`EditDiff::render()`'s leading-context loop to number from 1 turns
+`EditToolTest::testDistantContextIsElidedWithAnEllipsis` (` 11 line11` → `  1 line11`) and
+`testLineNumbersArePaddedToTheWidestOne` red. So this is a find with no fix and no new test, and the
+reason it is written down is the method: **a sweep command is a claim like any other, and upstream's
+own second implementation of something is the cheapest corpus there is** — it was written by somebody
+who knew the problem, so where it disagrees, one of the two is wrong and the diff is short enough to
+read.
 
 ### Two pastes in one read, and only the first one arrived
 
@@ -4915,6 +5129,28 @@ name can drop it, and anything that keeps the fixed name must keep it.
 
 Not covered by a test: reaching it needs a killed process and a real archive, and
 `extract()` is private — the seam would be a public method existing for the test alone.
+
+### Ctrl+L was the third key taken off the prompt and bound to nothing
+
+The last find of the audit, out of a 106-line component nobody expected anything from.
+`custom-editor.ts` is eleven `if`s and pig's `CustomEditor::claimed()` is the same eleven as a
+`match` — and one of the eleven, `ctrl+l`, was claimed and never bound. Upstream's `onCtrlL` opens its
+model selector; pig had the key reserved for a handler it never registered, so pressing it took the
+byte off the text field and did nothing at all.
+
+**Third time, and the worst of the three**, because Ctrl+L is the one key in that set a terminal
+already has a meaning for: pressing it out of habit to clear the screen did not even do that.
+Ctrl+G was invisible (nothing had ever worked), ctrl+p was invisible, and this one is a key people
+press expecting a specific thing. It is bound to `showModels('')` now — `/model` with nothing after
+it, which is upstream's selector — and it has a row in `KEYS`, because the entry on the eleven
+editing keys is about exactly this: a key that works and is named nowhere is half of a key.
+
+The rule, stated for the third time because three is a pattern: **a component that claims a key is
+making a promise the application has to keep, and nothing checks it.** The list to compare is
+`CustomEditor::claimed()`'s arms against the `$this->editor->on(...)` calls in `bindEditor()` — one
+grep, and it would have caught all three at once.
+
+Regression test: `InteractiveModeTest::testCtrlLOpensTheModelPicker`.
 
 ### Ctrl+G was being reported to nobody
 

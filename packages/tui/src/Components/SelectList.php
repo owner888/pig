@@ -120,6 +120,8 @@ final class SelectList implements Component, InputHandler
     #[\Override]
     public function render(int $width): array
     {
+        // `No matches` rather than upstream's `No matching commands`: this list is the models, the
+        // sessions, the themes and the sign-ins as well as the commands.
         if ($this->filtered === []) {
             return [($this->theme->noMatch)('  No matches')];
         }

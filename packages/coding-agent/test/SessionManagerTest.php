@@ -20,6 +20,7 @@ use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\Test\AssertsThrows;
 
@@ -562,6 +563,69 @@ final class SessionManagerTest extends TestCase
         // remembers a conversation.
         $this->assertSame('the second thing', $listed[0]->opening);
         $this->assertSame(2, $listed[0]->messages);
+    }
+
+    /**
+     * "Newest" is when it was last worked on, not when it was started.
+     *
+     * A conversation's file is named after the moment it began and is never renamed, so a name
+     * sort answers "most recently *started*" — which for `--continue` is the wrong question the
+     * moment anybody resumes something. Start A on Monday and B on Tuesday, spend Wednesday in A,
+     * and a name sort hands back B: the one conversation you were demonstrably not working on.
+     */
+    public function testContinueOpensTheOneLastWorkedOnRatherThanTheOneStartedLast(): void
+    {
+        $directory = SessionManager::directory('/some/project');
+
+        foreach (['A', 'B'] as $index => $which) {
+            $session = SessionManager::create(
+                '/some/project',
+                "{$directory}/2026-01-0{$index}T00-00-00-000Z_x{$index}.jsonl",
+            );
+            $session->append(new UserMessage("conversation {$which}"));
+            $session->append($this->answer());
+        }
+
+        // A was started first and resumed since; B has not been touched since it began.
+        $a = "{$directory}/2026-01-00T00-00-00-000Z_x0.jsonl";
+        $b = "{$directory}/2026-01-01T00-00-00-000Z_x1.jsonl";
+        touch($b, 1_700_000_000);
+        touch($a, 1_700_000_600);
+
+        $this->assertSame('conversation A', SessionManager::latestFor('/some/project')?->opening);
+
+        // And the picker's order is the same order, so the row under the cursor is the one
+        // somebody would reach for first.
+        $this->assertSame(
+            ['conversation A', 'conversation B'],
+            array_map(
+                static fn (SessionInfo $info): string => $info->opening,
+                SessionManager::listFor('/some/project'),
+            ),
+        );
+    }
+
+    /** Two files written in the same second still come back in a fixed order. */
+    public function testSessionsWrittenInTheSameSecondDoNotShuffle(): void
+    {
+        $directory = SessionManager::directory('/some/project');
+
+        foreach (['first', 'second'] as $index => $said) {
+            $session = SessionManager::create(
+                '/some/project',
+                "{$directory}/2026-01-0{$index}T00-00-00-000Z_x{$index}.jsonl",
+            );
+            $session->append(new UserMessage($said));
+            $session->append($this->answer());
+            touch($session->path, 1_700_000_000);
+        }
+
+        $openings = array_map(
+            static fn (SessionInfo $info): string => $info->opening,
+            SessionManager::listFor('/some/project'),
+        );
+
+        $this->assertSame(['second', 'first'], $openings);
     }
 
     /**

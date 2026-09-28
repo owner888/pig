@@ -246,6 +246,10 @@ final class SettingsList implements Component, InputHandler
         $last = count($this->items) - 1;
 
         match (true) {
+            // Any key leaves a list with nothing in it, where upstream answers only Escape and
+            // moves a cursor through no rows for everything else. Unreachable from `/settings`,
+            // which always has rows; the alternative is a screen that cannot be left by the key
+            // somebody presses first.
             $last < 0 => $this->close(),
             Keys::isArrowUp($data) => $this->selected = $this->selected === 0 ? $last : $this->selected - 1,
             Keys::isArrowDown($data) => $this->selected = $this->selected === $last ? 0 : $this->selected + 1,

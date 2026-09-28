@@ -51,10 +51,51 @@ final class DiffViewTest extends TestCase
     {
         $lines = $this->lines("call(a, b)\n", "call(a, c)\n");
 
-        // Only the part that differs, not the whole line — the point of the mark is to
-        // show where to look.
-        $this->assertSame('b)', $this->inverted($lines[0]));
-        $this->assertSame('c)', $this->inverted($lines[1]));
+        // Only the part that differs, not the whole line — the point of the mark is to show where
+        // to look. These used to read `b)` and `c)`, because the split kept each word with the
+        // punctuation and spaces around it; the closing paren did not change and is not marked.
+        $this->assertSame('b', $this->inverted($lines[0]));
+        $this->assertSame('c', $this->inverted($lines[1]));
+    }
+
+    public function testTheSpaceBeforeAChangedWordIsNotPartOfTheChange(): void
+    {
+        $lines = $this->lines("a b c d e\n", "a b X d e\n");
+
+        // The highlight starts where the change does. Whitespace beginning a changed run moves
+        // out of the inverted part wherever that run starts, which used to happen only at the
+        // start of the line — so a word swapped in the middle was marked one column early.
+        $this->assertSame('c', $this->inverted($lines[0]));
+        $this->assertSame('X', $this->inverted($lines[1]));
+    }
+
+    public function testWhitespaceBetweenTwoWordsIsNotMarkedEither(): void
+    {
+        $lines = $this->lines("a  b\n", "a   b\n");
+
+        // The same rule as the indent, one gap along: inverting whitespace draws a block and says
+        // nothing about what changed. Both lines still show their own spacing, which is how a
+        // reader sees that anything happened at all — `testAChangedIndentIsStillShown` says the
+        // same thing for column 1. The strip used to apply only at the start of the line, and this
+        // is the case that told the two apart.
+        $this->assertSame('', $this->inverted($lines[0]));
+        $this->assertSame('', $this->inverted($lines[1]));
+        $this->assertNotSame(Ansi::strip($lines[0]), Ansi::strip($lines[1]));
+    }
+
+    public function testEachLineIsDrawnWithItsOwnText(): void
+    {
+        // The invariant a diff has to keep, and the one upstream does not: `diffWords` ignores
+        // whitespace, so a whitespace-only change comes back as a single unchanged part holding
+        // the *new* string — and upstream appends that to both lines. Measured against the
+        // package over 436 edited line pairs: 106 of upstream's removed lines are drawn with text
+        // the file does not have, and the worst of them is this one, where the `-` line shows the
+        // indentation of the `+` line and nothing is marked at all. Somebody approving an edit
+        // from that diff is reading a line that is not in the file.
+        $lines = $this->lines("    return 1;\n", "        return 1;\n");
+
+        $this->assertStringStartsWith('-1     return 1;', Ansi::strip($lines[0]));
+        $this->assertStringStartsWith('+1         return 1;', Ansi::strip($lines[1]));
     }
 
     public function testABlockRewriteIsNotMarkedWordByWord(): void
@@ -73,8 +114,8 @@ final class DiffViewTest extends TestCase
         $lines = $this->lines("    return 1;\n", "    return 2;\n");
 
         // Inverting an indent paints a solid block down the left and says nothing,
-        // because the indentation is not what changed.
-        $this->assertSame('2;', $this->inverted($lines[1]));
+        // because the indentation is not what changed. `2` rather than `2;`, for the reason above.
+        $this->assertSame('2', $this->inverted($lines[1]));
         $this->assertStringStartsWith('+1     return ', Ansi::strip($lines[1]));
     }
 

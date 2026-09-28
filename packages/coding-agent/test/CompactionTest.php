@@ -19,6 +19,7 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
+use Pig\CodingAgent\Session\BranchSummarization;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\Compaction;
 use Pig\CodingAgent\Session\CompactionSummary;
@@ -436,6 +437,64 @@ final class CompactionTest extends TestCase
         ]);
 
         $this->assertStringContainsString('[Another branch]: it was about the parser', $text);
+    }
+
+    // ---- what a handover is made of ------------------------------------------------------
+
+    /**
+     * A tool result is left out at every budget, including "no budget".
+     *
+     * Its context is in the assistant message that asked for it, and results are the bulk of a
+     * long branch — so this is a rule about what a handover *is*, not a way of saving room.
+     * Gated on the budget, a model that declares no context window got the whole branch plus
+     * every file it had read: 28,808 characters of request against 792 for the same branch.
+     */
+    #[DataProvider('everyBudget')]
+    public function testAToolResultIsNeverPartOfAHandover(int $budget): void
+    {
+        $messages = [
+            new UserMessage('read the config'),
+            self::calling('t1', 'read', ['path' => 'config.php']),
+            new ToolResultMessage('t1', 'read', [new TextContent(str_repeat('FILE CONTENTS ', 2_000))]),
+            new UserMessage('what did it say'),
+        ];
+
+        [$kept] = BranchSummarization::prepare($messages, $budget);
+
+        $this->assertCount(3, $kept);
+        $this->assertNotContains($messages[2], $kept);
+
+        // And the request built from it is the conversation rather than the file.
+        $this->assertStringNotContainsString('FILE CONTENTS', BranchSummarization::request($kept));
+    }
+
+    /** @return iterable<string, array{0: int}> */
+    public static function everyBudget(): iterable
+    {
+        yield 'no budget at all' => [0];
+        yield 'room for everything' => [100_000];
+        yield 'room for the recent end only' => [40];
+    }
+
+    /**
+     * Which files the branch touched is complete even when the prose is not.
+     *
+     * The file lists come from every message, the prose from as much as fits. Upstream's
+     * collection sits inside the loop that stops at the budget, so a long branch there reports
+     * the files at its recent end and forgets the rest — see the docblock on `prepare()`.
+     */
+    public function testTheFileListSurvivesABudgetThatDropsTheMessageThatNamedIt(): void
+    {
+        $messages = [
+            self::calling('c1', 'read', ['path' => 'read-at-the-far-end.php']),
+            new UserMessage(str_repeat('padding ', 200)),
+            new UserMessage('and this is where we got to'),
+        ];
+
+        [$kept, $read] = BranchSummarization::prepare($messages, 40);
+
+        $this->assertSame(['read-at-the-far-end.php'], $read);
+        $this->assertNotContains($messages[0], $kept, 'the message that named it did not fit');
     }
 
     // ---- scaffolding -----------------------------------------------------------------------

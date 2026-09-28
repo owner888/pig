@@ -587,6 +587,7 @@ final class InteractiveMode
         'shift+tab' => 'cycle the thinking level',
         'shift+ctrl+d' => 'write a debug log: this frame, its line widths, the conversation',
         'ctrl+p' => 'next model, shift+ctrl+p for the previous one',
+        'ctrl+l' => 'choose a model from the list',
         'ctrl+o' => 'show more: tool output, and this list',
         'ctrl+t' => 'show or hide thinking',
         '/' => 'commands',
@@ -646,6 +647,12 @@ final class InteractiveMode
         // is worse than either.
         $this->editor->on('ctrl+p', fn () => $this->cycleModel());
         $this->editor->on('shift+ctrl+p', fn () => $this->cycleModel(backward: true));
+
+        // And ctrl+l, which was the third of them: claimed since it was ported, bound to nothing,
+        // and the one key in the set a terminal already has a meaning for — so pressing it out of
+        // habit to clear the screen did not even do that. Upstream's `onCtrlL` opens its model
+        // selector, which is `/model` with nothing after it here.
+        $this->editor->on('ctrl+l', fn () => $this->showModels(''));
         $this->editor->on('ctrl+g', function (): void {
             // In a fiber of its own, the same reason `send()` is: this runs inside the
             // input callback, and it suspends — which would suspend the loop that called it.

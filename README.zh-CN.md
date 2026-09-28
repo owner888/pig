@@ -107,8 +107,8 @@ Ctrl+G 把 prompt 里现在的内容丢进 `$VISUAL` 或 `$EDITOR`，改完再�
 `--model` 不用写全 id，写一部分就行——`--model sonnet`、`--model 'opus 4.1'`——`--model sonnet:high`
 还能顺手把思考档位一起设了。`--list-models` 把**有 key 的**那些列出来，带上下文窗口和输出上限；
 `--list-models gem pro` 再筛一遍，模糊匹配，provider 和 id 当一整串来搜。`/model` 给的是同一份列表，
-切到没有 key 的模型会直接被拒绝并说清是哪个，而不是等下一轮请求才失败。不想开列表的话，Ctrl+P
-往后跳一个模型，Shift+Ctrl+P 往前跳一个。
+切到没有 key 的模型会直接被拒绝并说清是哪个，而不是等下一轮请求才失败。Ctrl+L 直接开这份列表；
+不想开列表的话，Ctrl+P 往后跳一个模型，Shift+Ctrl+P 往前跳一个。
 
 `--models` 把这一次会话**收窄**到其中几个，逗号分隔，之后 Ctrl+P 只在这几个里转：
 `--models sonnet,haiku` 从 sonnet 开始，两个来回切；`--models 'anthropic/*:high'` 把 Anthropic
