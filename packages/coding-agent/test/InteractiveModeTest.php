@@ -28,6 +28,7 @@ use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
@@ -50,7 +51,6 @@ use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
-use Pig\CodingAgent\Version;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Test\ProbeModels;
@@ -2914,8 +2914,14 @@ final class InteractiveModeTest extends TestCase
         // as long as that file was missing, the one test of this command was pinning the absence
         // of a file rather than the command. The empty answer has its case in `ChangelogTest`,
         // against a path that is not there, which is where a question about the file belongs.
+        // Asserted against what the parser found rather than against a number typed here: the
+        // version this build *is* comes from the git tag, so in a checkout it is not a release and
+        // has nothing to do with which entries the file holds.
+        $entries = Changelog::parse();
+
+        $this->assertNotSame([], $entries, 'there is a CHANGELOG.md to show');
         $this->assertStringContainsString("What's New", $screen);
-        $this->assertStringContainsString(Version::current(), $screen);
+        $this->assertStringContainsString($entries[0]->version, $screen);
         $this->assertStringNotContainsString('No changelog entries found.', $screen);
     }
 

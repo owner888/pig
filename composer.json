@@ -1,32 +1,34 @@
 {
     "name": "pig/pig",
     "description": "pi, ported to PHP: agent core, unified LLM API, terminal UI, coding agent CLI",
-    "type": "project",
-    "version": "0.1.0",
+    "type": "library",
+    "keywords": ["agent", "llm", "cli", "tui", "coding-agent", "anthropic", "openai", "gemini"],
+    "license": "MIT",
     "bin": [
         "bin/pig",
         "bin/pig-ai"
     ],
-    "license": "MIT",
     "require": {
         "php": ">=8.3",
-        "pig/agent-core": "@dev",
-        "pig/ai": "@dev",
-        "pig/async": "@dev",
-        "pig/coding-agent": "@dev",
-        "pig/tui": "@dev"
+        "composer-runtime-api": "^2.0",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "ext-openssl": "*",
+        "ext-pcntl": "*",
+        "ext-pcre": "*"
     },
-    "repositories": [
-        {
-            "type": "path",
-            "url": "packages/*"
-        }
-    ],
     "require-dev": {
         "phpunit/phpunit": "^12"
     },
-    "minimum-stability": "dev",
-    "prefer-stable": true,
+    "autoload": {
+        "psr-4": {
+            "Pig\\Agent\\": "packages/agent-core/src/",
+            "Pig\\Ai\\": "packages/ai/src/",
+            "Pig\\Async\\": "packages/async/src/",
+            "Pig\\CodingAgent\\": "packages/coding-agent/src/",
+            "Pig\\Tui\\": "packages/tui/src/"
+        }
+    },
     "autoload-dev": {
         "psr-4": {
             "Pig\\Agent\\Test\\": "packages/agent-core/test/",

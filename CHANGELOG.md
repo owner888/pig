@@ -7,9 +7,13 @@ A `##` heading with a version in it starts an entry and everything until the nex
 it — so an `## Unreleased` heading is a section nobody has versioned yet, and the notes under it
 are deliberately *not* shown as part of the release above. See `Pig\CodingAgent\Changelog`.
 
-**Releasing:** the version lives in `composer.json` and nowhere else — `bin/pig` reads it, `pig
---version` prints it, and the update check compares it against Packagist. Bump it in the same
-commit as the tag, or a copy installed from the tag reports itself as out of date for ever.
+**Releasing:** the version lives in the **git tag** and nowhere else. `composer.json` has no
+`version` field on purpose — Packagist derives one from the tag and says a field "should be omitted",
+because a field and a tag are the two copies that can disagree. `Pig\CodingAgent\Version` asks
+Composer what it installed, `pig --version` prints that, and the update check compares it against
+Packagist. So a release is: add the heading below, commit, `git tag v0.2.0`, push the tag. There is
+no number to bump anywhere else, and a build with no tag reachable reports
+`1.0.0+no-version-set` — Composer's own words — and asks Packagist nothing.
 
 ## Unreleased
 

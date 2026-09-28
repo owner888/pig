@@ -48,11 +48,11 @@ use Pig\CodingAgent\Timings;
 use Pig\CodingAgent\Version;
 use Pig\Tui\Style;
 
-// **Read from `composer.json` rather than written here as well.** Packagist derives a package's
-// version from its tag and the update check below compares against Packagist, so a second copy of
-// the number is a copy that can disagree — and the way it disagrees is the worst one available: a
-// build installed from tag 0.2.0 whose constant still says 0.1.0 reports itself as out of date
-// for ever. One source, bumped in the commit that carries the tag.
+// **Asked of Composer rather than written here.** Packagist derives a package's version from its
+// **tag**, and the update check below compares against Packagist — so a number written down
+// anywhere in this repository is a copy that can disagree with the tag, and the way it disagrees is
+// the worst one available: a build installed from tag 0.2.0 that still says 0.1.0 reports itself as
+// out of date for ever. `Version` reads Composer's own answer, so there is nothing to bump.
 define('VERSION', Version::current());
 
 // The first mark is an anchor and costs nothing; every one after it is the gap since the

@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Cli;
 
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
+use Pig\CodingAgent\Version;
 use Throwable;
 
 /**
@@ -39,17 +40,37 @@ use Throwable;
  */
 final class UpdateCheck
 {
-    /** The package as Packagist knows it — the root `composer.json`'s own name. */
-    public const string PACKAGE = 'pig/pig';
-
     /**
      * What to run, which is all this feature does about it.
      *
      * Assumes the global-require install, which is what declaring `bin` in `composer.json` is for.
      * If the release decides otherwise — a phar, a `create-project`, a tap — this string is the one
-     * place to change.
+     * place to change. The package name comes from `Version`, which is the one place it is written.
      */
-    public const string COMMAND = 'composer global update ' . self::PACKAGE;
+    public const string COMMAND = 'composer global update ' . Version::PACKAGE;
+
+    /**
+     * What a released version looks like, and therefore what is worth comparing.
+     *
+     * Composer answers `dev-main` for a branch and `1.0.0+no-version-set` for a working tree with no
+     * tag reachable, and **neither can be out of date** — there is no release to be behind. Left
+     * unchecked the second one is the dangerous shape rather than the first: it reads as `1.0.0`, so
+     * `version_compare()` puts it ahead of every real release and the check goes quiet for a reason
+     * that has nothing to do with the truth. Anchored at both ends, so `+no-version-set` is refused
+     * rather than quietly ignored down to the `1.0.0` in front of it.
+     *
+     * **A pre-release is a release here**, unlike on the other side of the comparison where a beta
+     * is not offered to somebody who did not ask for one. The two are different questions and the
+     * asymmetry is the point: running `0.2.0-beta.1` and not being told that `0.2.0` is out is
+     * exactly the case `Changelog`'s own note is about, where the hand-rolled comparison read
+     * `0.2.0-beta` as equal to the release it precedes. `version_compare()` orders it correctly, so
+     * the only thing needed is not to refuse it.
+     *
+     * Three parts and not two, matching `Changelog::heading()` — pig's own versions are three-part,
+     * and the file that decides what is new and the check that decides what is newer should not
+     * disagree about what a version of pig looks like.
+     */
+    private const string A_RELEASE = '/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?\z/';
 
     /**
      * Short on purpose: nobody is waiting for this, and a machine behind a hostile network should
@@ -70,6 +91,12 @@ final class UpdateCheck
     /** The newest released version if it is newer than $current, or null when there is nothing to say. */
     public function newerThan(string $current): ?string
     {
+        // Nothing to be behind, and nothing asked of Packagist either — a developer running from a
+        // checkout gets no request, which is the other half of not drawing anything.
+        if (preg_match(self::A_RELEASE, $current) !== 1) {
+            return null;
+        }
+
         try {
             $newest = $this->newest();
         } catch (Throwable) {
@@ -87,7 +114,7 @@ final class UpdateCheck
     /** The highest released version Packagist lists, or null. */
     private function newest(): ?string
     {
-        $response = $this->http->follow(new Request('GET', $this->endpoint . self::PACKAGE . '.json', [
+        $response = $this->http->follow(new Request('GET', $this->endpoint . Version::PACKAGE . '.json', [
             'accept' => 'application/json',
         ]));
 
@@ -98,7 +125,7 @@ final class UpdateCheck
         }
 
         $decoded = json_decode($body, true);
-        $versions = $decoded['packages'][self::PACKAGE] ?? null;
+        $versions = $decoded['packages'][Version::PACKAGE] ?? null;
 
         if (!is_array($versions)) {
             return null;

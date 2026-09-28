@@ -89,7 +89,7 @@ AppleScript, which always is, when it is not.
 | Concurrency | Hand-written `Fiber` + `stream_select` loop | One `select()` must wait on the LLM socket and STDIN together — that is what makes Esc-to-interrupt and typing mid-stream possible |
 | HTTP transport | Raw `tls://` streams, hand-written HTTP/1.1 | Sockets and STDIN are then the same kind of thing; one loop, no `ext-curl` |
 | Unions | real union type where the arms are closed and few, marker interface otherwise | PHP has union types; what it lacks is naming one and typing an array's elements — see [Porting the unions](#porting-the-unions) |
-| Layout | composer monorepo, `Pig\*` | Mirrors upstream's package split one-to-one |
+| Layout | one published package, five namespaces under `packages/` | Mirrors upstream's package split one-to-one; packagist.org cannot serve a package from a subdirectory, so the split is a layout rather than five packages — see the Packagist entry in the traps |
 | Session file | pi's format exactly, in pi's directory layout | A conversation started in either tool opens in the other; `--resume` lists both — see [The session file is pi's file](#the-session-file-is-pis-file) |
 | Back-compatibility | none before a release | pig has never shipped, so there is nobody with an old file; a reader for one would be compatibility with nothing, exercised only by the test written to exercise it |
 
@@ -1668,11 +1668,11 @@ Two things about it, and the first is the reason the logic is in `Cli\` rather t
   `pig` and `pi` both read, with the mode that file gets. The usage text says which file, because
   that is the one thing somebody on a fresh machine needs to know.
 
-**`composer.json` declares `bin` now**, and a `version` with it. This paragraph used to say the
-opposite — "declaring executables is a packaging decision rather than part of this port" — and the
-decision has since been taken, because the update check needs a version to compare and the command
-it prints (`composer global update pig/pig`) needs an install that puts `pig` on the PATH. The entry
-below has what that turned out to cost.
+**`composer.json` declares `bin` now.** This paragraph used to say the opposite — "declaring
+executables is a packaging decision rather than part of this port" — and the decision has since been
+taken, because the command the update check prints (`composer global update pig/pig`) only works for
+an install that puts `pig` on the PATH. There is deliberately **no** `version` field beside it; the
+two entries below have that and the rest of the packaging.
 
 ### Tidying pi's directory, which is pig's problem
 
@@ -3365,7 +3365,7 @@ before optional ones.
 ## Commands
 
 ```bash
-composer install        # path repositories + PHPUnit 12
+composer install        # PHPUnit 12; the five packages/ are autoloaded by the root package
 php test/lint.php       # php -l over every file (PHPUnit only parses what it loads)
 vendor/bin/phpunit      # filter: vendor/bin/phpunit --filter Loop
 php test/live.php       # the providers against the real endpoints — costs money, needs keys
@@ -8684,11 +8684,10 @@ settled the shape — the version comes from **Packagist**, the notice **prints 
 updates nothing** (which is pi's behaviour, and `pi update` is for *extensions*), and the check is
 **on by default with a way off**.
 
-What that produced: `CHANGELOG.md`, `"version"` and `"bin"` in `composer.json`,
-`CodingAgent\Version` (the manifest is the one source — `Version::current()`, cached, throwing by
-name when the file or the key is missing), `Cli\UpdateCheck`, `Settings::updateCheckEnabled()`,
-`--no-update-check`, and `InteractiveMode::sayNewVersion()`. `bin/pig`'s `const VERSION = '0.1.0'`
-is `define('VERSION', Version::current())`, because **a `const` needs a compile-time value** and a
+What that produced: `CHANGELOG.md`, `"bin"` in `composer.json`, `CodingAgent\Version`,
+`Cli\UpdateCheck`, `Settings::updateCheckEnabled()`, `--no-update-check`, and
+`InteractiveMode::sayNewVersion()`. `bin/pig`'s `const VERSION = '0.1.0'` is
+`define('VERSION', Version::current())`, because **a `const` needs a compile-time value** and a
 second copy of the number is the thing `Version` exists to prevent.
 
 Five things in it are decisions rather than code:
@@ -8701,11 +8700,13 @@ Five things in it are decisions rather than code:
 - **It is spawned, inside the one `Async::run()` the interactive start already has.** A network call
   in front of the first frame is a start that hangs on a bad network, and the answer arriving while
   somebody is already typing is exactly what `sayNewVersion()` being public is for.
-- **Pre-releases are skipped**, and `version_compare()` does the comparing — `Changelog`'s rule, for
-  `Changelog`'s reason.
-- **The version lives in `composer.json` and nowhere else**, and `CHANGELOG.md` says so at the top:
-  bump it in the tag's own commit, or a copy installed from that tag reports itself out of date for
-  ever.
+- **A pre-release is never offered and is always told**, which sounds contradictory and is two
+  questions: a beta is not *offered* to somebody who did not ask for one, and somebody already
+  running `0.2.0-beta.1` is told when `0.2.0` lands. `version_compare()` orders both correctly —
+  `Changelog`'s rule, for `Changelog`'s reason — so the asymmetry is one `str_contains` on the way
+  out and one regex on the way in.
+- **The version lives in the git tag and nowhere else.** This bullet said `composer.json` for one
+  batch; see the entry below for why that was wrong and what it cost.
 - **"you have" is `$this->version`, not `Version::current()`.** The component already holds the
   string the banner drew, and reading the manifest a second time made the screen contradict itself
   three lines apart — banner `v0.0.0`, notice `you have 0.1.0` — about the one comparison the block
@@ -8767,6 +8768,100 @@ disk made first.*
 executable bit in git and the container copy is not a git repository, so that one is one command on
 the Mac: `git update-index --chmod=+x bin/pig bin/pig-ai`.
 
+### Packaging for Packagist, and the version field that was the wrong answer to the right question
+
+The entry above got `Version` right in principle and wrong in fact. Its reasoning — *one written-down
+number beats two* — is sound, and it was pointed at the wrong file: **Packagist derives a package's
+version from the git tag**, and its own documentation says the `version` field "should be omitted",
+for precisely the reason the entry gives. So `composer.json` holding `0.1.0` did not remove the second
+copy, it *created* it, and the failure it warned about (a build from tag `v0.2.0` reporting itself out
+of date for ever) became "somebody forgot to edit the field before tagging" — the same bug with a
+manual step in front of it. *A rule about not writing a fact down twice is only as good as knowing
+where the first copy already is.*
+
+Both of these were the developer's calls, and both came out the way the facts pointed.
+
+**One package, not six.** packagist.org does not host archives — it references the source — so it
+cannot serve a package from a subdirectory, and multi-package repositories are a Private Packagist
+feature. The monorepo therefore publishes as a single `pig/pig` whose root `composer.json` autoloads
+all five namespaces out of `packages/*/src`. What that removed is worth listing, because every line
+of it existed only to make the split work in a checkout: the `path` repository, the five
+`pig/*: "@dev"` requires, `minimum-stability: dev` and `prefer-stable`. All four are root-only
+settings anyway — **Composer reads `repositories` and `minimum-stability` from the root package and
+nowhere else** — so `composer global require pig/pig` would have gone to Packagist for five packages
+that are not there, with `@dev` constraints nothing would satisfy. The alternative, splitting into six
+read-only repositories with a CI job to push them, buys `require pig/ai` for somebody who has never
+asked for it, and costs six tags to keep in step — which is the rule at the top of this file.
+
+The five `packages/*/composer.json` stay, and what they are has changed: **structure documentation,
+not manifests.** Nothing reads them now. They are kept because the package split is the port's
+skeleton and each one states what its package needs, but a requirement written only there is a
+requirement Composer will not enforce — which is exactly how the next paragraph happened.
+
+**`type` is `library`, not `project`.** `project` means "an application you `create-project` from";
+the default is `library` and that is what a CLI installed with `composer global require` is.
+
+**And collapsing found a requirement nothing declared: `ext-pcntl`.** This document has said since
+`pig/tui` was ported that the extension is required, with the reason (SIGWINCH is the only way to
+learn the window was resized) and the consequence (`ProcessTerminal` *refuses to start* rather than
+drawing at the startup width for ever) — and **no `composer.json` in the tree listed it.** So
+`composer install` succeeded on a machine without it and pig died at startup with a `TuiError`,
+where Composer's whole job is to refuse beforehand. The fourth shape from the index, on a manifest:
+a claim about the repository the repository did not keep. It is in the root's `require` now, with
+`ext-json`, `ext-mbstring`, `ext-openssl` and `ext-pcre`, which the sub-packages declared and the
+root — the only one Composer reads — did not.
+
+**`Version` asks Composer instead of reading a file.** `Composer\InstalledVersions::getPrettyVersion('pig/pig')`,
+`v` stripped. That costs one platform requirement, `composer-runtime-api ^2.0`, which is Composer's
+own runtime rather than a package anything downloads — the same kind of entry as `php` or `ext-json`,
+and it was put to the developer as a dependency question because that is the standing rule.
+`getPrettyVersion` and not `getRootPackage()`: installed globally, pig is a *dependency* of the
+global project, so the root package is that project and not pig.
+
+**A checkout is not a release, and the unguarded shape of that is the dangerous one.** Measured, by
+rewriting `installed.php`'s answer four ways:
+
+| Composer says | `pig --version` | asked of Packagist |
+|---|---|---|
+| `0.1.0` (tag `v0.1.0`) | `pig 0.1.0` | yes |
+| `v0.2.0` | `pig 0.2.0` | yes |
+| `dev-main` (a branch) | `pig dev-main` | **no** |
+| `1.0.0+no-version-set` (no tag reachable) | `pig 1.0.0+no-version-set` | **no** |
+
+`dev-main` is obvious. `1.0.0+no-version-set` is the one to be careful about: it *reads as* `1.0.0`,
+so an unguarded `version_compare()` puts a checkout ahead of every real release and the check goes
+quiet — right answer, wrong reason, and it would have stayed quiet after `1.0.1` shipped too. The
+gate is `UpdateCheck::A_RELEASE`, anchored at both ends so the suffix is refused rather than ignored
+down to the number in front of it, and it lives with the other reasons that class says nothing rather
+than as a condition in `bin/pig`. Both are printed as Composer words them, because `no-version-set`
+is a sentence a developer can read and an invented `0.0.0` is a number they would have to go and
+check.
+
+**The two tests that asserted the field are gone the same way the changelog ones went.**
+`testPigsOwnVersionComesFromComposerJsonAndNowhereElse` asserted `$manifest['version'] ===
+Version::current()`, which was true and was a test of the wrong fact; it now asserts `composer.json`
+has **no** `version` key, which is the decision. And `testTheChangelogHasAnEntryForTheVersionThisIs`
+could only ever pass where the version was a release, so it skips in a checkout and says which
+version made it skip — the assertion that matters runs on a tag, which is where it is wanted.
+
+**Two things the verification tripped over, both stale generated state rather than source.** The
+shim autoloads `packages/*/src` by hand and bypasses `vendor/`, so it had no
+`Composer\InstalledVersions` and every version test died on a missing class; it hands that one file
+over now. Worse: `vendor/composer/installed.json` still recorded `pig/ai` and `pig/async` as
+requiring `php >=8.4`, from before the floor moved to 8.3 — so a `dump-autoload` regenerated
+`platform_check.php` as `PHP_VERSION_ID >= 80400` and **every test that spawns `bin/pig` failed on
+8.3**, 35 of them, with a Composer platform error that named nothing about pig. The metadata was
+corrected to what `packages/*/composer.json` actually declare. *A generated file can be years out of
+date and cost nothing until something regenerates a second file from it* — and collapsing to one
+package removes this whole class, since there will be no `pig/*` entries in anybody's lock.
+
+**Still the developer's**, and none of it is code: the vendor namespace `pig` has to actually be free
+on Packagist (`Version::PACKAGE` and the command it prints both assume `pig/pig`, and vendor names
+there are first-come-first-served); `authors` is the one field a Packagist listing normally carries
+and the standing rule is that the name does not enter this repository, so what goes there — a handle,
+or nothing — is theirs; and `composer.json` no longer matches any lock, so the Mac needs a
+`composer update` before anything else.
+
 **And publishing has a consequence this document leans on in two places.** The back-compatibility
 row says *"pig has never shipped, so there is nobody with an old file"*, and the session-format
 section says there is *"no reader for the old shape, on purpose"* because *"a reader for it would be
@@ -8782,7 +8877,11 @@ packaging decision and it is the developer's.
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;
 8.3 is the floor actually declared, because 8.1 is end-of-life and 8.2 loses security support at
-the end of 2026. `require.php` in the three composer.json files is the source of truth.
+the end of 2026. **`require.php` in the root `composer.json` is the source of truth**, because that
+is the one Composer reads — the five under `packages/` declare their own and are structure
+documentation now rather than manifests; see the Packagist entry in the traps. This line said "the
+three composer.json files" for as long as there were three, and by the time anybody looked there
+were six and only one of them was load-bearing.
 
 Off-limits until the floor moves, even though the dev machine runs 8.4:
 

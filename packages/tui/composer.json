@@ -6,6 +6,7 @@
     "require": {
         "php": ">=8.3",
         "ext-mbstring": "*",
+        "ext-pcntl": "*",
         "ext-pcre": "*",
         "pig/async": "@dev"
     },

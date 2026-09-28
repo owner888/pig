@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use Composer\InstalledVersions;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Http\HttpClient;
@@ -51,7 +52,7 @@ final class UpdateCheckTest extends TestCase
     /** @param list<string> $versions */
     private static function packagist(array $versions): array
     {
-        return ['packages' => [UpdateCheck::PACKAGE => array_map(
+        return ['packages' => [Version::PACKAGE => array_map(
             static fn (string $version): array => ['version' => $version],
             $versions,
         )]];
@@ -130,8 +131,8 @@ final class UpdateCheckTest extends TestCase
             'not json at all' => ['<html>go away</html>', 200],
             'json of the wrong shape' => [['packages' => 'surprise'], 200],
             'a package that is not this one' => [['packages' => ['someone/else' => []]], 200],
-            'no versions in it' => [['packages' => [UpdateCheck::PACKAGE => []]], 200],
-            'a release with no version field' => [['packages' => [UpdateCheck::PACKAGE => [['ref' => 'x']]]], 200],
+            'no versions in it' => [['packages' => [Version::PACKAGE => []]], 200],
+            'a release with no version field' => [['packages' => [Version::PACKAGE => [['ref' => 'x']]]], 200],
             'an empty body' => ['', 200],
         ];
     }
@@ -147,23 +148,99 @@ final class UpdateCheckTest extends TestCase
 
     // ---- the version it is comparing against ---------------------------------------------
 
-    public function testPigsOwnVersionComesFromComposerJsonAndNowhereElse(): void
+    public function testTheVersionIsComposersAnswerAndIsWrittenDownNowhere(): void
     {
-        // One source, because the update check compares against Packagist: a second copy that
-        // said 0.1.0 while the tag said 0.2.0 would report itself out of date for ever.
-        $manifest = json_decode((string) file_get_contents(Version::path()), true);
+        // **The tag is the source, so nothing in the repository may hold the number.** Packagist
+        // derives a package's version from its tag and says the `version` field "should be
+        // omitted" for exactly that reason — a field and a tag are the two copies that can
+        // disagree. This asserted the field's value until the day pig was nearly published.
+        $manifest = json_decode((string) file_get_contents(dirname(__DIR__, 3) . '/composer.json'), true);
 
         $this->assertIsArray($manifest);
-        $this->assertSame($manifest['version'], Version::current());
-        $this->assertMatchesRegularExpression('/^\d+\.\d+\.\d+/', Version::current());
+        $this->assertArrayNotHasKey('version', $manifest, 'the tag decides; a field here can disagree with it');
+        $this->assertSame(Version::PACKAGE, $manifest['name'] ?? null, 'and Composer is asked about this name');
+        $this->assertNotSame('', Version::current());
     }
 
-    public function testTheChangelogHasAnEntryForTheVersionThisIs(): void
+    /**
+     * What Composer would answer for a tag cut with a `v` on it, which is most of them.
+     *
+     * `InstalledVersions::reload()` is Composer's own seam for this — it is what Composer uses in its
+     * own tests — and it is the only way to reach the case from a checkout, where the real answer is
+     * `1.0.0+no-version-set` and has no `v` to strip. The alternative was a hand probe that rewrote
+     * `vendor/composer/installed.php`, which verified it once and pinned nothing: mutating the
+     * `ltrim` away broke no test at all until this existed.
+     *
+     * The dataset is restored whatever happens, because this is global state and everything else in
+     * the suite that asks for a version would get this one instead.
+     */
+    public function testATagCutWithAVeeIsNotTheVersionItReports(): void
     {
+        $real = InstalledVersions::getAllRawData()[0];
+
+        try {
+            InstalledVersions::reload([
+                'root' => [...$real['root'], 'pretty_version' => 'v0.9.0', 'version' => '0.9.0.0'],
+                'versions' => [
+                    ...$real['versions'],
+                    Version::PACKAGE => [
+                        ...($real['versions'][Version::PACKAGE] ?? []),
+                        'pretty_version' => 'v0.9.0',
+                        'version' => '0.9.0.0',
+                    ],
+                ],
+            ]);
+
+            $this->assertSame('0.9.0', Version::current(), 'the v belongs to the tag, not to the version');
+        } finally {
+            InstalledVersions::reload($real);
+        }
+
+        $this->assertNotSame('0.9.0', Version::current(), 'and the real answer is back');
+    }
+
+    public function testACheckoutIsNotOutOfDateAndIsNotAsked(): void
+    {
+        // What Composer answers for a working tree: `dev-main` for a branch, and
+        // `1.0.0+no-version-set` when no tag is reachable. **The second is the dangerous one** — it
+        // reads as `1.0.0`, so an unguarded `version_compare()` puts a checkout ahead of every real
+        // release and goes quiet for a reason that has nothing to do with the truth. The endpoint
+        // here is a server that would answer a newer version, so a gate that let either through
+        // would report one.
+        $branch = $this->asking(self::packagist(['9.9.9']));
+
+        $this->assertNull(Async::run(static fn () => $branch->newerThan('dev-main')));
+
+        $untagged = $this->asking(self::packagist(['9.9.9']));
+
+        $this->assertNull(Async::run(static fn () => $untagged->newerThan('1.0.0+no-version-set')));
+    }
+
+    public function testAPreReleaseOfPigIsStillToldAboutTheRelease(): void
+    {
+        // The asymmetry, and it is deliberate: a beta is never *offered* to somebody who did not ask
+        // for one, and somebody already running one is still told when the release lands. That is
+        // `Changelog`'s own note from the other end — the arithmetic it replaced read `0.2.0-beta`
+        // as equal to the release it precedes, so a beta user saw nothing after upgrading.
+        $check = $this->asking(self::packagist(['0.2.0', '0.1.0']));
+
+        $this->assertSame('0.2.0', Async::run(static fn () => $check->newerThan('0.2.0-beta.1')));
+    }
+
+    public function testTheChangelogHasAnEntryForAReleasedVersion(): void
+    {
+        $version = Version::current();
+
+        if (preg_match('/^\d+\.\d+\.\d+\z/', $version) !== 1) {
+            // A checkout has no release to have notes for. This is the case on a developer's machine
+            // and the assertion below is the one that matters on a tag, which is where it runs.
+            self::markTestSkipped("Not a released build ({$version})");
+        }
+
         // The two are read together at startup — the version decides which entries are new — so a
-        // release whose number is in neither file is a release nobody is told about.
+        // release whose number is in neither place is a release nobody is told about.
         $this->assertStringContainsString(
-            '## ' . Version::current(),
+            '## ' . $version,
             (string) file_get_contents(dirname(__DIR__, 3) . '/CHANGELOG.md'),
         );
     }

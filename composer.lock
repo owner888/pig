@@ -4,153 +4,8 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "e01519cbada1463fe2b76b6df45abddd",
-    "packages": [
-        {
-            "name": "pig/agent-core",
-            "version": "dev-main",
-            "dist": {
-                "type": "path",
-                "url": "packages/agent-core",
-                "reference": "5a1f0451ef698c8afc1dadb5f40d55e15f5d8a96"
-            },
-            "require": {
-                "php": ">=8.3",
-                "pig/ai": "@dev",
-                "pig/async": "@dev"
-            },
-            "type": "library",
-            "autoload": {
-                "psr-4": {
-                    "Pig\\Agent\\": "src/"
-                }
-            },
-            "license": [
-                "MIT"
-            ],
-            "description": "Agent loop for pig: tool calling, steering, and conversation state.",
-            "transport-options": {
-                "relative": true
-            }
-        },
-        {
-            "name": "pig/ai",
-            "version": "dev-main",
-            "dist": {
-                "type": "path",
-                "url": "packages/ai",
-                "reference": "d40ad8a6b0515b0b52472412d1857122726a9b39"
-            },
-            "require": {
-                "ext-json": "*",
-                "ext-mbstring": "*",
-                "ext-openssl": "*",
-                "php": ">=8.3",
-                "pig/async": "@dev"
-            },
-            "type": "library",
-            "autoload": {
-                "psr-4": {
-                    "Pig\\Ai\\": "src/"
-                }
-            },
-            "license": [
-                "MIT"
-            ],
-            "description": "Unified multi-provider LLM API for pig: streaming messages, tools, usage accounting.",
-            "transport-options": {
-                "relative": true
-            }
-        },
-        {
-            "name": "pig/async",
-            "version": "dev-main",
-            "dist": {
-                "type": "path",
-                "url": "packages/async",
-                "reference": "757a58410ee8caaf8c3bd761e4fabd991d20a4bd"
-            },
-            "require": {
-                "php": ">=8.3"
-            },
-            "type": "library",
-            "autoload": {
-                "psr-4": {
-                    "Pig\\Async\\": "src/"
-                }
-            },
-            "license": [
-                "MIT"
-            ],
-            "description": "Coroutine runtime for pig: event loop, futures, fibers. No dependencies.",
-            "transport-options": {
-                "relative": true
-            }
-        },
-        {
-            "name": "pig/coding-agent",
-            "version": "dev-main",
-            "dist": {
-                "type": "path",
-                "url": "packages/coding-agent",
-                "reference": "07ef2ba8014e9f912db7275bcf51da2de80190a7"
-            },
-            "require": {
-                "ext-json": "*",
-                "ext-mbstring": "*",
-                "php": ">=8.3",
-                "pig/agent-core": "@dev",
-                "pig/ai": "@dev",
-                "pig/async": "@dev",
-                "pig/tui": "@dev"
-            },
-            "suggest": {
-                "fd": "find tool — pig downloads it to ~/.pig/tools if missing; brew install fd to use your own",
-                "ripgrep": "grep tool — pig downloads it to ~/.pig/tools if missing; brew install ripgrep to use your own"
-            },
-            "type": "library",
-            "autoload": {
-                "psr-4": {
-                    "Pig\\CodingAgent\\": "src/"
-                }
-            },
-            "license": [
-                "MIT"
-            ],
-            "description": "The coding agent: tools the model runs, and the CLI around them.",
-            "transport-options": {
-                "relative": true
-            }
-        },
-        {
-            "name": "pig/tui",
-            "version": "dev-main",
-            "dist": {
-                "type": "path",
-                "url": "packages/tui",
-                "reference": "4bc17d61d77fccd8406d72cdcf7d37d7fd231731"
-            },
-            "require": {
-                "ext-mbstring": "*",
-                "ext-pcre": "*",
-                "php": ">=8.3",
-                "pig/async": "@dev"
-            },
-            "type": "library",
-            "autoload": {
-                "psr-4": {
-                    "Pig\\Tui\\": "src/"
-                }
-            },
-            "license": [
-                "MIT"
-            ],
-            "description": "Terminal UI for pig: differential rendering, grapheme-accurate widths, ANSI-aware wrapping.",
-            "transport-options": {
-                "relative": true
-            }
-        }
-    ],
+    "content-hash": "81d42d3409e1ee47e57a6395229ca256",
+    "packages": [],
     "packages-dev": [
         {
             "name": "myclabs/deep-copy",
@@ -734,16 +589,16 @@
         },
         {
             "name": "phpunit/phpunit",
-            "version": "12.5.35",
+            "version": "12.5.36",
             "source": {
                 "type": "git",
                 "url": "https://github.com/sebastianbergmann/phpunit.git",
-                "reference": "345ac22e42cb14cdc7aa8428655d8bb8c82a4aab"
+                "reference": "ddb775588a0ea447d1c9b190c0f29c174ce81d65"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/sebastianbergmann/phpunit/zipball/345ac22e42cb14cdc7aa8428655d8bb8c82a4aab",
-                "reference": "345ac22e42cb14cdc7aa8428655d8bb8c82a4aab",
+                "url": "https://api.github.com/repos/sebastianbergmann/phpunit/zipball/ddb775588a0ea447d1c9b190c0f29c174ce81d65",
+                "reference": "ddb775588a0ea447d1c9b190c0f29c174ce81d65",
                 "shasum": ""
             },
             "require": {
@@ -812,7 +667,7 @@
             "support": {
                 "issues": "https://github.com/sebastianbergmann/phpunit/issues",
                 "security": "https://github.com/sebastianbergmann/phpunit/security/policy",
-                "source": "https://github.com/sebastianbergmann/phpunit/tree/12.5.35"
+                "source": "https://github.com/sebastianbergmann/phpunit/tree/12.5.36"
             },
             "funding": [
                 {
@@ -820,7 +675,7 @@
                     "type": "other"
                 }
             ],
-            "time": "2026-09-09T04:48:50+00:00"
+            "time": "2026-09-25T08:47:40+00:00"
         },
         {
             "name": "sebastian/cli-parser",
@@ -1847,18 +1702,18 @@
         }
     ],
     "aliases": [],
-    "minimum-stability": "dev",
-    "stability-flags": {
-        "pig/agent-core": 20,
-        "pig/ai": 20,
-        "pig/async": 20,
-        "pig/coding-agent": 20,
-        "pig/tui": 20
-    },
-    "prefer-stable": true,
+    "minimum-stability": "stable",
+    "stability-flags": {},
+    "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {
-        "php": ">=8.3"
+        "php": ">=8.3",
+        "composer-runtime-api": "^2.0",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "ext-openssl": "*",
+        "ext-pcntl": "*",
+        "ext-pcre": "*"
     },
     "platform-dev": {},
     "plugin-api-version": "2.9.0"

@@ -6,7 +6,6 @@ namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Changelog;
-use Pig\CodingAgent\Version;
 
 /** `CHANGELOG.md`, read for `/changelog` and for the note shown once after an upgrade. */
 final class ChangelogTest extends TestCase
@@ -148,17 +147,15 @@ final class ChangelogTest extends TestCase
 
         // **This used to assert `[]`, on the grounds that pig had no releases and therefore no
         // file.** So the one test of the default path was pinning the absence of a file, and it
-        // would have gone green for a `path()` pointing anywhere else at all. What it asserts now
-        // is that the two halves agree: the path names a file this parser can read, and the
-        // version this pig is has an entry in it — which is the pair `/changelog` and the upgrade
-        // note both rest on. The empty answer keeps its own case above, against a path that is
-        // not there, which is where a question about a missing file belongs.
+        // would have gone green for a `path()` pointing anywhere else at all. What it asserts now is
+        // that the path names a file this parser can read and gets versions out of it — the pair
+        // `/changelog` and the upgrade note both rest on. Which version this build *is* is not
+        // asked here: that comes from the git tag rather than from anything in the tree, so a
+        // checkout has no number to match against and `UpdateCheckTest` is where the release case
+        // lives. The empty answer keeps its own case above, against a path that is not there.
         $entries = Changelog::parse();
 
         $this->assertNotSame([], $entries);
-        $this->assertContains(
-            Version::current(),
-            array_map(static fn (Changelog $entry): string => $entry->version, $entries),
-        );
+        $this->assertMatchesRegularExpression('/^\d+\.\d+\.\d+\z/', $entries[0]->version);
     }
 }

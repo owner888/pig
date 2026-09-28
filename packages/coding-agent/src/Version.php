@@ -4,64 +4,65 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
+use Composer\InstalledVersions;
+use OutOfBoundsException;
+
 /**
- * pig's own version, read from `composer.json`.
+ * pig's own version, as Composer resolved it.
  *
- * **One source, and the reason is the update check.** Packagist derives a package's version from
- * its git tag, and `Cli\UpdateCheck` compares what is running against what Packagist answers — so
- * a number written down twice is a number that can disagree, and the way it disagrees is the worst
- * one available: a copy installed from tag 0.2.0 whose constant still said 0.1.0 would report
- * itself as out of date for ever, on every start, with no way to make it stop.
+ * **The git tag is the one source, and this reads Composer's answer rather than a field.** It used
+ * to read `"version"` out of `composer.json`, on the reasoning that one written-down number beats
+ * two — and that was the right instinct pointed at the wrong file: Packagist derives a package's
+ * version from its **tag** and says in as many words that the field "should be omitted", because a
+ * field and a tag are exactly the two copies that can disagree. So the field is gone and
+ * `Composer\InstalledVersions` answers, which is Composer telling us what it installed.
  *
- * So `composer.json` holds it and this reads it. Bumping it belongs in the commit that carries the
- * tag, which `CHANGELOG.md` says at the top for whoever does the release.
+ * What that costs is one platform requirement, `composer-runtime-api`, which is Composer's own
+ * runtime and not a package anything downloads — the same kind of entry as `php` or `ext-json`.
  *
- * The same `dirname(__DIR__, 3)` as `Changelog::path()`, and for the same reason: both files sit at
- * the root of the repository beside the README, and one expression for "where the repository
- * starts" is better than two that can drift apart.
+ * **A checkout is not a release, and Composer says so in its own words.** A working tree with no tag
+ * reachable comes back as `1.0.0+no-version-set` and a branch as `dev-main`; both are printed as
+ * they are, because `no-version-set` is a sentence a developer can read and an invented `0.0.0`
+ * would be a number they would have to go and check. What must not happen is comparing one against
+ * Packagist, and that rule lives in `Cli\UpdateCheck` with the other reasons it says nothing.
  */
 final class Version
 {
-    private static ?string $current = null;
+    /**
+     * The package as Composer and Packagist know it — this repository's own name.
+     *
+     * **One copy, here.** `Cli\UpdateCheck` asks Packagist about it and builds the install command
+     * out of it, and this asks Composer about it; a second spelling is the one kind of typo that
+     * would make those two questions be about different packages.
+     */
+    public const string PACKAGE = 'pig/pig';
 
     /**
-     * The version this build is.
+     * The version this build is, as Composer resolved it, without a `v` on the front.
      *
-     * **A missing or unreadable `composer.json` throws**, rather than answering `0.0.0` or
-     * `unknown`. Every other loader in this repository names a file it cannot use instead of
-     * carrying on — and here the alternative is worse than a missing feature, because a made-up
-     * version is a number the update check would compare against Packagist and act on.
+     * **A build Composer has never heard of throws**, rather than answering `0.0.0` or `unknown`.
+     * Every other loader here names what it cannot read instead of carrying on, and a made-up
+     * version is worse than a missing feature: it is a number `/changelog` filters on and the update
+     * check would compare against Packagist.
      */
     public static function current(): string
     {
-        if (self::$current !== null) {
-            return self::$current;
+        try {
+            $version = InstalledVersions::getPrettyVersion(self::PACKAGE);
+        } catch (OutOfBoundsException $problem) {
+            throw new CodingAgentError(
+                "Cannot read pig's own version: Composer does not know about " . self::PACKAGE
+                . '. Was this installed with composer?',
+                previous: $problem,
+            );
         }
 
-        $path = self::path();
-
-        if (!is_file($path) || !is_readable($path)) {
-            throw new CodingAgentError("Cannot read pig's own version: {$path} is not there.");
+        if ($version === null || $version === '') {
+            throw new CodingAgentError("Cannot read pig's own version: Composer has no version for " . self::PACKAGE . '.');
         }
 
-        $manifest = json_decode((string) file_get_contents($path), true);
-
-        if (!is_array($manifest) || !is_string($manifest['version'] ?? null) || $manifest['version'] === '') {
-            throw new CodingAgentError("Cannot read pig's own version: {$path} has no \"version\".");
-        }
-
-        return self::$current = $manifest['version'];
-    }
-
-    /** Where the manifest is: the root of the repository, beside `CHANGELOG.md`. */
-    public static function path(): string
-    {
-        return dirname(__DIR__, 3) . '/composer.json';
-    }
-
-    /** Test seam — a process has one version for its whole life. */
-    public static function forget(): void
-    {
-        self::$current = null;
+        // Packagist keeps the tag as it was cut, so `v0.1.0` reaches here; `Cli\UpdateCheck` strips
+        // it on the other side of the comparison for the same reason.
+        return ltrim($version, 'vV');
     }
 }
