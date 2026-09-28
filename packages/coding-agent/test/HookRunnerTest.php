@@ -16,6 +16,7 @@ use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\CodingAgent\Hooks\Events\AgentStartEvent;
+use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\ToolCallEvent;
 use Pig\CodingAgent\Hooks\Events\ToolResultEvent;
@@ -26,6 +27,7 @@ use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
 use Pig\CodingAgent\Hooks\Results\ContextEventResult;
+use Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
 use Pig\CodingAgent\Hooks\Results\ToolResultEventResult;
@@ -267,6 +269,50 @@ final class HookRunnerTest extends TestCase
         ]);
 
         $this->assertNull($runner->emitToolResult(new ToolResultEvent('read', '1', [], [])));
+        $this->assertCount(1, $this->errors);
+    }
+
+    /**
+     * A handler that throws on one of the four *decisive* events has not answered.
+     *
+     * Those four go through `ask()` rather than `emit()`, which is a second walk over the
+     * handlers with its own `try` — and that `try` had no test: removing it broke nothing in the
+     * whole suite, while a hook with a typo in it would have thrown out of `compact()`,
+     * `goTo()` or `switchTo()` instead of letting the default happen. Upstream's own suite names
+     * the rule ("should continue with default compaction if hook throws error"), which is how
+     * this was found. Answering null is what makes that fall-through work, and the next handler
+     * still gets asked.
+     */
+    public function testAThrowingHandlerOnADecisiveEventIsReportedAndTheNextOneStillAnswers(): void
+    {
+        $runner = $this->runner([
+            $this->hook(['session_before_compact' => static function (): void {
+                throw new RuntimeException('a typo in a hook');
+            }], 'bad.php'),
+            $this->hook([
+                'session_before_compact' => static fn () => new SessionBeforeCompactResult(cancel: true),
+            ], 'good.php'),
+        ]);
+
+        $answer = $runner->emitBeforeCompact(new SessionBeforeCompactEvent([], 'summarise this'));
+
+        $this->assertTrue($answer?->cancel);
+        $this->assertCount(1, $this->errors);
+        $this->assertSame('bad.php', $this->errors[0]->hookPath);
+        $this->assertSame('session_before_compact', $this->errors[0]->event);
+        $this->assertStringContainsString('a typo in a hook', $this->errors[0]->error);
+    }
+
+    /** And with nobody left to answer, the caller is told nothing was decided. */
+    public function testADecisiveEventWhoseOnlyHandlerThrowsAnswersNothing(): void
+    {
+        $runner = $this->runner([
+            $this->hook(['session_before_compact' => static function (): void {
+                throw new RuntimeException('boom');
+            }]),
+        ]);
+
+        $this->assertNull($runner->emitBeforeCompact(new SessionBeforeCompactEvent([], 'summarise this')));
         $this->assertCount(1, $this->errors);
     }
 

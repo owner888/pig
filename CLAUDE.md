@@ -1946,6 +1946,65 @@ several compactions winning, a branch summary appearing on the path — are each
 which is what makes this read cheap: the expensive part of the file format was done when it became
 pi's.
 
+### The rest of `coding-agent`'s tests, and the `try` that turned out to have none
+
+The same sweep over the other sixteen files — `agent-session-*`, `compaction`, `compaction-hooks`,
+`tools`, `skills`, `args`, `model-resolver`, `fuzzy`, `truncate-to-width`, `rpc`. No bug, one real
+coverage gap, and one divergence in pig's favour; the value of writing it down is the *evidence*, so:
+
+**The gap: `HookRunner::ask()`'s `try` had no test at all.** Removing it broke **nothing** in 2,433
+cases. Four events are *decisive* — `session_before_compact`, `session_before_tree`,
+`session_before_switch`, `before_agent_start` — and they go through `ask()`, which is a second walk
+over the handlers with its own `try`, beside `emit()`'s. Only `emit()`'s was pinned
+(`testAHandlerThatThrowsIsReportedAndTheRestStillRun`). So a hook with a typo in a
+`session_before_compact` handler would, if that `try` were ever removed, throw out of `compact()`,
+`goTo()` or `switchTo()` instead of letting the default happen — and upstream's suite is what names
+the rule: *"should continue with default compaction if hook throws error"*. **The first shape from the
+index, on a `try` rather than on a rule**: two methods over the same handlers, one of them tested.
+`HookRunnerTest::testAThrowingHandlerOnADecisiveEventIsReportedAndTheNextOneStillAnswers` and
+`testADecisiveEventWhoseOnlyHandlerThrowsAnswersNothing` are the two ends.
+
+**The divergence: an empty `--model` is refused here and is a lottery upstream.** Its own test says so
+— *"empty pattern matches via partial matching: Empty string is included in all model IDs, so partial
+matching finds a match"* — so `--model ""` there silently opens on whichever model the substring pass
+happens to rank first. `ModelResolver::parse('')` answers null and `CodingAgent::session()` refuses by
+name: `No model matches ''. Try --list-models for the list.` Verified through the binary.
+
+Everything else in those sixteen files is already pinned or has no case here, and the six worth
+naming because the check was not a grep:
+
+- **Where a branch summary's parent lands**, upstream's two cases: navigating to a *user* message
+  attaches it to that message's parent, navigating to an answer attaches it to the answer. pig's
+  `goTo()` moves the leaf to the resolved target and appends afterwards, so both fall out of one line
+  — and `abandoning($entryId)` is passed the **original** id, not the resolved one, which is what
+  upstream passes to `collectEntriesForBranchSummary` too: the message whose text went to the editor
+  is not also summarised.
+- **`sonnet:`, `sonnet:random` and `sonnet:high:random`** all answer the model with thinking `off` and
+  a warning naming the level, which is upstream's three cases (its own are spelled with OpenRouter's
+  `qwen3-coder:exacto`, an id pig's registry does not carry).
+- **The `truncate-to-width` crash from upstream's issue report** — `'✔ script to run › dev $ …'` at
+  terminal width 67 — comes out of `Width::truncate()` at exactly 65 columns, 67 with the cursor. Run,
+  not reasoned about.
+- **`grep` on a single file still names the file**, because pig passes `--json` as upstream does and
+  the filename is in the event. Plain `rg` output would have dropped it for a single path, which is
+  what that test exists to catch.
+- **Every one of `skills.test.ts`'s validation claims is pinned**: the folder-name mismatch, 64
+  characters (in characters), the character class, a leading or trailing hyphen, two hyphens in a row,
+  an unknown frontmatter field, the folder name used when the frontmatter has no `name`, and XML
+  escaping. Its filter rules too — `ignoredSkills` is checked before `includeSkills`, so it wins, and
+  an empty `includeSkills` filters nothing. All four settings keys are upstream's key paths.
+- **A `session_compact` event fires after the summary is saved**, which is upstream's *"should include
+  entries in compact event after compaction is saved"*.
+
+**One absence is a decision rather than a find**, so it is recorded and not implemented: upstream has
+five per-root skill switches — `skills.enableCodexUser`, `enableClaudeUser`, `enableClaudeProject`,
+`enablePiUser`, `enablePiProject` — and two of its tests exercise them (*"should load from
+customDirectories only when built-ins disabled"*, *"should return empty when all sources disabled and
+no custom dirs"*). pig has `--no-skills`, which is all seven roots or none, and `ignoredSkills` by
+name. Five booleans on `Skills::load()` is new public surface, so it is the developer's call; the
+argument for is that somebody with a large `~/.claude/skills` may want it out of pig's prompt without
+naming every skill in it, and the argument against is the rule at the top of this file.
+
 ### Talking to a gateway instead of a provider
 
 `Agent\StreamProxy` is upstream's `agent/proxy.ts`. **It is the second thing in this repository
