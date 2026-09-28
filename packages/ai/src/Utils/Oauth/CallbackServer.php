@@ -69,8 +69,17 @@ final class CallbackServer
     /**
      * Take the port, or say who has it.
      *
-     * `stream_socket_server()` both warns and returns false, so the warning is caught rather
-     * than suppressed — it is the only place the reason appears, and `@` is not allowed here.
+     * `stream_socket_server()` both warns *and* returns false, so the warning is caught with a
+     * handler rather than suppressed, because `@` is not allowed here and an unsuppressed warning
+     * from before the UI exists lands on the terminal.
+     *
+     * **This used to say the warning is the only place the reason appears, and that is not true.**
+     * Measured against a port already held: `$errstr` is `Address already in use` and the warning is
+     * `stream_socket_server(): Unable to connect to tcp://127.0.0.1:8085 (Address already in use)`
+     * — the same fact, and `$errstr` is the cleaner of the two, which is why it is preferred below.
+     * So `$problem` is a fallback for a failure that populates one and not the other, and the
+     * handler earns its place by keeping the warning off the screen rather than by carrying the
+     * reason. A docblock's justification is a claim like any other.
      */
     public function listen(): void
     {

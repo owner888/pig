@@ -154,6 +154,20 @@ final class CallbackServerTest extends TestCase
         $this->assertStringContainsString((string) $this->port, $problem->getMessage());
         $this->assertStringContainsString('only redirect to that exact port', $problem->getMessage());
 
+        // **And the reason, which is the half that carries information.** The port and the
+        // sentence after it are constants, so asserting only those passes with `unknown error`
+        // in the middle — which is what a mutation sweep found, and it is the `'ripgrep exited'`
+        // shape: a test written against what the code says rather than against what the reader
+        // needs. `Address already in use` is the whole of what anybody can act on.
+        $this->assertStringContainsString('Address already in use', $problem->getMessage());
+        $this->assertStringNotContainsString('unknown error', $problem->getMessage());
+
+        // And it is `$errstr`'s wording rather than the warning's, which carries the same fact
+        // wrapped in `stream_socket_server(): Unable to connect to tcp://…`. Both sources have
+        // the reason — measured — so asserting the reason alone cannot say which one is used,
+        // and preferring the clean one is what the docblock claims.
+        $this->assertStringNotContainsString('stream_socket_server()', $problem->getMessage());
+
         fclose($held);
     }
 

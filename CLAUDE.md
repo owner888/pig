@@ -5770,7 +5770,9 @@ applied. The pass-through takes six seconds and fails four tests when actually r
 So `TransformMessages.php`'s 77 timeouts and `AssistantMessageBuilder.php`'s 47 were both suspect,
 and re-running them with trees recreated from scratch separated them: the transform's were entirely
 contamination, and **the builder's 47 are real** — mutating the accumulator genuinely stops the
-stream terminating. The trees are rebuilt every run now.
+stream terminating. The trees are rebuilt every run now. *Why* it stops terminating, and why that
+makes the 47 detections of a state no provider can reach rather than a gap, took its own read and has
+its own entry below.
 
 The rule, for the third time in this session and the second in this entry: *a measuring instrument
 is a claim like any other.* Both of this harness's bugs produced **confident wrong output** rather
@@ -6050,6 +6052,185 @@ bugs, and **neither corpus was kept**. What the suite had afterwards was 3 test 
 already say a corpus is worth running and worth keeping the count of; the third clause is that it is
 worth keeping as a **test**, because a count in this document is evidence about the day it was
 written and a test is evidence every day.
+
+### A killed sweep leaves workers behind, and contention manufactures *kills*
+
+`packages/ai/src/Utils/Oauth` is the last directory the instrument had not been pointed at — 2,101
+lines across ten files, four sign-in flows and a loopback HTTP server. 759 mutations. The finding
+worth putting first is about the sweep and not about the code, because it is the one direction the
+three earlier harness bugs never took.
+
+**The first run was killed part-way through, and its eight test processes were not.** Nothing noticed:
+the sweep's own per-mutation timeout lives in the Python that was killed, so eight `php` processes
+carried on for **fifty minutes** — spinning, holding a CPU each. The replacement run recreated the
+worker trees, so its files were clean, and it reported **759 run, 130 not killed**.
+
+Re-run on an idle machine, the same 759 mutations report **272 not killed.** So the contaminated run
+did not inflate the survivor list, it **halved** it — and that is the dangerous direction. Under 2×
+CPU load the suite fails for reasons of its own: a canned server that answers on a timer answers too
+late, a test that waits 50ms waits through the wrong window, an assertion about elapsed time comes
+back wrong. Every one of those is a red suite, and a red suite is recorded as `killed`. **Contention
+manufactures kills, so a contaminated sweep says the code is pinned when it is not.**
+
+The three earlier bugs all produced false *survivors* — a worker race, a reused tree, a replacement
+string that never matched — and a false survivor costs an afternoon chasing coverage that already
+exists. A false kill costs the bug. So two rules, and the first is the cheap one:
+
+- **Count the worker processes before trusting a number.** `ps -eo cmd | grep -c php` against the
+  worker count, and `etimes` on any that look old. Eight workers means eight processes; thirteen
+  means something from last time is still running, and the numbers from that run are worth nothing in
+  either direction.
+- **Kill the strays before re-running**, not just the run. The trees are recreated at startup, so the
+  files are safe; the CPU is not.
+
+One thing the two-pass design did earn, in the opposite way from expected. `InteractiveModeTest` is
+**56 of the 62 seconds** a full-consumer filter costs here, and what it exercises of this directory is
+the `/login` and `/logout` lists rather than the flows — so pass 1 ran without it and pass 2 re-ran
+only the survivors with it. In the contaminated run pass 2 appeared to kill 29 of the first 50, which
+looked like the filter-omission trap repeating. On the clean run it killed **0 of the 75 it reached**
+before that run was killed too. So the suspicion was contamination as well, and the honest statement
+is a sampled one: a quarter of the survivors were re-checked with `InteractiveModeTest` in the filter
+and none of them died.
+
+**What the 272 are.** By file, and the shape is worth reading before the individual finds:
+`Anthropic.php` 6 of 37, `Provider.php` 1 of 27, and `Pkce`, `DeviceCode`, `OauthError` and
+`Credentials` between them 3 of 13 — the pure parts are pinned. The survivors are in
+`Antigravity.php` (51 of 128), `GeminiCli.php` (62 of 189), `GithubCopilot.php` (52 of 166) and
+`CallbackServer.php` (67 of 191, plus 20 detected by hanging). And most of *those* are one of three
+kinds: closing a socket or cancelling a watcher, where the end state is the same either way and there
+is no seam to observe a peak through — the `HttpClient::follow()` measurement two entries up applies
+unchanged; a guard on a value the caller cannot produce; and `?? null` against `''` in front of an
+`is_string()`. These suites are thorough — 57 cases and 13 — and they cover nearly every rule this
+document states about the four flows.
+
+Three did not, and the first is a claim this file made about the platform:
+
+**`CallbackServer::listen()`'s docblock said the warning is the only place the reason appears.**
+Measured against a port already held: `$errstr` is `Address already in use` and the warning is
+`stream_socket_server(): Unable to connect to tcp://127.0.0.1:8085 (Address already in use)` — the
+same fact twice, and `$errstr` is the cleaner of the two, which is why the code prefers it. So the
+handler earns its place by keeping a warning off the screen before the UI exists, not by carrying
+information nothing else has; `$problem` is a fallback for a failure that populates one and not the
+other. The fourth shape from the index, pointed at PHP rather than at this repository.
+
+**And the test for it asserted the half that is a constant.** `testAPortSomebodyElseHoldsIsReportedByName`
+checked the port number and the sentence after it, both of which are literals — so `unknown error` in
+the middle passes, and deleting the whole `$reason` line passes. That is the `'ripgrep exited'` shape
+exactly: *a test written against what the code says rather than against what the reader needs.* It
+asserts `Address already in use` now, and that the message is **not** the warning's wording, since
+both sources carry the reason and asserting the reason alone cannot say which one is used.
+
+**`slow_down` adding five seconds had no test, and the first attempt at one held the mutation in
+place.** The rule is upstream's and this document states it. The obvious test — serve `slow_down`,
+abort, count the asks — passed identically with the five seconds and without, because
+`MIN_INTERVAL` floors a declared interval of 0 at **one second**, so in a 150ms window there is
+exactly one ask whatever the code does. Measured both ways rather than assumed, which is the only
+reason it was caught: the window has to outlive one second for the two answers to differ at all. At
+1.3s it is one ask against two, and the assertion is `assertSame(1, …)` rather than an upper bound,
+because an upper bound is what was wrong the first time. *A test that cannot fail is not a test, and
+the way to find out is to run it against the mutation it was written for.*
+
+**Blank at the enterprise prompt had no test either.** `if (trim($typed) !== '' && $enterprise ===
+null)` is two conditions, "something was typed" and "it is not a host", and either one alone turns
+pressing Enter into an error — which is the whole of what `allowEmpty` on that prompt is for. `&&`
+for `||` broke nothing.
+
+**One divergence found on the way and left alone, because it is a decision rather than a fix.**
+Upstream's `normalizeDomain` is `new URL("https://" + trimmed).hostname` in a `try`; pig's is
+`parse_url('//' . $trimmed, PHP_URL_HOST)`. Run against the same inputs on both sides:
+
+| typed | upstream | pig |
+|---|---|---|
+| `company.ghe.com` | `company.ghe.com` | `company.ghe.com` |
+| `???`, `@@@` | null | null |
+| `!!!` | `!!!` | `!!!` |
+| **`a b`**, **`not a host!!`** | **null** | **accepted as a host** |
+
+A space is a forbidden host code point to WHATWG and nothing to `parse_url`, so pig accepts a typed
+domain with a space in it and goes on to build `https://a b/login/device/code`. It still fails — the
+request cannot be made — but it fails with pig's own `Cannot parse URL` instead of the sentence
+written for exactly this, and this document's claim that "something that is not a host is refused" is
+narrower than it reads. A space is also the likeliest thing to be in a pasted domain. The fix is one
+comparison; tightening a validation rule is the developer's call, so the measurement is here and the
+change is not made. The regression test uses `???` so it pins the guard as written rather than the
+behaviour somebody might want instead.
+
+Regression tests: `CallbackServerTest::testAPortSomebodyElseHoldsIsReportedByName` (two assertions
+added), `OauthTest::testSlowDownMakesTheNextAskWaitFiveSecondsLonger`,
+`testBlankAtTheEnterprisePromptMeansGithubComRatherThanARefusal`,
+`testSomethingTypedThatIsNotAHostIsRefusedBeforeAnythingIsAsked`. Each of the five mutations was
+re-applied afterwards: four die, one is detected by hanging.
+
+**With this the instrument has been over every directory in `packages/ai`**, and the tally across the
+four sweeps is worth one line, because the *ratio* is the useful part rather than the totals:
+providers 1,633 mutations with 191 survivors, `Http` 530 with 40, `Utils` 456 with 89 before the
+tests and 63 after, `Utils/Oauth` 759 with 272. The last of those is not a worse-written directory —
+it is four network flows whose bodies are socket discipline and whose decisions are already covered,
+so the survivor count is dominated by lines with no observable effect. **A survivor rate is a fact
+about what a suite can see, not a grade.**
+
+### Why mutating the accumulator hangs the suite, and what that says about reachability
+
+`AssistantMessageBuilder`'s 47 timeouts were recorded above as real and unexplained. They are
+explained now, and the answer is a structural one about the five providers rather than about the
+builder.
+
+**Reproduced in one step** rather than inferred from the list: make `fail()` throw — one line, any
+exception — and `AnthropicTest` does not fail, it **hangs**. The reason is the shape of `run()`:
+
+```php
+try {
+    …the stream…
+    $stream->push(new DoneEvent($message->stopReason, $message));
+    $stream->end();
+} catch (Throwable $error) {
+    $builder->fail($error->getMessage(), $signal?->aborted() ?? false);
+    $failed = $builder->snapshot();
+    $stream->push(new ErrorEvent($failed->stopReason, $failed));
+    $stream->end();          // ← and nothing below this
+}
+```
+
+`end()` is in both branches and in **no `finally`**, so a throw inside the `catch` never reaches it.
+All five providers are `Async::spawn(fn () => $this->run(…))` with nobody awaiting the future, which
+is the case this document already has a rule for, in as many words: *anything inside `Async::spawn()`
+whose future nobody awaits must not be able to throw.* `run()`'s own `try` honours that for the body.
+Its `catch` is outside any handler, so a throw there is lost and the stream is never closed — and a
+consumer parked on a stream that never ends waits for ever. In a test that is a hung suite; in
+`bin/pig` it is a spinner that never stops, because STDIN keeps the loop from ever going idle.
+
+**So why is this a note and not a fix.** Nothing in that `catch` can throw. `fail()` assigns two
+fields. `snapshot()` walks `$this->blocks`, whose every element `push()` initialises with a string or
+an array, and hands them to four constructors that take exactly those types. `setUsage()` is
+arithmetic. `EventStream::push()` returns early when the stream is done and cannot double-complete.
+Checked one by one rather than assumed, because "can this throw" is the whole question here.
+
+Which puts it in the category this project refuses: **a branch only a test could reach.** The 47
+timeouts are therefore not a coverage gap — they are detections of a state no provider can be in,
+and the correct reading of the sweep is that the builder is *pinned*, not that it is unprotected.
+
+**And that distinction is the general lesson, because a hang and a failure mean different things
+about reachability.** A mutation that makes the suite *fail* says the code under it is load-bearing
+on a path the tests reach. A mutation that makes the suite *hang* says something else: the thing it
+broke is also what the error handling depends on, so the failure path failed too. Every one of these
+47 is that shape. Worth knowing before reading a timeout as either a detection or a defect — it is
+a detection, and what it is detecting may be unreachable.
+
+What would make it structural rather than dependent on that audit is one `finally` per provider,
+which **removes** a line rather than adding a branch: the two `$stream->end()` calls become one below
+the `catch`. That is five files and a change to code that works, so it is the developer's call rather
+than the audit's, and it is written here rather than done. The argument for it is that the audit above
+has to be re-run every time anything in `snapshot()` gains a field; the argument against is that
+nothing in this codebase adds structure for a state that cannot arise.
+
+**One more harness note, and it is the cheapest of the four.** This sweep appeared to hang at
+`77 mutations` with a single worker. It was not hung and it was not contaminated: the jobs were
+submitted from a **generator** — `for i, f in enumerate(pool.submit(...) for m in jobs)` — so
+`f.result()` blocked before the next `submit()` and eight workers ran one at a time, turning five
+minutes into forty. The list has to be built before any result is read, which every earlier version
+of the script did. *Three of this instrument's four bugs have looked like something other than what
+they were, and the tell each time was a number that did not match the machine: thirteen processes for
+eight workers, one process for eight workers.*
 
 ### A space that is not U+0020 emptied the search box
 

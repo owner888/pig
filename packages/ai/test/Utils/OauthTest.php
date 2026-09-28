@@ -457,6 +457,83 @@ final class OauthTest extends TestCase
         $this->assertNull($token);
     }
 
+    public function testSlowDownMakesTheNextAskWaitFiveSecondsLonger(): void
+    {
+        $url = $this->serve(['error' => 'slow_down']);
+
+        // Counting the asks rather than timing the sleep, and the window is what makes the two
+        // answers different: `interval: 0` is floored to `MIN_INTERVAL`, which is one second, so
+        // without the five the loop asks again at 1.0s and this window catches the second ask.
+        // With the five it is 6.0s and there is only ever one. **Measured both ways** — a
+        // 150ms window sees one ask whatever the code does, which is what the first version of
+        // this test asserted and why it held a mutation in place.
+        $this->run(function () use ($url): ?string {
+            $controller = new AbortController();
+            Loop::get()->delay(1.3, static fn () => $controller->abort('enough'));
+
+            return $this->copilot($url)->poll(
+                'github.com',
+                new DeviceCode('dev-1', 'ABCD', 'https://x', 0, 900),
+                $controller->signal,
+            );
+        });
+
+        $asks = substr_count($this->server->received(), 'POST /');
+
+        $this->assertSame(1, $asks, "asked {$asks} times in 1.3s, so the interval did not grow");
+    }
+
+    public function testBlankAtTheEnterprisePromptMeansGithubComRatherThanARefusal(): void
+    {
+        $url = $this->serve([
+            'device_code' => 'dev-1',
+            'user_code' => 'ABCD-1234',
+            'verification_uri' => 'https://github.com/login/device',
+            'interval' => 0,
+            'expires_in' => 900,
+        ]);
+
+        // `allowEmpty` on the prompt is what makes blank an answer, and the guard in front of
+        // the refusal is the other half of it: the two conditions are "something was typed" and
+        // "it is not a host", and either one on its own turns pressing Enter into an error.
+        $answer = $this->run(function () use ($url): ?Credentials {
+            $controller = new AbortController();
+            Loop::get()->delay(0.15, static fn () => $controller->abort('enough'));
+
+            return $this->copilot($url)->login(
+                static fn (): string => '',
+                static fn (): null => null,
+                null,
+                $controller->signal,
+            );
+        });
+
+        // Null because the wait was called off, which means it got past the prompt and as far
+        // as asking — an error would have named the domain that was not one.
+        $this->assertNull($answer);
+        $this->assertStringContainsString('POST /', $this->server->received());
+    }
+
+    public function testSomethingTypedThatIsNotAHostIsRefusedBeforeAnythingIsAsked(): void
+    {
+        $url = $this->serve(['error' => 'authorization_pending']);
+
+        $problem = $this->assertThrows(
+            OauthError::class,
+            fn (): mixed => $this->run(fn (): ?Credentials => $this->copilot($url)->login(
+                // `???` rather than something with a space in it, which `parse_url()` hands back
+                // as a host where upstream's `new URL()` throws — see the entry in CLAUDE.md.
+                static fn (): string => '???',
+                static fn (): null => null,
+            )),
+        );
+
+        // Upstream throws here too, and it is the right way round: carrying on against
+        // github.com would sign somebody in to the wrong GitHub and look like it worked.
+        $this->assertStringContainsString('is not a GitHub Enterprise domain', $problem->getMessage());
+        $this->assertSame('', $this->server->received(), 'nothing should have been asked');
+    }
+
     // ---- GitHub Copilot: the token swap --------------------------------------------------
 
     public function testTheGitHubTokenIsTradedForACopilotOne(): void
