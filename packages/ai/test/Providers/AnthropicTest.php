@@ -266,6 +266,62 @@ final class AnthropicTest extends TestCase
         $this->assertSame('user pressed esc', $message->errorMessage);
     }
 
+    /**
+     * An interrupted turn still reports what it cost.
+     *
+     * Anthropic sends usage at the *start* of a stream, so a turn escape stopped half way has real
+     * numbers to report — and upstream's `tokens.test.ts` asserts exactly that, per provider, with
+     * the two OpenAI APIs as the documented exception because they only report in the final chunk.
+     * The rule was right here and untested: the abort case above serves a stream with no
+     * `message_start` in it, so nothing would have caught a regression that dropped the usage. What
+     * it would cost is a bill that misses every interrupted turn, and escape is not a rare key.
+     */
+    public function testAnAbortedTurnKeepsTheUsageThatHadAlreadyArrived(): void
+    {
+        $url = $this->server->start([
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n",
+            $this->chunk("event: message_start\ndata: " . json_encode([
+                'type' => 'message_start',
+                'message' => ['usage' => ['input_tokens' => 1200, 'cache_read_input_tokens' => 0]],
+            ]) . "\n\n"),
+            $this->chunk("event: content_block_start\ndata: " . json_encode([
+                'type' => 'content_block_start',
+                'index' => 0,
+                'content_block' => ['type' => 'text'],
+            ]) . "\n\n"),
+            $this->chunk("event: content_block_delta\ndata: " . json_encode([
+                'type' => 'content_block_delta',
+                'index' => 0,
+                'delta' => ['type' => 'text_delta', 'text' => str_repeat('a poem ', 50)],
+            ]) . "\n\n"),
+            // …and then the connection sits there while the person presses escape.
+        ], closeAfter: false);
+
+        $message = Async::run(function () use ($url): AssistantMessage {
+            $controller = new AbortController();
+            $stream = $this->anthropic()->stream(
+                $this->model($url),
+                new Context([new UserMessage('write a long poem')]),
+                $this->options($controller),
+            );
+
+            Loop::get()->delay(0.08, static fn () => $controller->abort('user pressed esc'));
+
+            foreach ($stream as $ignored) {
+                // Drain until the abort lands.
+            }
+
+            return $stream->result()->await();
+        });
+
+        $this->assertSame(StopReason::Aborted, $message->stopReason);
+        $this->assertSame(1_200, $message->usage->input);
+
+        // And the cost with it, since that is what `/session` and the footer add up.
+        $this->assertSame(1_200 / 1_000_000 * 3.0, $message->usage->cost->input);
+        $this->assertGreaterThan(0.0, $message->usage->cost->total);
+    }
+
     public function testTheRequestIsShapedTheWayAnthropicWantsIt(): void
     {
         $url = $this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]]);

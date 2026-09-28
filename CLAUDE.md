@@ -2026,6 +2026,55 @@ The other four files needed no change and the evidence is worth keeping:
 - **`autocomplete.test.ts`'s four cases are the `/`-is-not-a-path rule**, which has its own entry
   below and eight regression tests.
 
+### `ai`'s tests are all live-provider, and two of them are still a specification
+
+Twelve files, 6,017 lines, and **every one of them needs real keys**: they are the same handful of
+scenarios repeated per provider, `e2e.test.ts`'s shape one package over. So none of them is a suite
+pig can run — but two state a *cross-provider invariant*, which is checkable against a canned server,
+and that is where the whole batch's value was.
+
+**`tokens.test.ts`: an interrupted turn still reports what it cost.** Anthropic and Google send usage
+at the *start* of a stream, so a turn escape stopped half way has real numbers; the two OpenAI APIs
+only report in the final chunk and upstream's test documents them as the exception. pig gets this
+right — measured through a canned stream, `input: 1200`, `cost.input: 0.0036`, `stopReason: aborted`
+— **and had no test for it**, because the existing abort case serves a stream with no `message_start`
+in it, so no usage ever arrives and nothing would catch a regression. The mutation that names it is
+one line in `fail()` — `$this->usage = new Usage()`, the plausible mistake of "an aborted turn
+produced nothing so it cost nothing" — and it breaks **exactly one** test in 2,438: the new one. What
+it would have cost is a bill that misses every interrupted turn, on the key pig is built around.
+`AnthropicTest::testAnAbortedTurnKeepsTheUsageThatHadAlreadyArrived`.
+
+**`empty.test.ts`: what goes on the wire for a message with nothing in it.** Four shapes — an empty
+content array, an empty string, whitespace only, and an empty assistant message mid-conversation —
+built for three providers against a canned server and read off the request:
+
+| | anthropic | openai-completions | google |
+|---|---|---|---|
+| empty content array | `[]` | `[]` | `[]` |
+| empty string | dropped | **sent**, `text: ""` | **sent**, `text: ""` |
+| whitespace only | dropped | **sent** verbatim | **sent** verbatim |
+| empty assistant | dropped | dropped | dropped |
+
+pig matches upstream on every cell, **including where upstream's own two providers disagree with each
+other**: `anthropic.ts` filters a text block on `trim().length > 0` and `google-shared.ts` and
+`openai-completions.ts` do not. So a conversation of one empty message reaches Anthropic as
+`messages: []` and reaches Gemini as a part holding the empty string, and which of the two is right
+is not decidable from here — upstream's assertion is deliberately tolerant ("either handle gracefully
+or return an error"), and only a live call would say. It is written down so nobody tidies pig's Google
+path into agreeing with pig's Anthropic path and thereby diverges from both.
+
+Worth knowing about that row: **an empty assistant message is dropped by all three, which leaves two
+consecutive user messages.** That is upstream's behaviour too (`if (blocks.length === 0) continue;`),
+and it is the one shape where the dropping changes the *structure* of the conversation rather than
+just removing nothing.
+
+The other ten files are live-only with nothing to extract: `abort`, `stream`, `handoff`,
+`image-tool-result` and `context-overflow` are per-provider round trips (their invariants are already
+entries below — the overflow table, `TransformMessages`, the Copilot headers), `image-limits`
+*discovers* each provider's limits empirically rather than asserting one, `total-tokens` and `xhigh`
+are the two finds already recorded against them, and `unicode-surrogate` is `Utf8::sanitize()`, whose
+docblock carries its own verification.
+
 ### Talking to a gateway instead of a provider
 
 `Agent\StreamProxy` is upstream's `agent/proxy.ts`. **It is the second thing in this repository
