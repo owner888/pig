@@ -245,14 +245,10 @@ final class Models
      */
     private const array XAI_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'grok-4.20-0309-non-reasoning' => ['Grok 4.20 (Non-Reasoning)', 1_000_000, 30_000, false, true, 1.25, 2.5, 0.2, 0.0],
-        'grok-4.20-0309-reasoning' => ['Grok 4.20 (Reasoning)', 1_000_000, 30_000, true, true, 1.25, 2.5, 0.2, 0.0],
         'grok-4.3' => ['Grok 4.3', 1_000_000, 30_000, true, true, 1.25, 2.5, 0.2, 0.0],
         'grok-4.5' => ['Grok 4.5', 500_000, 500_000, true, true, 2.0, 6.0, 0.3, 0.0],
         'grok-4.6' => ['Grok 4.6', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0],
         'grok-4.7' => ['Grok 4.7', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0],
-        'grok-build-0.1' => ['Grok Build 0.1', 256_000, 256_000, true, true, 1.0, 2.0, 0.2, 0.0],
-        'grok-code-fast-1' => ['Grok Code Fast 1', 32_768, 8_192, false, false, 0.2, 1.5, 0.02, 0.0],
         // <<< generated
     ];
 
@@ -375,18 +371,18 @@ final class Models
         'claude-fable-5' => ['Claude Fable 5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
         'claude-fable-5.1' => ['Claude Fable 5.1', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
         'claude-haiku-4.5' => ['Claude Haiku 4.5 (latest)', Api::OpenAiCompletions, 200_000, 64_000, true, true],
-        'claude-opus-4.7' => ['Claude Opus 4.7', Api::OpenAiCompletions, 200_000, 32_000, true, true],
-        'claude-opus-4.8' => ['Claude Opus 4.8', Api::OpenAiCompletions, 200_000, 64_000, true, true],
+        'claude-opus-4.7' => ['Claude Opus 4.7', Api::OpenAiCompletions, 1_000_000, 32_000, true, true],
+        'claude-opus-4.8' => ['Claude Opus 4.8', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
         'claude-opus-5' => ['Claude Opus 5', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
         'claude-opus-5.5' => ['Claude Opus 5.5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
-        'claude-sonnet-4.6' => ['Claude Sonnet 4.6', Api::OpenAiCompletions, 200_000, 32_000, true, true],
+        'claude-sonnet-4.6' => ['Claude Sonnet 4.6', Api::OpenAiCompletions, 1_000_000, 32_000, true, true],
         'claude-sonnet-5' => ['Claude Sonnet 5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
         'gemini-3.5-flash' => ['Gemini 3.5 Flash', Api::OpenAiCompletions, 200_000, 64_000, true, true],
         'gemini-3.6-flash' => ['Gemini 3.6 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
         'gemini-3.7-flash' => ['Gemini 3.7 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
         'gemini-3.8-flash' => ['Gemini 3.8 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
         'gpt-5-mini' => ['GPT-5 Mini', Api::OpenAiResponses, 264_000, 64_000, true, true],
-        'gpt-5.3-codex' => ['GPT-5.3 Codex', Api::OpenAiResponses, 400_000, 128_000, true, true],
+        'gpt-5.3-codex' => ['GPT-5.3 Codex', Api::OpenAiResponses, 1_000_000, 128_000, true, true],
         'gpt-5.4' => ['GPT-5.4', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
         'gpt-5.4-mini' => ['GPT-5.4 mini', Api::OpenAiResponses, 400_000, 128_000, true, true],
         'gpt-5.4-nano' => ['GPT-5.4 nano', Api::OpenAiResponses, 400_000, 128_000, true, true],

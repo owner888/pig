@@ -85,14 +85,16 @@ final class GenerateModelsTest extends TestCase
         );
     }
 
-    public function testTheCacheCorrectionIsAppliedAndSaysWhy(): void
+    public function testACorrectionIsAppliedAndSaysWhy(): void
     {
         $output = $this->run();
 
-        // models.dev reports 1.5/18.75, which is three times the real figure.
-        self::assertStringContainsString('models.dev has 3x the real cache pricing', $output);
+        // A context window is where compaction fires, so a Copilot model reported at a fifth of
+        // its real window is a conversation summarised with four times the room it thought.
+        self::assertStringContainsString('github-copilot/claude-sonnet-4.6 corrected', $output);
+        self::assertStringContainsString('GitHub gives it the extended window', $output);
         self::assertStringContainsString(
-            "'claude-opus-4-5' => ['Claude Opus 4.5', 200_000, 64_000, true, 5.0, 25.0, 0.5, 6.25],",
+            "'claude-sonnet-4.6' => ['Sonnet 4.6', Api::OpenAiCompletions, 1_000_000, 16_000, true, true],",
             $output,
         );
     }
@@ -162,19 +164,20 @@ final class GenerateModelsTest extends TestCase
     {
         // The day models.dev fixes its own figure, a blind merge would go on reporting
         // "corrected" for ever and nobody would retire the override.
+        // Exactly what happened on the second real regeneration: the first `fix` here corrected
+        // Anthropic's cache pricing, models.dev fixed its own figure, the run said so, and the
+        // override was retired in one line rather than re-derived.
         $catalogue = self::catalogue();
-        $catalogue['anthropic']['models']['claude-opus-4-5']['cost'] = [
-            'input' => 5, 'output' => 25, 'cache_read' => 0.5, 'cache_write' => 6.25,
-        ];
+        $catalogue['github-copilot']['models']['claude-sonnet-4.6']['limit']['context'] = 1_000_000;
         file_put_contents($this->fixture, (string) json_encode($catalogue));
 
         $output = $this->run();
 
         self::assertStringContainsString(
-            'the override for anthropic/claude-opus-4-5 changes nothing any more',
+            'the override for github-copilot/claude-sonnet-4.6 changes nothing any more',
             $output,
         );
-        self::assertStringNotContainsString('claude-opus-4-5 corrected', $output);
+        self::assertStringNotContainsString('claude-sonnet-4.6 corrected', $output);
     }
 
     public function testADryRunWritesNothing(): void
@@ -263,12 +266,6 @@ final class GenerateModelsTest extends TestCase
                     'limit' => ['context' => 200_000, 'output' => 8_192],
                     'cost' => $priced(1, 2), 'modalities' => ['input' => ['text']],
                 ],
-                'claude-opus-4-5' => [
-                    'name' => 'Claude Opus 4.5', 'tool_call' => true, 'reasoning' => true,
-                    'limit' => ['context' => 200_000, 'output' => 64_000],
-                    'cost' => ['input' => 5, 'output' => 25, 'cache_read' => 1.5, 'cache_write' => 18.75],
-                    'modalities' => ['input' => ['text', 'image']],
-                ],
             ]],
             'openai' => ['models' => [
                 'no-limits' => [
@@ -333,6 +330,13 @@ final class GenerateModelsTest extends TestCase
                 'claude-x' => [
                     'name' => 'Claude X', 'tool_call' => true, 'reasoning' => true,
                     'limit' => ['context' => 128_000, 'output' => 16_000],
+                    'modalities' => ['input' => ['text', 'image']],
+                ],
+                // The one the `fix` arm corrects: GitHub gives it the extended window and
+                // models.dev reports a fifth of it.
+                'claude-sonnet-4.6' => [
+                    'name' => 'Sonnet 4.6', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 200_000, 'output' => 16_000],
                     'modalities' => ['input' => ['text', 'image']],
                 ],
                 'oswe-thing' => [

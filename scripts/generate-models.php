@@ -94,14 +94,51 @@ const DIRECT = [
  * number with no reason beside it is a number nobody can ever retire. Each is keyed
  * `provider/id`; `fix` adjusts a row models.dev does carry, `add` supplies one it does not.
  *
+ * **The first `fix` here was retired by the mechanism rather than by anybody re-deriving it**,
+ * which is the whole point of reporting a correction that changes nothing. It adjusted
+ * `anthropic/claude-opus-4-5`'s cache pricing, which models.dev reported at three times the real
+ * figure — 1.5/18.75 against 0.5/6.25 — and on the *second* regeneration the run said `the
+ * override for anthropic/claude-opus-4-5 changes nothing any more`, because models.dev had fixed
+ * its own number. Gone, in one line, with no guessing about whether it was still needed.
+ *
+ * **The Copilot windows are the live ones, and they are not cosmetic.** GitHub's own "models with
+ * extended capabilities" table gives these the 1,000,000-token window; models.dev reports 200,000
+ * for three of them and 400,000 for the fourth. A context window is **where compaction fires**, so
+ * a fifth of the real figure means pig summarises a conversation that had four times the room —
+ * paying for a summarisation and shortening the model's view for nothing. The list is upstream's
+ * `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS` at HEAD, whose comment records checking it against
+ * GitHub's published table; that check is inherited here and was not repeated, the same standing
+ * as `EXCLUDED` below.
+ *
+ * One gap worth knowing rather than discovering: upstream keeps that as a **set**, so it also
+ * covers ids models.dev does not carry for Copilot yet. These are per-id, so the entries are the
+ * four that are currently both listed and short — which keeps every run's output about something
+ * real instead of five lines saying "changes nothing". The cost is that a *new* Copilot model
+ * arriving with a too-small window is not caught by itself; the tell is a Copilot row whose window
+ * looks small next to its siblings, and upstream's set is where to check.
+ *
  * @var array<string, array{kind: string, why: string, row: array<string, mixed>}>
  */
 const OVERRIDES = [
-    'anthropic/claude-opus-4-5' => [
+    'github-copilot/claude-opus-4.7' => [
         'kind' => 'fix',
-        // models.dev reports three times the real cache pricing — 1.5/18.75 against 0.5/6.25.
-        'why' => 'models.dev has 3x the real cache pricing',
-        'row' => ['cacheRead' => 0.5, 'cacheWrite' => 6.25],
+        'why' => "GitHub gives it the extended window; models.dev reports a fifth of it",
+        'row' => ['context' => 1_000_000],
+    ],
+    'github-copilot/claude-opus-4.8' => [
+        'kind' => 'fix',
+        'why' => "GitHub gives it the extended window; models.dev reports a fifth of it",
+        'row' => ['context' => 1_000_000],
+    ],
+    'github-copilot/claude-sonnet-4.6' => [
+        'kind' => 'fix',
+        'why' => "GitHub gives it the extended window; models.dev reports a fifth of it",
+        'row' => ['context' => 1_000_000],
+    ],
+    'github-copilot/gpt-5.3-codex' => [
+        'kind' => 'fix',
+        'why' => "GitHub gives it the extended window; models.dev reports 400,000",
+        'row' => ['context' => 1_000_000],
     ],
     'openai/gpt-5-chat-latest' => [
         'kind' => 'add',

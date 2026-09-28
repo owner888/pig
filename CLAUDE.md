@@ -5843,6 +5843,44 @@ domain over: **a test that names a live model id has an expiry date.** Name one 
 assertion is about that model; otherwise register what the rule needs. The tell is the same as ever —
 if the test's own comment says the id does not matter, the assertion should not name it.
 
+**The second regeneration was the quiet one, and it is the one that says the machinery works.** With
+`EXCLUDED` in place: `0 added, 4 gone, 0 changed` — exactly the four xAI ids and nothing else, so the
+first run's 99/104/28 really was the frozen table catching up rather than the generator being
+unstable. 169 models. And it retired an override without anybody re-deriving anything:
+
+```
+! the override for anthropic/claude-opus-4-5 changes nothing any more: models.dev has 3x the real cache pricing
+```
+
+models.dev had fixed its own figure. That line is the whole reason a correction reports when it
+changes nothing, and it arrived on the mechanism's first opportunity to use it. The override is gone.
+
+**Which left the `fix` arm with no entry, and that was worth not shrugging at** — an untested arm in
+the thing that rewrites the registry is what this entry is about. So upstream HEAD was read for a
+*live* correction instead of deleting the two tests, and there is one:
+`GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS`. Measured against the regenerated rows, four of its ten are
+short:
+
+```
+claude-opus-4.7    only 200,000
+claude-opus-4.8    only 200,000
+claude-sonnet-4.6  only 200,000
+gpt-5.3-codex      only 400,000
+```
+
+GitHub's own table gives those the 1,000,000-token window. **A context window is where compaction
+fires**, so a fifth of the real figure means pig summarising a conversation that had four times the
+room — the failure the deleted `spotValues` docblock described in as many words ("too small
+summarises a conversation that had room"). Four `fix` entries, upstream's reason carried with them,
+and the check behind that reason is **inherited and not repeated here**, the same standing as
+`EXCLUDED`.
+
+One gap recorded rather than papered over: upstream keeps that as a *set*, so it also covers ids
+models.dev does not carry for Copilot yet, while these are per-id. Six of the ten would report
+"changes nothing" every run, which is noise, so the four that are live are the entries — and a *new*
+Copilot model arriving with a too-small window is therefore not caught by itself. The tell is a
+Copilot row whose window looks small beside its siblings.
+
 ### Eighteen of Gemini's twenty finish reasons were an error with no words in it
 
 Reported from real use — *"新版 Gemini 和 DeepSeek 总是因为这个出错"* — and the half of it that could be
