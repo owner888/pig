@@ -329,7 +329,13 @@ PSR-18 响应体，会把那一次同时盯着模型 socket 和键盘的 `stream
 composer install
 php test/lint.php      # 对每个文件跑 php -l
 vendor/bin/phpunit
+php test/live.php      # 对真实 API 跑一遍 provider —— 要花钱、要密钥
 ```
+
+`test/live.php` 不属于测试套件、也不会自己跑：每个 provider 十二个场景打真实 API，因为只有这样才能
+回答「provider 会不会**接受** pig 发出去的东西」—— 重放的 thinking 签名、为中断的调用编造出来的 tool
+result、从别的 provider 接过来的对话、超过窗口的 prompt。密钥从 pig 自己读的地方读，所以已经登录过的
+机器什么都不用配；`php test/live.php anthropic google` 指定跑哪几个。每次调用都压在几百 token 以内。
 
 验证要对着**下限版本**跑，而不是只对着你本机的 PHP：8.3 会在解析期就拒绝 8.4-only 语法，
 而顺手用上一个下限没有的特性太容易了。

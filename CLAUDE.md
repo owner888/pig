@@ -2103,6 +2103,54 @@ entries below — the overflow table, `TransformMessages`, the Copilot headers),
 are the two finds already recorded against them, and `unicode-surrogate` is `Utf8::sanitize()`, whose
 docblock carries its own verification.
 
+### `test/live.php`, and what Anthropic said back
+
+The worry the provider-SDK section states plainly — *"a bug in them shows up as tokens going missing
+rather than as an error, and there is no vendor implementation to fall back to"* — is about 4,977
+lines of hand-written protocol with 167 tests over it, **every one of which answers a server pig
+wrote itself, from fixtures pig wrote itself.** A fixture written to agree with the code is a failure
+this project has had twice: Anthropic's `message_delta` usage and `retry.maxAttempts`. So the
+canned-server suite cannot settle the one question that matters most, which is not "does pig parse
+what a provider sends" but **"does the provider accept what pig sends"**.
+
+`test/live.php` is that question, as a script rather than a PHPUnit test — it costs money and needs
+credentials, so it must not be reachable by a runner at all, which is upstream's `skipIf(!API_KEY)`
+one step further. Keys come from `Auth::discover()` and the environment, never from an argument,
+because argv is in the process list. Twelve scenarios per provider, each capped at a few hundred
+tokens; the overflow case is refused before it is billed. `php test/live.php anthropic google` names
+which to run.
+
+**Run against the real Anthropic API: twelve of twelve.** The four that only the far end can rule on
+are the reason it exists:
+
+| | |
+|---|---|
+| a replayed thinking signature | **accepted** — it is signed, and meaningless to anybody but the issuer, so nothing local could have told us |
+| `TransformMessages`' invented `No result provided` | **accepted** — the claim that every provider refuses a dangling call, tested on one |
+| the live wording of a too-long prompt | **matched** `Ai\Utils\Overflow`'s table |
+| `cache_control: ephemeral` on the last block | **acted on** — wrote 5,611 tokens, read 5,611 back on the second call |
+
+And four that pin what earlier reads had only argued: an aborted turn keeps the usage that arrived, a
+finished turn has both an input and an output count (the `message_delta` merge, live), `max_tokens`
+comes back as `StopReason::Length`, and an empty conversation is refused with `400 messages: at least
+one message is required` — **which is not read as an overflow**, so an empty prompt cannot set a
+compaction going. That last one settles the question the canned-server read left open two batches
+earlier: pig drops an empty message and sends `messages: []`, exactly as upstream does, and Anthropic
+says no. Both halves were predicted; only the wording needed a call.
+
+Two things the run is *not*. It is **one provider of five**: from this container and from the
+desktop bridge alike, only `api.anthropic.com` is allowlisted — every other provider host answers
+`CONNECT tunnel failed, 403` — so OpenAI, Google, Groq, xAI, Cerebras, z.ai, Mistral and Copilot are
+untested against a real endpoint and their protocol code rests on canned servers alone. And it is
+**not a one-off**: the numbers above are worth re-running rather than quoting, which is what the
+script is for.
+
+One finding was the harness's own and is kept because of how it looked: a **1×1 PNG** is a valid
+PNG that Anthropic refuses with `400 Could not process image`. On screen that is indistinguishable
+from a provider rejecting pig's image encoding. 16×16 passes. *A live harness can fail for reasons
+that have nothing to do with the thing under test, and the first failure is worth suspecting in the
+harness before the port.*
+
 ### Talking to a gateway instead of a provider
 
 `Agent\StreamProxy` is upstream's `agent/proxy.ts`. **It is the second thing in this repository
@@ -3225,6 +3273,7 @@ before optional ones.
 composer install        # path repositories + PHPUnit 12
 php test/lint.php       # php -l over every file (PHPUnit only parses what it loads)
 vendor/bin/phpunit      # filter: vendor/bin/phpunit --filter Loop
+php test/live.php       # the providers against the real endpoints — costs money, needs keys
 ```
 
 PHPUnit 12 is the newest release that still runs on PHP 8.3, so it is what the floor allows.
