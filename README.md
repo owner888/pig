@@ -65,14 +65,18 @@ keyword to a tool's schema can never break the tool.
 ## Try it
 
 ```bash
-composer global require pigagent/pig
+curl -fsSL https://raw.githubusercontent.com/owner888/pig/main/install.sh | sh
 ANTHROPIC_API_KEY=sk-ant-... pig
 ```
 
-If that answers `command not found`, Composer's global bin directory is not on your PATH — a
-one-time setup that every Composer-installed command needs, not this one in particular:
+The installer checks PHP and its extensions before touching anything, installs the package with
+Composer, and offers to put Composer's global bin directory on your PATH — which is the step that is
+otherwise easy to miss, because Composer says nothing about it and `pig` is then `command not found`.
+
+Composer directly works too, with that last step left to you:
 
 ```bash
+composer global require pigagent/pig
 echo "export PATH=\"$(composer global config bin-dir --absolute):\$PATH\"" >> ~/.zshrc
 exec $SHELL
 ```

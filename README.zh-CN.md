@@ -57,14 +57,17 @@ provider 的证书，所以代理只负责搬字节、读不到内容；域名�
 ## 跑一下
 
 ```bash
-composer global require pigagent/pig
+curl -fsSL https://raw.githubusercontent.com/owner888/pig/main/install.sh | sh
 ANTHROPIC_API_KEY=sk-ant-... pig
 ```
 
-如果这里报 `command not found`，是 Composer 的全局 bin 目录不在 PATH 上——这是所有用 Composer 装的
-命令都要做一次的事，跟 pig 无关，每台机器只做一次：
+这个脚本会先查 PHP 和扩展、再用 Composer 装、最后问你要不要把 Composer 的全局 bin 目录加进 PATH
+——最后这步最容易漏，因为 Composer 一个字都不会提，然后 `pig` 就是 `command not found`。
+
+直接用 Composer 也行，只是最后那步得自己来：
 
 ```bash
+composer global require pigagent/pig
 echo "export PATH=\"$(composer global config bin-dir --absolute):\$PATH\"" >> ~/.zshrc
 exec $SHELL
 ```

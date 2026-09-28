@@ -8998,6 +8998,36 @@ is another, which nothing puts on PATH. So "every PHP CLI is like this" is true 
 claim as "this is as good as it gets"; the JS side of the same tool simply does not have the problem.
 Nothing pig ships can change it — a package cannot choose where Composer puts its bins.
 
+**There is an `install.sh`, and it is not a second distribution channel.** `curl -fsSL
+https://pigagent.dev/install.sh | sh` runs `composer global require` — the same one package from the
+same Packagist — so `Version::current()` still reads Composer's answer and
+`UpdateCheck::COMMAND` is still the right command for anybody who used it. What it adds is the two
+things Composer will not do: **name every missing PHP extension before anything is installed**,
+where a missing `ext-pcntl` otherwise surfaces mid-install as a platform error that names no fix, and
+**offer to put Composer's global bin directory on the PATH**, which is the step that turns a
+successful install into `command not found`.
+
+Modelled on upstream's, and the reading corrected a claim made here first: pi's quickstart says "the
+curl installer uses npm globally", which describes its **legacy** path — the default is a *managed*
+install that fetches release metadata from `pi.dev/api`, runs `npm ci` into
+`~/.pi/agent/install/releases/<version>` and symlinks a launcher onto the PATH. That layer exists to
+pin transitive dependencies npm's global install does not, and **pig has none to pin**, so copying it
+would buy nothing and re-create the two-version-sources problem below. What was worth taking is its
+shape and four functions: picking the shell profile from `$SHELL`, `fish_add_path` versus `export
+PATH`, a whole-line `grep -Fxq` so running the installer twice does not append twice, and asking
+through `/dev/tty` — necessary because a piped script *is* standard input. 200 lines against
+upstream's 1789; the 600 lines of logo animation and raw-key menus are not the part that works.
+
+**The structural thing to keep: every function is defined first and the last line is the only call.**
+Piped to `sh`, a download cut off half way still executes what arrived — so a script that did work
+before its end would perform half an install. `InstallScriptTest::testNothingRunsUntilTheLastLine`
+pins it, because nothing else would notice a refactor that moved the call up.
+
+And the extension list is a **second copy of what `composer.json` requires**, deliberately: a shell
+script cannot read the manifest before PHP is known to exist, which is the very case the preflight is
+for. So it is pinned instead — the list, the minimum version in both the compared and the printed
+form, and the package name against `Version::PACKAGE`. Five mutations, five kills.
+
 **No phar and no Homebrew tap, for now, and the reason is not effort.** A second install route is a
 second answer to *which version am I running* — the thing `Version` was just rebuilt to have exactly
 one of — and worse, a `brew`-installed copy would be told to run `composer global update
