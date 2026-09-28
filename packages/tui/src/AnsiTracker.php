@@ -23,6 +23,14 @@ final class AnsiTracker
 
     private ?string $background = null;
 
+    /**
+     * The attributes a terminal draws on an empty cell, and the code that turns each off.
+     *
+     * In SGR order, so the sequence reads `24;27;29` rather than in whatever order this was
+     * written. See `lineEndReset()` for why these three and nothing else.
+     */
+    private const array PAINTS_A_BLANK_CELL = [4 => 24, 7 => 27, 9 => 29];
+
     /** Attributes turned off by a code other than their own. */
     private const array TURNS_OFF = [
         21 => [1],
@@ -174,12 +182,32 @@ final class AnsiTracker
     /**
      * What to turn off before the line ends.
      *
-     * Only underline: a terminal draws it across the padding after the text, so a wrapped
-     * underlined word leaves a rule running to the right edge. Colours stop where the
-     * characters stop, so they are left alone and carry to the next line intact.
+     * The test is whether the attribute **paints a blank cell**, because what follows the text on
+     * a wrapped line is padding: underline and strikethrough are drawn through a space like a
+     * rule, and inverse swaps the foreground in, so a space becomes a block of colour. All three
+     * leave a mark running to the right edge and all three are closed here, with their own
+     * off-codes in one sequence.
+     *
+     * Everything else is left alone and carries to the next line intact. Bold, dim and italic do
+     * nothing to a space; blink and conceal are invisible on one; a foreground colour stops where
+     * the characters stop; and a **background** is the one that has to survive, since a caller
+     * padding a coloured row wants the colour to reach the edge.
+     *
+     * Upstream closes underline only, and its comment gives the reason as "Other attributes like
+     * colors don't visually bleed to padding" — true of a colour and false of SGR 7 and SGR 9.
+     * `DiffView` marks a changed run with inverse and `Markdown` strikes through `~~text~~`, so
+     * both were reachable: an edited line long enough to wrap painted the rest of two rows solid.
      */
     public function lineEndReset(): string
     {
-        return $this->flags[4] ? "\x1b[24m" : '';
+        $codes = [];
+
+        foreach (self::PAINTS_A_BLANK_CELL as $flag => $off) {
+            if ($this->flags[$flag]) {
+                $codes[] = (string) $off;
+            }
+        }
+
+        return $codes === [] ? '' : "\x1b[" . implode(';', $codes) . 'm';
     }
 }

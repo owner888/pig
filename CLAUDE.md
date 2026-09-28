@@ -2005,6 +2005,27 @@ name. Five booleans on `Skills::load()` is new public surface, so it is the deve
 argument for is that somebody with a large `~/.claude/skills` may want it out of pig's prompt without
 naming every skill in it, and the argument against is the rule at the top of this file.
 
+### `tui`'s tests, where the specification was the find
+
+Five files, 1,492 lines, and the useful one is `wrap-ansi.test.ts` — six cases about style bleeding
+across a wrap, which is the family two entries in the traps section already belong to. pig satisfies
+all six as written, **and the comment inside the rule they describe is wrong about two attributes**:
+the entry below on inverse and strikethrough is what came out of reading them.
+
+The other four files needed no change and the evidence is worth keeping:
+
+- **`truncated-text.test.ts`'s nine claims all hold**, run rather than read: exact padding to the
+  width at every size, one line whatever the input, the `\e[0m` before the ellipsis so the ellipsis is
+  not styled with whatever was truncated, the first line only when the text has newlines, and an empty
+  text still padded to width.
+- **`editor.test.ts` and `markdown.test.ts` are the two files already answered by a corpus** — 1,308
+  keystroke sequences against `editor.ts` and 54 documents against `marked`, both in the traps below.
+  A corpus compares behaviour where the tests state intent, and where a corpus has been run the tests
+  are the weaker instrument: it is how the byte offset that crashed on CJK and the two list bugs were
+  found, neither of which any `it()` over there names.
+- **`autocomplete.test.ts`'s four cases are the `/`-is-not-a-path rule**, which has its own entry
+  below and eight regression tests.
+
 ### Talking to a gateway instead of a provider
 
 `Agent\StreamProxy` is upstream's `agent/proxy.ts`. **It is the second thing in this repository
@@ -4836,6 +4857,57 @@ string. `Highlight` therefore splits every token on `\n` and styles each piece o
 line, rather than styling the token once and splitting afterwards.
 
 Regression test: `HighlightTest::testEachLineClosesItsOwnStyles`.
+
+### Inverse and strikethrough paint a blank cell, and the rule said only underline does
+
+The third entry in this family and the one where the reason was written down and was wrong.
+`AnsiTracker::lineEndReset()` turns off what must not run past the text on a wrapped line, and it
+turned off **underline only** — upstream's rule, with upstream's reason on it: *"Only underline
+causes visual bleeding into padding. Other attributes like colors don't visually bleed to padding."*
+
+True of a colour. False of two others, and the test is simply **whether the attribute paints an empty
+cell**:
+
+| | on a space |
+|---|---|
+| underline (4) | a rule drawn through it |
+| **strikethrough (9)** | **a rule drawn through it** |
+| **inverse (7)** | **the foreground swapped in — a solid block of colour** |
+| bold, dim, italic | nothing |
+| blink, conceal | nothing visible |
+| foreground | stops where the characters stop |
+| background | *has* to survive — a padded row should reach the edge |
+
+Both of the two are reachable: `DiffView::mark()` wraps a changed run in `Style::inverse()`, and
+`Markdown` strikes through `~~text~~`. Reproduced through the real components rather than the
+primitive — a diff of one rewritten line, drawn in a 44-column `Text`:
+
+```
+0 !!  \e[38;5;167m-12 return $this->\e[7moldCall($a, $b) +
+1     \e[7;38;5;167m$this->somethingElseEntirely($c) ?? 0\e[27m; //
+3 !!  \e[38;5;143m+12 return $this->\e[7mnewThing($x, $y) +
+```
+
+`!!` is a line handed to the terminal with inverse still on, so every padding space after it is
+filled to the right edge — two rows per edited line, on the ordinary case of a line whose middle was
+rewritten. The marked run only has to be long enough for the wrap to fall inside it.
+
+`PAINTS_A_BLANK_CELL` is the table now, in SGR order so the sequence reads `24;27;29`, and only the
+attributes actually on are emitted — so the underline-only case is still exactly `\e[24m`, which is
+what upstream's own test asserts with `endsWith`.
+
+**And the rest of `wrap-ansi.test.ts` passes as written**, which is worth the words because that file
+is a specification of this whole family: no underline code on the line *before* the styled text, a
+background on every continuation line, a background surviving an underline that closes per line, and
+a colour re-opened at the start of each continuation — all four run against pig and all four agree,
+byte for byte on the one upstream asserts exactly.
+
+Regression tests: `TextWrapTest::testInverseIsClosedAtEachLineEndToo`,
+`testStrikethroughIsClosedAtEachLineEndToo`, and
+`testOnlyTheAttributesThatPaintABlankCellAreClosed` — which is the one that stops the fix becoming
+"close everything", since closing bold or a foreground would cost a code per line for nothing, and
+closing the background is the bug the whole mechanism exists to avoid. Dropping any one of the three
+rows turns exactly its own test red.
 
 ### A per-line prefix has to go on after the wrap, not before
 

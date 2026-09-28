@@ -84,6 +84,41 @@ final class TextWrapTest extends TestCase
         $this->assertStringEndsNotWith("\x1b[24m", $lines[0]);
     }
 
+    /**
+     * Inverse paints a blank cell, so it bleeds exactly as underline does.
+     *
+     * Upstream's comment says only underline bleeds ("Other attributes like colors don't visually
+     * bleed to padding"), which is true of a colour and false of SGR 7: inverse swaps foreground
+     * and background, so every padding space after the text is filled with the foreground colour.
+     * `DiffView` marks a changed run with it, so an edited line long enough to wrap painted the
+     * rest of two rows solid.
+     */
+    public function testInverseIsClosedAtEachLineEndToo(): void
+    {
+        $lines = TextWrap::wrap("\x1b[7maaaa bbbb cccc", 9);
+
+        $this->assertStringEndsWith("\x1b[27m", $lines[0]);
+        $this->assertStringContainsString("\x1b[7m", $lines[1]);
+    }
+
+    /** And strikethrough, which a terminal draws through the padding like a rule. */
+    public function testStrikethroughIsClosedAtEachLineEndToo(): void
+    {
+        $lines = TextWrap::wrap("\x1b[9maaaa bbbb cccc", 9);
+
+        $this->assertStringEndsWith("\x1b[29m", $lines[0]);
+        $this->assertStringContainsString("\x1b[9m", $lines[1]);
+    }
+
+    /** Several at once close in one sequence, and only the ones that are on. */
+    public function testOnlyTheAttributesThatPaintABlankCellAreClosed(): void
+    {
+        // Bold and a colour are invisible on a space; underline and inverse are not.
+        $lines = TextWrap::wrap("\x1b[1;4;7;31maaaa bbbb cccc", 9);
+
+        $this->assertStringEndsWith("\x1b[24;27m", $lines[0]);
+    }
+
     public function testStyleCarriesOverALiteralNewline(): void
     {
         $lines = TextWrap::wrap("\x1b[1mbold\nstill bold", 20);
