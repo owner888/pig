@@ -197,4 +197,29 @@ final class LoopTest extends TestCase
         $this->assertThrows(AsyncError::class, fn () => $loop->tick(), "Reader {$watcher} watches a closed stream");
         $this->assertTrue(is_resource($peer));
     }
+
+    public function testWaitingOnATimerWithNoStreamsSleepsRatherThanSpinning(): void
+    {
+        // `stream_select()` cannot wait on nothing, so with timers and no watchers the wait is
+        // a `usleep()`. Deleting it leaves a **busy-wait**: every callback still fires at the
+        // right moment and the wall clock is identical, so nothing about the output can tell
+        // the two apart — measured, 0.150s either way. What differs is the CPU: 0.1ms asleep
+        // against 134ms spinning, which on a retry countdown or a `Process::runAsync()` poll
+        // is a core at 100% for as long as the wait lasts.
+        Loop::get()->delay(0.15, static fn () => null);
+
+        $before = getrusage();
+        $wall = microtime(true);
+        Loop::get()->run();
+        $after = getrusage();
+
+        $elapsed = microtime(true) - $wall;
+        $cpu = ($after['ru_utime.tv_sec'] - $before['ru_utime.tv_sec']) * 1_000_000
+            + ($after['ru_utime.tv_usec'] - $before['ru_utime.tv_usec']);
+
+        // The timer really was waited for, so this is not passing by returning early.
+        $this->assertGreaterThan(0.1, $elapsed);
+        // Generous by three orders of magnitude against the 134ms a spin costs.
+        $this->assertLessThan(50_000, $cpu, 'the wait burned CPU, so it was a spin and not a sleep');
+    }
 }

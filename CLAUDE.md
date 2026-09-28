@@ -102,7 +102,9 @@ Both were chosen explicitly, not by default:
 - **Event loop is hand-written, not `amphp/amp` v3** (also Fiber-based, with SSE-capable HTTP).
   Chosen to keep the core dependency-free.
 
-`Pig\Async` has no upstream counterpart at all — JS ships an event loop, PHP does not.
+`Pig\Async` has no counterpart in *upstream* at all — JS ships an event loop, PHP does not. It has a
+reference all the same: it is read against workerman's `EventInterface` in the traps below, which is
+where the three deliberate absences, the two places pig is ahead of it, and the one real gap are.
 
 #### `Future` + `Deferred` is the Promise, and `then()` is what fibers make unnecessary
 
@@ -6303,6 +6305,110 @@ Regression tests: `OauthTest::testAHostWithSomethingForbiddenInItIsNotOne` (ten 
 them null under `new URL` as well), `testATabInsideAHostIsRemovedRatherThanRenamingTheHost`,
 `testAControlAtTheEndIsStrippedAndOneAtTheFrontIsNot`,
 `testATypedDomainIsLowercasedTheWayTheUrlParserDoesIt`, `testAnIpv6LiteralKeepsItsBrackets`.
+
+### `packages/async` read against workerman, which is the reference it does have
+
+This document has said from the start that `Pig\Async` "has no upstream counterpart at all — JS
+ships an event loop, PHP does not", and used that to explain why the read-against-upstream
+scoreboard has no row for it. **The developer's correction: PHP has mature event loops, and
+workerman is the one to read.** So it was read against [workerman](https://github.com/walkor/workerman),
+whose `EventInterface` is the comparison surface, and against the select-based loop
+[ReactPHP](https://reactphp.org/event-loop/) and workerman share.
+
+Ten of workerman's fifteen methods are here under the same names — `onReadable`, `onWritable`,
+`cancel` (its `offReadable`/`offWritable`/`offDelay`), `defer`, `delay`, `run`, `stop`, plus
+`isIdle` where it has `getTimerCount`. Three absences are pig's own answers rather than gaps:
+
+| workerman | pig |
+|---|---|
+| `repeat()` / `offRepeat()` | a callback that re-arms itself — `BorderedLoader`'s spinner and `Process::runAsync`'s poll. A second way to say "again in a moment" is what the rule at the top of this file forbids |
+| `onSignal()` / `offSignal()` | `pcntl_async_signals(true)` plus `pcntl_signal()` where the signal is wanted — `ProcessTerminal` for SIGWINCH, `InteractiveMode` for SIGCONT. Two users, neither of which wants the loop to own the table |
+| `deleteAllTimer()` | `Loop::reset()`, which tests use and nothing else does |
+
+**And on two things pig is ahead of both**, which is worth stating because it is the same
+`version_compare()` rule one package over — where the reference is working around something, the
+port is not the workaround:
+
+- **EINTR is matched on the errno, not suppressed.** workerman's React loop is
+  `@stream_select($read, $write, $except, …)`, with the `@` there precisely because a signal
+  interrupts the call, and React dispatches signals with `pcntl_signal_dispatch()` before every
+  select. pig captures the warning with a handler — `@` is forbidden here and the linter enforces
+  it — reads `Unable to select [4]` out of it and returns, which is the entry on that trap above.
+  The `@` throws away the errno, so it cannot tell EINTR from a real failure.
+- **A closed stream is named by its watcher.** `stream_select()` silently drops one and then fails
+  with `No stream arrays were passed`, which names nothing; `poll()` checks `is_resource()` per
+  watcher first and says which one. Both loops have the hazard and only one of them has the
+  message.
+
+**The one real absence is a loop-level error handler.** workerman's interface has
+`setErrorHandler(callable)` and every callback goes through a `safeCall()` that routes a throw to
+it. pig has nothing: `runQueue()`, `poll()` and `runTimers()` each invoke callbacks bare.
+Measured, all three:
+
+```
+a deferred callback    => RuntimeException escaped run(): boom
+a timer callback       => RuntimeException escaped run(): boom
+a readable watcher     => RuntimeException escaped run(): boom
+```
+
+**And the traps above are the bill for it.** The sentence "runs inside the loop's own input
+callback, so there is nothing above it to catch" appears five times in this file, and each time it
+is explaining why something small took the **whole session** down: one byte that is not UTF-8 in a
+tool's output, the same in a diff, in a hook's message and in what the person typed; a `/settings`
+hint one column too wide on a narrow terminal; a cursor left inside a character by an editor key.
+Every one was fixed at its source, correctly. The *class* is still open, and the next throw inside
+a `render()` ends `bin/pig` with a stack trace over a half-drawn screen.
+
+It is **not added here**, for the reason `Future::all()` is not: it is new public surface in
+`Pig\Async` and the shape is the whole question, so it is the developer's call and the first caller
+should decide it. The shape has three real decisions in it, which is why it is not a one-liner —
+does the loop carry on after a callback throws, or stop; is the report drawn once or on every frame
+(a `render()` that throws throws again next tick, which is the problem
+`ToolExecutionComponent`'s renderer fallback already solves with a once-per-call latch); and does
+a handler that swallows breach the no-silent-fallback rule or satisfy it by reporting. **The
+argument for having it is the five entries above; the argument against is that a handler which
+hides a broken renderer is worse than a crash that gets reported.**
+
+### 478 mutations over `packages/async`, and a wait that was a spin
+
+Swept in the same batch, two passes as the Oauth entry describes, and with the stray-process count
+checked **by the script** before it starts — the guard that entry asks for, which earned itself
+immediately by refusing to run beside two leftovers.
+
+300 of the 478 completed before the run was killed, with all ten files represented: **219 killed,
+47 detected by hanging, 34 surviving.** Eleven percent, against `Utils/Oauth`'s thirty-six — *the
+best-pinned package swept so far*, and the reason is visible in the shape: `AbortSignal` 14 of 14,
+`AbortController` 8 of 9, `AbortState` 22 of 26, `Future` 35 of 40, `Deferred` 12 of 15. `Loop.php`
+is 60 killed, 29 hanging and 18 surviving, and the hangs are what a broken event loop is: every
+test waiting for something that will not arrive.
+
+Two of the 34 were real, and the first is the more interesting kind of bug this instrument finds:
+
+**A wait with no streams in it was a `usleep()` and deleting it changed nothing observable.**
+`stream_select()` cannot wait on nothing — PHP 8 raises `ValueError("No stream arrays were
+passed")` — so with timers armed and no watchers the wait is a sleep. Take the sleep out and every
+callback still fires at the right moment and the wall clock is *identical*: 0.150s either way,
+measured. What differs is the CPU — **0.1ms asleep against 134ms spinning**, a thousandfold, which
+on a retry countdown or a `Process::runAsync()` poll is a core at 100% for as long as the wait
+lasts. No assertion about output could have caught it, which is why `getrusage()` is what the test
+asserts on. *A defect with no wrong answer in it still has a cost, and the instrument that finds
+one measures something other than the answer.*
+
+**And `onComplete()` has two paths of which only one was reached.** A future that is already
+complete defers the callback instead of queueing it; deleting that `defer` changed no test. A
+callback that never runs is whatever was waiting on it waiting for ever, and `EventStream` and
+`Async::run()` are what register these.
+
+Regression tests: `LoopTest::testWaitingOnATimerWithNoStreamsSleepsRatherThanSpinning` — which
+asserts the timer really was waited for as well, so it cannot pass by returning early — and
+`FutureTest::testACallbackRegisteredAfterCompletionStillRuns`, which also pins that the callback is
+**not** run synchronously, the rule the pending path is written for. Both mutations re-applied
+afterwards and both die.
+
+The remaining 32 are the familiar three kinds: `?? null` against `''` in front of a type check,
+`$x = []` and `$x = ''` initialisers whose deletion warns (so `failOnWarning` kills them and the
+shim does not), and cleanup assignments whose end state is identical. The 178 mutations the killed
+run never reached are worth finishing, and the file list above says where they would land.
 
 ### A space that is not U+0020 emptied the search box
 

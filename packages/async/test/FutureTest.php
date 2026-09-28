@@ -170,4 +170,27 @@ final class FutureTest extends TestCase
 
         $this->assertSame('handled', $seen);
     }
+
+    public function testACallbackRegisteredAfterCompletionStillRuns(): void
+    {
+        // `onComplete()` has two paths and only the pending one was reached: a future that has
+        // already finished defers the callback instead of queueing it, and deleting that defer
+        // changed no test. A callback that never runs is whatever was waiting on it waiting for
+        // ever — and `EventStream` and `Async::run()` are what register these.
+        $deferred = new Deferred();
+        $deferred->complete('already done');
+
+        $seen = null;
+        $deferred->future->onComplete(function (?\Throwable $error, mixed $result) use (&$seen): void {
+            $seen = [$error, $result];
+        });
+
+        // Not synchronously, which is the rule the pending path is written for as well: a
+        // callback must not run inside the completer's own stack.
+        $this->assertNull($seen);
+
+        Loop::get()->run();
+
+        $this->assertSame([null, 'already done'], $seen);
+    }
 }
