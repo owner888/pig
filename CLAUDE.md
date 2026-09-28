@@ -8812,6 +8812,84 @@ putting one collision back and watching it refuse.
 The neighbouring PHPUnit 12 rule was swept at the same time and is clean: every method named by a
 `#[DataProvider]` is `public static`, which that version requires and older ones did not.
 
+### What the first real PHPUnit run said, once it could load the suite
+
+With the ten final-method collisions gone, `vendor/bin/phpunit` ran for the first time in a long
+while: **2595 tests, 2 errors, 5 failures, 1 deprecation.** Not one of them was a bug in pig's
+behaviour, and that is the interesting part — every one was either a test coupled to the machine it
+ran on, or a test that could not work under the real runner. So the entry is about the **kinds**.
+
+**Kind one: a test that passes or fails by what the machine happens to have.** Two of these, both
+green in the container and red on a Mac that had actually used pig:
+
+- **`SearchToolsTest`'s two missing-tool tests emptied `PATH` and stopped there.** But
+  `ExternalTool::locate()` looks in **pig's own `~/.pig/tools` first**, deliberately, so a downloaded
+  copy beats one the PATH shadows — which means on any machine where pig has ever fetched `fd`, the
+  tool was found and nothing threw. A test about something being absent that only passes where it was
+  never present. `PIG_HOME` now points at an empty directory as well, which is what
+  `ToolInstallerTest` had been doing in its `setUp` all along: *the answer was already in the
+  repository, in the sibling that got it right.*
+- **`InteractiveModeTest`'s export test asserted a path against the wrapped screen.** In the
+  container `/tmp/pig-interactive-…` fits on one line; on macOS
+  `/var/folders/mk/6fds…/T/pig-interactive-…/out.html` wraps, and the renderer split it mid-word as
+  `out.` / `html`. Reproduced here by pointing `TMPDIR` at a path of that shape. Collapsing
+  whitespace does **not** undo it — joining those two rows gives `out. html`, which is not the
+  filename either — so `screenText()` renders at a width nothing wraps at. The rule: **assert layout
+  against `screen()` and words against `screenText()`**, and a path in an assertion is words.
+
+**Kind two: a test that could not work under the real runner, and the shim could not show it.**
+`testATagCutWithAVeeIsNotTheVersionItReports` steered `Version::current()` with
+`InstalledVersions::reload()` and reported `dev-main` instead of the fabricated `v0.9.0`. Reading
+Composer's source says why: `getInstalled()` consults **every registered ClassLoader's dataset
+before** the one `reload()` sets, so a reloaded version is ignored wherever an autoloader is
+registered — which is every real run. **The shim registers no Composer ClassLoader**, so there the
+reload was the only dataset and it worked. That is a new line in the list of ways the shim differs,
+and a structural one rather than a strictness one: *anything that depends on
+`ClassLoader::getRegisteredLoaders()` behaves differently under the shim.*
+
+The fix was not a better seam. Stripping a tag's `v` was written out **twice** — `Version::current()`
+and `UpdateCheck::newest()` — which is the first shape from the index on a one-line rule, and the
+worst place for it, since the two are the opposite sides of one comparison and a disagreement makes
+`v0.2.0` newer than `0.2.0`. It is `Version::plain()` once, both readers call it, and it is tested as
+what it is: a pure function over a table. **New public API, so it was flagged rather than assumed.**
+
+**Kind three: hygiene that only shows up in a long-lived process.** Two `OverflowTest` errors,
+`Reader r1 watches a closed stream; cancel the watcher before closing it` — which is this document's
+own trap, thrown from inside a test that had done nothing wrong. Two causes, both fixed:
+
+- **`OverflowTest` and `HookRunnerTest` were the only two test classes that turn the loop and never
+  `Loop::reset()`.** The loop is a singleton that outlives a test, so those two inherited whatever
+  watchers the previous test left — and the error names *their* `Async::run()`. Found by sweeping
+  every class for the pair (touches the loop, never resets), which is two out of forty-odd.
+- **`CannedServer` never cancelled the watcher on its listening socket**, and nothing ever stopped a
+  server: `OverflowTest` builds one per call and drops it. So the stream went away on garbage
+  collection with its watcher still armed. It has `stop()` and a destructor now, cancelling before
+  closing, and its two deferred writes are guarded with `is_resource()` so a stopped server cannot
+  write to a closed peer. A helper is not exempt from the rule the rest of the tree follows.
+
+The container could not reproduce the second one on its own — the probe said OK with the destructor
+removed, because `Loop` holds the stream resource itself in its watcher record and so keeps it alive.
+That is worth knowing: **the container's loop keeps a dropped socket open, so this class of leak is
+invisible here and shows up wherever GC and test order differ.** Both fixes are correct by the rule
+whether or not the ordering that exposed them can be staged again.
+
+**And one deprecation, which `failOnDeprecation` makes a failure:** `ReflectionMethod::setAccessible()`
+is deprecated in PHP 8.5 and has had no effect since 8.1 — reflection reaches a private method by
+itself. One call in the tree, in `GoogleTest`, removed.
+
+**The last two were half of a commit that did not travel.** Commit `98ed239` ("Align with Pi system
+prompts") changed `SystemPrompt.php`'s wording to upstream's and left `SystemPromptTest` asserting
+pig's earlier phrasing — `read-only work only` against `ONLY for read-only operations`, and `Use bash
+for file work` against `Use bash for file operations like ls, grep, find`. The source was the
+intended state and the assertions followed it, which is also the direction this file's own fidelity
+rule points: where the two disagree about what upstream says, upstream decides.
+
+Worth knowing for anybody reading an older note: **the prompt and its test were treated as off-limits
+for a while**, as the developer's own working copy, so they were held out of every sync. That no
+longer holds — the edit was upstream alignment rather than private work, and both files are ordinary
+parts of the tree again. *A rule about which files not to touch is worth re-asking about, because the
+reason for it expires quietly.*
+
 ### Packaging for Packagist, and the version field that was the wrong answer to the right question
 
 The entry above got `Version` right in principle and wrong in fact. Its reasoning — *one written-down

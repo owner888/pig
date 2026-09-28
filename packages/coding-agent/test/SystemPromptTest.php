@@ -117,13 +117,16 @@ final class SystemPromptTest extends ToolTestCase
     {
         $prompt = $this->prompt(['read', 'bash']);
 
-        $this->assertStringContainsString('read-only work only', $prompt);
+        // Upstream's wording, which `SystemPrompt.php` took in the commit that aligned the prompts
+        // with pi's. This asserted pig's earlier phrasing (`read-only work only`) and was the half
+        // of that commit that did not travel.
+        $this->assertStringContainsString('ONLY for read-only operations', $prompt);
         $this->assertStringNotContainsString('READ-ONLY mode', $prompt);
     }
 
     public function testWithBashAndNoSearchToolsBashIsWhatToSearchWith(): void
     {
-        $this->assertStringContainsString('Use bash for file work', $this->prompt(['read', 'bash', 'edit']));
+        $this->assertStringContainsString('Use bash for file operations', $this->prompt(['read', 'bash', 'edit']));
     }
 
     public function testWithSearchToolsTheyArePreferredOverBash(): void

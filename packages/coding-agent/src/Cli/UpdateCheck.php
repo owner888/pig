@@ -141,8 +141,9 @@ final class UpdateCheck
             }
 
             // Packagist writes the tag as it was cut, so a `v` prefix reaches here; and a hyphen is
-            // a pre-release, which is not what somebody who did not ask gets offered.
-            $version = ltrim($version, 'vV');
+            // a pre-release, which is not what somebody who did not ask gets offered. The stripping
+            // is `Version`'s, because the other side of this comparison does it too.
+            $version = Version::plain($version);
 
             if ($version === '' || str_contains($version, '-')) {
                 continue;

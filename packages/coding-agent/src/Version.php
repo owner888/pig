@@ -61,8 +61,26 @@ final class Version
             throw new CodingAgentError("Cannot read pig's own version: Composer has no version for " . self::PACKAGE . '.');
         }
 
-        // Packagist keeps the tag as it was cut, so `v0.1.0` reaches here; `Cli\UpdateCheck` strips
-        // it on the other side of the comparison for the same reason.
+        return self::plain($version);
+    }
+
+    /**
+     * A version without the `v` a tag may have been cut with.
+     *
+     * **One rule, two readers, and it was written out twice.** Composer reports `v0.1.0` for a tag
+     * spelled that way and Packagist lists the tag as it was cut, so both sides of the update
+     * check's comparison have to strip it — `Cli\UpdateCheck::newest()` is the other one. Two copies
+     * of a one-line rule is how the two come to disagree about whether `v0.2.0` is newer than
+     * `0.2.0`, which is a comparison that must never be true.
+     *
+     * Public because it is the only honest way to test it. `Version::current()` asks Composer, and
+     * Composer's answer cannot be steered from a test: `InstalledVersions::reload()` sets the
+     * dataset that `getInstalled()` consults **last**, after every registered ClassLoader's own — so
+     * a test that reloads a fabricated version is ignored wherever an autoloader is registered,
+     * which is every real run. It passed under the verification shim, which registers none.
+     */
+    public static function plain(string $version): string
+    {
         return ltrim($version, 'vV');
     }
 }

@@ -18,7 +18,49 @@ final class CannedServer
     /** @var list<resource> */
     private array $open = [];
 
+    /**
+     * Every watcher this server put on the loop, so each can come off before its stream goes away.
+     *
+     * **A stream closed while a watcher still points at it is a loop that trips on the next poll** —
+     * `Reader r1 watches a closed stream` — and the listening socket used to be closed by nothing but
+     * garbage collection, with its watcher still registered. So the failure landed in whichever
+     * `Async::run()` came next, in a test that had done nothing wrong: `OverflowTest` builds a server
+     * per call and never stops one, so the first one collected took down the following call. The rule
+     * is this repository's own and is written down twice; a test helper is not exempt from it.
+     *
+     * @var list<string>
+     */
+    private array $watchers = [];
+
     private string $received = '';
+
+    public function __destruct()
+    {
+        $this->stop();
+    }
+
+    /**
+     * Take every watcher off the loop and close every socket, in that order.
+     *
+     * Idempotent, because `closeAfter` also closes the peer on a timer and the destructor runs
+     * whether or not a test called this.
+     */
+    public function stop(): void
+    {
+        foreach ($this->watchers as $watcher) {
+            Loop::get()->cancel($watcher);
+        }
+
+        $this->watchers = [];
+
+        foreach ($this->open as $stream) {
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+        }
+
+        $this->open = [];
+    }
 
     /**
      * @param list<string> $pieces
@@ -36,7 +78,7 @@ final class CannedServer
         stream_set_blocking($server, false);
         $this->open[] = $server;
 
-        Loop::get()->onReadable($server, function ($listening) use ($pieces, $closeAfter): void {
+        $this->watchers[] = Loop::get()->onReadable($server, function ($listening) use ($pieces, $closeAfter): void {
             $connection = stream_socket_accept($listening, 0);
 
             if ($connection === false) {
@@ -101,15 +143,21 @@ final class CannedServer
 
             foreach ($pieces as $index => $piece) {
                 Loop::get()->delay(0.01 * ($index + 1), static function () use ($peer, $piece): void {
-                    fwrite($peer, $piece);
+                    if (is_resource($peer)) {
+                        fwrite($peer, $piece);
+                    }
                 });
             }
 
             if ($closeAfter) {
                 Loop::get()->delay(0.01 * (count($pieces) + 1), static function () use ($peer): void {
-                    fclose($peer);
+                    if (is_resource($peer)) {
+                        fclose($peer);
+                    }
                 });
             }
         });
+
+        $this->watchers[] = (string) $reader;
     }
 }

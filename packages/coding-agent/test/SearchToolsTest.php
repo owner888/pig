@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use Closure;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Pig\Agent\AgentError;
 use Pig\Async\Async;
@@ -73,13 +74,40 @@ final class SearchToolsTest extends ToolTestCase
 
     // ---- the tools being missing ---------------------------------------------------
 
-    public function testAMissingToolSaysHowToInstallIt(): void
+    /**
+     * Run $work on a machine that has neither tool, anywhere.
+     *
+     * **Emptying the PATH is not enough, and that is the whole reason this helper exists.**
+     * `ExternalTool::locate()` looks in pig's *own* tools directory first — deliberately, so a
+     * downloaded copy beats one the PATH later shadows — so on any machine where pig has ever
+     * fetched `fd` or `rg` into `~/.pig/tools`, these two tests found the tool and nothing threw.
+     * It passed in a container with no tools and failed on a machine that had used pig, which is
+     * the wrong way round for a test about something being absent. `PIG_HOME` points that lookup
+     * at an empty directory, as `ToolInstallerTest` already does in its `setUp`.
+     */
+    private function withNoToolInstalled(Closure $work): void
     {
         $path = getenv('PATH');
+        $home = getenv('PIG_HOME');
+        $empty = $this->cwd . '/no-tools-here';
+
+        mkdir($empty . '/tools', 0o755, true);
         putenv('PATH=/nonexistent');
+        putenv('PIG_HOME=' . $empty);
         ExternalTool::forget();
 
         try {
+            $work();
+        } finally {
+            putenv('PATH=' . $path);
+            putenv($home === false ? 'PIG_HOME' : 'PIG_HOME=' . $home);
+            ExternalTool::forget();
+        }
+    }
+
+    public function testAMissingToolSaysHowToInstallIt(): void
+    {
+        $this->withNoToolInstalled(function (): void {
             // With downloading off, what the model gets is one command a person can run.
             $error = $this->assertThrows(
                 AgentError::class,
@@ -89,19 +117,12 @@ final class SearchToolsTest extends ToolTestCase
 
             $this->assertStringContainsString('Install it with:', $error->getMessage());
             $this->assertStringContainsString('github.com/sharkdp/fd', $error->getMessage());
-        } finally {
-            putenv('PATH=' . $path);
-            ExternalTool::forget();
-        }
+        });
     }
 
     public function testRipgrepIsNamedInItsOwnMessage(): void
     {
-        $path = getenv('PATH');
-        putenv('PATH=/nonexistent');
-        ExternalTool::forget();
-
-        try {
+        $this->withNoToolInstalled(function (): void {
             $error = $this->assertThrows(
                 AgentError::class,
                 fn () => $this->execute(new GrepTool($this->cwd), ['pattern' => 'x']),
@@ -109,10 +130,7 @@ final class SearchToolsTest extends ToolTestCase
             );
 
             $this->assertStringContainsString('BurntSushi/ripgrep', $error->getMessage());
-        } finally {
-            putenv('PATH=' . $path);
-            ExternalTool::forget();
-        }
+        });
     }
 
     // ---- find ----------------------------------------------------------------------

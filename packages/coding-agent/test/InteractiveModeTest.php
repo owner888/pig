@@ -317,6 +317,29 @@ final class InteractiveModeTest extends TestCase
     }
 
     /**
+     * The screen as one run of words, for asserting on a sentence the renderer may have wrapped.
+     *
+     * **A line break inside the text is the renderer working, not a difference in the text.** The
+     * export test asserted `Exported to <path>` against `screen()` and passed only where the
+     * temporary directory was short: on macOS the path is
+     * `/var/folders/mk/6fds…/T/pig-interactive-…` and the sentence wraps across three rows, so the
+     * assertion failed on a machine where the feature was working perfectly. Reproduced in the
+     * container by pointing `TMPDIR` at a path of that shape. Use this whenever the thing being
+     * asserted is the *words*; use `screen()` when the layout is the point.
+     *
+     * **Rendered wide rather than de-wrapped**, because collapsing whitespace does not undo a wrap:
+     * 80 columns split the path at `out.` / `html`, and joining those with a space gives
+     * `out. html`, which is not the filename either. A width nothing wraps at is the only way to
+     * read the text back as it was written.
+     */
+    private function screenText(int $width = 400): string
+    {
+        $lines = array_map(Ansi::strip(...), $this->mode->screen()->render($width));
+
+        return trim((string) preg_replace('/ +/', ' ', implode(' ', $lines)));
+    }
+
+    /**
      * Turn the loop without waiting out whatever timer is pending.
      *
      * `settle()` polls with no timeout of its own, so with a retry's half-minute timer armed and
@@ -1391,7 +1414,7 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('hello', $html);
         $this->assertStringContainsString('the answer', $html);
         $this->assertStringNotContainsString('<script', $html);
-        $this->assertStringContainsString('Exported to ' . $path, $this->screen());
+        $this->assertStringContainsString('Exported to ' . $path, $this->screenText());
     }
 
     public function testASessionThatIsNotSavedHasNothingToExport(): void

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
-use Composer\InstalledVersions;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Http\HttpClient;
@@ -163,40 +162,39 @@ final class UpdateCheckTest extends TestCase
     }
 
     /**
-     * What Composer would answer for a tag cut with a `v` on it, which is most of them.
+     * A tag cut with a `v` on it is not the version it reports, on either side of the comparison.
      *
-     * `InstalledVersions::reload()` is Composer's own seam for this — it is what Composer uses in its
-     * own tests — and it is the only way to reach the case from a checkout, where the real answer is
-     * `1.0.0+no-version-set` and has no `v` to strip. The alternative was a hand probe that rewrote
-     * `vendor/composer/installed.php`, which verified it once and pinned nothing: mutating the
-     * `ltrim` away broke no test at all until this existed.
-     *
-     * The dataset is restored whatever happens, because this is global state and everything else in
-     * the suite that asks for a version would get this one instead.
+     * **This was an `InstalledVersions::reload()` and it could not work.** `getInstalled()` consults
+     * every registered ClassLoader's dataset *before* the one `reload()` sets, so a fabricated
+     * version is ignored wherever an autoloader is registered — which is every real run. It passed
+     * under the verification shim, which registers none, and failed under PHPUnit reporting the real
+     * `dev-main`. The rule is a pure string operation and existed in two places, so it is one now and
+     * tested as what it is.
      */
-    public function testATagCutWithAVeeIsNotTheVersionItReports(): void
+    #[DataProvider('versionsWithAndWithoutAVee')]
+    public function testATagCutWithAVeeIsNotTheVersionItReports(string $given, string $expected): void
     {
-        $real = InstalledVersions::getAllRawData()[0];
+        $this->assertSame($expected, Version::plain($given));
+    }
 
-        try {
-            InstalledVersions::reload([
-                'root' => [...$real['root'], 'pretty_version' => 'v0.9.0', 'version' => '0.9.0.0'],
-                'versions' => [
-                    ...$real['versions'],
-                    Version::PACKAGE => [
-                        ...($real['versions'][Version::PACKAGE] ?? []),
-                        'pretty_version' => 'v0.9.0',
-                        'version' => '0.9.0.0',
-                    ],
-                ],
-            ]);
+    /** @return array<string, array{0: string, 1: string}> */
+    public static function versionsWithAndWithoutAVee(): array
+    {
+        return [
+            'the common spelling of a tag' => ['v0.1.0', '0.1.0'],
+            'a capital, which git allows' => ['V0.1.0', '0.1.0'],
+            'already plain' => ['0.1.0', '0.1.0'],
+            'a pre-release keeps its suffix' => ['v0.2.0-beta.1', '0.2.0-beta.1'],
+            'a branch is left alone' => ['dev-main', 'dev-main'],
+            'and so is what Composer says with no tag' => ['1.0.0+no-version-set', '1.0.0+no-version-set'],
+        ];
+    }
 
-            $this->assertSame('0.9.0', Version::current(), 'the v belongs to the tag, not to the version');
-        } finally {
-            InstalledVersions::reload($real);
-        }
-
-        $this->assertNotSame('0.9.0', Version::current(), 'and the real answer is back');
+    public function testWhatCurrentReportsHasNoVeeOnIt(): void
+    {
+        // The other end: whatever Composer answers on this machine, the version pig reports and
+        // compares is the plain one. Both readers of the rule go through the one implementation.
+        $this->assertSame(Version::plain(Version::current()), Version::current());
     }
 
     public function testACheckoutIsNotOutOfDateAndIsNotAsked(): void

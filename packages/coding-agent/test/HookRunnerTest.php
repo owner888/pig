@@ -15,6 +15,7 @@ use Pig\Ai\UserMessage;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
+use Pig\Async\Loop;
 use Pig\CodingAgent\Hooks\Events\AgentStartEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
@@ -36,6 +37,21 @@ use RuntimeException;
 
 final class HookRunnerTest extends TestCase
 {
+    /**
+     * A loop of this test's own.
+     *
+     * **Every other class that turns the loop does this, and these two were the exceptions.** The
+     * loop is a singleton that outlives a test, so a class starting without this inherits whatever
+     * watchers the previous test left behind — and a watcher whose stream has since gone reports
+     * `Reader r1 watches a closed stream` from inside *this* test's `Async::run()`, naming a test
+     * that did nothing wrong. It showed up as two `OverflowTest` errors under real PHPUnit and not
+     * under the verification shim, which runs the same files in a different order.
+     */
+    #[\Override]
+    protected function setUp(): void
+    {
+        Loop::reset();
+    }
     /** @var list<HookError> what the runner reported while a test ran */
     private array $errors = [];
 

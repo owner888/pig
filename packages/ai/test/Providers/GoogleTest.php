@@ -576,8 +576,10 @@ final class GoogleTest extends TestCase
     {
         $this->assertNotNull($model);
 
+        // No `setAccessible(true)`: it has had no effect since PHP 8.1 — reflection reaches a private
+        // method by itself — and PHP 8.5 deprecates the call, which `phpunit.xml`'s
+        // `failOnDeprecation` turns into a failure. It was the one call of its kind in the tree.
         $method = new \ReflectionMethod(Stream::class, 'translate');
-        $method->setAccessible(true);
         $options = $method->invoke(null, $model, new SimpleStreamOptions(apiKey: 'k', reasoning: $effort));
 
         $this->assertInstanceOf(GoogleOptions::class, $options);
