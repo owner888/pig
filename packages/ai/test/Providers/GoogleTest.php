@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Test\Providers;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
@@ -172,6 +173,96 @@ final class GoogleTest extends TestCase
         // Eighteen of Gemini's twenty finish reasons mean the turn produced nothing
         // usable; only STOP and MAX_TOKENS do not.
         $this->assertSame(StopReason::Error, $message->stopReason);
+
+        // **And it says which one.** This assertion is the whole of the find below: the case
+        // passed for months on the line above alone, because `mapStopReason` answers `error`
+        // and leaves `errorMessage` null — which is an error with no text in it.
+        $this->assertSame('Gemini stopped with nothing usable: SAFETY', $message->errorMessage);
+    }
+
+    /**
+     * @param string $reason a finish reason that means the turn produced nothing usable
+     * @param string $expected what the turn should say it was
+     */
+    #[DataProvider('finishReasonsThatMeanNothingUsable')]
+    public function testAFinishReasonThatMeansNothingUsableSaysWhichOneItWas(
+        string $reason,
+        string $expected,
+    ): void {
+        $url = $this->serve([['candidates' => [['finishReason' => $reason]]]]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame($expected, $message->errorMessage);
+    }
+
+    /** @return iterable<string, array{0: string, 1: string}> */
+    public static function finishReasonsThatMeanNothingUsable(): iterable
+    {
+        // One per family, because the reasons are a flat enum and a `match` that got one of
+        // them would look like it had them all.
+        yield 'a safety block' => ['SAFETY', 'Gemini stopped with nothing usable: SAFETY'];
+        yield 'recitation' => ['RECITATION', 'Gemini stopped with nothing usable: RECITATION'];
+        yield 'a malformed call' => [
+            'MALFORMED_FUNCTION_CALL',
+            'Gemini stopped with nothing usable: MALFORMED_FUNCTION_CALL',
+        ];
+        yield 'a reason this pig has never heard of' => [
+            'SOMETHING_NEW',
+            'Gemini stopped with nothing usable: SOMETHING_NEW',
+        ];
+    }
+
+    public function testTheTwoReasonsThatAreNotFailuresStillSayNothing(): void
+    {
+        // The other half of the rule, so the fix cannot become "every finish reason throws":
+        // `MAX_TOKENS` is a turn that ran out of room and `STOP` is one that finished, and
+        // neither is an error to be explained.
+        foreach ([['MAX_TOKENS', StopReason::Length], ['STOP', StopReason::Stop]] as [$reason, $expected]) {
+            $this->server = new CannedServer();
+            $url = $this->serve([
+                ['candidates' => [['content' => ['parts' => [['text' => 'well']]], 'finishReason' => $reason]]],
+            ]);
+
+            [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+            $this->assertSame($expected, $message->stopReason);
+            $this->assertNull($message->errorMessage);
+        }
+    }
+
+    public function testARefusedTurnKeepsWhatItSaidAndWhatItCost(): void
+    {
+        // The reason the usage is read before the finish reason: they ride on the same chunk,
+        // and a turn Gemini refused was still billed for its input. Text in the first chunk and
+        // the refusal in the second, which is also the shape that leaves a block open.
+        $url = $this->serve([
+            ['candidates' => [['content' => ['parts' => [['text' => 'here is the start of an ans']]]]]],
+            [
+                'candidates' => [['finishReason' => 'SAFETY']],
+                'usageMetadata' => [
+                    'promptTokenCount' => 40,
+                    'candidatesTokenCount' => 7,
+                    'totalTokenCount' => 47,
+                ],
+            ],
+        ]);
+
+        [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(40, $message->usage->input);
+        $this->assertSame(7, $message->usage->output);
+
+        // Partial text survives, because `fail()` only sets the reason and keeps the blocks.
+        $this->assertSame('here is the start of an ans', self::textOf($message));
+
+        // And the open block is closed on the way out, so the stream is still well formed —
+        // a consumer that pairs start with end does not have to guess.
+        $this->assertSame(
+            ['StartEvent', 'TextStartEvent', 'TextDeltaEvent', 'TextEndEvent', 'ErrorEvent'],
+            $types,
+        );
     }
 
     public function testARefusedPromptIsAFailureAndNotAnEmptySuccess(): void
@@ -505,6 +596,19 @@ final class GoogleTest extends TestCase
             new Usage(),
             StopReason::Stop,
         );
+    }
+
+    private static function textOf(AssistantMessage $message): string
+    {
+        $text = '';
+
+        foreach ($message->content as $block) {
+            if ($block instanceof TextContent) {
+                $text .= $block->text;
+            }
+        }
+
+        return $text;
     }
 
     /** @return array{0: list<string>, 1: AssistantMessage} */

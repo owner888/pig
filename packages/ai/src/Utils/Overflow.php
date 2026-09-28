@@ -102,9 +102,14 @@ final class Overflow
         //
         // **And it is not one provider's quirk.** DeepSeek does the same, measured through
         // `test/live.php`: a prompt sized past a declared 65,536-token window came back answered
-        // and billed at **98,315** input tokens. Upstream carries this branch for z.ai alone; two
-        // examples is what makes it a shape rather than a special case, so a new endpoint is worth
-        // asking the question of rather than assuming it refuses.
+        // and billed at **98,315** input tokens. Two examples is what makes it a shape rather than
+        // a special case, so a new endpoint is worth asking the question of rather than assuming
+        // it refuses — and upstream's own comment, which names z.ai and nothing else, is worth
+        // reading as the list of what somebody had measured rather than as the list of what the
+        // branch covers. *Its code is provider-agnostic exactly as this is*; only its prose is
+        // narrow. This comment used to say upstream carried the branch for z.ai alone, which is
+        // the fourth shape from CLAUDE.md's index — a claim about a repository that a grep
+        // refutes — pointed at upstream for once.
         if ($contextWindow !== null && $contextWindow > 0 && $message->stopReason === StopReason::Stop) {
             return $message->usage->input + $message->usage->cacheRead > $contextWindow;
         }

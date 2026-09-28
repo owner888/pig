@@ -164,6 +164,20 @@ final class RetryTest extends TestCase
         $this->assertFalse(Retry::worthRetrying($overflow));
     }
 
+    public function testAGeminiRefusalIsExplainedAndStillNotRetried(): void
+    {
+        // `GoogleShared` gives a non-STOP finish reason a message of its own, so that a turn
+        // Gemini refused is legible rather than an error with no text in it. Giving it one puts
+        // it in front of these two for the first time, and neither should change its mind: a
+        // safety block is not a wait-and-try-again, and it is not a conversation to compact.
+        foreach (['SAFETY', 'RECITATION', 'MALFORMED_FUNCTION_CALL', 'OTHER', 'LANGUAGE'] as $reason) {
+            $refused = self::failed("Gemini stopped with nothing usable: {$reason}");
+
+            $this->assertFalse(Retry::worthRetrying($refused, 1_000_000), $reason);
+            $this->assertFalse(Overflow::happened($refused, 1_000_000), $reason);
+        }
+    }
+
     public function testTheSilentOverflowIsNotRetriedEither(): void
     {
         // z.ai answers successfully having been sent more than the window holds; nothing

@@ -2127,7 +2127,45 @@ credentials, so it must not be reachable by a runner at all, which is upstream's
 one step further. Keys come from `Auth::discover()` and the environment, never from an argument,
 because argv is in the process list. Twelve scenarios per provider, each capped at a few hundred
 tokens; the overflow case is refused before it is billed. `php test/live.php anthropic google` names
-which to run.
+which to run, and `php test/live.php google/<model-id>` names the **model** — added the first time a
+question was about one model rather than a provider, since the table's ids are a cheap default and
+editing it to ask one question is how a default stops being one. What was typed wins over the table
+and over `models.json`, and adds a provider neither offered. A provider name that is not one is now
+said so as well — before this, a typo in the one argument this script takes printed a summary of zero
+scenarios and no reason for it, and a model skipped for want of a key did not say which model it
+would have used, which is exactly what somebody checking whether their `provider/id` took effect
+needs to see.
+
+**And the first real use of it hit the anchor, which is the second time.** The id asked for was
+`gemini-3.8-flash` — a model that exists and that `Ai\Models`, pinned at 2026-01-02, has never heard
+of, so the answer was `no such model in the registry`. True, and it sends somebody looking for a typo
+in what they typed. So the message now names the cause and the route, and **the route was measured
+end to end rather than asserted** — a `models.json` declaring the model under the `google` provider:
+
+```
+$ PIG_HOME=… php test/live.php google/gemini-3.8-flash
+google / gemini-3.8-flash   (reasoning: yes, images: yes)
+  NO  text   google returned 403: Host not in allowlist: generativelanguage.googleapis.com
+$ PIG_HOME=… bin/pig --list-models gemini-3
+google  gemini-3-flash-preview  1.0M  65.5K  yes  yes
+google  gemini-3-pro-preview    1M    64K    yes  yes
+google  gemini-3.8-flash        1.0M  65.5K  yes  yes
+```
+
+The reasoning and image columns are read off the declaration, the built-in Google rows are untouched
+(`Models::register()` fills gaps rather than overwriting), and the 403 is this container's egress and
+not the wiring. So "a model pig has never heard of is reached through `models.json`" is now a
+verified sentence rather than a plausible one, and it holds for `bin/pig` at the same time — which is
+the answer to the staleness generally, and the reason the pin stays affordable.
+
+**The other half of that turn is a documentation rule.** The example in these three places was
+`google/gemini-3-pro-preview`, and it was pointed out as already dated. It is an id the pin
+*guarantees*, so the command works — but the sentence it sits in is the one telling somebody how to
+reach a model the registry is too old for, and naming a perishable model there is the worst place for
+one. The READMEs say `google/<model-id>`, and `live.php`'s own docblock names an id the pin carries
+and says why it is not the newest one. **An id written into documentation dates the documentation**,
+which is the same rule this file already applies to measured figures ("a number in this file is worth
+a re-run rather than a quotation").
 
 **Run against the real Anthropic API: twelve of twelve.** The four that only the far end can rule on
 are the reason it exists:
@@ -2136,7 +2174,7 @@ are the reason it exists:
 |---|---|
 | a replayed thinking signature | **accepted** — it is signed, and meaningless to anybody but the issuer, so nothing local could have told us |
 | `TransformMessages`' invented `No result provided` | **accepted** — the claim that every provider refuses a dangling call, tested on one |
-| the live wording of a too-long prompt | **matched** `Ai\Utils\Overflow`'s table |
+| the live wording of a too-long prompt | **matched** `Ai\Utils\Overflow`'s table — `prompt is too long: 300024 tokens > 200000 maximum`, caught by Anthropic's own row rather than by one of the three generic ones |
 | `cache_control: ephemeral` on the last block | **acted on** — wrote 5,611 tokens, read 5,611 back on the second call |
 
 And four that pin what earlier reads had only argued: an aborted turn keeps the usage that arrived, a
@@ -3309,6 +3347,7 @@ composer install        # path repositories + PHPUnit 12
 php test/lint.php       # php -l over every file (PHPUnit only parses what it loads)
 vendor/bin/phpunit      # filter: vendor/bin/phpunit --filter Loop
 php test/live.php       # the providers against the real endpoints — costs money, needs keys
+                        # `… google` for one provider, `… google/<model-id>` for one model
 ```
 
 PHPUnit 12 is the newest release that still runs on PHP 8.3, so it is what the floor allows.
@@ -5606,17 +5645,118 @@ is the only reason anybody looked.
 
 **And the same run found the silent overflow is not one provider's quirk.** `Overflow::happened()`
 carries a usage-based branch for z.ai, which takes an oversized request, answers, and bills past the
-window; upstream has it for that one endpoint. DeepSeek does it too — a prompt sized past a declared
-65,536-token window came back **answered and billed at 98,315 input tokens**, and the branch caught
-it. Two examples is what makes it a shape rather than a special case: a new endpoint is worth asking
-the question of rather than assuming it refuses. That branch is also the reason the scenario had to
-be rewritten before it could see any of this — it returned on "the provider answered" without ever
-consulting the usage, so a provider of that kind was reported as a failure with no numbers in it.
+window. DeepSeek does it too — a prompt sized past a declared 65,536-token window came back
+**answered and billed at 98,315 input tokens**, and the branch caught it. Two examples is what makes
+it a shape rather than a special case: a new endpoint is worth asking the question of rather than
+assuming it refuses. That branch is also the reason the scenario had to be rewritten before it could
+see any of this — it returned on "the provider answered" without ever consulting the usage, so a
+provider of that kind was reported as a failure with no numbers in it.
+
+**This entry used to say "upstream has it for that one endpoint", and that is false.** Checked
+because the claim was about to be repeated out loud: upstream's `isContextOverflow` guards the branch
+with `if (contextWindow && message.stopReason === "stop")` and its caller `_checkCompaction` passes
+`this.model?.contextWindow ?? 0` — **provider-agnostic, exactly as pig's is**. Only its *comment*
+names z.ai, as the one provider somebody had measured. So the two tools detect a silent overflow
+equally well, and what decides whether either of them does is something else entirely: **whether the
+declared `contextWindow` is right.** For a provider pig ships no entry for — DeepSeek is one — that
+number comes out of a hand-written `models.json`, where `CustomModels` checks it is a positive whole
+number and cannot check it is *true*. Declared larger than the real window, the comparison never
+fires in either tool; declared smaller, both compact early. That is the first thing to ask about when
+a silent-overflow provider misbehaves, and the fourth shape from the index is why this paragraph
+exists: a claim about a repository is worth a grep, upstream's included.
 
 Regression tests: `OpenAiCompletionsTest::testDeepSeekGetsItUnderTheOlderNameToo`, which also pins
 that nothing *else* about the endpoint is treated as strict — it takes `store`, the `developer` role
 and `reasoning_effort` without complaint, so the one row is the whole difference. Taking
 `deepseek.com` off the row turns it red.
+
+### Eighteen of Gemini's twenty finish reasons were an error with no words in it
+
+Reported from real use — *"新版 Gemini 和 DeepSeek 总是因为这个出错"* — and the half of it that could be
+settled without waiting for the message was settled by a probe rather than by reading. A Gemini
+candidate carries a `finishReason`, and `GoogleShared::stopReason()` answers `STOP => Stop`,
+`MAX_TOKENS => Length`, `default => Error`. The default is the whole enum's worth of ways a turn can
+produce nothing: `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII`, `LANGUAGE`,
+`MALFORMED_FUNCTION_CALL`, `UNEXPECTED_TOOL_CALL`, `OTHER` and the image ones. Measured, one chunk per
+row:
+
+```
+finishReason=SAFETY                   stopReason=error   errorMessage=NULL   overflow=no
+finishReason=RECITATION               stopReason=error   errorMessage=NULL   overflow=no
+finishReason=MALFORMED_FUNCTION_CALL  stopReason=error   errorMessage=NULL   overflow=no
+finishReason=OTHER                    stopReason=error   errorMessage=NULL   overflow=no
+finishReason=MAX_TOKENS               stopReason=length  errorMessage=NULL   overflow=no
+finishReason=STOP                     stopReason=stop    errorMessage=NULL   overflow=no
+```
+
+**`errorMessage` is null, and three things read it.** `Overflow::happened()` and
+`Retry::worthRetrying()` each test `stopReason === Error && errorMessage !== null` as their *first*
+condition, so such a turn is **neither compacted nor retried**; and what reaches the screen is an
+error with no text. A safety block, a recitation block and a malformed call are then the same event
+to look at — and the last of those is ordinary on Gemini 3 with tools. The nearest thing to a
+diagnosis anybody had was the absence of one.
+
+Upstream's `mapStopReason` does the same and sets no message either, so **this is a divergence rather
+than a port correction** — and it is the shape the blocked-prompt case twenty lines up had already
+answered: `promptFeedback.blockReason` *throws* `Gemini refused the prompt: SAFETY`, which
+`Google::run()`'s catch turns into a real `errorMessage`. One of two siblings had the rule, which is
+the first shape from the index.
+
+So the reason is thrown, in the sibling's words and its shape. Four things had to be got right and
+each has its own test, because each was a way to make the fix cost something:
+
+- **The usage is read before the finish reason now.** They ride on the same chunk, and throwing
+  jumped over `usageMetadata` — measured at `input=0 output=0` on a prompt of 40 tokens. A turn the
+  provider refused was still billed for its input, which is
+  `testAnAbortedTurnKeepsTheUsageThatHadAlreadyArrived`'s rule from the other end: *a turn that
+  produced nothing did not therefore cost nothing.*
+- **The open block is closed before the throw.** `fail()` keeps the content, so partial text survives
+  — but without `close()` the events run `TextStart → TextDelta → Error` with no `TextEnd`, and a
+  consumer that pairs them has to guess.
+- **Nothing became retryable by accident.** None of the reason names matches `Retry::WORDS`
+  (`overloaded|rate.?limit|…`), the sentence carries no `returned <status>` for `statusOf()` to read,
+  and none matches an `Overflow` pattern — so a safety block is explained and still not waited out,
+  which is right, because asking again gets the same answer.
+- **`MAX_TOKENS` and `STOP` still say nothing**, or the fix would be "every finish reason throws".
+
+Regression tests: `GoogleTest::testAFinishReasonThatMeansNothingUsableSaysWhichOneItWas` (four cases,
+including a reason this pig has never heard of), `testARefusedTurnKeepsWhatItSaidAndWhatItCost`,
+`testTheTwoReasonsThatAreNotFailuresStillSayNothing`, the strengthened
+`testASafetyBlockIsAnErrorHoweverPolitelyItIsPhrased`, and
+`RetryTest::testAGeminiRefusalIsExplainedAndStillNotRetried`. Each end fails on its own mutation:
+dropping the throw turns **six** red, reading the usage afterwards turns exactly the cost one red, and
+dropping `close()` turns exactly the event-order assertion red.
+
+**And the old test is why this lasted.** `testASafetyBlockIsAnErrorHoweverPolitelyItIsPhrased`
+asserted `StopReason::Error` and nothing else, so it passed identically with a message and without
+one — *an assertion that holds either way is not an assertion*, for the fourth time this file has
+said so.
+
+### Two overflow wordings nobody here has seen, and what a miss costs
+
+Left open on purpose, so that the next person does not mistake the table's silence for coverage.
+Reported from real use: the new Gemini and DeepSeek both fail often enough to be noticed, and the
+`Ai\Utils\Overflow` rows that are supposed to catch them have never been read back from those
+endpoints.
+
+| Row | Written for | Verified against the real API |
+|---|---|---|
+| `/input token count.*exceeds the maximum/i` | Google | **no** — the example is `gemini-2.5`-era, and the reporter is on a newer model |
+| the usage branch | DeepSeek | the branch fires, but only if `models.json`'s `contextWindow` is the true one |
+
+A miss here is not loud. `happened()` answers false, `worthRetrying()` then reads the same message,
+finds a status or a familiar word or neither, and the turn either dies with the provider's sentence on
+screen or is retried three times against a prompt that is exactly as long each time. Compaction — the
+one thing that would fix it — never runs. That is the failure the reporter describes, and it is
+indistinguishable from the entry above without the text.
+
+**What closes it is one line of provider prose, and nothing else.** The class's own rule is that a
+pattern with no example beside it is a guess and a guess here compacts a conversation that was fine,
+so no row is added until the sentence is in hand. `php test/live.php google/<model-id>` is how to get
+it without waiting for it to happen again — the `overflow is recognised` scenario prints the
+provider's own words when they are not recognised, and naming a model on the command line is what
+that argument was added for. For a model newer than the anchor, declare it in `models.json` first;
+the section above measures that route.
 
 ### The overflow pattern for Cerebras and Mistral could never match pig's own words
 
@@ -5667,6 +5807,88 @@ it is a separate entry point and a public one. The rule this is an instance of: 
 enough to turn any failure into a message has to be narrower than the argument checks**, or every
 programming error becomes conversation. Nothing in pig relied on the old behaviour; the suite was
 green before the tests for it were written, which is exactly why it had survived.
+
+### A truncated answer came back as a finished one, with no usage at all
+
+Two terminal events end a Responses API stream and `OpenAiResponses` listed one. `response.failed`
+and `response.completed` were there; **`response.incomplete` was not** — which is the one the API
+sends when the answer was cut off, `max_output_tokens` reached being the ordinary way. So the stream
+simply ended: `onCompleted()` never ran, the status was never read, and `stopReason()`'s own
+`'incomplete' => Length` arm was **unreachable code**. Measured against the real API with a
+sixteen-token budget:
+
+```
+NO  max_tokens stops it   it came back as stop after 0 output tokens against a budget of 16
+```
+
+Two symptoms, one missing arm, and the second is the worse one. **The usage rides on that event
+too**, so a truncated turn reported none: the half-sentence read as the finished answer, and the
+turn cost nothing in `/session` and the footer. Hitting the output cap is how a long answer
+ordinarily ends, so this under-reported the commonest expensive turn there is.
+
+*A `match` arm for a value that can never reach it is the same defect as a missing arm, and it reads
+as coverage.* `stopReason()` looked complete — it names `incomplete` — and nothing above it could
+deliver that word. The one place to check is the caller's event list, which is the third time this
+file has arrived at *read the other end*.
+
+**Upstream handles neither event**, so this is a divergence rather than a port correction. Its
+stream ends the same way and its `stopReason` has the same unreachable arm.
+
+The same run also produced a bare **`unknown error`** for an oversized prompt, which is
+`errorText()` reading `$data['message']` on an `error` event that did not carry it there. Both
+shapes are read now — flat and nested under `error` — and **the fallback is the payload itself**
+rather than a sentence that describes nothing: `Overflow`'s table matches against a provider's own
+words, so a message that goes missing there is a conversation that could have been compacted and
+instead died.
+
+**Both fixes were then run against the real API and both hold**, and the second answered a question
+this entry had left open. The overflow case came back
+`ok, refused: Error context_length_exceeded: Your input exceeds the context window of this model.` —
+a message *and* a code where there had been neither, so **the live event nests both under `error`**
+and the documented flat shape is not what arrives. Two things follow: reading only the documented
+path loses the whole message, and `/exceeds the context window/i` — OpenAI's own row in
+`Ai\Utils\Overflow`, inherited from upstream and never checked against the API — **matches.** The
+truncation case came back `ok` as well: `response.incomplete` now ends the turn as `Length` with its
+usage intact. *The fallback that prints the payload is what turned "which shape is it" from a guess
+into a line of output.*
+
+Regression tests: `OpenAiResponsesTest::testAnIncompleteResponseIsLengthAndKeepsItsUsage`,
+`testAnErrorWithNoMessageWhereItBelongsIsNotCalledUnknown`,
+`testAnErrorWithNoMessageAnywhereCarriesWhatArrived`. **The second one was silent on its own
+mutation until a line was added**: asserting the sentence is in the message passes either way,
+because the fallback prints the whole payload and the payload contains the sentence. It asserts the
+fallback's own words are *absent* now — the third time this session that an assertion which held
+either way was caught by mutating the thing it was written for.
+
+### A 404 for a model pig offers, and a cause that did not survive the second data point
+
+Groq answered every scenario with `404 The model 'llama-3.3-70b-versatile' does not exist or you do
+not have access to it` — and **that id is in pig's registry**. `Ai\Models` is 166 models as
+`models.generated.ts` had them at the anchor, 2026-01-02, so a provider that has retired one since
+answers 404 for a row pig still offers in `--list-models`, and `--model` still resolves.
+
+**That was the reading, and the next run refuted it.** Swapping in `llama-3.1-8b-instant` — also in
+the registry, and a current Groq model as far as anything here can tell — produced the same 404. Two
+independent live models failing the same way on one key points at **the key's access** rather than at
+the catalogue, and Groq's sentence says so in its second half: *"or you do not have access to it"*.
+So Groq is still untested, the cause is the credential, and the staleness above is a real hazard that
+this observation is not evidence for. *A cause that explains one data point is a hypothesis; the
+cheap way to find out is one more point, which cost a single run here.*
+
+The hazard is real anyway and is the price of pinning the registry, which is deliberate — a port
+should agree with the thing it was ported from, and the figures in this file are upstream's at the
+anchor rather than whatever models.dev says today. It is worth knowing rather than fixing: such a
+failure is legible, it costs one command to pick another id, and the alternative is a registry that
+drifts from the snapshot everything else here is checked against. If it ever becomes a nuisance the
+answer is `models.json`, which is exactly the file for "this endpoint has a model pig has never
+heard of".
+
+What it cost here was a whole provider's live run, and the harness made it worse before it made it
+better: nine scenarios answered the same 404, and **two of them printed `ok`** — the empty-message
+and budget cases accept a refusal as their answer and could not tell one refusal from another. Both
+ask `isAboutTheRequest()` now (a 400 is the provider judging what was sent; a 401, 403 or 404 is it
+saying something else entirely), and `text` is the pre-flight: if the plainest scenario cannot say
+hello, the rest are skipped with one line instead of nine identical ones.
 
 ### A JavaScript index past the end is a field that disappears, and PHP has no such thing
 

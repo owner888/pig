@@ -146,7 +146,16 @@ final class OpenAiResponses
             'response.reasoning_summary_part.done' => $this->onBreak($builder, $stream, $open),
             'response.output_text.delta', 'response.refusal.delta' => $this->onDelta($data, $builder, $stream, $open, 'text'),
             'response.function_call_arguments.delta' => $this->onArguments($data, $builder, $stream, $open),
-            'response.completed' => $this->onCompleted($data, $builder, $open),
+            // **Both terminal events, and `response.incomplete` is the one that was missing.** It
+            // is what the Responses API sends when the answer was cut off — `max_output_tokens`
+            // reached, most often — and without it here the stream simply ended: `onCompleted()`
+            // never ran, so the status was never read, `stopReason()`'s own `'incomplete' =>
+            // Length` arm was unreachable, and **the usage on that event was never taken**. A turn
+            // truncated by the output cap therefore came back as a clean `stop` carrying **no
+            // usage at all** — the half-sentence read as the finished answer, and the turn cost
+            // nothing in `/session` and the footer. Measured against the real API with a 16-token
+            // budget: `stop` after 0 output tokens. Upstream handles neither event.
+            'response.completed', 'response.incomplete' => $this->onCompleted($data, $builder, $open),
             'error' => throw new ProviderError($this->errorText($data)),
             'response.failed' => throw new ProviderError($this->failureText($data)),
             default => $open,
@@ -387,13 +396,38 @@ final class OpenAiResponses
         };
     }
 
-    /** @param array<string, mixed> $data */
+    /**
+     * What an `error` event says, whichever shape it says it in.
+     *
+     * The documented shape is flat — `{type, code, message, param}` — and **the live one is
+     * nested**, which is what a run against the real API settled: an oversized prompt used to come
+     * back as a bare `unknown error`, with no `Error <code>:` in front of it either, so neither
+     * field was at the documented path; with both paths read it is
+     * `Error context_length_exceeded: Your input exceeds the context window of this model.` So
+     * `{type: "error", error: {message, code}}` is what arrives, and reading only the documented
+     * shape loses the whole message.
+     *
+     * The fallback is **the payload itself** rather than a sentence that describes nothing: an
+     * error nobody can act on is worse than an ugly one, and the raw JSON is what says which shape
+     * to read next time — which is how the nesting above was established rather than guessed.
+     * `Overflow`'s table needs the provider's own words to match against, so a message that goes
+     * missing here is a conversation that could have been compacted and instead died: with the
+     * message back, `/exceeds the context window/i` matches, which is OpenAI's own row in that
+     * table and had never been verified against the API before.
+     *
+     * @param array<string, mixed> $data
+     */
     private function errorText(array $data): string
     {
-        $code = $data['code'] ?? null;
-        $message = $data['message'] ?? 'unknown error';
+        $nested = is_array($data['error'] ?? null) ? $data['error'] : [];
+        $code = $data['code'] ?? $nested['code'] ?? null;
+        $message = $data['message'] ?? $nested['message'] ?? null;
 
-        return is_string($code) ? "Error {$code}: {$message}" : (string) $message;
+        if (!is_string($message) || $message === '') {
+            return 'an error with no message in it: ' . (json_encode($data) ?: 'unreadable');
+        }
+
+        return is_string($code) ? "Error {$code}: {$message}" : $message;
     }
 
     /** @param array<string, mixed> $data */

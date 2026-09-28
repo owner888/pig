@@ -5,9 +5,15 @@ declare(strict_types=1);
 /**
  * The providers, against the real endpoints.
  *
- * `php test/live.php [provider …]` — every provider a key can be found for, or only the ones
- * named. Each scenario prints one line: `ok`, `no` with what went wrong, or `--` when the model
- * cannot do that thing.
+ * `php test/live.php [provider|provider/model-id …]` — every provider a key can be found for, or
+ * only the ones named, and `google/gemini-2.5-pro` to try a model the table below does not name.
+ * Each scenario prints one line: `ok`, `no` with what went wrong, or `--` when the model cannot do
+ * that thing.
+ *
+ * **The example is deliberately an id the pin guarantees** rather than the newest model anybody
+ * would actually want to test: an id written into documentation dates the documentation, and the
+ * one place it must not be stale is the line telling somebody how to reach a model the registry is
+ * too old for.
  *
  * **Not a PHPUnit test, on purpose.** It costs money and needs credentials, so it must never run
  * in the ordinary suite — which is upstream's arrangement too (`describe.skipIf(!API_KEY)`), one
@@ -55,17 +61,28 @@ use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CustomModels;
 
 /**
- * One cheap model per provider, and the smallest reasoning-capable one where there is a choice.
+ * One cheap model per provider.
  *
  * Cheap on purpose: this asks whether the protocol works, and the protocol does not get better on
- * a larger model. Each row is `[model id, does it reason, does it take images]` — read off
- * `Ai\Models` rather than assumed, so a wrong guess here shows up as `--` rather than as a failure.
+ * a larger model. What each model can do is read off `Ai\Models` rather than assumed, so a
+ * scenario a model cannot reach comes back `--` rather than as a failure.
+ *
+ * **A `404 The model … does not exist` here is the registry being older than the provider**, not a
+ * wrong id in this table: `Ai\Models` is 166 models pinned at the anchor commit, 2026-01-02, and
+ * a provider that has retired one since answers 404 for a row pig still offers in `--list-models`.
+ * Groq did exactly that to `llama-3.3-70b-versatile`. So the fix for such a line is another id —
+ * on the command line rather than in this table, since the table is the cheap default and the
+ * question is usually about one model. The thing worth knowing is that `--list-models` has the same
+ * staleness — see the note in CLAUDE.md, because pinning the registry is deliberate and this is its
+ * price. A model named on the command line still has to be *in* the registry: this harness reads
+ * the window, the output cap and whether it can think off `Ai\Models`, and a model it has never
+ * heard of is reached the way a session reaches one, through `models.json`.
  */
 const MODELS = [
     'anthropic' => 'claude-sonnet-4-5',
     'openai' => 'gpt-5-mini',
     'google' => 'gemini-2.5-flash',
-    'groq' => 'llama-3.3-70b-versatile',
+    'groq' => 'llama-3.1-8b-instant',
     'xai' => 'grok-3-fast',
     'cerebras' => 'gpt-oss-120b',
     'zai' => 'glm-4.5-flash',
@@ -104,13 +121,23 @@ final class Live
         $model = Models::find($provider, $id);
 
         if ($model === null) {
+            // **Naming what to do, because the commonest way to get here is not a typo.**
+            // `Ai\Models` is pinned at the anchor commit, so every model released since is
+            // missing from it and this line is what a current model id gets. The message used
+            // to stop at "no such model", which is true and leaves somebody looking for the
+            // mistake in what they typed.
             printf("\n%s — no such model in the registry: %s\n", $provider, $id);
+            printf("      the registry is pinned at the anchor commit (2026-01-02), so a model\n");
+            printf("      released since is not in it. Declare it in ~/.pig/models.json under\n");
+            printf("      this provider and it is reachable here and from bin/pig.\n");
 
             return;
         }
 
         if (!$this->auth->hasKeyFor($provider)) {
-            printf("\n%s — no key, skipped\n", $provider);
+            // The id as well, because a model named on the command line is otherwise skipped
+            // without ever saying whether the name was the one that took effect.
+            printf("\n%s / %s — no key, skipped\n", $provider, $id);
 
             return;
         }
@@ -118,7 +145,17 @@ final class Live
         printf("\n%s / %s   (reasoning: %s, images: %s)\n", $provider, $id,
             $model->reasoning ? 'yes' : 'no', $model->acceptsImages() ? 'yes' : 'no');
 
-        $this->run('text', fn (): string => $this->text($model));
+        // **`text` is the pre-flight.** Groq answered nine scenarios with the same
+        // `404 The model … does not exist`, and two of them called it `ok` — the empty-message and
+        // budget cases accept a refusal as their answer and cannot tell one refusal from another.
+        // So the simplest thing the plainest scenario already does is made to count: if the model
+        // cannot answer "say hello", nothing after it means anything.
+        if (!$this->run('text', fn (): string => $this->text($model))) {
+            printf("      the rest is skipped — nothing below this can mean anything\n");
+
+            return;
+        }
+
         $this->run('stream order', fn (): string => $this->events($model));
         $this->run('tool call and result', fn (): string => $this->tools($model));
         $this->run('thinking, then replayed', fn (): string => $this->thinking($model));
@@ -388,6 +425,13 @@ final class Live
             return 'an empty conversation was read as an overflow: ' . self::oneLine((string) $message->errorMessage);
         }
 
+        // A refusal is this scenario's answer only if it is *about* the message. A 404 for the
+        // model or a 401 for the key is the provider saying something else entirely, and counting
+        // it here is how Groq's missing model came back as `ok` twice.
+        if (!self::isAboutTheRequest($message)) {
+            return 'refused for an unrelated reason: ' . self::oneLine((string) $message->errorMessage);
+        }
+
         return 'ok, refused: ' . self::oneLine((string) $message->errorMessage);
     }
 
@@ -441,8 +485,11 @@ final class Live
         });
 
         if ($message->stopReason === StopReason::Error) {
-            // A provider that refuses the budget itself is an answer too.
-            return 'ok, refused a sixteen-token budget: ' . self::oneLine((string) $message->errorMessage);
+            // A provider that refuses the budget itself is an answer too — but only if that is
+            // what it refused. See `isAboutTheRequest()`.
+            return self::isAboutTheRequest($message)
+                ? 'ok, refused a sixteen-token budget: ' . self::oneLine((string) $message->errorMessage)
+                : 'refused for an unrelated reason: ' . self::oneLine((string) $message->errorMessage);
         }
 
         if ($message->stopReason === StopReason::Length) {
@@ -560,8 +607,14 @@ final class Live
         // window argument for exactly that, and the first version of this scenario returned before
         // ever reaching it, so a provider of that kind was reported as a failure with no numbers.
         if (Overflow::happened($message, $model->contextWindow)) {
+            // The wording is printed on the way past, because `Overflow`'s table is a row per
+            // provider *with the sentence it was written for beside it* — and a row can match for
+            // the wrong reason. Three of the twelve patterns are generic (`context length
+            // exceeded`, `too many tokens`, `token limit exceeded`), so a provider whose own
+            // phrasing has drifted still comes back `ok` while its specific row has quietly
+            // stopped matching. Reading the sentence is what tells the two apart.
             return $message->stopReason === StopReason::Error
-                ? 'ok'
+                ? 'ok, refused: ' . self::oneLine((string) $message->errorMessage)
                 : sprintf('ok, the silent kind (answered, billed %d against a %d window)',
                     $message->usage->input + $message->usage->cacheRead, $model->contextWindow);
         }
@@ -606,7 +659,8 @@ final class Live
         return Async::run(fn (): ?string => $this->auth->apiKey($model->provider));
     }
 
-    private function run(string $label, callable $scenario): void
+    /** Whether it passed, so a caller can stop when the ground has gone. */
+    private function run(string $label, callable $scenario): bool
     {
         Loop::reset();
         $started = microtime(true);
@@ -622,19 +676,35 @@ final class Live
         if ($answer === '--') {
             printf("  --  %-26s (this model cannot)\n", $label);
 
-            return;
+            return true;
         }
 
         if (str_starts_with($answer, 'ok')) {
             $this->ok++;
             printf("  ok  %-26s %4.1fs  %s\n", $label, $seconds, $answer === 'ok' ? '' : $answer);
 
-            return;
+            return true;
         }
 
         $this->no++;
         $this->failures[] = "{$label}: {$answer}";
         printf("  NO  %-26s %4.1fs  %s\n", $label, $seconds, $answer);
+
+        return false;
+    }
+
+    /**
+     * Whether a refusal is about what was sent rather than about the account or the model.
+     *
+     * Two scenarios treat a refusal as their answer — an empty message and a one-line budget — so
+     * both need to know the difference. A 400 is the provider judging the request; a 401, 403 or
+     * 404 is it saying the key is wrong or the model is not there, which is not an answer to
+     * anything either scenario asked. Groq answered nine scenarios with the same
+     * `404 The model … does not exist` and two of them printed `ok`.
+     */
+    private static function isAboutTheRequest(AssistantMessage $message): bool
+    {
+        return preg_match('/ returned (401|403|404):/', (string) $message->errorMessage) !== 1;
     }
 
     private static function textOf(AssistantMessage $message): string
@@ -658,7 +728,25 @@ final class Live
     }
 }
 
-$wanted = array_slice($argv, 1);
+// An argument is a provider, or `provider/model-id` to try a model `MODELS` does not name. Split
+// on the **first** slash: a provider name never contains one and a model id can (OpenRouter's are
+// `vendor/name`).
+$wanted = [];
+
+/** @var array<string, string> $named provider => the id that was typed for it */
+$named = [];
+
+foreach (array_slice($argv, 1) as $argument) {
+    $at = strpos($argument, '/');
+    $provider = $at === false ? $argument : substr($argument, 0, $at);
+
+    $wanted[] = $provider;
+
+    if ($at !== false) {
+        $named[$provider] = substr($argument, $at + 1);
+    }
+}
+
 $auth = Auth::discover();
 
 // `models.json` too, the way `bin/pig` does it — an endpoint somebody declared themselves is the
@@ -683,7 +771,21 @@ foreach ($custom->models as $model) {
     $offered[$model->provider] ??= $model->id;
 }
 
+// What was typed wins, and adds a provider neither source offered — the same order every other
+// choice in pig follows. `=` rather than `??=` for exactly that reason.
+foreach ($named as $provider => $id) {
+    $offered[$provider] = $id;
+}
+
 $live = new Live($auth, $offered);
+
+// A provider nobody has heard of is said so rather than matching nothing: before this, a typo in
+// the one argument this script takes printed a summary of zero scenarios and no reason for it.
+foreach ($wanted as $provider) {
+    if (!array_key_exists($provider, $offered)) {
+        printf("\n%s — no such provider. There is %s.\n", $provider, implode(', ', array_keys($offered)));
+    }
+}
 
 foreach ($offered as $provider => $id) {
     if ($wanted !== [] && !in_array($provider, $wanted, true)) {

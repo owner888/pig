@@ -149,16 +149,46 @@ final class GoogleShared
             }
         }
 
-        if (is_string($candidate['finishReason'] ?? null)) {
-            $reason = self::stopReason($candidate['finishReason']);
-
-            // A turn that called a tool is finished with the turn, not the task, and
-            // Gemini says STOP for both.
-            $builder->setStopReason(self::hasToolCall($builder->snapshot()) ? StopReason::ToolUse : $reason);
-        }
-
+        // **Before the finish reason, because that one can throw.** The usage rides on the same
+        // chunk as the reason, so reading it afterwards loses it for exactly the turns that failed
+        // — and a turn Gemini refused was still billed for its input. Measured: with these two the
+        // other way round, a safety block came back `input=0 output=0` on a prompt of 40 tokens.
+        // The same fact `AnthropicTest::testAnAbortedTurnKeepsTheUsageThatHadAlreadyArrived` pins
+        // from the other end: a turn that produced nothing did not therefore cost nothing.
         if (is_array($data['usageMetadata'] ?? null)) {
             $builder->setUsage(self::usage($data['usageMetadata']));
+        }
+
+        if (is_string($candidate['finishReason'] ?? null)) {
+            // A turn that called a tool is finished with the turn, not the task, and
+            // Gemini says STOP for both.
+            $reason = self::hasToolCall($builder->snapshot())
+                ? StopReason::ToolUse
+                : self::stopReason($candidate['finishReason']);
+
+            if ($reason === StopReason::Error) {
+                // **The reason is the only thing there is to say, so it has to be said.** Eighteen
+                // of Gemini's twenty finish reasons mean the turn produced nothing usable, and the
+                // chunk that carries one carries no message anywhere — so upstream's
+                // `mapStopReason`, which answers `error` and stops there, leaves an
+                // `AssistantMessage` whose `errorMessage` is null. Measured consequence, on both
+                // sides: `Overflow::happened()` and `Retry::worthRetrying()` each test
+                // `errorMessage !== null` as their first condition, so such a turn is **neither
+                // compacted nor retried**, and what reaches the screen is an error with no text in
+                // it. A safety block and a malformed call then read alike, and the second is
+                // ordinary on Gemini 3 with tools.
+                //
+                // Thrown rather than assigned, which is what the blocked-prompt sibling twenty
+                // lines up already does for the same category of answer — and `fail()` keeps the
+                // content, so partial text survives the failure. Nothing here becomes retryable by
+                // accident: none of the reasons matches `Retry`'s word list, and the sentence
+                // carries no `returned <status>` for it to read.
+                self::close($builder, $stream, $open);
+
+                throw new ProviderError("Gemini stopped with nothing usable: {$candidate['finishReason']}");
+            }
+
+            $builder->setStopReason($reason);
         }
 
         return $open;

@@ -393,8 +393,11 @@ php test/live.php      # the providers against the real endpoints — costs mone
 against the real API, which is the only way to answer whether a provider *accepts* what pig sends —
 a replayed thinking signature, a tool result invented for an interrupted call, a conversation carried
 over from another provider, a prompt past the window. It takes its keys where pig takes its own, so a
-machine that has signed in needs nothing, and `php test/live.php anthropic google` names which to run.
-Each call is capped at a few hundred tokens.
+machine that has signed in needs nothing, and `php test/live.php anthropic google` names which to run
+— or `php test/live.php google/<model-id>` to try one particular model. The id has to be one the
+registry carries, which is pinned at the upstream anchor commit; a model released since then is
+declared in `~/.pig/models.json` and is then reachable both here and from `bin/pig`. Each call is
+capped at a few hundred tokens.
 
 Verify against the floor, not just your PHP: 8.3 rejects 8.4-only syntax at parse time, and it is
 easy to reach for a feature the declared floor does not have.

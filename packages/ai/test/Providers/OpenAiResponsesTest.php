@@ -525,6 +525,73 @@ final class OpenAiResponsesTest extends TestCase
         });
     }
 
+    /**
+     * A truncated answer is a truncated answer, and it still reports what it cost.
+     *
+     * `response.incomplete` is the other terminal event and was not in the list, so the stream
+     * just ended: the status was never read, `stopReason()`'s `'incomplete' => Length` arm was
+     * unreachable, and the usage riding on that event was dropped. What came back was a clean
+     * `stop` with **no usage at all** — the half-sentence read as the finished answer, and the
+     * turn cost nothing in `/session` or the footer.
+     *
+     * Found against the real API with a 16-token budget: `stop` after 0 output tokens. Two
+     * symptoms, one missing arm. Upstream handles neither terminal event.
+     */
+    public function testAnIncompleteResponseIsLengthAndKeepsItsUsage(): void
+    {
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'output_index' => 0, 'item' => ['type' => 'message']],
+            ['type' => 'response.output_text.delta', 'output_index' => 0, 'delta' => 'The sea is'],
+            ['type' => 'response.incomplete', 'response' => [
+                'status' => 'incomplete',
+                'incomplete_details' => ['reason' => 'max_output_tokens'],
+                'usage' => ['input_tokens' => 14, 'output_tokens' => 16, 'total_tokens' => 30],
+            ]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('write a paragraph')]));
+
+        $this->assertSame(StopReason::Length, $message->stopReason);
+        $this->assertSame(14, $message->usage->input);
+        $this->assertSame(16, $message->usage->output);
+    }
+
+    /** An error event with nothing at the documented path still says what arrived. */
+    public function testAnErrorWithNoMessageWhereItBelongsIsNotCalledUnknown(): void
+    {
+        // A live run produced a bare `unknown error` for an oversized prompt, which means the
+        // message was somewhere else. Both shapes are read now, and the payload is the fallback:
+        // `Overflow`'s table matches against the provider's own words, so a message that goes
+        // missing here is a conversation that could have been compacted and instead died.
+        $url = $this->serve([['type' => 'error', 'error' => [
+            'message' => 'Requested 300000 tokens, exceeds the context window',
+            'code' => 'context_length_exceeded',
+        ]]]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertStringContainsString('exceeds the context window', (string) $message->errorMessage);
+        $this->assertStringContainsString('context_length_exceeded', (string) $message->errorMessage);
+
+        // **And it is the message rather than the payload printed around it.** Asserting only that
+        // the sentence is in there passes either way, because the fallback prints the whole JSON —
+        // which contains it. The mutation that reads the flat path alone was silent until this
+        // line, in a test written to catch exactly that mutation.
+        $this->assertStringNotContainsString('an error with no message in it', (string) $message->errorMessage);
+    }
+
+    /** And with the message nowhere at all, the payload itself is the message. */
+    public function testAnErrorWithNoMessageAnywhereCarriesWhatArrived(): void
+    {
+        $url = $this->serve([['type' => 'error', 'detail' => 'a shape nobody documented']]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertStringContainsString('an error with no message in it', (string) $message->errorMessage);
+        $this->assertStringContainsString('a shape nobody documented', (string) $message->errorMessage);
+    }
+
     // ---- what Copilot needs on top -----------------------------------------------------------
 
     public function testCopilotIsToldWhoAskedAndThatAnImageIsComing(): void
