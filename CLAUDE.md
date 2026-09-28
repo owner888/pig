@@ -6216,12 +6216,24 @@ broke is also what the error handling depends on, so the failure path failed too
 47 is that shape. Worth knowing before reading a timeout as either a detection or a defect — it is
 a detection, and what it is detecting may be unreachable.
 
-What would make it structural rather than dependent on that audit is one `finally` per provider,
-which **removes** a line rather than adding a branch: the two `$stream->end()` calls become one below
-the `catch`. That is five files and a change to code that works, so it is the developer's call rather
-than the audit's, and it is written here rather than done. The argument for it is that the audit above
-has to be re-run every time anything in `snapshot()` gains a field; the argument against is that
-nothing in this codebase adds structure for a state that cannot arise.
+**A `finally` was the obvious answer and it was tried and reverted, which is the more useful half.**
+The change looked free — the two `$stream->end()` calls become one below the `catch`, six files
+(the five providers and `StreamProxy`, whose tail is byte-identical), a line removed rather than a
+branch added. With `fail()` throwing it **still hangs**, and the reason is a fact about `EventStream`
+worth knowing on its own: `end()` takes an optional result, and a bare `end()` **does not complete
+`finalResult`** — that only happens when a terminal event is *pushed* and `isComplete()` recognises
+it. So the `finally` closes the iteration and leaves `result()` unresolved, and a consumer awaiting
+the turn's outcome waits exactly as long as before. The construction that does both is the one
+`AgentLoop` already uses for this shape, `EventStream::fail($error)` — which would mean a nested
+`try` inside the `catch`, for a state nothing can reach.
+
+And the decisive fact is one that should have been checked before the option was offered at all:
+**upstream has the same two branches and no `finally`.** `anthropic.ts` ends `push({type:"done"})`,
+`stream.end()`, `catch`, `push({type:"error"})`, `stream.end()` — the shape pig ports. So the port is
+faithful, the hazard is upstream's too, and the answer to "should this be structural" is that it is
+not structural there either. Six files reverted, and what is left is this paragraph: *the option I
+put to the developer was worse than it looked in two independent ways, and one `grep` of upstream
+would have said so first.*
 
 **One more harness note, and it is the cheapest of the four.** This sweep appeared to hang at
 `77 mutations` with a single worker. It was not hung and it was not contaminated: the jobs were
@@ -6231,6 +6243,66 @@ minutes into forty. The list has to be built before any result is read, which ev
 of the script did. *Three of this instrument's four bugs have looked like something other than what
 they were, and the tell each time was a number that did not match the machine: thirteen processes for
 eight workers, one process for eight workers.*
+
+### `parse_url()` is not `new URL()`, and a typed domain went through with a space in it
+
+The divergence the Oauth sweep turned up, now closed. Upstream's `normalizeDomain` is
+`new URL(trimmed.includes("://") ? trimmed : "https://" + trimmed).hostname` inside a `try`; pig's
+was `parse_url('//' . $trimmed, PHP_URL_HOST)`. Run against each other over 34 inputs, they
+**disagreed on thirteen**, and the answer was three separate things rather than one:
+
+| | upstream | pig had |
+|---|---|---|
+| `COMPANY.GHE.COM` | `company.ghe.com` | `COMPANY.GHE.COM` |
+| `a b`, `not a host!!` | null | accepted as a host |
+| `a<b.com`, `a>b.com`, `a^b.com`, `a\|b.com` | null | accepted |
+| `a%b.com`, `a%20b.com` | null | accepted |
+| `a<TAB>b.com` | `ab.com` | `a_b.com` |
+| `a\x01b.com`, `a\x7fb.com` | null | accepted |
+| `münchen.de` | `xn--mnchen-3ya.de` | `münchen.de` |
+
+WHATWG's host parser **lowercases**, **refuses the forbidden host code points**, and **punycodes a
+non-ASCII domain**; `parse_url()` does none of the three. The first two are done now and the two
+agree on 33 of the 34.
+
+- **The space is the one anybody reaches.** A domain pasted with a word after it came back as a
+  host, so the flow built `https://a b/login/device/code` and failed with pig's own
+  `Cannot parse URL` — instead of `'…' is not a GitHub Enterprise domain.`, which is the sentence
+  written for exactly this and the only one that tells somebody what to fix.
+- **Lowercasing is not cosmetic here**: the typed spelling reaches `Credentials::enterpriseUrl` and
+  `baseUrl()`, so the same domain typed two ways was stored and sent as two different strings.
+- **Two removal steps have to happen before `parse_url()`, not after.** `parse_url()` hands a tab or
+  a control character inside a host back as an **underscore**, so a check on the parsed host would
+  be looking at `a_b.com` and find nothing wrong with it. WHATWG strips C0 controls and spaces off
+  each end and removes every tab, newline and carriage return, and both run first.
+- **The order is upstream's, and it is what makes two answers look arbitrary.** The scheme is
+  prepended *first*: `ghe.com\x01` has its control stripped because it is still at the end of the
+  string, and `\x01ghe.com` does not, because `https://` is now in front of it and the control is
+  inside the host. Both answers are upstream's and both have a test.
+- **`[` and `]` are forbidden host code points and are deliberately not refused**, because an IPv6
+  literal comes back wrapped in them — `[::1]`, which is what upstream answers too.
+- **`%` is refused outright.** WHATWG percent-decodes a domain before checking it, so `a%20b.com` is
+  the space again and `a%b.com` is an invalid escape; both throw there. Refusing it without decoding
+  matches both measured cases, which is the standard this file holds a pattern to.
+
+**The one that remains is the IDN, and it cannot be closed here.** `idn_to_ascii()` is ext-intl,
+which this project deliberately does not require — the whole of `Graphemes` and `Width` exists to
+avoid it. So `münchen.de` is `xn--mnchen-3ya.de` upstream and passes through as typed here. Passing
+through rather than refusing is the smaller divergence: it accepts everything upstream accepts, the
+punycode spelling is what the DNS holds anyway and is taken as it is, and an IDN Enterprise host is
+the one shape in that method nobody has ever reported. If it ever matters, the price is a required
+extension and this paragraph is where to argue it.
+
+Found in the same batch and worth its own line: **`OauthTest` had no `use PHPUnit\Framework\Attributes\DataProvider`**,
+so the first data-provided case in it failed with `ArgumentCountError: Too few arguments`. The
+missing-`use` trap's fourth guise, and the first in a test file — where it reads as a broken test
+rather than as a missing import, because the attribute silently resolves to a class in the test's own
+namespace and no provider is ever found.
+
+Regression tests: `OauthTest::testAHostWithSomethingForbiddenInItIsNotOne` (ten rows, every one of
+them null under `new URL` as well), `testATabInsideAHostIsRemovedRatherThanRenamingTheHost`,
+`testAControlAtTheEndIsStrippedAndOneAtTheFrontIsNot`,
+`testATypedDomainIsLowercasedTheWayTheUrlParserDoesIt`, `testAnIpv6LiteralKeepsItsBrackets`.
 
 ### A space that is not U+0020 emptied the search box
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Test\Utils;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Utils\Oauth\Anthropic;
@@ -325,6 +326,74 @@ final class OauthTest extends TestCase
         $this->assertNull(GithubCopilot::normalizeDomain(''));
         $this->assertNull(GithubCopilot::normalizeDomain('   '));
         $this->assertNull(GithubCopilot::normalizeDomain('???'));
+    }
+
+    /**
+     * What WHATWG forbids in a host, which `parse_url()` does not.
+     *
+     * Every row was run against `new URL("https://" + input).hostname` and is null there too.
+     * The space is the one anybody reaches: a domain pasted with a word after it used to come
+     * back as a host, so the flow went on to build `https://a b/login/device/code` and failed
+     * with `Cannot parse URL` rather than with the sentence written for this.
+     */
+    #[DataProvider('typedThingsThatAreNotHosts')]
+    public function testAHostWithSomethingForbiddenInItIsNotOne(string $typed): void
+    {
+        $this->assertNull(GithubCopilot::normalizeDomain($typed));
+    }
+
+    /** @return array<string, array{0: string}> */
+    public static function typedThingsThatAreNotHosts(): array
+    {
+        return [
+            'a space' => ['a b'],
+            'a word after the domain' => ['not a host!!'],
+            'a less-than' => ['a<b.com'],
+            'a greater-than' => ['a>b.com'],
+            'a caret' => ['a^b.com'],
+            'a bar' => ['a|b.com'],
+            'a stray percent' => ['a%b.com'],
+            // Percent-decoded by WHATWG before the check, so this is the space again.
+            'a percent-encoded space' => ['a%20b.com'],
+            'a control character' => ["a\x01b.com"],
+            'a delete' => ["a\x7fb.com"],
+        ];
+    }
+
+    public function testATabInsideAHostIsRemovedRatherThanRenamingTheHost(): void
+    {
+        // WHATWG strips tab, LF and CR from the string before parsing anything, so this is
+        // `ab.com` on both sides. It has to happen first: `parse_url()` hands an interior tab
+        // back as an **underscore**, and `a_b.com` is a perfectly good host that nobody typed.
+        $this->assertSame('ab.com', GithubCopilot::normalizeDomain("a\tb.com"));
+        $this->assertSame('ab.com', GithubCopilot::normalizeDomain("a\nb.com"));
+        $this->assertSame('ab.com', GithubCopilot::normalizeDomain("a\rb.com"));
+    }
+
+    public function testAControlAtTheEndIsStrippedAndOneAtTheFrontIsNot(): void
+    {
+        // Both answers are upstream's, and the asymmetry is the order rather than a rule: the
+        // scheme goes on first, so a control at the end is still at the end of the string the
+        // parser strips — and one at the front now has `https://` before it, which puts it
+        // inside the host, where a control is refused.
+        $this->assertSame('ghe.com', GithubCopilot::normalizeDomain("ghe.com\x01"));
+        $this->assertNull(GithubCopilot::normalizeDomain("\x01ghe.com"));
+    }
+
+    public function testATypedDomainIsLowercasedTheWayTheUrlParserDoesIt(): void
+    {
+        // The typed spelling reaches `Credentials::enterpriseUrl` and `baseUrl()`, so without
+        // this the same domain typed two ways is stored and sent as two different strings.
+        $this->assertSame('company.ghe.com', GithubCopilot::normalizeDomain('COMPANY.GHE.COM'));
+        $this->assertSame('company.ghe.com', GithubCopilot::normalizeDomain('HTTPS://Company.GHE.com/x'));
+    }
+
+    public function testAnIpv6LiteralKeepsItsBrackets(): void
+    {
+        // `[` and `]` are forbidden host code points and are deliberately not refused, because
+        // this is what both parsers answer for an address literal.
+        $this->assertSame('[::1]', GithubCopilot::normalizeDomain('[::1]'));
+        $this->assertSame('[::1]', GithubCopilot::normalizeDomain('https://[::1]/x'));
     }
 
     // ---- GitHub Copilot: where it answers ------------------------------------------------

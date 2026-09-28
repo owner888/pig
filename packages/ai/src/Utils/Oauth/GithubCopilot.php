@@ -74,13 +74,35 @@ final class GithubCopilot
     ];
 
     /** Five minutes, which is upstream's margin: a token is treated as dead before it is. */
-    private const int MARGIN_MS = 5 * 60 * 1000; // 5 minutes
+    private const int MARGIN_MS = 5 * 60 * 1000;
 
     /** However eager the server says it is, it is asked no more than once a second. */
     private const float MIN_INTERVAL = 1.0;
 
     /** What `slow_down` costs, added to the interval each time it is said. */
     private const float SLOW_DOWN = 5.0;
+
+    /**
+     * WHATWG's forbidden host code points, as far as one can be reached through `parse_url()`.
+     *
+     * `#`, `/`, `:`, `?`, `@` and `\` are on that list and are also delimiters, so `parse_url()`
+     * has already cut the host at them by the time this sees it; `[` and `]` are on it too and
+     * are left out on purpose, because an IPv6 literal comes back wrapped in them (`[::1]`, which
+     * is what upstream answers as well). What remains is the space, the C0 controls and DEL, the
+     * four bracket-and-bar characters, and `%` — which WHATWG rejects in a domain unless it is a
+     * valid escape whose decoded form is itself legal, so both `a%b.com` and `a%20b.com` throw
+     * there. Refusing it outright matches both, which is what was measured rather than reasoned.
+     */
+    private const string NOT_A_HOST = '/[\x20<>^|%]/';
+
+    /**
+     * A control character or DEL, anywhere in what is left after the two removal steps.
+     *
+     * Separate from the class above because it is asked *before* `parse_url()`, which replaces
+     * one inside a host with an underscore and would hide it. DEL is not one of the characters
+     * WHATWG strips off the ends, so it reaches the host and is refused there.
+     */
+    private const string NO_CONTROLS = '/[\x00-\x1f\x7f]/';
 
     /**
      * @param string|null $origin every endpoint under this instead of under the domain, so a
@@ -98,9 +120,26 @@ final class GithubCopilot
      * A host name out of whatever somebody typed, or null if it is not one.
      *
      * `company.ghe.com`, `https://company.ghe.com`, `https://company.ghe.com/some/path` all
-     * come back as the host. Upstream leans on `new URL()`; `parse_url()` answers the same
-     * question, and the `//` is added when there is no scheme because without it the whole
-     * string parses as a path.
+     * come back as the host, and the `//` is added when there is no scheme because without it
+     * the whole string parses as a path.
+     *
+     * **`parse_url()` is not `new URL()`, and the gap was three things wide.** Upstream is
+     * `new URL(trimmed.includes("://") ? trimmed : "https://" + trimmed).hostname` inside a
+     * `try`, and WHATWG's host parser lowercases, refuses the forbidden host code points, and
+     * punycodes a non-ASCII domain. `parse_url()` does none of the three. Run against `new URL`
+     * over 34 inputs, the two disagreed on thirteen of them — and the one that matters is a
+     * **space**, which is forbidden to WHATWG and nothing to `parse_url()`: `a b` came back as a
+     * host, so a pasted domain with a word after it reached `https://a b/login/device/code` and
+     * failed as `Cannot parse URL` instead of as the sentence written for exactly that.
+     *
+     * The first two are done here and the two now agree on 33 of the 34.
+     * **The exception is a non-ASCII domain**, which upstream turns into its punycode spelling
+     * and this cannot: `idn_to_ascii()` is ext-intl, which is deliberately not required — see
+     * the extensions note, where `Graphemes` and `Width` exist to avoid it. So `münchen.de` is
+     * `xn--mnchen-3ya.de` upstream and passes through as typed here. Passing through rather than
+     * refusing is the smaller divergence: it accepts everything upstream accepts, the punycode
+     * spelling is what the DNS holds anyway and is taken as it is, and an IDN Enterprise host is
+     * the one shape in this method nobody has ever reported.
      */
     public static function normalizeDomain(string $input): ?string
     {
@@ -110,9 +149,36 @@ final class GithubCopilot
             return null;
         }
 
-        $host = parse_url(str_contains($trimmed, '://') ? $trimmed : '//' . $trimmed, PHP_URL_HOST);
+        // **Upstream's composition, in upstream's order**, which is what decides two answers that
+        // look arbitrary: the scheme is prepended *first*, and only then does the URL parser strip
+        // C0 controls and spaces off each end and remove every tab, newline and carriage return.
+        // So a control at the end of what was typed is stripped and one at the front is not — it
+        // has `https://` in front of it by then, which puts it inside the host.
+        $url = str_replace(["\t", "\n", "\r"], '', trim(
+            str_contains($trimmed, '://') ? $trimmed : 'https://' . $trimmed,
+            " \x00..\x1f",
+        ));
 
-        return is_string($host) && $host !== '' ? $host : null;
+        // A control left anywhere is refused rather than parsed, because `parse_url()` hands one
+        // inside a host back as an **underscore** and a check on the parsed host would then be
+        // looking at `a_b.com` and find nothing wrong with it. This is the one place stricter than
+        // upstream, which percent-encodes a control in a *path* and still answers with the host.
+        // Nothing types one at this prompt, and the alternative is knowing where the host ends
+        // before parsing in order to find out.
+        if (preg_match(self::NO_CONTROLS, $url) === 1) {
+            return null;
+        }
+
+        $host = parse_url($url, PHP_URL_HOST);
+
+        if (!is_string($host) || $host === '' || preg_match(self::NOT_A_HOST, $host) === 1) {
+            return null;
+        }
+
+        // Lowercased, as WHATWG's host parser does it: the typed spelling reaches
+        // `Credentials::enterpriseUrl` and `baseUrl()`, so `COMPANY.GHE.COM` would otherwise be
+        // stored and sent as a different string from the same domain typed in lower case.
+        return strtolower($host);
     }
 
     /**
