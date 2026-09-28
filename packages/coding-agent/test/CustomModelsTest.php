@@ -63,7 +63,9 @@ final class CustomModelsTest extends TestCase
     {
         return [
             'baseUrl' => 'http://192.168.1.9:8080/v1',
-            'apiKey' => 'MY_BOX_KEY',
+            // A literal rather than `MY_BOX_KEY`: a variable name with nothing behind it is now a
+            // complaint of its own, and a fixture shared by thirty tests should not carry one.
+            'apiKey' => 'sk-a-literal-key',
             'api' => 'openai-completions',
             'models' => [self::model()],
             ...$overrides,
@@ -191,7 +193,7 @@ final class CustomModelsTest extends TestCase
         putenv('MY_BOX_KEY=sk-from-the-environment');
 
         $auth = Auth::inMemory();
-        $this->load(self::provider())->install($auth);
+        $this->load(self::provider(['apiKey' => 'MY_BOX_KEY']))->install($auth);
 
         // The reason the order is this way round: this is the one config file in pig whose
         // natural contents are a credential, and a file in a repository is a credential in a
@@ -207,15 +209,81 @@ final class CustomModelsTest extends TestCase
         $this->assertSame('sk-written-in-the-file', $auth->apiKey('my-box'));
     }
 
+    /**
+     * A name with no variable behind it is no key, not a key that happens to be that name.
+     *
+     * Upstream's `resolveApiKeyConfig` falls back to the value whenever the environment has
+     * nothing, so a `models.json` that names `DEEPSEEK_API_KEY` on a machine where it is not set
+     * hands the *name* on as a credential: `hasKeyFor()` says yes, the models are listed and
+     * switchable, and the request leaves as `Authorization: Bearer DEEPSEEK_API_KEY`. That is the
+     * 401-explaining-nothing this class's docblock gives as the reason for resolving at all,
+     * reached through the fallback. Found while pointing `test/live.php` at a declared endpoint.
+     */
+    public function testAVariableNameWithNothingBehindItIsNotAKey(): void
+    {
+        putenv('MY_BOX_KEY');
+
+        $auth = Auth::inMemory();
+        $custom = $this->load(self::provider(['apiKey' => 'MY_BOX_KEY']));
+        $custom->install($auth);
+
+        $this->assertNull($auth->apiKey('my-box'));
+        $this->assertFalse($auth->hasKeyFor('my-box'), 'and so the models are not offered');
+
+        // Said where every other thing wrong with this file is said: a 401 from an endpoint
+        // explains nothing about a file, and this names the variable to fill in.
+        $this->assertCount(1, $custom->problems);
+        $this->assertStringContainsString('"apiKey" names MY_BOX_KEY, which is not set', $custom->problems[0]);
+    }
+
+    /** And a value that is not shaped like a variable name is still taken literally. */
+    public function testAKeyThatCouldNotBeAVariableNameIsNeverMistakenForOne(): void
+    {
+        $auth = Auth::inMemory();
+        $custom = $this->load(self::provider(['apiKey' => 'sk-lowercase-and-dashes']));
+        $custom->install($auth);
+
+        $this->assertSame('sk-lowercase-and-dashes', $auth->apiKey('my-box'));
+        $this->assertSame([], $custom->problems);
+    }
+
+    /**
+     * An empty key is no key, and it keeps the complaint it already had.
+     *
+     * Two ways to have no key and they should not both be described as an unset variable: this one
+     * was already named at the point the file is read, so the new check has to leave it alone.
+     */
+    public function testAnEmptyApiKeyIsNoKeyAndKeepsItsOwnComplaint(): void
+    {
+        $auth = Auth::inMemory();
+        $custom = $this->load(self::provider(['apiKey' => '']));
+        $custom->install($auth);
+
+        $this->assertNull($auth->apiKey('my-box'));
+        $this->assertCount(1, $custom->problems);
+        $this->assertStringContainsString('no "apiKey"', $custom->problems[0]);
+        $this->assertStringNotContainsString('which is not set', $custom->problems[0]);
+    }
+
     public function testAuthHeaderPutsTheResolvedKeyInTheHeaders(): void
     {
         putenv('MY_BOX_KEY=sk-resolved');
 
-        $model = $this->load(self::provider(['authHeader' => true]))->models[0];
+        $model = $this->load(self::provider(['apiKey' => 'MY_BOX_KEY', 'authHeader' => true]))->models[0];
 
         // Resolved, not the variable's name: a proxy given `Bearer MY_BOX_KEY` answers 401
         // and says nothing about why.
         $this->assertSame('Bearer sk-resolved', $model->headers['Authorization']);
+    }
+
+    /** And with no key to put there, the header is left off rather than sent empty. */
+    public function testAuthHeaderWithNoKeyBehindItAddsNoHeader(): void
+    {
+        putenv('MY_BOX_KEY');
+
+        $model = $this->load(self::provider(['apiKey' => 'MY_BOX_KEY', 'authHeader' => true]))->models[0];
+
+        $this->assertArrayNotHasKey('Authorization', $model->headers);
     }
 
     public function testWithoutAuthHeaderNothingIsAddedToTheHeaders(): void
@@ -231,7 +299,7 @@ final class CustomModelsTest extends TestCase
 
         // So a fixed file next run does not also need the key put somewhere new.
         $this->assertSame([], $custom->models);
-        $this->assertSame('MY_BOX_KEY', $auth->apiKey('my-box'));
+        $this->assertSame('sk-a-literal-key', $auth->apiKey('my-box'));
     }
 
     // ---- a built-in always wins ---------------------------------------------------------

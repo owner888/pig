@@ -188,12 +188,20 @@ final readonly class CustomModels
         // wherever its protocol puts it — a proxy in front of something, usually. Resolved
         // here rather than at request time because that is where upstream does it, and
         // because a header is part of what a model *is* in this design.
-        if (($config['authHeader'] ?? false) === true) {
-            $headers['Authorization'] = 'Bearer ' . self::resolve($key);
-        }
-
         $models = [];
         $problems = [];
+        $resolved = self::resolve($key);
+
+        // Said where every other thing wrong with this file is said, because it is the same kind
+        // of thing: a value that cannot do its job, named so the line says what to fix. Without
+        // it the only symptom is a 401 from an endpoint, which explains nothing about a file.
+        if ($resolved === null && preg_match(self::VARIABLE_NAME, $key) === 1) {
+            $problems[] = "{$where}: \"apiKey\" names {$key}, which is not set — no key for this provider";
+        }
+
+        if (($config['authHeader'] ?? false) === true && $resolved !== null) {
+            $headers['Authorization'] = 'Bearer ' . $resolved;
+        }
 
         foreach ($entries as $entry) {
             if (!is_array($entry)) {
@@ -346,17 +354,39 @@ final readonly class CustomModels
         );
     }
 
+    /** `MY_BOX_KEY`, `DEEPSEEK_API_KEY` — what an environment variable is called and no key is. */
+    private const string VARIABLE_NAME = '/^[A-Z][A-Z0-9_]*$/';
+
     /**
-     * A value that names an environment variable, or is the thing itself.
+     * A value that names an environment variable, or is the thing itself, or is nothing.
      *
      * Upstream's `resolveApiKeyConfig`, and the order is the point: the variable is looked at
      * first, so a file can carry a name and the secret can stay out of it.
+     *
+     * **The third answer is pig's own.** Upstream falls back to the value whenever the environment
+     * has nothing, which cannot tell a literal key from a *name whose variable is not set* — and
+     * that second case then travels as a key: `hasKeyFor()` says yes, the models are listed and
+     * switchable, and the request goes out as `Authorization: Bearer DEEPSEEK_API_KEY`. Which is
+     * the failure this class's own docblock names as the reason for resolving at all, arriving
+     * through the fallback. Measured with a `models.json` naming a variable that was not set:
+     * `hasKeyFor` true, `apiKey` the literal string, and the provider in `availableModels()`.
+     *
+     * The two are told apart by shape, which is safe because no provider's key looks like a
+     * variable name: `sk-ant-…`, `sk-…`, `AIza…`, `gsk_…`, `xai-…` all carry lowercase or a dash,
+     * and `^[A-Z][A-Z0-9_]*$` carries neither. So an all-capitals value with no variable behind it
+     * is a name that was never filled in, and the honest answer is that there is no key — which
+     * `hasKeyFor()` turns into a model that is not offered, and `load()` into a line at startup
+     * saying which variable is empty. Anything else is still taken literally, as upstream takes it.
      */
-    public static function resolve(string $value): string
+    public static function resolve(string $value): ?string
     {
         $fromEnvironment = getenv($value);
 
-        return is_string($fromEnvironment) && $fromEnvironment !== '' ? $fromEnvironment : $value;
+        if (is_string($fromEnvironment) && $fromEnvironment !== '') {
+            return $fromEnvironment;
+        }
+
+        return $value === '' || preg_match(self::VARIABLE_NAME, $value) === 1 ? null : $value;
     }
 
     /**

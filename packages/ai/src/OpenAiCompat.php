@@ -58,7 +58,13 @@ final readonly class OpenAiCompat
             store: !$strict,
             developerRole: !$strict,
             reasoningEffort: !self::hostContains($baseUrl, ['api.x.ai']),
-            maxTokensField: self::hostContains($baseUrl, ['mistral.ai', 'chutes.ai'])
+            // `deepseek.com` is the third, and the only one here found by measurement rather than
+            // by a 400: DeepSeek **accepts** `max_completion_tokens` and ignores it, so nothing
+            // fails and every request is simply unbounded. `test/live.php` asked for 16 tokens and
+            // got 145, which is what turned "the stop reason is not mapped" into "the field name
+            // is wrong". *An endpoint that quietly drops a field is worse than one that refuses
+            // it, and only a number tells them apart.*
+            maxTokensField: self::hostContains($baseUrl, ['mistral.ai', 'chutes.ai', 'deepseek.com'])
                 ? 'max_tokens'
                 : 'max_completion_tokens',
             toolResultName: $mistral,

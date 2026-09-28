@@ -428,6 +428,30 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame('max_completion_tokens', OpenAiCompat::detect('https://api.groq.com/openai/v1')->maxTokensField);
     }
 
+    /**
+     * DeepSeek too, and it is the one that was found by counting rather than by a refusal.
+     *
+     * It **accepts** `max_completion_tokens` and ignores it, so nothing fails and every request is
+     * unbounded: `test/live.php` asked for 16 output tokens against `api.deepseek.com` and the turn
+     * came back after 145, stopped because the model had finished rather than because it hit a
+     * limit. The model's own `maxTokens` had never applied either.
+     *
+     * Reachable only through `models.json`, since pig ships no DeepSeek entry — which is why it
+     * took pointing the live harness at a declared endpoint to find.
+     */
+    public function testDeepSeekGetsItUnderTheOlderNameToo(): void
+    {
+        $this->assertSame('max_tokens', OpenAiCompat::detect('https://api.deepseek.com/v1')->maxTokensField);
+
+        // And nothing else about it is treated as strict: it takes `store`, the `developer` role
+        // and `reasoning_effort` without complaint.
+        $compat = OpenAiCompat::detect('https://api.deepseek.com/v1');
+
+        $this->assertTrue($compat->store);
+        $this->assertTrue($compat->developerRole);
+        $this->assertTrue($compat->reasoningEffort);
+    }
+
     public function testMistralsToolIdsAreCutAndPaddedToExactlyNine(): void
     {
         // Detected rather than hand-built: what Mistral needs is several flags at once,

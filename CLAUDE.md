@@ -5565,6 +5565,50 @@ ported, tested and one flag away. The test that asserted the old behaviour was c
 one letter from `--no-tools`, which is about the tools **somebody wrote** in `~/.pig/tools` and not
 about this. `ArgumentsTest` states both, next to each other.
 
+### DeepSeek accepted the field and ignored it, so every request to it was unbounded
+
+`OpenAiCompat` is the table of ways an "OpenAI-compatible" endpoint is not one, and its own note
+says how a row gets added: *"None of that is documented anywhere as a difference; it is what a 400
+looks like after you have sent it."* **This row is the one that never produced a 400.**
+
+`api.deepseek.com` falls in `detect()`'s default arm, so pig sends `max_completion_tokens`. DeepSeek
+takes it, ignores it, and answers. Measured through `test/live.php` against a `models.json` provider:
+
+```
+NO  max_tokens stops it   it came back as stop after 145 output tokens against a budget of 16
+                          — the budget was ignored, so the field name is wrong for this endpoint
+```
+
+So **no pig request to DeepSeek had ever been bounded**: not `SimpleStreamOptions(maxTokens: …)`, not
+the model's declared `maxTokens`, not the compaction summariser's. Nothing failed, nothing was
+logged, and the only symptom is a bill. `deepseek.com` joins `mistral.ai` and `chutes.ai` on the
+`max_tokens` row.
+
+**An endpoint that quietly drops a field is worse than one that refuses it, and only a number tells
+them apart.** The first run reported `it came back as stop rather than length`, which reads like a
+stop-reason mapping that missed a word — and the two have opposite fixes. What separated them was
+reporting the output count beside the budget: 145 against 16 is a limit that was never applied, and
+about 16 would have been a limit applied and misreported. *A live scenario that reports a verdict
+instead of a measurement can send you to the wrong file.*
+
+Reachable only through `models.json`, since pig ships no DeepSeek entry — so the harness offering
+declared providers is what found it, and the developer having a key for a provider pig does not carry
+is the only reason anybody looked.
+
+**And the same run found the silent overflow is not one provider's quirk.** `Overflow::happened()`
+carries a usage-based branch for z.ai, which takes an oversized request, answers, and bills past the
+window; upstream has it for that one endpoint. DeepSeek does it too — a prompt sized past a declared
+65,536-token window came back **answered and billed at 98,315 input tokens**, and the branch caught
+it. Two examples is what makes it a shape rather than a special case: a new endpoint is worth asking
+the question of rather than assuming it refuses. That branch is also the reason the scenario had to
+be rewritten before it could see any of this — it returned on "the provider answered" without ever
+consulting the usage, so a provider of that kind was reported as a failure with no numbers in it.
+
+Regression tests: `OpenAiCompletionsTest::testDeepSeekGetsItUnderTheOlderNameToo`, which also pins
+that nothing *else* about the endpoint is treated as strict — it takes `store`, the `developer` role
+and `reasoning_effort` without complaint, so the one row is the whole difference. Taking
+`deepseek.com` off the row turns it red.
+
 ### The overflow pattern for Cerebras and Mistral could never match pig's own words
 
 Seventeenth, and the narrowest kind of porting bug: a regex ported with its subject left behind.
@@ -5957,6 +6001,54 @@ Three smaller parity gaps came out of the same read:
 - **A hook's summary was taken even when nobody asked for one.** The hook is *told* whether anyone
   wants a summary — it is the last argument of `SessionBeforeTreeEvent` — so prose returned anyway
   has misread the event, and upstream ignores it.
+
+### A `models.json` key that was only a variable's name travelled as the key
+
+The same question as the entry below — *is there a key for this model?* — at the one end that
+answer had been fixed for everywhere else. `hasKeyFor()` was taught to filter `--list-models`,
+`/model`, `get_available_models` and a resumed session; for a **declared** provider it was always
+true, because `CustomModels::resolve()` could not tell a literal key from a name whose variable is
+not set. Measured with a `models.json` naming `DEEPSEEK_API_KEY` on a machine without it:
+
+```
+custom keys declared:  {"deepseek":"DEEPSEEK_API_KEY"}
+hasKeyFor('deepseek'): true
+apiKey('deepseek'):    'DEEPSEEK_API_KEY'
+in availableModels:    YES
+```
+
+So the models are listed, chosen and resumed onto, and the request leaves as
+`Authorization: Bearer DEEPSEEK_API_KEY` — **which is the failure `CustomModels`' own docblock gives
+as the reason for resolving in the first place**: *"a proxy handed the literal string `MY_BOX_KEY`
+answers 401 and explains nothing."* The fallback produced the thing the feature exists to prevent,
+and `hasKeyFor()`'s comment had reasoned about it and stopped one case short — *"a wrong one here
+only if the file left it empty"*.
+
+Upstream's `resolveApiKeyConfig` has the same fallback and cannot distinguish the two either, so
+this is a deliberate divergence, and what makes it safe is **shape**: `^[A-Z][A-Z0-9_]*$` is what an
+environment variable is called and what no provider's key looks like — `sk-ant-…`, `sk-…`, `AIza…`,
+`gsk_…`, `xai-…` all carry lowercase or a dash. An all-capitals value with no variable behind it is
+a name nobody filled in, so `resolve()` answers **null**, `hasKeyFor()` answers false and the models
+are not offered, and `load()` adds a line where every other complaint about that file goes:
+
+```
+models.json: …/models.json, provider "deepseek": "apiKey" names DEEPSEEK_API_KEY, which is not set
+```
+
+Anything not shaped like a name is still taken literally, as upstream takes it, and an `apiKey` that
+is simply absent keeps the complaint it already had rather than being described as an unset variable.
+`authHeader: true` with no key adds no header instead of sending `Bearer ` with nothing after it.
+
+**Found by pointing `test/live.php` at a declared endpoint** — the `models.json` path is the one part
+of the registry with no live coverage at all, and the harness offering custom providers is what
+reached it. The developer's keys included one for a provider pig ships no entry for, which is the
+only reason anybody looked.
+
+Regression tests: `CustomModelsTest::testAVariableNameWithNothingBehindItIsNotAKey`,
+`testAKeyThatCouldNotBeAVariableNameIsNeverMistakenForOne`,
+`testAnEmptyApiKeyIsNoKeyAndKeepsItsOwnComplaint`, `testAuthHeaderWithNoKeyBehindItAddsNoHeader`.
+Putting upstream's fallback back turns the first and last red. The shared fixture's `apiKey` became
+a literal in the same change: thirty tests were sharing a value that is now a complaint of its own.
 
 ### A model with no API key could be switched to, listed, and resumed onto
 

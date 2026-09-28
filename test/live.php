@@ -52,6 +52,7 @@ use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\CustomModels;
 
 /**
  * One cheap model per provider, and the smallest reasoning-capable one where there is a choice.
@@ -91,8 +92,11 @@ final class Live
     /** @var list<string> */
     private array $failures = [];
 
-    public function __construct(private readonly Auth $auth)
-    {
+    /** @param array<string, string> $offered provider => the model id to use for it */
+    public function __construct(
+        private readonly Auth $auth,
+        private readonly array $offered = MODELS,
+    ) {
     }
 
     public function provider(string $provider, string $id): void
@@ -131,8 +135,8 @@ final class Live
     /** A conversation from one provider carried on by another — upstream's `handoff.test.ts`. */
     public function handoff(string $from, string $to): void
     {
-        $source = Models::find($from, MODELS[$from] ?? '');
-        $target = Models::find($to, MODELS[$to] ?? '');
+        $source = Models::find($from, $this->offered[$from] ?? '');
+        $target = Models::find($to, $this->offered[$to] ?? '');
 
         if ($source === null || $target === null
             || !$this->auth->hasKeyFor($from) || !$this->auth->hasKeyFor($to)) {
@@ -441,9 +445,24 @@ final class Live
             return 'ok, refused a sixteen-token budget: ' . self::oneLine((string) $message->errorMessage);
         }
 
-        return $message->stopReason === StopReason::Length
-            ? 'ok'
-            : "it came back as {$message->stopReason->value} rather than length";
+        if ($message->stopReason === StopReason::Length) {
+            return 'ok';
+        }
+
+        // **The output count is what tells the two failures apart**, and the first version of this
+        // did not report it: a mapping that missed this provider's word for truncation ends the
+        // turn at about the budget, and a budget the endpoint *ignored* ends it wherever the model
+        // chose. The second is `OpenAiCompat::maxTokensField` naming a field the endpoint does not
+        // read — `max_completion_tokens` where it wants `max_tokens` — which means no pig request
+        // to it has ever been bounded.
+        return sprintf(
+            'it came back as %s after %d output tokens against a budget of 16 — %s',
+            $message->stopReason->value,
+            $message->usage->output,
+            $message->usage->output > 24
+                ? 'the budget was ignored, so the field name is wrong for this endpoint'
+                : 'the budget held, so it is the stop reason that is not being mapped',
+        );
     }
 
     private function caching(Model $model): string
@@ -536,13 +555,31 @@ final class Live
         $huge = str_repeat($run, (int) ceil($model->contextWindow * 3 / strlen($run)));
         $message = $this->answer($model, new Context([new UserMessage($huge)]));
 
-        if ($message->stopReason !== StopReason::Error) {
-            return 'the provider accepted a prompt larger than its window';
+        // **Two shapes, and answering is one of them.** z.ai takes the oversized request, answers,
+        // and bills for more input than the window holds — `Overflow::happened()` was given the
+        // window argument for exactly that, and the first version of this scenario returned before
+        // ever reaching it, so a provider of that kind was reported as a failure with no numbers.
+        if (Overflow::happened($message, $model->contextWindow)) {
+            return $message->stopReason === StopReason::Error
+                ? 'ok'
+                : sprintf('ok, the silent kind (answered, billed %d against a %d window)',
+                    $message->usage->input + $message->usage->cacheRead, $model->contextWindow);
         }
 
-        return Overflow::happened($message, $model->contextWindow)
-            ? 'ok'
-            : 'not recognised as an overflow: ' . self::oneLine((string) $message->errorMessage);
+        if ($message->stopReason === StopReason::Error) {
+            return 'not recognised as an overflow: ' . self::oneLine((string) $message->errorMessage);
+        }
+
+        // Neither refused nor billed past the window: the far end dropped what did not fit. Worth
+        // reporting as what it is rather than as a failure — pig's auto-compaction is driven by
+        // its own count against the window, not by an overflow signal, so a provider that
+        // truncates silently still compacts on time. What it loses is the late warning.
+        return sprintf(
+            'ok, silently truncated (sent ~%dk characters, billed %d against a %d window)',
+            (int) round(strlen($huge) / 1_000),
+            $message->usage->input + $message->usage->cacheRead,
+            $model->contextWindow,
+        );
     }
 
     // ---- scaffolding ----------------------------------------------------------------------
@@ -623,9 +660,32 @@ final class Live
 
 $wanted = array_slice($argv, 1);
 $auth = Auth::discover();
-$live = new Live($auth);
 
-foreach (MODELS as $provider => $id) {
+// `models.json` too, the way `bin/pig` does it — an endpoint somebody declared themselves is the
+// one part of the registry with no live coverage at all, and it is also the only way to reach a
+// provider pig ships no entry for. `install()` is what tells `Auth` where that provider's key
+// comes from, so a declared `apiKey` naming an environment variable resolves here exactly as it
+// does in a session.
+$custom = CustomModels::discover();
+$custom->install($auth);
+
+foreach ($custom->problems as $problem) {
+    printf("models.json: %s\n", $problem);
+}
+
+Models::register($custom->models);
+
+// Every provider with a table of its own, then anything `models.json` added — by its first model,
+// since a declared provider has no obvious "cheapest" and whoever wrote the file chose them all.
+$offered = MODELS;
+
+foreach ($custom->models as $model) {
+    $offered[$model->provider] ??= $model->id;
+}
+
+$live = new Live($auth, $offered);
+
+foreach ($offered as $provider => $id) {
     if ($wanted !== [] && !in_array($provider, $wanted, true)) {
         continue;
     }
@@ -636,7 +696,7 @@ foreach (MODELS as $provider => $id) {
 // Cross-provider, which needs two keys — every ordered pair that has them would be a lot of calls,
 // so this takes the providers named (or found) and walks consecutive pairs.
 $have = array_values(array_filter(
-    array_keys(MODELS),
+    array_keys($offered),
     static fn (string $provider): bool => ($wanted === [] || in_array($provider, $wanted, true))
         && $auth->hasKeyFor($provider),
 ));

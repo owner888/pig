@@ -175,10 +175,10 @@ final class Auth
         }
 
         if (isset($this->customKeys[$provider])) {
-            // `resolve()` hands back the variable's name when the environment has no such
-            // variable, which is the right answer for a provider that takes a literal key in the
-            // file and a wrong one here only if the file left it empty.
-            return CustomModels::resolve($this->customKeys[$provider]) !== '';
+            // Null covers both ways a declared key can be no key: an empty value, and a name
+            // whose variable is not set — see `CustomModels::resolve()`, which used to hand the
+            // name back and so answered yes for a provider nothing could authenticate to.
+            return CustomModels::resolve($this->customKeys[$provider]) !== null;
         }
 
         return Stream::envApiKey($provider) !== null;

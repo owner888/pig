@@ -99,6 +99,12 @@ final class Overflow
         // The silent kind: z.ai takes the oversized request, answers something, and bills for
         // more input tokens than the window holds. Nothing failed, so nothing said anything —
         // the only evidence is the usage report.
+        //
+        // **And it is not one provider's quirk.** DeepSeek does the same, measured through
+        // `test/live.php`: a prompt sized past a declared 65,536-token window came back answered
+        // and billed at **98,315** input tokens. Upstream carries this branch for z.ai alone; two
+        // examples is what makes it a shape rather than a special case, so a new endpoint is worth
+        // asking the question of rather than assuming it refuses.
         if ($contextWindow !== null && $contextWindow > 0 && $message->stopReason === StopReason::Stop) {
             return $message->usage->input + $message->usage->cacheRead > $contextWindow;
         }

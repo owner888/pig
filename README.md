@@ -203,7 +203,8 @@ local server — and its models then work everywhere a built-in one does, includ
 ```
 
 `apiKey` is the **name of an environment variable** if one answers to it, so the key itself
-need not be in the file. `api` is one of `openai-completions`, `openai-responses`,
+need not be in the file — and an all-capitals name with no variable set is treated as no key at
+all, said at startup by name, rather than being sent to the endpoint as though it were the key. `api` is one of `openai-completions`, `openai-responses`,
 `anthropic-messages` or `google-generative-ai`, and can be set on the provider or per model;
 `authHeader: true` sends the key as `Authorization: Bearer …` for a proxy that wants it there.
 Anything wrong with the file is printed and skipped — the rest of it, and every built-in
