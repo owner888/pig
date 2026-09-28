@@ -1670,7 +1670,7 @@ Two things about it, and the first is the reason the logic is in `Cli\` rather t
 
 **`composer.json` declares `bin` now.** This paragraph used to say the opposite — "declaring
 executables is a packaging decision rather than part of this port" — and the decision has since been
-taken, because the command the update check prints (`composer global update pig/pig`) only works for
+taken, because the command the update check prints (`composer global update pigagent/pig`) only works for
 an install that puts `pig` on the PATH. There is deliberately **no** `version` field beside it; the
 two entries below have that and the rest of the packaging.
 
@@ -8905,12 +8905,12 @@ Both of these were the developer's calls, and both came out the way the facts po
 
 **One package, not six.** packagist.org does not host archives — it references the source — so it
 cannot serve a package from a subdirectory, and multi-package repositories are a Private Packagist
-feature. The monorepo therefore publishes as a single `pig/pig` whose root `composer.json` autoloads
+feature. The monorepo therefore publishes as a single `pigagent/pig` whose root `composer.json` autoloads
 all five namespaces out of `packages/*/src`. What that removed is worth listing, because every line
 of it existed only to make the split work in a checkout: the `path` repository, the five
 `pig/*: "@dev"` requires, `minimum-stability: dev` and `prefer-stable`. All four are root-only
 settings anyway — **Composer reads `repositories` and `minimum-stability` from the root package and
-nowhere else** — so `composer global require pig/pig` would have gone to Packagist for five packages
+nowhere else** — so `composer global require pigagent/pig` would have gone to Packagist for five packages
 that are not there, with `@dev` constraints nothing would satisfy. The alternative, splitting into six
 read-only repositories with a CI job to push them, buys `require pig/ai` for somebody who has never
 asked for it, and costs six tags to keep in step — which is the rule at the top of this file.
@@ -8933,7 +8933,7 @@ a claim about the repository the repository did not keep. It is in the root's `r
 `ext-json`, `ext-mbstring`, `ext-openssl` and `ext-pcre`, which the sub-packages declared and the
 root — the only one Composer reads — did not.
 
-**`Version` asks Composer instead of reading a file.** `Composer\InstalledVersions::getPrettyVersion('pig/pig')`,
+**`Version` asks Composer instead of reading a file.** `Composer\InstalledVersions::getPrettyVersion('pigagent/pig')`,
 `v` stripped. That costs one platform requirement, `composer-runtime-api ^2.0`, which is Composer's
 own runtime rather than a package anything downloads — the same kind of entry as `php` or `ext-json`,
 and it was put to the developer as a dependency question because that is the standing rule.
@@ -8977,21 +8977,32 @@ corrected to what `packages/*/composer.json` actually declare. *A generated file
 date and cost nothing until something regenerates a second file from it* — and collapsing to one
 package removes this whole class, since there will be no `pig/*` entries in anybody's lock.
 
-**Still the developer's**, and none of it is code: the vendor namespace `pig` has to actually be free
-on Packagist (`Version::PACKAGE` and the command it prints both assume `pig/pig`, and vendor names
-there are first-come-first-served); `authors` is the one field a Packagist listing normally carries
-and the standing rule is that the name does not enter this repository, so what goes there — a handle,
-or nothing — is theirs; and `composer.json` no longer matches any lock, so the Mac needs a
-`composer update` before anything else.
+**The vendor `pig` was taken, which is why the package is `pigagent/pig`.** Submitting answered what
+nothing here could check: `pig` on Packagist holds an unrelated `pig/router`, and vendor names there
+are first-come-first-served, so the claim route was closed and the name had to change before the
+first release. `pigagent` matches the project's own domain. It cost two lines — `Version::PACKAGE`
+and `composer.json`'s `name` — because the name is written **once** and `UpdateCheck::COMMAND` is
+built from it; `UpdateCheckTest` asserts the manifest and the constant agree, which is the test that
+makes a rename two lines rather than a hunt. **The binary is untouched**: `pig` is what `bin` says
+and has nothing to do with the package name, so nothing a person types changed.
+
+Worth knowing for the next name: `vendor/composer/installed.php` records the old one until
+`composer install` or `update` runs — `dump-autoload` does **not** rewrite it, which is the same
+staleness that turned a years-old `>=8.4` into 35 failures two paragraphs up. So a rename looks
+broken (`Composer does not know about pigagent/pig`) until the lock is refreshed.
+
+`authors` is `owner888` with a homepage, which is the GitHub account rather than the name the
+standing rule keeps out of this repository. And `composer.json` no longer matches any lock, so the
+Mac needs a `composer update` before anything else.
 
 **And publishing has a consequence this document leans on in two places.** The back-compatibility
 row says *"pig has never shipped, so there is nobody with an old file"*, and the session-format
 section says there is *"no reader for the old shape, on purpose"* because *"a reader for it would be
-compatibility with nothing"*. Both are arguments from having no users, and **the day `pig/pig` is on
+compatibility with nothing"*. Both are arguments from having no users, and **the day `pigagent/pig` is on
 Packagist they expire** — the rule they rest on is already stated correctly ("back-compatibility is a
 debt to real users, and there are none until there is a release"), so nothing in it is wrong, but
 the release is what starts the debt. Related and smaller: the root package is a path-repository
-monorepo, so `composer global require pig/pig` cannot install it as it stands — the five
+monorepo, so `composer global require pigagent/pig` cannot install it as it stands — the five
 `packages/*` have to be published too, or the root has to stop depending on them by path. That is a
 packaging decision and it is the developer's.
 

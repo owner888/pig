@@ -1,5 +1,5 @@
 {
-    "name": "pig/pig",
+    "name": "pigagent/pig",
     "description": "pi, ported to PHP: agent core, unified LLM API, terminal UI, coding agent CLI",
     "type": "library",
     "keywords": ["agent", "llm", "cli", "tui", "coding-agent", "anthropic", "openai", "gemini"],

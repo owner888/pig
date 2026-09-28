@@ -34,8 +34,13 @@ final class Version
      * **One copy, here.** `Cli\UpdateCheck` asks Packagist about it and builds the install command
      * out of it, and this asks Composer about it; a second spelling is the one kind of typo that
      * would make those two questions be about different packages.
+     *
+     * The vendor is `pigagent` and not `pig`, which is taken on Packagist by an unrelated
+     * `pig/router` — so the claim route was closed and the name had to change before the first
+     * submission. `pigagent` matches the project's own domain. **The binary is still `pig`**: what a
+     * person types comes from `bin` in `composer.json` and has nothing to do with this.
      */
-    public const string PACKAGE = 'pig/pig';
+    public const string PACKAGE = 'pigagent/pig';
 
     /**
      * The version this build is, as Composer resolved it, without a `v` on the front.
