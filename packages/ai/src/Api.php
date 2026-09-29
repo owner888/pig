@@ -17,4 +17,5 @@ enum Api: string
     case AnthropicMessages = 'anthropic-messages';
     case GoogleGenerativeAi = 'google-generative-ai';
     case GoogleGeminiCli = 'google-gemini-cli';
+    case Antigravity = 'antigravity';
 }

@@ -41,6 +41,7 @@ use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\CustomTools\ToolProblem;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
 use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
+use Pig\CodingAgent\Extensions\ExtensionDiscovery;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
@@ -539,7 +540,8 @@ final class InteractiveMode
     }
 
     /**
-     * The three lines at the top, and the full list behind ctrl+o.
+     * The three lines at the top, followed by compact loaded sections,
+     * and the full list behind ctrl+o.
      *
      * One line of keys rather than a column of thirteen, which is what upstream settled
      * on: the list was taller than most of the conversations it sat above. The rest is
@@ -554,26 +556,38 @@ final class InteractiveMode
 
         if (!$this->expanded) {
             $lines[] = $this->palette->fg('dim', 'Press ctrl+o for the full list of keys, and what is loaded.');
+            $loaded = $this->loaded(compact: true);
+            if ($loaded !== '') {
+                $lines[] = '';
+                $lines[] = $loaded;
+            }
 
             return implode("\n", $lines);
         }
 
-        return implode("\n", [...$lines, '', $this->keysAndCommands()]);
+        $loaded = $this->loaded(compact: false);
+
+        return implode("\n", [
+            ...$lines,
+            '',
+            $this->keysAndCommands(),
+            ...($loaded === '' ? [] : ['', $loaded]),
+        ]);
     }
 
     /**
      * What was loaded into this session, as sections.
      *
-     * A section with nothing in it is not drawn. Upstream lists skills and extensions
-     * here too; neither is ported, so neither has a heading to be empty under.
+     * In compact mode (collapsed banner), displays compact lists under [Context], [Skills],
+     * and [Extensions]. In expanded mode (ctrl+o), displays full scope or detail.
      */
-    private function loaded(): string
+    private function loaded(bool $compact = false): string
     {
         $sections = [];
 
         if ($this->contextFiles !== []) {
             $names = array_map(
-                static fn (ContextFile $file): string => basename($file->path),
+                fn (ContextFile $file): string => $compact ? basename($file->path) : $this->formatDisplayPath($file->path),
                 $this->contextFiles,
             );
 
@@ -588,11 +602,10 @@ final class InteractiveMode
                 . $this->palette->fg('muted', '  ' . implode(', ', $names));
         }
 
-        if ($this->hooks !== null && !$this->hooks->isEmpty()) {
-            $names = array_map(basename(...), $this->hooks->paths());
-
-            $sections[] = $this->palette->fg('mdHeading', '[Hooks]') . "\n"
-                . $this->palette->fg('muted', '  ' . implode(', ', $names));
+        $extensions = $this->discoveredExtensions();
+        if ($extensions !== []) {
+            $sections[] = $this->palette->fg('mdHeading', '[Extensions]') . "\n"
+                . $this->palette->fg('muted', '  ' . implode(', ', $extensions));
         }
 
         if ($this->customTools !== null && !$this->customTools->isEmpty()) {
@@ -601,6 +614,34 @@ final class InteractiveMode
         }
 
         return implode("\n\n", $sections);
+    }
+
+    /**
+     * Labels of loaded hooks and extensions from standard locations.
+     *
+     * @return list<string>
+     */
+    private function discoveredExtensions(): array
+    {
+        $extraPaths = [];
+        if ($this->hooks !== null && !$this->hooks->isEmpty()) {
+            $extraPaths = $this->hooks->paths();
+        }
+
+        return ExtensionDiscovery::discover($this->cwd, $extraPaths);
+    }
+
+    /**
+     * Format an absolute path with leading ~ for the user's home directory.
+     */
+    private function formatDisplayPath(string $path): string
+    {
+        $home = Env::home();
+        if ($home !== null && $home !== '' && str_starts_with($path, $home)) {
+            return '~' . substr($path, strlen($home));
+        }
+
+        return $path;
     }
 
     /** The keys worth knowing before the first prompt, on one line. */
@@ -1681,9 +1722,7 @@ final class InteractiveMode
             $rows[] = $this->palette->fg('dim', Width::pad('/' . $name, $column)) . $this->palette->fg('muted', $does);
         }
 
-        $loaded = $this->loaded();
-
-        return implode("\n", $rows) . ($loaded === '' ? '' : "\n\n" . $loaded);
+        return implode("\n", $rows);
     }
 
     private function commandHelp(): string

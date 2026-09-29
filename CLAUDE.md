@@ -9802,6 +9802,55 @@ handling), the `Api` case and `Stream` dispatch, reading `antigravity` from `aut
 removing the built-in `google-antigravity` / `google-gemini-cli`. The removal goes **last** — doing
 it before the new provider works leaves a window where neither does.
 
+### The Antigravity provider is `GoogleGeminiCli` plus an envelope
+
+`Providers\Antigravity` was adapted from **pig's own `GoogleGeminiCli`**, not from the
+implementation it was ported from. Both post to `v1internal:streamGenerateContent?alt=sse` and
+both wrap a Gemini request in an envelope, so the streaming, the SSE unwrap, the `data.response`
+unwrap, the error shape and all of `GoogleShared` were already here and already tested. What the
+reference had that this needed was the envelope's *contents*. Porting its hand-rolled SSE loop as
+well would have left two of them in the repository, and only one under test.
+
+What the envelope adds over the Gemini CLI one:
+
+    model        the RUNTIME id, not the one on screen      (Routing)
+    requestType  'agent'
+    userAgent    'antigravity'  — pig used to send 'pig'
+    requestId    agent/{agentId}/{ms}/{trajectoryId}/{steps}
+    request.sessionId, request.labels  — including model_enum and the used_claude pair
+
+**Three constants were wrong in a way that only ever surfaces as a 4xx**: the host has no
+`sandbox` in it, the User-Agent header is the Antigravity CLI's (this deployment answers 403 to
+the wrong one — `SANDBOX_HEADERS`' old docblock said so), and the envelope's own `userAgent` field
+says `antigravity`. Upstream's changelog has that last one as a fix for 429s specifically, which is
+the kind of thing nobody guesses.
+
+**The trajectory id is derived from the conversation, not the clock.** It is what the deployment
+caches against, so the first 64 **bytes** of the first message are hashed into it — a byte cut,
+kept as a byte cut on purpose. Everything else in this repository that cuts text by bytes is a bug
+(see the footer entry); this one's output goes straight into `md5()`, where a cut inside a
+character is a different byte string rather than a broken one, and widening it to characters would
+change every id the deployment has cached. A message with no text at all seeds from a constant and
+not from `uniqid()`, so those conversations stay self-consistent too. Both are pinned by tests,
+because "seed from the clock" passes everything else.
+
+**The fallback host is a constructor argument.** Only 403 and 404 fall through to the second host
+— a 429 is the quota answering and asking the other host gets the same answer, which `Session\Retry`
+one level up is what waits out. Injectable for exactly the reason `$http` is: a test cannot point a
+model at Google's host *and* have the request arrive at a canned server, so under a hardcoded pair
+the one branch that matters is the one no test can see. `GoogleGeminiCli::headersFor()` makes the
+same argument about deciding by provider name rather than by host.
+
+**`thinkingEnabled: false` with a level still set means off**, the reading every other provider
+here gives it. The guard looked redundant and survived every mutation until a test set the two
+contradictory on purpose — which `Stream` can, since it sets both.
+
+**Not done**, and the provider should not be called finished: `normalizeConversationTurns` (three
+rules the reference implementation has to stop the deployment answering 400 on tool-heavy turns —
+a `functionCall` that does not follow a user turn, a request with no natural-language user part, a
+trailing model turn) and thought-signature carry-over. Neither can be written against a canned
+server alone; both need a real turn to check against.
+
 ### `auth.json` says `antigravity`, pig looked for `google-antigravity`
 
 Why `bin/pig -p hi --model google-antigravity/gemini-3-flash` answers *"No API key for provider"*

@@ -6,6 +6,7 @@ namespace Pig\Ai;
 
 use Pig\Ai\Providers\Anthropic;
 use Pig\Ai\Providers\AnthropicOptions;
+use Pig\Ai\Providers\Antigravity;
 use Pig\Ai\Providers\Google;
 use Pig\Ai\Providers\GoogleGeminiCli;
 use Pig\Ai\Providers\GoogleOptions;
@@ -64,6 +65,7 @@ final class Stream
             // The same options: Code Assist is a different envelope around the same request, so
             // temperature, thinking and tool choice mean exactly what they mean for Gemini.
             Api::GoogleGeminiCli => (new GoogleGeminiCli())->stream($model, $context, self::google($options, $apiKey)),
+            Api::Antigravity => (new Antigravity())->stream($model, $context, self::google($options, $apiKey)),
         };
     }
 
@@ -136,6 +138,7 @@ final class Stream
             ),
             Api::GoogleGenerativeAi => self::gemini($model, $options, $maxTokens, $apiKey),
             Api::GoogleGeminiCli => self::geminiCli($model, $options, $maxTokens, $apiKey),
+            Api::Antigravity => self::antigravity($options, $maxTokens, $apiKey),
             Api::AnthropicMessages => new AnthropicOptions(
                 $options?->temperature,
                 $maxTokens,
@@ -206,6 +209,30 @@ final class Stream
      * `2.5-pro` starts at 128 there and 1024 here. The Gemini 3 level path *is* the same, so it
      * shares `geminiLevel()`.
      */
+    /**
+     * Antigravity's, which needs the *level* and nothing else about thinking.
+     *
+     * No budget and no clamping here, unlike every other arm: on this deployment a level chooses
+     * a different upstream model, and `Antigravity\Routing` owns both that choice and the budget
+     * that goes with it. Passing a second opinion down would be two things deciding one.
+     *
+     * `ReasoningEffort`'s values are `ThinkingLevel`'s minus `off`, and `off` arrives here as no
+     * reasoning at all — so the level the provider wants is exactly `$options?->reasoning?->value`
+     * with null meaning off. That the two enums line up is luck worth stating: if a case is ever
+     * added to one of them, this is a line to check.
+     */
+    private static function antigravity(?SimpleStreamOptions $options, int $maxTokens, ?string $apiKey): GoogleOptions
+    {
+        return new GoogleOptions(
+            $options?->temperature,
+            $maxTokens,
+            $options?->signal,
+            $apiKey,
+            thinkingEnabled: $options?->reasoning !== null,
+            thinkingLevel: $options?->reasoning?->value,
+        );
+    }
+
     private static function geminiCli(Model $model, ?SimpleStreamOptions $options, int $maxTokens, ?string $apiKey): GoogleOptions
     {
         $base = [$options?->temperature, $maxTokens, $options?->signal, $apiKey];
