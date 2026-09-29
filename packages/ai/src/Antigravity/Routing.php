@@ -92,15 +92,109 @@ final class Routing
         // <<< generated
     ];
 
+    /**
+     * The tables a reader found on disk, when there are any.
+     *
+     * @var array<string, array{default: string, off?: string, levels: array<string, string>}>|null
+     */
+    private static ?array $routing = null;
+
+    /** @var array<string, string> */
+    private static array $enums = [];
+
+    /**
+     * Use the tables somebody read off disk instead of the generated ones.
+     *
+     * `CodingAgent\Antigravity\Catalog` is the caller: pi's `models-store.json` holds the same
+     * three tables, refreshed from the deployment every four hours, where the ones above are a
+     * snapshot taken whenever `scripts/fetch-antigravity-models.php` was last run. Both come
+     * from the same authority, so the fresher one wins — which is the opposite of
+     * `Models::register()`'s rule, and for the opposite reason: there a *person's* file must not
+     * be able to redefine a shipped model, and here neither side is a person's opinion.
+     *
+     * **Mechanism, not policy — nothing here validates.** The reader checks that every routing
+     * target has an enum and installs both tables or neither; putting that here would mean two
+     * places deciding it, and this one has nowhere to report a file that is wrong. Same split as
+     * `Skills::load()`, which takes the roots and knows no settings keys.
+     *
+     * The enums *merge*, with the file's winning: a store written by an older extension carries
+     * routing and no enums at all, and a runtime id the file does not name is one the generated
+     * table may still know.
+     *
+     * @param array<string, array{default: string, off?: string, levels: array<string, string>}> $routing
+     * @param array<string, string> $enums
+     */
+    public static function useTables(array $routing, array $enums = []): void
+    {
+        self::$routing = $routing;
+        self::$enums = $enums;
+    }
+
+    /** Back to the generated tables. For tests, which must not leak a catalogue into each other. */
+    public static function forgetTables(): void
+    {
+        self::$routing = null;
+        self::$enums = [];
+    }
+
+    /** @return array<string, array{default: string, off?: string, levels: array<string, string>}> */
+    private static function routing(): array
+    {
+        return self::$routing ?? self::ROUTING;
+    }
+
+    /** @return array<string, string> */
+    private static function enums(): array
+    {
+        return [...self::ENUMS, ...self::$enums];
+    }
+
     /** Every logical model this provider can be asked for. */
     public static function models(): array
     {
-        return array_keys(self::ROUTING);
+        return array_keys(self::routing());
     }
 
     public static function knows(string $model): bool
     {
-        return isset(self::ROUTING[$model]);
+        return isset(self::routing()[$model]);
+    }
+
+    /**
+     * Whether every level of every model in $routing names a runtime id with a known enum.
+     *
+     * What a reader asks before calling `useTables()`. A table installed with one target missing
+     * turns that level into a `ProviderError` at the moment somebody picks it, which is the
+     * furthest possible point from the file that caused it.
+     *
+     * @param array<string, array{default: string, off?: string, levels: array<string, string>}> $routing
+     * @param array<string, string> $enums
+     *
+     * @return list<string> the runtime ids with no enum, empty when the pair is usable
+     */
+    public static function orphans(array $routing, array $enums = []): array
+    {
+        $known = [...self::ENUMS, ...$enums];
+        $missing = [];
+
+        foreach ($routing as $entry) {
+            // `off` is absent for a model that cannot be turned off, and absent is not the same
+            // as a target named `''` — the entry shape is what `resolve()` reads, so this walks
+            // exactly the three places it looks.
+            $targets = [$entry['default'], ...array_values($entry['levels'])];
+
+            if (isset($entry['off'])) {
+                $targets[] = $entry['off'];
+            }
+
+            foreach ($targets as $target) {
+                if (!isset($known[$target])) {
+                    $missing[$target] = true;
+                }
+            }
+        }
+
+        return array_keys($missing);
     }
 
     /**
@@ -119,7 +213,7 @@ final class Routing
      */
     public static function resolve(string $model, ?string $level): array
     {
-        $entry = self::ROUTING[$model]
+        $entry = self::routing()[$model]
             ?? throw new ProviderError("Antigravity has no model '{$model}'. Regenerate the routing tables with scripts/fetch-antigravity-models.php.");
 
         // `off` when there is one, the default when the model cannot be turned off. Reaching the
@@ -129,7 +223,7 @@ final class Routing
             ? ($entry['off'] ?? $entry['default'])
             : ($entry['levels'][$level] ?? $entry['default']);
 
-        $enum = self::ENUMS[$runtime]
+        $enum = self::enums()[$runtime]
             ?? throw new ProviderError("Antigravity runtime model '{$runtime}' has no enum. The routing and enum tables disagree; regenerate both.");
 
         return [$runtime, $enum];

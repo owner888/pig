@@ -35,6 +35,7 @@ use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\Cli\SessionPicker;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\CodingAgentError;
+use Pig\CodingAgent\Antigravity\Catalog as AntigravityCatalog;
 use Pig\CodingAgent\CustomModels;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Rpc\RpcMode;
@@ -242,6 +243,18 @@ foreach ($custom->problems as $problem) {
     // Named and carried on, like a settings file that is not JSON: the built-in models are
     // still there and the session still starts. A bad line loses only itself.
     fwrite(STDERR, Style::yellow("models.json: {$problem}\n"));
+}
+
+// After the declared providers and before the model is resolved, for the same reasons. The
+// catalogue the `pi-antigravity` extension keeps refreshed on disk is a newer reading of the
+// endpoint `Ai\Models::ANTIGRAVITY_MODELS` was printed from — same authority, so it wins; see
+// `Antigravity\Catalog`. `--no-save` reads none of it, as it reads no `models.json`: that flag
+// means this run touches nothing of the person's.
+$catalogue = isset($options['no-save']) ? AntigravityCatalog::none() : AntigravityCatalog::discover();
+$catalogue->install();
+
+foreach ($catalogue->problems as $problem) {
+    fwrite(STDERR, Style::yellow("antigravity: {$problem}\n"));
 }
 
 Timings::mark('customModels');

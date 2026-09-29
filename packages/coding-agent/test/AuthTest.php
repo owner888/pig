@@ -174,6 +174,69 @@ final class AuthTest extends TestCase
         $this->assertArrayHasKey('openai', $written);
     }
 
+    // ---- Antigravity's second place --------------------------------------------------------
+
+    public function testAnAntigravitySignInIsFoundInTheAccountsStoreWhenThisFileHasNone(): void
+    {
+        // `auth.json` holds one credential per provider, and the `pi-antigravity` extension lets
+        // somebody sign in with several Google accounts — so it keeps the store and copies the
+        // active one out to here. This is the case where the copy-out never happened.
+        $auth = $this->given('{}');
+
+        file_put_contents($this->home . '/antigravity-accounts.json', json_encode([
+            'version' => 1,
+            'activeAccountId' => 'dev@example',
+            'accounts' => ['dev@example' => [
+                'refresh' => 'a-refresh-token',
+                'access' => 'an-access-token',
+                'expires' => 9_000_000_000_000,
+                'projectId' => 'a-cloud-project',
+                'email' => 'dev@example',
+            ]],
+        ]));
+
+        $credentials = $auth->credentials(Provider::Antigravity);
+
+        $this->assertNotNull($credentials);
+        $this->assertSame('an-access-token', $credentials->access);
+        $this->assertSame('a-cloud-project', $credentials->projectId);
+    }
+
+    public function testThisFileWinsWhenItHasAnAntigravityEntryOfItsOwn(): void
+    {
+        // A credential that is in `auth.json` is the one both tools are using — the store is
+        // only consulted when there is nothing here.
+        $auth = $this->given(json_encode(['antigravity' => [
+            'type' => 'oauth',
+            'refresh' => 'the-one-in-auth-json',
+            'access' => 'the-access-token-in-auth-json',
+            'expires' => 9_000_000_000_000,
+        ]]) ?: '{}');
+
+        file_put_contents($this->home . '/antigravity-accounts.json', json_encode([
+            'version' => 1,
+            'activeAccountId' => 'dev@example',
+            'accounts' => ['dev@example' => ['refresh' => 'the-one-in-the-store', 'access' => 'the-stores-access-token']],
+        ]));
+
+        $this->assertSame('the-access-token-in-auth-json', $auth->credentials(Provider::Antigravity)?->access);
+    }
+
+    public function testNoOtherProviderLooksInThatStore(): void
+    {
+        // The store is Antigravity's, and a provider reading somebody else's credentials file
+        // is a worse bug than the one this fixes.
+        $auth = $this->given('{}');
+
+        file_put_contents($this->home . '/antigravity-accounts.json', json_encode([
+            'version' => 1,
+            'activeAccountId' => 'dev@example',
+            'accounts' => ['dev@example' => ['refresh' => 'r', 'access' => 'a']],
+        ]));
+
+        $this->assertNull($auth->credentials(Provider::Anthropic));
+    }
+
     // ---- writing -------------------------------------------------------------------------
 
     public function testAKeyIsStillThereWhenItIsOpenedAgain(): void

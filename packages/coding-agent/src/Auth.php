@@ -16,6 +16,7 @@ use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Pkce;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\Async\AbortSignal;
+use Pig\CodingAgent\Antigravity\Accounts;
 use Throwable;
 
 /**
@@ -58,6 +59,9 @@ final class Auth
 
     /** @var list<string> what could not be read, for the caller to complain about */
     private array $problems = [];
+
+    /** Antigravity's several sign-ins, beside this file — see `accounts()`. */
+    private ?Accounts $accounts = null;
 
     /**
      * @param Settings|null $settings where Gemini CLI's client id and secret may be kept. Only
@@ -223,13 +227,31 @@ final class Auth
         return is_string($type) ? $type : null;
     }
 
+    /**
+     * The several Antigravity sign-ins the `pi-antigravity` extension keeps, beside this file.
+     *
+     * Built on demand and kept, because `credentials()` is asked on every turn and the store is
+     * only read once. Null path — `--no-save`, a test — gets a store that reads and writes
+     * nothing, which is what `Accounts::beside(null)` is.
+     */
+    private function accounts(): Accounts
+    {
+        return $this->accounts ??= Accounts::beside($this->path);
+    }
+
     /** The stored tokens for a provider signed in with OAuth, or null. */
     public function credentials(Provider $provider): ?Credentials
     {
         $entry = $this->data[$provider->value] ?? null;
 
         if ($entry === null || ($entry['type'] ?? null) !== 'oauth') {
-            return null;
+            // **Antigravity has a second place its credentials live**, because `auth.json` holds
+            // one entry per provider and the extension lets somebody sign in with several Google
+            // accounts. Its `antigravity-accounts.json` is the store and this file's entry is a
+            // copy of whichever account is active — so the two normally agree, and the case this
+            // catches is a sign-in the copy-out never reached. Only when there is nothing here:
+            // a credential that *is* in `auth.json` is the one both tools are using.
+            return $provider === Provider::Antigravity ? $this->accounts()->active() : null;
         }
 
         $refresh = $entry['refresh'] ?? null;
@@ -526,6 +548,16 @@ final class Auth
         }
 
         $this->setCredentials($provider, $renewed);
+
+        // And into the accounts store, or the extension's copy of this account goes stale: it
+        // keeps a token per account and reaches for them when a quota wall comes back, so one
+        // pig renewed and did not write down is one the extension will present as valid hours
+        // after it was replaced. Matched against the credential it replaces, which is what
+        // upstream's `updateRememberedAccount` takes, because the email is what re-keys an entry
+        // and the old refresh token is what finds it.
+        if ($provider === Provider::Antigravity) {
+            $this->accounts()->renewed($credentials, $renewed);
+        }
 
         return $renewed;
     }

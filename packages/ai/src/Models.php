@@ -414,6 +414,12 @@ final class Models
     private static array $registered = [];
 
     /**
+     * @var list<Model> handed over by something entitled to overwrite a built-in row — see the
+     *      `$replace` argument on `register()`, which has exactly one caller
+     */
+    private static array $replacing = [];
+
+    /**
      * Add models the table does not know about.
      *
      * For `models.json`: somebody's own endpoint, or a local server, declared in a file rather
@@ -430,11 +436,26 @@ final class Models
      * session, `RpcMode` — asks this class by id, and a model that only some of them could see
      * would be a model that works until you save the conversation.
      *
+     * **`$replace` is the one exception to that rule and it has one caller**:
+     * `CodingAgent\Antigravity\Catalog`, reading the catalogue pi keeps refreshed on disk. The
+     * rule above exists so a *person's* file cannot redefine a shipped model; there both sides
+     * have one author — the deployment's own catalogue endpoint — and `ANTIGRAVITY_MODELS` is
+     * itself a frozen print of it, so the two differ only in when they were taken. A snapshot
+     * beating a live reading of the same source is the wrong way round, and what it costs is
+     * visible: those rows carry `new Pricing()` where the catalogue carries real prices, so a
+     * subscription turn reports as free. Nothing else may pass true, and a second caller is the
+     * moment to ask whether this is still an exception or has become a rule.
+     *
      * @param list<Model> $models
      */
-    public static function register(array $models): void
+    public static function register(array $models, bool $replace = false): void
     {
-        self::$registered = [...self::$registered, ...$models];
+        if ($replace) {
+            self::$replacing = [...self::$replacing, ...$models];
+        } else {
+            self::$registered = [...self::$registered, ...$models];
+        }
+
         self::$models = null;
     }
 
@@ -442,6 +463,7 @@ final class Models
     public static function forgetRegistered(): void
     {
         self::$registered = [];
+        self::$replacing = [];
         self::$models = null;
     }
 
@@ -648,6 +670,12 @@ final class Models
         // Last, and only where nothing is already: see `register()`. A built-in wins.
         foreach (self::$registered as $model) {
             $models[$model->provider . '/' . $model->id] ??= $model;
+        }
+
+        // And after even that, the one kind that is allowed to overwrite a built-in row — see
+        // the `$replace` argument on `register()` for why Antigravity's catalogue is it.
+        foreach (self::$replacing as $model) {
+            $models[$model->provider . '/' . $model->id] = $model;
         }
 
         return self::$models = $models;
