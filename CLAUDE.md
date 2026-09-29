@@ -9802,6 +9802,40 @@ handling), the `Api` case and `Stream` dispatch, reading `antigravity` from `aut
 removing the built-in `google-antigravity` / `google-gemini-cli`. The removal goes **last** — doing
 it before the new provider works leaves a window where neither does.
 
+### `defaultProvider` was written from the start and read by nothing
+
+The footer said `(google) gemini-3.8-flash • thinking off` where pi said
+`(antigravity) gemini-3.8-flash • medium`, and the provider half was a real bug.
+
+`Settings::setDefaultModel($id, $provider)` stores both. `CodingAgent` read only
+`$settings->defaultModel()` — the **bare** id — and a bare id means the direct provider by
+`Models::RESOLD`'s rule. So a session last used on `antigravity/gemini-3.8-flash` reopened on
+Google's public model of the same name: same id, different model, different bill. `defaultProvider`
+had no reader outside the tests that asserted it was written.
+
+**Invisible until a resold id was the default.** `claude-sonnet-4-5` remembered as `anthropic` and
+resolved bare gives the same model either way, which is every case anybody had.
+
+Two boundaries the fix needs, both tested:
+
+- **Only the remembered model gets the remembered provider.** `--model gemini-3.8-flash` and
+  `PIG_MODEL` are left exactly as typed. Applying a stored provider to what somebody just typed
+  would be the worse bug of the two.
+- **A stored provider that has gone falls back rather than failing.** `google-antigravity` is
+  precisely that case after the rename above, so any settings file written before it names a
+  provider that no longer exists. A tool that will not start because of a line it wrote itself is
+  not a trade worth making.
+
+The other half of that footer — `• thinking off` against pi's `• medium` — was not a bug. Measured:
+
+    (google) gemini-3.8-flash       off/minimal/low/medium/high    off stays off
+    (antigravity) gemini-3.8-flash  low/medium/high                off clamps to low
+
+Google's public model has no `thinkingLevelMap`, so every level is available and a session with
+thinking off shows exactly that. Antigravity's says `off => null` — it cannot be turned off — so
+the same session clamps up to `low`. Both halves of the difference came from being on the wrong
+model.
+
 ### Removing Gemini CLI, and the four rules that nearly went with it
 
 Upstream removed Gemini CLI and Antigravity together in `0.71.0`; pig kept Antigravity and

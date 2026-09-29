@@ -117,6 +117,23 @@ final class Settings
         return is_string($model) && $model !== '' ? $model : null;
     }
 
+    /**
+     * Which provider the remembered model belongs to.
+     *
+     * **Written since the beginning and read by nothing until now**, which is only visible for a
+     * resold id: `defaultModel` alone is a *bare* id, and a bare id means the direct provider by
+     * `Models::RESOLD`'s rule. So a session last used on `antigravity/gemini-3.8-flash` came back
+     * on Google's public `gemini-3.8-flash` — same id, different model, different price — and for
+     * `claude-sonnet-4-5` the bare answer happened to be the right one, which is why it went
+     * unnoticed. See `CodingAgent`, which reads both together now.
+     */
+    public function defaultProvider(): ?string
+    {
+        $provider = $this->get('defaultProvider');
+
+        return is_string($provider) && $provider !== '' ? $provider : null;
+    }
+
     public function setDefaultModel(string $id, string $provider): void
     {
         $this->global['defaultModel'] = $id;

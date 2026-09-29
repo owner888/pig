@@ -196,11 +196,21 @@ final class CodingAgent
         } else {
             // The order stated at the top of `bin/pig`: what was typed, then the environment, then
             // what was chosen last time, then the built-in default.
-            $wanted = $model
-                ?? self::fromEnvironment($environment, 'PIG_MODEL')
-                ?? $settings->defaultModel()
-                ?? 'claude-sonnet-4-5';
+            $typed = $model ?? self::fromEnvironment($environment, 'PIG_MODEL');
+            $wanted = $typed ?? $settings->defaultModel() ?? 'claude-sonnet-4-5';
             $choice = ModelResolver::parse($wanted);
+
+            // **The remembered provider, applied only to the remembered model.** A bare id means
+            // the direct provider, so without this a session last used on
+            // `antigravity/gemini-3.8-flash` reopened on Google's public model of the same name.
+            // `--model` and `PIG_MODEL` are left alone: a bare id somebody typed means what it
+            // says, and second-guessing it with a stored provider would be worse than the bug.
+            if ($typed === null && $settings->defaultModel() !== null && $settings->defaultProvider() !== null) {
+                // Falls back rather than failing: a stored provider can name one that has since
+                // gone — `google-antigravity` did — and an old settings file must not stop pig
+                // starting. Same for a model dropped from that provider's table.
+                $choice = ModelResolver::parse($settings->defaultProvider() . '/' . $wanted) ?? $choice;
+            }
 
             if ($choice === null) {
                 throw new CodingAgentError("No model matches '{$wanted}'. Try --list-models for the list.");

@@ -183,6 +183,52 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertSame('zzp-alpha', $this->start()->model->id);
     }
 
+    public function testTheRememberedProviderComesBackWithTheRememberedModel(): void
+    {
+        // **The bug this is here for**: `defaultModel` is a *bare* id and a bare id means the
+        // direct provider, so a session last used on Antigravity's `gemini-3.8-flash` reopened on
+        // Google's public model of the same name — same id, different model. `defaultProvider`
+        // was written from the start and read by nothing.
+        $this->writeSettings(['defaultModel' => 'gemini-3.8-flash', 'defaultProvider' => 'antigravity']);
+
+        $started = $this->start();
+
+        $this->assertSame('gemini-3.8-flash', $started->model->id);
+        $this->assertSame('antigravity', $started->model->provider);
+    }
+
+    public function testWithNoRememberedProviderABareIdStillMeansTheDirectOne(): void
+    {
+        // Settings files written before the provider was read back have no `defaultProvider`.
+        $this->writeSettings(['defaultModel' => 'gemini-3.8-flash']);
+
+        $this->assertSame('google', $this->start()->model->provider);
+    }
+
+    public function testARememberedProviderThatHasGoneFallsBackRatherThanRefusingToStart(): void
+    {
+        // `google-antigravity` is exactly this case: it was renamed, and any settings file written
+        // before that still names it. Failing here would be a tool that will not start because of
+        // a line it wrote itself.
+        $this->writeSettings(['defaultModel' => 'gemini-3.8-flash', 'defaultProvider' => 'google-antigravity']);
+
+        $started = $this->start();
+
+        $this->assertSame('gemini-3.8-flash', $started->model->id);
+        $this->assertSame('google', $started->model->provider);
+    }
+
+    public function testWhatWasTypedIsNotSecondGuessedWithTheRememberedProvider(): void
+    {
+        // A bare id somebody typed means what it says. Applying the stored provider to it would
+        // be a worse bug than the one above: `--model gemini-3.8-flash` would quietly become
+        // Antigravity's because of something the last session saved.
+        $this->writeSettings(['defaultModel' => 'gemini-3.8-flash', 'defaultProvider' => 'antigravity']);
+
+        $this->assertSame('google', $this->start([], ['model' => 'gemini-3.8-flash'])->model->provider);
+        $this->assertSame('google', $this->start(['PIG_MODEL' => 'gemini-3.8-flash'])->model->provider);
+    }
+
     public function testAndFinallyTheBuiltInDefault(): void
     {
         $this->assertSame('claude-sonnet-4-5', $this->start()->model->id);
