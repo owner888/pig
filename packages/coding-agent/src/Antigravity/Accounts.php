@@ -100,6 +100,36 @@ final class Accounts
         return $entry === null ? null : self::credentials($entry);
     }
 
+    /** @return array<string, array<string, mixed>> */
+    public function accounts(): array
+    {
+        return $this->accounts;
+    }
+
+    public function activeId(): ?string
+    {
+        return $this->active;
+    }
+
+    public function activate(string $id): void
+    {
+        if (isset($this->accounts[$id])) {
+            $this->active = $id;
+            $this->save();
+        }
+    }
+
+    public function remove(string $id): void
+    {
+        if (isset($this->accounts[$id])) {
+            unset($this->accounts[$id]);
+            if ($this->active === $id) {
+                $this->active = array_key_first($this->accounts);
+            }
+            $this->save();
+        }
+    }
+
     /** How many sign-ins are in the store, which is the only thing `/login` would want to say. */
     public function count(): int
     {

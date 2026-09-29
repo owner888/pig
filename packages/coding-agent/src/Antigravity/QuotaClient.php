@@ -262,12 +262,9 @@ final class QuotaClient
                 'Accept' => 'application/json',
                 'User-Agent' => self::USER_AGENT,
             ];
-            if ($projectId !== null && $projectId !== '') {
-                $headers['X-Goog-User-Project'] = $projectId;
-            }
 
             try {
-                $encoded = json_encode($body) ?: '{}';
+                $encoded = $body === [] ? '{}' : (json_encode((object) $body) ?: '{}');
                 $response = $http->send(new Request('POST', $url, $headers, $encoded));
                 $text = $response->body->all();
                 $data = json_decode($text, true);

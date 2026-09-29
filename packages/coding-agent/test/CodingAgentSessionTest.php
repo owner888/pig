@@ -229,6 +229,22 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertSame('google', $this->start(['PIG_MODEL' => 'gemini-3.8-flash'])->model->provider);
     }
 
+    public function testPiModelAndPiProviderAreSupportedAsEnvironmentFallbacks(): void
+    {
+        $started = $this->start(['PI_MODEL' => 'gemini-3.8-flash', 'PI_PROVIDER' => 'antigravity', 'PI_REASONING_LEVEL' => 'medium']);
+        $this->assertSame('antigravity', $started->model->provider);
+        $this->assertSame('gemini-3.8-flash', $started->model->id);
+        $this->assertSame(ThinkingLevel::Medium, $started->thinking);
+    }
+
+    public function testStartupThinkingLevelIsClampedForModelsThatRequireReasoning(): void
+    {
+        // Antigravity models have `off => null` in thinkingLevelMap (they cannot be turned off).
+        // Startup must clamp `off` to a supported level (low/medium) rather than remaining `off`.
+        $started = $this->start([], ['model' => 'antigravity/gemini-3.8-flash']);
+        $this->assertNotSame(ThinkingLevel::Off, $started->thinking);
+    }
+
     public function testAndFinallyTheBuiltInDefault(): void
     {
         $this->assertSame('claude-sonnet-4-5', $this->start()->model->id);

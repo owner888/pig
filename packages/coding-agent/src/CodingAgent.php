@@ -201,20 +201,21 @@ final class CodingAgent
         } else {
             // The order stated at the top of `bin/pig`: what was typed, then the environment, then
             // what was chosen last time, then the built-in default.
-            $typed = $model ?? self::fromEnvironment($environment, 'PIG_MODEL');
+            $envModel = self::fromEnvironment($environment, 'PIG_MODEL') ?? self::fromEnvironment($environment, 'PI_MODEL');
+            $envProvider = self::fromEnvironment($environment, 'PIG_PROVIDER') ?? self::fromEnvironment($environment, 'PI_PROVIDER');
+            $typed = $model ?? $envModel;
             $wanted = $typed ?? $settings->defaultModel() ?? 'claude-sonnet-4-5';
-            $choice = ModelResolver::parse($wanted);
 
-            // **The remembered provider, applied only to the remembered model.** A bare id means
-            // the direct provider, so without this a session last used on
-            // `antigravity/gemini-3.8-flash` reopened on Google's public model of the same name.
-            // `--model` and `PIG_MODEL` are left alone: a bare id somebody typed means what it
-            // says, and second-guessing it with a stored provider would be worse than the bug.
-            if ($typed === null && $settings->defaultModel() !== null && $settings->defaultProvider() !== null) {
-                // Falls back rather than failing: a stored provider can name one that has since
-                // gone — `google-antigravity` did — and an old settings file must not stop pig
-                // starting. Same for a model dropped from that provider's table.
-                $choice = ModelResolver::parse($settings->defaultProvider() . '/' . $wanted) ?? $choice;
+            // Provider precedence:
+            // 1) Explicit in the model name (e.g. `antigravity/gemini-3.8-flash`)
+            // 2) From environment (PIG_PROVIDER / PI_PROVIDER)
+            // 3) Stored defaultProvider in settings (when using stored defaultModel)
+            $provider = $envProvider ?? ($typed === null ? $settings->defaultProvider() : null);
+
+            if ($provider !== null && !str_contains($wanted, '/')) {
+                $choice = ModelResolver::parse($provider . '/' . $wanted) ?? ModelResolver::parse($wanted);
+            } else {
+                $choice = ModelResolver::parse($wanted);
             }
 
             if ($choice === null) {
@@ -239,17 +240,18 @@ final class CodingAgent
             $auth->setRuntimeApiKey($chosen->provider, $apiKey);
         }
 
-        $level = $thinking !== null
-            ? ThinkingLevel::tryFrom($thinking) ?? ThinkingLevel::Off
+        $envThinking = self::fromEnvironment($environment, 'PIG_THINKING') ?? self::fromEnvironment($environment, 'PI_REASONING_LEVEL');
+        $thinkingArg = $thinking ?? $envThinking;
+
+        $level = $thinkingArg !== null
+            ? ThinkingLevel::tryFrom($thinkingArg) ?? ThinkingLevel::Off
             : ($choice->thinking === ThinkingLevel::Off
                 ? ($settings->defaultThinkingLevel() ?? ThinkingLevel::Off)
                 : $choice->thinking);
 
         // Clamped rather than refused: a model that cannot reason and a request that asks it to is
         // a request the provider rejects, and nobody typing `--thinking high` meant to be told no.
-        if (!$chosen->reasoning) {
-            $level = ThinkingLevel::Off;
-        }
+        $level = ThinkingLevel::clampedFor($chosen, $level);
 
         // Loaded here rather than left to the prompt builder, so a banner and the system prompt
         // cannot disagree about what was picked up.

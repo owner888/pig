@@ -10021,6 +10021,14 @@ Worth noting what fixing the name alone would have bought: nothing. The endpoint
 says a wrong User-Agent is answered with 403. Six of the seven ids in `ANTIGRAVITY_MODELS` no
 longer exist either. The name was the first of four failures, not the only one.
 
+### A user quota request sent as `[]` was refused, and `X-Goog-User-Project` triggered a 403
+
+Two bugs in Antigravity quota discovery (`QuotaClient`):
+1. `postJson` serialized empty request bodies as `json_encode([])`, which produces `"[]"`. Google Cloud Code RPC endpoints require the root element to be an object message and returned 400 `Invalid JSON payload received. Root element must be a message.` Fixed by encoding empty arrays as `"{}"`.
+2. Sending `X-Goog-User-Project: <projectId>` to personal quota endpoints (`v1internal:loadCodeAssist` and `v1internal:retrieveUserQuotaSummary`) caused Google Cloud IAM to demand `serviceusage.services.use` project permissions, returning 403 `Caller does not have required permission to use project`. Those endpoints belong to the user's personal Google subscription rather than a project quota, so that header is omitted.
+
+In addition, `CodingAgent::session()` now honors `PI_PROVIDER`, `PI_MODEL` and `PI_REASONING_LEVEL` from the environment when `PIG_*` variables are not set, and clamps the startup thinking level using `ThinkingLevel::clampedFor($chosen, $level)` so models with `thinkingLevelMap` (such as Antigravity models requiring reasoning) do not default to `off`.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;
