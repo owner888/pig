@@ -175,6 +175,18 @@ final class FooterTest extends TestCase
         $this->assertStringContainsString('↓9.5k', $line);
         $this->assertStringContainsString('R95k', $line);
         $this->assertStringContainsString('W9.5M', $line);
+        $this->assertStringContainsString('CH1.0%', $line);
+    }
+
+    public function testCacheHitRateIsFormattedAsCHPercentage(): void
+    {
+        $session = $this->session();
+        // 9 input tokens + 991 cache read tokens = 1000 prompt tokens -> 99.1% hit rate
+        $this->spent($session, new Usage(9, 100, 991, 0));
+
+        $line = $this->lines($session)[1];
+
+        $this->assertStringContainsString('CH99.1%', $line);
     }
 
     public function testACountOfZeroIsLeftOutRatherThanShownAsZero(): void
@@ -359,7 +371,7 @@ final class FooterTest extends TestCase
 
         // Wide enough for `claude-test` but not for `(anthropic) claude-test`. Narrower than
         // this and the right-hand side goes entirely, which is a different branch.
-        $line = Ansi::strip((new FooterComponent($session, $this->palette, $this->cwd))->render(74)[1]);
+        $line = Ansi::strip((new FooterComponent($session, $this->palette, $this->cwd))->render(81)[1]);
 
         $this->assertStringNotContainsString('(anthropic', $line);
         $this->assertStringEndsWith('claude-test', $line);

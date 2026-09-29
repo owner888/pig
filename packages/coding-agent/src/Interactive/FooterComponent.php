@@ -240,6 +240,10 @@ final class FooterComponent implements Component
             }
         }
 
+        if (($stats->cacheRead > 0 || $stats->cacheWrite > 0) && ($hitRate = $this->latestCacheHitRate()) !== null) {
+            $parts[] = 'CH' . number_format($hitRate, 1) . '%';
+        }
+
         // Upstream's condition, and the `||` is the point: on a subscription the interesting
         // fact is there before any money is, because the number beside it is notional.
         $subscription = $this->onASubscription();
@@ -295,6 +299,26 @@ final class FooterComponent implements Component
         $gap = str_repeat(' ', max(0, $width - $leftWidth - Width::visible($cut)));
 
         return $this->palette->fg('dim', $left) . $this->palette->fg('dim', $gap . $cut);
+    }
+
+    /**
+     * Cache hit rate of the latest assistant message, as a percentage.
+     *
+     * Upstream's `latestCacheHitRate` in `components/footer.ts`.
+     */
+    private function latestCacheHitRate(): ?float
+    {
+        foreach (array_reverse($this->session->messages()) as $message) {
+            if (!$message instanceof AssistantMessage || $message->stopReason === StopReason::Aborted) {
+                continue;
+            }
+
+            $promptTokens = $message->usage->input + $message->usage->cacheRead + $message->usage->cacheWrite;
+
+            return $promptTokens > 0 ? ($message->usage->cacheRead / $promptTokens) * 100 : null;
+        }
+
+        return null;
     }
 
     private function context(): string
