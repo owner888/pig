@@ -574,15 +574,11 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringNotContainsString('suspend', $this->screen());
     }
 
-    public function testWhatWasLoadedIsListedUnderTheFullList(): void
+    public function testWhatWasLoadedIsListedInTheBanner(): void
     {
         $this->startWithContext();
 
-        $this->assertStringNotContainsString('[Context]', $this->screen());
-
-        $this->type("\x0f");
         $screen = $this->screen();
-
         $this->assertStringContainsString('[Context]', $screen);
         $this->assertStringContainsString('AGENTS.md', $screen);
     }
@@ -1579,11 +1575,10 @@ final class InteractiveModeTest extends TestCase
 
     // ---- skills -----------------------------------------------------------------------------
 
-    public function testLoadedSkillsAreListedUnderTheFullList(): void
+    public function testLoadedSkillsAreListedInTheBanner(): void
     {
         $this->start(skills: [new Skill('tidy', 'tidy up a file', '/s/tidy/SKILL.md', '/s/tidy', 'user')]);
 
-        $this->type("\x0f");
         $screen = $this->screen();
 
         $this->assertStringContainsString('[Skills]', $screen);
@@ -2712,7 +2707,6 @@ final class InteractiveModeTest extends TestCase
     public function testACustomToolIsNamedInTheBanner(): void
     {
         $this->start(customTools: $this->tools('wc'));
-        $this->type("\x0f");
 
         $this->assertStringContainsString('[Tools]', $this->screen());
     }

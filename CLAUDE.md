@@ -73,8 +73,9 @@ the developer asked for it, it is ported and listed here:
 
 The anchor's banner is a column of thirteen keys, which is taller than most of the
 conversations it sits above; HEAD moved the list behind `ctrl+o` and put a one-line
-summary in its place. `[Skills]` and `[Extensions]` are sections there too; `[Skills]` is
-here now, and `[Extensions]` is not ported, so it has no heading to be empty under.
+summary in its place. `[Context]`, `[Skills]` and `[Extensions]` are sections directly
+displayed on startup; `[Context]` lists discovered context files, `[Skills]` lists loaded
+skills, and `[Extensions]` discovers and displays loaded extensions/hooks.
 
 Upstream reads the clipboard through a native Node addon on macOS and Windows and falls back
 to `wl-paste` / `xclip` / PowerShell on Linux. PHP has no addon, so every platform goes
