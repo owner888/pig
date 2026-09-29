@@ -318,7 +318,7 @@ final class SkillsTest extends TestCase
 
         // pig's own beats another tool's copy. Upstream keeps the first and skips the rest, which
         // in its own order means `~/.codex/skills` outranks everything — nobody editing a skill in
-        // `~/.pig/skills` expects a copy in another tool's folder to be the one that runs.
+        // `~/.pig/agent/skills` expects a copy in another tool's folder to be the one that runs.
         $this->assertCount(1, $skills);
         $this->assertSame('from pig', $skills[0]->description);
         $this->assertSame('user', $skills[0]->source);

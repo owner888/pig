@@ -6,6 +6,7 @@ namespace Pig\Tui\Components;
 
 use Closure;
 use Pig\Tui\Component;
+use Pig\Tui\Fuzzy;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
 use Pig\Tui\Width;
@@ -25,6 +26,9 @@ final class SelectList implements Component, InputHandler
     private array $filtered;
 
     private int $selected = 0;
+
+    /** What has been typed into the list, which is also whether to draw the search line. */
+    private string $query = '';
 
     /** @var Closure(SelectItem): void|null */
     private ?Closure $onSelect = null;
@@ -57,17 +61,33 @@ final class SelectList implements Component, InputHandler
         $this->theme = $theme ?? SelectListTheme::default();
     }
 
-    /** Keep the items whose value starts with $filter. */
+    /**
+     * Keep the items $filter matches, best first.
+     *
+     * Was a `startsWith` over the *value*, which for the model picker means over `0`, `1`, `2` —
+     * nothing anyone could type. Now upstream's fuzzy ranking over each row's own haystack.
+     */
     public function setFilter(string $filter): void
     {
-        $needle = mb_strtolower($filter, 'UTF-8');
-
-        $this->filtered = array_values(array_filter(
+        $this->query = $filter;
+        $this->filtered = Fuzzy::filter(
             $this->items,
-            static fn (SelectItem $item): bool => str_starts_with(mb_strtolower($item->value, 'UTF-8'), $needle),
-        ));
+            $filter,
+            static fn (SelectItem $item): string => $item->haystack(),
+        );
 
-        $this->selected = 0;
+        // Upstream's two halves: a query puts the selection on its best match, and clearing one
+        // leaves it where it was rather than throwing you back to the top of a list you had
+        // scrolled down. Clamped either way, because the list it indexes into just changed.
+        $this->selected = $filter !== ''
+            ? 0
+            : min($this->selected, max(0, count($this->filtered) - 1));
+    }
+
+    /** What has been typed into the list so far. */
+    public function filter(): string
+    {
+        return $this->query;
     }
 
     public function setSelectedIndex(int $index): void
@@ -120,10 +140,17 @@ final class SelectList implements Component, InputHandler
     #[\Override]
     public function render(int $width): array
     {
+        // Drawn only once something has been typed, which is what keeps this out of the way of
+        // every list that is never searched — the editor's completions above all, which are
+        // filtered by the line you are writing and never see a printable key of their own.
+        $search = $this->query === ''
+            ? []
+            : [($this->theme->description)(Width::truncate('  /' . $this->query, $width - 2, ''))];
+
         // `No matches` rather than upstream's `No matching commands`: this list is the models, the
         // sessions, the themes and the sign-ins as well as the commands.
         if ($this->filtered === []) {
-            return [($this->theme->noMatch)('  No matches')];
+            return [...$search, ($this->theme->noMatch)('  No matches')];
         }
 
         $total = count($this->filtered);
@@ -142,7 +169,7 @@ final class SelectList implements Component, InputHandler
             $lines[] = ($this->theme->scrollInfo)(Width::truncate("  ({$position}/{$total})", $width - 2, ''));
         }
 
-        return $lines;
+        return [...$search, ...$lines];
     }
 
     private function row(SelectItem $item, bool $isSelected, int $width): string
@@ -190,8 +217,37 @@ final class SelectList implements Component, InputHandler
             Keys::isArrowDown($data) => $this->moveTo($this->selected === $last ? 0 : $this->selected + 1),
             Keys::isEnter($data) => $this->choose(),
             Keys::isEscape($data) || Keys::isCtrlC($data) => $this->cancel(),
+            Keys::isBackspace($data) => $this->backspace(),
+            self::isPrintable($data) => $this->setFilter($this->query . $data),
             default => null,
         };
+    }
+
+    /**
+     * One character off the end of the query, by characters and not by bytes.
+     *
+     * Escape still cancels the list rather than clearing the query, which is upstream's
+     * arrangement: the way out of a picker should not depend on whether you typed in it.
+     */
+    private function backspace(): void
+    {
+        if ($this->query !== '') {
+            $this->setFilter(mb_substr($this->query, 0, -1, 'UTF-8'));
+        }
+    }
+
+    /**
+     * Whether this keystroke is text rather than a key.
+     *
+     * Anything starting with escape is a sequence — an arrow, a function key, a mouse report —
+     * and the control range is the ctrl chords, which every list above reserves. What is left is
+     * text, including a paste, which arrives as one string and belongs in the query whole.
+     */
+    private static function isPrintable(string $data): bool
+    {
+        return $data !== ''
+            && !str_starts_with($data, "\x1b")
+            && preg_match('/^[^\x00-\x1f\x7f]+$/u', $data) === 1;
     }
 
     private function moveTo(int $index): void

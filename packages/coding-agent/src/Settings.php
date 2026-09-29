@@ -10,7 +10,7 @@ use Pig\Agent\ThinkingLevel;
 /**
  * What someone chose last time, and what this project insists on.
  *
- * Two files, both JSON, both optional: `~/.pig/settings.json` is the person's and is
+ * Two files, both JSON, both optional: `~/.pig/agent/settings.json` is the person's and is
  * written back to; `<cwd>/.pig/settings.json` is the project's and is only ever read.
  * The project wins, which is the point of it being separate — a repository can say
  * "compaction keeps more here" without touching anyone's own preferences, and a `/theme`

@@ -412,6 +412,58 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertFalse(array_key_exists('reasoning_effort', $this->server->receivedJson()));
     }
 
+    public function testAModelsOwnWordForAnEffortIsWhatGetsSent(): void
+    {
+        $this->send(
+            new Context([new UserMessage('hi')]),
+            $this->model(reasoning: true, thinkingLevelMap: ['high' => 'max']),
+            ReasoningEffort::High,
+        );
+
+        $this->assertSame('max', $this->server->receivedJson()['reasoning_effort']);
+    }
+
+    public function testAnEffortTheMapDoesNotMentionIsSentUnchanged(): void
+    {
+        $this->send(
+            new Context([new UserMessage('hi')]),
+            $this->model(reasoning: true, thinkingLevelMap: ['high' => 'max']),
+            ReasoningEffort::Medium,
+        );
+
+        $this->assertSame('medium', $this->server->receivedJson()['reasoning_effort']);
+    }
+
+    public function testThinkingOffCanBeSaidInTheEndpointsOwnWord(): void
+    {
+        // Some endpoints want to be told thinking is off rather than being told nothing. Only a
+        // string does it: `off => null` means this model has no way to be told, and the field is
+        // left out rather than guessed at.
+        $this->send(
+            new Context([new UserMessage('hi')]),
+            $this->model(reasoning: true, thinkingLevelMap: ['off' => 'none']),
+            null,
+        );
+
+        $this->assertSame('none', $this->server->receivedJson()['reasoning_effort']);
+
+        $this->server = new CannedServer();
+        $this->send(
+            new Context([new UserMessage('hi')]),
+            $this->model(reasoning: true, thinkingLevelMap: ['off' => null]),
+            null,
+        );
+
+        $this->assertFalse(array_key_exists('reasoning_effort', $this->server->receivedJson()));
+    }
+
+    public function testWithNoMapAtAllNothingIsSentForThinkingOff(): void
+    {
+        $this->send(new Context([new UserMessage('hi')]), $this->model(reasoning: true), null);
+
+        $this->assertFalse(array_key_exists('reasoning_effort', $this->server->receivedJson()));
+    }
+
     // ---- the endpoints that are not quite compatible -------------------------------------
 
     public function testGrokIsNotSentAReasoningEffortItRejects(): void
@@ -647,6 +699,10 @@ final class OpenAiCompletionsTest extends TestCase
                     $model->pricing,
                     $model->headers,
                     $model->compat,
+                    // Every field, field by field — which is why this list is a hazard: a new
+                    // one left off here does not fail to compile, it makes the feature look
+                    // broken in whichever test happens to need it.
+                    $model->thinkingLevelMap,
                 ),
                 $context,
                 new OpenAiOptions(temperature: $temperature, apiKey: 'test-key', reasoning: $reasoning),
@@ -825,6 +881,7 @@ final class OpenAiCompletionsTest extends TestCase
         bool $reasoning = false,
         bool $images = true,
         ?OpenAiCompat $compat = null,
+        array $thinkingLevelMap = [],
     ): Model {
         return new Model(
             'test-model',
@@ -839,6 +896,7 @@ final class OpenAiCompletionsTest extends TestCase
             new Pricing(input: 1.0, output: 2.0),
             [],
             $compat,
+            $thinkingLevelMap,
         );
     }
 

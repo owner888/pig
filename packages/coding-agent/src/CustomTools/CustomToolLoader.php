@@ -11,7 +11,7 @@ use Throwable;
 /**
  * Finding tool files and running them.
  *
- * A tool lives in a folder of its own: `~/.pig/tools/<name>/index.php`, or the same under
+ * A tool lives in a folder of its own: `~/.pig/agent/tools/<name>/index.php`, or the same under
  * `<cwd>/.pig/tools`. That is upstream's layout and the reason is the same — a tool is
  * more likely than a hook to want a second file next to it, and a folder is where that
  * goes. The file returns a factory; the factory is handed a `CustomToolApi` and returns a

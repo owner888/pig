@@ -10,11 +10,21 @@ use Pig\Tui\Env;
 final class Config
 {
     /**
-     * `~/.pig`, or whatever `PIG_HOME` says.
+     * `~/.pig/agent`, or whatever `PIG_HOME` says.
      *
      * Settings, sessions and a global `AGENTS.md` live here. Overridable because tests
      * must not read or write the real one, and because a person with several setups
      * should be able to keep them apart.
+     *
+     * **The `agent` is deliberate and was added later**, to match `piHome()` below — upstream's
+     * `getAgentDir()` has always been `~/.pi/agent`, and pig kept everything one level up. The
+     * two layouts being different shapes is the kind of difference that costs an afternoon every
+     * time somebody compares a path across the two tools.
+     *
+     * No migration: `PIG_HOME` still points wherever it is told, and an existing `~/.pig` is not
+     * searched as a fallback. The developer asked for the move rather than for compatibility with
+     * the old layout, and a fallback that quietly reads the old directory forever is how two
+     * homes end up half-populated. Moving the old `~/.pig/*` into `~/.pig/agent/` is the whole upgrade.
      */
     public static function home(): string
     {
@@ -24,7 +34,7 @@ final class Config
             return rtrim($override, '/');
         }
 
-        return self::homeDirectory() . '/.pig';
+        return self::homeDirectory() . '/.pig/agent';
     }
 
     /**

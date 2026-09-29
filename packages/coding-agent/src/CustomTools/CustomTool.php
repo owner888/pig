@@ -16,7 +16,7 @@ use InvalidArgumentException;
  * these — or a list of them:
  *
  * ```php
- * <?php // ~/.pig/tools/wc/index.php
+ * <?php // ~/.pig/agent/tools/wc/index.php
  *
  * use Pig\Agent\AgentToolResult;
  * use Pig\Ai\TextContent;

@@ -316,6 +316,29 @@ final class InteractiveModeTest extends TestCase
         return implode("\n", array_map(Ansi::strip(...), $this->mode->screen()->render(80)));
     }
 
+    /** How many rows a picker says it has, from the `(3/57)` it draws under a long list. */
+    private function pickerTotal(): int
+    {
+        return preg_match('/\(\d+\/(\d+)\)/', $this->screen(), $found) === 1 ? (int) $found[1] : 0;
+    }
+
+    /**
+     * The row a picker has the selection on, which is the arrow's line.
+     *
+     * For a fuzzy-filtered list this is the assertion worth making: everything matches a little,
+     * and what the filter is *for* is putting the right row under the cursor.
+     */
+    private function selectedRow(): string
+    {
+        foreach (explode("\n", $this->screen()) as $line) {
+            if (str_contains($line, '→ ')) {
+                return $line;
+            }
+        }
+
+        return '';
+    }
+
     /**
      * The screen as one run of words, for asserting on a sentence the renderer may have wrapped.
      *
@@ -574,11 +597,15 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringNotContainsString('suspend', $this->screen());
     }
 
-    public function testWhatWasLoadedIsListedInTheBanner(): void
+    public function testWhatWasLoadedIsListedUnderTheFullList(): void
     {
         $this->startWithContext();
 
+        $this->assertStringNotContainsString('[Context]', $this->screen());
+
+        $this->type("\x0f");
         $screen = $this->screen();
+
         $this->assertStringContainsString('[Context]', $screen);
         $this->assertStringContainsString('AGENTS.md', $screen);
     }
@@ -1575,10 +1602,11 @@ final class InteractiveModeTest extends TestCase
 
     // ---- skills -----------------------------------------------------------------------------
 
-    public function testLoadedSkillsAreListedInTheBanner(): void
+    public function testLoadedSkillsAreListedUnderTheFullList(): void
     {
         $this->start(skills: [new Skill('tidy', 'tidy up a file', '/s/tidy/SKILL.md', '/s/tidy', 'user')]);
 
+        $this->type("\x0f");
         $screen = $this->screen();
 
         $this->assertStringContainsString('[Skills]', $screen);
@@ -1653,7 +1681,7 @@ final class InteractiveModeTest extends TestCase
         $this->type('/skills');
         $this->type(self::ENTER);
 
-        $this->assertStringContainsString('~/.pig/skills', $this->screen());
+        $this->assertStringContainsString('~/.pig/agent/skills', $this->screen());
     }
 
     // ---- models -----------------------------------------------------------------------------
@@ -1669,6 +1697,96 @@ final class InteractiveModeTest extends TestCase
 
         $this->assertStringContainsString('Pick a model', $screen);
         $this->assertStringContainsString('claude-', $screen);
+    }
+
+    public function testTypingInTheModelListNarrowsItAndSwitchesToWhatIsLeft(): void
+    {
+        $this->start();
+
+        $this->type('/model');
+        $this->type(self::ENTER);
+        $this->type('haiku');
+
+        $this->assertStringContainsString('/haiku', $this->screen());
+
+        // A fuzzy match over a line naming the provider, the id and the name is a loose net —
+        // upstream's is too. What the assertion is about is the *ranking*: the best match is on
+        // the top row, which is where typing puts the selection.
+        $this->assertStringContainsString('claude-haiku-4-5', $this->selectedRow());
+
+        $this->type(self::ENTER);
+
+        $this->assertSame('claude-haiku-4-5', $this->session->model()?->id);
+    }
+
+    public function testTheModelListIsSearchedByProviderAndNameAsWellAsId(): void
+    {
+        // The rows are numbered `0`, `1`, `2`, so without a haystack of their own there is
+        // nothing here anyone could type. Upstream ranks on provider, `provider/id`, id and name.
+        $this->start();
+
+        $this->type('/model');
+        $this->type(self::ENTER);
+        $this->type('anthropic/haiku');
+
+        // Every token has to match, and `anthropic/…` is two tokens: a github-copilot row named
+        // "Claude Haiku 4.5" cannot satisfy the first one.
+        $this->assertStringContainsString('claude-haiku-4-5', $this->selectedRow());
+        $this->assertStringNotContainsString('No matches', $this->screen());
+    }
+
+    public function testAProviderPrefixedQueryRanksThatProvidersOwnAboveAResellersCopy(): void
+    {
+        // The reason upstream's search line names the provider twice and the bare id last. Rank
+        // the rows on how they read instead and `openai/gpt` puts groq's `openai/gpt-oss-120b`
+        // first, because that row's *id* contains the provider the query names.
+        $this->start();
+
+        $this->type('/model');
+        $this->type(self::ENTER);
+        $this->type('openai/gpt');
+
+        $row = $this->selectedRow();
+
+        $this->assertStringContainsString('openai ·', $row);
+        $this->assertStringNotContainsString('groq', $row);
+    }
+
+    public function testBackspaceInTheModelListWidensItAgain(): void
+    {
+        $this->start();
+
+        $this->type('/model');
+        $this->type(self::ENTER);
+        $this->type('haiku');
+
+        $this->assertStringContainsString('/haiku', $this->screen());
+        $narrowed = $this->pickerTotal();
+
+        foreach (range(1, 5) as $ignored) {
+            $this->type("\x7f");
+        }
+
+        // The query line goes with the last character of the query, and the list is longer than
+        // it was. The *selection* stays where it was rather than jumping back to the top, which
+        // is upstream's behaviour and the point of clamping instead of resetting: you do not get
+        // thrown to the start of a list you had scrolled into.
+        $this->assertStringNotContainsString('/haiku', $this->screen());
+        $this->assertGreaterThan($narrowed, $this->pickerTotal());
+    }
+
+    public function testEscapeLeavesTheModelListEvenAfterTypingInIt(): void
+    {
+        $this->start();
+        $before = $this->session->model()?->id;
+
+        $this->type('/model');
+        $this->type(self::ENTER);
+        $this->type('haiku');
+        $this->type(self::ESCAPE);
+
+        $this->assertStringNotContainsString('Pick a model', $this->screen());
+        $this->assertSame($before, $this->session->model()?->id);
     }
 
     public function testModelWithAPatternSwitchesWithoutOpeningTheList(): void
@@ -2707,6 +2825,7 @@ final class InteractiveModeTest extends TestCase
     public function testACustomToolIsNamedInTheBanner(): void
     {
         $this->start(customTools: $this->tools('wc'));
+        $this->type("\x0f");
 
         $this->assertStringContainsString('[Tools]', $this->screen());
     }

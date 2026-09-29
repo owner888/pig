@@ -41,7 +41,7 @@ final readonly class SignIn
       pig-ai help                    this
 
     The token is kept in the same file `pig` reads — pi's `~/.pi/agent/auth.json` when pi has one,
-    and `~/.pig/auth.json` otherwise. `pig` itself has `/login`, which does the same thing; this is
+    and `~/.pig/agent/auth.json` otherwise. `pig` itself has `/login`, which does the same thing; this is
     for a machine with no terminal UI to do it from.
 
     TEXT;

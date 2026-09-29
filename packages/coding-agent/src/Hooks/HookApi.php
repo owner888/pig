@@ -20,7 +20,7 @@ use Pig\Tui\Process;
  * registers what it wants:
  *
  * ```php
- * <?php // ~/.pig/hooks/no-force-push.php
+ * <?php // ~/.pig/agent/hooks/no-force-push.php
  *
  * use Pig\CodingAgent\Hooks\HookApi;
  * use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;

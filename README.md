@@ -12,7 +12,7 @@ runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the 
 > out of the conversation). Sessions are saved as they happen — `--continue` picks up the
 > last one, `/resume` picks from a list. When the context fills it summarises itself and
 > carries on, which `/compact` also does on demand, and `/model` switches models mid-session.
-> Skills are picked up from `~/.pig/skills` and from Claude's and Codex's folders too, and
+> Skills are picked up from `~/.pig/agent/skills` and from Claude's and Codex's folders too, and
 > images a tool returns are drawn in the terminal. Hooks are PHP files that can block a
 > tool, edit what the model is shown, or add commands of their own, and a folder with an
 > `index.php` in it is a tool the model can call. `-p` prints one answer and exits, and
@@ -104,7 +104,7 @@ A start asks Packagist once, in the background, whether there is a newer pig, an
 the conversation if there is — with the command to run, because pig does not update itself.
 Nothing is said when the answer is no, when the network is not there, or when anything else goes
 wrong. `--no-update-check` skips the asking for one run, and `"update": {"check": false}` in
-`~/.pig/settings.json` turns it off for good. `/changelog` shows what changed, and the entries
+`~/.pig/agent/settings.json` turns it off for good. `/changelog` shows what changed, and the entries
 newer than the version you last saw are shown once, by themselves, after an upgrade.
 
 With a Claude Pro or Max subscription there is no key to set: `/login` gives you a URL to open
@@ -113,7 +113,7 @@ a code to type at github.com and waits, and escape stops the waiting. Gemini CLI
 Code Assist) opens a browser and catches the redirect on `localhost:8085`, so port 8085 has to be
 free; it needs Google's own client id and secret, which pig does not ship — set
 `GEMINI_CLI_CLIENT_ID` and `GEMINI_CLI_CLIENT_SECRET`, or `geminiCli.clientId` and
-`geminiCli.clientSecret` in `~/.pig/settings.json`. Antigravity is the fourth and works the same
+`geminiCli.clientSecret` in `~/.pig/agent/settings.json`. Antigravity is the fourth and works the same
 way on port 51121, with a client id and secret of its own (`ANTIGRAVITY_CLIENT_ID` and
 `ANTIGRAVITY_CLIENT_SECRET`, or `antigravity.clientId` and `antigravity.clientSecret`) — it is
 what gets you Gemini 3, Claude and GPT-OSS through a Google subscription. Whichever you use, the
@@ -217,7 +217,7 @@ summarised first, then sent again, because the same request would be exactly as 
 seconds. Escape stops that summarising as well, and stops it whether it was `/compact` that asked
 or a full window. `retry.enabled: false` in the settings turns the first off.
 
-A provider pig has never heard of goes in `~/.pig/models.json` — your own box, a proxy, a
+A provider pig has never heard of goes in `~/.pig/agent/models.json` — your own box, a proxy, a
 local server — and its models then work everywhere a built-in one does, including `--model`,
 `/model` and `--list-models`:
 
@@ -242,25 +242,25 @@ Anything wrong with the file is printed and skipped — the rest of it, and ever
 model, still work. It is pi's format, and pi's own `~/.pi/agent/models.json` is read when pig
 has none.
 
-Settings live in `~/.pig/settings.json`, and a project can override them in
+Settings live in `~/.pig/agent/settings.json`, and a project can override them in
 `.pig/settings.json`. The theme, model and thinking level you pick are remembered.
 `/settings` shows what can be changed from inside a session — theme, thinking, whether
 reasoning is drawn, whether pictures are drawn, whether messages you type mid-run go over one at
 a time or together, auto-compact, auto-retry — with what each one is set to now. Enter changes
 the row you are on and the list stays open; escape closes it.
 
-A markdown file in `~/.pig/commands/` or `.pig/commands/` becomes a slash command: `review.md`
+A markdown file in `~/.pig/agent/commands/` or `.pig/commands/` becomes a slash command: `review.md`
 is `/review`, its body is the prompt, and `$1` and `$@` are filled from what follows. Those and
 the ones a hook registers work outside the terminal too — `pig -p "/review src/Foo.php"` sends the
 prompt, and `pig -p "/deploy staging"` runs the hook's command.
 
-A PHP file in `~/.pig/hooks/` or `.pig/hooks/` that returns a callable is a hook. It gets
+A PHP file in `~/.pig/agent/hooks/` or `.pig/hooks/` that returns a callable is a hook. It gets
 sixteen events — every tool call and result, every turn, the context on its way to the model,
 compaction, `/tree`, startup and shutdown — and can block a tool, rewrite what the model is
 shown, or add a slash command of its own:
 
 ```php
-<?php // ~/.pig/hooks/no-force-push.php
+<?php // ~/.pig/agent/hooks/no-force-push.php
 
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
@@ -300,13 +300,13 @@ plain `bool` back. `select`, `input`, a multi-line `editor`, `notify`, a keyed f
 `custom` (draw your own component) are there too. Escape answers no, so walking away from the
 question does not wave the tool through.
 
-A folder with an `index.php` in `~/.pig/tools/` or `.pig/tools/` is a tool the model can
+A folder with an `index.php` in `~/.pig/agent/tools/` or `.pig/tools/` is a tool the model can
 call — a folder, because that directory also holds the `fd` and `rg` binaries pig may have
 downloaded, and a file there is one of those. Same loader as hooks, same trade-off; `/tools`
 lists everything the model has and where each one came from, and `--no-tools` skips them:
 
 ```php
-<?php // ~/.pig/tools/wc/index.php
+<?php // ~/.pig/agent/tools/wc/index.php
 
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
@@ -334,7 +334,7 @@ session starts, switches, jumps or ends, which is how one that keeps state rebui
 go of it. And it can draw its own call and its own result in the transcript,
 so a tool whose answer is a table is not squeezed through formatting meant for files.
 
-Skills are folders with a `SKILL.md` in them. pig reads `~/.pig/skills` and `.pig/skills`, and
+Skills are folders with a `SKILL.md` in them. pig reads `~/.pig/agent/skills` and `.pig/skills`, and
 also `~/.claude/skills`, `.claude/skills`, `~/.codex/skills`, `~/.pi/agent/skills` and `.pi/skills`,
 so a skill written for another agent — or for pi, before the move — works here unchanged. Two folders
 holding the same name is an override rather than an error: `pig > pi > claude > codex`, a project
@@ -393,7 +393,7 @@ the TUI uses.
 
 PHP >= 8.3 with `ext-json`, `ext-mbstring`, `ext-openssl`, and `ext-pcntl` for the terminal UI.
 `stty` is the one external binary that is required. `fd` and `rg` are needed by the `find` and
-`grep` tools, and pig downloads them into `~/.pig/tools/` on first use if they are not installed
+`grep` tools, and pig downloads them into `~/.pig/agent/bin/` on first use if they are not installed
 (`PIG_OFFLINE=1` turns that off).
 
 `Fiber` arrived in PHP 8.1 and everything rests on it, so 8.1 is the absolute floor. 8.3 is the
@@ -430,7 +430,7 @@ over from another provider, a prompt past the window. It takes its keys where pi
 machine that has signed in needs nothing, and `php test/live.php anthropic google` names which to run
 — or `php test/live.php google/<model-id>` to try one particular model. The id has to be one the
 registry carries, which is pinned at the upstream anchor commit; a model released since then is
-declared in `~/.pig/models.json` and is then reachable both here and from `bin/pig`. Each call is
+declared in `~/.pig/agent/models.json` and is then reachable both here and from `bin/pig`. Each call is
 capped at a few hundred tokens.
 
 Verify against the floor, not just your PHP: 8.3 rejects 8.4-only syntax at parse time, and it is

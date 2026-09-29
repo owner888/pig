@@ -9,7 +9,7 @@ use Pig\CodingAgent\Config;
 /**
  * Prompts kept as files, reachable as `/name`.
  *
- * A markdown file in `~/.pig/commands/` or `.pig/commands/` becomes a slash command whose
+ * A markdown file in `~/.pig/agent/commands/` or `.pig/commands/` becomes a slash command whose
  * body is the prompt. `/review src/Foo.php` sends `review.md` with `$1` filled in — which
  * is the whole feature: the thing people retype every day, typed once.
  *

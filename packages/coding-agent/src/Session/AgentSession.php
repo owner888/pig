@@ -263,10 +263,9 @@ final class AgentSession
         // taken on trust for the same reason `setModel()` clamps: a level the model cannot
         // do is a request the provider rejects, and the person resuming did not ask for it
         // — the file did.
-        $levels = $this->availableThinkingLevels();
         $level = $recorded['thinking']?->known() ?? $this->thinkingLevel();
 
-        $this->agent->setThinkingLevel(in_array($level, $levels, true) ? $level : ThinkingLevel::Off);
+        $this->agent->setThinkingLevel($this->clampThinking($level));
     }
 
     // ---- events ------------------------------------------------------------------
@@ -512,10 +511,22 @@ final class AgentSession
         // only one of them, which is this audit's recurring find.
         $this->settings?->setDefaultModel($model->id, $model->provider);
 
-        $wanted = $thinking ?? $this->thinkingLevel();
-        $levels = $this->availableThinkingLevels();
+        $this->setThinkingLevel($this->clampThinking($thinking ?? $this->thinkingLevel()));
+    }
 
-        $this->setThinkingLevel(in_array($wanted, $levels, true) ? $wanted : ThinkingLevel::Off);
+    /**
+     * $level if this model has it, otherwise the nearest one it does have.
+     *
+     * Was `in_array(…) ? … : Off` at both call sites, which is the same thing only when every
+     * reasoning model has every level — true while the list was hardcoded and false the moment a
+     * `thinkingLevelMap` can take one away. Upstream searches up and then down, so a model
+     * missing `low` lands on `medium` rather than having thinking switched off.
+     */
+    private function clampThinking(ThinkingLevel $level): ThinkingLevel
+    {
+        $model = $this->model();
+
+        return $model === null ? $level : ThinkingLevel::clampedFor($model, $level);
     }
 
     /**
@@ -1830,19 +1841,16 @@ final class AgentSession
     {
         $model = $this->model();
 
-        if ($model === null || !$model->reasoning) {
-            return [];
-        }
-
-        $levels = [
-            ThinkingLevel::Off,
-            ThinkingLevel::Minimal,
-            ThinkingLevel::Low,
-            ThinkingLevel::Medium,
-            ThinkingLevel::High,
-        ];
-
-        return $model->supportsXhigh() ? [...$levels, ThinkingLevel::Xhigh] : $levels;
+        // **The empty list is pig's way of saying "no thinking here at all"**, and it is load
+        // bearing: `cycleThinkingLevel()` answers null on it, and the settings list uses it to
+        // decide whether there is a thinking row to draw. Upstream's `supportedBy()` answers
+        // `[off]` for a model that cannot reason — one level, which is true and is a different
+        // statement. Handing that to these callers turns "no row" into "a row with one choice",
+        // which is what seven tests said the first time this was written without the guard.
+        //
+        // So the rule about *which* levels a reasoning model has lives on the enum, and the rule
+        // about whether there are any at all stays here.
+        return $model === null || !$model->reasoning ? [] : ThinkingLevel::supportedBy($model);
     }
 
     // ---- what it has cost ---------------------------------------------------------

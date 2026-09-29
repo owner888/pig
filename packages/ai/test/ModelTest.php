@@ -51,6 +51,77 @@ final class ModelTest extends TestCase
     }
 
     /** @param list<'text'|'image'> $input */
+    // ---- what a model calls each thinking level -------------------------------------------
+
+    /**
+     * The three states, which are the whole of this field.
+     *
+     * A key that is absent and a key whose value is null are *different*, and every operator
+     * that would be natural to reach for here — `??`, `isset()`, `empty()` — flattens them into
+     * each other. Only `array_key_exists()` tells them apart.
+     */
+    public function testALevelTheMapDoesNotMentionSendsItsOwnName(): void
+    {
+        $model = $this->thinking(['high' => 'max']);
+
+        $this->assertSame('medium', $model->thinkingEffort('medium'));
+        $this->assertTrue($model->hasThinkingLevel('medium'));
+    }
+
+    public function testALevelTheMapRenamesSendsTheNewName(): void
+    {
+        $this->assertSame('max', $this->thinking(['high' => 'max'])->thinkingEffort('high'));
+    }
+
+    public function testALevelTheMapNullsIsOneTheModelDoesNotHave(): void
+    {
+        $model = $this->thinking(['minimal' => null]);
+
+        $this->assertFalse($model->hasThinkingLevel('minimal'));
+        $this->assertNull($model->thinkingEffort('minimal'));
+
+        // And its neighbours are untouched: a partial map says only what is unusual.
+        $this->assertTrue($model->hasThinkingLevel('low'));
+    }
+
+    public function testXhighComesFromTheMapWhenItSaysAnythingAtAll(): void
+    {
+        $this->assertTrue($this->thinking(['xhigh' => 'xhigh'])->supportsXhigh());
+        $this->assertFalse($this->thinking(['xhigh' => null])->supportsXhigh());
+    }
+
+    public function testWithNoMapXhighStillComesFromTheIdList(): void
+    {
+        // pig's generated tables carry no maps, so dropping this would quietly take a level away
+        // from the three models that have it.
+        $this->assertTrue($this->thinking([], 'gpt-5.2')->supportsXhigh());
+        $this->assertFalse($this->thinking([], 'claude-sonnet-4-5')->supportsXhigh());
+    }
+
+    public function testAMapSayingNoBeatsTheIdListRatherThanBeingOverruledByIt(): void
+    {
+        // The two are not an either-or: the list is the *fallback*, so a `models.json` that
+        // redeclares one of those ids with `"xhigh": null` is taken at its word. Written as
+        // `idList || map` this passes every other test in this file and quietly ignores the file.
+        $this->assertFalse($this->thinking(['xhigh' => null], 'gpt-5.2')->supportsXhigh());
+    }
+
+    /** @param array<string, string|null> $map */
+    private function thinking(array $map, string $id = 'claude-sonnet-4-5'): Model
+    {
+        return new Model(
+            $id,
+            'Test',
+            Api::AnthropicMessages,
+            'anthropic',
+            'https://api.anthropic.com',
+            200_000,
+            64_000,
+            reasoning: true,
+            thinkingLevelMap: $map,
+        );
+    }
+
     private function model(Pricing $pricing, array $input = ['text']): Model
     {
         return new Model(

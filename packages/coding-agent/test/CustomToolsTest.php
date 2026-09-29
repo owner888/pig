@@ -170,6 +170,22 @@ final class CustomToolsTest extends TestCase
         $this->assertSame([], $problems);
     }
 
+    public function testADownloadedBinaryIsNotMistakenForOneOfThePersonsTools(): void
+    {
+        // `fd` and `rg` used to be downloaded into this very directory, and the only reason it
+        // never broke is the rule above: a binary is a file and the loader wants folders. They
+        // live in `bin/` now — `ToolInstaller::directory()` says why — and this is the test that
+        // notices if that ever moves back.
+        mkdir($this->home . '/bin', 0o777, true);
+        file_put_contents($this->home . '/bin/fd', "#!/bin/sh\necho nope\n");
+        file_put_contents($this->home . '/tools/rg', "#!/bin/sh\necho nope\n");
+
+        [$tools, $problems] = CustomToolLoader::load($this->project, ToolSet::ALL, [], $this->home);
+
+        $this->assertSame([], $tools);
+        $this->assertSame([], $problems);
+    }
+
     public function testBothFoldersAreReadWithTheUserFirst(): void
     {
         $this->write($this->home . '/tools', 'a', self::source('a'));

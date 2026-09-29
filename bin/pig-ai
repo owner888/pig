@@ -32,7 +32,7 @@ use Pig\CodingAgent\Settings;
 use Pig\Tui\Style;
 
 // The settings are read for two things: the two Google flows need a client id and secret that this
-// repository does not hold, and `~/.pig/settings.json` is one of the two places they can be — and
+// repository does not hold, and `~/.pig/agent/settings.json` is one of the two places they can be — and
 // a sign-in is the *first* thing that needs the network, so it needs the proxy as much as a turn
 // does. Signing in and then failing to reach the provider would be a confusing way to find out.
 $settings = Settings::load(getcwd() ?: '.');

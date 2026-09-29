@@ -14,7 +14,7 @@ use Pig\Tui\Process;
  * Fetching `fd` and `rg` when the machine has not got them.
  *
  * Ported from upstream's `ensureTool()`, which is why the agent works on a machine where
- * `which fd` finds nothing. The binaries land in `~/.pig/tools/`, not on the PATH, so
+ * `which fd` finds nothing. The binaries land in `~/.pig/agent/bin/`, not on the PATH, so
  * nothing outside pig is touched.
  *
  * Two things are added on top of upstream. `PIG_OFFLINE=1` turns it off, for a machine
@@ -66,9 +66,19 @@ final class ToolInstaller
         return self::directory() . '/' . $binary . (PHP_OS_FAMILY === 'Windows' ? '.exe' : '');
     }
 
+    /**
+     * `~/.pig/agent/bin`, which is upstream's `join(getAgentDir(), "bin")`.
+     *
+     * **Was `tools/`, and that was a collision rather than a naming preference.**
+     * `CustomTools\CustomToolLoader` scans the same `tools/` for folders with an `index.php` in
+     * them — a person's own tools. So a downloaded `fd` binary sat in the directory pig also
+     * treats as a list of tools to load, and the only reason nothing broke is that the loader
+     * wants directories and a binary is a file. Separating them is the point; matching upstream
+     * is the reason the new name is `bin`.
+     */
     public static function directory(): string
     {
-        return Config::home() . '/tools';
+        return Config::home() . '/bin';
     }
 
     /** Whether downloading is allowed at all. */

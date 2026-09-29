@@ -436,8 +436,28 @@ final class OpenAiCompletions
             $body['tool_choice'] = $options->toolChoice;
         }
 
+        // Upstream's two default arms, and the operators are copied rather than tidied. The set
+        // arm uses `??`, so a level the map calls *null* still sends the level's own name here,
+        // while upstream's zai and baseten arms drop the field for the same null. That
+        // inconsistency is upstream's; it costs nothing because a null level never reaches a
+        // request — `ThinkingLevel::supportedBy()` has already kept it out of the picker.
+        //
+        // Keyed by the **effort** and not by the thinking level, because pig converts one to the
+        // other a layer above the provider (`ThinkingLevel::toReasoning()`), where upstream still
+        // has the level. The only key that differs is `minimal`, which pig has already sent as
+        // `low` by this point — and a `minimal` the map calls null is filtered out upstream of
+        // here anyway, so nothing reachable is lost.
         if ($options?->reasoning !== null && $model->reasoning && $compat->reasoningEffort) {
-            $body['reasoning_effort'] = $options->reasoning->value;
+            $body['reasoning_effort'] = $model->thinkingEffort($options->reasoning->value) ?? $options->reasoning->value;
+        } elseif ($options?->reasoning === null && $model->reasoning && $compat->reasoningEffort) {
+            // Thinking is off, and some endpoints want to be told so in their own word for it.
+            // Only a string: `off => null` means this model has no way to be told, and the field
+            // is left out rather than guessed at.
+            $off = $model->thinkingLevelMap['off'] ?? null;
+
+            if (is_string($off)) {
+                $body['reasoning_effort'] = $off;
+            }
         }
 
         return $body;

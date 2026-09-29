@@ -42,7 +42,9 @@ final class ConfigTest extends TestCase
 
     public function testPigsOwnHomeIsUnderTheHomeDirectory(): void
     {
-        $this->assertSame('/tmp/pig-config-home/.pig', Config::home());
+        // `agent` under `.pig`, the same shape as `~/.pi/agent` — see `Config::home()` for why
+        // there is no fallback to the old `~/.pig`.
+        $this->assertSame('/tmp/pig-config-home/.pig/agent', Config::home());
     }
 
     public function testPigHomeOverridesIt(): void

@@ -80,7 +80,7 @@ final class SearchToolsTest extends ToolTestCase
      * **Emptying the PATH is not enough, and that is the whole reason this helper exists.**
      * `ExternalTool::locate()` looks in pig's *own* tools directory first — deliberately, so a
      * downloaded copy beats one the PATH later shadows — so on any machine where pig has ever
-     * fetched `fd` or `rg` into `~/.pig/tools`, these two tests found the tool and nothing threw.
+     * fetched `fd` or `rg` into `~/.pig/agent/bin`, these two tests found the tool and nothing threw.
      * It passed in a container with no tools and failed on a machine that had used pig, which is
      * the wrong way round for a test about something being absent. `PIG_HOME` points that lookup
      * at an empty directory, as `ToolInstallerTest` already does in its `setUp`.

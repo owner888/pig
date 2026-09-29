@@ -176,7 +176,7 @@ more than the saved dependency, and two implementations that can disagree about 
 exist is a bug the model would have to debug.
 
 `ensureTool()` is ported too, so the same thing happens as in pi: `ExternalTool` looks in
-`~/.pig/tools/`, then the PATH (knowing that Debian calls `fd` `fdfind`), and only then has
+`~/.pig/agent/tools/`, then the PATH (knowing that Debian calls `fd` `fdfind`), and only then has
 `ToolInstaller` fetch the release from GitHub. Two differences, both of which upstream has at
 HEAD or would be better for: `PIG_OFFLINE=1` turns fetching off, and the download says what it
 is pulling and from where **before** it starts, because an executable arriving from the
@@ -369,7 +369,7 @@ added between a tool call and its result is a request the provider rejects outri
 event, so a UI redrawing on it already has the message.
 
 `Session\SessionManager` is the conversation on disk: one JSON object per line, appended
-to, under `~/.pig/sessions/<the project's path, flattened>/`. Appending rather than
+to, under `~/.pig/agent/sessions/<the project's path, flattened>/`. Appending rather than
 rewriting is what makes a session survive whatever ends the process. **Nothing is written
 until the first assistant message** — someone who starts pig, reads the banner and quits
 leaves no file behind, which is what makes the directory worth opening at all; the
@@ -1012,7 +1012,7 @@ newlines — the renderer turns a paragraph of prose into one long line, so coun
 folds every code block and never folds any thinking, which is exactly backwards.
 
 `Settings` is upstream's `core/settings-manager.ts`. Two JSON files, both optional:
-`~/.pig/settings.json` is the person's and is written back to; `<cwd>/.pig/settings.json` is
+`~/.pig/agent/settings.json` is the person's and is written back to; `<cwd>/.pig/settings.json` is
 the project's and is only ever read. The project wins, which is the point of it being
 separate — a repository can say "compaction keeps more here" without touching anyone's
 preferences, and a `/theme` typed in that repository still saves to the person's file and
@@ -1225,7 +1225,7 @@ blocked, next steps — not a recap) and five things worth keeping straight:
   the context filled up.
 
 `Prompt\SlashCommands` is upstream's `core/slash-commands.ts`: a markdown file in
-`~/.pig/commands/` or `.pig/commands/` becomes `/name`, and its body is the prompt.
+`~/.pig/agent/commands/` or `.pig/commands/` becomes `/name`, and its body is the prompt.
 `/review src/Foo.php` sends `review.md` with `$1` filled in.
 
 Not the same thing as a skill, though both are markdown with frontmatter and the two are
@@ -1268,13 +1268,13 @@ instructions are a file the model reads when a task matches. That is what makes 
 affordable — a hundred of them cost a hundred lines, not a hundred documents.
 
 Seven roots, in this order: `~/.codex/skills`, `~/.claude/skills`, `.claude/skills`,
-`~/.pi/agent/skills`, `.pi/skills`, `~/.pig/skills`, `.pig/skills`, plus whatever `--skills-dir`
+`~/.pi/agent/skills`, `.pi/skills`, `~/.pig/agent/skills`, `.pig/skills`, plus whatever `--skills-dir`
 adds. Someone who wrote a skill once should not have to write it again per agent. The `~/.claude`
 roots are scanned **one level deep** and the others recursively, because a folder per skill is the
 layout there and descending further finds a skill's own examples rather than more skills.
 
 Five of the seven are upstream's. **pi's two are pig's own addition**, and upstream has no reason to
-have them — it *is* pi, so `~/.pi/agent/skills` is the root pig renamed to `~/.pig/skills`. Reading
+have them — it *is* pi, so `~/.pi/agent/skills` is the root pig renamed to `~/.pig/agent/skills`. Reading
 pi's as well follows from what pig already does everywhere else: it opens pi's sessions, its
 `auth.json` and its `models.json`. Keeping somebody's conversations and credentials across the move
 and silently dropping their skills is the half-migration that is worse than none. Note the depth:
@@ -1295,7 +1295,7 @@ it. Three things about the shape:
   have, and a malformed skill in a folder nobody asked to read is not worth a warning.
 - **pig's own two roots have no key, and that is a naming problem rather than a missing feature.**
   Upstream's own root *is* `~/.pi/agent/skills`, so its `enablePiUser` and pig's name the same
-  directory and no upstream key is left over for `~/.pig/skills`. Inventing `enablePigUser` would put
+  directory and no upstream key is left over for `~/.pig/agent/skills`. Inventing `enablePigUser` would put
   a key in a settings file that only pig understands — the `models.json` `compat` trade, which this
   file already argues the other way. `skills.enabled` and `--no-skills` are the switch for those two,
   `ignoredSkills` for anything narrower.
@@ -1317,12 +1317,12 @@ link — four folders, one name, and the pig one is what loads.
 
 **This is the second divergence, and upstream is the other way round.** It keeps the *first* one and
 warns `"skipping this one"`, in this same order — which makes `~/.codex/skills` outrank everything,
-including pi's own skills. Nobody who edits a skill in `~/.pig/skills` expects a copy in another
+including pi's own skills. Nobody who edits a skill in `~/.pig/agent/skills` expects a copy in another
 tool's folder to be the one that runs, and between two answers to the same name the more specific one
 is right. The override is named in a warning either way, so which of the two files is in effect is
 never a guess: `name taken: "review" overrides the one from ~/.pi/agent/skills/review/SKILL.md`.
 
-One file reached through two roots — `~/.claude/skills` symlinked into `~/.pig/skills` — is still one
+One file reached through two roots — `~/.claude/skills` symlinked into `~/.pig/agent/skills` — is still one
 skill and no warning, because the `realpath` check comes first. That is the normal way to keep one
 copy, and it is not an override.
 
@@ -1719,7 +1719,7 @@ entry per provider, in upstream's own shape, either `{"type":"api_key","key":…
 `{"type":"oauth","refresh":…,"access":…,"expires":…}`.
 
 **It is pi's file, not a copy of it.** `Auth::discover()` opens `~/.pi/agent/auth.json` when
-that exists and only falls back to `~/.pig/auth.json`. That is not the same decision as reading
+that exists and only falls back to `~/.pig/agent/auth.json`. That is not the same decision as reading
 pi's sessions, and the reason is specific: Anthropic **rotates** refresh tokens, so the old one
 is void the moment a new one is issued. Two files holding the same token is two tools taking it
 in turns to log each other out — whichever refreshes first wins, and the other has to sign in
@@ -1805,7 +1805,7 @@ The other half was already here under other names (`Ai\Models`, `Auth`, `ModelRe
 is exactly how this one stayed invisible long enough to be the fourth thing the left-out table
 got wrong.
 
-`~/.pig/models.json`, or pi's `~/.pi/agent/models.json` when pig has none — a fallback rather
+`~/.pig/agent/models.json`, or pi's `~/.pi/agent/models.json` when pig has none — a fallback rather
 than a merge, because one file is what upstream has and somebody who already told pi about
 their box should not have to say it twice. Neither is ever written to. `--no-save` reads
 neither: that flag means the run touches nothing of the person's.
@@ -2380,12 +2380,12 @@ Three rules make it testable, and they are worth keeping when it grows:
 
 `bin/pig` went from 539 lines to 411.
 
-`Hooks\` is upstream's `core/hooks/`. A hook is a PHP file in `~/.pig/hooks` or
+`Hooks\` is upstream's `core/hooks/`. A hook is a PHP file in `~/.pig/agent/hooks` or
 `.pig/hooks` that returns a callable; the callable is handed a `HookApi` and registers what
 it wants to hear about:
 
 ```php
-<?php // ~/.pig/hooks/no-force-push.php
+<?php // ~/.pig/agent/hooks/no-force-push.php
 
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
@@ -2591,13 +2591,13 @@ and the part that survives into the conversation is the part that reaches the mo
 dialog on and a second mode will have a different one.
 
 `CustomTools\` is upstream's `core/custom-tools/`, on the same loader. A tool lives in a
-folder of its own — `~/.pig/tools/<name>/index.php`, or the same under `<cwd>/.pig/tools`
+folder of its own — `~/.pig/agent/tools/<name>/index.php`, or the same under `<cwd>/.pig/tools`
 — because a tool is likelier than a hook to want a second file beside it, and a folder is
 where that goes. The file returns a factory; the factory returns a `CustomTool` or a list
 of them:
 
 ```php
-<?php // ~/.pig/tools/wc/index.php
+<?php // ~/.pig/agent/tools/wc/index.php
 
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
@@ -2659,11 +2659,11 @@ Five things worth keeping straight:
 `customTools`. The system prompt's "Available tools" list stays the built-ins, as upstream's
 does: a custom tool reaches the model as a tool definition, which is the part that matters.
 
-**`~/.pig/tools/` holds two unrelated things**, and that is upstream's doing rather than a
+**`~/.pig/agent/tools/` holds two unrelated things**, and that is upstream's doing rather than a
 choice made here: `ToolInstaller` downloads `fd` and `rg` into it, and custom tools live in
 it too. They are told apart by shape — a downloaded binary is a file, a custom tool is a
 folder with an entry file — and the discovery glob is `*/index.php`, so neither sees the
-other. Worth knowing before wondering why `ls ~/.pig/tools` shows a mixture.
+other. Worth knowing before wondering why `ls ~/.pig/agent/tools` shows a mixture.
 
 `renderCall` and `renderResult` are ported too: a tool hands back a `Pig\Tui\Component` and
 `ToolExecutionComponent` draws that instead of its own tool view — which is what stops a tool
@@ -5398,7 +5398,7 @@ Three things wrong with it, in order of how much they cost:
   the space in a path copied out of Finder is U+202F. So a hook that is right there was reported
   as `not a readable file`, naming a path that looks identical to the one on disk. Reproduced.
 - **A missing `HOME` becomes `/tmp`**, which is a silent fallback of exactly the kind the
-  conventions forbid — `~/.pig/hooks/x.php` resolves to a file under the temp directory and the
+  conventions forbid — `~/.pig/agent/hooks/x.php` resolves to a file under the temp directory and the
   complaint names a path nobody wrote. `Paths::expand()` leaves the path alone.
 - **It does not collapse `..`**, which `Paths::resolve()` has done since the `grep` prefix fix.
 
@@ -5456,7 +5456,7 @@ Tests: `HookRunnerTest::testAToolCallHandlerThatThrowsIsNotCaughtHere` and
 
 ### Two hook files reaching the same path is a fatal error, not a doubled handler
 
-`~/.pig/hooks` symlinked into a project's `.pig/hooks` is a normal way to keep one copy of a
+`~/.pig/agent/hooks` symlinked into a project's `.pig/hooks` is a normal way to keep one copy of a
 hook, and the obvious reading is that loading it twice just registers its handlers twice.
 It is worse than that: `require` on a file that declares a function a second time is a fatal
 `Error`, so the second load kills the *first* hook as well and neither works.
@@ -5640,7 +5640,7 @@ ported, tested and one flag away. The test that asserted the old behaviour was c
 `--read-only` so the three answers cannot drift apart.
 
 `--tools` had to join `Arguments::TAKES_A_VALUE`, which is the trap that list exists for — and it is
-one letter from `--no-tools`, which is about the tools **somebody wrote** in `~/.pig/tools` and not
+one letter from `--no-tools`, which is about the tools **somebody wrote** in `~/.pig/agent/tools` and not
 about this. `ArgumentsTest` states both, next to each other.
 
 ### DeepSeek accepted the field and ignored it, so every request to it was unbounded
@@ -8823,7 +8823,7 @@ ran on, or a test that could not work under the real runner. So the entry is abo
 green in the container and red on a Mac that had actually used pig:
 
 - **`SearchToolsTest`'s two missing-tool tests emptied `PATH` and stopped there.** But
-  `ExternalTool::locate()` looks in **pig's own `~/.pig/tools` first**, deliberately, so a downloaded
+  `ExternalTool::locate()` looks in **pig's own `~/.pig/agent/tools` first**, deliberately, so a downloaded
   copy beats one the PATH shadows — which means on any machine where pig has ever fetched `fd`, the
   tool was found and nothing threw. A test about something being absent that only passes where it was
   never present. `PIG_HOME` now points at an empty directory as well, which is what
@@ -9519,6 +9519,242 @@ Regression tests: `FooterTest::testNothingIsEverCutInsideACharacter` over widths
 the cut only lands inside a character at some of them, and only some widths reach the branch at
 all. The second asserts the line is **exactly** the width whenever any of the right-hand text is
 on it; without that, the byte-sized gap survives every mutation.
+
+### The list widget could filter and nothing ever asked it to
+
+`SelectList::setFilter()` existed, and the only caller in the whole repository was its own test.
+Every picker — models, sessions, themes, sign-ins — took arrow keys and nothing else, and a
+printable key fell off the end of a `match` into `default => null`.
+
+It also filtered on the wrong field. `str_starts_with($item->value, …)`, and the model picker's
+values are `0`, `1`, `2`: a row's position in the list. *There was nothing there anyone could
+type.* A prefix match is the wrong shape besides — `cmt` should find `commit`.
+
+So: upstream's `fuzzy.ts` ported to `Tui\Fuzzy` (scores pinned against numbers taken from running
+the original — see below), `setFilter()` moved onto it, and `handleInput()` given a backspace arm
+and a printable-text arm. Two details are upstream's and neither is obvious:
+
+- **Escape cancels the picker rather than clearing the query.** The way out must not depend on
+  whether you typed.
+- **A query moves the selection to the top match; clearing one leaves it where it is.** Not
+  symmetrical, and right: clearing a query should not throw you back to the top of a list you had
+  scrolled into.
+
+The search line is drawn *only when something has been typed*, which is what keeps this out of the
+editor's completion popup — the one `SelectList` that must not grow a search box, since it is
+already filtered by the line you are writing. It never gets one, because the editor forwards only
+up and down arrows to it and so can never accumulate a query. No flag, no opt-in: the two
+behaviours fall out of the same rule.
+
+`isPrintable()` is the arm that needed the care. "Not handled above" is not the same as "text": an
+arrow is `\e[A`, a function key `\e[15~`, ctrl chords are the C0 range, and any of them taken as
+text is a stray character in the query.
+
+### Pinning a port to the original's arithmetic
+
+`Fuzzy` is scored, and a scoring function is the one kind of port that can be wrong in a way no
+ordinary test notices: every "the better match ranks first" assertion still passes while the
+picker quietly feels different to type into.
+
+So the numbers were taken from the original — `node --experimental-strip-types` over pi's own
+`fuzzy.ts`, 24 pairs, scores printed — and compared against this one. All 24 matched exactly,
+multibyte and digit-swap cases included, and they are now a data provider in `FuzzyTest`
+(`testTheScoreIsTheOneUpstreamGives`). If one moves, the scoring changed.
+
+Two deliberate deviations, both narrow:
+
+- **Characters, not bytes.** The original counts UTF-16 units; `strpos()` looking for one byte of a
+  three-byte character finds the middle of the character before it, and the index it returns then
+  poisons every gap and boundary sum after it. `mb_str_split` and a character-index `indexOf`.
+- **`[a-z]` and not `\p{L}`** in the digit-swap patterns, which *is* the original: the query is
+  already lowercased, and a script whose letters are not these has no digit-order convention this
+  would be fixing.
+
+`usort()` is relied on being stable, as the original relies on `Array.prototype.sort` being
+stable: rows that score alike keep the order they were handed in, which for the model picker is
+the current model first and the default one second.
+
+### A test that could not fail, and the experiment that found the case
+
+`SelectItem::$searchText` carries upstream's `getModelSelectorSearchText` — provider, then
+`provider/id`, then provider again, and the bare id *last*, so that `openai/gpt-5` ranks OpenAI's
+own above a reseller's `openrouter/openai/gpt-5`.
+
+Wiring it into the picker survived every mutation at first. The fallback haystack is the label and
+the description, which between them already contain the id, the provider *and* the name — so the
+same rows matched either way and only their order differed. A test asserting the right row is
+present cannot see that.
+
+Rather than assert on the wiring, the ranking was measured: both haystacks built over the real
+registry, ten provider-prefixed queries filtered through each, top row compared. **Nine of ten
+flipped.** The clearest is the one upstream's docblock describes: `openai/gpt` gives `openai/gpt-4.1`
+with the search line and groq's `openai/gpt-oss-120b` without it, because that row's *id* contains
+the provider the query names. That is now the regression test, and it fails on the mutation with
+`groq · GPT OSS 120B` in the message.
+
+The lesson is the general one: when a mutation survives, the missing test is usually a *comparison*
+the assertions never make, and the way to find it is to run the two versions side by side over real
+data rather than to reason about which case might differ.
+
+### The footer said less than upstream's about the same session
+
+Two things missing, both upstream's and both ported:
+
+`• thinking off` when a model that *can* reason is not being asked to. It used to show nothing,
+and nothing cannot distinguish "this model does not think" from "thinking is off" — a fact about
+the session that the corner is exactly the place for.
+
+`(provider) ` in front of the model id, under two conditions that are easy to drop and are the
+whole design. It appears **only when more than one provider is on offer** — one provider makes the
+prefix noise, since it distinguishes nothing — and **only if it fits**, dropped *whole* rather than
+cut, because half a provider name in parentheses reads as a different provider, and the id is the
+part you steer by. The fit is measured against the left side's width *after* it was truncated, not
+the width it wanted.
+
+The provider count is memoised and cleared in `invalidate()`, which is what a model switch or a
+sign-in calls; upstream pushes the count in from outside for the same reason. The test for that
+clearing is the one that needed `WithoutProviderKeys` — a second provider signed into mid-session
+has to bring the prefix out, and without the clear it stays hidden until the next run.
+
+Not ported: the `→ routed-model` segment, which is for upstream's virtual models. There is no
+equivalent here yet.
+
+### `ANTIGRAVITY_MODELS` has no upstream left to copy from — but the deployment has a catalogue
+
+`scripts/generate-models.php` explains why this table is hand-written: models.dev does not carry a
+subscription deployment's catalogue, so it is hand-written in upstream's generator too, "and not
+for want of trying". That is now worse and better at the same time.
+
+Worse: **upstream deleted its Antigravity support entirely.** pi `0.87.1` has no trace of it
+outside two changelog lines, and `packages/ai/CHANGELOG.md` records the removal under `0.71.0`
+(2026-04-30) — "provider registration, model metadata, OAuth, and package exports". The
+maintenance story for this table was "copy upstream's hand-written one", and there is no longer
+one to copy. Anyone comparing pig against a current pi and finding Antigravity models there is
+looking at that pi's own `models.json` or at a third-party extension, not at anything built in.
+
+Better: **the deployment answers a catalogue request.**
+
+    POST https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels
+    {"project": "<the Cloud project /login stored>"}
+
+`scripts/fetch-antigravity-models.php` asks it and prints rows in this table's tuple shape. It
+replaced a `probe-antigravity.php` that sent one minimal request per candidate id and read which
+came back — the right method for a deployment with no catalogue, and the wrong answer for one that
+has it. **The lesson is the order**: "there is no catalogue endpoint" was inferred from pig's own
+provider not calling one, which is evidence about pig and not about the deployment.
+
+Three things that run the other way from what the code suggests, all found by reading a working
+implementation rather than pig's:
+
+- **The host has no `sandbox` in it.** `GoogleGeminiCli::SANDBOX_ENDPOINT` says
+  `daily-cloudcode-pa.sandbox.googleapis.com`; the catalogue and a working client both use
+  `daily-cloudcode-pa.googleapis.com`, with `cloudcode-pa.googleapis.com` as the fallback.
+- **The User-Agent moved on.** `antigravity/1.11.5 darwin/arm64` against the CLI's current
+  `antigravity/cli/1.1.23 (aidev_client; os_type=linux; …)`. The docblock on `SANDBOX_HEADERS`
+  is right that this string is load-bearing, which is exactly why a stale one matters.
+- **The catalogue's `name` field is not trustworthy.** `gemini-2.5-flash` and
+  `gemini-2.5-flash-lite` both come back named after a Flash Lite of a different generation, and
+  two caches of the same catalogue disagree about which. The ids and the numbers are sound; the
+  display names are not, so they are worth reading before pasting.
+
+**What the table cannot express, and why that matters more than the rows.** These ids are
+*logical*. The catalogue also carries a `routing` map and a `modelEnums` map: `gemini-3.8-flash`
+at medium is sent as `gemini-3.8-flash-medium`, and that is sent as `MODEL_PLACEHOLDER_M319`. A
+thinking level selecting a different upstream model has no equivalent anywhere in pig — `Model`
+has one id and `ThinkingLevel` maps to a reasoning effort, not to another model. So a row in this
+table is reachable only as far as the bare id works, and filling the table is not the same as
+supporting the provider.
+
+### `thinkingLevelMap`: the half of Antigravity's routing that belongs in pig
+
+The Antigravity catalogue carries two maps and they are not the same kind of thing. `routing` and
+`modelEnums` turn a level into **another upstream model** — `gemini-3.8-flash` at medium is sent as
+`gemini-3.8-flash-medium`, which is sent as `MODEL_PLACEHOLDER_M319`. `thinkingLevelMap` turns a
+level into **what this model calls it**, or says the model does not have it.
+
+The second is upstream's own model-schema field (`ai/src/types.ts`, and
+`ThinkingLevelMapSchema` in `core/model-config.ts` validates it in a `models.json`). The first is a
+gateway's business: when the transport goes through something that already resolves ids — as it
+does here, through an OpenAI-compatible gateway — putting the routing in pig too means two things
+deciding one thing, which is the argument `GoogleGeminiCli`'s docblock already makes about the
+retry loop it declined to port. So the line is: **the map comes in, the routing stays out.** That
+boundary was read off pi's source rather than guessed; the entry above says why it could not be
+read off pig's.
+
+**Three states, and PHP flattens two of them by default.** A key that is absent means "send the
+level's own name"; a key whose value is *null* means the model does not have that level; a string
+is what to send instead. `$map[$level] ?? …` reads null as absent, which is the one value that
+means the opposite — so `hasThinkingLevel()` is `array_key_exists`-first, and the docblock saying
+so was written *before* the first implementation got it wrong anyway. Upstream writes
+`mapped === null` freely because JavaScript tells `undefined` from `null`; this is the line where
+that stops being free. The regression test is `ModelTest::testALevelTheMapNullsIsOneTheModelDoesNotHave`.
+
+Where each piece lives, and why it is not all on `Model`: `Model` is in the `ai` package, which
+depends on `pig/async` and nothing else — it has never heard of `ThinkingLevel`, which lives in
+`agent-core`. So `Model` carries the string-keyed half (`thinkingEffort()`, `hasThinkingLevel()`,
+`supportsXhigh()`) and `ThinkingLevel` carries the enum half (`supportedBy()`, `clampedFor()`).
+Writing it the other way round inverts the package layering, and the first draft did.
+
+**`xhigh` keeps its hardcoded id list as a fallback**, which is a deviation. Upstream can insist
+xhigh be opted into through the map because every model it ships carries one; pig's generated
+tables carry none, so a model that says nothing falls back to the list and `gpt-5.2` keeps the
+level it has. The map still wins when it mentions xhigh at all — written as `idList || map` instead
+of `map ?: idList` it passes everything except a `models.json` that redeclares one of those three
+ids with `"xhigh": null`, which is the test that had to be added to kill that mutation.
+
+**Two contracts were changed on purpose.**
+
+`AgentSession::availableThinkingLevels()` still answers the **empty list** for a model that cannot
+reason, while `ThinkingLevel::supportedBy()` answers `[off]`. Both are right: "one level, and it is
+off" is a true statement about the model, and "no levels at all" is what `cycleThinkingLevel()` and
+the settings list use to decide there is no thinking row to draw. Handing upstream's answer
+straight to those callers turned "no row" into "a row with one choice" and broke seven tests, none
+of them about thinking.
+
+And asking for a level a model lacks now lands on **the nearest level it has** — up from what was
+asked for, then down — where it used to fall to `off`. That reverses a decision this repository had
+written down, on the grounds that sending `high` for `xhigh` answers a different question from the
+one asked. That reads well for xhigh alone and fails everywhere else: once a map can remove *any*
+level, the same rule turns "medium, please" on a model that goes low-or-high into thinking switched
+off entirely, which is further from the question than `high` ever was. The Antigravity flash models
+are exactly that shape — `off` is null, they always think.
+
+**A hazard found the hard way.** `OpenAiCompletionsTest::send()` rebuilds the `Model` field by
+field to swap in the canned server's URL. A new constructor field left off that list does not fail
+to compile — it makes the feature look broken in whichever test happens to need it, which is how
+half an hour went on a map that was being dropped in the test helper rather than ignored by the
+provider. It is the only place in the repository that copies a `Model` that way; if a second one
+appears, this is the note that says why it is worth avoiding.
+
+### `~/.pig` became `~/.pig/agent`, and the downloaded binaries left `tools/`
+
+Two moves, one of them only cosmetic and the other a collision that had been quietly working.
+
+`Config::home()` is `~/.pig/agent` now, the same shape `piHome()` has always had — upstream's
+`getAgentDir()` is `~/.pi/agent`, and pig kept everything a level up, so every path comparison
+across the two tools had a step in it that was pure accident. Everything else follows for free:
+sessions, `settings.json`, `auth.json`, hooks, skills and commands are all built off that one
+method, and exactly two tests had the old path written out.
+
+**No migration and no fallback.** `PIG_HOME` still wins, and an old `~/.pig` is not searched. The
+developer asked for the move rather than for compatibility, and a fallback that reads the old
+directory forever is how somebody ends up with two half-populated homes and no way to tell which
+one a given file came from. `mv ~/.pig/* ~/.pig/agent/` is the whole upgrade.
+
+The second move is the one worth remembering. `ToolInstaller::directory()` was
+`Config::home() . '/tools'` — **the same directory `CustomTools\CustomToolLoader` scans for
+folders with an `index.php` in them.** A downloaded `fd` binary sat in the list of the person's own
+tools, and the only reason nothing ever broke is a rule written for a different purpose: the
+loader wants directories and a binary is a file. That is a coincidence holding two features apart,
+not a design. They are `bin/` and `tools/` now, which also happens to be upstream's name for the
+first. `CustomToolsTest::testADownloadedBinaryIsNotMistakenForOneOfThePersonsTools` is what
+notices if they are ever merged back.
+
+**A blanket `~/.pig/` → `~/.pig/agent/` pass over the docs is not safe**, and the obvious way to
+do it damaged the docblock that had just been written to explain the change — `~/.pig/agent`
+became `~/.pig/agent/agent`. The give-away is `grep -rn "agent/agent"`, which is worth running
+after any such rename. Project-local `.pig/hooks` and `.pig/tools` have no tilde and are
+deliberately untouched: those are per-project directories and did not move.
 
 ## Version floor: PHP >= 8.3
 

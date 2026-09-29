@@ -95,7 +95,7 @@ final class SignInTest extends TestCase
         // place this differs from upstream — whose own writes `auth.json` into the current
         // directory.
         $this->assertStringContainsString('~/.pi/agent/auth.json', $this->said());
-        $this->assertStringContainsString('~/.pig/auth.json', $this->said());
+        $this->assertStringContainsString('~/.pig/agent/auth.json', $this->said());
     }
 
     public function testListNamesEveryProviderByIdAndLabel(): void

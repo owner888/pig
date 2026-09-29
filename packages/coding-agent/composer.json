@@ -18,7 +18,7 @@
         }
     },
     "suggest": {
-        "fd": "find tool — pig downloads it to ~/.pig/tools if missing; brew install fd to use your own",
-        "ripgrep": "grep tool — pig downloads it to ~/.pig/tools if missing; brew install ripgrep to use your own"
+        "fd": "find tool — pig downloads it to ~/.pig/agent/bin if missing; brew install fd to use your own",
+        "ripgrep": "grep tool — pig downloads it to ~/.pig/agent/bin if missing; brew install ripgrep to use your own"
     }
 }

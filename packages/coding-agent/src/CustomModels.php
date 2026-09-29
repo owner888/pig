@@ -71,7 +71,7 @@ final readonly class CustomModels
     }
 
     /**
-     * Read `~/.pig/models.json`, or pi's if pig has none.
+     * Read `~/.pig/agent/models.json`, or pi's if pig has none.
      *
      * pi's is a fallback rather than a merge: one file is what upstream has, and somebody who
      * already told pi about their endpoint should not have to say it twice. Neither file is
@@ -318,7 +318,52 @@ final readonly class CustomModels
             self::pricing(is_array($entry['cost'] ?? null) ? $entry['cost'] : []),
             [...$headers, ...self::strings($entry['headers'] ?? null)],
             self::compat(is_array($entry['compat'] ?? null) ? $entry['compat'] : null),
+            self::thinkingLevelMap(is_array($entry['thinkingLevelMap'] ?? null) ? $entry['thinkingLevelMap'] : null),
         );
+    }
+
+    /**
+     * What this model calls each thinking level — upstream's `thinkingLevelMap`.
+     *
+     * A key with a string is what to send instead of the level's own name; a key with **null**
+     * says the model does not have that level at all, which is why this cannot be written with
+     * `??` and why a missing key is left missing rather than filled in with null. The three
+     * states are `Ai\Model`'s to read; this only has to preserve them.
+     *
+     * The seven keys are upstream's `ThinkingLevelMapSchema` — including `max`, which has no
+     * `ThinkingLevel` here. It is kept rather than refused: a `models.json` written for pi is
+     * meant to work here, and a file that is rejected over a level pig has no name for would make
+     * that false. `ThinkingLevel::supportedBy()` simply never asks for it.
+     *
+     * Anything else in the object is dropped in silence — unlike the typed fields around it,
+     * which say what is wrong. A wrong key here removes a level from a menu rather than
+     * misreporting money, and upstream's schema ignores unknown keys too.
+     *
+     * @param array<mixed>|null $map
+     *
+     * @return array<string, string|null>
+     */
+    private static function thinkingLevelMap(?array $map): array
+    {
+        if ($map === null) {
+            return [];
+        }
+
+        $kept = [];
+
+        foreach (['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as $level) {
+            if (!array_key_exists($level, $map)) {
+                continue;
+            }
+
+            $value = $map[$level];
+
+            if ($value === null || is_string($value)) {
+                $kept[$level] = $value;
+            }
+        }
+
+        return $kept;
     }
 
     /**

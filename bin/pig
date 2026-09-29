@@ -105,8 +105,8 @@ if (isset($options['help'])) {
                         where it goes: `--export a.jsonl out.html`
       --skills-dir <d>  one more folder of skills, on top of the standard ones
       --no-skills       start without loading any skills, wherever they live
-      --no-hooks        start without loading ~/.pig/hooks or .pig/hooks
-      --no-tools        start without loading ~/.pig/tools or .pig/tools
+      --no-hooks        start without loading ~/.pig/agent/hooks or .pig/hooks
+      --no-tools        start without loading ~/.pig/agent/tools or .pig/tools
       --no-update-check do not ask Packagist whether there is a newer pig
       -p, --print       say it, print the answer, exit — the same as --mode text
       --mode <m>        text, json or rpc. Any of them leaves the terminal behind:

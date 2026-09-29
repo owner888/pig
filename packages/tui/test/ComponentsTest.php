@@ -215,7 +215,7 @@ final class ComponentsTest extends TestCase
         $this->assertTrue($cancelled);
     }
 
-    public function testFilteringKeepsThePrefixMatchesAndResetsTheSelection(): void
+    public function testFilteringKeepsTheMatchesAndPutsTheSelectionOnTheBestOne(): void
     {
         $list = $this->list(['commit', 'compare', 'help']);
         $list->handleInput("\x1b[B");
@@ -223,7 +223,8 @@ final class ComponentsTest extends TestCase
         $list->setFilter('com');
 
         $this->assertSame('commit', $list->selectedItem()?->value);
-        $this->assertCount(2, $list->render(30));
+        // The two matches, and the line saying what was typed.
+        $this->assertCount(3, $list->render(30));
     }
 
     public function testAnEmptyFilterResultSaysSoInsteadOfDrawingNothing(): void
@@ -231,8 +232,122 @@ final class ComponentsTest extends TestCase
         $list = $this->list(['one']);
         $list->setFilter('zzz');
 
-        $this->assertSame(["\x1b[2m  No matches\x1b[22m"], $list->render(30));
+        $this->assertSame(["\x1b[2m  /zzz\x1b[22m", "\x1b[2m  No matches\x1b[22m"], $list->render(30));
         $this->assertNull($list->selectedItem());
+    }
+
+    // ---- typing in a list ---------------------------------------------------------------
+
+    public function testTypingFiltersTheListAndIsShownBackToYou(): void
+    {
+        $list = $this->list(['commit', 'compare', 'help']);
+
+        foreach (['h', 'e', 'l'] as $key) {
+            $list->handleInput($key);
+        }
+
+        $this->assertSame('hel', $list->filter());
+        $this->assertSame('help', $list->selectedItem()?->value);
+        $this->assertStringContainsString('/hel', $list->render(30)[0]);
+    }
+
+    public function testTheCharactersDoNotHaveToBeNextToEachOther(): void
+    {
+        // The whole difference from the prefix match this replaced: `cmt` finds `commit`, and
+        // nothing about `commit` starts with `cmt`.
+        $list = $this->list(['compare', 'commit', 'help']);
+        $list->setFilter('cmt');
+
+        $rows = $list->render(30);
+
+        $this->assertCount(2, $rows);
+        $this->assertStringContainsString('commit', $rows[1]);
+    }
+
+    public function testBackspaceTakesOffACharacterAndNotAByte(): void
+    {
+        $list = $this->list(['构建中', '构建完成', 'build']);
+        $list->handleInput('构');
+        $list->handleInput('建');
+        $list->handleInput("\x7f");
+
+        // One `substr()` here instead of `mb_substr()` and the query is two thirds of a
+        // character — which matches nothing, and is not text the terminal can draw either.
+        $this->assertSame('构', $list->filter());
+        // The search line, then the two rows that still match.
+        $this->assertCount(3, $list->render(30));
+    }
+
+    public function testBackspaceOnAnEmptyQueryIsNotAnError(): void
+    {
+        $list = $this->list(['one']);
+        $list->handleInput("\x7f");
+
+        $this->assertSame('', $list->filter());
+        $this->assertSame('one', $list->selectedItem()?->value);
+    }
+
+    public function testEscapeStillCancelsRatherThanClearingWhatWasTyped(): void
+    {
+        // The way out of a picker must not depend on whether you typed in it.
+        $cancelled = false;
+        $list = $this->list(['one', 'two']);
+        $list->setCancelHandler(static function () use (&$cancelled): void {
+            $cancelled = true;
+        });
+
+        $list->handleInput('t');
+        $list->handleInput("\x1b");
+
+        $this->assertTrue($cancelled);
+    }
+
+    public function testKeysThatAreNotTextNeverLandInTheQuery(): void
+    {
+        $list = $this->list(['one', 'two']);
+
+        // An arrow, a function key, a ctrl chord, and a bare tab: every one of these would be a
+        // stray character in the query if "not handled above" were taken to mean "text".
+        foreach (["\x1b[A", "\x1b[15~", "\x10", "\t", "\x01"] as $key) {
+            $list->handleInput($key);
+        }
+
+        $this->assertSame('', $list->filter());
+        // Two rows and no search line: nothing was typed, so nothing is shown as typed.
+        $this->assertCount(2, $list->render(30));
+    }
+
+    public function testClearingTheQueryLeavesTheSelectionWhereItWas(): void
+    {
+        $list = $this->list(['one', 'two', 'three']);
+        $list->handleInput("\x1b[B");
+        $list->handleInput("\x1b[B");
+
+        $this->assertSame('three', $list->selectedItem()?->value);
+
+        $list->setFilter('');
+
+        $this->assertSame('three', $list->selectedItem()?->value);
+    }
+
+    public function testARowCanSayWhatItIsSearchedByWhenItsLabelIsNotIt(): void
+    {
+        // The model picker's values are row numbers and its labels are ids; upstream ranks on a
+        // line that puts the provider first, so the row has to carry its own haystack.
+        // The two rows are deliberately the wrong way round: the one that *reads* like the query
+        // is not the one that should win it. Fall back to label-and-description and the arrow
+        // lands on the other row.
+        $list = new SelectList(
+            [
+                new SelectItem('0', 'openai-gpt-5', 'a reseller', 'openrouter openrouter/openai-gpt-5'),
+                new SelectItem('1', 'no words in common', 'nor here', 'openai openai/gpt-5 openai gpt-5'),
+            ],
+            theme: SelectListTheme::default(),
+        );
+
+        $list->setFilter('openai/gpt-5');
+
+        $this->assertSame('1', $list->selectedItem()?->value);
     }
 
     public function testALongListScrollsAndSaysWhereItIs(): void

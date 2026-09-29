@@ -614,7 +614,7 @@ final class CodingAgentSessionTest extends TestCase
 
     public function testACustomToolThatDoesNotLoadIsAWarningToo(): void
     {
-        // `~/.pig/tools/<name>/index.php` — a folder, which is the layout the loader looks for.
+        // `~/.pig/agent/tools/<name>/index.php` — a folder, which is the layout the loader looks for.
         mkdir($this->home . '/tools/broken', 0o755, true);
         file_put_contents($this->home . '/tools/broken/index.php', "<?php\n\nreturn 'not a callable';\n");
 
@@ -626,7 +626,7 @@ final class CodingAgentSessionTest extends TestCase
 
     public function testNoToolsSkipsThatFolderEntirely(): void
     {
-        // `~/.pig/tools/<name>/index.php` — a folder, which is the layout the loader looks for.
+        // `~/.pig/agent/tools/<name>/index.php` — a folder, which is the layout the loader looks for.
         mkdir($this->home . '/tools/broken', 0o755, true);
         file_put_contents($this->home . '/tools/broken/index.php', "<?php\n\nreturn 'not a callable';\n");
 

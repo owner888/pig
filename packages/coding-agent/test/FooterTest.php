@@ -20,14 +20,18 @@ use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Interactive\FooterComponent;
+use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Theme\Palette;
+use Pig\Test\WithoutProviderKeys;
 use Pig\Tui\Ansi;
 
 /** The two dim lines under everything: where you are, and what this has cost. */
 final class FooterTest extends TestCase
 {
+    use WithoutProviderKeys;
+
     private const int WIDTH = 76;
 
     private Palette $palette;
@@ -302,10 +306,12 @@ final class FooterTest extends TestCase
         $this->assertSame(self::WIDTH, mb_strwidth($this->lines($session)[1]));
     }
 
-    public function testTheThinkingLevelIsShownOnlyWhenItIsOn(): void
+    public function testAThinkingModelWithThinkingOffSaysSoRatherThanNothing(): void
     {
+        // Upstream's wording, and the more useful of the two: an empty corner cannot tell you
+        // whether the model cannot think or is not being asked to.
         $session = $this->session(true);
-        $this->assertStringNotContainsString('•', $this->lines($session)[1]);
+        $this->assertStringContainsString('claude-test • thinking off', $this->lines($session)[1]);
 
         $session->setThinkingLevel(ThinkingLevel::High);
         $this->assertStringContainsString('claude-test • high', $this->lines($session)[1]);
@@ -317,6 +323,72 @@ final class FooterTest extends TestCase
         $session->setThinkingLevel(ThinkingLevel::High);
 
         $this->assertStringNotContainsString('•', $this->lines($session)[1]);
+    }
+
+    public function testTheProviderIsNamedWhenThereIsMoreThanOneToTellApart(): void
+    {
+        $session = $this->session();
+        $this->spent($session, new Usage(100, 100));
+
+        $this->assertStringEndsWith('(anthropic) claude-test', $this->lines($session)[1]);
+    }
+
+    public function testWithOneProviderOnOfferThePrefixWouldSayNothingAndIsLeftOut(): void
+    {
+        // `--models` narrows what is on offer, and narrowed to one provider the prefix cannot
+        // distinguish anything — it is just three columns of noise in a corner that is short of
+        // them. Upstream's condition, not an optimisation.
+        $agent = new Agent(new AgentOptions(apiKey: 'k'));
+        $model = new Model('claude-test', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000, false);
+        $agent->setModel($model);
+        $session = new AgentSession($agent, modelScope: [new ModelChoice($model)]);
+        $this->spent($session, new Usage(100, 100));
+
+        $line = $this->lines($session)[1];
+
+        $this->assertStringEndsWith('claude-test', $line);
+        $this->assertStringNotContainsString('(anthropic)', $line);
+    }
+
+    public function testWhenThePrefixWouldNotFitTheModelIdIsWhatSurvives(): void
+    {
+        // Dropped whole rather than cut: half a provider name in parentheses reads as a
+        // different provider, and the id is the part you steer by.
+        $session = $this->session();
+        $this->spent($session, new Usage(999_999, 999_999, 999_999, 999_999, 0, new Cost(total: 123.456)));
+
+        // Wide enough for `claude-test` but not for `(anthropic) claude-test`. Narrower than
+        // this and the right-hand side goes entirely, which is a different branch.
+        $line = Ansi::strip((new FooterComponent($session, $this->palette, $this->cwd))->render(74)[1]);
+
+        $this->assertStringNotContainsString('(anthropic', $line);
+        $this->assertStringEndsWith('claude-test', $line);
+    }
+
+    public function testASecondProviderSignedIntoMidSessionBringsThePrefixOut(): void
+    {
+        // The count is memoised, because this line is drawn twelve times a second. `invalidate()`
+        // is what has to clear it — without that, signing in to a second provider leaves the
+        // corner claiming there is still only one until the next run.
+        $this->forgetProviderKeys();
+
+        try {
+            $auth = new Auth($this->cwd . '/auth.json');
+            $auth->setRuntimeApiKey('anthropic', 'k');
+
+            $session = $this->session();
+            $footer = new FooterComponent($session, $this->palette, $this->cwd, null, $auth);
+            $this->spent($session, new Usage(100, 100));
+
+            $this->assertStringNotContainsString('(anthropic)', Ansi::strip($footer->render(self::WIDTH)[1]));
+
+            $auth->setRuntimeApiKey('openai', 'k');
+            $footer->invalidate();
+
+            $this->assertStringEndsWith('(anthropic) claude-test', Ansi::strip($footer->render(self::WIDTH)[1]));
+        } finally {
+            $this->restoreProviderKeys();
+        }
     }
 
     public function testWithNoModelItSaysSoRatherThanBeingBlank(): void

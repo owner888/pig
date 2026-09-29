@@ -601,15 +601,20 @@ final class AgentSessionTest extends TestCase
         $this->assertSame('test-thinker-2', $session->model()?->id);
     }
 
-    public function testAskingForXhighOnAModelWithoutItFallsToOffRatherThanPretending(): void
+    public function testAskingForALevelAModelLacksLandsOnTheNearestItHas(): void
     {
         $session = $this->session([]);
 
         $session->setModel($this->thinkingModel(), ThinkingLevel::Xhigh);
 
-        // Anthropic has no xhigh. Silently sending `high` instead would be answering a
-        // different question from the one asked.
-        $this->assertSame(ThinkingLevel::Off, $session->thinkingLevel());
+        // **This reverses a decision this file used to record.** The old rule was `off`, on the
+        // grounds that sending `high` for `xhigh` answers a different question from the one
+        // asked. That reads well for xhigh and falls apart everywhere else: once a
+        // `thinkingLevelMap` can take *any* level away, the same rule turns "medium, please" on a
+        // model that goes low-or-high into thinking switched off entirely — which is a further
+        // answer from the question than `high` ever was. Upstream searches up from what was
+        // asked for and then down, so the most this can do is move one step.
+        $this->assertSame(ThinkingLevel::High, $session->thinkingLevel());
     }
 
     // ---- thinking ----------------------------------------------------------------

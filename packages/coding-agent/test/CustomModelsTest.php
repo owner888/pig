@@ -105,6 +105,66 @@ final class CustomModelsTest extends TestCase
         $this->assertSame('my-box', Models::get('qwen3-coder')?->provider);
     }
 
+    // ---- what a model calls each thinking level -------------------------------------------
+
+    public function testAThinkingLevelMapIsCarriedOverFromTheFile(): void
+    {
+        // Upstream's key and upstream's spelling, so a `models.json` written for pi keeps
+        // working here — which is this file's whole standing rule.
+        $model = $this->load(self::provider([
+            'models' => [self::model(['reasoning' => true, 'thinkingLevelMap' => [
+                'off' => null,
+                'minimal' => null,
+                'high' => 'max',
+            ]])],
+        ]))->models[0];
+
+        $this->assertNull($model->thinkingEffort('off'));
+        $this->assertFalse($model->hasThinkingLevel('minimal'));
+        $this->assertSame('max', $model->thinkingEffort('high'));
+        // Not mentioned, so not changed — a partial map says only what is unusual.
+        $this->assertSame('low', $model->thinkingEffort('low'));
+    }
+
+    public function testAMissingKeyAndAKeySetToNullStayDifferentThroughTheFile(): void
+    {
+        // JSON can express both and PHP can lose the difference in a dozen ways on the way in.
+        // `"medium": null` means the model has no medium; leaving `medium` out means it does.
+        $model = $this->load(self::provider([
+            'models' => [self::model(['reasoning' => true, 'thinkingLevelMap' => ['medium' => null]])],
+        ]))->models[0];
+
+        $this->assertFalse($model->hasThinkingLevel('medium'));
+        $this->assertTrue($model->hasThinkingLevel('high'));
+    }
+
+    public function testALevelPigHasNoNameForIsKeptRatherThanRefused(): void
+    {
+        // Upstream has a `max` level and pig does not. Refusing the file over it would break the
+        // promise that a `models.json` written for pi works here; nothing ever asks for it.
+        $problems = $this->load(self::provider([
+            'models' => [self::model(['reasoning' => true, 'thinkingLevelMap' => ['max' => 'max']])],
+        ]))->problems;
+
+        $this->assertSame([], $problems);
+    }
+
+    public function testRubbishInTheMapIsDroppedWithoutTakingTheModelWithIt(): void
+    {
+        $custom = $this->load(self::provider([
+            'models' => [self::model(['reasoning' => true, 'thinkingLevelMap' => [
+                'high' => 7,
+                'nonsense' => 'x',
+                'low' => 'low',
+            ]])],
+        ]));
+
+        $this->assertCount(1, $custom->models);
+        // The number is not a level name, so `high` falls back to being sent as itself.
+        $this->assertSame('high', $custom->models[0]->thinkingEffort('high'));
+        $this->assertSame('low', $custom->models[0]->thinkingEffort('low'));
+    }
+
     public function testTheBaseUrlLosesItsTrailingSlash(): void
     {
         $model = $this->load(self::provider(['baseUrl' => 'http://box:8080/v1/']))->models[0];

@@ -37,7 +37,7 @@ final class ToolInstallerTest extends ToolTestCase
         Loop::reset();
 
         $this->home = $this->cwd . '/pig-home';
-        mkdir($this->home . '/tools', 0o755, true);
+        mkdir($this->home . '/bin', 0o755, true);
         putenv('PIG_HOME=' . $this->home);
         ExternalTool::forget();
     }
@@ -54,7 +54,7 @@ final class ToolInstallerTest extends ToolTestCase
     /** A file that behaves enough like the real thing to be found and run. */
     private function fakeTool(string $name, string $prints = ''): string
     {
-        $path = $this->home . '/tools/' . $name;
+        $path = $this->home . '/bin/' . $name;
         file_put_contents($path, "#!/bin/sh\nprintf '%s' " . escapeshellarg($prints) . "\n");
         chmod($path, 0o755);
 
@@ -83,9 +83,9 @@ final class ToolInstallerTest extends ToolTestCase
 
     public function testTheDirectoryIsUnderTheConfigHome(): void
     {
-        $this->assertSame($this->home . '/tools', ToolInstaller::directory());
-        $this->assertSame($this->home . '/tools/fd', ToolInstaller::path('fd'));
-        $this->assertSame($this->home . '/tools/rg', ToolInstaller::path('rg'));
+        $this->assertSame($this->home . '/bin', ToolInstaller::directory());
+        $this->assertSame($this->home . '/bin/fd', ToolInstaller::path('fd'));
+        $this->assertSame($this->home . '/bin/rg', ToolInstaller::path('rg'));
     }
 
     public function testHasDoesNotDownloadToAnswer(): void

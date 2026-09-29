@@ -15,13 +15,13 @@ use Throwable;
  * callable is handed a `HookApi` to register on:
  *
  * ```php
- * <?php // ~/.pig/hooks/log-edits.php
+ * <?php // ~/.pig/agent/hooks/log-edits.php
  * return function (Pig\CodingAgent\Hooks\HookApi $pi): void {
  *     $pi->on('tool_result', fn ($event) => error_log("{$event->toolName} ran"));
  * };
  * ```
  *
- * Two roots, in this order: `~/.pig/hooks` and then `<cwd>/.pig/hooks`, so a project can
+ * Two roots, in this order: `~/.pig/agent/hooks` and then `<cwd>/.pig/hooks`, so a project can
  * add to what the machine already has. Settings may name more files after those.
  *
  * Upstream's loader is the part that does not survive the port. It uses `jiti` to load
@@ -55,9 +55,7 @@ final class HookLoader
 
         $paths = [
             ...self::discover($home . '/hooks'),
-            ...self::discover($home . '/extensions'),
             ...self::discover($cwd . '/.pig/hooks'),
-            ...self::discover($cwd . '/.pig/extensions'),
         ];
 
         foreach ($configured as $path) {

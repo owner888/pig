@@ -41,7 +41,6 @@ use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\CustomTools\ToolProblem;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
 use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Extensions\ExtensionDiscovery;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
@@ -540,8 +539,7 @@ final class InteractiveMode
     }
 
     /**
-     * The three lines at the top, followed by compact loaded sections,
-     * and the full list behind ctrl+o.
+     * The three lines at the top, and the full list behind ctrl+o.
      *
      * One line of keys rather than a column of thirteen, which is what upstream settled
      * on: the list was taller than most of the conversations it sat above. The rest is
@@ -556,38 +554,26 @@ final class InteractiveMode
 
         if (!$this->expanded) {
             $lines[] = $this->palette->fg('dim', 'Press ctrl+o for the full list of keys, and what is loaded.');
-            $loaded = $this->loaded(compact: true);
-            if ($loaded !== '') {
-                $lines[] = '';
-                $lines[] = $loaded;
-            }
 
             return implode("\n", $lines);
         }
 
-        $loaded = $this->loaded(compact: false);
-
-        return implode("\n", [
-            ...$lines,
-            '',
-            $this->keysAndCommands(),
-            ...($loaded === '' ? [] : ['', $loaded]),
-        ]);
+        return implode("\n", [...$lines, '', $this->keysAndCommands()]);
     }
 
     /**
      * What was loaded into this session, as sections.
      *
-     * In compact mode (collapsed banner), displays compact lists under [Context], [Skills],
-     * and [Extensions]. In expanded mode (ctrl+o), displays full scope or detail.
+     * A section with nothing in it is not drawn. Upstream lists skills and extensions
+     * here too; neither is ported, so neither has a heading to be empty under.
      */
-    private function loaded(bool $compact = false): string
+    private function loaded(): string
     {
         $sections = [];
 
         if ($this->contextFiles !== []) {
             $names = array_map(
-                fn (ContextFile $file): string => $compact ? basename($file->path) : $this->formatDisplayPath($file->path),
+                static fn (ContextFile $file): string => basename($file->path),
                 $this->contextFiles,
             );
 
@@ -602,10 +588,11 @@ final class InteractiveMode
                 . $this->palette->fg('muted', '  ' . implode(', ', $names));
         }
 
-        $extensions = $this->discoveredExtensions();
-        if ($extensions !== []) {
-            $sections[] = $this->palette->fg('mdHeading', '[Extensions]') . "\n"
-                . $this->palette->fg('muted', '  ' . implode(', ', $extensions));
+        if ($this->hooks !== null && !$this->hooks->isEmpty()) {
+            $names = array_map(basename(...), $this->hooks->paths());
+
+            $sections[] = $this->palette->fg('mdHeading', '[Hooks]') . "\n"
+                . $this->palette->fg('muted', '  ' . implode(', ', $names));
         }
 
         if ($this->customTools !== null && !$this->customTools->isEmpty()) {
@@ -614,34 +601,6 @@ final class InteractiveMode
         }
 
         return implode("\n\n", $sections);
-    }
-
-    /**
-     * Labels of loaded hooks and extensions from standard locations.
-     *
-     * @return list<string>
-     */
-    private function discoveredExtensions(): array
-    {
-        $extraPaths = [];
-        if ($this->hooks !== null && !$this->hooks->isEmpty()) {
-            $extraPaths = $this->hooks->paths();
-        }
-
-        return ExtensionDiscovery::discover($this->cwd, $extraPaths);
-    }
-
-    /**
-     * Format an absolute path with leading ~ for the user's home directory.
-     */
-    private function formatDisplayPath(string $path): string
-    {
-        $home = Env::home();
-        if ($home !== null && $home !== '' && str_starts_with($path, $home)) {
-            return '~' . substr($path, strlen($home));
-        }
-
-        return $path;
     }
 
     /** The keys worth knowing before the first prompt, on one line. */
@@ -1482,7 +1441,7 @@ final class InteractiveMode
     private function hookList(): string
     {
         if ($this->hooks === null || $this->hooks->isEmpty()) {
-            return 'No hooks loaded. A .php file in ~/.pig/hooks or .pig/hooks that returns a callable is one.';
+            return 'No hooks loaded. A .php file in ~/.pig/agent/hooks or .pig/hooks that returns a callable is one.';
         }
 
         $lines = [];
@@ -1672,7 +1631,7 @@ final class InteractiveMode
     {
         if ($this->skills === []) {
             return 'No skills found. A skill is a folder with a SKILL.md in '
-                . '~/.pig/skills, .pig/skills, ~/.claude/skills, .claude/skills, ~/.codex/skills, '
+                . '~/.pig/agent/skills, .pig/skills, ~/.claude/skills, .claude/skills, ~/.codex/skills, '
                 . '~/.pi/agent/skills or .pi/skills.';
         }
 
@@ -1722,7 +1681,9 @@ final class InteractiveMode
             $rows[] = $this->palette->fg('dim', Width::pad('/' . $name, $column)) . $this->palette->fg('muted', $does);
         }
 
-        return implode("\n", $rows);
+        $loaded = $this->loaded();
+
+        return implode("\n", $rows) . ($loaded === '' ? '' : "\n\n" . $loaded);
     }
 
     private function commandHelp(): string
@@ -1877,6 +1838,20 @@ final class InteractiveMode
         return $items;
     }
 
+    /**
+     * What typing in the model picker is ranked against.
+     *
+     * Upstream's `getModelSelectorSearchText`, repetition and all, and the repetition is the
+     * whole design: the provider appears twice and the bare id only at the end, so that typing
+     * `openai/gpt-5` ranks OpenAI's own above a reseller's `openrouter/openai/gpt-5`. The row's
+     * value is its position in the list — `0`, `1`, `2` — so without this there is nothing to
+     * search a model by at all.
+     */
+    private static function modelSearchText(Model $model): string
+    {
+        return "{$model->provider} {$model->provider}/{$model->id} {$model->provider} {$model->id} {$model->name}";
+    }
+
     private function showModels(string $pattern = ''): void
     {
         if ($this->session->isStreaming()) {
@@ -1918,6 +1893,7 @@ final class InteractiveMode
                     self::dollars($model->pricing->output),
                     $model->reasoning ? ' · thinks' : '',
                 ),
+                self::modelSearchText($model),
             );
         }
 

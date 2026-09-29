@@ -6,6 +6,8 @@ namespace Pig\CodingAgent\Interactive;
 
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\AssistantMessage;
+use Pig\Ai\Model;
+use Pig\Ai\Models;
 use Pig\Ai\StopReason;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Session\AgentSession;
@@ -41,14 +43,18 @@ final class FooterComponent implements Component
     /** false once looked for and not found, null when it has not been looked for. */
     private string|false|null $branch = null;
 
+    /** How many providers the models on offer come from; null until counted. */
+    private ?int $providerCount = null;
+
     /** @var array<string, string> what hooks and custom tools have to say, by key */
     private array $statuses = [];
 
     /**
      * @param Settings|null $settings for the auto-compaction marker; absent means the default,
      *        which is on — the same answer `AgentSession::shouldCompact()` gives without one
-     * @param Auth|null     $auth     for "(sub)"; absent means nothing is known about how this
-     *        provider is paid for, which is not the same as knowing it is billed
+     * @param Auth|null     $auth     for "(sub)" and for counting providers; absent means nothing
+     *        is known about how this provider is paid for, which is not the same as knowing it is
+     *        billed — and that every model in the table counts, which is what `Models::all()` says
      */
     public function __construct(
         private readonly AgentSession $session,
@@ -62,9 +68,10 @@ final class FooterComponent implements Component
     #[\Override]
     public function invalidate(): void
     {
-        // The branch is the only thing cached, and a checkout is exactly the kind of
-        // thing that happens between two frames.
+        // Both of the cached things, and for the same reason: a checkout and a sign-in are
+        // exactly the kind of thing that happens between two frames.
         $this->branch = null;
+        $this->providerCount = null;
     }
 
     /**
@@ -250,7 +257,10 @@ final class FooterComponent implements Component
             $left = Width::truncate(Ansi::strip($left), $width);
         }
 
-        return $this->justify($left, $right, $width);
+        // Upstream's order, and it is load-bearing: the left side is cut first and its width
+        // measured again, because whether the provider prefix fits is asked against the cut
+        // width and not the width it wanted.
+        return $this->justify($left, $this->withProvider($right, Width::visible($left), $width), $width);
     }
 
     /**
@@ -352,11 +362,53 @@ final class FooterComponent implements Component
             return 'no-model';
         }
 
+        if (!$model->reasoning) {
+            return $model->id;
+        }
+
+        // `• thinking off` and not nothing, which is upstream's wording and the more useful of
+        // the two: a model that *can* think and is not thinking is a fact about this session,
+        // and an empty corner cannot tell you which of the two reasons it is empty for.
         $level = $this->session->thinkingLevel();
 
-        return $model->reasoning && $level !== ThinkingLevel::Off
-            ? $model->id . ' • ' . $level->value
-            : $model->id;
+        return $model->id . ' • ' . ($level === ThinkingLevel::Off ? 'thinking off' : $level->value);
+    }
+
+    /**
+     * `(provider) ` in front, when there is more than one provider to tell apart and room to
+     * say which.
+     *
+     * Both halves of that are upstream's. One provider makes the prefix noise — it cannot
+     * distinguish anything — and when it does not fit, upstream drops the prefix rather than
+     * the model id, because the id is the part you steer by. The whole thing is dropped and
+     * not cut: half a provider name in parentheses reads as a different provider.
+     */
+    private function withProvider(string $right, int $leftWidth, int $width): string
+    {
+        $model = $this->session->model();
+
+        if ($model === null || $this->providerCount() <= 1) {
+            return $right;
+        }
+
+        $prefixed = '(' . $model->provider . ') ' . $right;
+
+        return $leftWidth + 2 + Width::visible($prefixed) > $width ? $right : $prefixed;
+    }
+
+    /**
+     * How many providers the models on offer here come from.
+     *
+     * Memoised because this line is drawn twelve times a second and the answer changes only
+     * when a key does — upstream pushes the count into its footer from outside for the same
+     * reason. Cleared by `invalidate()`, which is what a model switch or a sign-in calls.
+     */
+    private function providerCount(): int
+    {
+        return $this->providerCount ??= count(array_unique(array_map(
+            static fn (Model $model): string => $model->provider,
+            $this->session->modelsOnOffer($this->auth?->availableModels() ?? Models::all()),
+        )));
     }
 
     /** Short enough to sit in a corner: 950, 9.5k, 95k, 9.5M. */

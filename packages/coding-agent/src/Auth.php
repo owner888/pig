@@ -35,7 +35,7 @@ use Throwable;
  * ```
  *
  * **It is pi's file, not a copy of it.** `discover()` opens `~/.pi/agent/auth.json` when that
- * exists and only falls back to `~/.pig/auth.json`, and the reason is not tidiness: Anthropic
+ * exists and only falls back to `~/.pig/agent/auth.json`, and the reason is not tidiness: Anthropic
  * **rotates** refresh tokens, so the old one is void the moment a new one is issued. Two files
  * holding the same token is two tools taking it in turns to log each other out — whichever
  * refreshes first wins and the other has to sign in again. One file is the only arrangement
@@ -503,7 +503,7 @@ final class Auth
             throw new OauthError(
                 'Signing in to Gemini CLI needs Google\'s own client id and secret, which pig does not ship. '
                 . 'Set GEMINI_CLI_CLIENT_ID and GEMINI_CLI_CLIENT_SECRET, or put geminiCli.clientId and '
-                . 'geminiCli.clientSecret in ~/.pig/settings.json. They are the ones in the published '
+                . 'geminiCli.clientSecret in ~/.pig/agent/settings.json. They are the ones in the published '
                 . 'gemini-cli package.',
             );
         }
@@ -533,7 +533,7 @@ final class Auth
             throw new OauthError(
                 'Signing in to Antigravity needs its own client id and secret, which pig does not ship. '
                 . 'Set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET, or put antigravity.clientId and '
-                . 'antigravity.clientSecret in ~/.pig/settings.json. They are the ones in the published '
+                . 'antigravity.clientSecret in ~/.pig/agent/settings.json. They are the ones in the published '
                 . 'Antigravity client, and they are not the same pair as Gemini CLI\'s.',
             );
         }

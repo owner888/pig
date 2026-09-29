@@ -296,7 +296,7 @@ final class ArgumentsTest extends TestCase
         $parsed = $this->parse('--no-tools', 'fix the bug');
 
         // `--tools` chooses the built-in set; `--no-tools` skips the ones somebody wrote in
-        // `~/.pig/tools`. Two different questions with names one letter apart.
+        // `~/.pig/agent/bin`. Two different questions with names one letter apart.
         $this->assertTrue($parsed->has('no-tools'));
         $this->assertFalse(isset($parsed->options['tools']));
         $this->assertSame(['fix the bug'], $parsed->messages);

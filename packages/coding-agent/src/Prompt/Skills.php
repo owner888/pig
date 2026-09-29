@@ -17,7 +17,7 @@ use Pig\CodingAgent\Tools\Paths;
  * hundred of them cost a hundred lines, not a hundred documents.
  *
  * The roots are upstream's, and they are other tools' as well as pig's: `~/.claude/skills`
- * and `~/.codex/skills` are read exactly as `~/.pig/skills` is, because a person who has
+ * and `~/.codex/skills` are read exactly as `~/.pig/agent/skills` is, because a person who has
  * written a skill once should not have to write it again per agent.
  *
  * Two things differ from upstream and both are stated where they happen: a later root **overrides**
@@ -25,7 +25,7 @@ use Pig\CodingAgent\Tools\Paths;
  * codex; and pi's own two roots are read at all.
  *
  * **pi's own two are read as well, which upstream has no reason to do** — it *is* pi, so its
- * `~/.pi/agent/skills` is the root pig renamed to `~/.pig/skills`. Reading pi's as well follows from
+ * `~/.pi/agent/skills` is the root pig renamed to `~/.pig/agent/skills`. Reading pi's as well follows from
  * what pig already does everywhere else: it opens pi's sessions, its `auth.json` and its
  * `models.json`. Keeping somebody's conversations and credentials across the move while silently
  * dropping their skills is the half-migration that is worse than none — and the reason stated above
@@ -101,7 +101,7 @@ final class Skills
         //
         // This is a deliberate divergence. Upstream keeps the *first* one and skips the rest, in
         // this same order — which makes `~/.codex/skills` outrank everything, including pi's own.
-        // Nobody who edits a skill in `~/.pig/skills` expects a copy in another tool's folder to be
+        // Nobody who edits a skill in `~/.pig/agent/skills` expects a copy in another tool's folder to be
         // the one that runs, and the more specific of two answers is the right one. The override is
         // named in a warning either way, so nothing about it is silent.
         //
@@ -118,7 +118,7 @@ final class Skills
         // **pig's own two have no settings key**, which is the one place this differs from
         // upstream, and it is a naming problem rather than a decision about features: upstream's
         // own root *is* `~/.pi/agent/skills`, so its `enablePiUser` and pig's name the same
-        // directory, and no upstream key is left over for `~/.pig/skills`. Inventing one would put
+        // directory, and no upstream key is left over for `~/.pig/agent/skills`. Inventing one would put
         // a key in a settings file that only pig understands. The all-or-nothing switch already
         // exists twice — `skills.enabled` and `--no-skills` — with `ignoredSkills` for narrower.
         $table = [
@@ -160,7 +160,7 @@ final class Skills
                 }
 
                 // Two roots reaching the same file through a symlink is one skill, not a
-                // collision: `~/.claude/skills` symlinked into `~/.pig/skills` is a
+                // collision: `~/.claude/skills` symlinked into `~/.pig/agent/skills` is a
                 // normal way to keep one copy.
                 $real = realpath($skill->path);
                 $real = $real === false ? $skill->path : $real;
