@@ -527,6 +527,18 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertSame($path, $again->store?->path);
     }
 
+    public function testAResumeIdIsResolvedToTheSessionFile(): void
+    {
+        $first = $this->start();
+        self::converse($first, 'earlier');
+        $id = (string) $first->store?->id;
+
+        $again = $this->start([], ['resume' => $id]);
+
+        $this->assertTrue($again->resumed);
+        $this->assertSame($first->store?->path, $again->store?->path);
+    }
+
     public function testASessionFileThatWillNotOpenSaysWhy(): void
     {
         $error = $this->assertThrows(

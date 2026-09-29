@@ -183,6 +183,12 @@ final class AgentSession
         return $this->store;
     }
 
+    /** The command to resume this session, if it was persisted to disk. */
+    public function resumeCommand(): ?string
+    {
+        return $this->store?->resumeCommand();
+    }
+
     /** The project directory, so a mode holding a session need not be handed it twice. */
     public function cwd(): string
     {

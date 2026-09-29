@@ -200,14 +200,36 @@ final class SocketTest extends TestCase
     private function echoServer(): array
     {
         return $this->server(function ($connection): void {
-            Loop::get()->onReadable($connection, static function ($peer): void {
+            $buffer = '';
+            $writer = null;
+
+            Loop::get()->onReadable($connection, function ($peer) use (&$buffer, &$writer): void {
                 $data = fread($peer, 65536);
 
                 if ($data === false || $data === '') {
                     return;
                 }
 
-                fwrite($peer, $data);
+                $written = fwrite($peer, $data);
+
+                if ($written < strlen($data)) {
+                    $buffer .= substr($data, $written === false ? 0 : $written);
+
+                    if ($writer === null) {
+                        $writer = Loop::get()->onWritable($peer, function ($wpeer) use (&$buffer, &$writer): void {
+                            $sent = fwrite($wpeer, $buffer);
+
+                            if ($sent > 0) {
+                                $buffer = substr($buffer, $sent);
+                            }
+
+                            if ($buffer === '') {
+                                Loop::get()->cancel($writer);
+                                $writer = null;
+                            }
+                        });
+                    }
+                }
             });
         });
     }

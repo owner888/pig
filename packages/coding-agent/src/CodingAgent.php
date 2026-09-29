@@ -436,6 +436,14 @@ final class CodingAgent
             $resume = $latest->path;
         }
 
+        if ($resume !== null) {
+            $found = SessionManager::find($cwd, $resume);
+
+            if ($found !== null) {
+                $resume = $found;
+            }
+        }
+
         try {
             return $resume === null ? SessionManager::create($cwd) : SessionManager::open($resume);
         } catch (Throwable $error) {

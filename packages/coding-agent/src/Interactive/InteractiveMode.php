@@ -453,6 +453,12 @@ final class InteractiveMode
         return $this->tui;
     }
 
+    /** The command to resume this session, if it was persisted to disk. */
+    public function resumeCommand(): ?string
+    {
+        return $this->session->resumeCommand();
+    }
+
     public function stop(): void
     {
         if (!$this->running) {

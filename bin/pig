@@ -101,6 +101,7 @@ if (isset($options['help'])) {
       --cwd <path>      where to work (default: here)
       -c, --continue    pick up the most recent session here
       -r, --resume      choose from a list; `--resume <file>` opens one by path
+      --session <id>    resume a session by its ID or path
       --no-save         do not write this session to disk
       --export <file>   write a session file out as HTML and stop. A second word is
                         where it goes: `--export a.jsonl out.html`
@@ -348,7 +349,33 @@ if (isset($options['tools'])) {
 
 // Resolved here rather than inside the assembly, because choosing one draws a list on the
 // terminal and `CodingAgent::session()` has no screen: it takes a path, or nothing.
-$resumePath = $options['resume'] ?? null;
+$resumePath = $options['session'] ?? $options['resume'] ?? null;
+
+if (isset($options['session'])) {
+    $sessionArg = $options['session'];
+
+    if ($sessionArg === '') {
+        fwrite(STDERR, Style::red("--session requires a session ID or path.\n"));
+
+        exit(1);
+    }
+
+    $resolved = SessionManager::find($cwd, $sessionArg);
+
+    if ($resolved === null) {
+        fwrite(STDERR, Style::red("No session found matching '{$sessionArg}'.\n"));
+
+        exit(1);
+    }
+
+    $resumePath = $resolved;
+} elseif ($resumePath !== null && $resumePath !== '') {
+    $resolved = SessionManager::find($cwd, $resumePath);
+
+    if ($resolved !== null) {
+        $resumePath = $resolved;
+    }
+}
 
 if ($resumePath === '' && !isset($options['no-save'])) {
     // `--resume` with nothing after it means "show me the list": a session file is named after six
@@ -535,6 +562,12 @@ if ($mode === 'rpc') {
     // The first thing a person sees after quitting is their own shell, so the screen is
     // handed back the way it was found.
     echo "\n";
+
+    $resume = $running->resumeCommand();
+
+    if ($resume !== null && (!function_exists('posix_isatty') || posix_isatty(STDOUT))) {
+        echo Style::dim('To resume this session: '), $resume, "\n";
+    }
 }
 
 exit($exit);

@@ -94,7 +94,8 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 `-c`/`--continue` to pick up where you left off, or `-r`/`--resume` on its own to choose from
 a list — type in that list to search it, and the search matches anything said in the
 conversation, not just the line it opened with. Escape there starts a new conversation instead;
-ctrl+c leaves without starting one. `/resume` inside a session shows the same list, search and
+ctrl+c leaves without starting one. `--session <id>` resumes an earlier session by its ID or
+path directly (printed upon quitting a session). `/resume` inside a session shows the same list, search and
 all. `-h` for the flags, `-v` for the version.
 `/help` inside lists every key, the prompt's own editing keys included, and every command.
 Shift+ctrl+d writes a debug log — the frame, how wide each line came out, and the conversation —

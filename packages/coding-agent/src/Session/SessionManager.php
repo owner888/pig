@@ -88,6 +88,25 @@ final class SessionManager
         );
     }
 
+    /** Whether this session has been written to disk. */
+    public function isPersisted(): bool
+    {
+        return $this->started && is_file($this->path);
+    }
+
+    /**
+     * The command to resume this session, matching upstream pi's formatResumeCommand.
+     * Returns null if the session was never persisted to disk.
+     */
+    public function resumeCommand(): ?string
+    {
+        if (!$this->isPersisted()) {
+            return null;
+        }
+
+        return "pig --session {$this->id}";
+    }
+
     /** A v4 UUID, which is what pi's ids are made of. */
     private static function uuid(): string
     {
@@ -974,6 +993,102 @@ final class SessionManager
     public static function latestFor(string $cwd): ?SessionInfo
     {
         return self::listFor($cwd)[0] ?? null;
+    }
+
+    /**
+     * Find a session file by its exact ID, prefix, or path.
+     *
+     * Matches upstream pi's resolveSessionPath():
+     * 1. Direct path: if it contains a slash or ends in .jsonl, resolve as a file path.
+     * 2. Local exact or prefix match: search the project's session directory in pig and pi.
+     * 3. Global match: search all projects' session directories in pig and pi.
+     */
+    public static function find(string $cwd, string $sessionArg): ?string
+    {
+        $sessionArg = trim($sessionArg);
+
+        if ($sessionArg === '') {
+            return null;
+        }
+
+        if (str_contains($sessionArg, '/') || str_contains($sessionArg, '\\') || str_ends_with($sessionArg, '.jsonl')) {
+            if (is_file($sessionArg)) {
+                return $sessionArg;
+            }
+
+            $local = $cwd . '/' . $sessionArg;
+
+            if (is_file($local)) {
+                return $local;
+            }
+
+            return null;
+        }
+
+        // Local project session directory (pig and pi)
+        $localDirs = [
+            self::directory($cwd),
+            self::directory($cwd, Config::piHome()),
+        ];
+
+        foreach ($localDirs as $dir) {
+            if (!is_dir($dir)) {
+                continue;
+            }
+
+            // 1. Exact ID match (files are named {timestamp}_{id}.jsonl)
+            $exact = glob($dir . '/*_' . $sessionArg . '.jsonl') ?: [];
+
+            if ($exact !== []) {
+                return $exact[0];
+            }
+
+            // 2. Prefix match
+            $prefix = glob($dir . '/*_' . $sessionArg . '*.jsonl') ?: [];
+
+            if ($prefix !== []) {
+                return $prefix[0];
+            }
+        }
+
+        // Search through recent session entries in case of custom or migrated filenames
+        foreach (self::listFor($cwd) as $session) {
+            if ($session->id === $sessionArg || str_starts_with($session->id, $sessionArg)) {
+                return $session->path;
+            }
+        }
+
+        // Global search across all project session directories
+        $globalRoots = [
+            Config::home() . '/sessions',
+            Config::piHome() . '/sessions',
+        ];
+
+        foreach ($globalRoots as $root) {
+            if (!is_dir($root)) {
+                continue;
+            }
+
+            $exact = glob($root . '/*/*_' . $sessionArg . '.jsonl') ?: [];
+
+            if ($exact !== []) {
+                return $exact[0];
+            }
+
+            $prefix = glob($root . '/*/*_' . $sessionArg . '*.jsonl') ?: [];
+
+            if ($prefix !== []) {
+                return $prefix[0];
+            }
+        }
+
+        return null;
+    }
+
+    /** Find an exact session ID without loading transcript bodies. */
+    public static function findById(string $cwd, string $id): ?string
+    {
+        return self::find($cwd, $id);
     }
 
     /**

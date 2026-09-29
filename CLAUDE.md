@@ -8188,7 +8188,6 @@ Left out of `main.ts` with reasons, so the flag list is not compared twice:
 | `checkForNewVersion()` | fetches `registry.npmjs.org` at every start to see whether a newer release exists. pig is not published, and the habit is one pig refuses elsewhere in as many words — *"reaching for the network to draw a completion list is not something a keystroke should do"* |
 | `--system-prompt`, `--append-system-prompt`, and `.pi/SYSTEM.md` discovery | the system prompt is the developer's own file here, so this is theirs to decide rather than the audit's |
 | `--hook <path>`, `--tool <path>` | pig adds hook and custom-tool paths through the settings only, which is where a path somebody uses twice belongs. The mirror of `--no-hooks`/`--no-tools`, which upstream lacks and pig has |
-| `--session <path>` | `--resume <path>` already opens one by path — see the note on `--resume` taking an optional value |
 | `--session-dir <dir>` | `PIG_HOME` moves the whole directory, which is the only use anybody has had for it |
 | `--provider` | pig resolves a provider and an id together (`ModelResolver`), so there is nothing for a second flag to disambiguate |
 

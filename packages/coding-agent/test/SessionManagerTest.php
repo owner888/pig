@@ -1114,6 +1114,51 @@ final class SessionManagerTest extends TestCase
         $this->assertSame(3, $back[0]->replaced);
     }
 
+    public function testIsPersistedAndResumeCommand(): void
+    {
+        $session = SessionManager::create($this->cwd());
+
+        // Newly created session without persisted assistant turn is not persisted
+        $this->assertFalse($session->isPersisted());
+        $this->assertNull($session->resumeCommand());
+
+        $this->converse($session, 'first turn');
+
+        // Persisted once written to disk
+        $this->assertTrue($session->isPersisted());
+        $this->assertSame("pig --session {$session->id}", $session->resumeCommand());
+    }
+
+    public function testFindSessionByExactIdPrefixAndPath(): void
+    {
+        $cwdA = $this->cwd() . '/project-a';
+        $cwdB = $this->cwd() . '/project-b';
+
+        $sessionA = SessionManager::create($cwdA);
+        $this->converse($sessionA, 'hello in project A');
+
+        $sessionB = SessionManager::create($cwdB);
+        $this->converse($sessionB, 'hello in project B');
+
+        // 1. Direct path
+        $this->assertSame($sessionA->path, SessionManager::find($cwdA, $sessionA->path));
+
+        // 2. Exact ID local match
+        $this->assertSame($sessionA->path, SessionManager::find($cwdA, $sessionA->id));
+        $this->assertSame($sessionA->path, SessionManager::findById($cwdA, $sessionA->id));
+
+        // 3. Prefix match
+        $prefixA = substr($sessionA->id, 0, 8);
+        $this->assertSame($sessionA->path, SessionManager::find($cwdA, $prefixA));
+
+        // 4. Global match for session in another project
+        $this->assertSame($sessionB->path, SessionManager::find($cwdA, $sessionB->id));
+
+        // 5. Unknown session ID returns null
+        $this->assertNull(SessionManager::find($cwdA, 'non-existent-session-id'));
+        $this->assertNull(SessionManager::find($cwdA, ''));
+    }
+
     private function cwd(): string
     {
         return $this->home . '/project';

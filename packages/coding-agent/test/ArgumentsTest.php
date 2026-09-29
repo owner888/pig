@@ -33,6 +33,13 @@ final class ArgumentsTest extends TestCase
         $this->assertSame(['out.html'], $parsed->messages, 'the second word is where it goes');
     }
 
+    public function testSessionTakesTheIdOrPathAfterIt(): void
+    {
+        $parsed = Arguments::parse(['--session', '01a0ee50-aabf-7649-b059-925b25a6a31b']);
+
+        $this->assertSame('01a0ee50-aabf-7649-b059-925b25a6a31b', $parsed->value('session'));
+    }
+
     public function testAnOptionWithAValueTakesTheNextArgument(): void
     {
         $this->assertSame('sonnet', $this->parse('--model', 'sonnet')->value('model'));
