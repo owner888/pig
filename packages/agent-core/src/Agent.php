@@ -123,6 +123,12 @@ final class Agent
         $this->state->tools = $tools;
     }
 
+    /** @return list<AgentTool> */
+    public function tools(): array
+    {
+        return $this->state->tools;
+    }
+
     /** @param list<mixed> $messages */
     public function replaceMessages(array $messages): void
     {

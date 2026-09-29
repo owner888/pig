@@ -8,6 +8,7 @@ use Closure;
 use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentStartEvent;
+use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
 use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
@@ -36,19 +37,33 @@ use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Cli\SessionList;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Export\HtmlExport;
+use Pig\CodingAgent\CustomTools\CustomToolApi;
+use Pig\CodingAgent\CustomTools\CustomToolLoader;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\CustomTools\LoadedCustomTool;
 use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\CustomTools\ToolProblem;
+use Pig\CodingAgent\Extensions\ExtensionDiscovery;
+use Pig\CodingAgent\Extensions\ExtensionLoader;
+use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
 use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Extensions\ExtensionDiscovery;
 use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookError;
+use Pig\CodingAgent\Hooks\HookLoader;
 use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Hooks\HookedTool;
+use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Hooks\RegisteredCommand;
 use Pig\CodingAgent\Prompt\ContextFile;
+use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
+use Pig\CodingAgent\Prompt\Skills;
+use Pig\CodingAgent\Prompt\SlashCommands;
+use Pig\CodingAgent\Prompt\SystemPrompt;
+use Pig\CodingAgent\Tools\ToolSet;
+use Pig\Tui\Env;
 use Pig\CodingAgent\Session\SessionCodec;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\HookMessage;
@@ -210,6 +225,12 @@ final class InteractiveMode
     /** @var array<string, Closure> what a hook draws its own messages with, by custom type */
     private array $messageRenderers = [];
 
+    /** @var list<LoadedExtension> */
+    private array $extensions = [];
+
+    /** @var list<string> */
+    private array $builtInTools = [];
+
     /**
      * @param list<string>                $initialMessages said before the first keystroke, in order
      * @param list<\Pig\Ai\ImageContent> $initialImages   attachments for the first of them
@@ -235,7 +256,7 @@ final class InteractiveMode
         // off-by-ones.
         private readonly ?Auth $auth = null,
         private readonly ?string $changelog = null,
-        private readonly array $extensions = [],
+        array $extensions = [],
     ) {
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
@@ -243,6 +264,8 @@ final class InteractiveMode
         $this->fileCommands = $fileCommands;
         $this->hooks = $hooks;
         $this->customTools = $customTools;
+        $this->extensions = $extensions;
+        $this->builtInTools = ToolSet::CODING;
         $this->settings = $settings ?? Settings::inMemory();
         $this->hideThinking = $this->settings->hideThinking();
         $this->showImages = $this->settings->showImages();
@@ -1060,12 +1083,12 @@ final class InteractiveMode
                     fn (array $command): SlashCommand => new SlashCommand(
                         $command[0],
                         $command[1],
-                        // The one built-in whose argument is a known list rather than free text.
-                        // `SlashCommand::$argumentCompletions` has been read by the provider since
-                        // it was ported and supplied by nobody, and its own docblock named this
-                        // very example — so `/model son` offered **file names**, because past the
-                        // first space Tab means a path unless something says otherwise.
-                        $command[0] === 'model' ? $this->modelCompletions(...) : null,
+                        // The built-ins whose argument is a known list rather than free text.
+                        match ($command[0]) {
+                            'model' => $this->modelCompletions(...),
+                            'thinking' => $this->thinkingCompletions(...),
+                            default => null,
+                        },
                     ),
                     self::COMMANDS,
                 ),
@@ -1339,9 +1362,11 @@ final class InteractiveMode
     /** @var list<array{0: string, 1: string}> */
     private const array COMMANDS = [
         ['help', 'Show the keys and commands'],
+        ['hotkeys', 'Show all keyboard shortcuts'],
         ['new', 'Forget the conversation and start over'],
         ['session', 'What this session has cost'],
         ['model', 'Switch models, or say which one'],
+        ['thinking', 'Set thinking level, or choose from a list'],
         ['skills', 'What the model can reach for, and where it came from'],
         ['copy', 'Put the last answer on the clipboard'],
         ['export', 'Write this conversation out as an HTML file'],
@@ -1354,6 +1379,7 @@ final class InteractiveMode
         ['theme', 'Switch between dark and light'],
         ['settings', 'Change what is switchable, and see what it is set to'],
         ['changelog', 'What changed, release by release'],
+        ['reload', 'Reload extensions, skills, commands, tools, and context files'],
         ['hooks', 'What hooks loaded, and what they added'],
         ['tools', 'What the model can call, built-in and loaded'],
         ['exit', 'Quit'],
@@ -1396,7 +1422,7 @@ final class InteractiveMode
         // `debug` is a third: it is for reporting a fault rather than for using pig, and
         // shift+ctrl+d is the route worth advertising — it works whatever holds the focus, which
         // is the whole point of a key that captures the screen.
-        if ($name === 'quit' || $name === 'arminsayshi' || $name === 'debug') {
+        if ($name === 'quit' || $name === 'hotkeys' || $name === 'arminsayshi' || $name === 'debug') {
             return true;
         }
 
@@ -1423,11 +1449,12 @@ final class InteractiveMode
     private function command(string $text, string $name): void
     {
         match ($name) {
-            'help' => $this->say($this->commandHelp()),
+            'help', 'hotkeys' => $this->say($this->commandHelp()),
             'new' => $this->newSession(),
             'session' => $this->say($this->sessionSummary()),
             'compact' => $this->startCompaction(trim(substr($text, strlen($name) + 1))),
             'model' => $this->showModels(trim(substr($text, strlen($name) + 1))),
+            'thinking' => $this->handleThinkingCommand(trim(substr($text, strlen($name) + 1))),
             'skills' => $this->say($this->skillList()),
             'copy' => $this->copyLastAnswer(),
             'export' => $this->exportSession(trim(substr($text, strlen($name) + 1))),
@@ -1439,6 +1466,7 @@ final class InteractiveMode
             'theme' => $this->switchTheme(),
             'settings' => $this->showSettings(),
             'changelog' => $this->showChangelog(),
+            'reload' => $this->reload(),
             'arminsayshi' => $this->sayHi(),
             'debug' => $this->writeDebugLog(),
             'hooks' => $this->say($this->hookList()),
@@ -1889,14 +1917,246 @@ final class InteractiveMode
     }
 
     /**
-     * What typing in the model picker is ranked against.
+     * Argument completions for `/thinking`: supported thinking levels for the active model.
      *
-     * Upstream's `getModelSelectorSearchText`, repetition and all, and the repetition is the
-     * whole design: the provider appears twice and the bare id only at the end, so that typing
-     * `openai/gpt-5` ranks OpenAI's own above a reseller's `openrouter/openai/gpt-5`. The row's
-     * value is its position in the list — `0`, `1`, `2` — so without this there is nothing to
-     * search a model by at all.
+     * @return list<AutocompleteItem>
      */
+    private function thinkingCompletions(string $typed): array
+    {
+        $levels = $this->session->availableThinkingLevels();
+
+        if ($levels === []) {
+            return [];
+        }
+
+        $wanted = mb_strtolower(trim($typed));
+        $items = [];
+
+        $descriptions = [
+            'off' => 'No reasoning',
+            'minimal' => 'Very brief reasoning (~1k tokens)',
+            'low' => 'Light reasoning (~2k tokens)',
+            'medium' => 'Moderate reasoning (~8k tokens)',
+            'high' => 'Deep reasoning (~16k tokens)',
+            'xhigh' => 'Maximum reasoning (~32k tokens)',
+        ];
+
+        foreach ($levels as $level) {
+            $name = $level->value;
+
+            if ($wanted !== '' && !str_starts_with($name, $wanted)) {
+                continue;
+            }
+
+            $items[] = new AutocompleteItem($name, $name, $descriptions[$name] ?? null);
+        }
+
+        return $items;
+    }
+
+    private function handleThinkingCommand(string $arg): void
+    {
+        $available = $this->session->availableThinkingLevels();
+
+        if ($available === []) {
+            $this->say('This model does not support thinking');
+
+            return;
+        }
+
+        if ($arg === '') {
+            $this->showThinkingSelector();
+
+            return;
+        }
+
+        $level = ThinkingLevel::tryFrom(strtolower($arg));
+        $supported = array_map(static fn (ThinkingLevel $l): string => $l->value, $available);
+
+        if ($level === null || !in_array($level->value, $supported, true)) {
+            $this->sayError("Unknown thinking level \"{$arg}\". Available levels: " . implode(', ', $supported) . '.');
+
+            return;
+        }
+
+        $this->useThinkingLevel($level->value);
+        $this->paintBorder();
+        $this->say("Thinking level: {$level->value}");
+    }
+
+    private function showThinkingSelector(): void
+    {
+        $available = $this->session->availableThinkingLevels();
+
+        if ($available === []) {
+            $this->say('This model does not support thinking');
+
+            return;
+        }
+
+        $current = $this->session->thinkingLevel()->value;
+
+        $submenu = $this->thinkingSubmenu($available, $current, function (?string $value): void {
+            $this->overlay->clear();
+            $this->tui->setFocus($this->editor);
+
+            if ($value !== null) {
+                $this->useThinkingLevel($value);
+                $this->paintBorder();
+                $this->say("Thinking level: {$value}");
+            }
+
+            $this->tui->requestRender();
+        });
+
+        $this->overlay->clear();
+        $this->overlay->addChild($submenu);
+        $this->tui->setFocus($submenu);
+        $this->tui->requestRender();
+    }
+
+    /**
+     * Hot-reload keybindings, extensions, skills, commands, tools, and context files.
+     *
+     * Ported from upstream's `/reload` command in `interactive-mode.ts`.
+     */
+    private function reload(): void
+    {
+        if ($this->session->isStreaming()) {
+            $this->sayWarning('Wait for the current response to finish before reloading.');
+
+            return;
+        }
+
+        if ($this->session->isCompacting()) {
+            $this->sayWarning('Wait for compaction to finish before reloading.');
+
+            return;
+        }
+
+        // 1. Reload context files
+        [$contextFiles, $contextWarnings] = ContextFiles::loadWithWarnings($this->cwd);
+        $this->contextFiles = $contextFiles;
+
+        // 2. Reload skills
+        [$skills, $skillWarnings] = Skills::load(
+            $this->cwd,
+            extraDirs: array_filter($this->settings->skillList('customDirectories')),
+            ignored: $this->settings->skillList('ignoredSkills'),
+            only: $this->settings->skillList('includeSkills'),
+            roots: [
+                'codex-user' => $this->settings->skillRoot('enableCodexUser'),
+                'claude-user' => $this->settings->skillRoot('enableClaudeUser'),
+                'claude-project' => $this->settings->skillRoot('enableClaudeProject'),
+                'pi-user' => $this->settings->skillRoot('enablePiUser'),
+                'pi-project' => $this->settings->skillRoot('enablePiProject'),
+            ],
+        );
+        $this->skills = $skills;
+
+        // 3. Reload file commands
+        $this->fileCommands = SlashCommands::load($this->cwd);
+        $this->session->setFileCommands($this->fileCommands);
+
+        // 4. Reload extensions
+        $this->extensions = ExtensionDiscovery::discover($this->cwd, $this->settings->extensions());
+
+        // 5. Reload hooks and extension hooks
+        [$loadedHooks, $hookProblems] = HookLoader::load($this->cwd, $this->settings->hooks());
+        $loadedTools = [];
+
+        [$loadedExtensions, $extensionProblems] = ExtensionLoader::load(
+            $this->cwd,
+            $this->settings->extensions(),
+            $this->extensions,
+            auth: $this->auth,
+        );
+
+        foreach ($loadedExtensions as $ext) {
+            $loadedHooks[] = new LoadedHook($ext->path, $ext->resolved, $ext->api);
+            foreach ($ext->api->tools() as $tool) {
+                $loadedTools[] = new LoadedCustomTool($ext->path, $ext->resolved, $tool);
+            }
+        }
+
+        $hooks = new HookRunner($loadedHooks, $this->cwd, $this->session->store());
+        $this->hooks = $hooks;
+        $this->session->setHooks($hooks);
+
+        $session = $this->session;
+        $hooks->initialize(
+            getModel: static fn () => $session->model(),
+            isIdle: static fn (): bool => !$session->isStreaming(),
+            abort: static function () use ($session): void {
+                $session->abort();
+            },
+            hasQueuedMessages: static fn (): bool => $session->queued() !== [],
+            signal: static fn () => $session->signal(),
+            ui: $this->ui,
+            send: static function (HookMessage $message, bool $triggerTurn) use ($session): void {
+                $session->sendHookMessage($message, $triggerTurn);
+            },
+            note: static function (string $customType, mixed $data) use ($session): void {
+                $session->appendHookEntry($customType, $data);
+            },
+        );
+
+        $hooks->onError($this->sayHookError(...));
+        $this->messageRenderers = $hooks->renderers();
+        [$this->hookCommands, $clashes] = $hooks->commands();
+
+        foreach ($clashes as $clash) {
+            $hooks->emitError($clash);
+        }
+
+        // 6. Reload custom tools
+        $toolApi = new CustomToolApi($this->cwd);
+        [$diskTools, $toolProblems] = CustomToolLoader::load(
+            $this->cwd,
+            $this->builtInTools,
+            $this->settings->customTools(),
+            api: $toolApi,
+        );
+        $allCustomTools = [...$diskTools, ...$loadedTools];
+        $customTools = new CustomToolSet($allCustomTools, $toolApi);
+        $this->customTools = $customTools;
+        $customTools->withUi($this->ui);
+        $customTools->withContext(fn () => $hooks->context());
+
+        // 7. Update agent tools & system prompt
+        $builtIn = ToolSet::create($this->cwd, $this->builtInTools);
+        $allTools = [...$builtIn, ...$customTools->agentTools()];
+        $wrapped = HookedTool::wrap($allTools, $hooks);
+        $this->session->agent->setTools($wrapped);
+
+        $systemPrompt = SystemPrompt::build(
+            $this->cwd,
+            $this->builtInTools,
+            contextFiles: $this->contextFiles,
+            skills: $this->skills,
+        );
+        $this->session->agent->setSystemPrompt($systemPrompt);
+
+        // 8. Rebind autocomplete on editor and update banner
+        $this->bindEditor();
+        $this->banner?->setText($this->banner());
+
+        // 9. Report warnings if any
+        $allWarnings = [
+            ...$contextWarnings,
+            ...array_map(static fn ($w): string => "skill {$w->path}: {$w->message}", $skillWarnings),
+            ...array_map(static fn ($p): string => "hook {$p->toText()}", $hookProblems),
+            ...array_map(static fn ($p): string => "extension {$p->toText()}", $extensionProblems),
+            ...array_map(static fn ($p): string => "tool {$p->toText()}", $toolProblems),
+        ];
+
+        foreach ($allWarnings as $w) {
+            $this->sayWarning($w);
+        }
+
+        $this->say($this->palette->fg('accent', 'Reloaded extensions, skills, commands, tools, and context files.'));
+        $this->tui->requestRender();
+    }
     private static function modelSearchText(Model $model): string
     {
         return "{$model->provider} {$model->provider}/{$model->id} {$model->provider} {$model->id} {$model->name}";

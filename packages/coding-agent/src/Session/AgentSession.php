@@ -153,7 +153,7 @@ final class AgentSession
         private readonly string $cwd = '.',
         private ?SessionManager $store = null,
         private readonly ?Settings $settings = null,
-        private readonly ?HookRunner $hooks = null,
+        private ?HookRunner $hooks = null,
         array $fileCommands = [],
         array $modelScope = [],
     ) {
@@ -175,6 +175,17 @@ final class AgentSession
     public function hooks(): ?HookRunner
     {
         return $this->hooks;
+    }
+
+    public function setHooks(?HookRunner $hooks): void
+    {
+        $this->hooks = $hooks;
+    }
+
+    /** @param list<FileCommand> $fileCommands */
+    public function setFileCommands(array $fileCommands): void
+    {
+        $this->fileCommands = $fileCommands;
     }
 
     /** Where this session is being written, if it is. */

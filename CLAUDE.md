@@ -617,7 +617,7 @@ components it draws with are `UserMessageComponent`, `AssistantMessageComponent`
 `InteractiveMode` is ~1200 lines against upstream's 2439, and the difference is almost entirely
 selectors: upstream has twenty-five of them — models, sessions, settings, hooks, OAuth, branch
 trees — and each needs a subsystem that is not ported. What is here is the loop that makes it
-an agent you can talk to, nineteen slash commands plus whatever the hooks add, the keys, and
+an agent you can talk to, twenty-two slash commands plus whatever the hooks add, the keys, and
 the dialogs a hook or a custom tool can open mid-turn (`Interactive\TerminalUi`).
 
 **Audited against its 2439 lines by surface** — 68 upstream methods mapped name by name against

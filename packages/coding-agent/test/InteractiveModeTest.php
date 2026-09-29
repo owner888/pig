@@ -742,6 +742,96 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('/session', $screen);
     }
 
+    public function testHotkeysAliasListsTheKeysAndTheCommands(): void
+    {
+        $this->start();
+
+        $this->type('/hotkeys');
+        $this->type(self::ENTER);
+
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('shift+tab', $screen);
+        $this->assertStringContainsString('/session', $screen);
+    }
+
+    public function testThinkingCommandSetsLevelDirectlyOrOpensSubmenu(): void
+    {
+        $this->start(reasoning: true);
+
+        // 1. Set level directly via argument
+        $this->type('/thinking high');
+        $this->type(self::ENTER);
+
+        $this->assertSame(ThinkingLevel::High, $this->session->thinkingLevel());
+        $this->assertStringContainsString('Thinking level: high', $this->screen());
+
+        // 2. Open submenu via /thinking without arguments
+        $this->type('/thinking');
+        $this->type(self::ENTER);
+
+        // Overlay is open showing Thinking submenu
+        $screen = $this->screen();
+        $this->assertStringContainsString('Thinking', $screen);
+        $this->assertStringContainsString('Enter to select', $screen);
+
+        // Escape closes submenu
+        $this->type("\e");
+        $this->assertStringNotContainsString('Enter to select', $this->screen());
+    }
+
+    public function testThinkingCommandReportsUnknownLevel(): void
+    {
+        $this->start(reasoning: true);
+
+        $this->type('/thinking ultra');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('Unknown thinking level "ultra"', $this->screen());
+    }
+
+    public function testThinkingCommandOnNonReasoningModelSaysNotSupported(): void
+    {
+        $this->start(reasoning: false);
+
+        $this->type('/thinking');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('This model does not support thinking', $this->screen());
+    }
+
+    public function testReloadCommandRefreshesResourcesWhenIdle(): void
+    {
+        $this->start();
+
+        $this->type('/reload');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('Reloaded extensions, skills, commands, tools, and context files', $this->screen());
+    }
+
+    public function testReloadCommandWarnsWhenStreaming(): void
+    {
+        $this->start(['done']);
+        $this->holdTheAgent();
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertTrue($this->session->isStreaming());
+
+        $this->type('/reload');
+        $this->type(self::ENTER);
+
+        $this->assertStringContainsString('Wait for the current response to finish before reloading', $this->screen());
+
+        // Exit cleanly
+        $this->type('/quit');
+        $this->type(self::ENTER);
+        $this->settle();
+    }
+
     public function testNewForgetsTheConversation(): void
     {
         $this->start(['answered']);
