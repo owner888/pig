@@ -19,6 +19,35 @@ no number to bump anywhere else, and a build with no tag reachable reports
 
 - Nothing yet.
 
+## 0.1.1
+
+Nothing about how pig runs changed — no file under `packages/*/src` is touched. What changed is
+getting it onto a machine, and what the test suite can see.
+
+- **`install.sh`**, so `curl -fsSL https://pigagent.dev/install.sh | sh` is the one line. It runs
+  `composer global require pigagent/pig` — the one way pig is distributed, so there is still a
+  single answer to "which version am I running" — and adds the two things Composer will not do. It
+  names **every** missing PHP extension at once *before* anything is installed, where a missing
+  `ext-pcntl` otherwise surfaces half way through as a platform error that says nothing about what
+  to install. And it offers to put Composer's global bin directory on your PATH, which is the step
+  that turns a successful install into `command not found`. Every function is defined before the
+  last line calls one, so a download cut off half way does nothing at all rather than half an
+  install.
+- **Both READMEs say how to install it**, with that PATH step as a prerequisite rather than a
+  footnote: `composer global require` on its own really does end in `command not found`, so the
+  instructions did not work as written.
+- **`bin/pig` and `bin/pig-ai` are executable in git.** Composer sets the bit when it installs, so
+  this one is for whoever clones the repository.
+- **A mutation sweep over the eight files whose mistakes are not undoable** — the four tools that
+  change your files or kill your processes, the arithmetic that decides what the model is shown of
+  them, and the three classes that write the session file pi also reads. 831 mutations, and the
+  tests it asked for are what is in this release. `Truncate` had no test of its own at all; Escape
+  arriving between the model asking for a write and the write happening was pinned in none of the
+  tools; two write-failure checks could never have fired; a compaction's kept range was not held to
+  ending at the compaction; and every default the session decoders apply to a field pi leaves out
+  was untested. **None of it was a behaviour change** — each guard was already doing the right
+  thing, and nothing was holding it there.
+
 ## 0.1.0
 
 First numbered version, and the first one that can tell you there is a newer one.
