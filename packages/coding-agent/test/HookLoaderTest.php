@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Test;
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookLoader;
+use Pig\CodingAgent\Hooks\HookRunner;
 
 final class HookLoaderTest extends TestCase
 {
@@ -313,5 +314,74 @@ final class HookLoaderTest extends TestCase
         $this->assertCount(2, $hooks);
         $this->assertCount(1, $errors);
         $this->assertSame('b.php', basename($errors[0]->hookPath));
+    }
+
+    public function testTopLevelNamedFunctionIsRejectedToPreventReloadFatalError(): void
+    {
+        $this->write($this->home . '/hooks', 'global_fn.php', <<<'PHP'
+            <?php
+            function badHelperFunction(): void {}
+            return function ($pi): void {};
+            PHP);
+
+        [$hooks, $errors] = HookLoader::load($this->project, home: $this->home);
+
+        $this->assertCount(0, $hooks);
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString("defines top-level named function 'badHelperFunction()'", $errors[0]->error);
+        $this->assertStringContainsString('use scoped closures', $errors[0]->error);
+    }
+
+    public function testTopLevelNamedClassIsRejectedToPreventReloadFatalError(): void
+    {
+        $this->write($this->home . '/hooks', 'global_class.php', <<<'PHP'
+            <?php
+            class BadGlobalClass {}
+            return function ($pi): void {};
+            PHP);
+
+        [$hooks, $errors] = HookLoader::load($this->project, home: $this->home);
+
+        $this->assertCount(0, $hooks);
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString("defines top-level named class 'BadGlobalClass'", $errors[0]->error);
+        $this->assertStringContainsString('use anonymous classes', $errors[0]->error);
+    }
+
+    public function testAnonymousClassAndScopedClosuresAreAccepted(): void
+    {
+        $this->write($this->home . '/hooks', 'clean_scoped.php', <<<'PHP'
+            <?php
+            return static function ($pi): void {
+                $closureHelper = static fn (): int => 42;
+                $anonClass = new class {
+                    public function answer(): int { return 42; }
+                };
+            };
+            PHP);
+
+        [$hooks, $errors] = HookLoader::load($this->project, home: $this->home);
+
+        $this->assertCount(1, $hooks);
+        $this->assertCount(0, $errors);
+    }
+
+    public function testHookContextStateContainerPassesDataAcrossCalls(): void
+    {
+        $runner = new HookRunner([], '.');
+        $ctx1 = $runner->context();
+
+        $this->assertFalse($ctx1->has('service'));
+        $this->assertNull($ctx1->get('service'));
+
+        $ctx1->set('service', 'video_worker');
+
+        $this->assertTrue($ctx1->has('service'));
+        $this->assertSame('video_worker', $ctx1->get('service'));
+
+        // Next context built from the same runner shares the state instance
+        $ctx2 = $runner->context();
+        $this->assertTrue($ctx2->has('service'));
+        $this->assertSame('video_worker', $ctx2->get('service'));
     }
 }

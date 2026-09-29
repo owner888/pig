@@ -26,6 +26,7 @@ use Pig\CodingAgent\Session\SessionManager;
 final readonly class HookContext
 {
     public readonly HookUi $ui;
+    public readonly HookState $state;
 
     /**
      * @param Closure(): bool|null $isIdle            whether the agent is between runs
@@ -35,6 +36,7 @@ final readonly class HookContext
      * @param AbortSignal|null     $signal            the turn in progress's, null between
      *        turns — what a handler's own waiting should park on, so escape cuts it short
      *        rather than the person waiting it out. `$pi->exec()` uses it without being told
+     * @param HookState|null       $state             shared state container for handlers
      */
     public function __construct(
         public string $cwd,
@@ -46,8 +48,25 @@ final readonly class HookContext
         ?HookUi $ui = null,
         public bool $hasUi = false,
         public ?AbortSignal $signal = null,
+        ?HookState $state = null,
     ) {
         $this->ui = $ui ?? new NoUi();
+        $this->state = $state ?? new HookState();
+    }
+
+    public function set(string $key, mixed $value): void
+    {
+        $this->state->set($key, $value);
+    }
+
+    public function get(string $key, mixed $default = null): mixed
+    {
+        return $this->state->get($key, $default);
+    }
+
+    public function has(string $key): bool
+    {
+        return $this->state->has($key);
     }
 
     public function isIdle(): bool

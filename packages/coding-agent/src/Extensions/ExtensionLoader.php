@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Extensions;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Hooks\HookApi;
+use Pig\CodingAgent\Hooks\HookLoader;
 use Pig\CodingAgent\Tools\Paths;
 use Throwable;
 
@@ -124,6 +125,12 @@ final class ExtensionLoader
     {
         if (!is_readable($path)) {
             return [null, new ExtensionError($path, 'load', 'not a readable file')];
+        }
+
+        $symbolError = HookLoader::checkTopLevelSymbols($resolved);
+
+        if ($symbolError !== null) {
+            return [null, new ExtensionError($path, 'load', $symbolError)];
         }
 
         $name = self::nameOf($path);

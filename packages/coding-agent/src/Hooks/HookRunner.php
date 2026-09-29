@@ -68,6 +68,8 @@ final class HookRunner
 
     private ?HookUi $ui = null;
 
+    private readonly HookState $state;
+
     /** @param list<LoadedHook> $hooks in the order they were loaded, which is the order they run */
     public function __construct(
         array $hooks = [],
@@ -75,6 +77,7 @@ final class HookRunner
         private readonly ?SessionManager $store = null,
     ) {
         $this->hooks = $hooks;
+        $this->state = new HookState();
     }
 
     /**
@@ -258,6 +261,7 @@ final class HookRunner
             // was somebody there and then heard nothing back.
             $this->ui !== null && !$this->ui instanceof NoUi,
             $this->getSignal === null ? null : ($this->getSignal)(),
+            $this->state,
         );
     }
 

@@ -173,4 +173,38 @@ PHP);
         $this->assertCount(1, $loaded);
         $this->assertSame('legacy', $loaded[0]->name);
     }
+
+    public function testTopLevelNamedFunctionIsRejected(): void
+    {
+        $file = $this->homeDir . '/extensions/bad_fn.php';
+        file_put_contents($file, <<<'PHP'
+<?php
+function myGlobalExtensionHelper() {}
+return function ($pi) {};
+PHP);
+
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir);
+
+        $this->assertCount(0, $loaded);
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString("defines top-level named function 'myGlobalExtensionHelper()'", $errors[0]->message);
+        $this->assertStringContainsString('use scoped closures', $errors[0]->message);
+    }
+
+    public function testTopLevelNamedClassIsRejected(): void
+    {
+        $file = $this->homeDir . '/extensions/bad_class.php';
+        file_put_contents($file, <<<'PHP'
+<?php
+class MyGlobalExtensionClass {}
+return function ($pi) {};
+PHP);
+
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir);
+
+        $this->assertCount(0, $loaded);
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString("defines top-level named class 'MyGlobalExtensionClass'", $errors[0]->message);
+        $this->assertStringContainsString('use anonymous classes', $errors[0]->message);
+    }
 }
