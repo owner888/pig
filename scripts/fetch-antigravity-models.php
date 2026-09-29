@@ -131,7 +131,46 @@ if (isset($options['raw'])) {
 }
 
 $decoded = json_decode($raw, true);
-$models = is_array($decoded) ? ($decoded['models'] ?? $decoded) : null;
+
+if (!is_array($decoded)) {
+    fwrite(STDERR, Style::red("That is not JSON. Run again with --raw to see it.\n"));
+
+    exit(1);
+}
+
+/**
+ * The three tables, wherever they are sitting.
+ *
+ * Deliberately forgiving about the shape, because there are already three of them in the wild:
+ * the endpoint's own reply, the `antigravity-model-catalog.json` cache (`models` + `routing`, no
+ * enums), and the `models-store.json` blob, where the enums are a *sibling* of the catalogue
+ * rather than inside it. Guessing wrong prints an empty table; looking in all three places costs
+ * six lines.
+ */
+$find = static function (array $tree, string $key, int $depth = 6) use (&$find): ?array {
+    if (is_array($tree[$key] ?? null)) {
+        return $tree[$key];
+    }
+
+    if ($depth <= 0) {
+        return null;
+    }
+
+    // Breadth first, so a shallower match wins over a deeper one of the same name. Counting
+    // levels by hand is what this replaced: the store nests one deeper than the cache and the
+    // first version quietly found nothing.
+    foreach ($tree as $value) {
+        if (is_array($value) && ($found = $find($value, $key, $depth - 1)) !== null) {
+            return $found;
+        }
+    }
+
+    return null;
+};
+
+$models = $find($decoded, 'models') ?? (array_is_list($decoded) ? $decoded : null);
+$routing = $find($decoded, 'routing');
+$enums = $find($decoded, 'modelEnums');
 
 if (!is_array($models) || $models === []) {
     fwrite(STDERR, Style::yellow(
@@ -173,8 +212,100 @@ foreach ($models as $model) {
     );
 }
 
+// ---- the two tables `Antigravity\Routing` carries between its generated markers -------------
+
+if ($routing === null) {
+    echo "\n", Style::yellow(
+        "No `routing` in this payload, so the two tables in `Ai\\Antigravity\\Routing` cannot be\n"
+        . "regenerated from it. The model rows above are still good.\n",
+    );
+
+    exit(0);
+}
+
+/** Only what routing can reach: the catalogue also enumerates the IDE's own models. */
+$reachable = [];
+
+foreach ($routing as $entry) {
+    if (!is_array($entry)) {
+        continue;
+    }
+
+    foreach ([$entry['off'] ?? null, $entry['defaultRequestId'] ?? null, ...array_values($entry['routing'] ?? [])] as $target) {
+        if (is_string($target) && $target !== '') {
+            $reachable[$target] = true;
+        }
+    }
+}
+
+$quote = static fn (string $text): string => "'" . str_replace(["\\", "'"], ["\\\\", "\\'"], $text) . "'";
+
+echo "\n// ---- Routing::ROUTING ", str_repeat('-', 60), "\n";
+ksort($routing);
+
+foreach ($routing as $logical => $entry) {
+    if (!is_array($entry) || !is_string($entry['defaultRequestId'] ?? null)) {
+        continue;
+    }
+
+    $parts = ["'default' => " . $quote($entry['defaultRequestId'])];
+
+    // Absent rather than null for a model that cannot be turned off — `Routing` reads the
+    // difference, so this has to preserve it.
+    if (is_string($entry['off'] ?? null)) {
+        $parts[] = "'off' => " . $quote($entry['off']);
+    }
+
+    $levels = [];
+    $byLevel = is_array($entry['routing'] ?? null) ? $entry['routing'] : [];
+    ksort($byLevel);
+
+    foreach ($byLevel as $level => $target) {
+        if (is_string($target)) {
+            $levels[] = $quote((string) $level) . ' => ' . $quote($target);
+        }
+    }
+
+    $parts[] = "'levels' => [" . implode(', ', $levels) . ']';
+
+    echo '        ', $quote((string) $logical), ' => [', implode(', ', $parts), "],\n";
+}
+
+if ($enums === null) {
+    echo "\n", Style::yellow(
+        "No `modelEnums` in this payload — in a `models-store.json` they sit beside the catalogue\n"
+        . "rather than in it, so check there. Without them `Routing` cannot name a model on the\n"
+        . "wire, and the table it already carries is the one to keep.\n",
+    );
+
+    exit(0);
+}
+
+echo "\n// ---- Routing::ENUMS ", str_repeat('-', 62), "\n";
+$kept = array_intersect_key($enums, $reachable);
+ksort($kept);
+
+foreach ($kept as $runtime => $enum) {
+    if (is_string($enum)) {
+        echo '        ', $quote((string) $runtime), ' => ', $quote($enum), ",\n";
+    }
+}
+
+$orphans = array_diff_key($reachable, $kept);
+
+if ($orphans !== []) {
+    fwrite(STDERR, "\n" . Style::red(
+        'Routing targets with no enum: ' . implode(', ', array_keys($orphans)) . "\n"
+        . "`Routing::resolve()` refuses these rather than guessing, so a table pasted in with them\n"
+        . "missing turns those levels into an error. Fetch both tables from the same payload.\n",
+    ));
+
+    exit(1);
+}
+
 echo "\n", Style::yellow(
-    "Rows, not a rewrite: `ANTIGRAVITY_MODELS` has no generated markers, so paste these in and\n"
-    . "read the diff. What this cannot know is the routing — the ids above are the logical ones,\n"
-    . "and which runtime id each thinking level sends is a separate table.\n",
+    "Rows, not a rewrite. The model rows go in `Ai\\Models::ANTIGRAVITY_MODELS`, which has no\n"
+    . "generated markers, and the two tables above go between the markers in\n"
+    . "`Ai\\Antigravity\\Routing`. Read the diff: a routing change moves which model a thinking\n"
+    . "level actually asks for, and every request still succeeds afterwards.\n",
 );

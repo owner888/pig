@@ -9756,6 +9756,72 @@ became `~/.pig/agent/agent`. The give-away is `grep -rn "agent/agent"`, which is
 after any such rename. Project-local `.pig/hooks` and `.pig/tools` have no tilde and are
 deliberately untouched: those are per-project directories and did not move.
 
+### Antigravity: three names for one model choice
+
+`Ai\Antigravity\Routing` is the first piece of an Antigravity provider that pig owns rather than
+reaches through a gateway. It exists because **the id somebody picks is not the id that goes out**:
+
+    gemini-3.8-flash   +  medium   ->  gemini-3.8-flash-medium  ->  MODEL_PLACEHOLDER_M319
+    (logical)             (level)      (runtime)                    (enum, what the wire carries)
+
+Nothing else in pig works like that. A `Model` has one id and `ThinkingLevel` maps to a reasoning
+effort, not to another model — so this lives **inside the provider**: the registry keeps offering
+one id per model and the translation happens where the request is built. The `thinkingLevelMap`
+work in the entry above decides *which levels to offer*; this decides *what to send*. They compose
+and neither needed the other's shape.
+
+**An unknown model is refused, not defaulted.** The implementation this was ported from ends its
+lookup chain with "otherwise Gemini 3.8 Flash", which is right for a gateway taking whatever a
+client sends and wrong here: pig's registry is built from these very tables, so a miss can only be
+a bug in pig, and serving a different model than the one on screen is how such a bug never gets
+found. Same for a runtime id with no enum — that means the two tables were regenerated out of step,
+and guessing would send a request naming nothing.
+
+**The tables are generated and the generator is checked against them.**
+`scripts/fetch-antigravity-models.php` prints all three (model rows, routing, enums) from the
+deployment's catalogue, and running it over the real payload reproduces the committed tables **line
+for line** — which is the only way to know a hand-pasted table still matches its source. Two things
+that cost time:
+
+- **There are three payload shapes in the wild** for the same data: the endpoint's reply, the
+  `antigravity-model-catalog.json` cache (`models` + `routing`, *no* enums), and the
+  `models-store.json` blob, where `modelEnums` sits **beside** the catalogue rather than inside it.
+  The first version of the lookup counted levels by hand, found nothing in the third shape, and
+  printed an empty table. It is a depth-limited breadth-first search now.
+- **Only routing-reachable runtime ids are kept.** The catalogue also enumerates the Antigravity
+  IDE's own models — tab completion, its chat surfaces, image generation, the `-tiered` variants —
+  ten of the thirty-three. A table listing models nothing here can ask for invites somebody to ask
+  for them.
+
+`thinkingBudget()` is the exception to "generated": the catalogue carries no budgets, so it is a
+hand-tuned heuristic ported as-is. The Pro figures being `10_001` and `1_001` — one more than the
+Flash ones — is in the original. A rounder number there changes what the model is asked for.
+
+**Not done yet**: the wire protocol (envelope, thought signatures, endpoint fallback, quota
+handling), the `Api` case and `Stream` dispatch, reading `antigravity` from `auth.json`, and
+removing the built-in `google-antigravity` / `google-gemini-cli`. The removal goes **last** — doing
+it before the new provider works leaves a window where neither does.
+
+### `auth.json` says `antigravity`, pig looked for `google-antigravity`
+
+Why `bin/pig -p hi --model google-antigravity/gemini-3-flash` answers *"No API key for provider"*
+while the key is plainly in `~/.pi/agent/auth.json`. The entry is keyed **`antigravity`** — the
+name the `pi-antigravity` extension writes — and pig's `Models::ANTIGRAVITY` is
+`google-antigravity`, which is what upstream called it before deleting the whole provider. The
+credential *shape* matches exactly: `type: oauth`, `access`, `refresh`, `expires` as an int, and a
+non-empty `projectId` are precisely what `Auth::credentials()` wants.
+
+pig already prefers pi's `auth.json` over its own when both exist, and interoperating with that
+file is the only reason that preference is there — so failing to recognise the provider name pi
+writes into it is a bug, not a difference of opinion. The new provider uses `antigravity`.
+
+Worth noting what fixing the name alone would have bought: nothing. The endpoint
+(`daily-cloudcode-pa.**sandbox**.googleapis.com` against a working
+`daily-cloudcode-pa.googleapis.com`) and the User-Agent (`antigravity/1.11.5 darwin/arm64` against
+`antigravity/cli/1.1.23 (aidev_client; …)`) have both drifted, and `SANDBOX_HEADERS`' own docblock
+says a wrong User-Agent is answered with 403. Six of the seven ids in `ANTIGRAVITY_MODELS` no
+longer exist either. The name was the first of four failures, not the only one.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;
