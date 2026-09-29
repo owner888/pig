@@ -658,6 +658,36 @@ final class PiFormatTest extends TestCase
         $this->assertSame('kept', $messages[1]->content[0]->text);
     }
 
+    public function testTheUpgradedFileKeepsOnlyOneClaimAboutWhereTheCutIs(): void
+    {
+        // **The upgrade rewrites the file**, so what is left on disk is what pi reads next. v1
+        // named the cut by an index into the file and v2 names it by an id; a file carrying both
+        // is a file that can disagree with itself — and it will, because a later compaction moves
+        // every index while the ids stay put. This document's own note on the rename says so, and
+        // nothing was holding it: deleting the line that drops the old field broke no test.
+        $path = $this->v1Session('two-claims.jsonl', [
+            $this->said('old one', '2026-01-02T21:29:31.000Z'),
+            $this->said('kept', '2026-01-02T21:29:32.000Z'),
+            ['type' => 'compaction', 'timestamp' => '2026-01-02T21:29:33.000Z',
+             'summary' => 'what pi summarised', 'firstKeptEntryIndex' => 2, 'tokensBefore' => 5],
+        ]);
+
+        SessionManager::open($path);
+
+        $written = array_map(
+            static fn (string $line): array => (array) json_decode($line, true),
+            array_values(array_filter(explode("\n", (string) file_get_contents($path)))),
+        );
+        $compaction = array_values(array_filter(
+            $written,
+            static fn (array $entry): bool => ($entry['type'] ?? null) === 'compaction',
+        ));
+
+        $this->assertCount(1, $compaction);
+        $this->assertArrayHasKey('firstKeptEntryId', $compaction[0], "v2's name for the cut");
+        $this->assertArrayNotHasKey('firstKeptEntryIndex', $compaction[0], "and v1's is gone");
+    }
+
     // ---- both directories ------------------------------------------------------------
 
     public function testPisSessionsAreListedBesidePigsOwn(): void

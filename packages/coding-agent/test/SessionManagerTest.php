@@ -547,6 +547,28 @@ final class SessionManagerTest extends TestCase
 
     // ---- finding one again ----------------------------------------------------------------
 
+    public function testAJsonlFileThatIsNotASessionIsNotOfferedInTheList(): void
+    {
+        // The same guard as `open()`'s, in the path that builds `--resume`'s list — and with the
+        // same hole: a file whose first line is valid JSON of the wrong type passes a weakened
+        // check. What it costs here is milder than opening one (nothing is written), and it is
+        // still a row in a list of conversations that is not a conversation.
+        $directory = SessionManager::directory('/some/project');
+        $session = SessionManager::create('/some/project', "{$directory}/2026-01-01T00-00-00-000Z_real.jsonl");
+        $session->append(new UserMessage('a real conversation'));
+        $session->append($this->answer());
+
+        file_put_contents(
+            "{$directory}/2026-01-02T00-00-00-000Z_notes.jsonl",
+            json_encode(['type' => 'note', 'text' => 'not a conversation']) . "\n",
+        );
+
+        $listed = SessionManager::listFor('/some/project');
+
+        $this->assertCount(1, $listed);
+        $this->assertSame('a real conversation', $listed[0]->opening);
+    }
+
     public function testSessionsAreListedNewestFirstAndLabelledByWhatWasAsked(): void
     {
         foreach (['the first thing', 'the second thing'] as $index => $said) {
@@ -725,6 +747,35 @@ final class SessionManagerTest extends TestCase
         );
     }
 
+    public function testAJsonFileThatIsNotASessionIsRefusedToo(): void
+    {
+        // **The case the test above cannot reach.** It writes `just some text`, which fails both
+        // halves of `!is_array($header) || type !== 'session'` at once — so the guard survives
+        // being weakened to `&&` and the suite stays green. What that weakening allows is the
+        // thing this refusal exists to prevent: `.jsonl` is an ordinary format for datasets and
+        // logs, and a mistyped `--resume ~/data/train.jsonl` would open one as a conversation and
+        // then **append session entries to it**. There is no undo for that.
+        $path = $this->home . '/train.jsonl';
+        mkdir($this->home, 0o700, true);
+        file_put_contents($path, json_encode(['type' => 'note', 'text' => 'not a conversation']) . "\n");
+
+        $this->assertThrows(
+            AgentError::class,
+            static fn () => SessionManager::open($path),
+            'Not a pig session file',
+        );
+
+        // Well-formed JSON of the right *shape* but the wrong type is the same refusal: a session
+        // header is the only thing that makes a file one.
+        file_put_contents($path, json_encode(['type' => 'message', 'cwd' => '/somewhere']) . "\n");
+
+        $this->assertThrows(
+            AgentError::class,
+            static fn () => SessionManager::open($path),
+            'Not a pig session file',
+        );
+    }
+
     public function testAMissingFileSaysSo(): void
     {
         $this->assertThrows(
@@ -855,6 +906,212 @@ final class SessionManagerTest extends TestCase
         $session->appendLabel($branch[0]['id'], 'the start');
 
         $this->assertSame('the start', $session->tree()[0]['label']);
+    }
+
+    public function testAnEntryThatIsItsOwnParentIsARootRatherThanAnEndlessTree(): void
+    {
+        $session = SessionManager::create($this->cwd());
+        $this->converse($session, 'A');
+
+        // A file written by something else can say anything, and an entry naming itself as its
+        // parent is the one shape `tree()` cannot walk: it would be its own child for ever.
+        file_put_contents(
+            $session->path,
+            json_encode([
+                'type' => 'message',
+                'id' => 'zzzzzzzz',
+                'parentId' => 'zzzzzzzz',
+                'timestamp' => '2030-01-01T00:00:00.000Z',
+                'message' => ['role' => 'user', 'content' => [['type' => 'text', 'text' => 'from nowhere']]],
+            ]) . "\n",
+            FILE_APPEND,
+        );
+
+        $roots = SessionManager::open($session->path)->tree();
+
+        $this->assertCount(2, $roots, 'the conversation, and the self-parented entry beside it');
+        $this->assertSame('zzzzzzzz', $roots[1]['id']);
+        $this->assertSame([], $roots[1]['children']);
+    }
+
+    public function testAnEntryWhoseParentIsMissingIsWalkedBackFromRatherThanThrough(): void
+    {
+        $session = SessionManager::create($this->cwd());
+        $this->converse($session, 'A');
+
+        file_put_contents(
+            $session->path,
+            json_encode([
+                'type' => 'message',
+                'id' => 'yyyyyyyy',
+                'parentId' => 'nosuchid',
+                'timestamp' => '2030-01-01T00:00:00.000Z',
+                'message' => ['role' => 'user', 'content' => [['type' => 'text', 'text' => 'orphaned']]],
+            ]) . "\n",
+            FILE_APPEND,
+        );
+
+        // The walk back stops where the chain does: an entry whose parent is not in the file is
+        // a root, so this conversation is that one message and nothing in front of it.
+        $back = SessionManager::open($session->path)->messages();
+
+        $this->assertCount(1, $back);
+        $this->assertSame('orphaned', $back[0]->content[0]->text);
+    }
+
+    // ---- what a list of conversations says about each one -------------------------------------
+
+    public function testTheLabelInTheListIsTheFirstThingSaidAndNotTheLast(): void
+    {
+        // What anybody remembers a conversation by is how it opened. Reading on past the first
+        // question leaves every row in `--resume`'s list labelled by the last thing typed into
+        // it, which for a long conversation is a detail nobody would recognise.
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('why does the build fail'));
+        $session->append($this->answer());
+        $session->append(new UserMessage('and now try the other one'));
+        $session->append($this->answer('done'));
+
+        $this->assertSame('why does the build fail', SessionManager::listFor('/some/project')[0]->opening);
+    }
+
+    public function testAConversationThatOpensWithAPictureIsLabelledByWhatWasSaidWithIt(): void
+    {
+        // A pasted screenshot arrives as the first block of the first message, so the walk for
+        // the opening line has to step over a block that is not text rather than reading one.
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage([
+            new ImageContent(base64_encode('not really a png'), 'image/png'),
+            new TextContent('what is wrong with this screen'),
+        ]));
+        $session->append($this->answer());
+
+        $this->assertSame('what is wrong with this screen', SessionManager::listFor('/some/project')[0]->opening);
+    }
+
+    public function testTheMessageCountCountsMessagesAndNotEveryLineInTheFile(): void
+    {
+        // A session file holds lines that are not messages — a label, the model that was being
+        // used, a hook's private note — and `--resume` shows this number beside the opening
+        // line. Counting the whole file says a two-message conversation is five messages long.
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one thing'));
+        $session->append($this->answer());
+        $session->appendModelChange('anthropic', 'claude-x');
+        $session->appendCustomEntry('note', ['seen' => true]);
+        $session->appendLabel($session->branch()[0]['id'], 'the start');
+
+        // And a line that calls itself a message and carries none is not one either: there is
+        // nothing to count the role of, so counting it would be counting a line for its `type`.
+        file_put_contents(
+            $session->path,
+            json_encode(['type' => 'message', 'id' => 'xxxxxxxx', 'parentId' => null, 'timestamp' => '2030-01-01T00:00:00.000Z']) . "\n",
+            FILE_APPEND,
+        );
+
+        $this->assertSame(2, SessionManager::listFor('/some/project')[0]->messages);
+    }
+
+    public function testADirectoryThatLooksLikeASessionFileIsNotListed(): void
+    {
+        $directory = SessionManager::directory('/some/project');
+        $session = SessionManager::create('/some/project', "{$directory}/2026-01-01T00-00-00-000Z_real.jsonl");
+        $this->converse($session, 'a real conversation');
+
+        // The glob matches a name, not a file. Two guards make this true — the stat that builds
+        // the sort keys skips it, and `lines()` refuses anything that is not a file — so no one
+        // mutation of either fails this; what it pins is the rule rather than a line.
+        mkdir("{$directory}/2026-01-02T00-00-00-000Z_not-a-file.jsonl");
+
+        $listed = SessionManager::listFor('/some/project');
+
+        $this->assertCount(1, $listed);
+        $this->assertSame('a real conversation', $listed[0]->opening);
+    }
+
+    // ---- a name on a point --------------------------------------------------------------------
+
+    public function testALabelOfNothingButSpacesClearsTheNameAndOneWithSpacesRoundItIsTrimmed(): void
+    {
+        $session = SessionManager::create($this->cwd());
+        $this->converse($session, 'A');
+        $point = $session->branch()[0]['id'];
+
+        $session->appendLabel($point, '  before the refactor  ');
+        $this->assertSame('before the refactor', $session->labelOf($point));
+
+        // `/label` with nothing after it clears the name, and what arrives here from an editor
+        // with a space still in it is the same act.
+        $session->appendLabel($point, '   ');
+        $this->assertNull($session->labelOf($point));
+    }
+
+    public function testAClearedNameIsGoneFromTheOneKeptInMemoryToo(): void
+    {
+        $session = SessionManager::create($this->cwd());
+        $this->converse($session, 'A');
+        $point = $session->branch()[0]['id'];
+
+        $session->appendLabel($point, 'the start');
+        $session->appendLabel($point, null);
+
+        // Two records of one name — the file and the map this reads from — so clearing has to
+        // reach both or the name comes off on disk and stays on screen.
+        $this->assertNull($session->labelOf($point));
+        $this->assertNull(SessionManager::open($session->path)->labelOf($point));
+    }
+
+    // ---- writing ------------------------------------------------------------------------------
+
+    public function testASessionThatCannotBeWrittenSaysSoRatherThanCarryingOnSilently(): void
+    {
+        $directory = SessionManager::directory('/some/project');
+        mkdir($directory, 0o700, true);
+
+        // A directory standing where the file should be is the one way to make the write fail
+        // on purpose: the parent exists, so nothing earlier refuses first.
+        $path = "{$directory}/2026-01-01T00-00-00-000Z_taken.jsonl";
+        mkdir($path);
+
+        $session = SessionManager::create('/some/project', $path);
+        $session->append(new UserMessage('a question'));
+
+        // A failing `file_put_contents` warns as well as answering false, and a warning fails a
+        // test under this project's phpunit.xml — so it is caught here rather than left to fail
+        // the assertion about the throw.
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $problem = $this->assertThrows(AgentError::class, fn () => $session->append($this->answer()));
+        } finally {
+            restore_error_handler();
+        }
+
+        $this->assertStringContainsString('Could not write the session', $problem->getMessage());
+    }
+
+    public function testACompactionDoesNotReplayTheMessagesThatCameAfterIt(): void
+    {
+        $session = SessionManager::create('/some/project');
+        $session->append(new UserMessage('one'));
+        $session->append($this->answer('first'));
+        $session->append(new UserMessage('two'));
+        $session->append($this->answer('second'));
+        $session->append(new CompactionSummary('we talked', [], [], 0, $session->entryAt(3)));
+        $session->append(new UserMessage('three'));
+        $session->append($this->answer('third'));
+
+        // What a compaction keeps ends at the compaction itself. Reading past it collects the
+        // messages after it as well, and the walk then appends those a second time — a resumed
+        // conversation whose last exchange the model is shown twice.
+        $back = SessionManager::open($session->path)->messages();
+
+        $this->assertCount(4, $back);
+        $this->assertInstanceOf(CompactionSummary::class, $back[0]);
+        $this->assertSame('second', $back[1]->content[0]->text);
+        $this->assertSame('three', $back[2]->content[0]->text);
+        $this->assertSame('third', $back[3]->content[0]->text);
+        $this->assertSame(3, $back[0]->replaced);
     }
 
     private function cwd(): string

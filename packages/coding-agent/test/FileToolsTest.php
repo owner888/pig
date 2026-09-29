@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use Pig\Agent\AgentError;
+use Pig\Async\AbortController;
+use Pig\Async\AbortError;
 use Pig\CodingAgent\Tools\LsTool;
 use Pig\CodingAgent\Tools\Truncate;
 use Pig\CodingAgent\Tools\WriteTool;
@@ -62,6 +64,46 @@ final class FileToolsTest extends ToolTestCase
             fn () => $this->execute(new WriteTool($this->cwd), ['path' => 'adir', 'content' => 'x']),
             'is a directory',
         );
+    }
+
+    public function testAWriteThatEscapeStoppedLeavesNothingBehind(): void
+    {
+        $controller = new AbortController();
+        $controller->abort();
+
+        // `write` is one of the four tools whose mistakes are not undoable, so the check is at
+        // the top: escape between the model asking for a write and the write happening has to
+        // mean the file is not there afterwards, not that it is there and nobody wanted it.
+        $this->assertThrows(
+            AbortError::class,
+            fn () => (new WriteTool($this->cwd))->execute('call-1', ['path' => 'out.txt', 'content' => 'x'], $controller->signal),
+        );
+
+        $this->assertFileDoesNotExist($this->cwd . '/out.txt');
+    }
+
+    public function testAWriteThatDidNotLandIsNotReportedAsHavingLanded(): void
+    {
+        // A symlink into a directory that is not there: the link's own directory exists, so
+        // nothing refuses first, and `file_put_contents` fails on the target.
+        symlink($this->cwd . '/nowhere/target.txt', $this->cwd . '/link.txt');
+
+        // The failing write warns as well as answering false, and a warning fails a test under
+        // this project's phpunit.xml — caught here so it cannot fail the assertion below.
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $problem = $this->assertThrows(
+                AgentError::class,
+                fn () => $this->execute(new WriteTool($this->cwd), ['path' => 'link.txt', 'content' => 'x']),
+            );
+        } finally {
+            restore_error_handler();
+        }
+
+        // Without the check the model is told `Wrote  bytes` — false cast to a string — about a
+        // file that does not exist, and carries on editing it.
+        $this->assertStringContainsString('Could not write link.txt', $problem->getMessage());
     }
 
     // ---- ls ------------------------------------------------------------------------

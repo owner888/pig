@@ -6,6 +6,8 @@ namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use Pig\Agent\AgentError;
+use Pig\Async\AbortController;
+use Pig\Async\AbortError;
 use Pig\Ai\ImageContent;
 use Pig\CodingAgent\Tools\Paths;
 use Pig\CodingAgent\Tools\ReadTool;
@@ -130,6 +132,48 @@ final class ReadToolTest extends ToolTestCase
         );
     }
 
+    public function testTheLastLineCanBeReadAndTheOneAfterItCannot(): void
+    {
+        $this->file('three.txt', "a\nb\nc");
+
+        // The pair is the test: asserting that offset 99 is refused says nothing about where
+        // the end is, and one line past the end is the offset a model asks for after reading
+        // the last page. Answering it with nothing reads as an empty file.
+        $this->assertSame('c', $this->textOf($this->execute($this->read(), ['path' => 'three.txt', 'offset' => 3])));
+
+        $this->assertThrows(
+            AgentError::class,
+            fn () => $this->execute($this->read(), ['path' => 'three.txt', 'offset' => 4]),
+            'past the end',
+        );
+    }
+
+    public function testALimitThatEndsExactlyAtTheLastLineSaysNothingAboutContinuing(): void
+    {
+        $this->file('four.txt', "a\nb\nc\nd");
+
+        // The other end of the same rule. "0 more lines in file. Use offset=5 to continue" is an
+        // instruction to read past the end, which the tool then refuses.
+        $this->assertSame("a\nb\nc\nd", $this->textOf($this->execute($this->read(), ['path' => 'four.txt', 'limit' => 4])));
+        $this->assertStringContainsString(
+            '[1 more lines in file. Use offset=4 to continue]',
+            $this->textOf($this->execute($this->read(), ['path' => 'four.txt', 'limit' => 3])),
+        );
+    }
+
+    public function testAnAbortedReadStopsBeforeItOpensAnything(): void
+    {
+        $this->file('notes.txt', 'one');
+
+        $controller = new AbortController();
+        $controller->abort();
+
+        $this->assertThrows(
+            AbortError::class,
+            fn () => $this->read()->execute('call-1', ['path' => 'notes.txt'], $controller->signal),
+        );
+    }
+
     public function testALongFileIsCutAtTheLineLimitAndSaysSo(): void
     {
         $total = Truncate::MAX_LINES + 500;
@@ -162,6 +206,21 @@ final class ReadToolTest extends ToolTestCase
         // Nothing whole fits, so what comes back is a way forward rather than half a line.
         $this->assertStringContainsString('Use bash:', $output);
         $this->assertStringContainsString("sed -n '1p' minified.js", $output);
+    }
+
+    public function testTheEnormousLineSaysHowBigItIsAndNotJustThatItIsTooBig(): void
+    {
+        // Three times the budget, so the line's own size and the limit are not the same string —
+        // ten bytes over rounds to the same figure and an assertion on it would hold either way.
+        $length = Truncate::MAX_BYTES * 3;
+        $this->file('minified.js', str_repeat('a', $length));
+
+        $output = $this->textOf($this->execute($this->read(), ['path' => 'minified.js']));
+
+        // Without the size, "over the 50.0KB limit" leaves the model with no idea whether
+        // `head -c` gets it a tenth of the line or all but ten bytes of it.
+        $this->assertStringContainsString('Line 1 is ' . Truncate::size($length) . ',', $output);
+        $this->assertStringContainsString('over the ' . Truncate::size(Truncate::MAX_BYTES) . ' limit', $output);
     }
 
     public function testTruncationDetailsGoToTheUiAsWellAsTheModel(): void

@@ -9067,6 +9067,133 @@ monorepo, so `composer global require pigagent/pig` cannot install it as it stan
 `packages/*` have to be published too, or the root has to stop depending on them by path. That is a
 packaging decision and it is the developer's.
 
+### 831 mutations over the eight files whose mistakes are not undoable
+
+The instrument had been over every directory in `packages/ai`. This is `coding-agent`, narrowed to
+the files where a bug is neither visible nor recoverable: `ReadTool`, `WriteTool`, `EditTool`, `Run`,
+`Truncate`, `SessionManager`, `SessionEntries`, `SessionCodec` — the four tools that change the
+user's files or kill their processes, the arithmetic that decides what the model is shown of them,
+and the three classes that write the session file **pi also reads**. Everywhere else in the tree a
+mistake shows up as a wrong answer somebody can see; here it shows up as a file that is gone.
+
+**831 mutations, and the estimate before it ran was 945** — 0.38 per source line, the rate the five
+earlier sweeps had been stable at. Off by 12%, which is worth knowing next time a sweep is budgeted
+from the rate rather than counted: the rate is a planning figure, not a measurement.
+
+Pass 1 detected 706 of the 831 — 692 killed outright and 14 by hanging the suite, which is a
+detection too. **219 survived it before the tests below and 125 after.** What it found divides in
+four, and the first is the one worth the words.
+
+**`Truncate` had no test of its own.** 78 mutations, 40 survivors — the highest rate of the eight,
+and nearly all of them one shape: `<=` became `<` and `>` became `>=` across `head()`, `tail()`,
+`line()`, `size()` and the byte accounting, and the whole suite stayed green. **Every bound turned
+out to be right**, which is not an argument for leaving it alone: the correctness came from a run
+against upstream over 777 documents, the run was not kept, and *what a corpus proves it proves on the
+day it ran.* Third time — after `PartialJson` and `JsonSchema`, whose entries say the same thing. So
+`TruncateTest` is 21 cases written to `JsonSchemaTest`'s rule, **asserting that a bound rejects what
+is out of range is not a test of the bound**: each pins the value that exactly reaches the limit *and*
+the first one past it, because only the pair says where the edge is.
+
+**Four real gaps, each one arm of a guard nobody could reach.**
+
+- **The "Not a pig session file" guard was testable only on its easy arm.** `!is_array($header) ||
+  ($header['type'] ?? null) !== 'session'` — the existing fixture wrote `just some text`, which fails
+  **both** halves, so `||` → `&&` survived. Verified consequence: pig opens a `~/data/train.jsonl` as
+  a conversation and appends to it. The same guard is in `describe()`, so it is also a row in
+  `--resume`'s list that is not a conversation.
+- **Escape between the model asking for a write and the write happening was unpinned in all four
+  tools.** Deleting `$signal?->throwIfAborted()` from `read`, `write` or `edit` broke nothing. For
+  `write` and `edit` that is the one thing escape has to mean: the file afterwards is the file that
+  was there before.
+- **Two write-failure detections never fired.** `file_put_contents(…) === false` in
+  `SessionManager::write()` and in `WriteTool` — mutate the `false` and the throw is unreachable, and
+  the model is told `Wrote  bytes to …` (false cast to a string) about a file that does not exist,
+  then carries on editing it. Neither is easy to stage on purpose, so the tests use the two shapes
+  that fail without needing a permission: a directory standing where the file should be, and a
+  symlink into a directory that is not there. **A failing `file_put_contents` warns as well as
+  answering false**, and a warning fails a test under `phpunit.xml`, so both scope a
+  `set_error_handler` around the one call with the reason on it.
+- **A compaction replayed the messages that came after it.** `keptFrom()` walks up to the compaction
+  and `break`s there; without the break it collects the messages after it as well, and the walk then
+  appends those a second time — a resumed conversation whose last exchange the model is shown twice.
+
+**And a whole family the sweep is unusually good at: the default on every field pi omits.** The
+session file is pi's, so a file written by pi — or by a pi old enough to predate a field — arrives
+with that field missing, and what missing *means* is a decision per field rather than one rule. Every
+one of them survived: `display` on a hook's message (absent means shown, or a hook that told somebody
+something told nobody), `fromHook` on both summaries in both decoders (absent means pig's own, which
+is pi's own rule for its own field, and it decides whether `Compaction::files()` carries the file
+lists forward), `cancelled` and `truncated` on a typed `!command`, the `firstKeptEntryId` that is null
+rather than an id matching nothing, and the timestamp that orders the catch-up flush. `millis()` had
+no test at all, so `$at === false` → `!==` — every timestamp read back as *now* — was green.
+
+Smaller, same batch: the `/resume` list's label was "the first thing said" and reading past it was
+unpinned (every row labelled by the last thing typed into it); a conversation whose first message
+opens with a **pasted screenshot** went through `opening()`'s `instanceof` in a way that only held
+because of an `&&`; the message count counted messages rather than lines; `Run`'s timeout timer was
+left armed when a command beat it, which keeps `isIdle()` false and is a session that finishes and
+will not quit; both spill thresholds were unpinned at the exact limit, where a file is written that
+nothing will ever name; and **`timeout: 0` meant no timeout where one operator over it means no
+time** — the schema says `number` and the description says there is none by default, so a model
+spelling "no limit" as 0 is ordinary, and the mutated guard kills every command instantly.
+
+**The third kind is the survivors with a measured reason, and two are worth knowing.**
+`stream_set_blocking($pipe, false)` in `Run::start()` looks load-bearing and is not: every read is
+gated by `Loop::onReadable()`, and `fread` on a **blocking** pipe returns what is available rather
+than filling the buffer — measured, 0.000s and `"one\n"` on both settings against `echo one; sleep
+0.4; echo two`. So the line cannot be observed from outside and the mutation is equivalent.
+`ReadTool` and `EditTool` each check the signal twice, and **neither check can be killed alone**
+because nothing between them suspends: the tools are synchronous, so the signal cannot change, and
+only deleting both changes anything (which `testAnEditThatEscapeStoppedLeavesTheFileAsItWas` catches).
+The rest are the familiar three — `?? null` against `''` in front of a type check, initialisers whose
+deletion *warns* (so `failOnWarning` kills them and the shim does not), and cleanup whose end state is
+identical: `fclose($this->spill)` is belt-and-braces because `Run` is local to `execute()` and PHP
+closes the handle when it goes, which is `HttpClient::follow()`'s `body->close()` again. The 125 in
+one line: 56 are `?? null` against `''`, 41 are statement deletions (mostly those initialisers), and
+the remaining 28 are operators inside the three shapes above.
+
+| | mutations | survived, before | after |
+|---|---|---|---|
+| `Truncate` | 78 | 40 | 10 |
+| `SessionManager` | 366 | 78 | 67 |
+| `SessionEntries` | 71 | 23 | 13 |
+| `SessionCodec` | 43 | 12 | 1 |
+| `ReadTool` | 69 | 9 | 5 |
+| `EditTool` | 25 | 5 | 5 |
+| `WriteTool` | 17 | 3 | 1 |
+| `Run` | 162 | 43 | 37 |
+
+`EditTool`'s five do not move and each is accounted for above: the two signal checks that cannot be
+killed apart, the read-only case that skips as root, and two failures — a read that cannot fail after
+`is_file`, and a write that cannot fail after `is_writable` — with no way to stage either. **A
+survivor rate is a fact about what a suite can see, not a grade**, which this file has said once
+before and is the right reading of that row.
+
+**The fourth kind is the harness, for the seventh time, and this one changed the source.** A
+throwaway script re-applied each mutation to confirm it now dies, matching its target line by
+`old in line` — and the pattern `            $this->closePipe($fd);` is a **substring of the
+deeper-indented call inside `read()`**, so it deleted the wrong line. Then my own two-minute limit
+SIGTERMed it mid-job, the `finally` did not run, and the tree kept a `read()` that never closes a
+pipe at EOF. Caught by reading the file rather than by a failure: with the line gone the suite still
+passed 28 of 28, because every command in it is short enough that `close()`'s own sweep tidies up
+afterwards. Three rules, and the middle one is new:
+
+- **Anchor a mutation to one line and refuse when the pattern matches more than one.** Substring
+  matching across an indented tree finds the wrong statement silently.
+- **The undo is a copy on disk written before the mutation** — already the rule (bug 6) — **and the
+  restore is asserted byte for byte at the end.** The assertion is what turns "it probably restored"
+  into a fact.
+- Give the run a timeout well inside the caller's, so the process ends itself rather than being
+  killed from outside.
+
+Regression tests, and each of the mutations above was re-applied afterwards to confirm it now dies:
+`TruncateTest` (21 cases, the whole file), `SessionManagerTest`'s eleven new ones (the two guards, the
+self-parented entry, the orphan, the list's label and count, a cleared and a whitespace-only name,
+the unwritable file, the compaction's trailing messages, the stray directory),
+`SessionEntriesTest` and `SessionCodecTest` (new files, the defaults and the two `default => null`
+arms), `PiFormatTest::testTheUpgradedFileKeepsOnlyOneClaimAboutWhereTheCutIs`,
+`ReadToolTest`'s four, `EditToolTest`'s two, `FileToolsTest`'s two, and `BashToolTest`'s five.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;

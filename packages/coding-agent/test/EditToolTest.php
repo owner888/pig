@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use Pig\Agent\AgentError;
+use Pig\Async\AbortController;
+use Pig\Async\AbortError;
 use Pig\CodingAgent\Tools\EditDiff;
 use Pig\CodingAgent\Tools\EditTool;
 use Pig\Test\AssertsThrows;
@@ -24,6 +26,48 @@ final class EditToolTest extends ToolTestCase
         $this->execute($this->edit(), $arguments);
 
         return (string) file_get_contents($this->cwd . '/' . $arguments['path']);
+    }
+
+    // ---- when the turn was called off ----------------------------------------------
+
+    public function testAnEditThatEscapeStoppedLeavesTheFileAsItWas(): void
+    {
+        $this->file('a.php', "<?php\n\$x = 1;\n");
+
+        $controller = new AbortController();
+        $controller->abort();
+
+        // `edit` changes somebody else's file, so the one thing escape has to mean here is that
+        // the file on disk is the file that was there before the turn.
+        $this->assertThrows(
+            AbortError::class,
+            fn () => (new EditTool($this->cwd))->execute(
+                'call-1',
+                ['path' => 'a.php', 'oldText' => '$x = 1;', 'newText' => '$x = 2;'],
+                $controller->signal,
+            ),
+        );
+
+        $this->assertSame("<?php\n\$x = 1;\n", (string) file_get_contents($this->cwd . '/a.php'));
+    }
+
+    public function testAFileThatCannotBeWrittenIsRefusedBeforeItIsRead(): void
+    {
+        $path = $this->file('locked.php', "<?php\n\$x = 1;\n");
+        chmod($path, 0o444);
+
+        if (is_writable($path)) {
+            // root writes to anything, so the condition this is about cannot be staged here.
+            $this->markTestSkipped('cannot make a file read-only as this user');
+        }
+
+        // Read-only is refused by name. Reading it first and letting the write fail would report
+        // the same file as unreadable, which sends somebody looking at the wrong permission.
+        $this->assertThrows(
+            AgentError::class,
+            fn () => $this->execute($this->edit(), ['path' => 'locked.php', 'oldText' => '$x = 1;', 'newText' => '$x = 2;']),
+            'Not readable and writable',
+        );
     }
 
     // ---- replacing -----------------------------------------------------------------

@@ -12,6 +12,7 @@ use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Tools\BashTool;
+use Pig\CodingAgent\Tools\Run;
 use Pig\CodingAgent\Tools\Shell;
 use Pig\CodingAgent\Tools\Truncate;
 use Pig\Test\AssertsThrows;
@@ -438,5 +439,103 @@ final class BashToolTest extends ToolTestCase
         );
 
         $this->assertSame('untouched', file_get_contents($this->cwd . '/marker.txt'));
+    }
+
+    public function testATimeoutOfNothingMeansNoTimeoutRatherThanNoTime(): void
+    {
+        // The schema says `number` and the description says there is none by default, so a model
+        // spelling "no limit" as 0 is an ordinary thing to receive. Armed at zero the timer fires
+        // on the next tick, and every command comes back `timed out after 0 seconds`.
+        $this->assertSame("ok\n", $this->textOf($this->bash(['command' => 'sleep 0.1; echo ok', 'timeout' => 0])));
+
+        // The other side of the same guard: something positive really does stop it.
+        $this->assertThrows(
+            AgentError::class,
+            fn () => $this->bash(['command' => 'sleep 30', 'timeout' => 0.2]),
+            'timed out',
+        );
+    }
+
+    public function testACommandThatBeatItsTimeoutLeavesTheLoopNothingToWaitFor(): void
+    {
+        $started = microtime(true);
+
+        $this->assertSame("ok\n", $this->textOf($this->bash(['command' => 'echo ok', 'timeout' => 30])));
+
+        // A timeout that was never needed is a timer still armed for half a minute, and a
+        // pending timer keeps `isIdle()` false — which `bin/pig` waits on before it exits. So
+        // the leak is not a slow command, it is a session that finishes and then will not quit.
+        // Turned rather than asked once: a callback still queued is work, and the question is
+        // whether the work *ends* — `BorderedLoader`'s own test learnt that the hard way.
+        for ($tick = 0; $tick < 20 && !Loop::get()->isIdle(); $tick++) {
+            // An expired timer of the test's own, or the poll below waits out whatever is armed.
+            Loop::get()->delay(0.0, static fn () => null);
+            Loop::get()->tick();
+        }
+
+        $this->assertTrue(Loop::get()->isIdle(), 'nothing is still armed');
+        $this->assertLessThan(5.0, microtime(true) - $started, 'and it did not get there by waiting');
+    }
+
+    public function testACommandThatIsWideRatherThanLongIsStillWrittenOutInFull(): void
+    {
+        // The mirror of the two-thousand-short-lines case: one enormous line is nowhere near the
+        // line limit and well past the byte one, so the count of bytes seen is what has to send
+        // it to a file. Without it the notice names a path for output only the line count spills.
+        $length = Truncate::MAX_BYTES * 4;
+        $result = $this->bash(['command' => "head -c {$length} /dev/zero | tr '\\0' 'a'"]);
+
+        $path = $result->details['fullOutputPath'] ?? null;
+
+        $this->assertNotNull($path, 'a byte-heavy output has somewhere to look');
+        $this->assertFileExists($path);
+        // The whole of it, in one file: everything seen before the threshold goes in front, and
+        // every chunk after it is appended to the same handle rather than starting a new one.
+        $this->assertSame($length, strlen((string) file_get_contents($path)));
+        unlink($path);
+    }
+
+    public function testOutputThatExactlyFillsTheBudgetIsNotWrittenOutAndOneByteMoreIs(): void
+    {
+        // Asked of `Run` rather than of the tool, because the tool cannot see this: `details` is
+        // only built when something was cut, so at exactly the budget a spill file written for
+        // nothing is a temp file nobody is ever told about — and asserting the bound only from
+        // the side where it is out of range is not a test of the bound.
+        $this->assertNull($this->spillOf(Truncate::MAX_BYTES), 'nothing will be cut, so there is nothing to spill');
+
+        $path = $this->spillOf(Truncate::MAX_BYTES + 1);
+
+        $this->assertNotNull($path);
+        unlink((string) $path);
+    }
+
+    public function testTheLineCountHasTheSameTwoSidesAsTheByteCount(): void
+    {
+        $lines = Truncate::MAX_LINES;
+
+        $this->assertNull($this->spill("seq 1 {$lines}"), 'exactly the line budget is not truncated');
+
+        $path = $this->spill('seq 1 ' . ($lines + 1));
+
+        $this->assertNotNull($path);
+        unlink((string) $path);
+    }
+
+    /** Where `Run` put the whole output of a command that printed $bytes bytes, if anywhere. */
+    private function spillOf(int $bytes): ?string
+    {
+        return $this->spill("head -c {$bytes} /dev/zero | tr '\\0' 'a'");
+    }
+
+    private function spill(string $command): ?string
+    {
+        $run = new Run($this->cwd, $command, null);
+
+        Async::run(static function () use ($run): void {
+            $run->start();
+            $run->wait(null, null);
+        });
+
+        return $run->spillPath;
     }
 }
