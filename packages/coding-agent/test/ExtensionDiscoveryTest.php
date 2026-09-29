@@ -59,7 +59,7 @@ final class ExtensionDiscoveryTest extends TestCase
         rmdir($dir);
     }
 
-    public function testDiscoversExtensionsFromBothPigAndPiDirectories(): void
+    public function testOnlyDiscoversPhpExtensionsFromPigDirectories(): void
     {
         $pigExt = $this->homeDir . '/extensions';
         $piExt = $this->piHomeDir . '/extensions';
@@ -67,32 +67,14 @@ final class ExtensionDiscoveryTest extends TestCase
         mkdir($piExt, 0755, true);
 
         file_put_contents($pigExt . '/my-hook.php', '<?php');
+        file_put_contents($pigExt . '/ignored.ts', '// ts in pig dir ignored');
+        // Pi extensions should not be scanned because PHP cannot mix JS/TS
         file_put_contents($piExt . '/copy.ts', '// ts');
         file_put_contents($piExt . '/system-notify.ts', '// ts');
 
         $labels = ExtensionDiscovery::discover($this->cwd);
 
-        $this->assertSame(['copy.ts', 'my-hook.php', 'system-notify.ts'], $labels);
-    }
-
-    public function testDiscoversNpmPackagesFromSettings(): void
-    {
-        $pkgDir = $this->piHomeDir . '/npm/node_modules/pi-antigravity';
-        mkdir($pkgDir . '/src', 0755, true);
-        file_put_contents($pkgDir . '/package.json', json_encode([
-            'name' => 'pi-antigravity',
-            'pi' => [
-                'extensions' => ['./src/index.ts'],
-            ],
-        ]));
-
-        file_put_contents($this->piHomeDir . '/settings.json', json_encode([
-            'packages' => ['npm:pi-antigravity'],
-        ]));
-
-        $labels = ExtensionDiscovery::discover($this->cwd);
-
-        $this->assertSame(['pi-antigravity:src'], $labels);
+        $this->assertSame(['my-hook.php'], $labels);
     }
 
     public function testExtraPathsAreIncluded(): void

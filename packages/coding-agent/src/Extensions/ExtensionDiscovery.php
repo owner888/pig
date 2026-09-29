@@ -7,16 +7,15 @@ namespace Pig\CodingAgent\Extensions;
 use Pig\CodingAgent\Config;
 
 /**
- * Discover extensions available to this session.
+ * Discover PHP extensions and hooks available to pig.
  *
- * Upstream pi loads TypeScript extensions via jiti from:
- * 1. Global extensions: ~/.pig/extensions, and ~/.pi/agent/extensions
- * 2. Project extensions: <cwd>/.pig/extensions, and <cwd>/.pi/extensions
- * 3. Declared packages in settings.json (e.g. npm:pi-antigravity)
+ * Pig is a pure PHP runtime and does not load or mix JavaScript/TypeScript
+ * files from pi's directory (~/.pi/agent/extensions).
  *
- * In pig, native PHP hooks (~/.pig/hooks) also act as extensions.
- * This class discovers both PHP hooks and pi-compatible extensions
- * so the startup screen can display what is loaded.
+ * It discovers:
+ * 1. Global pig extensions: ~/.pig/extensions (*.php)
+ * 2. Project-local pig extensions: <cwd>/.pig/extensions (*.php)
+ * 3. Loaded PHP hooks
  */
 final class ExtensionDiscovery
 {
@@ -32,8 +31,6 @@ final class ExtensionDiscovery
         $dirs = [
             Config::home() . '/extensions',
             $cwd . '/.pig/extensions',
-            Config::piHome() . '/extensions',
-            $cwd . '/.pi/extensions',
         ];
 
         $labels = [];
@@ -50,7 +47,7 @@ final class ExtensionDiscovery
             }
 
             foreach ($entries as $entry) {
-                if ($entry === '' || $entry[0] === '.') {
+                if ($entry === '' || $entry[0] === '.' || !str_ends_with($entry, '.php')) {
                     continue;
                 }
 
@@ -63,70 +60,6 @@ final class ExtensionDiscovery
 
                 if (is_file($path)) {
                     $labels[] = $entry;
-                } elseif (is_dir($path)) {
-                    $pkgJson = $path . '/package.json';
-                    if (is_file($pkgJson) && is_readable($pkgJson)) {
-                        $pkg = json_decode((string) file_get_contents($pkgJson), true);
-                        if (is_array($pkg) && !empty($pkg['pi']['extensions']) && is_array($pkg['pi']['extensions'])) {
-                            foreach ($pkg['pi']['extensions'] as $ext) {
-                                if (is_string($ext)) {
-                                    $labels[] = $entry . '/' . basename($ext);
-                                }
-                            }
-                            continue;
-                        }
-                    }
-                    $labels[] = $entry;
-                }
-            }
-        }
-
-        // Check packages configured in settings files
-        $settingsFiles = [
-            Config::home() . '/settings.json',
-            $cwd . '/.pig/settings.json',
-            Config::piHome() . '/settings.json',
-            $cwd . '/.pi/settings.json',
-        ];
-
-        foreach ($settingsFiles as $file) {
-            if (!is_file($file) || !is_readable($file)) {
-                continue;
-            }
-
-            $data = json_decode((string) file_get_contents($file), true);
-            if (!is_array($data) || empty($data['packages']) || !is_array($data['packages'])) {
-                continue;
-            }
-
-            foreach ($data['packages'] as $pkg) {
-                $name = is_string($pkg) ? $pkg : ($pkg['source'] ?? '');
-                if (!is_string($name) || $name === '') {
-                    continue;
-                }
-
-                if (str_starts_with($name, 'npm:')) {
-                    $pkgName = substr($name, 4);
-                    $pkgDir = Config::piHome() . '/npm/node_modules/' . $pkgName;
-                    if (is_dir($pkgDir)) {
-                        $pkgJson = $pkgDir . '/package.json';
-                        if (is_file($pkgJson) && is_readable($pkgJson)) {
-                            $manifest = json_decode((string) file_get_contents($pkgJson), true);
-                            if (is_array($manifest) && !empty($manifest['pi']['extensions']) && is_array($manifest['pi']['extensions'])) {
-                                foreach ($manifest['pi']['extensions'] as $ext) {
-                                    if (is_string($ext)) {
-                                        $dirPart = trim(dirname($ext), './');
-                                        $label = ($dirPart === '.' || $dirPart === '') ? $pkgName : "{$pkgName}:{$dirPart}";
-                                        $labels[] = $label;
-                                    }
-                                }
-                                continue;
-                            }
-                        }
-                    }
-                    $labels[] = $pkgName;
-                } else {
-                    $labels[] = basename($name);
                 }
             }
         }
