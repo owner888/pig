@@ -9397,6 +9397,18 @@ hand back. With the guard removed and everything else in place the same case mea
 again, which is the evidence that a mutation no test can kill is still load-bearing — there is no
 seam to observe a cache through, the same standing as `HttpClient::follow()`'s `body->close()`.
 
+**Confirmed on a real terminal afterwards, and the confirmation says which half of it mattered.**
+The candidate window now sits under the composing text and stays there; before, it fell every time.
+And the terminal it was fixed on — Apple's Terminal.app — **does not support synchronized output**,
+measured rather than assumed: `printf '\033[?2026$p'` gets no DECRQM reply, just the literal `p`
+back. So the wrapper around the frame is inert there, and what fixed it is the **per-line diff**:
+the composing line is no longer erased and rewritten twelve times a second.
+
+That is worth keeping straight, because the two halves look interchangeable and are not. The
+wrapper is still right, and it is the only thing that helps a terminal which *does* implement 2026
+— there the cursor's trip away and back is never painted. On everything else the only defence is
+not writing to that line at all.
+
 **One thing this did not fix, stated rather than left to be rediscovered.** A message that is one
 long text block still costs ~20ms a delta at 2,000 lines, because that block's text really did
 change and `Markdown` cannot parse incrementally — a render throttle is the answer if it ever
@@ -9475,6 +9487,38 @@ and `testNewOutputAndANewRowCountBothReachTheScreen`. The width key and the cach
 by those; the `setText`/`setRows` invalidations and the text and row keys are **mutually redundant**,
 each covering the other's mutation, and both are kept because that is exactly the shape `Text` and
 `Markdown` already have.
+
+### The footer cut its lines to a byte count and handed the terminal half a character
+
+Three places in `FooterComponent` cut a line that would not fit, and all three counted **bytes** —
+`substr(Ansi::strip($text), 0, $width - 3) . '...'`. The method one of them sits in is called
+`trim()` and its own docblock said *"measured by what is visible rather than by bytes"*, which was
+true of the measuring and false of the cutting, three lines below it.
+
+What that produces is not a crooked column, which is the rest of this family. It is **a fragment
+that is no encoding's text**: three columns of a hook's status line in Chinese is nine bytes, and
+the ninth is the middle of the fourth character. Every other display path in this repository
+sanitises what it is handed against exactly that — and this one *made* it rather than passing it
+on, downstream of all of them.
+
+`justify()` had a second bug stacked on the first: `$gap = str_repeat(' ', $width - $leftWidth -
+strlen($cut))`. The cut text is right-aligned, so the gap is what puts it against the edge — and
+sized in bytes, a model id in a script where one character is not one byte leaves the line **short
+of the width**. Short rather than over, which is why nothing caught it: every assertion in that
+file asks whether a line overflows. *An assertion about overflowing cannot see a line that stops
+early*, which is the `grep`-exit-code shape again.
+
+All three go through `Width::truncate()`, which is ANSI-aware and cuts on grapheme boundaries and
+already existed. Found by asking what could hand a terminal bytes it cannot turn into a string,
+after Terminal.app trapped inside `__CFStringCreateImmutableFunnel3` while drawing — **that is not
+evidence it was the cause**, and the reported session's footer is ASCII throughout, so this is a
+bug found while looking rather than the bug looked for.
+
+Regression tests: `FooterTest::testNothingIsEverCutInsideACharacter` over widths 8 to 80 and
+`testAModelNamedInAWideScriptStillFitsBesideTheCounts` over 58 to 96 — a column at a time, because
+the cut only lands inside a character at some of them, and only some widths reach the branch at
+all. The second asserts the line is **exactly** the width whenever any of the right-hand text is
+on it; without that, the byte-sized gap survives every mutation.
 
 ## Version floor: PHP >= 8.3
 

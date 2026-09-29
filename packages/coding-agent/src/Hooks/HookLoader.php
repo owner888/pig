@@ -55,7 +55,9 @@ final class HookLoader
 
         $paths = [
             ...self::discover($home . '/hooks'),
+            ...self::discover($home . '/extensions'),
             ...self::discover($cwd . '/.pig/hooks'),
+            ...self::discover($cwd . '/.pig/extensions'),
         ];
 
         foreach ($configured as $path) {

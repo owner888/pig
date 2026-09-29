@@ -102,12 +102,18 @@ final class FooterComponent implements Component
         return $lines;
     }
 
-    /** One line's worth, measured by what is visible rather than by bytes. */
+    /**
+     * One line's worth, measured **and cut** by what is visible rather than by bytes.
+     *
+     * The measuring was right and the cutting was `substr()`, which is the same mistake this
+     * file's own docblock warns about one method down — and worse here than a crooked column,
+     * because a cut that lands inside a character hands the terminal half of one. Three columns
+     * of a hook's status line in Chinese is nine bytes, and the ninth is the middle of the
+     * fourth character.
+     */
     private function trim(string $text, int $width): string
     {
-        return Width::visible($text) <= $width
-            ? $text
-            : substr(Ansi::strip($text), 0, max(0, $width - 3)) . '...';
+        return Width::visible($text) <= $width ? $text : Width::truncate(Ansi::strip($text), $width);
     }
 
     // ---- the top line ----------------------------------------------------------------
@@ -241,7 +247,7 @@ final class FooterComponent implements Component
         $right = $this->model();
 
         if (Width::visible($left) > $width) {
-            $left = substr(Ansi::strip($left), 0, max(0, $width - 3)) . '...';
+            $left = Width::truncate(Ansi::strip($left), $width);
         }
 
         return $this->justify($left, $right, $width);
@@ -271,8 +277,12 @@ final class FooterComponent implements Component
             return $this->palette->fg('dim', $left);
         }
 
-        $cut = substr(Ansi::strip($right), 0, $room);
-        $gap = str_repeat(' ', $width - $leftWidth - strlen($cut));
+        // Cut and measured in columns. `substr()` here was two bugs rather than one: it could
+        // end inside a character, and `strlen()` then sized the gap in bytes — so a model whose
+        // name is not ASCII made this line *wider* than the terminal, which `Tui::checkWidth()`
+        // refuses to draw at all. The `max(0, …)` is for the same arithmetic going the other way.
+        $cut = Width::truncate(Ansi::strip($right), $room, '');
+        $gap = str_repeat(' ', max(0, $width - $leftWidth - Width::visible($cut)));
 
         return $this->palette->fg('dim', $left) . $this->palette->fg('dim', $gap . $cut);
     }

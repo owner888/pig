@@ -425,4 +425,60 @@ final class FooterTest extends TestCase
             }
         }
     }
+
+    // ---- cutting a line that is too long -----------------------------------------------
+
+    public function testNothingIsEverCutInsideACharacter(): void
+    {
+        // Three places here cut a line to fit and all three counted bytes. A cut that lands
+        // between the bytes of one character hands the terminal a fragment that is not text in
+        // any encoding, which is the one thing every other display path in this repository
+        // sanitises against — and this one *made* it rather than passing it on.
+        $session = $this->session();
+        $this->spent($session, new Usage(999_999, 999_999, 999_999, 999_999, 0, new Cost(total: 123.456)));
+
+        $footer = new FooterComponent($session, $this->palette, $this->cwd);
+        $footer->setStatus('long', str_repeat('构建中', 60));
+
+        // Every width, because where the cut lands moves one byte at a time and only some of
+        // those bytes are a character boundary.
+        for ($width = 8; $width <= 80; $width++) {
+            foreach ($footer->render($width) as $line) {
+                $this->assertTrue(mb_check_encoding($line, 'UTF-8'), "at width {$width}");
+                $this->assertLessThanOrEqual($width, mb_strwidth(Ansi::strip($line)), "at width {$width}");
+            }
+        }
+    }
+
+    public function testAModelNamedInAWideScriptStillFitsBesideTheCounts(): void
+    {
+        // The right-hand end is cut to what is left over, and the gap before it was sized with
+        // `strlen()` — so a name that is not ASCII made this line *wider* than the terminal,
+        // which the renderer refuses to draw at all rather than wrapping.
+        // The **id** is what the corner shows, and a `models.json` declaring a local endpoint
+        // can name a model anything at all — which is the only way a provider's id gets here in
+        // a script where one character is not one byte, and it is a file people write by hand.
+        $agent = new Agent(new AgentOptions(apiKey: 'k'));
+        $agent->setModel(new Model('通义千问-长名字模型', '通义千问', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000, false));
+        $session = new AgentSession($agent);
+        $this->spent($session, new Usage(999_999, 999_999, 999_999, 999_999, 0, new Cost(total: 123.456)));
+
+        // Wide enough that there is room left for the name after the counts, and then one
+        // column at a time through it: the cut only lands inside a character at some of them.
+        for ($width = 58; $width <= 96; $width++) {
+            foreach ((new FooterComponent($session, $this->palette, $this->cwd))->render($width) as $line) {
+                $plain = Ansi::strip($line);
+
+                $this->assertTrue(mb_check_encoding($line, 'UTF-8'), "at width {$width}");
+                $this->assertLessThanOrEqual($width, mb_strwidth($plain), "at width {$width}");
+
+                // The name is right-aligned, so whenever any of it is on the line the line
+                // reaches the right edge. Sizing the gap in bytes leaves it short instead,
+                // which no assertion about overflowing can see.
+                if (str_contains($plain, '通')) {
+                    $this->assertSame($width, mb_strwidth($plain), "at width {$width}");
+                }
+            }
+        }
+    }
 }
