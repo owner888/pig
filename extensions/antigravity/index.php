@@ -354,7 +354,7 @@ return function (ExtensionApi $pi): void {
 
             $contents = [new TextContent($savedNotice)];
             foreach ($result->images as $img) {
-                $contents[] = new ImageContent($img['mimeType'], $img['data']);
+                $contents[] = new ImageContent($img['data'], $img['mimeType']);
             }
 
             return new AgentToolResult($contents, [

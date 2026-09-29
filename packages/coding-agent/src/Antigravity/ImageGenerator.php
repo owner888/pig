@@ -16,7 +16,13 @@ use Throwable;
  */
 final class ImageGenerator
 {
-    public const string DEFAULT_MODEL = 'gemini-3-pro-image';
+    public const string DEFAULT_MODEL = 'gemini-3.1-flash-image';
+
+    public const array MODEL_FALLBACKS = [
+        'gemini-3.1-flash-image',
+        'gemini-3-pro-image',
+        'gemini-3-pro-image-preview',
+    ];
 
     public const array ASPECT_RATIOS = [
         '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9',
@@ -67,28 +73,8 @@ final class ImageGenerator
             );
         }
 
-        $cleanModel = trim($model) !== '' ? trim($model) : self::DEFAULT_MODEL;
-
-        $body = [
-            'project' => $projectId,
-            'model' => $cleanModel,
-            'request' => [
-                'contents' => [
-                    ['role' => 'user', 'parts' => [['text' => $cleanPrompt]]],
-                ],
-                'systemInstruction' => [
-                    'role' => 'user',
-                    'parts' => [['text' => self::SYSTEM_INSTRUCTION]],
-                ],
-                'generationConfig' => [
-                    'imageConfig' => ['aspectRatio' => $cleanRatio],
-                    'candidateCount' => 1,
-                ],
-            ],
-            'requestType' => 'agent',
-            'userAgent' => 'antigravity',
-            'requestId' => sprintf('agent/%s/%d/%s/1', bin2hex(random_bytes(4)), (int) (microtime(true) * 1000), bin2hex(random_bytes(6))),
-        ];
+        $requestedModel = trim($model) !== '' ? trim($model) : self::DEFAULT_MODEL;
+        $modelsToTry = array_values(array_unique([$requestedModel, ...self::MODEL_FALLBACKS]));
 
         $candidates = $this->endpoint !== null ? [$this->endpoint] : QuotaClient::ENDPOINTS;
         $http = $this->http ?? new HttpClient(60.0);
@@ -96,36 +82,62 @@ final class ImageGenerator
         $lastError = 'No endpoint available';
         $extractedImages = [];
         $extractedTexts = [];
+        $usedModel = $requestedModel;
 
-        foreach ($candidates as $endpoint) {
-            $url = rtrim($endpoint, '/') . '/v1internal:streamGenerateContent?alt=sse';
-            $headers = [
-                'Authorization' => "Bearer {$token}",
-                'Content-Type' => 'application/json',
-                'Accept' => 'text/event-stream',
-                'User-Agent' => self::USER_AGENT,
+        foreach ($modelsToTry as $currentModel) {
+            $body = [
+                'project' => $projectId,
+                'model' => $currentModel,
+                'request' => [
+                    'contents' => [
+                        ['role' => 'user', 'parts' => [['text' => $cleanPrompt]]],
+                    ],
+                    'systemInstruction' => [
+                        'role' => 'user',
+                        'parts' => [['text' => self::SYSTEM_INSTRUCTION]],
+                    ],
+                    'generationConfig' => [
+                        'imageConfig' => ['aspectRatio' => $cleanRatio],
+                        'candidateCount' => 1,
+                    ],
+                ],
+                'requestType' => 'agent',
+                'userAgent' => 'antigravity',
+                'requestId' => sprintf('agent/%s/%d/%s/1', bin2hex(random_bytes(4)), (int) (microtime(true) * 1000), bin2hex(random_bytes(6))),
             ];
-            if ($projectId !== '') {
-                $headers['X-Goog-User-Project'] = $projectId;
-            }
 
-            try {
-                $encoded = json_encode($body) ?: '{}';
-                $response = $http->send(new Request('POST', $url, $headers, $encoded), $signal);
+            foreach ($candidates as $endpoint) {
+                $url = rtrim($endpoint, '/') . '/v1internal:streamGenerateContent?alt=sse';
+                $headers = [
+                    'Authorization' => "Bearer {$token}",
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'text/event-stream',
+                    'User-Agent' => self::USER_AGENT,
+                ];
 
-                if (!$response->isSuccessful()) {
-                    $errText = $response->body->all();
-                    $lastError = "Image generation failed ({$response->status}): " . substr($errText, 0, 300);
-                    continue;
+                try {
+                    $encoded = json_encode($body) ?: '{}';
+                    $response = $http->send(new Request('POST', $url, $headers, $encoded), $signal);
+
+                    if (!$response->isSuccessful()) {
+                        $errText = $response->body->all();
+                        $lastError = "Image generation failed ({$response->status}): " . substr($errText, 0, 300);
+                        if ($response->status === 404) {
+                            // Try next model if 404
+                            break;
+                        }
+                        continue;
+                    }
+
+                    [$extractedImages, $extractedTexts] = self::parseResponse($response->body->all());
+
+                    if ($extractedImages !== []) {
+                        $usedModel = $currentModel;
+                        break 2;
+                    }
+                } catch (Throwable $e) {
+                    $lastError = $e->getMessage();
                 }
-
-                [$extractedImages, $extractedTexts] = self::parseResponse($response->body->all());
-
-                if ($extractedImages !== []) {
-                    break;
-                }
-            } catch (Throwable $e) {
-                $lastError = $e->getMessage();
             }
         }
 
@@ -153,7 +165,7 @@ final class ImageGenerator
             $savedPaths[] = $resolvedFile;
         }
 
-        return new GeneratedImageResult($savedPaths, $extractedImages, $extractedTexts, $cleanModel);
+        return new GeneratedImageResult($savedPaths, $extractedImages, $extractedTexts, $usedModel);
     }
 
     /**
