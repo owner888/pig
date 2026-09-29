@@ -385,7 +385,7 @@ final class Auth
             // one with a flag: the scopes, the port and the client differ, and the only thing
             // they share is the protocol the tokens are later spent on.
             Provider::GoogleGeminiCli => $this->geminiCli($onAuth, $onProgress, $signal),
-            Provider::GoogleAntigravity => $this->antigravity($onAuth, $onProgress, $signal),
+            Provider::Antigravity => $this->antigravity($onAuth, $onProgress, $signal),
         };
 
         if ($credentials === null) {
@@ -560,7 +560,7 @@ final class Auth
             // carries the one the token was minted by. The other two providers need neither.
             [$id, $secret] = match ($provider) {
                 Provider::GoogleGeminiCli => $this->googleClient(),
-                Provider::GoogleAntigravity => $this->antigravityClient(),
+                Provider::Antigravity => $this->antigravityClient(),
                 default => [null, null],
             };
             $renewed = $provider->refresh($credentials, null, $id, $secret);

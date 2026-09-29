@@ -297,7 +297,7 @@ final class OauthTest extends TestCase
 
         $this->assertThrows(
             OauthError::class,
-            static fn (): string => Provider::GoogleAntigravity->apiKey($credentials),
+            static fn (): string => Provider::Antigravity->apiKey($credentials),
         );
     }
 
@@ -1059,7 +1059,7 @@ final class OauthTest extends TestCase
 
     public function testAntigravitysKeyCarriesTheProjectAlongsideTheToken(): void
     {
-        $key = Provider::GoogleAntigravity->apiKey(new Credentials('r', 'ya29.a', 0, projectId: 'proj-1'));
+        $key = Provider::Antigravity->apiKey(new Credentials('r', 'ya29.a', 0, projectId: 'proj-1'));
 
         // The same shape Gemini CLI's uses, because it is the same protocol — two deployments,
         // one provider class parsing the key back.

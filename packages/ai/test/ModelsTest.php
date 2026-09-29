@@ -89,6 +89,7 @@ final class ModelsTest extends TestCase
                     Api::OpenAiResponses,
                     Api::GoogleGenerativeAi,
                     Api::GoogleGeminiCli,
+                    Api::Antigravity,
                 ],
                 $model->id . ' speaks ' . $model->api->value,
             );
@@ -213,7 +214,7 @@ final class ModelsTest extends TestCase
                 'zai',
                 'github-copilot',
                 'google-gemini-cli',
-                'google-antigravity',
+                'antigravity',
             ],
             Models::providers(),
         );

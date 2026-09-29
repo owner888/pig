@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai;
 
+use Pig\Ai\Providers\Antigravity;
 use Pig\Ai\Providers\GoogleGeminiCli;
 
 /**
@@ -58,7 +59,16 @@ final class Models
     public const string COPILOT = 'github-copilot';
 
     public const string GEMINI_CLI = 'google-gemini-cli';
-    public const string ANTIGRAVITY = 'google-antigravity';
+    /**
+     * `antigravity`, not `google-antigravity`.
+     *
+     * Upstream's name for it before it deleted the provider altogether; the live convention is
+     * this one — it is what the `pi-antigravity` extension writes into `auth.json`, and pig reads
+     * pi's `auth.json` by preference, so the old name meant a key that was plainly there could
+     * not be found. `Oauth\Provider`'s value has to match, because `Auth::apiKey()` looks the
+     * provider up in that enum by this very string.
+     */
+    public const string ANTIGRAVITY = 'antigravity';
 
     private const string ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 
@@ -122,28 +132,43 @@ final class Models
     ];
 
     /**
-     * Antigravity's seven, which are the reason it exists: not Google's models.
+     * Antigravity's fourteen, which are the reason it exists: not Google's models.
      *
-     * Two of Anthropic's, three Geminis and an open-weights one, all behind Google's sandbox
-     * deployment of Code Assist and all billed to a subscription rather than per token. The
-     * thinking variants are **separate ids** rather than a level on one model — `-thinking` is
-     * how Antigravity spells it and there is no flag that turns it on, so a model here either
-     * reasons or does not.
+     * Anthropic's and an open-weights one alongside the Geminis, all on Google's Code Assist
+     * deployment and all billed to a subscription rather than per token.
      *
-     * In `RESOLD`, and it matters more here than anywhere: `claude-sonnet-4-5` is Anthropic's
+     * In `RESOLD`, and it matters more here than anywhere: `claude-sonnet-4-6` is Anthropic's
      * own id. A bare one has to keep meaning Anthropic's, or somebody with an Antigravity
      * sign-in would find their `--model sonnet` quietly going through Google.
      *
-     * [name, context window, max output, reasoning, accepts images]
+     * **Every row says `off => null`**, which is the deployment's own answer and not an
+     * oversight: these models always think, and `ThinkingLevel::supportedBy()` is what keeps
+     * `off` out of the picker for them. The routing tables still have an `off` target — that is
+     * what to send if something asks anyway — so the two are consistent rather than at odds.
+     *
+     * Generated from the deployment's catalogue by `scripts/fetch-antigravity-models.php`, with
+     * **two names corrected by hand**: the catalogue calls both `gemini-2.5-flash` and
+     * `gemini-2.5-flash-lite` "Gemini 3.1 Flash Lite", and two of its own caches disagree about
+     * which wrong name to use. The ids and the numbers are sound; the labels for those rows are
+     * not, and a regeneration will bring them back — read the diff.
+     *
+     * [name, context window, max output, reasoning, accepts images, thinkingLevelMap]
      */
     private const array ANTIGRAVITY_MODELS = [
-        'claude-opus-4-5-thinking' => ['Claude Opus 4.5 Thinking (Antigravity)', 200_000, 64_000, true, true],
-        'claude-sonnet-4-5' => ['Claude Sonnet 4.5 (Antigravity)', 200_000, 64_000, false, true],
-        'claude-sonnet-4-5-thinking' => ['Claude Sonnet 4.5 Thinking (Antigravity)', 200_000, 64_000, true, true],
-        'gemini-3-flash' => ['Gemini 3 Flash (Antigravity)', 1_048_576, 65_535, true, true],
-        'gemini-3-pro-high' => ['Gemini 3 Pro High (Antigravity)', 1_048_576, 65_535, true, true],
-        'gemini-3-pro-low' => ['Gemini 3 Pro Low (Antigravity)', 1_048_576, 65_535, true, true],
-        'gpt-oss-120b-medium' => ['GPT-OSS 120B Medium (Antigravity)', 131_072, 32_768, false, false],
+        'gemini-3.8-flash' => ['Gemini 3.8 Flash (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null]],
+        'gemini-3.7-flash' => ['Gemini 3.7 Flash (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null]],
+        'gemini-3.6-flash' => ['Gemini 3.6 Flash (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null]],
+        'gemini-3.5-flash' => ['Gemini 3.5 Flash (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null]],
+        'gemini-3.5-flash-lite' => ['Gemini 3.5 Flash Lite (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
+        'gemini-3.1-flash-lite' => ['Gemini 3.1 Flash Lite (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
+        'gemini-3-flash' => ['Gemini 3 Flash (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
+        'gemini-2.5-flash' => ['Gemini 2.5 Flash (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
+        'gemini-2.5-flash-lite' => ['Gemini 2.5 Flash Lite (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
+        'claude-opus-4-6' => ['Claude Opus 4.6 (Antigravity)', 250_000, 64_000, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
+        'claude-sonnet-4-6' => ['Claude Sonnet 4.6 (Antigravity)', 200_000, 64_000, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
+        'gemini-3.1-pro' => ['Gemini 3.1 Pro (Antigravity)', 1_048_576, 65_535, true, true, ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null]],
+        'gemini-2.5-pro' => ['Gemini 2.5 Pro (Antigravity)', 1_048_576, 65_535, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
+        'gpt-oss-120b' => ['GPT-OSS 120B (Antigravity)', 131_072, 32_768, true, false, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => null, 'xhigh' => null]],
     ];
 
     /** provider => where its OpenAI-compatible endpoint lives. */
@@ -639,22 +664,22 @@ final class Models
             );
         }
 
-        foreach (self::ANTIGRAVITY_MODELS as $id => [$name, $window, $maxTokens, $reasoning, $images]) {
+        foreach (self::ANTIGRAVITY_MODELS as $id => [$name, $window, $maxTokens, $reasoning, $images, $thinking]) {
             $models[self::ANTIGRAVITY . '/' . $id] = new Model(
                 $id,
                 $name,
-                // The same protocol as Gemini CLI — the envelope, the endpoint path and the
-                // chunk shape are identical. What differs is the deployment it is sent to and
-                // the `User-Agent` that deployment insists on, both of which travel with the
-                // model rather than with the code.
-                Api::GoogleGeminiCli,
+                // Its own api now, not Gemini CLI's. The envelope, the endpoint and the
+                // User-Agent all differ — see `Providers\Antigravity`, which spells out which
+                // three constants were wrong while this shared the other provider.
+                Api::Antigravity,
                 self::ANTIGRAVITY,
-                GoogleGeminiCli::SANDBOX_ENDPOINT,
+                Antigravity::ENDPOINT,
                 $window,
                 $maxTokens,
                 $reasoning,
                 $images ? ['text', 'image'] : ['text'],
                 new Pricing(),
+                thinkingLevelMap: $thinking,
             );
         }
 

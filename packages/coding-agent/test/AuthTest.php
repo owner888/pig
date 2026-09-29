@@ -398,7 +398,7 @@ final class AuthTest extends TestCase
         // here either. Gemini CLI's is the same shape for the same reason.
         $problem = $this->assertThrows(OauthError::class, function () use (&$shown): void {
             $this->auth()->login(
-                Provider::GoogleAntigravity,
+                Provider::Antigravity,
                 static function (string $url, ?string $instructions) use (&$shown): void {
                     $shown++;
                 },

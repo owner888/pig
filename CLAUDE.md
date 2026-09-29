@@ -9802,6 +9802,42 @@ handling), the `Api` case and `Stream` dispatch, reading `antigravity` from `aut
 removing the built-in `google-antigravity` / `google-gemini-cli`. The removal goes **last** — doing
 it before the new provider works leaves a window where neither does.
 
+### One string had to move in three places at once
+
+`auth.json` says `antigravity`. Making pig read it is not an alias — `Auth::apiKey()` does
+`Provider::tryFrom($provider)`, so **the key in `auth.json`, the `Oauth\Provider` enum value and
+the registry's provider name are all the same string**, and changing one without the others just
+moves where the key goes missing. So all three moved together:
+
+    Models::ANTIGRAVITY              'google-antigravity'  ->  'antigravity'
+    Oauth\Provider::GoogleAntigravity ... = 'google-antigravity'  ->  Provider::Antigravity = 'antigravity'
+    the registry's 7 stale rows       ->  the catalogue's 14, with thinkingLevelMap
+
+No compatibility shim for the old name. It was upstream's before upstream deleted the provider,
+nothing writes it any more, and a second accepted spelling is a second place to look when a key
+does not resolve.
+
+The antigravity models moved to `Api::Antigravity` at the same time, which made three things in
+`GoogleGeminiCli` dead — `SANDBOX_ENDPOINT`, `SANDBOX_HEADERS` and `headersFor()`, the last of
+which existed only to choose between two header sets for two providers sharing one class. They are
+gone, and the two tests that covered them moved to `AntigravityTest` rather than being dropped:
+the registry shape one, and **the `RESOLD` rule** — `claude-sonnet-4-6` is Anthropic's id and a
+bare `--model sonnet` must not quietly go through Google. That rule did not change; only the id
+and the provider name in its test did.
+
+**What the thinkingLevelMap from the catalogue actually says**, now that it is wired:
+
+    gemini-3.8-flash    low / medium / high
+    gemini-3.1-pro      low / high
+    gpt-oss-120b        medium
+    the other eleven    high
+
+Every row says `off => null`: **these models always think.** So `off` is not offered, which is
+also why the routing tables still having an `off` target is not a contradiction — that is what to
+send if something asks anyway. `minimal` and `xhigh` are null everywhere too, so the picker offers
+three levels at most where it used to offer six, and `gemini-3.8-flash • medium` is now a thing pig
+can say.
+
 ### The Antigravity provider is `GoogleGeminiCli` plus an envelope
 
 `Providers\Antigravity` was adapted from **pig's own `GoogleGeminiCli`**, not from the

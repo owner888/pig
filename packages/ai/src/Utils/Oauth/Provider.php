@@ -28,7 +28,9 @@ enum Provider: string
 
     case GoogleGeminiCli = 'google-gemini-cli';
 
-    case GoogleAntigravity = 'google-antigravity';
+    // `antigravity`, matching `Models::ANTIGRAVITY` — `Auth::apiKey()` looks a provider up
+    // in this enum by that string, so the two cannot drift apart without a key going missing.
+    case Antigravity = 'antigravity';
 
     /** Upstream's wording, because it is what someone picking from a list has to recognise. */
     public function label(): string
@@ -37,7 +39,7 @@ enum Provider: string
             self::Anthropic => 'Anthropic (Claude Pro/Max)',
             self::GithubCopilot => 'GitHub Copilot',
             self::GoogleGeminiCli => 'Google Cloud Code Assist (Gemini CLI)',
-            self::GoogleAntigravity => 'Antigravity (Gemini 3, Claude, GPT-OSS)',
+            self::Antigravity => 'Antigravity (Gemini 3, Claude, GPT-OSS)',
         };
     }
 
@@ -46,7 +48,7 @@ enum Provider: string
      *
      * Offering one pig cannot finish would be the same mistake as offering a model whose
      * protocol is not ported — a list entry that fails after the person has committed to it,
-     * rather than one that says so up front. `GoogleAntigravity` answered false here until its
+     * rather than one that says so up front. `Antigravity` answered false here until its
      * flow and its seven models arrived.
      *
      * **A table, not a computed answer**, which is upstream's shape: `getOAuthProviders()`
@@ -65,7 +67,7 @@ enum Provider: string
             self::Anthropic => true,
             self::GithubCopilot => true,
             self::GoogleGeminiCli => true,
-            self::GoogleAntigravity => true,
+            self::Antigravity => true,
         };
     }
 
@@ -106,7 +108,7 @@ enum Provider: string
                     'The stored Gemini CLI credentials have no Cloud project id, so there is nothing to spend the token against.',
                 ),
             ),
-            self::GoogleAntigravity => (new Antigravity(
+            self::Antigravity => (new Antigravity(
                 $clientId ?? throw new OauthError('Renewing an Antigravity token needs its client id and secret.'),
                 $clientSecret ?? throw new OauthError('Renewing an Antigravity token needs its client secret.'),
                 $http ?? new HttpClient(),
@@ -139,7 +141,7 @@ enum Provider: string
             // two travel as one string because that is all an api key field can carry.
             // `Providers\GoogleGeminiCli` is what parses it back, for both of these — they are
             // the same protocol against two deployments.
-            self::GoogleGeminiCli, self::GoogleAntigravity => self::projectKey($credentials),
+            self::GoogleGeminiCli, self::Antigravity => self::projectKey($credentials),
         };
     }
 

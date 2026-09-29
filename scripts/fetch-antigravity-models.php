@@ -49,7 +49,7 @@ use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
 use Pig\Tui\Style;
 
-/** Where the catalogue answers. No `sandbox`, unlike `GoogleGeminiCli::SANDBOX_ENDPOINT`. */
+/** Where the catalogue answers. Same host as `Providers\Antigravity::ENDPOINT`. */
 const ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com';
 
 /** The CLI's own, which is what this deployment checks for. */

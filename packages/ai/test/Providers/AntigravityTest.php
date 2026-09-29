@@ -302,6 +302,38 @@ final class AntigravityTest extends TestCase
         $this->assertStringContainsString('token and a Cloud project', (string) $message);
     }
 
+    // ---- what the registry offers ----------------------------------------------------------
+
+    public function testTheRegistrysAntigravityModelsAreAllOnThisProvider(): void
+    {
+        $listed = array_values(array_filter(
+            \Pig\Ai\Models::all(),
+            static fn (Model $m): bool => $m->provider === 'antigravity',
+        ));
+
+        $this->assertCount(14, $listed);
+
+        foreach ($listed as $model) {
+            $this->assertSame(Api::Antigravity, $model->api, $model->id);
+            $this->assertSame(Antigravity::ENDPOINT, $model->baseUrl, $model->id);
+            // A subscription, so there is no per-token price to report.
+            $this->assertSame(0.0, $model->pricing->input, $model->id);
+            // Every one of them always thinks, which is the deployment's answer and not an
+            // oversight — see the table's docblock.
+            $this->assertFalse($model->hasThinkingLevel('off'), $model->id);
+        }
+    }
+
+    public function testAntigravityDoesNotStealAnthropicsOwnId(): void
+    {
+        // `claude-sonnet-4-6` is Anthropic's id and Antigravity resells it. A bare one has to
+        // keep meaning Anthropic's, or somebody with an Antigravity sign-in would find their
+        // `--model sonnet` quietly going through Google. This test moved here with the provider;
+        // the rule is `Models::RESOLD`'s and did not change.
+        $this->assertNotSame('antigravity', \Pig\Ai\Models::get('claude-sonnet-4-6')?->provider);
+        $this->assertSame('antigravity', \Pig\Ai\Models::find('antigravity', 'claude-sonnet-4-6')?->provider);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
     private function send(string $model, ?string $level, ?Context $context = null): void
