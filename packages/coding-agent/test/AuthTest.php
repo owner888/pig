@@ -31,7 +31,6 @@ final class AuthTest extends TestCase
     /** Where this class writes, and what would otherwise answer for it. */
     private const array CLEARED = [
         'PIG_HOME', 'PI_HOME', 'PI_CODING_AGENT_DIR',
-        'GEMINI_CLI_CLIENT_ID', 'GEMINI_CLI_CLIENT_SECRET',
         // Antigravity's pair as well: with both exported in the shell running the suite, the
         // case asserting that a flow with no client credentials never opens a browser would
         // open one and fail for a reason that has nothing to do with the code.
@@ -477,91 +476,6 @@ final class AuthTest extends TestCase
         $this->assertSame($this->home . '/pig/auth.json', Auth::discover()->path());
     }
 
-    // ---- Google's client credentials, which pig does not ship -----------------------------
-
-    public function testTheEnvironmentIsAskedForGooglesClientCredentialsFirst(): void
-    {
-        putenv('GEMINI_CLI_CLIENT_ID=from-the-shell');
-        putenv('GEMINI_CLI_CLIENT_SECRET=secret-from-the-shell');
-
-        $this->assertSame(['from-the-shell', 'secret-from-the-shell'], $this->auth()->googleClient());
-    }
-
-    public function testTheSettingsFileIsTheOtherPlaceTheyCanLive(): void
-    {
-        $settings = Settings::inMemory([
-            'geminiCli' => ['clientId' => 'from-settings', 'clientSecret' => 'secret-from-settings'],
-        ]);
-
-        $auth = new Auth($this->home . '/auth.json', $settings);
-
-        $this->assertSame(['from-settings', 'secret-from-settings'], $auth->googleClient());
-    }
-
-    public function testTheEnvironmentBeatsTheSettingsFile(): void
-    {
-        putenv('GEMINI_CLI_CLIENT_ID=from-the-shell');
-        putenv('GEMINI_CLI_CLIENT_SECRET=secret-from-the-shell');
-
-        $settings = Settings::inMemory([
-            'geminiCli' => ['clientId' => 'from-settings', 'clientSecret' => 'secret-from-settings'],
-        ]);
-
-        // The order everything else in pig uses: what was typed, then the environment, then what
-        // was chosen last time.
-        $this->assertSame(['from-the-shell', 'secret-from-the-shell'], (new Auth(null, $settings))->googleClient());
-    }
-
-    public function testWithoutThemTheRefusalSaysWhereTheyGoAndThatPigHasNone(): void
-    {
-        $problem = $this->assertThrows(OauthError::class, fn (): array => $this->auth()->googleClient());
-
-        // Somebody who has not got them needs both halves: where they go, and that this is not
-        // something pig can supply.
-        $this->assertStringContainsString('GEMINI_CLI_CLIENT_ID', $problem->getMessage());
-        $this->assertStringContainsString('geminiCli.clientId', $problem->getMessage());
-        $this->assertStringContainsString('does not ship', $problem->getMessage());
-    }
-
-    public function testHalfAPairIsRefusedRatherThanHandedOverWithAGapInIt(): void
-    {
-        putenv('GEMINI_CLI_CLIENT_ID=from-the-shell');
-
-        // Both halves are needed and either one missing is the same answer. Returning the id with
-        // a null beside it builds a flow that sends somebody to a browser, gets their consent, and
-        // fails at Google's token endpoint with nothing on screen naming the missing secret.
-        $problem = $this->assertThrows(OauthError::class, fn (): array => $this->auth()->googleClient());
-
-        $this->assertStringContainsString('GEMINI_CLI_CLIENT_SECRET', $problem->getMessage());
-    }
-
-    public function testAVariableExportedWithNothingInItIsNotSet(): void
-    {
-        // `export GEMINI_CLI_CLIENT_ID` with no value — a docker `-e NAME`, an ssh or tmux
-        // environment forwarding the name — answers `''` rather than absent, which is the
-        // `getenv()` trap. Read as set, it shadows the settings file with nothing.
-        putenv('GEMINI_CLI_CLIENT_ID=');
-        putenv('GEMINI_CLI_CLIENT_SECRET=');
-
-        $settings = Settings::inMemory([
-            'geminiCli' => ['clientId' => 'from-settings', 'clientSecret' => 'secret-from-settings'],
-        ]);
-
-        $this->assertSame(['from-settings', 'secret-from-settings'], (new Auth(null, $settings))->googleClient());
-    }
-
-    public function testASettingThatIsThereAndEmptyIsNotSetEither(): void
-    {
-        $settings = Settings::inMemory(['geminiCli' => ['clientId' => 'an-id', 'clientSecret' => '']]);
-
-        $problem = $this->assertThrows(
-            OauthError::class,
-            fn (): array => (new Auth(null, $settings))->googleClient(),
-        );
-
-        $this->assertStringContainsString('GEMINI_CLI_CLIENT_SECRET', $problem->getMessage());
-    }
-
     // ---- Antigravity's pair, which is not that one -----------------------------------------
 
     public function testAntigravityReadsItsOwnPairFromEitherPlace(): void
@@ -587,25 +501,87 @@ final class AuthTest extends TestCase
         );
     }
 
-    public function testAntigravitysPairIsItsOwnAndNotGeminiClis(): void
+    public function testTheEnvironmentBeatsTheSettingsFile(): void
     {
-        // Two OAuth clients with different scopes — a Gemini CLI token reaches Antigravity's
-        // endpoint and is refused there — so one reader answering for both would sign somebody
-        // in to a sandbox that then says no, with nothing explaining why.
-        putenv('GEMINI_CLI_CLIENT_ID=gemini-id');
-        putenv('GEMINI_CLI_CLIENT_SECRET=gemini-secret');
+        // The order everything else in pig uses: what was typed, then the environment, then what
+        // was chosen last time. **Ported from the reader that went with Gemini CLI** — the rule
+        // is this reader's too and was only ever tested on that one.
+        putenv('ANTIGRAVITY_CLIENT_ID=ag-from-the-shell');
+        putenv('ANTIGRAVITY_CLIENT_SECRET=ag-secret-from-the-shell');
 
         $settings = Settings::inMemory([
-            'geminiCli' => ['clientId' => 'gemini-id', 'clientSecret' => 'gemini-secret'],
+            'antigravity' => ['clientId' => 'ag-from-settings', 'clientSecret' => 'ag-secret-from-settings'],
         ]);
-        $auth = new Auth(null, $settings);
 
-        $this->assertSame(['gemini-id', 'gemini-secret'], $auth->googleClient());
+        $this->assertSame(
+            ['ag-from-the-shell', 'ag-secret-from-the-shell'],
+            (new Auth(null, $settings))->antigravityClient(),
+        );
+    }
 
-        $problem = $this->assertThrows(OauthError::class, fn (): array => $auth->antigravityClient());
+    public function testAVariableExportedWithNothingInItIsNotSet(): void
+    {
+        // `export ANTIGRAVITY_CLIENT_ID` with no value — a docker `-e NAME`, an ssh or tmux
+        // environment forwarding the name — answers `''` rather than absent, which is the
+        // `getenv()` trap. Read as set, it shadows the settings file with nothing.
+        putenv('ANTIGRAVITY_CLIENT_ID=');
+        putenv('ANTIGRAVITY_CLIENT_SECRET=');
 
+        $settings = Settings::inMemory([
+            'antigravity' => ['clientId' => 'ag-from-settings', 'clientSecret' => 'ag-secret-from-settings'],
+        ]);
+
+        $this->assertSame(
+            ['ag-from-settings', 'ag-secret-from-settings'],
+            (new Auth(null, $settings))->antigravityClient(),
+        );
+    }
+
+    public function testASettingThatIsThereAndEmptyIsNotSetEither(): void
+    {
+        $settings = Settings::inMemory(['antigravity' => ['clientId' => 'an-id', 'clientSecret' => '']]);
+
+        $problem = $this->assertThrows(
+            OauthError::class,
+            fn (): array => (new Auth(null, $settings))->antigravityClient(),
+        );
+
+        $this->assertStringContainsString('ANTIGRAVITY_CLIENT_SECRET', $problem->getMessage());
+    }
+
+    public function testTheRefusalSaysWhereTheyGoAndThatPigHasNone(): void
+    {
+        $problem = $this->assertThrows(OauthError::class, fn (): array => $this->auth()->antigravityClient());
+
+        // Somebody who has not got them needs both halves: where they go, and that this is not
+        // something pig can supply.
         $this->assertStringContainsString('ANTIGRAVITY_CLIENT_ID', $problem->getMessage());
-        $this->assertStringContainsString('not the same pair', $problem->getMessage());
+        $this->assertStringContainsString('antigravity.clientId', $problem->getMessage());
+        $this->assertStringContainsString('does not ship', $problem->getMessage());
+    }
+
+    public function testThisReaderLooksAtItsOwnNamesAndNoOthers(): void
+    {
+        // The test this replaces asserted that Antigravity's pair was not Gemini CLI's, by
+        // reading both. There is only one now, so the surviving half of that rule is this: a
+        // pair sitting under some *other* name is not this one's, and finding none is a refusal
+        // rather than a fallback.
+        putenv('GOOGLE_CLIENT_ID=someone-elses');
+        putenv('GOOGLE_CLIENT_SECRET=someone-elses-secret');
+
+        $settings = Settings::inMemory(['geminiCli' => ['clientId' => 'id', 'clientSecret' => 'secret']]);
+
+        try {
+            $problem = $this->assertThrows(
+                OauthError::class,
+                fn (): array => (new Auth(null, $settings))->antigravityClient(),
+            );
+
+            $this->assertStringContainsString('ANTIGRAVITY_CLIENT_ID', $problem->getMessage());
+        } finally {
+            putenv('GOOGLE_CLIENT_ID');
+            putenv('GOOGLE_CLIENT_SECRET');
+        }
     }
 
     public function testHalfOfAntigravitysPairIsRefusedToo(): void

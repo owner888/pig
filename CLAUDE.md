@@ -9802,6 +9802,75 @@ handling), the `Api` case and `Stream` dispatch, reading `antigravity` from `aut
 removing the built-in `google-antigravity` / `google-gemini-cli`. The removal goes **last** — doing
 it before the new provider works leaves a window where neither does.
 
+### Removing Gemini CLI, and the four rules that nearly went with it
+
+Upstream removed Gemini CLI and Antigravity together in `0.71.0`; pig kept Antigravity and
+removed the other. Gone: `Providers\GoogleGeminiCli`, `Utils\Oauth\GeminiCli`, their tests, the
+`Api` case, the `Stream` arms and `geminiCli()` options builder, `Oauth\Provider`'s case,
+`Models::GEMINI_CLI` with its five rows, and `Auth::googleClient()` — dead once nothing called it.
+
+**The interesting part was the tests.** Nineteen of them failed, and the lazy reading is "tests for
+deleted code, delete them". Four covered behaviour that is *still live* in `Oauth\Antigravity` and
+had only ever been tested through the flow that was going:
+
+- the token exchange being **form-encoded** rather than JSON;
+- the **CSRF state check** — `hash_equals` against the PKCE verifier;
+- the email being read, and a provider that refuses to say it **not** being a failure;
+- `access_type=offline` plus `prompt=consent`, and the state being the verifier.
+
+Same story in `AuthTest` for the client-credentials reader: `antigravityClient()` implements
+env-then-settings, **the environment winning over settings**, an exported-but-empty variable not
+counting as set, and an empty setting not counting either — and the last three were only tested on
+`googleClient()`. All seven were ported rather than dropped. **Deleting a provider is where
+coverage goes quietly**: the tests that fail are obvious, and the ones that were carrying a second
+provider's only coverage are not.
+
+Two tests were rewritten rather than moved, because what they asserted no longer exists: the one
+comparing Antigravity's client pair against Gemini CLI's now asserts that the reader looks at *its
+own* names and refuses rather than falling back, and `GoogleTest`'s Gemini 3 Pro level test is
+replaced by the drift note below.
+
+### `Stream::gemini()`'s Gemini 3 check stopped matching Gemini 3
+
+Found by the removal, not caused by it. The public Google arm picks the *level* path with
+
+    str_contains($id, '3-pro') || str_contains($id, '3-flash')
+
+and the generated table has moved on to `gemini-3.1-pro-preview`, `gemini-3.5-flash`,
+`gemini-3.8-flash` — **none of which contain either string.** Measured across the registry: exactly
+one public model, `gemini-3-flash-preview`, still takes the level path; every other Gemini 3.x model
+falls through to `thinkingBudget: -1`. `geminiLevel()`'s pro branch, which gives Pro two levels
+instead of four, is unreachable for every model in the table.
+
+Two tests hid this. Both used `gemini-3-pro-preview` as their fixture — an id that existed **only in
+the Gemini CLI table**, the one place the old literal naming survived, and which was dispatched
+through the Gemini CLI arm rather than the public one they were filed under. Deleting that table
+made them fail, which is how the drift surfaced.
+
+Not fixed, because fixing it needs a fact this repository cannot check: whether Google's public
+endpoint takes `thinkingLevel` for 3.5 and 3.8 or wants a budget. What is in place is
+`GoogleTest::testTheLevelPathOnlyStillCatchesOnePublicModel`, which pins the measurement so the
+decision fails loudly the moment somebody acts on it.
+
+### Verified against the real deployment
+
+`bin/pig -p hi --model antigravity/gemini-3.8-flash` answered on the first real request. That one
+line validates six things at once, none of which a canned server can check:
+
+1. the provider name in `auth.json` (`antigravity`) resolving to a key;
+2. the host — no `sandbox` in it;
+3. the `User-Agent` header the deployment insists on;
+4. the envelope: `requestType`, `userAgent`, `requestId`, `sessionId`, the labels;
+5. the routing — `gemini-3.8-flash` going out as `gemini-3.8-flash-low` at the default level;
+6. the model enum naming a model the deployment recognises.
+
+Any one of them wrong is a 4xx, so "it answered" is a stronger result than it looks. **What it does
+not cover is a turn with tools in it** — `normalizeConversationTurns` exists in the reference
+implementation to stop the deployment answering 400 on those, and whether pig needs it depends on
+whether `GoogleShared::contents()` can produce the shapes it guards against. The reference built
+its contents from an OpenAI-shaped payload and pig does not, so the answer is not obvious either
+way and is worth a real tool-using turn before any of it is ported.
+
 ### One string had to move in three places at once
 
 `auth.json` says `antigravity`. Making pig read it is not an alias — `Auth::apiKey()` does

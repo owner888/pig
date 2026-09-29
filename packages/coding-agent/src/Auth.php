@@ -11,7 +11,6 @@ use Pig\Ai\Stream;
 use Pig\Ai\Utils\Oauth\Anthropic;
 use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\Antigravity;
-use Pig\Ai\Utils\Oauth\GeminiCli;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Pkce;
@@ -62,7 +61,7 @@ final class Auth
 
     /**
      * @param Settings|null $settings where Gemini CLI's client id and secret may be kept. Only
-     *        that one flow needs them, and they are not in this repository — see `googleClient()`.
+     *        that one flow needs them, and they are not in this repository — see `antigravityClient()`.
      */
     public function __construct(
         private readonly ?string $path,
@@ -381,10 +380,6 @@ final class Auth
         $credentials = match ($provider) {
             Provider::Anthropic => $this->anthropic($onAuth, $onPrompt),
             Provider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
-            // Two deployments of Code Assist behind two OAuth clients, so two arms rather than
-            // one with a flag: the scopes, the port and the client differ, and the only thing
-            // they share is the protocol the tokens are later spent on.
-            Provider::GoogleGeminiCli => $this->geminiCli($onAuth, $onProgress, $signal),
             Provider::Antigravity => $this->antigravity($onAuth, $onProgress, $signal),
         };
 
@@ -458,17 +453,6 @@ final class Auth
      * @param Closure(string, ?string): void $onAuth
      * @param Closure(string): void|null $onProgress
      */
-    private function geminiCli(Closure $onAuth, ?Closure $onProgress, ?AbortSignal $signal): ?Credentials
-    {
-        [$id, $secret] = $this->googleClient();
-
-        return (new GeminiCli($id, $secret))->login($onAuth, $onProgress, $signal);
-    }
-
-    /**
-     * @param Closure(string, ?string): void $onAuth
-     * @param Closure(string): void|null $onProgress
-     */
     private function antigravity(Closure $onAuth, ?Closure $onProgress, ?AbortSignal $signal): ?Credentials
     {
         [$id, $secret] = $this->antigravityClient();
@@ -477,47 +461,17 @@ final class Auth
     }
 
     /**
-     * Google's client id and secret for the Gemini CLI, which this repository does not hold.
+     * Antigravity's own client id and secret, which this repository does not hold.
      *
      * Upstream embeds them behind `atob()`, and for a Google installed-application client that is
-     * defensible — the secret is not confidential by design, it ships in every Gemini CLI install
-     * and in a published npm package, and PKCE is what protects the exchange. It is still not
-     * something a repository can carry: GitHub's push protection matches them plain **and**
-     * base64-decoded, and the scanners that report a credential get it revoked. So they are
-     * configuration, in the order everything else in pig is: the environment, then the settings
-     * file.
+     * defensible — the secret is not confidential by design, it ships in every install, and PKCE
+     * is what protects the exchange. It is still not something a repository can carry: GitHub's
+     * push protection matches them plain **and** base64-decoded, and the scanners that report a
+     * credential get it revoked. So they are configuration, in the order everything else in pig
+     * is: the environment, then the settings file.
      *
-     * @return array{0: string, 1: string}
-     */
-    public function googleClient(): array
-    {
-        $id = getenv('GEMINI_CLI_CLIENT_ID');
-        $secret = getenv('GEMINI_CLI_CLIENT_SECRET');
-
-        $id = is_string($id) && $id !== '' ? $id : $this->setting('geminiCli.clientId');
-        $secret = is_string($secret) && $secret !== '' ? $secret : $this->setting('geminiCli.clientSecret');
-
-        if ($id === null || $secret === null) {
-            // Named in full, because somebody who has not got them needs to know both where they
-            // go and that they are not something pig can supply.
-            throw new OauthError(
-                'Signing in to Gemini CLI needs Google\'s own client id and secret, which pig does not ship. '
-                . 'Set GEMINI_CLI_CLIENT_ID and GEMINI_CLI_CLIENT_SECRET, or put geminiCli.clientId and '
-                . 'geminiCli.clientSecret in ~/.pig/agent/settings.json. They are the ones in the published '
-                . 'gemini-cli package.',
-            );
-        }
-
-        return [$id, $secret];
-    }
-
-    /**
-     * Antigravity's own client id and secret, which are **not** Gemini CLI's.
-     *
-     * A different OAuth client with different scopes — a Gemini CLI token reaches Antigravity's
-     * endpoint and is refused there — so this is a second pair and not a second reader of the
-     * first. Same rule and the same reason as `googleClient()`: upstream base64's them, which
-     * the scanners decode, so they are configuration here.
+     * There was a sibling reader for Gemini CLI's pair, on the same rule; it went with that
+     * provider.
      *
      * @return array{0: string, 1: string}
      */
@@ -556,10 +510,9 @@ final class Auth
         }
 
         try {
-            // Each Google flow's own pair, because they are two OAuth clients and a renewal
-            // carries the one the token was minted by. The other two providers need neither.
+            // Antigravity's own pair, because a renewal carries the client the token was minted
+            // by. The other providers need neither.
             [$id, $secret] = match ($provider) {
-                Provider::GoogleGeminiCli => $this->googleClient(),
                 Provider::Antigravity => $this->antigravityClient(),
                 default => [null, null],
             };

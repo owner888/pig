@@ -36,7 +36,7 @@ use stdClass;
  *
  * Upstream's `providers/google-shared.ts`, and it exists here for the reason it exists there:
  * **two providers speak this shape.** `Google` is the public Generative Language API and
- * `GoogleGeminiCli` is Google Cloud Code Assist, which wraps the same request in a project
+ * `Antigravity` is Google Code Assist, which wraps the same request in a project
  * envelope and returns the same chunk one key deeper. pig had only the first, so all of this sat
  * in `Google` as private methods; the second one arriving is what makes upstream's split the
  * right shape here too.

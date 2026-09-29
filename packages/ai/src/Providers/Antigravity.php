@@ -26,7 +26,8 @@ use Throwable;
 /**
  * Google Antigravity: Gemini, Claude and GPT-OSS on a subscription, through Code Assist.
  *
- * **Adapted from `GoogleGeminiCli` rather than from the implementation this was ported from.**
+ * **Adapted from pig's own Gemini CLI provider rather than from the implementation this was
+ * ported from** — that provider has since been removed, the way upstream removed its own.
  * Both speak `v1internal:streamGenerateContent?alt=sse` and both wrap a Gemini request in an
  * envelope, so the streaming, the SSE unwrap, the error shape and `GoogleShared` are all already
  * here and already tested. What the reference implementation had that this needed was the

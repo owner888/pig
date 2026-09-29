@@ -109,14 +109,12 @@ newer than the version you last saw are shown once, by themselves, after an upgr
 
 With a Claude Pro or Max subscription there is no key to set: `/login` gives you a URL to open
 and takes the code that comes back. A GitHub Copilot subscription works the same way — it shows
-a code to type at github.com and waits, and escape stops the waiting. Gemini CLI (Google Cloud
-Code Assist) opens a browser and catches the redirect on `localhost:8085`, so port 8085 has to be
-free; it needs Google's own client id and secret, which pig does not ship — set
-`GEMINI_CLI_CLIENT_ID` and `GEMINI_CLI_CLIENT_SECRET`, or `geminiCli.clientId` and
-`geminiCli.clientSecret` in `~/.pig/agent/settings.json`. Antigravity is the fourth and works the same
-way on port 51121, with a client id and secret of its own (`ANTIGRAVITY_CLIENT_ID` and
-`ANTIGRAVITY_CLIENT_SECRET`, or `antigravity.clientId` and `antigravity.clientSecret`) — it is
-what gets you Gemini 3, Claude and GPT-OSS through a Google subscription. Whichever you use, the
+a code to type at github.com and waits, and escape stops the waiting. Antigravity is the third:
+it opens a browser and catches the redirect on `localhost:51121`, so that port has to be free, and
+it needs a client id and secret of its own, which pig does not ship — set `ANTIGRAVITY_CLIENT_ID`
+and `ANTIGRAVITY_CLIENT_SECRET`, or `antigravity.clientId` and `antigravity.clientSecret` in
+`~/.pig/agent/settings.json`. It is what gets you Gemini 3, Claude and GPT-OSS through a Google
+subscription. Whichever you use, the
 token is kept in `~/.pi/agent/auth.json` — pi's own file, when pi has one, so signing in once is
 signing in once. `/logout` forgets it.
 
@@ -165,10 +163,10 @@ pattern may be a glob or a part of a name, and `:level` on the end sets the leve
 Cerebras, xAI, Zai and Mistral, which all speak OpenAI chat-completions. Set the matching
 `*_API_KEY` and `--model` reaches them.
 
-GitHub Copilot's nineteen are there too, and Google Cloud Code Assist's five — the models those
-subscriptions serve, under the same ids their own providers use. So `gpt-5` and `gemini-2.5-pro`
+GitHub Copilot's nineteen are there too, and Antigravity's fourteen — the models those
+subscriptions serve, under the same ids their own providers use. So `gpt-5` and `claude-sonnet-4-6`
 name two models each: a bare name means the direct provider, and a subscription's is
-`--model github-copilot/gpt-5` or `--model google-gemini-cli/gemini-2.5-pro`.
+`--model github-copilot/gpt-5` or `--model antigravity/claude-sonnet-4-6`.
 
 `/label before the refactor` names where you are, and `/tree` shows the name beside what was
 said — pi's own label entries, so a name set in either tool shows up in the other.

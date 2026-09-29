@@ -12,7 +12,6 @@ use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\CallbackServer;
 use Pig\Ai\Utils\Oauth\DeviceCode;
 use Pig\Ai\Utils\Oauth\Antigravity;
-use Pig\Ai\Utils\Oauth\GeminiCli;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Pkce;
@@ -291,7 +290,7 @@ final class OauthTest extends TestCase
 
         $this->assertThrows(
             OauthError::class,
-            static fn (): Credentials => Provider::GoogleGeminiCli->refresh($credentials),
+            static fn (): Credentials => Provider::Antigravity->refresh($credentials),
             'client id and secret',
         );
 
@@ -673,216 +672,6 @@ final class OauthTest extends TestCase
         $this->assertSame(['claude-sonnet-4.5' => false, 'grok-code-fast-1' => false], $seen);
     }
 
-    // ---- Gemini CLI: the URL somebody opens ----------------------------------------------
-
-    /** Made-up credentials: this repository does not hold Google's, and does not need to. */
-    private function gemini(string $url, ?CallbackServer $server = null): GeminiCli
-    {
-        return new GeminiCli('test-client-id', 'test-client-secret', new HttpClient(), $server, $url);
-    }
-
-    public function testAFlowWithNoClientCredentialsIsRefusedAtOnce(): void
-    {
-        // At construction, not at the first request: a flow built without them would send
-        // somebody to a browser and then fail, and the caller is what knows where to look.
-        $this->assertThrows(
-            OauthError::class,
-            static fn (): GeminiCli => new GeminiCli('', ''),
-            'client id and secret',
-        );
-    }
-
-    public function testTheGoogleUrlAsksForARefreshTokenAndMeansIt(): void
-    {
-        $pkce = Pkce::create();
-        $url = $this->gemini('http://unused')->authorizeUrl($pkce, 'http://localhost:8085/oauth2callback');
-
-        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
-
-        $this->assertSame($pkce->challenge, $query['code_challenge']);
-        $this->assertSame($pkce->verifier, $query['state']);
-        $this->assertSame('http://localhost:8085/oauth2callback', $query['redirect_uri']);
-        // Both, and both are load-bearing: offline asks for a refresh token and consent stops
-        // Google skipping the screen — and skipping the screen skips the token.
-        $this->assertSame('offline', $query['access_type']);
-        $this->assertSame('consent', $query['prompt']);
-        $this->assertSame('test-client-id', $query['client_id']);
-        // Space-separated, which is what OAuth says and what `http_build_query` encodes as `+`.
-        $this->assertStringContainsString('auth/cloud-platform', $query['scope']);
-        $this->assertStringContainsString(' ', $query['scope']);
-    }
-
-    // ---- Gemini CLI: the exchange ---------------------------------------------------------
-
-    public function testTheCodeIsExchangedAsAForm(): void
-    {
-        $url = $this->serve(['access_token' => 'ya29.a', 'refresh_token' => '1//r', 'expires_in' => 3599]);
-
-        $tokens = $this->onTheLoop(fn (): array => $this->gemini($url)
-            ->exchange('the-code', 'the-verifier', 'http://localhost:8085/oauth2callback'));
-
-        $sent = $this->server->received();
-
-        // Form-encoded, not JSON: Google's token endpoint takes the other one.
-        $this->assertStringContainsString('content-type: application/x-www-form-urlencoded', $sent);
-        $this->assertStringContainsString('grant_type=authorization_code', $sent);
-        $this->assertStringContainsString('code=the-code', $sent);
-        $this->assertStringContainsString('code_verifier=the-verifier', $sent);
-        // Handed in rather than held here: Google's renewal and exchange both carry them, and
-        // this repository does not ship them.
-        $this->assertStringContainsString('client_id=test-client-id', $sent);
-        $this->assertStringContainsString('client_secret=test-client-secret', $sent);
-
-        $this->assertSame('ya29.a', $tokens['access']);
-        $this->assertSame('1//r', $tokens['refresh']);
-    }
-
-    public function testNoRefreshTokenIsItsOwnComplaint(): void
-    {
-        $url = $this->serve(['access_token' => 'ya29.a', 'expires_in' => 3599]);
-
-        $problem = $this->assertThrows(
-            OauthError::class,
-            fn (): mixed => $this->onTheLoop(fn (): array => $this->gemini($url)->exchange('c', 'v', 'http://x/cb')),
-        );
-
-        // Named separately from a missing access token because it has a cause somebody can act
-        // on: Google only sends it when the consent screen was actually shown.
-        $this->assertStringContainsString('expire in an hour', $problem->getMessage());
-    }
-
-    public function testRenewingKeepsTheRefreshTokenGoogleDidNotResend(): void
-    {
-        $url = $this->serve(['access_token' => 'ya29.b', 'expires_in' => 3599]);
-
-        $credentials = $this->onTheLoop(fn (): Credentials => $this->gemini($url)->refresh('1//keep-me', 'proj-1'));
-
-        $this->assertStringContainsString('grant_type=refresh_token', $this->server->received());
-
-        // Google usually does not rotate this one and sends nothing rather than the same value
-        // again, so a missing field means "keep the one you have" and not "lost it".
-        $this->assertSame('1//keep-me', $credentials->refresh);
-        $this->assertSame('ya29.b', $credentials->access);
-        // Carried through rather than looked up again: it belongs to the account, not the token.
-        $this->assertSame('proj-1', $credentials->projectId);
-    }
-
-    // ---- Gemini CLI: the Cloud project ----------------------------------------------------
-
-    public function testAnAccountThatAlreadyHasAProjectIsNotOnboarded(): void
-    {
-        $url = $this->serve(['cloudaicompanionProject' => 'existing-project']);
-
-        $project = $this->onTheLoop(fn (): ?string => $this->gemini($url)->project('ya29.a'));
-
-        $this->assertSame('existing-project', $project);
-        // One request: asking to be onboarded when there is already a project is how you end up
-        // with two.
-        $this->assertStringContainsString('loadCodeAssist', $this->server->received());
-        $this->assertStringNotContainsString('onboardUser', $this->server->received());
-    }
-
-    public function testAnAccountWithNoProjectIsOnboardedIntoOne(): void
-    {
-        // No `cloudaicompanionProject` at the top, so the same answer serves as the onboarding
-        // reply: done, with an id.
-        $url = $this->serve([
-            'allowedTiers' => [['id' => 'LEGACY'], ['id' => 'FREE', 'isDefault' => true]],
-            'done' => true,
-            'response' => ['cloudaicompanionProject' => ['id' => 'made-one']],
-        ]);
-
-        $project = $this->onTheLoop(fn (): ?string => $this->gemini($url)->project('ya29.a'));
-
-        $this->assertSame('made-one', $project);
-        // The tier Google marked default, not the first one in the list.
-        $this->assertStringContainsString('"tierId":"FREE"', $this->server->received());
-    }
-
-    public function testAHalfBuiltProjectIsNotTakenAsFinished(): void
-    {
-        // An id but no `done`: the call answers with a project that is still being made, and
-        // taking that id would name something nothing can be spent against yet. Two attempts
-        // in, the wait is what this ends on.
-        $url = $this->serve(['response' => ['cloudaicompanionProject' => ['id' => 'not-yet']]]);
-
-        $project = $this->onTheLoop(function () use ($url): ?string {
-            $controller = new AbortController();
-            Loop::get()->delay(0.05, static fn () => $controller->abort('Cancelled'));
-
-            return $this->gemini($url)->project('ya29.a', null, $controller->signal);
-        });
-
-        // Null and not `not-yet`: giving up is an outcome, and a wrong id is not.
-        $this->assertNull($project);
-    }
-
-    public function testProvisioningSaysWhatItIsDoing(): void
-    {
-        $url = $this->serve(['response' => ['cloudaicompanionProject' => ['id' => 'x']]]);
-        $said = [];
-
-        $this->onTheLoop(function () use ($url, &$said): void {
-            $controller = new AbortController();
-            Loop::get()->delay(0.05, static fn () => $controller->abort('Cancelled'));
-
-            $this->gemini($url)->project(
-                'ya29.a',
-                static function (string $note) use (&$said): void {
-                    $said[] = $note;
-                },
-                $controller->signal,
-            );
-        });
-
-        // Half a minute of silence is how a person concludes it has hung.
-        $this->assertNotSame([], $said);
-        $this->assertStringContainsString('Provisioning', $said[0]);
-    }
-
-    // ---- Gemini CLI: the email ------------------------------------------------------------
-
-    public function testTheEmailIsReadWhenGoogleWillSayIt(): void
-    {
-        $url = $this->serve(['email' => 'me@example.com']);
-
-        $this->assertSame('me@example.com', $this->onTheLoop(fn (): ?string => $this->gemini($url)->email('ya29.a')));
-    }
-
-    public function testAnEmailGoogleWillNotSayIsNotAFailure(): void
-    {
-        $url = $this->serve(['error' => 'nope'], 403, 'Forbidden');
-
-        // Upstream ignores every failure here and so does this: it is a label on the credential,
-        // and an account that will not answer this is not one that cannot use Gemini.
-        $this->assertNull($this->onTheLoop(fn (): ?string => $this->gemini($url)->email('ya29.a')));
-    }
-
-    // ---- Gemini CLI: the state check ------------------------------------------------------
-
-    public function testACodeThatCameBackWithTheWrongStateIsRefused(): void
-    {
-        $port = self::freePort();
-        $server = new CallbackServer($port);
-        $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 60]);
-
-        $problem = $this->assertThrows(OauthError::class, function () use ($url, $server, $port): void {
-            $this->onTheLoop(function () use ($url, $server, $port): void {
-                Loop::get()->defer(function () use ($port): void {
-                    self::pretendBrowser($port, '/oauth2callback?code=c&state=not-the-verifier');
-                });
-
-                $this->gemini($url, $server)->login(static function (string $u, ?string $i): void {
-                });
-            });
-        });
-
-        // The state is the verifier, so a code that came back with a different one came from a
-        // request this process never made. Upstream calls it a possible CSRF attack.
-        $this->assertStringContainsString('wrong state', $problem->getMessage());
-        $server->close();
-    }
-
     private static function freePort(): int
     {
         $probe = stream_socket_server('tcp://127.0.0.1:0');
@@ -908,33 +697,6 @@ final class OauthTest extends TestCase
 
         stream_set_blocking($client, false);
         fwrite($client, "GET {$target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-    }
-
-    // ---- Gemini CLI: the provider entry ---------------------------------------------------
-
-    public function testGeminiCliIsOfferedNowThatThereAreModelsToChoose(): void
-    {
-        // It was false while the protocol and the models were missing: a sign-in that unlocks
-        // nothing to choose is the same mistake as a model whose protocol is not ported.
-        $this->assertTrue(Provider::GoogleGeminiCli->available());
-    }
-
-    public function testGeminiClisKeyCarriesTheProjectAlongsideTheToken(): void
-    {
-        $key = Provider::GoogleGeminiCli->apiKey(new Credentials('r', 'ya29.a', 0, projectId: 'proj-1'));
-
-        // Upstream's shape: Code Assist needs both, and an api key field can only carry one
-        // string.
-        $this->assertSame(['token' => 'ya29.a', 'projectId' => 'proj-1'], json_decode($key, true));
-    }
-
-    public function testGeminiCliCredentialsWithNoProjectAreRefused(): void
-    {
-        $this->assertThrows(
-            OauthError::class,
-            static fn (): string => Provider::GoogleGeminiCli->apiKey(new Credentials('r', 'a', 0)),
-            'no Cloud project id',
-        );
     }
 
     // ---- Antigravity ----------------------------------------------------------------------
@@ -974,6 +736,75 @@ final class OauthTest extends TestCase
         $this->assertSame('http://localhost:51121/oauth-callback', $query['redirect_uri']);
         $this->assertSame('offline', $query['access_type']);
         $this->assertSame('consent', $query['prompt']);
+        // Both were only ever asserted through the provider that has since gone: the challenge
+        // is what PKCE protects the exchange with, and the state being the verifier is what the
+        // callback is checked against.
+        $this->assertSame($pkce->challenge, $query['code_challenge']);
+        $this->assertSame($pkce->verifier, $query['state']);
+    }
+
+    public function testAntigravityExchangesTheCodeAsAForm(): void
+    {
+        $url = $this->serve(['access_token' => 'ya29.a', 'refresh_token' => '1//r', 'expires_in' => 3599]);
+
+        $tokens = $this->onTheLoop(fn (): array => $this->antigravity($url)
+            ->exchange('the-code', 'the-verifier', 'http://localhost:51121/oauth-callback'));
+
+        $sent = $this->server->received();
+
+        // Form-encoded, not JSON: Google's token endpoint takes the other one.
+        $this->assertStringContainsString('content-type: application/x-www-form-urlencoded', $sent);
+        $this->assertStringContainsString('grant_type=authorization_code', $sent);
+        $this->assertStringContainsString('code=the-code', $sent);
+        $this->assertStringContainsString('code_verifier=the-verifier', $sent);
+        // Handed in rather than held here: this repository does not ship them.
+        $this->assertStringContainsString('client_id=ag-client-id', $sent);
+        $this->assertStringContainsString('client_secret=ag-client-secret', $sent);
+
+        $this->assertSame('ya29.a', $tokens['access']);
+        $this->assertSame('1//r', $tokens['refresh']);
+    }
+
+    public function testAntigravityReadsTheEmailWhenGoogleWillSayIt(): void
+    {
+        $url = $this->serve(['email' => 'me@example.com']);
+
+        $this->assertSame('me@example.com', $this->onTheLoop(fn (): ?string => $this->antigravity($url)->email('ya29.a')));
+    }
+
+    public function testAnEmailGoogleWillNotSayIsNotAFailure(): void
+    {
+        $url = $this->serve(['error' => 'nope'], 403, 'Forbidden');
+
+        // It is a label on the credential, and an account that will not answer this is not one
+        // that cannot use Antigravity.
+        $this->assertNull($this->onTheLoop(fn (): ?string => $this->antigravity($url)->email('ya29.a')));
+    }
+
+    public function testAntigravityRefusesACodeThatCameBackWithTheWrongState(): void
+    {
+        // **The reason this was ported rather than deleted with the other provider.** It is the
+        // CSRF check, `hash_equals` and all, and it was only ever tested through the flow that
+        // has gone — so removing that test would have left the safeguard live and uncovered.
+        $port = self::freePort();
+        // The path as well as the port: a server left on the default path never sees a callback
+        // sent to this provider's, and the flow then waits for one forever.
+        $server = new CallbackServer($port, Antigravity::CALLBACK_PATH);
+        $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 60]);
+
+        $problem = $this->assertThrows(OauthError::class, function () use ($url, $server, $port): void {
+            $this->onTheLoop(function () use ($url, $server, $port): void {
+                Loop::get()->defer(function () use ($port): void {
+                    self::pretendBrowser($port, '/oauth-callback?code=c&state=not-the-verifier');
+                });
+
+                $this->antigravity($url, $server)->login(static function (string $u, ?string $i): void {
+                });
+            });
+        });
+
+        $this->assertStringContainsString('wrong state', $problem->getMessage());
+        $server->close();
     }
 
     public function testAntigravityComesBackToItsOwnRegisteredPort(): void

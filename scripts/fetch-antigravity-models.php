@@ -19,9 +19,8 @@ declare(strict_types=1);
  *
  * **Two constants here are the developer's working values rather than pig's**, because pig's
  * demonstrably drifted: the endpoint has no `sandbox` in it, and the User-Agent is the
- * Antigravity CLI's current one. `GoogleGeminiCli` still carries the old pair; that is a separate
- * change and this script does not depend on it — the endpoint is overridable with `--endpoint` so
- * the two can be compared rather than argued about.
+ * Antigravity CLI's current one. Both are what `Providers\Antigravity` sends now, and the
+ * endpoint stays overridable with `--endpoint` so a host can be compared rather than argued about.
  *
  * `--raw` prints what came back instead of the rows, which is the only way to see a field this
  * does not read yet.

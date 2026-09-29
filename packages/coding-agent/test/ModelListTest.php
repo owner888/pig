@@ -119,13 +119,14 @@ final class ModelListTest extends TestCase
 
     public function testASearchIsOverProviderAndIdAsOneString(): void
     {
-        $rows = array_slice($this->lines('google-gemini-cli'), 1);
+        $rows = array_slice($this->lines('antigravity'), 1);
 
-        // Which is how a provider's name narrows a listing of ids several providers resell.
+        // Which is how a provider's name narrows a listing of ids several providers resell —
+        // `claude-sonnet-4-6` is both Anthropic's and this one's.
         $this->assertNotSame([], $rows);
 
         foreach ($rows as $row) {
-            $this->assertStringStartsWith('google-gemini-cli', $row);
+            $this->assertStringStartsWith('antigravity', $row);
         }
     }
 

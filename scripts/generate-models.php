@@ -34,7 +34,7 @@ declare(strict_types=1);
  *   `<<< generated` pair and only what lies between them is replaced, so every docblock, base
  *   URL, `RESOLD` entry and Copilot header stays hand-written and a regeneration's diff is the
  *   rows and nothing else.
- * - **It does not touch `GEMINI_CLI_MODELS` or `ANTIGRAVITY_MODELS`.** Those are hand-written in
+ * - **It does not touch `ANTIGRAVITY_MODELS`.** That one is hand-written in
  *   *upstream's* generator too — models.dev does not carry a subscription deployment's catalogue —
  *   so they are hand-written here for the same reason and not for want of trying.
  * - **It does not add providers.** The filter is "the protocol is ported", which is `Models`' own

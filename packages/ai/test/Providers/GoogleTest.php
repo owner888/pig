@@ -546,20 +546,45 @@ final class GoogleTest extends TestCase
 
     public function testGeminiThreeIsGivenALevelAndNoBudget(): void
     {
-        $options = $this->translate(Models::get('gemini-3-pro-preview'), ReasoningEffort::Medium);
+        // `gemini-3-flash-preview`, because it is the only public model left whose id the level
+        // check matches — see the test below, which is about exactly that.
+        $options = $this->translate(Models::get('gemini-3-flash-preview'), ReasoningEffort::Medium);
 
-        $this->assertSame('HIGH', $options->thinkingLevel);
+        $this->assertSame('MEDIUM', $options->thinkingLevel);
         $this->assertNull($options->thinkingBudget);
     }
 
-    public function testGeminiThreeProOnlyHasTwoLevels(): void
+    public function testTheLevelPathOnlyStillCatchesOnePublicModel(): void
     {
-        $pro = Models::get('gemini-3-pro-preview');
+        // **A drift, pinned rather than papered over.** `Stream::gemini()` picks the level path
+        // with `str_contains($id, '3-pro') || str_contains($id, '3-flash')`, and the generated
+        // table has moved on to `gemini-3.1-pro-preview`, `gemini-3.5-flash`, `gemini-3.8-flash`
+        // — none of which contain either string. So every Gemini 3.x model but the one preview
+        // id takes the *budget* path and is sent `thinkingBudget: -1`.
+        //
+        // Whether that is wrong depends on what Google's public endpoint accepts for 3.5 and
+        // 3.8, which is not a question this suite can answer. What it can do is fail the moment
+        // somebody acts on the answer, so the decision does not get lost.
+        //
+        // `geminiLevel()`'s pro branch — `gemini-3-pro` gets two levels rather than four — is
+        // unreachable for every model in the table for the same reason. This test replaced the
+        // one that covered it, which only ever passed because its fixture was a *Gemini CLI*
+        // model: the one table where the literal `gemini-3-pro-preview` still existed.
+        $levelled = [];
+        $budgeted = [];
 
-        $this->assertSame('LOW', $this->translate($pro, ReasoningEffort::Minimal)->thinkingLevel);
-        $this->assertSame('LOW', $this->translate($pro, ReasoningEffort::Low)->thinkingLevel);
-        $this->assertSame('HIGH', $this->translate($pro, ReasoningEffort::Medium)->thinkingLevel);
-        $this->assertSame('HIGH', $this->translate($pro, ReasoningEffort::High)->thinkingLevel);
+        foreach (Models::all() as $model) {
+            if ($model->provider !== 'google' || !$model->reasoning || !str_contains($model->id, 'gemini-3')) {
+                continue;
+            }
+
+            $options = $this->translate($model, ReasoningEffort::Medium);
+            $options->thinkingLevel !== null ? $levelled[] = $model->id : $budgeted[] = $model->id;
+        }
+
+        $this->assertSame(['gemini-3-flash-preview'], $levelled);
+        $this->assertContains('gemini-3.8-flash', $budgeted);
+        $this->assertContains('gemini-3.1-pro-preview', $budgeted);
     }
 
     public function testAModelWithNoPublishedCeilingIsLeftToDecide(): void

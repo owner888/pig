@@ -14,16 +14,17 @@ use Throwable;
 /**
  * Signing in to Antigravity, which is Google's sandbox deployment of Code Assist.
  *
- * Upstream's `utils/oauth/google-antigravity.ts`. Same protocol as `GeminiCli` and a different
+ * Upstream's `utils/oauth/google-antigravity.ts`. The same OAuth protocol as its Gemini CLI
+ * sibling had, and a different
  * everything else: its own OAuth client, five scopes instead of three, port 51121 instead of
  * 8085, and a sandbox endpoint whose `User-Agent` check is load-bearing. What it buys is the
  * seven models in `Models::ANTIGRAVITY_MODELS` — two of Anthropic's, three Geminis and an
  * open-weights one, none of which Gemini CLI offers.
  *
- * **A separate class rather than a base one shared with `GeminiCli`.** Upstream has two files
+ * **A separate class rather than a base one shared with that sibling.** Upstream had two files
  * and so does this. The overlap is real — both are Google's PKCE loopback flow — but the two
  * differ in the part that matters most, which is what happens *after* the tokens arrive:
- * `GeminiCli` provisions a Cloud project and waits for it; this one asks two endpoints and
+ * that one provisioned a Cloud project and waited for it; this one asks two endpoints and
  * gives up into a constant. A shared parent would have to hold both shapes, and the seam would
  * fall exactly where the two are least alike.
  *
@@ -256,7 +257,7 @@ final class Antigravity
      * The Cloud project to spend the token against.
      *
      * **Nothing is provisioned and nothing is waited for**, which is the one real difference
-     * from `GeminiCli::project()`: two endpoints are asked, and if neither names a project the
+     * from how the Gemini CLI flow did it: two endpoints are asked, and if neither names a project the
      * constant is used. Upstream's shape, and the reason it can be this simple is that
      * Antigravity's sandbox does not require the caller's own project the way Code Assist
      * proper does.
@@ -303,7 +304,7 @@ final class Antigravity
      * Which address the token was issued to, if Google will say.
      *
      * A label on the credential. Nothing downstream reads it, which is why every failure is
-     * swallowed — the same call and the same reasoning as `GeminiCli::email()`.
+     * swallowed — the same call and the same reasoning the Gemini CLI flow used.
      */
     public function email(string $accessToken): ?string
     {

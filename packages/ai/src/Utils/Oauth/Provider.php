@@ -26,7 +26,6 @@ enum Provider: string
 
     case GithubCopilot = 'github-copilot';
 
-    case GoogleGeminiCli = 'google-gemini-cli';
 
     // `antigravity`, matching `Models::ANTIGRAVITY` — `Auth::apiKey()` looks a provider up
     // in this enum by that string, so the two cannot drift apart without a key going missing.
@@ -38,7 +37,6 @@ enum Provider: string
         return match ($this) {
             self::Anthropic => 'Anthropic (Claude Pro/Max)',
             self::GithubCopilot => 'GitHub Copilot',
-            self::GoogleGeminiCli => 'Google Cloud Code Assist (Gemini CLI)',
             self::Antigravity => 'Antigravity (Gemini 3, Claude, GPT-OSS)',
         };
     }
@@ -49,14 +47,14 @@ enum Provider: string
      * Offering one pig cannot finish would be the same mistake as offering a model whose
      * protocol is not ported — a list entry that fails after the person has committed to it,
      * rather than one that says so up front. `Antigravity` answered false here until its
-     * flow and its seven models arrived.
+     * flow and its models arrived.
      *
      * **A table, not a computed answer**, which is upstream's shape: `getOAuthProviders()`
-     * carries `available` as a literal field on each of its four entries and this is that list,
+     * carries `available` as a literal field on each of its entries and this is that list,
      * beside `label()` and matching it line for line. `return true` would read as a condition
-     * that cannot be false, which is a claim the code would be making and not keeping; four
-     * lines that each say `true` are a table whose rows currently agree, and a fifth provider
-     * ported halfway has somewhere to say so without anybody inventing a condition for it.
+     * that cannot be false, which is a claim the code would be making and not keeping; lines
+     * that each say `true` are a table whose rows currently agree, and a provider ported halfway
+     * has somewhere to say so without anybody inventing a condition for it.
      *
      * No `default`, like `refresh()` and `apiKey()`: an enum is closed, so a new case is a
      * `match` that stops rather than a silent `true`.
@@ -66,7 +64,6 @@ enum Provider: string
         return match ($this) {
             self::Anthropic => true,
             self::GithubCopilot => true,
-            self::GoogleGeminiCli => true,
             self::Antigravity => true,
         };
     }
@@ -96,18 +93,6 @@ enum Provider: string
             // the sign-in ends and how it is renewed — there is no separate refresh endpoint.
             self::GithubCopilot => (new GithubCopilot($http ?? new HttpClient()))
                 ->refresh($credentials->refresh, $credentials->enterpriseUrl),
-            // Renewable even though `available()` refuses a fresh sign-in: a credentials file
-            // written by pi can hold these, and a token that can be renewed should be.
-            self::GoogleGeminiCli => (new GeminiCli(
-                $clientId ?? throw new OauthError('Renewing a Gemini CLI token needs Google\'s client id and secret.'),
-                $clientSecret ?? throw new OauthError('Renewing a Gemini CLI token needs Google\'s client secret.'),
-                $http ?? new HttpClient(),
-            ))->refresh(
-                $credentials->refresh,
-                $credentials->projectId ?? throw new OauthError(
-                    'The stored Gemini CLI credentials have no Cloud project id, so there is nothing to spend the token against.',
-                ),
-            ),
             self::Antigravity => (new Antigravity(
                 $clientId ?? throw new OauthError('Renewing an Antigravity token needs its client id and secret.'),
                 $clientSecret ?? throw new OauthError('Renewing an Antigravity token needs its client secret.'),
@@ -139,9 +124,8 @@ enum Provider: string
             self::Anthropic, self::GithubCopilot => $credentials->access,
             // Upstream's shape: Code Assist needs a Cloud project as well as a token, and the
             // two travel as one string because that is all an api key field can carry.
-            // `Providers\GoogleGeminiCli` is what parses it back, for both of these — they are
-            // the same protocol against two deployments.
-            self::GoogleGeminiCli, self::Antigravity => self::projectKey($credentials),
+            // `Providers\Antigravity` is what parses it back.
+            self::Antigravity => self::projectKey($credentials),
         };
     }
 

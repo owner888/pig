@@ -8,7 +8,6 @@ use Pig\Ai\Providers\Anthropic;
 use Pig\Ai\Providers\AnthropicOptions;
 use Pig\Ai\Providers\Antigravity;
 use Pig\Ai\Providers\Google;
-use Pig\Ai\Providers\GoogleGeminiCli;
 use Pig\Ai\Providers\GoogleOptions;
 use Pig\Ai\Providers\OpenAiCompletions;
 use Pig\Ai\Providers\OpenAiOptions;
@@ -62,9 +61,6 @@ final class Stream
             Api::OpenAiCompletions => (new OpenAiCompletions())->stream($model, $context, self::openAi($options, $apiKey)),
             Api::OpenAiResponses => (new OpenAiResponses())->stream($model, $context, self::openAi($options, $apiKey)),
             Api::GoogleGenerativeAi => (new Google())->stream($model, $context, self::google($options, $apiKey)),
-            // The same options: Code Assist is a different envelope around the same request, so
-            // temperature, thinking and tool choice mean exactly what they mean for Gemini.
-            Api::GoogleGeminiCli => (new GoogleGeminiCli())->stream($model, $context, self::google($options, $apiKey)),
             Api::Antigravity => (new Antigravity())->stream($model, $context, self::google($options, $apiKey)),
         };
     }
@@ -107,7 +103,7 @@ final class Stream
      * **One arm per API and no `default`**, which is how `start()` below has always been written
      * and how this should have been: the `default` that used to sit here handed back plain
      * `StreamOptions`, so an API with no arm got no thinking configuration and said nothing about
-     * it — which is exactly what happened to `google-gemini-cli` for twelve models. Upstream's own
+     * it — which is exactly what happened to the Gemini CLI provider for twelve models. Upstream's own
      * default is an exhaustiveness check that throws. Without a `default`, a new `Api` case fails
      * here loudly instead of quietly asking the provider for its defaults.
      */
@@ -137,7 +133,6 @@ final class Stream
                 reasoning: $model->supportsXhigh() ? $options?->reasoning : $options?->reasoning?->clampToHigh(),
             ),
             Api::GoogleGenerativeAi => self::gemini($model, $options, $maxTokens, $apiKey),
-            Api::GoogleGeminiCli => self::geminiCli($model, $options, $maxTokens, $apiKey),
             Api::Antigravity => self::antigravity($options, $maxTokens, $apiKey),
             Api::AnthropicMessages => new AnthropicOptions(
                 $options?->temperature,
@@ -196,20 +191,6 @@ final class Stream
     }
 
     /**
-     * The same question for Code Assist, and not quite the same answer.
-     *
-     * **This arm was missing**, so every `google-gemini-cli` model — the five Gemini CLI ones and
-     * the seven Antigravity ones, which speak the same API — fell through to the `default` above
-     * and was handed plain `StreamOptions`. `--thinking high` on any of them asked for no thinking
-     * and got none, without a word. The `off` case came out right by accident: Code Assist reads a
-     * missing `thinkingConfig` as none.
-     *
-     * The shape is the public endpoint's; the numbers are not. Upstream's gemini-cli arm has one
-     * flat budget table for every 2.x model where the public arm has per-model ceilings —
-     * `2.5-pro` starts at 128 there and 1024 here. The Gemini 3 level path *is* the same, so it
-     * shares `geminiLevel()`.
-     */
-    /**
      * Antigravity's, which needs the *level* and nothing else about thinking.
      *
      * No budget and no clamping here, unlike every other arm: on this deployment a level chooses
@@ -231,29 +212,6 @@ final class Stream
             thinkingEnabled: $options?->reasoning !== null,
             thinkingLevel: $options?->reasoning?->value,
         );
-    }
-
-    private static function geminiCli(Model $model, ?SimpleStreamOptions $options, int $maxTokens, ?string $apiKey): GoogleOptions
-    {
-        $base = [$options?->temperature, $maxTokens, $options?->signal, $apiKey];
-        $effort = $options?->reasoning?->clampToHigh();
-
-        if ($effort === null) {
-            return new GoogleOptions(...$base, thinkingEnabled: false);
-        }
-
-        // Upstream's two checks rather than one for `gemini-3`: Antigravity's ids are
-        // `gemini-3-pro-high` and `gemini-3-flash`, and its Claude models take the budget path.
-        if (str_contains($model->id, '3-pro') || str_contains($model->id, '3-flash')) {
-            return new GoogleOptions(...$base, thinkingEnabled: true, thinkingLevel: self::geminiLevel($model, $effort));
-        }
-
-        return new GoogleOptions(...$base, thinkingEnabled: true, thinkingBudget: match ($effort) {
-            ReasoningEffort::Minimal => 1024,
-            ReasoningEffort::Low => 2048,
-            ReasoningEffort::Medium => 8192,
-            default => 16_384,
-        });
     }
 
     /** Gemini 3 Pro offers two levels; Flash offers four. */

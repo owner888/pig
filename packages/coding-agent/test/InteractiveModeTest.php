@@ -2919,12 +2919,12 @@ final class InteractiveModeTest extends TestCase
 
         $screen = $this->screen();
 
-        // All four flows are here now, so none of them is greyed and none carries a label.
-        // This used to assert "not ported yet" on Antigravity, which was the last one.
+        // Three flows, none greyed and none carrying a label. There were four until Gemini CLI
+        // went the way upstream's did; the list is `Oauth\Provider`'s and shrank with it.
         $this->assertStringContainsString('Anthropic (Claude Pro/Max)', $screen);
         $this->assertStringContainsString('GitHub Copilot', $screen);
-        $this->assertStringContainsString('Google Cloud Code Assist', $screen);
         $this->assertStringContainsString('Antigravity', $screen);
+        $this->assertStringNotContainsString('Google Cloud Code Assist', $screen);
         $this->assertStringNotContainsString('not ported yet', $screen);
     }
 
@@ -2935,8 +2935,7 @@ final class InteractiveModeTest extends TestCase
         $this->type('/login');
         $this->type(self::ENTER);
         // Down to the last one, Antigravity, whose client id and secret pig does not ship and
-        // which are not set here.
-        $this->type(self::DOWN);
+        // which are not set here. Two steps rather than three since Gemini CLI left the list.
         $this->type(self::DOWN);
         $this->type(self::DOWN);
         $this->type(self::ENTER);
