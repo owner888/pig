@@ -9194,6 +9194,82 @@ the unwritable file, the compaction's trailing messages, the stray directory),
 arms), `PiFormatTest::testTheUpgradedFileKeepsOnlyOneClaimAboutWhereTheCutIs`,
 `ReadToolTest`'s four, `EditToolTest`'s two, `FileToolsTest`'s two, and `BashToolTest`'s five.
 
+### Two files that belonged in those eight, and the front door neither was tested through
+
+The eight were chosen by one rule — *a mistake here is neither visible nor recoverable* — and two
+files that fit it exactly were left out. **`Migrations`** moves somebody else's session files and
+renames their `oauth.json`, and this document already says of it that "half-migrating somebody
+else's data is worse than none". **`Auth`** writes the credentials file pig and pi *share*, and
+Anthropic rotates refresh tokens, so one bad write there signs you out of both tools at once. 333
+mutations over the two of them, 87 alive, and 62 after the tests below.
+
+**The find is one shape and it is in both files: every test went in through the seam and none
+through the door.** `MigrationsTest`'s sixteen cases all call `authToAuthJson($directory)` or
+`sessionsFromAgentRoot($directory)` with a directory handed to them. `bin/pig` calls neither: it
+calls `Migrations::run()`, with no argument. So four mutations survived together, and each is a
+different way for the migration to silently not happen:
+
+| mutation | what it would do in production |
+|---|---|
+| delete `self::authToAuthJson()` from `run()` | credentials never move; pi's `auth.json` never appears |
+| delete `self::sessionsFromAgentRoot()` from `run()` | pi 0.30.0's stray sessions stay invisible to both tools |
+| delete either `$directory ??= Config::piHome()` | the default is never resolved — the only path production takes |
+
+None of the four could fail a test, because nothing in the suite ever reached `run()` or let a
+directory default. One case does all four: point `PI_HOME` at a temp directory, put an `oauth.json`
+and a stray session in it, call `run()`, and check both halves happened. **The rule, which is this
+document's "wired at one end only" pointed at a test file rather than at the code: a class whose
+tests all pass the seam an argument has no coverage of its default, and the default is what ships.**
+
+Three smaller ones, each a guard that could not fail against the fixture it had:
+
+- **`recordedCwd()`'s "not a session" check is `SessionManager`'s, with the same weak fixture.**
+  `!is_array($header) || type !== 'session'` → `&&` survived, because the existing case writes
+  `{"type":"notes"}` — which has no `cwd`, so a weakened guard has nowhere to file the file and
+  leaves it alone by accident. The shape that moves is another tool's log with a `cwd` field in it,
+  and then pig files somebody's unrelated `.jsonl` under `sessions/`. **Second time this exact pair
+  of lines has been found under-tested for the same reason**; the sibling is four entries up.
+- **An entry in pi's `oauth.json` that is not an object** was migrated when the `&&` became `||` —
+  and `{"type": "oauth", ...$notAnArray}` writes an `auth.json` neither tool can read, from the only
+  copy of those tokens.
+- **`Auth::save()`'s write-failure throw never fired**, the third of these in one session. Its own
+  docblock is the argument for the test: *"a token that did not stick is a sign-in that said it
+  worked, and the next thing that happens is an authentication error nobody can connect to this."*
+
+**And `antigravityClient()` was unpinned end to end** — every line of it, where its sibling
+`googleClient()` was covered. That is the *"a rule present in one place and absent in its sibling"*
+shape on a **test file**: the two methods are deliberately not one reader (different OAuth clients,
+different scopes, and a Gemini CLI token is refused at Antigravity's endpoint), so the coverage has
+to be two as well. Both now pin four things each — the environment wins, a variable exported with
+nothing in it falls through to the settings (the `getenv()` trap), a setting that is present and
+blank is not set, and **half a pair is refused rather than handed over with a gap in it**, which
+otherwise sends somebody to a browser, takes their consent, and fails at Google's token endpoint
+with nothing on screen naming the missing half.
+
+`AuthTest::CLEARED` gained `ANTIGRAVITY_CLIENT_ID` and `_SECRET` in the same pass: without them, a
+machine with that pair exported would have `testAFlowWithNoClientCredentialsIsRefusedBeforeAUrlIsShown`
+open a browser and fail for a reason that has nothing to do with the code — the same "passes on what
+the machine happens to have" as the missing-tool tests two entries up.
+
+**Three things in `Auth` are not testable, the developer was asked, and the answer was to leave them
+that way.** `login()`'s `setCredentials()` — the line that makes a sign-in persist at all —
+`fresh()`'s store of a **rotated** refresh token, and the Copilot block that switches on the models
+an account has not accepted: all three sit behind `new Anthropic()` / `new GithubCopilot()`
+constructed inside `Auth` with no endpoint to point elsewhere. Every flow class *has* that seam
+(`Anthropic`'s docblock says it is there "so a test can point it at a loopback server"); `Auth` is
+the one caller that does not use it. Upstream is built the same way, so this is not a port gap — it
+is new public surface, which made it the developer's call, and the call was **no**: a factory
+argument on `Auth`'s constructor is machinery for three tests and nothing else asks for it.
+
+So this paragraph is the record, and it is not an open question — **do not re-propose the seam.**
+What would reopen it is a reproduced failure rather than the coverage, because the consequences are
+the worst in the file: a sign-in that reports success and stores nothing, a rotated token thrown
+away so the next turn is signed out, and a third of Copilot's model list failing on its first turn.
+If one of those three is ever traced to a real bug, that is the day the seam is worth its keep, and
+this is the entry to start from. `test/live.php` is the other route: it already reaches real
+endpoints with real credentials, so a scenario that signs in and reads the file back would cover all
+three without any new surface at all.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;

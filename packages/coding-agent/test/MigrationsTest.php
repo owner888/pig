@@ -253,4 +253,59 @@ final class MigrationsTest extends TestCase
 
         $this->assertSame([], Migrations::authToAuthJson($this->directory . '/never-existed'));
     }
+
+    // ---- the front door ------------------------------------------------------------------
+
+    public function testRunDoesBothHalvesAndDoesThemInPisOwnDirectory(): void
+    {
+        // Every other case here calls one half with a directory handed to it, which is the seam
+        // and not the door: `bin/pig` calls `run()` with no argument at all. So the two things
+        // this pins are the two nothing else could — that `run()` still calls *both* halves, and
+        // that with nothing passed they go where `Config::piHome()` says rather than nowhere.
+        putenv('PI_HOME=' . $this->directory);
+
+        try {
+            $this->write('oauth.json', (string) json_encode(['anthropic' => ['refresh' => 'r']]));
+            $this->write(
+                'stray.jsonl',
+                "{\"type\":\"session\",\"cwd\":\"/Users/dev/Dev/pig\",\"version\":2}\n",
+            );
+
+            $named = Migrations::run();
+
+            $this->assertSame(['anthropic'], $named, 'the credential half ran and said whose');
+            $this->assertFileExists($this->directory . '/auth.json');
+            $this->assertFileExists($this->directory . '/sessions/--Users-dev-Dev-pig--/stray.jsonl');
+            $this->assertFileDoesNotExist($this->directory . '/stray.jsonl', 'the session half ran too');
+        } finally {
+            putenv('PI_HOME');
+        }
+    }
+
+    public function testAJsonlThatNamesADirectoryIsStillNotASession(): void
+    {
+        // The existing case writes a line with no `cwd` on it, so a guard that stopped checking
+        // the type would still have nowhere to file the file and would leave it alone by
+        // accident. Something else's log with a `cwd` field in it is the shape that moves.
+        $this->write('notes.jsonl', "{\"type\":\"notes\",\"cwd\":\"/Users/dev/notes\"}\n");
+
+        Migrations::sessionsFromAgentRoot($this->directory);
+
+        $this->assertFileExists($this->directory . '/notes.jsonl');
+        $this->assertFileDoesNotExist($this->directory . '/sessions/--Users-dev-notes--/notes.jsonl');
+    }
+
+    public function testAnEntryInTheOldFileThatIsNotACredentialIsNotCarriedAcross(): void
+    {
+        // pi's `oauth.json` is somebody else's file and can hold anything. An entry that is not
+        // an object has no fields to spread, so writing it out would produce an `auth.json`
+        // whose shape neither tool can read — and this is the only copy of those tokens.
+        $this->write('oauth.json', (string) json_encode([
+            'anthropic' => ['refresh' => 'r'],
+            'broken' => 'not an object',
+        ]));
+
+        $this->assertSame(['anthropic'], Migrations::authToAuthJson($this->directory));
+        $this->assertSame(['anthropic'], array_keys($this->json('auth.json')));
+    }
 }
