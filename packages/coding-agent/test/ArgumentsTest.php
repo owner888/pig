@@ -345,6 +345,20 @@ final class ArgumentsTest extends TestCase
         $this->assertSame(['fix the bug'], $parsed->messages);
     }
 
+    public function testExtensionTakesAValueAndNoExtensionsIsAFlag(): void
+    {
+        $this->assertContains('extension', Arguments::TAKES_A_VALUE);
+        $this->assertNotContains('no-extensions', Arguments::TAKES_A_VALUE);
+
+        $parsed = $this->parse('--extension', '/path/to/ext.php', 'say hello');
+        $this->assertSame('/path/to/ext.php', $parsed->value('extension'));
+        $this->assertSame(['say hello'], $parsed->messages);
+
+        $flagOnly = $this->parse('--no-extensions', 'say hello');
+        $this->assertTrue($flagOnly->has('no-extensions'));
+        $this->assertSame(['say hello'], $flagOnly->messages);
+    }
+
     public function testAMessageFromTheShellArrivesAsTextRatherThanAsBytes(): void
     {
         // A shell hands over bytes: `pig $'ask about \xe9 this'` is a perfectly ordinary thing to

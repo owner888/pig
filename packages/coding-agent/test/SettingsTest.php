@@ -442,6 +442,7 @@ final class SettingsTest extends TestCase
         $this->assertNull($settings->lastChangelogVersion(), 'never means a first run');
         $this->assertSame([], $settings->hooks());
         $this->assertSame([], $settings->customTools());
+        $this->assertSame([], $settings->extensions());
     }
 
     public function testAQueueModeTheFileInventedIsTheOrdinaryOne(): void
@@ -458,6 +459,7 @@ final class SettingsTest extends TestCase
         $this->writeGlobal([
             'hooks' => ['~/hooks/guard.php', 12],
             'customTools' => ['~/tools/wc/index.php'],
+            'extensions' => ['~/extensions/antigravity'],
         ]);
 
         $settings = $this->load();
@@ -467,14 +469,16 @@ final class SettingsTest extends TestCase
         // never heard about again.
         $this->assertSame(['~/hooks/guard.php', '12'], $settings->hooks());
         $this->assertSame(['~/tools/wc/index.php'], $settings->customTools());
+        $this->assertSame(['~/extensions/antigravity'], $settings->extensions());
 
         // A value that is not a list at all has no paths in it to name.
-        $this->writeGlobal(['hooks' => 'not a list', 'customTools' => 'not a list']);
+        $this->writeGlobal(['hooks' => 'not a list', 'customTools' => 'not a list', 'extensions' => 'not a list']);
 
         $settings = $this->load();
 
         $this->assertSame([], $settings->hooks());
         $this->assertSame([], $settings->customTools());
+        $this->assertSame([], $settings->extensions());
     }
 
     // ---- not writing ---------------------------------------------------------------------

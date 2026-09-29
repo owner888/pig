@@ -31,6 +31,7 @@ final class ExtensionDiscovery
         $dirs = [
             Config::home() . '/extensions',
             $cwd . '/.pig/extensions',
+            $cwd . '/extensions',
         ];
 
         $labels = [];
@@ -47,7 +48,7 @@ final class ExtensionDiscovery
             }
 
             foreach ($entries as $entry) {
-                if ($entry === '' || $entry[0] === '.' || !str_ends_with($entry, '.php')) {
+                if ($entry === '' || $entry[0] === '.') {
                     continue;
                 }
 
@@ -58,14 +59,21 @@ final class ExtensionDiscovery
                 }
                 $seen[$real] = true;
 
-                if (is_file($path)) {
+                if (is_file($path) && str_ends_with($entry, '.php')) {
+                    $labels[] = $entry;
+                } elseif (is_dir($path) && is_file($path . '/index.php')) {
                     $labels[] = $entry;
                 }
             }
         }
 
         foreach ($extraPaths as $extra) {
-            $labels[] = basename($extra);
+            $base = basename($extra);
+            if ($base === 'index.php') {
+                $labels[] = basename(dirname($extra));
+            } else {
+                $labels[] = $base;
+            }
         }
 
         $labels = array_values(array_unique(array_filter($labels, static fn (string $s): bool => trim($s) !== '')));

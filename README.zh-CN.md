@@ -286,6 +286,10 @@ return fn (CustomToolApi $pi) => new CustomTool(
 的工具靠这个重建或者放手。它也能自己画这次调用和这次的结果，所以一个答案是张表的工具，不必
 被塞进给文件设计的那套排版里。
 
+扩展是 `~/.pig/agent/extensions/`、`.pig/extensions/` 或 `extensions/` 里的 PHP 文件（或带 `index.php` 的文件夹），
+把 hook、命令和 tool 统一到一个入口里。Factory 收到的是继承了 `HookApi` 的 `ExtensionApi`，额外提供了 `registerTool()`。
+`--no-extensions` 一个都不加载，`--extension <path>` 加载指定文件。
+
 skill 就是一个带 `SKILL.md` 的文件夹。pig 读 `~/.pig/skills` 和 `.pig/skills`，同时也读
 `~/.claude/skills`、`.claude/skills`、`~/.codex/skills`、`~/.pi/agent/skills` 和 `.pi/skills`——给别的
 agent 写的、或者迁过来之前给 pi 写的 skill，在这儿都直接能用。两个目录里有同名 skill 是**覆盖**而不是

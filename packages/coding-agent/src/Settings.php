@@ -361,6 +361,20 @@ final class Settings
         return is_array($value) ? array_values(array_map(strval(...), $value)) : [];
     }
 
+    /**
+     * Extension files or directories named in the settings.
+     *
+     * Upstream's key exactly: a top-level `extensions` array of paths.
+     *
+     * @return list<string>
+     */
+    public function extensions(): array
+    {
+        $value = $this->get('extensions');
+
+        return is_array($value) ? array_values(array_map(strval(...), $value)) : [];
+    }
+
     public function skillsEnabled(): bool
     {
         return $this->get('skills.enabled') !== false;

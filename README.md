@@ -332,6 +332,11 @@ session starts, switches, jumps or ends, which is how one that keeps state rebui
 go of it. And it can draw its own call and its own result in the transcript,
 so a tool whose answer is a table is not squeezed through formatting meant for files.
 
+An extension is a PHP file (or a folder with `index.php`) in `~/.pig/agent/extensions/`, `.pig/extensions/`
+or `extensions/` that unifies hooks, commands and tools into a single definition. The factory is given an
+`ExtensionApi`, which inherits `HookApi` and adds `registerTool()`. `--no-extensions` skips them, and
+`--extension <path>` loads an explicit file.
+
 Skills are folders with a `SKILL.md` in them. pig reads `~/.pig/agent/skills` and `.pig/skills`, and
 also `~/.claude/skills`, `.claude/skills`, `~/.codex/skills`, `~/.pi/agent/skills` and `.pi/skills`,
 so a skill written for another agent — or for pi, before the move — works here unchanged. Two folders

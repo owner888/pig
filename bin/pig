@@ -108,6 +108,8 @@ if (isset($options['help'])) {
       --no-skills       start without loading any skills, wherever they live
       --no-hooks        start without loading ~/.pig/agent/hooks or .pig/hooks
       --no-tools        start without loading ~/.pig/agent/tools or .pig/tools
+      --extension <p>   load an explicit extension file or directory
+      --no-extensions   start without loading extensions
       --no-update-check do not ask Packagist whether there is a newer pig
       -p, --print       say it, print the answer, exit — the same as --mode text
       --mode <m>        text, json or rpc. Any of them leaves the terminal behind:
@@ -397,9 +399,11 @@ try {
         withHooks: !isset($options['no-hooks']),
         withSkills: !isset($options['no-skills']),
         withTools: !isset($options['no-tools']),
+        withExtensions: !isset($options['no-extensions']),
         skillsDir: $options['skills-dir'] ?? null,
         tools: $toolNames,
         models: $modelPatterns,
+        extensionPaths: isset($options['extension']) ? [$options['extension']] : null,
     );
 } catch (CodingAgentError $error) {
     // Almost always a model name that matches nothing or a missing API key, both worth saying
@@ -422,6 +426,7 @@ $skills = $started->skills;
 $fileCommands = $started->fileCommands;
 $hooks = $started->hooks;
 $customTools = $started->customTools;
+$extensions = $started->extensions;
 
 Timings::mark('assembled');
 
@@ -499,6 +504,7 @@ if ($mode === 'rpc') {
         initialMessages: $messages,
         initialImages: $files->images,
         changelog: $changelog,
+        extensions: $extensions,
     );
 
     // **Spawned, and inside the one `Async::run()` that owns the program.** It is one HTTPS

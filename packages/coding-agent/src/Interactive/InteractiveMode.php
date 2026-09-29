@@ -235,6 +235,7 @@ final class InteractiveMode
         // off-by-ones.
         private readonly ?Auth $auth = null,
         private readonly ?string $changelog = null,
+        private readonly array $extensions = [],
     ) {
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
@@ -626,6 +627,10 @@ final class InteractiveMode
         $extraPaths = [];
         if ($this->hooks !== null && !$this->hooks->isEmpty()) {
             $extraPaths = $this->hooks->paths();
+        }
+
+        foreach ($this->extensions as $ext) {
+            $extraPaths[] = $ext->path;
         }
 
         return ExtensionDiscovery::discover($this->cwd, $extraPaths);

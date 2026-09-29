@@ -73,8 +73,8 @@ the developer asked for it, it is ported and listed here:
 
 The anchor's banner is a column of thirteen keys, which is taller than most of the
 conversations it sits above; HEAD moved the list behind `ctrl+o` and put a one-line
-summary in its place. `[Skills]` and `[Extensions]` are sections there too; `[Skills]` is
-here now, and `[Extensions]` is not ported, so it has no heading to be empty under.
+summary in its place. `[Skills]` and `[Extensions]` are sections there too; both are
+here now.
 
 Upstream reads the clipboard through a native Node addon on macOS and Windows and falls back
 to `wl-paste` / `xclip` / PowerShell on Linux. PHP has no addon, so every platform goes
@@ -2685,6 +2685,17 @@ things about them:
 
 `CustomToolAPI.ui` is ported as `HookUi`, in both `$pi->ui()` and the context handed to
 `execute`. Nothing of upstream's custom-tool module is left out.
+
+`Extensions\` is upstream's `core/extensions/`. An extension is a PHP file (or a folder with
+`index.php`) in `~/.pig/agent/extensions`, `<cwd>/.pig/extensions` or `<cwd>/extensions` that
+returns a callable. It unifies what used to be split between hooks and custom tools: the callable
+is handed an `ExtensionApi` (which inherits `HookApi`) and can register commands, tools, event
+handlers and message renderers all from a single file or directory.
+
+`extensions/antigravity/index.php` is the first ported full extension, bringing Antigravity's
+quota monitoring (`/antigravity.usage`, `/antigravity.models`), account management
+(`/antigravity.accounts`), doctor diagnostics (`/antigravity.doctor`), model catalog refresh
+(`/antigravity.refresh`), image command (`/antigravity.image`), and the `generate_image` agent tool.
 
 Audited difference by difference against `wrapper.ts`, `types.ts` and `loader.ts`. `wrapper.ts` is
 `WrappedCustomTool` line for line, argument order included. What the rest found is one bug — the

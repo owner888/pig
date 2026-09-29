@@ -795,4 +795,39 @@ final class CodingAgentSessionTest extends TestCase
             Models::forgetRegistered();
         }
     }
+
+    public function testAnExtensionCanRegisterBothCommandsAndToolsIntoTheSession(): void
+    {
+        $extDir = $this->cwd . '/.pig/extensions/bundled';
+        mkdir($extDir, 0755, true);
+        file_put_contents($extDir . '/index.php', <<<'PHP'
+<?php
+use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\Agent\AgentToolResult;
+use Pig\Ai\TextContent;
+return function (ExtensionApi $pi): void {
+    $pi->registerCommand('bundled_cmd', fn () => null, 'Bundled Command');
+    $pi->registerTool(new CustomTool(
+        name: 'bundled_tool',
+        label: 'Bundled Tool',
+        description: 'Tool from extension',
+        parameters: ['type' => 'object', 'properties' => []],
+        execute: fn () => new AgentToolResult([new TextContent('ok')]),
+    ));
+};
+PHP);
+
+        $started = $this->start();
+
+        $this->assertContains('bundled_tool', $started->customTools->names());
+        [$commands] = $started->hooks->commands();
+        $this->assertArrayHasKey('bundled_cmd', $commands);
+
+        // Disabling withExtensions
+        $disabled = $this->start([], ['withExtensions' => false]);
+        $this->assertNotContains('bundled_tool', $disabled->customTools->names());
+        [$disabledCommands] = $disabled->hooks->commands();
+        $this->assertArrayNotHasKey('bundled_cmd', $disabledCommands);
+    }
 }

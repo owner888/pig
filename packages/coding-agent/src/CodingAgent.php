@@ -16,9 +16,12 @@ use Pig\Ai\UserMessage;
 use Pig\CodingAgent\CustomTools\CustomToolApi;
 use Pig\CodingAgent\CustomTools\CustomToolLoader;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\CustomTools\LoadedCustomTool;
+use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Hooks\HookedTool;
 use Pig\CodingAgent\Hooks\HookLoader;
 use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
@@ -170,9 +173,11 @@ final class CodingAgent
         bool $withHooks = true,
         bool $withTools = true,
         bool $withSkills = true,
+        bool $withExtensions = true,
         ?string $skillsDir = null,
         ?array $tools = null,
         ?array $models = null,
+        ?array $extensionPaths = null,
     ): StartedSession {
         $warnings = [];
 
@@ -305,6 +310,19 @@ final class CodingAgent
             $warnings[] = "hook {$problem->toText()}";
         }
 
+        $cliExtensions = $extensionPaths ?? [];
+        [$loadedExtensions, $extensionProblems] = $withExtensions
+            ? ExtensionLoader::load($cwd, $settings->extensions(), $cliExtensions, auth: $auth)
+            : [[], []];
+
+        foreach ($extensionProblems as $problem) {
+            $warnings[] = "extension {$problem->toText()}";
+        }
+
+        foreach ($loadedExtensions as $ext) {
+            $loadedHooks[] = new LoadedHook($ext->path, $ext->resolved, $ext->api);
+        }
+
         $hooks = new HookRunner($loadedHooks, $cwd, $store);
         Timings::mark('hooks');
 
@@ -328,6 +346,12 @@ final class CodingAgent
 
         foreach ($toolProblems as $problem) {
             $warnings[] = "tool {$problem->toText()}";
+        }
+
+        foreach ($loadedExtensions as $ext) {
+            foreach ($ext->api->tools() as $tool) {
+                $loadedTools[] = new LoadedCustomTool($ext->path, $ext->resolved, $tool);
+            }
         }
 
         Timings::mark('customTools');
@@ -389,6 +413,7 @@ final class CodingAgent
             $store,
             $warnings,
             $resumed,
+            extensions: $loadedExtensions,
         );
     }
 

@@ -43,7 +43,7 @@ use Pig\Tui\Process;
  *
  * Nothing of upstream's `HookAPI` is left out.
  */
-final class HookApi
+class HookApi
 {
     /** Every event a hook may subscribe to. */
     public const array EVENTS = [
@@ -278,9 +278,9 @@ final class HookApi
     {
         $name = ltrim($name, '/');
 
-        if ($name === '' || preg_match('/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/', $name) !== 1) {
+        if ($name === '' || preg_match('/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/', $name) !== 1) {
             throw new InvalidArgumentException(
-                "'{$name}' cannot be a command name: letters, digits, dashes and underscores only.",
+                "'{$name}' cannot be a command name: letters, digits, dots, dashes and underscores only.",
             );
         }
 

@@ -49,6 +49,8 @@ final readonly class StartedSession
         public array $warnings,
         /** Whether the conversation was picked up rather than started, for a caller that shows it. */
         public bool $resumed = false,
+        /** @var list<\Pig\CodingAgent\Extensions\LoadedExtension> */
+        public array $extensions = [],
     ) {
     }
 }
