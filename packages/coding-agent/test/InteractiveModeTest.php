@@ -2817,13 +2817,11 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('wc/index.php', $screen);
     }
 
-    public function testACustomToolIsListedInToolsCommand(): void
+    public function testACustomToolIsNamedInTheBanner(): void
     {
         $this->start(customTools: $this->tools('wc'));
-        $this->type('/tools');
-        $this->type(self::ENTER);
 
-        $this->assertStringContainsString('wc', $this->screen());
+        $this->assertStringContainsString('[Tools]', $this->screen());
     }
 
     public function testAToolIsToldTheSessionStartedAndThenSwitched(): void

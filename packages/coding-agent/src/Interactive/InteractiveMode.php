@@ -609,6 +609,11 @@ final class InteractiveMode
                 . $this->palette->fg('muted', '  ' . implode(', ', $extensions));
         }
 
+        if ($this->customTools !== null && !$this->customTools->isEmpty()) {
+            $sections[] = $this->palette->fg('mdHeading', '[Tools]') . "\n"
+                . $this->palette->fg('muted', '  ' . implode(', ', $this->customTools->names()));
+        }
+
         return implode("\n\n", $sections);
     }
 
