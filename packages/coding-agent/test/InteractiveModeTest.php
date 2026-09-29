@@ -14,6 +14,7 @@ use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
+use Pig\Ai\ErrorEvent;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
@@ -48,6 +49,7 @@ use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\Ai\Utils\Oauth\Credentials;
+use Throwable;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
@@ -269,6 +271,21 @@ final class InteractiveModeTest extends TestCase
             } else {
                 $this->held = $stream;
                 $this->answers[] = $answer;
+
+                $options->signal?->onAbort(function () use ($stream, $message): void {
+                    $aborted = new AssistantMessage(
+                        $message->content,
+                        $message->api,
+                        $message->provider,
+                        $message->model,
+                        $message->usage,
+                        StopReason::Aborted,
+                        'Aborted',
+                    );
+                    $stream->push(new StartEvent($aborted));
+                    $stream->push(new ErrorEvent(StopReason::Aborted, $aborted));
+                    $stream->end($aborted);
+                });
 
                 return $stream;
             }
@@ -2180,6 +2197,24 @@ final class InteractiveModeTest extends TestCase
 
         $held();
         $this->settle();
+    }
+
+    public function testQuittingWhileTheAgentIsWorkingAbortsTheAgentAndStops(): void
+    {
+        $this->start(['done']);
+        $this->holdTheAgent();
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertTrue($this->session->isStreaming());
+
+        $this->type('/quit');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertFalse($this->session->isStreaming());
     }
 
     public function testAFileCommandQueuedMidTurnReachesTheModelAsItsPromptAndComesBackAsItsName(): void

@@ -287,6 +287,16 @@ final class AgentSession
     /** Drop every listener and let go of the agent. */
     public function dispose(): void
     {
+        try {
+            $this->abortRetry();
+            $this->abortCompaction();
+            $this->abortBash();
+            $this->agent->abort();
+            $this->clearQueue();
+        } catch (Throwable) {
+            // Dispose must succeed even if an abort hook throws.
+        }
+
         if ($this->unsubscribeAgent !== null) {
             ($this->unsubscribeAgent)();
             $this->unsubscribeAgent = null;

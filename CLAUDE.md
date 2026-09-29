@@ -10029,6 +10029,26 @@ Two bugs in Antigravity quota discovery (`QuotaClient`):
 
 In addition, `CodingAgent::session()` now honors `PI_PROVIDER`, `PI_MODEL` and `PI_REASONING_LEVEL` from the environment when `PIG_*` variables are not set, and clamps the startup thinking level using `ThinkingLevel::clampedFor($chosen, $level)` so models with `thinkingLevelMap` (such as Antigravity models requiring reasoning) do not default to `off`.
 
+### `/quit` while working left the agent, bash, retries and compactions running in the background
+
+**Phenomenon**: When `/quit` or `/exit` was entered while the agent was `working` (streaming an LLM response, running tools, retrying, or compacting), the process failed to terminate in-flight work cleanly, and hooks like `system-notify.php` continued firing desktop notifications on turn completion.
+
+**Cause**:
+`InteractiveMode::stop()` calls `$this->session->dispose()`, `$this->tui->stop()`, and `Loop::get()->stop()`. However, `AgentSession::dispose()` previously only disconnected the agent listener and cleared `$this->listeners`. It omitted:
+1. `$this->abortRetry()` (sleeping retry timers kept firing and starting new turns in the background)
+2. `$this->abortCompaction()` (background compaction continued)
+3. `$this->abortBash()` (running bash subprocesses kept executing)
+4. `$this->agent->abort()` (the in-flight LLM stream and tool loops were never aborted)
+5. `$this->clearQueue()` (queued follow-up and steering messages were not discarded)
+
+As a result, background fibers and subprocesses continued running to completion and emitting events.
+
+**Countermeasure**:
+Aligned `AgentSession::dispose()` with upstream `agent-session.ts`'s `dispose()`: wrapped in a `try...catch (Throwable)` and explicitly invoke `$this->abortRetry()`, `$this->abortCompaction()`, `$this->abortBash()`, `$this->agent->abort()`, and `$this->clearQueue()` before unsubscribing and clearing listeners.
+
+**Test**:
+`InteractiveModeTest::testQuittingWhileTheAgentIsWorkingAbortsTheAgentAndStops`.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;
