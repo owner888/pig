@@ -74,7 +74,7 @@ final class SlashCommands
      * tab — are all below 0x80, so none of them can occur inside a UTF-8 sequence, and
      * concatenating the bytes in between puts the characters back exactly. `/review "解析器"`
      * comes out as one argument either way. (Where the same shape *is* a trap, the number is
-     * an index or a length rather than a scan — see `Utils\Fuzzy` and the editor's cursor.)
+     * an index or a length rather than a scan — see `Pig\Tui\Fuzzy` and the editor's cursor.)
      *
      * @return list<string>
      */

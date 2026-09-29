@@ -73,6 +73,20 @@ final class FuzzyTest extends TestCase
         $this->assertLessThan($inside, $atBoundary);
     }
 
+    public function testASpaceThatIsNotU0020StartsAWordToo(): void
+    {
+        // A conversation's text is whatever was pasted into it, so these arrive without anybody
+        // typing them: a full-width space from a Chinese IME, a non-breaking space from a web
+        // page, and a byte-order mark from the front of a file.
+        foreach (["\u{3000}", "\u{00A0}", "\u{FEFF}", "\u{2009}"] as $separator) {
+            $this->assertLessThan(
+                Fuzzy::match('b', 'ab')[1],
+                Fuzzy::match('b', 'a' . $separator . 'b')[1],
+                sprintf('U+%04X should start a word', mb_ord($separator, 'UTF-8')),
+            );
+        }
+    }
+
     public function testDigitsTypedOnTheWrongSideOfTheLettersStillMatch(): void
     {
         $this->assertTrue(Fuzzy::match('codex52', 'gpt-5.2-codex')[0]);
@@ -101,6 +115,30 @@ final class FuzzyTest extends TestCase
 
         $this->assertSame($items, Fuzzy::filter($items, '', static fn (string $x): string => $x));
         $this->assertSame($items, Fuzzy::filter($items, '   ', static fn (string $x): string => $x));
+
+        // And a space that is not U+0020 is still nothing typed. Before the split was `/u`, a
+        // lone full-width space was a *character to match*, so the list came back holding
+        // whichever item happened to contain one — usually none.
+        foreach (["\u{3000}", "\u{00A0}", "\u{FEFF}", "\u{3000}\u{00A0} "] as $blank) {
+            $this->assertSame($items, Fuzzy::filter($items, $blank, static fn (string $x): string => $x), sprintf('%s is still blank', bin2hex($blank)));
+        }
+    }
+
+    public function testASpaceThatIsNotU0020SeparatesTokens(): void
+    {
+        // **The bug this pins, and it is not exotic**: pressing space on a Chinese keyboard in
+        // full-width mode produces U+3000, and pasting from a web page brings U+00A0. The split
+        // was ASCII-only, so `tls　handshake` was a single token with a character in the middle
+        // that no conversation contains — and the `/resume` search box went empty on the one
+        // keystroke somebody uses to narrow it.
+        $items = ['debug the tls handshake', 'the markdown lexer'];
+
+        foreach (["tls\u{3000}handshake", "tls\u{00A0}handshake", "tls\u{2009}handshake"] as $query) {
+            $this->assertSame(['debug the tls handshake'], Fuzzy::filter($items, $query, static fn (string $x): string => $x), bin2hex($query));
+        }
+
+        // A mark on the front of a pasted query is not part of the first token either.
+        $this->assertSame(['debug the tls handshake'], Fuzzy::filter($items, "\u{FEFF}tls", static fn (string $x): string => $x));
     }
 
     public function testWhatDoesNotMatchIsLeftOut(): void
@@ -211,6 +249,20 @@ final class FuzzyTest extends TestCase
         $result = Fuzzy::filter($items, '项目', static fn (string $x): string => $x);
 
         $this->assertSame(['项目构建', '构建中的项目'], $result);
+    }
+
+    public function testPositionIsCountedInCharactersNotBytes(): void
+    {
+        // `好` is the second character of `你好` and the fourth, fifth and sixth *bytes* of it —
+        // so a byte walk finds three consecutive matches near the end of the string and scores
+        // this about -13.8 instead of one match at position 1.
+        $this->assertSame(0.1, Fuzzy::match('好', '你好')[1]);
+    }
+
+    public function testAChineseQueryMatchesChineseText(): void
+    {
+        $this->assertTrue(Fuzzy::match('握手', '调试 tls 握手')[0]);
+        $this->assertFalse(Fuzzy::match('手握', '调试 tls 握手')[0]);
     }
 
     public function testAQueryInOneScriptDoesNotMatchTextInAnother(): void

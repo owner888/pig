@@ -7,12 +7,12 @@ namespace Pig\CodingAgent\Cli;
 use Closure;
 use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Theme\Palette;
-use Pig\CodingAgent\Utils\Fuzzy;
 use Pig\Tui\Caret;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Input;
 use Pig\Tui\Components\SelectItem;
 use Pig\Tui\Components\SelectList;
+use Pig\Tui\Fuzzy;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
 

@@ -32,6 +32,14 @@ final class Fuzzy
     /** What separates words, for the bonus above. */
     private const string WORD_SEPARATORS = " \t\n\r\f\x0B-_./:";
 
+    /**
+     * Whitespace, as JavaScript means it.
+     *
+     * PCRE's `\s` under `/u` is the White_Space property, which leaves out `﻿` because it is
+     * a format character rather than a separator. JavaScript's `\s` includes it.
+     */
+    private const string SPACE = '\s\x{FEFF}';
+
     /** Reward for the query being the whole text rather than part of it. */
     private const int EXACT_BONUS = 100;
 
@@ -93,11 +101,7 @@ final class Fuzzy
      */
     public static function filter(array $items, string $query, Closure $textOf): array
     {
-        if (trim($query) === '') {
-            return $items;
-        }
-
-        $tokens = preg_split('/[\s\/]+/u', trim($query), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $tokens = preg_split('/[' . self::SPACE . '\/]+/u', $query, -1, PREG_SPLIT_NO_EMPTY) ?: [];
 
         if ($tokens === []) {
             return $items;
@@ -170,7 +174,11 @@ final class Fuzzy
                 }
             }
 
-            if ($at === 0 || str_contains(self::WORD_SEPARATORS, $characters[$at - 1])) {
+            if (
+                $at === 0
+                || str_contains(self::WORD_SEPARATORS, $characters[$at - 1])
+                || ($characters[$at - 1] > "\x7f" && preg_match('/^[' . self::SPACE . ']$/u', $characters[$at - 1]) === 1)
+            ) {
                 $score -= self::WORD_BOUNDARY_BONUS;
             }
 

@@ -7,7 +7,7 @@ namespace Pig\CodingAgent\Cli;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\CodingAgent\Auth;
-use Pig\CodingAgent\Utils\Fuzzy;
+use Pig\Tui\Fuzzy;
 use Pig\Tui\Width;
 
 /**

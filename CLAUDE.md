@@ -2895,7 +2895,7 @@ never a thing to show. What anybody remembers about a conversation three days la
 from the middle of it, which is the whole reason the field exists — matching the opening alone
 would only find the sessions that are already easy to recognise in the list.
 
-`Utils\Fuzzy` is upstream's `utils/fuzzy.ts`, arithmetic for arithmetic: every character of the
+`Pig\Tui\Fuzzy` is upstream's `packages/tui/src/fuzzy.ts`, arithmetic for arithmetic: every character of the
 query in order, somewhere in the text. **The score is a pile of penalties, so lower is better**
 — a run of consecutive characters is rewarded and the reward grows along the run, gaps cost,
 the start of a word is worth a lot, and a late match costs a little. A space-separated query is
@@ -3654,7 +3654,7 @@ upstream would pick:   A
 ```
 
 Upstream's `findMostRecentSession` stats each file and sorts by `mtime`. It also decides the order of
-the `--resume` picker, so the row under the cursor was the stale one — and `Utils\Fuzzy`'s own note
+the `--resume` picker, so the row under the cursor was the stale one — and `Tui\Fuzzy`'s own note
 leans on that order ("the list is sorted newest-first before it gets here, and ties coming back
 shuffled would look like the list had lost its order").
 
@@ -6544,7 +6544,7 @@ run never reached are worth finishing, and the file list above says where they w
 
 ### A space that is not U+0020 emptied the search box
 
-`Utils\Fuzzy` is what `/resume`'s searchable session list and `--list-models` filter through, and
+`Tui\Fuzzy` is what `/resume`'s searchable session list, `--list-models` and `SelectList` filter through, and
 `filter()` split the query into tokens with
 
 ```php
