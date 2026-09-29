@@ -98,6 +98,7 @@ ctrl+c leaves without starting one. `--session <id>` resumes an earlier session 
 path directly (printed upon quitting a session). `/resume` inside a session shows the same list, search and
 all. `-h` for the flags, `-v` for the version.
 `/help` inside lists every key, the prompt's own editing keys included, and every command.
+`/reload` reloads extensions, skills, commands, tools, and context files (`CLAUDE.md` / `AGENTS.md`) live without restarting pig (upgrading pig's core code itself still requires restarting the process).
 Shift+ctrl+d writes a debug log — the frame, how wide each line came out, and the conversation —
 which is the thing to attach to a bug report.
 

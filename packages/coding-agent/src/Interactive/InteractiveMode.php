@@ -659,7 +659,7 @@ final class InteractiveMode
         }
 
         foreach ($this->extensions as $ext) {
-            $extraPaths[] = $ext->path;
+            $extraPaths[] = is_string($ext) ? $ext : $ext->path;
         }
 
         return ExtensionDiscovery::discover($this->cwd, $extraPaths);
@@ -2059,7 +2059,7 @@ final class InteractiveMode
         $this->session->setFileCommands($this->fileCommands);
 
         // 4. Reload extensions
-        $this->extensions = ExtensionDiscovery::discover($this->cwd, $this->settings->extensions());
+        $discovered = ExtensionDiscovery::discover($this->cwd, $this->settings->extensions());
 
         // 5. Reload hooks and extension hooks
         [$loadedHooks, $hookProblems] = HookLoader::load($this->cwd, $this->settings->hooks());
@@ -2068,9 +2068,10 @@ final class InteractiveMode
         [$loadedExtensions, $extensionProblems] = ExtensionLoader::load(
             $this->cwd,
             $this->settings->extensions(),
-            $this->extensions,
+            $discovered,
             auth: $this->auth,
         );
+        $this->extensions = $loadedExtensions;
 
         foreach ($loadedExtensions as $ext) {
             $loadedHooks[] = new LoadedHook($ext->path, $ext->resolved, $ext->api);

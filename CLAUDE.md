@@ -10048,6 +10048,17 @@ Aligned `AgentSession::dispose()` with upstream `agent-session.ts`'s `dispose()`
 **Test**:
 `InteractiveModeTest::testQuittingWhileTheAgentIsWorkingAbortsTheAgentAndStops`.
 
+### `/reload` boundary and the extension redeclaration fatal error
+
+**Phenomenon**: When `/reload` was executed, if any loaded `.php` extension defined top-level named functions or classes (e.g. `function sendSystemNotification() {}`), PHP threw `PHP Fatal error: Cannot redeclare function ...` and crashed the session. Furthermore, updates to `pig`'s own core package classes (`packages/`) cannot take effect via `/reload`.
+
+**Cause**:
+Unlike Node.js modules which are wrapped in a private closure and whose module cache can be cleared, PHP files `require`d in the same process register top-level named functions and classes directly in PHP's global symbol tables. Re-`require`ing the file on `/reload` attempts to re-declare those symbols, causing a fatal error. Additionally, PHP does not support class unloading; once a class is compiled into memory by Composer, its definition cannot be replaced in the running process.
+
+**Countermeasure**:
+1. All extensions should use scoped closures and pass helpers via closure `use` or `HookContext $ctx` instead of declaring global functions or classes. The standard extensions (`copy.php`, `system-notify.php`, `smart-session.php`, `permission-gate.php`, `gemini-video.php`) were refactored to this scoped closure pattern so they can be reloaded repeatedly with zero conflicts.
+2. Clearly document `/reload`'s boundary across `README.md`, `README.zh-CN.md`, `bin/pig --help`, and `CLAUDE.md`: `/reload` live-refreshes extensions, skills, custom commands, tools, settings, and context files (`CLAUDE.md` / `AGENTS.md`), but upgrading `pig`'s own core engine classes still requires restarting `pig`.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;
