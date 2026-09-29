@@ -36,6 +36,10 @@ use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CodingAgent;
+use Pig\CodingAgent\Hooks\HookApi;
+use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Hooks\LoadedHook;
+use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\CompactionSummary;
@@ -1807,6 +1811,188 @@ final class AgentSessionTest extends TestCase
         $this->assertStringNotContainsString('carrying on', (string) file_get_contents($mine->path));
     }
 
+    public function testWhatWasTypedWithAnExclamationMarkIsInTheFileToo(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['hello'], store: $store);
+
+        // The file has to exist before a `!command` can be written to it, which is what the
+        // first turn is for: nothing is written until something has been answered.
+        Async::run(static fn () => $session->prompt('hi'));
+        Async::run(static fn () => $session->executeBash('echo from-the-shell'));
+
+        // Appended directly rather than through a turn, so there is no `message_end` to carry
+        // it to the file — and a conversation that reopens without what was run in it is a
+        // conversation missing the half that explains the rest.
+        $this->assertStringContainsString('from-the-shell', (string) file_get_contents($store->path));
+    }
+
+    public function testACommandRunDuringATurnReachesTheFileWhenTheTurnEnds(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['hello', 'hello again'], store: $store);
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $ran = null;
+        $session->subscribe(static function (AgentEvent $event) use ($session, &$ran): void {
+            if ($event instanceof MessageStartEvent && $ran === null) {
+                // Held back, because a message between a tool call and its result is a request
+                // every provider rejects. Held back and then dropped is the failure.
+                $ran = Async::run(static fn () => $session->executeBash('echo held-back'));
+            }
+        });
+
+        Async::run(static fn () => $session->prompt('and again'));
+
+        $this->assertStringContainsString('held-back', (string) file_get_contents($store->path));
+    }
+
+    // ---- leaving a conversation, which is a recipe and not a line ---------------------------
+
+    public function testAHookCanRefuseToLeaveAConversationEitherWay(): void
+    {
+        // The cancellable hook is the whole reason `startNew()` and `switchTo()` are one method
+        // each rather than a few lines in every mode: a hook that refuses worked in the terminal
+        // and was ignored over RPC until the recipe moved in here. Both doors, because a guard
+        // on one of two is the shape that got it wrong the first time.
+        $asked = [];
+        $hooks = $this->hooks([
+            'session_before_switch' => function (mixed $event) use (&$asked): SessionBeforeSwitchResult {
+                $asked[] = $event->reason;
+
+                return new SessionBeforeSwitchResult(cancel: true);
+            },
+        ]);
+
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['hello'], store: $store, hooks: $hooks);
+        Async::run(static fn () => $session->prompt('the conversation I am in'));
+
+        $new = $session->startNew();
+
+        $this->assertFalse($new->switched);
+        $this->assertSame($store->path, $session->store()?->path, 'still writing where it was');
+        $this->assertCount(2, $session->messages(), 'and still holding what was said');
+
+        $other = $this->session(['hi'], store: SessionManager::create(sys_get_temp_dir()));
+        Async::run(static fn () => $other->prompt('somewhere else'));
+
+        $switch = $session->switchTo((string) $other->store()?->path);
+
+        $this->assertFalse($switch->switched);
+        $this->assertSame($store->path, $session->store()?->path);
+        $this->assertSame(['new', 'resume'], $asked, 'and each was told which it was');
+    }
+
+    public function testWhatWasQueuedForTheOldConversationDoesNotCrossOver(): void
+    {
+        $session = $this->session(['hello'], store: SessionManager::create(sys_get_temp_dir()));
+        Async::run(static fn () => $session->prompt('the conversation I am in'));
+        $session->followUp('and one more thing');
+
+        $this->assertSame(['and one more thing'], $session->queued());
+
+        $session->startNew();
+
+        // It was typed into the conversation being thrown away. Sending it into its replacement
+        // is the same crossing as appending to the wrong file.
+        $this->assertSame([], $session->queued());
+
+        // And the other door, which had its own copy of the recipe until these became one
+        // method each — a guard on one of two is how the first version of this went wrong.
+        $other = $this->session(['hi'], store: SessionManager::create(sys_get_temp_dir()));
+        Async::run(static fn () => $other->prompt('somewhere else'));
+
+        Async::run(static fn () => $session->prompt('a fresh start'));
+        $session->followUp('queued here');
+
+        $session->switchTo((string) $other->store()?->path);
+
+        $this->assertSame([], $session->queued());
+    }
+
+    public function testAHookThatLooksAndSaysNothingDoesNotStopTheSwitch(): void
+    {
+        // A hook that only wants to *watch* must not stop the thing it is watching. Worth knowing
+        // that no mutation of the `&& $refusal->cancel` here can fail this: `emitBeforeSwitch()`
+        // goes through `ask()`, whose decisiveness predicate is `$r->cancel`, so a result that
+        // does not cancel never comes back at all. The two checks are one rule in two places —
+        // harmless, and the reason this case passes either way is measured rather than assumed.
+        $hooks = $this->hooks([
+            'session_before_switch' => static fn (): SessionBeforeSwitchResult
+                => new SessionBeforeSwitchResult(cancel: false),
+        ]);
+
+        $session = $this->session(['hello'], store: SessionManager::create(sys_get_temp_dir()), hooks: $hooks);
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $this->assertTrue($session->startNew()->switched);
+
+        $other = $this->session(['hi'], store: SessionManager::create(sys_get_temp_dir()));
+        Async::run(static fn () => $other->prompt('somewhere else'));
+
+        $this->assertTrue($session->switchTo((string) $other->store()?->path)->switched);
+    }
+
+    public function testTheHooksHearAboutASwitchOnceItHasHappened(): void
+    {
+        $seen = [];
+        $hooks = $this->hooks([
+            'session_switch' => function (mixed $event) use (&$seen): null {
+                $seen[] = [$event->reason, $event->previousSessionFile];
+
+                return null;
+            },
+        ]);
+
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(['hello'], store: $store, hooks: $hooks);
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $session->startNew();
+
+        // A custom tool watching for this is how it knows the conversation under it changed —
+        // and the file it names is the one being *left*, which is the only moment anything can
+        // still say what it was.
+        $this->assertSame([['new', $store->path]], $seen);
+
+        $fresh = (string) $session->store()?->path;
+        $other = $this->session(['hi'], store: SessionManager::create(sys_get_temp_dir()));
+        Async::run(static fn () => $other->prompt('somewhere else'));
+
+        $session->switchTo((string) $other->store()?->path);
+
+        $this->assertSame(['resume', $fresh], $seen[1] ?? null, 'and the other door says which it was');
+    }
+
+    public function testResumingComesBackOnWhatThatConversationWasHadWith(): void
+    {
+        // A real registry model, for the reason the `--continue` case below gives: restoring
+        // means looking the recorded provider and id back up, and this one can reason, so the
+        // level is not clamped away before it is ever written down.
+        $reasoning = Models::find('anthropic', 'claude-haiku-4-5');
+        self::assertNotNull($reasoning);
+
+        $other = SessionManager::create(sys_get_temp_dir());
+        $elsewhere = $this->session(['hi there'], store: $other);
+        Async::run(static fn () => $elsewhere->prompt('a conversation on another model'));
+        $elsewhere->setModel($reasoning);
+        $elsewhere->setThinkingLevel(ThinkingLevel::High);
+
+        $session = $this->session(['hello'], store: SessionManager::create(sys_get_temp_dir()));
+        Async::run(static fn () => $session->prompt('here'));
+
+        $this->assertSame(ThinkingLevel::Off, $session->thinkingLevel());
+
+        $session->switchTo((string) $other->path);
+
+        // The `--continue` case calls `restoreSettings()` itself; this is the other door, and
+        // resuming takes no model and no level, so the file wins outright — which is what the
+        // word means. Without it the conversation comes back on whatever the last one used.
+        $this->assertSame('claude-haiku-4-5', $session->model()?->id);
+        $this->assertSame(ThinkingLevel::High, $session->thinkingLevel());
+    }
+
     public function testAPathThatIsNotASessionCostsTheConversationNothing(): void
     {
         $store = SessionManager::create(sys_get_temp_dir());
@@ -1829,6 +2015,18 @@ final class AgentSessionTest extends TestCase
         $this->assertSame(['still waiting to be sent'], $session->queued());
     }
 
+    /** @param array<string, callable> $handlers */
+    private function hooks(array $handlers): HookRunner
+    {
+        $api = new HookApi('.', 'test.php');
+
+        foreach ($handlers as $event => $handler) {
+            $api->on($event, $handler);
+        }
+
+        return new HookRunner([new LoadedHook('test.php', 'test.php', $api)], sys_get_temp_dir());
+    }
+
     private function session(
         array $answers,
         ?Closure $hook = null,
@@ -1837,6 +2035,7 @@ final class AgentSessionTest extends TestCase
         ?SessionManager $store = null,
         ?Settings $settings = null,
         ?Closure $getApiKey = null,
+        ?HookRunner $hooks = null,
     ): AgentSession {
         $agent = new Agent(new AgentOptions(
             streamFn: $streamFn ?? $this->provider($answers, $hook),
@@ -1849,7 +2048,7 @@ final class AgentSessionTest extends TestCase
         $agent->setModel($model ?? $this->model());
         $this->current = $agent;
 
-        return new AgentSession($agent, sys_get_temp_dir(), $store, $settings);
+        return new AgentSession($agent, sys_get_temp_dir(), $store, $settings, $hooks);
     }
 
     /**

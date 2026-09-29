@@ -73,9 +73,8 @@ the developer asked for it, it is ported and listed here:
 
 The anchor's banner is a column of thirteen keys, which is taller than most of the
 conversations it sits above; HEAD moved the list behind `ctrl+o` and put a one-line
-summary in its place. `[Context]`, `[Skills]` and `[Extensions]` are sections directly
-displayed on startup; `[Context]` lists discovered context files, `[Skills]` lists loaded
-skills, and `[Extensions]` discovers and displays loaded extensions/hooks.
+summary in its place. `[Skills]` and `[Extensions]` are sections there too; `[Skills]` is
+here now, and `[Extensions]` is not ported, so it has no heading to be empty under.
 
 Upstream reads the clipboard through a native Node addon on macOS and Windows and falls back
 to `wl-paste` / `xclip` / PowerShell on Linux. PHP has no addon, so every platform goes
@@ -9270,6 +9269,78 @@ If one of those three is ever traced to a real bug, that is the day the seam is 
 this is the entry to start from. `test/live.php` is the other route: it already reaches real
 endpoints with real credentials, so a scenario that signs in and reads the file back would cover all
 three without any new surface at all.
+
+### The three files that can lose a conversation without saying so
+
+Next tier after the ten, by the same rule, and the criterion had to widen a little: not *a file the
+user cannot get back* but **a conversation that changes under somebody and never says it did**.
+`Session/Compaction` decides what is thrown away, `Session/AgentSession` coordinates every way a
+conversation is left or replaced, and `Settings` is what carries a person's choices to the next run.
+1,301 mutations — 144, 985 and 172 — and the shapes are not the ones the earlier rounds found.
+**208 survived and 168 after the tests below**: `Compaction` 40 to 33, `AgentSession` 126 to 114,
+`Settings` 50 to 21.
+
+**`Compaction`: the boundaries, and an assertion that could not fail.**
+
+- **The compaction threshold was pinned on neither side.** `shouldCompact()` is the arithmetic that
+  decides when a conversation gets summarised away, and the cases were 190k against a 200k window
+  and 150k against the same — both a long way from the line. `> window - reserve` and `>=` both
+  passed. Exactly `window - reserve` is still room for the answer the reserve is *for*, so that is
+  the last size that does not summarise, and the pair is now the test.
+- **The `<=` this file has a whole entry about was unpinned.** "A token count measured before a
+  compaction describes a conversation that no longer exists" ends with *"`<=` rather than `<`: the
+  summary is written straight after the turn it replaces and a millisecond holds both"* — and `<`
+  passed, because every fixture had them a full second apart. The consequence is the one that entry
+  opens with: the stale reading is believed, the session asks to compact before every turn, and the
+  second attempt fails with `Already compacted` in front of everything the person types.
+- **`request()`'s `<previous-summary>` block: the test asserted the tag and the tag is in the
+  prompt.** `UPDATE_PROMPT` says "provided in `<previous-summary>` tags", so
+  `assertStringContainsString('<previous-summary>', …)` holds whether or not the block was ever
+  added — and inverting the condition that adds it left the model told to update a summary it was
+  not given, which silently drops everything the first compaction said. It asserts the summary's
+  *text* now. **Fifth time in this document that an assertion held either way**; the tell is always
+  that the string being asserted appears somewhere else in the same output.
+- Smaller, same file: a file list is de-duplicated and sorted on the read side and neither on the
+  modified side, and a tool call whose arguments never arrived — an interrupted turn, half-parsed
+  JSON — put a null in the list of files the summary claims were touched.
+
+**`AgentSession`: 985 mutations, 859 killed in pass 1 — the best rate of any file swept, and the
+126 that were left are concentrated in exactly the recipe this document already has an entry for.**
+The entry is "RPC's session switch and new-session skipped the three checks the terminal's have",
+and its fix moved the whole recipe into `startNew()` and `switchTo()`. What the sweep says is that
+the recipe arrived without tests of its own: the cancellable `session_before_switch` hook could be
+deleted from either method, the queue could stop being cleared, `restoreSettings()` could stop being
+called on a resume, and the `session_switch` event could stop being emitted — nine mutations across
+the two methods, none of which any test could see. **A fix that moves a rule into one place still
+needs the rule tested in that place**, which is the same lesson as "after wiring anything through,
+mutate each end", one level up.
+
+Two more in the same file, both about what reaches disk: a `!command`'s `BashExecution` is appended
+to the session file directly, because there is no `message_end` to carry it — and the append could
+be deleted, on both the immediate path and the flush that runs when a command was held back during a
+turn. A conversation that reopens without what was run in it is missing the half that explains the
+rest.
+
+**`Settings`: the accessors, as a family.** This document already records `updateCheckEnabled()`
+being "entirely unpinned"; the sweep says that was one of a set. Deleting the `set()` out of
+`setHideThinking`, `setShowImages`, `setRetryEnabled`, `setQueueMode` or `setLastChangelogVersion`
+broke nothing, and so did deleting the `get()` out of `queueMode()`, `lastChangelogVersion()`,
+`hooks()` and `customTools()` — a setter that stopped writing leaves a screen agreeing with itself
+and a file that does not, and a getter that stopped reading is a preference that silently does
+nothing. Three table-driven cases cover the family instead of one test each: every switch out and
+back, every default an untouched file means, and the four numeric accessors against the three ways a
+hand-written file misses `is_int($value) && $value > 0` — **a quoted number** (the mistake
+`models.json`'s `cost` block has its own entry for), a zero, and a negative. Under `strict_types` a
+quoted number comes back out of a method declared `int`, which is a TypeError from somewhere that
+has nothing to do with the file.
+
+**One equivalent mutant worth writing down, because it looks like a gap.** `startNew()` and
+`switchTo()` both guard `if ($refusal !== null && $refusal->cancel)`, and no mutation of the `&&`
+can fail a test — `emitBeforeSwitch()` goes through `HookRunner::ask()`, whose decisiveness
+predicate *is* `$r->cancel`, so a result that does not cancel never comes back at all. The two are
+one rule in two places. Harmless, kept, and measured rather than assumed — and the test that covers
+the behaviour (a hook that only watches does not block the switch) says on itself that it cannot
+kill that mutation.
 
 ## Version floor: PHP >= 8.3
 

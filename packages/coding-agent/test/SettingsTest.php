@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\ThinkingLevel;
+use Pig\Agent\QueueMode;
 use Pig\CodingAgent\Settings;
 
 /** What someone chose last time, and what the project insists on. */
@@ -310,6 +312,169 @@ final class SettingsTest extends TestCase
         $this->writeGlobal(['defaultThinkingLevel' => 'enormous']);
 
         $this->assertNull($this->load()->defaultThinkingLevel());
+    }
+
+    // ---- the numbers, and what is not one --------------------------------------------------
+
+    /**
+     * The four accessors that take a fallback all read `is_int($value) && $value > 0`, and the
+     * cases below are the three ways a hand-written file misses that. A **quoted number** is the
+     * one to expect — the same mistake `models.json`'s `cost` block has its own entry for — and
+     * without the type check it comes back as a string out of a method declared `int`, which under
+     * `strict_types` is a TypeError from somewhere that has nothing to do with the file.
+     *
+     * Zero is the other: somebody turning a limit off by setting it to nothing gets a reserve of
+     * no tokens, which is compaction that never fires, or a kept-recent of nothing, which is a
+     * compaction that summarises the message you just sent.
+     *
+     * @return iterable<string, array{0: string, 1: mixed, 2: bool}>
+     */
+    public static function numbersAndNonNumbers(): iterable
+    {
+        yield 'a whole count is the answer' => ['compaction.reserveTokens', 9_000, true];
+        yield 'zero is not a limit' => ['compaction.reserveTokens', 0, false];
+        yield 'nor is a negative one' => ['compaction.keepRecentTokens', -1, false];
+        yield 'a number with the quotes left on' => ['retry.maxRetries', '7', false];
+        yield 'nor is a float where a count belongs' => ['retry.maxRetries', 2.5, false];
+        yield 'no retries at all is not a count either' => ['retry.maxRetries', 0, false];
+        yield 'milliseconds, still counted' => ['retry.baseDelayMs', 500, true];
+        yield 'a delay of nothing is not a delay' => ['retry.baseDelayMs', 0, false];
+    }
+
+    #[DataProvider('numbersAndNonNumbers')]
+    public function testANumberThatIsNotOneFallsBackRatherThanBeingUsed(string $key, mixed $value, bool $taken): void
+    {
+        [$head, $leaf] = explode('.', $key);
+        $this->writeGlobal([$head => [$leaf => $value]]);
+
+        $settings = $this->load();
+        $answer = match ($key) {
+            'compaction.reserveTokens' => $settings->compactionReserveTokens(1_111),
+            'compaction.keepRecentTokens' => $settings->compactionKeepRecentTokens(1_111),
+            'retry.maxRetries' => $settings->retryMaxAttempts(1_111),
+            'retry.baseDelayMs' => $settings->retryBaseDelay(1.111),
+        };
+
+        // The delay is the one that is not handed back as it was written: milliseconds in the
+        // file, seconds in the code.
+        $expected = $taken
+            ? ($key === 'retry.baseDelayMs' ? $value / 1000 : $value)
+            : ($key === 'retry.baseDelayMs' ? 1.111 : 1_111);
+
+        $this->assertSame($expected, $answer);
+    }
+
+    /**
+     * And the same for the three that answer with a string or with nothing.
+     *
+     * @return iterable<string, array{0: string, 1: mixed}>
+     */
+    public static function stringsAndNonStrings(): iterable
+    {
+        yield 'a theme' => ['theme', 'light'];
+        yield 'a shell' => ['shellPath', '/opt/homebrew/bin/bash'];
+        yield 'a model' => ['defaultModel', 'claude-sonnet-4-5'];
+        yield 'a version somebody has seen' => ['lastChangelogVersion', '0.1.1'];
+    }
+
+    #[DataProvider('stringsAndNonStrings')]
+    public function testAStringThatIsThereAndBlankIsNotSet(string $key, string $value): void
+    {
+        $read = fn (Settings $s): ?string => match ($key) {
+            'theme' => $s->theme(),
+            'shellPath' => $s->shellPath(),
+            'defaultModel' => $s->defaultModel(),
+            'lastChangelogVersion' => $s->lastChangelogVersion(),
+        };
+
+        $this->writeGlobal([$key => $value]);
+        $this->assertSame($value, $read($this->load()));
+
+        // `shellPath` is the one with teeth: an empty string there is refused by name rather than
+        // falling back to `/bin/bash`, which is the bug the setting exists to work around.
+        $this->writeGlobal([$key => '']);
+        $this->assertNull($read($this->load()), 'present and blank');
+
+        $this->writeGlobal([$key => 42]);
+        $this->assertNull($read($this->load()), 'present and not a string');
+    }
+
+    // ---- what a setter writes is what the getter reads ---------------------------------------
+
+    public function testEverySwitchGoesOutAndComesBackAsItself(): void
+    {
+        // Each pair is a setting something actually reads, and each half can fail on its own: a
+        // setter that stopped writing leaves a screen that agrees with itself and a file that
+        // does not, and a getter that stopped reading is a preference that silently does nothing.
+        // `/settings` changes all of these and the file is the only thing that carries them to
+        // the next run.
+        $settings = $this->load();
+
+        $settings->setHideThinking(true);
+        $settings->setShowImages(false);
+        $settings->setRetryEnabled(false);
+        $settings->setCompactionEnabled(false);
+        $settings->setQueueMode(QueueMode::All);
+        $settings->setLastChangelogVersion('0.2.0');
+
+        foreach ([$settings, $this->load()] as $where) {
+            $this->assertTrue($where->hideThinking());
+            $this->assertFalse($where->showImages());
+            $this->assertFalse($where->retryEnabled());
+            $this->assertFalse($where->compactionEnabled());
+            $this->assertSame(QueueMode::All, $where->queueMode());
+            $this->assertSame('0.2.0', $where->lastChangelogVersion());
+        }
+    }
+
+    public function testTheDefaultsAreWhatAnUntouchedFileMeans(): void
+    {
+        $settings = $this->load();
+
+        // Three of these are on unless turned off and two are off unless turned on, and which is
+        // which is a decision per setting rather than one rule — so a getter that lost its `get()`
+        // would answer the default for ever and look right in exactly half the cases.
+        $this->assertFalse($settings->hideThinking(), 'thinking is shown');
+        $this->assertTrue($settings->showImages(), 'pictures are drawn where they can be');
+        $this->assertTrue($settings->retryEnabled());
+        $this->assertTrue($settings->compactionEnabled());
+        $this->assertSame(QueueMode::OneAtATime, $settings->queueMode(), 'three thoughts, one at a time');
+        $this->assertNull($settings->lastChangelogVersion(), 'never means a first run');
+        $this->assertSame([], $settings->hooks());
+        $this->assertSame([], $settings->customTools());
+    }
+
+    public function testAQueueModeTheFileInventedIsTheOrdinaryOne(): void
+    {
+        $this->writeGlobal(['queueMode' => 'whenever']);
+
+        // Not `all`: getting three separate thoughts at once is the surprising half of the choice,
+        // so an unreadable value falls back to the unsurprising one.
+        $this->assertSame(QueueMode::OneAtATime, $this->load()->queueMode());
+    }
+
+    public function testFilesNamedInTheSettingsComeBackAsPathsAndNothingElseComesBackAtAll(): void
+    {
+        $this->writeGlobal([
+            'hooks' => ['~/hooks/guard.php', 12],
+            'customTools' => ['~/tools/wc/index.php'],
+        ]);
+
+        $settings = $this->load();
+
+        // Every entry becomes a string rather than being dropped, because the loader reports an
+        // unreadable path by name and a silently shortened list is a hook somebody wrote and
+        // never heard about again.
+        $this->assertSame(['~/hooks/guard.php', '12'], $settings->hooks());
+        $this->assertSame(['~/tools/wc/index.php'], $settings->customTools());
+
+        // A value that is not a list at all has no paths in it to name.
+        $this->writeGlobal(['hooks' => 'not a list', 'customTools' => 'not a list']);
+
+        $settings = $this->load();
+
+        $this->assertSame([], $settings->hooks());
+        $this->assertSame([], $settings->customTools());
     }
 
     // ---- not writing ---------------------------------------------------------------------

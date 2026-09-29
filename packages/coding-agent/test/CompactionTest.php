@@ -86,6 +86,19 @@ final class CompactionTest extends TestCase
         $this->assertFalse(Compaction::shouldCompact(150_000, 200_000));
     }
 
+    public function testTheThresholdIsWhereItSaysItIsAndNotOneTokenEitherSide(): void
+    {
+        // Both sides, because asserting only that 190k compacts and 150k does not says nothing
+        // about where the line is. Exactly at `window - reserve` there is still room for the
+        // answer the reserve is for, so that is the last size that does *not* summarise — and
+        // this is the arithmetic that decides when a conversation gets thrown away.
+        $window = 200_000;
+        $exact = $window - Compaction::RESERVE_TOKENS;
+
+        $this->assertFalse(Compaction::shouldCompact($exact, $window), 'exactly the reserve is still room');
+        $this->assertTrue(Compaction::shouldCompact($exact + 1, $window), 'and one token more is not');
+    }
+
     public function testAModelWithNoStatedWindowIsNeverCompactedFor(): void
     {
         // Guessing a window and compacting against the guess throws away a conversation
@@ -131,6 +144,23 @@ final class CompactionTest extends TestCase
         ];
 
         $this->assertSame(4_000, Compaction::lastUsage($messages)?->totalTokens);
+    }
+
+    public function testATurnAndTheSummaryThatReplacedItInTheSameMillisecondIsNotTrusted(): void
+    {
+        // The reason this compares with `<=` and not `<`, which nothing else here reaches: the
+        // summary is appended *straight after* the turn it replaces, so the two share a
+        // millisecond about as often as not. Read as newer than the summary, that turn's usage —
+        // which measured the request that was just compacted away — sets the session asking to
+        // compact again before every turn, and the second attempt fails with `Already compacted`.
+        $at = Timestamp::nowMs();
+
+        $messages = [
+            new CompactionSummary('what happened', [], [], 0, null, 2, $at),
+            self::assistant('the turn that asked for it', 190_000, StopReason::Stop, $at),
+        ];
+
+        $this->assertNull(Compaction::lastUsage($messages));
     }
 
     // ---- where to cut ---------------------------------------------------------------
@@ -323,8 +353,20 @@ final class CompactionTest extends TestCase
     {
         $request = Compaction::request([new UserMessage('hello')], 'what came before');
 
-        $this->assertStringContainsString('<previous-summary>', $request);
+        // The *text*, not the tag: `UPDATE_PROMPT` says "provided in <previous-summary> tags", so
+        // asserting the tag passes whether or not the block was ever added — and what that costs
+        // is the model being told to update a summary it was not given, which drops everything
+        // the first compaction said.
+        $this->assertStringContainsString("<previous-summary>\nwhat came before\n</previous-summary>", $request);
         $this->assertStringContainsString('PRESERVE all existing information', $request);
+    }
+
+    public function testAFirstCompactionCarriesNoEmptySummaryBlock(): void
+    {
+        $request = Compaction::request([new UserMessage('hello')]);
+
+        $this->assertStringNotContainsString("<previous-summary>\n", $request);
+        $this->assertStringContainsString('Keep each section concise', $request, 'the first-time prompt');
     }
 
     public function testWhatThePersonAskedToFocusOnIsPassedOn(): void
@@ -380,6 +422,36 @@ final class CompactionTest extends TestCase
         ]);
 
         $this->assertSame(['a.php'], $read);
+    }
+
+    public function testTheSameFileEditedTwiceIsListedOnceAndInOrder(): void
+    {
+        // The read list's own de-duplication and sort are pinned by the two cases above; the
+        // modified list has its own pair of calls and nothing was asking anything of them. A
+        // summary claiming a file was edited three times is a summary somebody has to read past.
+        [, $modified] = Compaction::files([
+            self::calling('c1', 'edit', ['path' => 'z.php']),
+            self::calling('c2', 'write', ['path' => 'a.php']),
+            self::calling('c3', 'edit', ['path' => 'z.php']),
+        ]);
+
+        $this->assertSame(['a.php', 'z.php'], $modified);
+    }
+
+    public function testACallWhoseArgumentsNeverArrivedNamesNoFile(): void
+    {
+        // An interrupted turn leaves a tool call with half-parsed arguments, so `path` can be
+        // missing or be something that is not one. Collected anyway, a null lands in the file
+        // list that goes into the session file and in front of the next model.
+        [$read, $modified] = Compaction::files([
+            self::calling('c1', 'read', []),
+            self::calling('c2', 'read', ['path' => '']),
+            self::calling('c3', 'edit', ['path' => 12]),
+            self::calling('c4', 'read', ['path' => 'real.php']),
+        ]);
+
+        $this->assertSame(['real.php'], $read);
+        $this->assertSame([], $modified);
     }
 
     // ---- the summary itself --------------------------------------------------------------
