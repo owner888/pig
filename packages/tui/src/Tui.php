@@ -16,10 +16,23 @@ use Pig\Tui\Images\TerminalImage;
  * reach it after the program exits — and that is what makes the rendering hard, because
  * lines already committed to scrollback cannot be rewritten.
  *
- * So each frame is compared against the last, the cursor is moved to the first line that
- * differs, and everything from there down is rewritten. When the first difference is above
- * the top of the window there is nothing to move the cursor to, and the whole screen is
- * redrawn instead.
+ * So each frame is compared against the last and **only the lines that differ are rewritten**.
+ * When the first difference is above the top of the window there is nothing to move the cursor
+ * to, and the whole screen is redrawn instead.
+ *
+ * Rewriting *from* the first difference *down* was the obvious way to do that and cost the one
+ * thing this arrangement exists to protect: the line somebody is typing into. A spinner tick
+ * changes one line above the editor, and everything below it — the editor, its borders, the
+ * footer — was erased and written again at the spinner's rate. An input method draws what is
+ * being composed at the terminal's cursor and anchors its candidate list there, so a prompt
+ * being repainted twenty times a second is a candidate list that will not stay put. Measured on
+ * a real frame: one line changed, eight rewritten, 1,885 bytes a tick. Per line it is one line
+ * and 130 bytes, and the composing line is not touched at all.
+ *
+ * **One write per frame, with the caret move inside the synchronized-output wrapper.** The move
+ * used to go out after it, so the terminal displayed the frame with the cursor wherever the last
+ * line left it and *then* moved it — two painted states, the first of them with the cursor at the
+ * bottom of the screen, which is the other half of the same candidate-list problem.
  */
 class Tui extends Container
 {
@@ -32,6 +45,19 @@ class Tui extends Container
 
     /** Where the cursor is, counted from the first line this drew. */
     private int $cursorRow = 0;
+
+    /**
+     * Which column the cursor is in, counted from the left edge of the line.
+     *
+     * Tracked rather than derived so that a frame which leaves the cursor exactly where the
+     * caret already is writes **nothing** — the row alone cannot say that, and a cursor move
+     * is the one thing an input method follows.
+     *
+     * Everything that writes a frame ends it with a `\r`, so this is 0 far more often than it
+     * looks: the alternative is measuring the last line, which for a line holding an image is
+     * both expensive and meaningless.
+     */
+    private int $cursorColumn = 0;
 
     private bool $renderRequested = false;
 
@@ -188,6 +214,7 @@ class Tui extends Container
             $this->previousLines = [];
             $this->previousWidth = 0;
             $this->cursorRow = 0;
+            $this->cursorColumn = 0;
             $this->screenIsLost = true;
         }
 
@@ -236,15 +263,13 @@ class Tui extends Container
         $widthChanged = $this->previousWidth !== 0 && $this->previousWidth !== $width;
 
         if ($this->previousLines === []) {
-            $this->drawAll($lines, $width, clear: $this->screenIsLost);
-            $this->placeCaret($width);
+            $this->paint($this->wholeFrame($lines, $width, clear: $this->screenIsLost), $lines, $width);
 
             return;
         }
 
         if ($widthChanged) {
-            $this->drawAll($lines, $width, clear: true);
-            $this->placeCaret($width);
+            $this->paint($this->wholeFrame($lines, $width, clear: true), $lines, $width);
 
             return;
         }
@@ -255,66 +280,91 @@ class Tui extends Container
             return;
         }
 
-        // The window shows cursorRow - height + 1 through cursorRow. A change above that
-        // is in scrollback, out of the cursor's reach, so the screen is redrawn instead.
-        if ($firstChanged < $this->cursorRow - $height + 1) {
-            $this->drawAll($lines, $width, clear: true);
-            $this->placeCaret($width);
+        // The window shows the last $height lines of the frame, so it starts at
+        // count - height. A change above that is in scrollback, out of the cursor's reach,
+        // so the screen is redrawn instead.
+        //
+        // Counted from the frame and not from cursorRow, which is where the *cursor* is:
+        // with only the changed lines rewritten that is wherever the last change was, which
+        // may be anywhere, and the top of the window is not a fact about it.
+        if ($firstChanged < count($this->previousLines) - $height) {
+            $this->paint($this->wholeFrame($lines, $width, clear: true), $lines, $width);
 
             return;
         }
 
-        $this->drawFrom($firstChanged, $lines, $width);
-        $this->placeCaret($width);
+        $this->paint($this->changedLines($firstChanged, $lines, $width), $lines, $width);
     }
 
     /**
-     * Leave the terminal's cursor where the focused component's caret is.
+     * Put one frame on the screen: the lines, then the caret, in a single write.
+     *
+     * @param list<string> $lines
+     */
+    private function paint(string $frame, array $lines, int $width): void
+    {
+        $this->terminal->write("\x1b[?2026h" . $frame . $this->caretMove($width) . "\x1b[?2026l");
+        $this->commit($lines, $width);
+    }
+
+    /**
+     * Move the terminal's cursor to the focused component's caret.
      *
      * Writing a frame leaves the cursor at the end of the last line, which is the bottom
      * of the screen. An input method draws the text being composed, and its candidate
      * list, wherever that cursor is — so typing Chinese put the pinyin and the candidates
      * over the footer instead of in the box they were going into.
      *
+     * **Nothing is written when the cursor is already there**, which after a frame that
+     * rewrote one line well above the prompt is the only way the composing line is left
+     * alone completely: a move away and back is still a move, and the candidate window
+     * follows it.
+     *
      * The cursor stays hidden: what is seen is still the component's own inverted cell.
      * This is only about where the terminal believes it is.
      */
-    private function placeCaret(int $width): void
+    private function caretMove(int $width): string
     {
         if (!$this->focused instanceof Caret) {
-            return;
+            return '';
         }
 
         $caret = $this->focused->caret($width);
         $top = $caret === null ? null : $this->rowOf($this->focused, $width);
 
         if ($caret === null || $top === null) {
-            return;
+            return '';
         }
 
         $row = $top + $caret[0];
+
+        if ($row === $this->cursorRow && $caret[1] === $this->cursorColumn) {
+            return '';
+        }
+
         $up = $this->cursorRow - $row;
         $buffer = $up > 0 ? "\x1b[{$up}A" : ($up < 0 ? "\x1b[" . -$up . 'B' : '');
         $buffer .= "\r" . ($caret[1] > 0 ? "\x1b[{$caret[1]}C" : '');
 
-        $this->terminal->write($buffer);
-
         // Recorded, or the next differential draw would count rows from the bottom of a
         // frame the cursor is no longer at the bottom of.
         $this->cursorRow = $row;
+        $this->cursorColumn = $caret[1];
+
+        return $buffer;
     }
 
     /** @param list<string> $lines */
-    private function drawAll(array $lines, int $width, bool $clear): void
+    private function wholeFrame(array $lines, int $width, bool $clear): string
     {
         // \e[3J clears the scrollback as well, so a redraw does not leave the previous
         // frame sitting above the new one for the user to scroll back into.
         // \r because the caret may have left the cursor part-way along a line, and the
         // first line below is written from wherever it is.
-        $buffer = "\x1b[?2026h" . ($clear ? "\x1b[3J\x1b[2J\x1b[H" : "\r");
+        $buffer = $clear ? "\x1b[3J\x1b[2J\x1b[H" : "\r";
 
         foreach ($lines as $index => $line) {
-            // Checked here as well as in drawFrom, and for the same reason. A too-wide
+            // Checked here as well as in changedLines, and for the same reason. A too-wide
             // line wraps, and every cursor move after it lands a row low — but this path
             // draws the *first* frame, whose top half a differential redraw never
             // revisits, so without this the corruption has no visible cause at all.
@@ -322,45 +372,93 @@ class Tui extends Container
             $buffer .= ($index > 0 ? "\r\n" : '') . $line;
         }
 
-        $this->terminal->write($buffer . "\x1b[?2026l");
-        $this->commit($lines, $width);
+        // After writing N lines the cursor sits at the end of the last one, and the \r puts
+        // it at a column this can state rather than measure — see $cursorColumn.
+        $this->cursorRow = count($lines) - 1;
+        $this->cursorColumn = 0;
+
+        return $buffer . "\r";
     }
 
     /**
-     * Rewrite from $from down, then erase whatever the last frame left below.
+     * Rewrite the lines that differ, grow or shrink the frame, and leave nothing else touched.
+     *
+     * $from is the first line that differs, so there is nothing to do above it. Below it every
+     * line is compared rather than rewritten, because a change high in the frame says nothing
+     * about the lines under it: a spinner tick above the prompt is one line, not everything
+     * from the spinner to the footer.
+     *
+     * Three regions, and they need different escapes, which is the whole reason this is not one
+     * loop. A line the last frame also had is addressed with a relative cursor move, because it
+     * is already on the screen. A line the frame has **grown** by is not: it is written after a
+     * `\r\n`, which is what makes the terminal scroll to make room — a cursor-down at the bottom
+     * of the screen stays where it is, so addressing a row that does not exist yet writes over
+     * the last one instead. And a line the frame has **shrunk** by has to be erased where it
+     * sits, from the new last line downwards.
+     *
+     * That last region is where this used to be wrong rather than merely wasteful. Rewriting
+     * from $from down leaves the cursor at the last line it *wrote*, and with the change beyond
+     * the new frame's end — a loader vanishing from the bottom, which is every turn — it wrote
+     * none, so the erase counted from one row too low: the first dead line survived and the
+     * sweep ran one row past the frame, scrolling the screen to reach a line that was never ours.
      *
      * @param list<string> $lines
      */
-    private function drawFrom(int $from, array $lines, int $width): void
+    private function changedLines(int $from, array $lines, int $width): string
     {
-        $buffer = "\x1b[?2026h";
-        $move = $from - $this->cursorRow;
+        $old = count($this->previousLines);
+        $new = count($lines);
+        $buffer = '';
+        $row = $this->cursorRow;
 
-        if ($move > 0) {
-            $buffer .= "\x1b[{$move}B";
-        } elseif ($move < 0) {
-            $up = -$move;
-            $buffer .= "\x1b[{$up}A";
-        }
+        for ($index = $from; $index < min($new, $old); $index++) {
+            if ($this->previousLines[$index] === $lines[$index]) {
+                continue;
+            }
 
-        $buffer .= "\r";
+            $this->checkWidth($lines, $index, $width);
 
-        for ($index = $from; $index < count($lines); $index++) {
             // \e[2K per line rather than one \e[J for the rest of the screen: clearing to
             // the end of the screen makes xterm.js flicker.
-            $buffer .= ($index > $from ? "\r\n" : '') . "\x1b[2K";
-            $this->checkWidth($lines, $index, $width);
-            $buffer .= $lines[$index];
+            $buffer .= self::moveTo($row, $index) . "\x1b[2K" . $lines[$index];
+            $row = $index;
         }
 
-        $extra = count($this->previousLines) - count($lines);
+        if ($new > $old) {
+            $buffer .= self::moveTo($row, $old - 1);
 
-        if ($extra > 0) {
-            $buffer .= str_repeat("\r\n\x1b[2K", $extra) . "\x1b[{$extra}A";
+            for ($index = $old; $index < $new; $index++) {
+                $this->checkWidth($lines, $index, $width);
+                $buffer .= "\r\n\x1b[2K" . $lines[$index];
+            }
+
+            $row = $new - 1;
         }
 
-        $this->terminal->write($buffer . "\x1b[?2026l");
-        $this->commit($lines, $width);
+        if ($old > $new) {
+            $extra = $old - $new;
+            $buffer .= self::moveTo($row, $new - 1) . str_repeat("\r\n\x1b[2K", $extra) . "\x1b[{$extra}A";
+            $row = $new - 1;
+        }
+
+        $this->cursorRow = $row;
+        $this->cursorColumn = 0;
+
+        return $buffer . "\r";
+    }
+
+    /**
+     * Get the cursor from one row of the frame to another, at column 0.
+     *
+     * The `\r` is not optional and is not only for the column: it is what clears the pending
+     * wrap a line exactly as wide as the terminal leaves behind.
+     */
+    private static function moveTo(int $from, int $to): string
+    {
+        $move = $to - $from;
+        $vertical = $move > 0 ? "\x1b[{$move}B" : ($move < 0 ? "\x1b[" . -$move . 'A' : '');
+
+        return $vertical . "\r";
     }
 
     /**
@@ -369,12 +467,12 @@ class Tui extends Container
      * $width is the width the frame was rendered at, not the terminal's width now: a
      * resize during the write would otherwise be recorded as already drawn.
      *
+     * Where the cursor is, is recorded by whatever built the frame — see $cursorColumn.
+     *
      * @param list<string> $lines
      */
     private function commit(array $lines, int $width): void
     {
-        // After writing N lines the cursor sits at the end of the last one.
-        $this->cursorRow = count($lines) - 1;
         $this->previousLines = $lines;
         $this->previousWidth = $width;
         $this->screenIsLost = false;

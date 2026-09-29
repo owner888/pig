@@ -16,6 +16,8 @@ use Pig\CodingAgent\Interactive\AssistantMessageComponent;
 use Pig\CodingAgent\Interactive\UserMessageComponent;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
+use Pig\Tui\Components\Spacer;
+use Pig\Tui\Container;
 
 /** The two halves of the conversation, as they appear in the scrollback. */
 final class MessageComponentsTest extends TestCase
@@ -141,6 +143,81 @@ final class MessageComponentsTest extends TestCase
 
         $this->assertStringContainsString('Partial', $text);
         $this->assertSame(1, substr_count($text, 'Par'));
+    }
+
+    public function testABlockThatHasStoppedChangingKeepsTheComponentThatDrewIt(): void
+    {
+        // Every block is re-read on every delta, and all but the last one are re-read as
+        // exactly what they already say. Building them again means laying the whole document
+        // out again, which `Markdown`'s cache exists to avoid and a component thrown away
+        // between frames can never reach: 19.6ms a delta against 0.1ms, measured over a
+        // 1,600-line answer whose first two blocks had settled.
+        $component = new AssistantMessageComponent($this->palette);
+        $settled = new TextContent('the first thing it said');
+
+        $component->update($this->assistant([$settled, new TextContent('and now it is s')]));
+        $before = self::blocks($component);
+
+        $component->update($this->assistant([$settled, new TextContent('and now it is saying more')]));
+        $after = self::blocks($component);
+
+        $this->assertSame($before[0], $after[0], 'the settled block was drawn by a new component');
+        $this->assertSame($before[1], $after[1], 'the growing block was too');
+        $this->assertStringContainsString('and now it is saying more', $this->text($component->render(self::WIDTH)));
+    }
+
+    public function testABlockWhoseKindChangesDoesNotInheritTheWrongComponent(): void
+    {
+        // Reuse is by position, so the thing that makes it safe is that a slot only ever
+        // holds one kind: a thinking block drawn in italics is not a message drawn plain,
+        // and a spacer appearing between them shifts every slot below by one.
+        $component = new AssistantMessageComponent($this->palette);
+
+        $component->update($this->assistant([new TextContent('said')]));
+        $before = self::blocks($component);
+
+        $component->update($this->assistant([new ThinkingContent('thought'), new TextContent('said')]));
+        $after = self::blocks($component);
+
+        $this->assertNotSame($before[0], $after[0]);
+
+        $text = $this->text($component->render(self::WIDTH));
+
+        $this->assertStringContainsString('thought', $text);
+        $this->assertStringContainsString('said', $text);
+    }
+
+    public function testAMessageWithFewerBlocksThanLastTimeDrawsOnlyWhatItHasNow(): void
+    {
+        // Slots only ever grow while one message streams, so the kept components are only
+        // ever *read* up to what this update filled — but `update()` is a public method and
+        // a shorter message is a legal thing to hand it, and what it would otherwise draw is
+        // the tail of the message before it.
+        $component = new AssistantMessageComponent($this->palette);
+
+        $component->update($this->assistant([new TextContent('first'), new TextContent('second')]));
+        $component->update($this->assistant([new TextContent('first')]));
+
+        $text = $this->text($component->render(self::WIDTH));
+
+        $this->assertStringContainsString('first', $text);
+        $this->assertStringNotContainsString('second', $text);
+    }
+
+    /**
+     * What it is drawing with, so a test can ask whether it is the same thing as last time.
+     *
+     * @return list<object>
+     */
+    private static function blocks(AssistantMessageComponent $component): array
+    {
+        $content = $component->children()[0];
+        self::assertInstanceOf(Container::class, $content);
+
+        return array_values(array_filter(
+            $content->children(),
+            static fn (object $child): bool => !$child instanceof Spacer,
+        ));
     }
 
     public function testWhitespaceOnlyContentIsNotDrawn(): void

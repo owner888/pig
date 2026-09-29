@@ -34,8 +34,13 @@ class Text implements Component
     ) {
     }
 
+    /** Not the text it already has: see `Markdown::setText()`, which is where that costs something. */
     public function setText(string $text): void
     {
+        if ($text === $this->text) {
+            return;
+        }
+
         $this->text = $text;
         $this->invalidate();
     }

@@ -9342,6 +9342,140 @@ one rule in two places. Harmless, kept, and measured rather than assumed — and
 the behaviour (a hook that only watches does not block the switch) says on itself that it cannot
 kill that mutation.
 
+### A spinner above the prompt repainted the line somebody was typing into
+
+Reported from a real session, with a screenshot: typing Chinese while the agent worked put the
+pinyin and its candidate list **below the footer**, and it would not stay put. An input method
+draws what is being composed at the terminal's cursor and anchors its candidate window there, so
+the question is never "why is the IME wrong" but "what is pig doing to that line and to that
+cursor". Two things, and both were in the renderer rather than anywhere near the editor:
+
+- **`drawFrom()` rewrote from the first difference to the end of the frame.** A spinner tick
+  changes one line, and everything below it — the editor, its borders, the footer — was erased
+  (`\e[2K`) and written again at the spinner's rate. Measured on a real frame: **one line changed,
+  eight rewritten, 1,885 bytes a tick**, including the line holding `ni hao`.
+- **The caret move went out *after* the synchronized-output wrapper.** So the terminal painted the
+  frame with the cursor wherever the last line left it — the bottom of the screen — and only then
+  moved it back. Two painted states per frame, the first of them with the cursor under the footer,
+  which is the candidate window going there and coming back twenty times a second.
+
+Both fixed, and the numbers are the point: **1,885 bytes → 95**, one line erased instead of eight,
+the composing line not touched at all, and one write per frame with the caret move inside the
+wrapper. Per keystroke, separately: **2,550 bytes → 214**.
+
+**Two things fell out of the rewrite, and the first is a bug the old shape had all along.** The
+erase of the lines a shrinking frame leaves behind counted from where the last *write* left the
+cursor — and when the change is beyond the new frame's end, which is a loader vanishing from the
+bottom and therefore every turn, it wrote nothing: the sweep started a row too low, so the first
+dead line survived and the last `\r\n` ran one row past the frame, scrolling the screen to erase a
+line that was never ours. The three regions need three different escapes and that is why
+`changedLines()` is not one loop: a line already on screen is addressed with a relative move, a
+line the frame has **grown** by has to be written after a `\r\n` (a cursor-down at the bottom of the
+screen stays where it is, so addressing a row that does not exist yet overwrites the last one), and
+a line the frame has **shrunk** by is erased from the new last line downwards.
+
+The second: **where the window starts is a fact about the frame, not about the cursor.** It was
+`cursorRow - height + 1`, which was the frame's last row only because writing one left the cursor
+there. With just the changed lines rewritten the cursor is wherever the last change was, so that
+expression becomes a window nearly the whole frame fits inside — and a change that has scrolled into
+the scrollback is then answered by moving the cursor to a row the terminal no longer has. It is
+`count($this->previousLines) - $height` now. *A derived value stops being derivable the moment the
+thing it was riding on changes, and nothing says so.*
+
+**The third measurement is the other half of the report — "typing is slow after a task" — and it is
+in the transcript rather than the renderer.** `AssistantMessageComponent::update()` threw every
+`Markdown` away and built it again on every delta, so `Markdown`'s cache (keyed on text and width)
+could never hit: 0.5ms at 40 lines, 2.2 at 200, 8.8 at 800, **20.6 at 2,000**, per delta, with the
+whole UI waiting on it — and the same at 2,000 lines of ASCII, so it is the parsing and not the
+character widths. The components are kept and set again now, by position, each slot tagged with what
+it is for. A 1,600-line answer whose first two blocks had settled: **19.6ms a delta → 0.1ms.**
+
+That needed the other half to work at all, and it is the part that looks like a no-op:
+**`setText()` returns early for the text it already has.** Every block but the last is set to
+exactly what it is showing, and invalidating there throws away the lines `render()` was about to
+hand back. With the guard removed and everything else in place the same case measures **18.6ms**
+again, which is the evidence that a mutation no test can kill is still load-bearing — there is no
+seam to observe a cache through, the same standing as `HttpClient::follow()`'s `body->close()`.
+
+**One thing this did not fix, stated rather than left to be rediscovered.** A message that is one
+long text block still costs ~20ms a delta at 2,000 lines, because that block's text really did
+change and `Markdown` cannot parse incrementally — a render throttle is the answer if it ever
+matters, and that is new behaviour rather than a fix.
+
+**And it did not fix the other half of the report at all**, which is the entry below: "typing is
+slow after a task" is a third bug in a third place, and the reason this entry spent a paragraph
+saying it could not be reproduced is that the transcript it was reproduced against was built out of
+`Text` components. *A synthetic frame is a claim about the code that built it.*
+
+Regression tests, and each of these ends was mutated separately:
+`TuiTest::testALineChangingAboveThePromptLeavesThePromptAlone`,
+`testTheFirstOfTheVanishedLinesIsTheOneErasedFirst`,
+`testLinesTheFrameHasGrownByAreWrittenRatherThanAddressed`,
+`testWhereTheWindowStartsIsAFactAboutTheFrameAndNotAboutTheCursor`,
+`testAFrameThatLeavesTheCursorWhereItAlreadyIsMovesItNoFurther`, the strengthened
+`testTheCursorEndsUpAtTheFocusedComponentsCaret` (which now asserts the move is *inside* the
+wrapper), and in `MessageComponentsTest`
+`testABlockThatHasStoppedChangingKeepsTheComponentThatDrewIt`,
+`testABlockWhoseKindChangesDoesNotInheritTheWrongComponent` and
+`testAMessageWithFewerBlocksThanLastTimeDrawsOnlyWhatItHasNow`.
+
+**And the harness bit for the seventh time, in the shape it has bitten in before**: a mutation run
+hit the two-minute limit on the tool calling it, python was killed, its `finally` never ran, and the
+next run measured a mutated file as its baseline — `1 failed` where the baseline must be green. Trap
+6's rule caught it (the copy on disk written first), and the reading is the one to keep: **a
+baseline that is not green means the numbers under it are worth nothing in either direction**, so
+check it before reading anything else.
+
+### One keystroke took a second and a half, and the component said it was cheap
+
+The other half of the same report — *"任务完成以后输入很卡"* — and the entry above is the record of
+guessing at it twice and missing. What settled it was one fact from the developer that no
+measurement of mine had asked for: **only one conversation was slow, and only when resumed with
+`pig -r`.** Other sessions were fine. That is not a statement about frame size or about images; it
+is a statement about *what is in that session*.
+
+So the session was profiled rather than imagined — 1.7MB, 416 messages, **201 tool results**:
+
+```
+frame: 3295 lines, 1.23 MB          a keystroke: median 1536 ms
+  render the whole tree    459 ms     the editor taking the key: 0.01 ms
+  rowOf(editor)           1042 ms     the dearest component: 12 lines, 50 ms
+```
+
+`BashOutputComponent` is the tail of a command's output cut to a few rows, and it **had no cache**,
+with a docblock explaining why: *"the wrap is cheap and the text changes on nearly every frame while
+the command is running."* Both halves are false for a command that has finished. The wrap is over
+**the whole output** — it wraps 600KB to keep twenty rows — and a resumed transcript is nothing but
+finished commands, whose text will never change again. So every keystroke re-wrapped every command
+output in the conversation, and `Container::rowOf()` renders the tree twice more to find the caret's
+row, so it happened three times over. Cached on text, rows and width like every other component
+here: **1536ms → 1.85ms.**
+
+**The comment is the whole lesson, and it is the fourth shape from the index pointed at a
+performance claim.** "The wrap is cheap" was a claim about the input, made where the input comes
+from outside; "the text changes on nearly every frame" was true of the one caller the author had in
+mind and false of the other, which is `replay()`. *A docblock that justifies the absence of a cache
+is an assertion about every caller, and it goes stale the same way a docblock listing absences
+does.* The sweep worth running after this one: every `invalidate()` in the tree whose body is a
+comment saying nothing is cached.
+
+**Two measurements from the same run are worth keeping, because neither is a bug and both will look
+like one later.** `Container::rowOf()` is 1.1ms of the remaining 1.85 — it renders `$chat` twice
+(once walking into it to search, once for `count()`), which with caches hitting is array
+concatenation rather than layout, and there is no symptom to justify changing it. And the first
+frame of that session is **1.24MB in a single `ProcessTerminal::write()`**, which blocks the one
+thread until the terminal has drained it — 815ms there, and it is the shape to suspect first for a
+session carrying screenshots, since a 600KB PNG becomes an 800KB image sequence and a full redraw
+re-emits every one of them.
+
+Regression tests: `BashOutputTest::testAFinishedCommandIsNotWrappedAgainOnEveryFrame` — a **ratio**
+rather than a number, because what a loaded machine does in a millisecond is not a fact about this
+code, and the gap it stands in for is 800× — plus `testTheSameOutputAtADifferentWidthIsWrappedAgain`
+and `testNewOutputAndANewRowCountBothReachTheScreen`. The width key and the cache itself are killed
+by those; the `setText`/`setRows` invalidations and the text and row keys are **mutually redundant**,
+each covering the other's mutation, and both are kept because that is exactly the shape `Text` and
+`Markdown` already have.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;

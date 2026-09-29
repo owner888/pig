@@ -21,6 +21,16 @@ use Pig\Tui\Width;
  * to reach `terminal.columns`; asking at render time is the same answer without the
  * dependency.
  *
+ * **Cached on the text, the row count and the width, like every other component here.** It was
+ * not, on the grounds that "the wrap is cheap and the text changes on nearly every frame while
+ * the command is running" — and both halves are wrong for a command that has *finished*. The
+ * wrap is over the whole output, not the few rows that survive it, so a 600KB build log is
+ * 600KB of wrapping to keep twenty lines; and a resumed transcript is nothing but finished
+ * commands, whose text will never change again. Measured on a real session with 201 tool
+ * results: **one keystroke cost 1.5 seconds**, because every frame re-wrapped every command
+ * output in the conversation, three times over — `Container::rowOf()` renders the tree twice
+ * more to find the caret's row.
+ *
  * Two differences from upstream's `bash-execution.ts`, both about the note:
  *
  * - **It counts the rows that were dropped.** Upstream counts *logical* lines — how many the
@@ -34,6 +44,15 @@ final class BashOutputComponent implements Component
 {
     private string $text = '';
 
+    /** @var list<string>|null */
+    private ?array $cachedLines = null;
+
+    private ?string $cachedText = null;
+
+    private ?int $cachedRows = null;
+
+    private ?int $cachedWidth = null;
+
     /**
      * @param Closure(int): string|null $note drawn above when rows were dropped
      */
@@ -45,20 +64,32 @@ final class BashOutputComponent implements Component
 
     public function setText(string $text): void
     {
+        if ($text === $this->text) {
+            return;
+        }
+
         $this->text = $text;
+        $this->invalidate();
     }
 
     /** How many rows to keep. `PHP_INT_MAX` for all of them. */
     public function setRows(int $rows): void
     {
+        if ($rows === $this->rows) {
+            return;
+        }
+
         $this->rows = $rows;
+        $this->invalidate();
     }
 
     #[\Override]
     public function invalidate(): void
     {
-        // Nothing cached: the wrap is cheap and the text changes on nearly every frame
-        // while the command is running.
+        $this->cachedLines = null;
+        $this->cachedText = null;
+        $this->cachedRows = null;
+        $this->cachedWidth = null;
     }
 
     #[\Override]
@@ -68,6 +99,35 @@ final class BashOutputComponent implements Component
             return [];
         }
 
+        if (
+            $this->cachedLines !== null
+            && $this->cachedText === $this->text
+            && $this->cachedRows === $this->rows
+            && $this->cachedWidth === $width
+        ) {
+            return $this->cachedLines;
+        }
+
+        return $this->cache($width, $this->lines($width));
+    }
+
+    /**
+     * @param list<string> $lines
+     * @return list<string>
+     */
+    private function cache(int $width, array $lines): array
+    {
+        $this->cachedText = $this->text;
+        $this->cachedRows = $this->rows;
+        $this->cachedWidth = $width;
+        $this->cachedLines = $lines;
+
+        return $lines;
+    }
+
+    /** @return list<string> */
+    private function lines(int $width): array
+    {
         $visual = [];
 
         foreach (explode("\n", $this->text) as $line) {

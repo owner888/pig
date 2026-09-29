@@ -65,8 +65,24 @@ final class Markdown implements Component
         $this->theme = $theme ?? MarkdownTheme::default();
     }
 
+    /**
+     * Not the text it already has, which is most calls.
+     *
+     * A streamed answer is re-sent complete on every delta, so every block but the last one is
+     * set to exactly what it is already showing — and invalidating there throws away the laid-out
+     * lines that `render()` was about to hand back for nothing. Measured over a plain answer:
+     * 20.6ms per delta at 2,000 lines, with the whole UI waiting on it.
+     *
+     * This is a cache, not a rule about what a setter may do: `invalidate()` still forces the
+     * layout again for a caller that needs it, and the width is part of the cache key rather than
+     * something a setter could know about.
+     */
     public function setText(string $text): void
     {
+        if ($text === $this->text) {
+            return;
+        }
+
         $this->text = $text;
         $this->invalidate();
     }

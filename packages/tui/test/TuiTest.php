@@ -96,6 +96,76 @@ final class TuiTest extends TestCase
         $this->assertStringNotContainsString("\x1b[1A", $output);
     }
 
+    public function testALineChangingAboveThePromptLeavesThePromptAlone(): void
+    {
+        // The spinner ticks about twenty times a second and sits above the editor, so
+        // rewriting from it *down* erased and rewrote the line somebody is composing into
+        // at that rate. Measured on a real frame: one line changed, eight rewritten.
+        $spinner = new TextComponent('-');
+        $prompt = new TextComponent("╭────╮\n│ ni hao\n╰────╯");
+        $footer = new TextComponent('sonnet');
+
+        $this->tui->addChild($spinner);
+        $this->tui->addChild($prompt);
+        $this->tui->addChild($footer);
+        $this->tui->start();
+        $this->frame();
+
+        $spinner->text = '\\';
+        $this->tui->requestRender();
+        $output = $this->frame();
+
+        $this->assertStringContainsString('\\', $output);
+        $this->assertStringNotContainsString('ni hao', $output);
+        $this->assertStringNotContainsString('╭', $output);
+        $this->assertStringNotContainsString('sonnet', $output);
+        $this->assertSame(1, substr_count($output, "\x1b[2K"), 'more than the one line was erased');
+    }
+
+    public function testTheFirstOfTheVanishedLinesIsTheOneErasedFirst(): void
+    {
+        // The change is *beyond* the new frame's end — a loader disappearing from the bottom,
+        // which is every turn — so rewriting from it down wrote nothing and left the cursor a
+        // row below the frame. The sweep then counted from there: the first dead line survived
+        // and the last one ran off the end of the frame, scrolling the screen to erase a row
+        // that was never ours.
+        $top = new TextComponent("one\ntwo");
+        $loader = new TextComponent("working\nstill working");
+        $this->tui->addChild($top);
+        $this->tui->addChild($loader);
+        $this->tui->start();
+        $this->frame();
+
+        $loader->text = '';
+        $this->tui->requestRender();
+        $output = $this->frame();
+
+        // Cursor on row 3, frame now ends at row 1: up two, then erase rows 2 and 3.
+        // What it used to write was a single \e[1A before the same sweep.
+        $this->assertStringContainsString("\x1b[2A\r\r\n\x1b[2K\r\n\x1b[2K\x1b[2A", $output);
+    }
+
+    public function testLinesTheFrameHasGrownByAreWrittenRatherThanAddressed(): void
+    {
+        // A row that does not exist yet cannot be reached with a cursor-down: at the bottom of
+        // the screen that stays where it is, so the new line lands on top of the last one. A
+        // \r\n is what makes the terminal scroll to make room.
+        $top = new TextComponent("a\nb");
+        $growing = new TextComponent('c');
+        $this->tui->addChild($top);
+        $this->tui->addChild($growing);
+        $this->tui->start();
+        $this->frame();
+
+        $growing->text = "c\nd\ne";
+        $this->tui->requestRender();
+        $output = $this->frame();
+
+        $this->assertStringContainsString("\r\n\x1b[2Kd\r\n\x1b[2Ke", $output);
+        $this->assertStringNotContainsString("\x1b[1B", $output);
+        $this->assertStringNotContainsString('c', $output, 'the line that did not change was rewritten');
+    }
+
     public function testTheCursorMovesUpToReachAnEarlierChangedLine(): void
     {
         $top = new TextComponent('before');
@@ -157,6 +227,35 @@ final class TuiTest extends TestCase
 
         $this->assertStringContainsString("\x1b[3J\x1b[2J\x1b[H", $output);
         $this->assertStringContainsString('line X', $output);
+    }
+
+    public function testWhereTheWindowStartsIsAFactAboutTheFrameAndNotAboutTheCursor(): void
+    {
+        // It used to be read off cursorRow, which was the frame's last line because that is
+        // where writing one left the cursor. With only the changed lines rewritten the cursor
+        // is wherever the last change was, which can be anywhere — and a window computed from
+        // a cursor high in the frame is a window nearly the whole frame fits inside, so a
+        // change that has scrolled into the scrollback is answered by moving the cursor to a
+        // row the terminal no longer has.
+        $terminal = new FakeTerminal(columns: 20, rows: 8);
+        $tui = new Tui($terminal);
+        $component = new TextComponent(implode("\n", array_map(static fn (int $n): string => "line {$n}", range(0, 9))));
+        $tui->addChild($component);
+        $tui->start();
+        Loop::get()->tick();
+
+        // Ten lines in an eight-row window, so rows 2 to 9 are on screen. Changing row 2 is
+        // a differential draw, and it leaves the cursor up there.
+        $component->text = str_replace('line 2', 'line two', $component->text);
+        $tui->requestRender();
+        Loop::get()->tick();
+
+        $terminal->clearWrites();
+        $component->text = str_replace('line 1', 'line one', $component->text);
+        $tui->requestRender();
+        Loop::get()->tick();
+
+        $this->assertStringContainsString("\x1b[3J\x1b[2J\x1b[H", $terminal->output());
     }
 
     public function testSeveralRequestsInOneTurnCostOneFrame(): void
@@ -280,8 +379,35 @@ final class TuiTest extends TestCase
 
         $output = $this->frame();
 
-        // Five lines drawn, cursor at the last; the caret is on row 3, four columns in.
-        $this->assertStringEndsWith("\x1b[1A\r\x1b[4C", $output);
+        // Five lines drawn, cursor at the last; the caret is on row 3, four columns in —
+        // and the move is the last thing *inside* the synchronized-output wrapper, not the
+        // first thing after it. Outside it the terminal paints the frame with the cursor at
+        // the bottom and then moves it, and the candidate list goes to the bottom and back
+        // on every frame, which is half of what this whole mechanism is for.
+        $this->assertStringEndsWith("\x1b[1A\r\x1b[4C\x1b[?2026l", $output);
+    }
+
+    public function testAFrameThatLeavesTheCursorWhereItAlreadyIsMovesItNoFurther(): void
+    {
+        // A move away and back is still a move, and an input method follows it — so the
+        // column is tracked as well as the row, and a frame that already ended where the
+        // caret is addresses the cursor not at all.
+        $editor = new TextComponent('a');
+        $editor->caret = [0, 0];
+
+        $this->tui->addChild($editor);
+        $this->tui->setFocus($editor);
+        $this->tui->start();
+
+        $this->assertStringEndsWith("\x1b[?2026l", $this->frame(), 'the first frame moved it anyway');
+
+        $editor->text = 'b';
+        $this->tui->requestRender();
+        $output = $this->frame();
+
+        // One line, rewritten, and the \r that ends every frame leaves the cursor at the
+        // column the caret is in — so there is nothing left to say.
+        $this->assertStringEndsWith("\x1b[2Kb\r\x1b[?2026l", $output);
     }
 
     public function testAComponentWithNoCaretLeavesTheCursorWhereItWas(): void
