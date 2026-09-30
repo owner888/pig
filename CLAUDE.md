@@ -10112,3 +10112,4 @@ and only the thinking test found it.
 - `Deferred::complete()` twice throws. Where ported code relies on a JS promise ignoring its
   second resolve, the call site guards with `isComplete()` and says so in a comment — so the
   leniency stays local instead of becoming a global rule.
+- **`CHANGELOG.md` matches upstream pi's format exactly.** Every release uses the `## [x.y.z] - YYYY-MM-DD` header (e.g. `## [0.87.1] - 2026-09-22`) and groups items into four standard sections: `### New Features` (major highlights, new model workflows), `### Added` (new capabilities, options, APIs, tools), `### Changed` (behavioral updates, defaults, refactoring), and `### Fixed` (bug fixes, crash preventions, protocol corrections). Only sections with items are included, and entries clearly state what changed and why.

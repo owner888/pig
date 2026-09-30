@@ -15,6 +15,34 @@ Packagist. So a release is: add the heading below, commit, `git tag v0.2.0`, pus
 no number to bump anywhere else, and a build with no tag reachable reports
 `1.0.0+no-version-set` — Composer's own words — and asks Packagist nothing.
 
+### Changelog Entry Format (pi-style / Keep a Changelog)
+
+Every release entry strictly follows upstream pi's format with version date and four standard sections:
+
+```markdown
+## [x.y.z] - YYYY-MM-DD
+
+### New Features
+
+- Feature title — Description of the major highlight, model capability, or core workflow.
+
+### Added
+
+- Added specific new options, tools, commands, extension APIs, or platform integrations.
+
+### Changed
+
+- Changed defaults, adjusted behaviors, refactored internal mechanisms, or optimized performance.
+
+### Fixed
+
+- Fixed specific bugs, crash conditions, encoding issues, or protocol mismatches.
+```
+
+- **Version header**: `## [x.y.z] - YYYY-MM-DD` (e.g. `## [0.2.0] - 2026-03-30`). Brackets around version are standard; date is ISO `YYYY-MM-DD`.
+- **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
+- **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
+
 ## Unreleased
 
 - Nothing yet.
