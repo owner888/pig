@@ -51,12 +51,11 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### New Features
 
-- One-command self-update (`pig update`) — Built-in CLI updater matching upstream pi's `pi update` to upgrade pig via Composer global update or git pull, update installed extension packages (`pig update --extensions`), or refresh model catalogs (`pig update --models`).
+- One-command self-update (`pig update`) — Built-in CLI updater matching upstream pi's `pi update` to upgrade pig via Composer global update or git pull, plus `--models` to refresh model catalogs.
+- Native `pig-antigravity` extension — Ported pure PHP implementation of the Antigravity extension (`extensions/pig-antigravity`), eliminating all Node.js and npm package dependencies.
 
 ### Added
 
-- Added `PackageUpdateCheck` (`packages/coding-agent/src/Cli/PackageUpdateCheck.php`) to scan configured `packages` in settings and query the npm registry asynchronously on startup.
-- Added `Package Updates Available` notification in `InteractiveMode::sayPackageUpdates()`, displaying packages with newer versions and directing to `pig update --extensions`.
 - Added session display name to the footer top line (`pwd (branch) • <session-name>`), matching upstream pi's layout and accommodating telemetry extensions like `smart-session`.
 - Added `SessionInfoEntry` (`session_info` entry type) for persisting custom and auto-summarized session titles in `.jsonl` files and displaying them in `/resume`.
 - Added `/name` slash command to view or update the current session name on the fly.
@@ -71,7 +70,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Fixed
 
-- Fixed Antigravity token refresh failure in long-running sessions by automatically falling back to the local `pi-antigravity` extension or desktop client credentials.
+- Fixed Antigravity token refresh failure in long-running sessions by automatically falling back to official desktop client credentials.
 - Fixed silent turn failures where unstreamed error responses (e.g. 400 Bad Request or token renewal errors) exited quietly without showing error text, ensuring `Error: <message>` is explicitly rendered in red.
 - Fixed `copy` extension (`/cc`) missing code blocks indented inside Markdown lists by updating regex and adding automatic indentation stripping (dedent).
 - Fixed `smart-session` real-time token speed meter and auto-naming failure caused by checking non-existent `$message->role` property instead of `instanceof AssistantMessage`.

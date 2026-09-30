@@ -2850,35 +2850,6 @@ final class InteractiveMode
         $this->tui->requestRender();
     }
 
-    /**
-     * Extension packages have newer versions on npm, matching upstream pi's
-     * showPackageUpdateNotification().
-     *
-     * @param list<string> $packages
-     */
-    public function sayPackageUpdates(array $packages): void
-    {
-        if ($packages === []) {
-            return;
-        }
-
-        $packageLines = implode("\n", array_map(static fn (string $pkg): string => "- {$pkg}", $packages));
-
-        $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Rule($this->palette->of('warning')));
-        $this->chat->addChild(new Text(
-            $this->palette->fg('warning', Style::bold('Package Updates Available')) . "\n\n"
-            . $this->palette->fg('muted', 'Package updates are available. Run ')
-            . $this->palette->fg('accent', 'pig update --extensions') . "\n\n"
-            . $this->palette->fg('muted', 'Packages:') . "\n"
-            . $packageLines,
-            1,
-            0,
-        ));
-        $this->chat->addChild(new Rule($this->palette->of('warning')));
-        $this->tui->requestRender();
-    }
-
     private function switchTheme(): void
     {
         $this->useTheme($this->theme === 'dark' ? 'light' : 'dark');

@@ -144,7 +144,9 @@ final class AntigravityExtensionTest extends TestCase
     public function testAntigravityExtensionLoadsCommandsAndTool(): void
     {
         $root = dirname(__DIR__, 4);
-        $extPath = $root . '/extensions/antigravity/index.php';
+        $extPath = is_file($root . '/extensions/pig-antigravity/index.php')
+            ? $root . '/extensions/pig-antigravity/index.php'
+            : $root . '/extensions/antigravity/index.php';
 
         $this->assertFileExists($extPath);
 
@@ -155,7 +157,7 @@ final class AntigravityExtensionTest extends TestCase
 
         $ext = null;
         foreach ($loaded as $candidate) {
-            if ($candidate->name === 'antigravity') {
+            if ($candidate->name === 'pig-antigravity' || $candidate->name === 'antigravity') {
                 $ext = $candidate;
                 break;
             }

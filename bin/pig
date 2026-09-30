@@ -30,7 +30,6 @@ use Pig\CodingAgent\Cli\Arguments;
 use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\Cli\FileArguments;
 use Pig\CodingAgent\Cli\ModelList;
-use Pig\CodingAgent\Cli\PackageUpdateCheck;
 use Pig\CodingAgent\Cli\SelfUpdate;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Changelog;
@@ -572,14 +571,6 @@ if ($mode === 'rpc') {
 
                 if ($newer !== null) {
                     $running->sayNewVersion($newer);
-                }
-            });
-
-            Async::spawn(static function () use ($running, $cwd): void {
-                $packageUpdates = (new PackageUpdateCheck())->checkForUpdates($cwd);
-
-                if ($packageUpdates !== []) {
-                    $running->sayPackageUpdates($packageUpdates);
                 }
             });
         }

@@ -506,21 +506,7 @@ final class Auth
         $secret = is_string($secret) && $secret !== '' ? $secret : $this->setting('antigravity.clientSecret');
 
         if (($id === null || $secret === null) && $allowDefault) {
-            // Auto-fallback: extract from local pi-antigravity extension if installed
-            $piExtFile = Config::piHome() . '/npm/node_modules/pi-antigravity/src/auth/oauth.ts';
-            if (is_file($piExtFile)) {
-                $code = file_get_contents($piExtFile);
-                if ($code !== false) {
-                    if ($id === null && preg_match('/CLIENT_ID\s*=\s*(?:[a-zA-Z0-9_]+\([^)]*\)\s*\|\|\s*)?atob\(\s*"([^"]+)"\s*\+\s*"([^"]+)"\s*\)/', $code, $m)) {
-                        $id = base64_decode($m[1] . $m[2], true) ?: null;
-                    }
-                    if ($secret === null && preg_match('/CLIENT_SECRET\s*=\s*(?:[a-zA-Z0-9_]+\([^)]*\)\s*\|\|\s*)?atob\(\s*"([^"]+)"\s*\+\s*"([^"]+)"\s*\)/', $code, $m)) {
-                        $secret = base64_decode($m[1] . $m[2], true) ?: null;
-                    }
-                }
-            }
-
-            // Public Antigravity desktop OAuth client fallback (same as upstream pi-antigravity)
+            // Public Antigravity desktop OAuth client fallback (pure PHP, zero npm dependency)
             $id ??= base64_decode('MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlc' . 'C5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==', true) ?: null;
             $secret ??= base64_decode('R09DU1BYLUs1OEZXUjQ' . '4NkxkTEoxbUxCOHNYQzR6NnFEQWY=', true) ?: null;
         }

@@ -2692,10 +2692,11 @@ returns a callable. It unifies what used to be split between hooks and custom to
 is handed an `ExtensionApi` (which inherits `HookApi`) and can register commands, tools, event
 handlers and message renderers all from a single file or directory.
 
-`extensions/antigravity/index.php` is the first ported full extension, bringing Antigravity's
+`extensions/pig-antigravity/index.php` is the first ported full extension, bringing Antigravity's
 quota monitoring (`/antigravity.usage`, `/antigravity.models`), account management
 (`/antigravity.accounts`), doctor diagnostics (`/antigravity.doctor`), model catalog refresh
 (`/antigravity.refresh`), image command (`/antigravity.image`), and the `generate_image` agent tool.
+All extensions in pig are pure PHP implementations without Node.js or npm dependencies.
 
 Audited difference by difference against `wrapper.ts`, `types.ts` and `loader.ts`. `wrapper.ts` is
 `WrappedCustomTool` line for line, argument order included. What the rest found is one bug — the
@@ -10140,3 +10141,4 @@ and only the thinking test found it.
   second resolve, the call site guards with `isComplete()` and says so in a comment — so the
   leniency stays local instead of becoming a global rule.
 - **`CHANGELOG.md` matches upstream pi's format exactly.** Every release uses the `## [x.y.z] - YYYY-MM-DD` header (e.g. `## [0.87.1] - 2026-09-22`) and groups items into four standard sections: `### New Features` (major highlights, new model workflows), `### Added` (new capabilities, options, APIs, tools), `### Changed` (behavioral updates, defaults, refactoring), and `### Fixed` (bug fixes, crash preventions, protocol corrections). Only sections with items are included, and entries clearly state what changed and why.
+- **Extensions are 100% pure PHP; never bridge or depend on npm packages.** Pig stays zero-runtime-dependency beyond PHP itself. Any extension from the upstream/pi ecosystem (such as `pi-antigravity`) must be ported directly to native PHP (e.g. `pig-antigravity`) using `ExtensionApi` and scoped closures. Do not query npm registries, parse `package.json`, or shell out to `npm`.
