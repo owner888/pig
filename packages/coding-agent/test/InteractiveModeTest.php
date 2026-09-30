@@ -3252,7 +3252,8 @@ final class InteractiveModeTest extends TestCase
 
         $this->mode->sayNewVersion('9.9.9');
 
-        $this->assertStringContainsString('you have 0.0.0', $this->screen());
+        $this->assertStringContainsString('New version 9.9.9 is available. Run ' . UpdateCheck::COMMAND, $this->screen());
+        $this->assertStringContainsString('https://pigagent.dev/changelog', $this->screen());
     }
 
     public function testNothingIsSaidAboutAVersionUntilSomethingSaysThereIsOne(): void

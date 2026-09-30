@@ -2839,9 +2839,10 @@ final class InteractiveMode
         $this->chat->addChild(new Spacer(1));
         $this->chat->addChild(new Rule($this->palette->of('warning')));
         $this->chat->addChild(new Text(
-            $this->palette->fg('warning', Style::bold('Update Available')) . "\n"
-            . $this->palette->fg('muted', "pig {$version} is out — you have {$this->version}. Run: ")
-            . $this->palette->fg('accent', UpdateCheck::COMMAND),
+            $this->palette->fg('warning', Style::bold('Update Available')) . "\n\n"
+            . $this->palette->fg('muted', "New version {$version} is available. Run ")
+            . $this->palette->fg('accent', UpdateCheck::COMMAND) . "\n"
+            . $this->palette->fg('muted', 'Changelog: https://pigagent.dev/changelog'),
             1,
             0,
         ));

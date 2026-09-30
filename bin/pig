@@ -30,6 +30,7 @@ use Pig\CodingAgent\Cli\Arguments;
 use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\Cli\FileArguments;
 use Pig\CodingAgent\Cli\ModelList;
+use Pig\CodingAgent\Cli\SelfUpdate;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\Cli\SessionPicker;
@@ -61,6 +62,11 @@ define('VERSION', Version::current());
 // rather than behind an `if` at each step.
 Timings::mark('start');
 
+if (($argv[1] ?? '') === 'update') {
+    $updater = new SelfUpdate();
+    exit($updater->run(array_slice($argv, 2)));
+}
+
 $arguments = Arguments::parse(array_slice($argv, 1));
 $options = $arguments->options;
 Timings::mark('parseArgs');
@@ -75,6 +81,10 @@ if (isset($options['help'])) {
     echo <<<TEXT
     pig — a coding agent in a terminal.
 
+    Commands:
+      update            update pig to the latest version
+
+    Options:
       --model <id>      which model to talk to (default: claude-sonnet-4-5).
                         A part of the name will do: `sonnet`, `haiku`, `opus 4.1`.
                         Add a thinking level with a colon: `sonnet:high`.

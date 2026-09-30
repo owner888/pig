@@ -103,9 +103,10 @@ Shift+ctrl+d writes a debug log — the frame, how wide each line came out, and 
 which is the thing to attach to a bug report.
 
 A start asks Packagist once, in the background, whether there is a newer pig, and says so under
-the conversation if there is — with the command to run, because pig does not update itself.
+the conversation if there is — with the update command (`pig update`).
 Nothing is said when the answer is no, when the network is not there, or when anything else goes
-wrong. `--no-update-check` skips the asking for one run, and `"update": {"check": false}` in
+wrong. Run `pig update` anytime to self-update pig to the latest release (or `pig update --models` to
+refresh model catalogs). `--no-update-check` skips the asking for one run, and `"update": {"check": false}` in
 `~/.pig/agent/settings.json` turns it off for good. `/changelog` shows what changed, and the entries
 newer than the version you last saw are shown once, by themselves, after an upgrade.
 

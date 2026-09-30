@@ -8695,7 +8695,7 @@ updates nothing** (which is pi's behaviour, and `pi update` is for *extensions*)
 **on by default with a way off**.
 
 What that produced: `CHANGELOG.md`, `"bin"` in `composer.json`, `CodingAgent\Version`,
-`Cli\UpdateCheck`, `Settings::updateCheckEnabled()`, `--no-update-check`, and
+`Cli\UpdateCheck`, `Cli\SelfUpdate` (`pig update`), `Settings::updateCheckEnabled()`, `--no-update-check`, and
 `InteractiveMode::sayNewVersion()`. `bin/pig`'s `const VERSION = '0.1.0'` is
 `define('VERSION', Version::current())`, because **a `const` needs a compile-time value** and a
 second copy of the number is the thing `Version` exists to prevent.
@@ -9008,7 +9008,12 @@ is another, which nothing puts on PATH. So "every PHP CLI is like this" is true 
 claim as "this is as good as it gets"; the JS side of the same tool simply does not have the problem.
 Nothing pig ships can change it — a package cannot choose where Composer puts its bins.
 
-**There is an `install.sh`, and it is not a second distribution channel.** `curl -fsSL
+**`pig update` is the CLI command, matching pi's `pi update`.** Instead of telling users to run
+Composer directly, `UpdateCheck::COMMAND` is `'pig update'` and `bin/pig update` calls `Cli\SelfUpdate`.
+It checks the runtime environment: in a git repository checkout it runs `git pull` followed by
+`composer install`, while in a Composer global installation it executes `composer global update pigagent/pig`.
+`pig update --models` refreshes model catalogs, and the startup notification in `sayNewVersion()` matches
+pi's layout with the changelog link.
 https://pigagent.dev/install.sh | sh` runs `composer global require` — the same one package from the
 same Packagist — so `Version::current()` still reads Composer's answer and
 `UpdateCheck::COMMAND` is still the right command for anybody who used it. What it adds is the two

@@ -89,9 +89,9 @@ ANTHROPIC_API_KEY=sk-ant-... bin/pig
 列出所有按键——包括输入框自己那些编辑键——和所有命令。`/reload` 可以在不重启 pig 的情况下实时热重载扩展、技能、自定义命令、工具和上下文规则文件（如 `CLAUDE.md` / `AGENTS.md`）；升级 pig 本体核心代码后仍需重启进程。按 shift+ctrl+d 写一份 debug log：当前这一帧、
 每行实际占多少列、以及整段对话，报 bug 就附这个。
 
-每次启动会在后台问 Packagist 一次「有没有更新的 pig」，有就在对话下面说一声，并给出要跑的命令——
-pig 自己不会去更新。答案是「没有」、网络不通、或者中间出了任何别的问题，都一个字不说。
-`--no-update-check` 让这一次不问，`~/.pig/settings.json` 里写 `"update": {"check": false}` 就是
+每次启动会在后台问 Packagist 一次「有没有更新的 pig」，有就在对话下面说一声，并提示运行 `pig update`
+一键自更新。答案是「没有」、网络不通、或者中间出了任何别的问题，都一个字不说。平时随时可以运行 `pig update`
+更新 pig 到最新版本（或 `pig update --models` 刷新模型目录）。`--no-update-check` 让这一次不问，`~/.pig/settings.json` 里写 `"update": {"check": false}` 就是
 彻底关掉。`/changelog` 看改了什么；比你上次看到的版本更新的那几条，升级之后会单独给你看一次。
 
 有 Claude Pro 或 Max 订阅的话不用配 key：`/login` 给你一个网址，打开点同意，把回来的 code 粘回来

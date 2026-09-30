@@ -47,6 +47,8 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Added
 
+- Added `pig update` CLI command (`Pig\CodingAgent\Cli\SelfUpdate`), matching upstream pi's `pi update` to self-update pig via Composer global update or git pull, plus `--models` to refresh model catalogs.
+- Aligned update available notification in `InteractiveMode::sayNewVersion()` with upstream pi, recommending `pig update` and pointing to the changelog URL.
 - Added session name display to the footer top line (`pwd (branch) • <session-name>`), matching upstream pi's layout and accommodating telemetry extensions like `smart-session`.
 - Added `SessionInfoEntry` (`session_info` entry type) for persisting custom and auto-summarized session titles in `.jsonl` files and displaying them in `/resume`.
 - Added `/name` slash command to view or update the current session name on the fly.

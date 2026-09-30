@@ -47,7 +47,10 @@ final class UpdateCheck
      * If the release decides otherwise — a phar, a `create-project`, a tap — this string is the one
      * place to change. The package name comes from `Version`, which is the one place it is written.
      */
-    public const string COMMAND = 'composer global update ' . Version::PACKAGE;
+    /**
+     * What to run to perform the update.
+     */
+    public const string COMMAND = 'pig update';
 
     /**
      * Short on purpose: nobody is waiting for this, and a machine behind a hostile network should
