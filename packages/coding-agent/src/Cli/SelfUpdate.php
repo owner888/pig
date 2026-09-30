@@ -104,13 +104,15 @@ final class SelfUpdate
             fwrite(
                 STDERR,
                 Style::red("Error: 'composer' executable not found in PATH.\n")
-                . Style::dim("Please run: composer global update " . Version::PACKAGE . "\n"),
+                . Style::dim("Please run: composer global require " . Version::PACKAGE . "\n"),
             );
 
             return 1;
         }
 
-        $code = $this->execute([$composer, 'global', 'update', Version::PACKAGE]);
+        // Use `composer global require` instead of `update` to safely elevate SemVer 0.x constraint
+        // (e.g. ^0.1.0 will reject upgrading to 0.2.x on `update`, but `require` resolves to the latest release).
+        $code = $this->execute([$composer, 'global', 'require', Version::PACKAGE]);
 
         if ($code !== 0) {
             fwrite(STDERR, Style::red("Failed to update pig via Composer (exit code {$code}).\n"));
