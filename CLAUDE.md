@@ -10106,6 +10106,20 @@ Unlike Node.js modules which are wrapped in a private closure and whose module c
 4. Added `isImageLine()` bypass in `Markdown::lines()` to skip wrapping and padding on terminal image protocol lines.
 5. Added cached layout in `Editor.php` to memoize the visual line layout within the same render frame.
 
+### `SessionManager::describe()` 必须流式读取，否则扫描多个 10MB+ 会话会触发 PHP 128MB OOM
+
+**现象**：
+在 Web 模式或会话选择器加载包含超大 `.jsonl` 会话（如 16MB、14MB 包含大量长上下文、压缩摘要与工具调用的会话）时，触发 `PHP Fatal error: Allowed memory size of 134217728 bytes exhausted in SessionManager.php on line 144`。
+
+**原因**：
+`SessionManager::lines()` 此前使用 `file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES)` 将整文件一次性读入由所有行组成的巨大 PHP 数组，并在后续使用 `array_slice` 发生数组浅拷贝。PHP 数组对于长字符串的内部 zval 结构体和散列表开销达到文件体积的 5-8 倍，单个 16MB 会话文件载入数组就消耗了近百兆内存；若一个目录下连续遍历 30 个会话的 `describe()`，极易瞬间冲破 PHP 默认的 128MB `memory_limit` 限制。
+
+**对策**：
+1. 重构 `SessionManager::describe()` 为流式逐行解析（`fopen` + `fgets`），读完一行立即解码并释放内存，实现 O(1) 恒定内存解析（即使单个会话文件达到 100MB，解析内存也仅几 KB）。
+2. 在 `describe()` 提取会话搜索关键词 `$said` 时，增加 `$totalSaidLength < 65536` 上限截断保护，避免累积数万条长历史消息把内存撑爆。
+3. 在 `HttpServer::listAllWorkspaces()` 读取首行 `cwd` 时，改用 `fgets($fh)` 只读取单个首行，避免调用 `file()` 吞进整个大文件。
+4. 在 CLI 入口 `bin/pig` 和 `bin/pig-ai` 中显式设置 `ini_set('memory_limit', '512M');`，提供双重运行保障。
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;

@@ -453,7 +453,12 @@ final class HttpServer
                     continue;
                 }
 
-                $firstLine = file($files[0])[0] ?? '';
+                $firstLine = '';
+                $fh = fopen($files[0], 'r');
+                if ($fh !== false) {
+                    $firstLine = fgets($fh) ?: '';
+                    fclose($fh);
+                }
                 $header = json_decode($firstLine, true);
                 $cwd = is_array($header) ? ($header['cwd'] ?? null) : null;
 

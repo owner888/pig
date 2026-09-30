@@ -1127,15 +1127,25 @@ final class SessionManager
      */
     private static function describe(string $path): ?SessionInfo
     {
-        $lines = self::lines($path);
-
-        if ($lines === null || $lines === []) {
+        if (!is_file($path) || !is_readable($path)) {
             return null;
         }
 
-        $header = json_decode($lines[0], true);
+        $fh = fopen($path, 'r');
+        if ($fh === false) {
+            return null;
+        }
+
+        $firstLine = fgets($fh);
+        if ($firstLine === false) {
+            fclose($fh);
+            return null;
+        }
+
+        $header = json_decode(trim($firstLine), true);
 
         if (!is_array($header) || ($header['type'] ?? null) !== 'session') {
+            fclose($fh);
             return null;
         }
 
@@ -1143,8 +1153,14 @@ final class SessionManager
         $sessionName = null;
         $messages = 0;
         $said = [];
+        $totalSaidLength = 0;
 
-        foreach (array_slice($lines, 1) as $line) {
+        while (($line = fgets($fh)) !== false) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+
             $entry = json_decode($line, true);
 
             if (!is_array($entry)) {
@@ -1175,14 +1191,17 @@ final class SessionManager
             // Upstream's rule: the two roles somebody would remember a phrase from. A tool
             // result is usually a file, and a search that matched the contents of every file
             // ever read would match everything.
-            if (in_array($entry['message']['role'] ?? null, ['user', 'assistant'], true)) {
+            if ($totalSaidLength < 65536 && in_array($entry['message']['role'] ?? null, ['user', 'assistant'], true)) {
                 $text = self::said($entry['message']);
 
                 if ($text !== '') {
                     $said[] = $text;
+                    $totalSaidLength += strlen($text);
                 }
             }
         }
+
+        fclose($fh);
 
         return new SessionInfo(
             $path,
