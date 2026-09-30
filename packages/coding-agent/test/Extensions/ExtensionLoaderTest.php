@@ -207,4 +207,36 @@ PHP);
         $this->assertStringContainsString("defines top-level named class 'MyGlobalExtensionClass'", $errors[0]->message);
         $this->assertStringContainsString('use anonymous classes', $errors[0]->message);
     }
+
+    public function testLaterExtensionWithSameNameOverridesEarlierOne(): void
+    {
+        // 1. Global extension: pig-antigravity
+        $globalDir = $this->homeDir . '/extensions/pig-antigravity';
+        mkdir($globalDir, 0755, true);
+        file_put_contents($globalDir . '/index.php', <<<'PHP'
+<?php
+use Pig\CodingAgent\Extensions\ExtensionApi;
+return function (ExtensionApi $pi): void {
+    $pi->registerCommand('antigravity.usage', fn ($args, $ctx) => null, 'global');
+};
+PHP);
+
+        // 2. Project-level extension with same name: pig-antigravity
+        $projectDir = $this->cwd . '/extensions/pig-antigravity';
+        mkdir($projectDir, 0755, true);
+        file_put_contents($projectDir . '/index.php', <<<'PHP'
+<?php
+use Pig\CodingAgent\Extensions\ExtensionApi;
+return function (ExtensionApi $pi): void {
+    $pi->registerCommand('antigravity.usage', fn ($args, $ctx) => null, 'project');
+};
+PHP);
+
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, home: $this->homeDir);
+
+        $this->assertSame([], $errors);
+        $this->assertCount(1, $loaded);
+        $this->assertSame('pig-antigravity', $loaded[0]->name);
+        $this->assertSame('project', $loaded[0]->api->commands()['antigravity.usage']->description);
+    }
 }

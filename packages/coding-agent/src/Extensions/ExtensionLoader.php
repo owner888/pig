@@ -76,11 +76,11 @@ final class ExtensionLoader
             }
 
             if ($loaded !== null) {
-                $extensions[] = $loaded;
+                $extensions[$loaded->name] = $loaded;
             }
         }
 
-        return [$extensions, $errors];
+        return [array_values($extensions), $errors];
     }
 
     /**
