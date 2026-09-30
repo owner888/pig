@@ -68,6 +68,7 @@ the developer asked for it, it is ported and listed here:
 |---|---|---|
 | Ctrl+V pastes a clipboard image as a temp file, and its path into the prompt | `Pig\Tui\Clipboard`, `Editor::pasteFromClipboard()` | `coding-agent/src/utils/clipboard-image.ts` + `interactive-mode.ts` |
 | A three-line banner with the keys on one line, the rest behind ctrl+o, and a `[Context]` section for what was loaded | `InteractiveMode::banner()` | the startup screen at 0.87 |
+| A 4-cell half-block startup mascot logo icon (custom pink piglet) | `Pig\CodingAgent\Interactive\PigLogo`, `InteractiveMode::banner()` | `pi-logo.ts` at 0.99.1 |
 | `!!command` runs without joining the conversation | `AgentSession::executeBash(remember: false)` | `!!` at 0.87; the anchor has `!` only |
 | Ctrl+G opens the prompt in `$VISUAL`, without stopping the event loop | `InteractiveMode::editPromptExternally()`, `Process::interactive()` | `openExternalEditor()` in `interactive-mode.ts`, which blocks |
 

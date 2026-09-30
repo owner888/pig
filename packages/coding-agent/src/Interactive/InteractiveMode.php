@@ -585,9 +585,14 @@ final class InteractiveMode
      */
     private function banner(): string
     {
+        [$topLogo, $bottomLogo] = PigLogo::lines();
+
+        $versionStr = Style::bold($this->palette->fg('accent', 'pig')) . $this->palette->fg('dim', " v{$this->version}");
+        $summaryStr = $this->palette->fg('muted', implode(' · ', self::SUMMARY));
+
         $lines = [
-            Style::bold($this->palette->fg('accent', 'pig')) . $this->palette->fg('dim', " v{$this->version}"),
-            $this->palette->fg('muted', implode(' · ', self::SUMMARY)),
+            "{$topLogo} {$versionStr}",
+            "{$bottomLogo} {$summaryStr}",
         ];
 
         $onboarding = $this->palette->fg('dim', 'Pig can explain its own features and look up its docs. Ask it how to use or extend Pig.');

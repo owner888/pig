@@ -45,7 +45,9 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
-- Nothing yet.
+### Added
+
+- Added adorable pig mascot icon (`Pig\CodingAgent\Interactive\PigLogo`) to startup banner, matching upstream pi's 4-cell half-block header icon with a custom pink piglet.
 
 ## [0.2.2] - 2026-09-30
 
