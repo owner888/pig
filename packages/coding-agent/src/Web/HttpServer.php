@@ -258,6 +258,7 @@ final class HttpServer
             ], json_encode([
                 'cwd' => basename($this->session->cwd()),
                 'branch' => 'main',
+                'sessionFile' => basename($this->session->store()?->path ?? ''),
                 'sessionName' => $this->session->getSessionName(),
                 'model' => $model?->id ?? 'no-model',
                 'provider' => $model?->provider ?? 'unknown',
@@ -299,6 +300,45 @@ final class HttpServer
                 'Content-Type' => 'application/json',
                 'Access-Control-Allow-Origin' => '*',
             ], json_encode($history));
+
+            return;
+        }
+
+        // 7. Sessions list for sidebar
+        if ($path === '/api/sessions') {
+            $sessions = \Pig\CodingAgent\Session\SessionManager::listFor($this->session->cwd());
+            $items = array_map(static fn ($s) => [
+                'id' => $s->id,
+                'path' => $s->path,
+                'filename' => basename($s->path),
+                'opening' => $s->opening,
+                'timestamp' => $s->timestamp,
+            ], $sessions);
+
+            $conn->sendResponse(200, [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ], json_encode($items));
+
+            return;
+        }
+
+        // 8. Switch session
+        if ($path === '/api/session/switch' && $req['method'] === 'POST') {
+            $data = json_decode($req['body'], true);
+            $targetPath = is_array($data) ? ($data['path'] ?? '') : '';
+            if (is_file($targetPath)) {
+                Async::spawn(function () use ($targetPath): void {
+                    try {
+                        $this->session->switchTo($targetPath);
+                    } catch (Throwable) {}
+                });
+            }
+
+            $conn->sendResponse(200, [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ], json_encode(['ok' => true]));
 
             return;
         }
