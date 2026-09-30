@@ -30,6 +30,7 @@ use Pig\CodingAgent\Cli\Arguments;
 use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\Cli\FileArguments;
 use Pig\CodingAgent\Cli\ModelList;
+use Pig\CodingAgent\Cli\PackageUpdateCheck;
 use Pig\CodingAgent\Cli\SelfUpdate;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Changelog;
@@ -564,13 +565,21 @@ if ($mode === 'rpc') {
     // output, and upstream notifies in its interactive mode alone for the same reason.
     $checkForUpdates = !isset($options['no-update-check']) && $settings->updateCheckEnabled();
 
-    Async::run(static function () use ($running, $checkForUpdates): void {
+    Async::run(static function () use ($running, $checkForUpdates, $cwd): void {
         if ($checkForUpdates) {
             Async::spawn(static function () use ($running): void {
                 $newer = (new UpdateCheck())->newerThan(VERSION);
 
                 if ($newer !== null) {
                     $running->sayNewVersion($newer);
+                }
+            });
+
+            Async::spawn(static function () use ($running, $cwd): void {
+                $packageUpdates = (new PackageUpdateCheck())->checkForUpdates($cwd);
+
+                if ($packageUpdates !== []) {
+                    $running->sayPackageUpdates($packageUpdates);
                 }
             });
         }

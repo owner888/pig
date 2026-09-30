@@ -9012,8 +9012,9 @@ Nothing pig ships can change it — a package cannot choose where Composer puts 
 Composer directly, `UpdateCheck::COMMAND` is `'pig update'` and `bin/pig update` calls `Cli\SelfUpdate`.
 It checks the runtime environment: in a git repository checkout it runs `git pull` followed by
 `composer install`, while in a Composer global installation it executes `composer global update pigagent/pig`.
-`pig update --models` refreshes model catalogs, and the startup notification in `sayNewVersion()` matches
-pi's layout with the changelog link.
+`pig update --extensions` updates installed extension packages via npm. `pig update --models` refreshes model catalogs.
+Startup checks also spawn `PackageUpdateCheck` to check npm packages asynchronously and render
+`Package Updates Available` boxes with `sayPackageUpdates()`, matching upstream pi's layout.
 https://pigagent.dev/install.sh | sh` runs `composer global require` — the same one package from the
 same Packagist — so `Version::current()` still reads Composer's answer and
 `UpdateCheck::COMMAND` is still the right command for anybody who used it. What it adds is the two

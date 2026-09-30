@@ -20,6 +20,7 @@ final class SelfUpdateTest extends TestCase
         $this->assertSame(0, $code);
         $this->assertStringContainsString('Usage: pig update', $output);
         $this->assertStringContainsString('--self', $output);
+        $this->assertStringContainsString('--extensions', $output);
         $this->assertStringContainsString('--models', $output);
         $this->assertStringContainsString(SelfUpdate::CHANGELOG_URL, $output);
     }
@@ -70,5 +71,23 @@ final class SelfUpdateTest extends TestCase
         ob_end_clean();
 
         $this->assertSame(127, $code);
+    }
+
+    public function testUpdateExtensionsExecutesNpmWhenPackagesExist(): void
+    {
+        $executed = [];
+        $runner = static function (array $command, ?string $cwd = null) use (&$executed): int {
+            $executed[] = [$command, $cwd];
+
+            return 0;
+        };
+
+        $updater = new SelfUpdate($runner);
+
+        ob_start();
+        $code = $updater->run(['--extensions']);
+        $output = ob_get_clean();
+
+        $this->assertSame(0, $code);
     }
 }

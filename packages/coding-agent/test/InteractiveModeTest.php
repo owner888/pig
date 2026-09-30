@@ -3265,6 +3265,18 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringNotContainsString('Update Available', $this->screen());
     }
 
+    public function testSayPackageUpdatesDrawsWarningBoxWithCommandAndPackages(): void
+    {
+        $this->start();
+        $this->mode->sayPackageUpdates(['pi-antigravity', 'another-pkg']);
+
+        $screen = $this->screen();
+        $this->assertStringContainsString('Package Updates Available', $screen);
+        $this->assertStringContainsString('pig update --extensions', $screen);
+        $this->assertStringContainsString('- pi-antigravity', $screen);
+        $this->assertStringContainsString('- another-pkg', $screen);
+    }
+
     // ---- /settings -------------------------------------------------------------------
 
     private const string ESCAPE = "\e";
