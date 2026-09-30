@@ -13,6 +13,7 @@ use Pig\Ai\Stream;
 use Pig\Ai\TextContent;
 use Pig\Ai\UserMessage;
 use Pig\Async\AbortSignal;
+use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 
 /**
@@ -56,6 +57,7 @@ final readonly class HookContext
         public ?AbortSignal $signal = null,
         ?HookState $state = null,
         private ?Closure $getApiKey = null,
+        public ?AgentSession $session = null,
     ) {
         $this->ui = $ui ?? new NoUi();
         $this->state = $state ?? new HookState();

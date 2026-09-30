@@ -380,6 +380,14 @@ driving pig from code.
 echo '{"id":"1","type":"prompt","message":"what does bin/pig do?"}' | bin/pig --mode rpc
 ```
 
+`--mode web` launches an interactive browser-based chat interface powered by local HTTP/SSE, with zero external dependencies:
+
+```bash
+bin/pig --mode web
+```
+
+You can also type `/web` from inside any interactive terminal session to launch the web interface on the fly.
+
 Twenty-three commands — prompt, steer, abort, switch models, compact, run a shell command,
 walk the conversation tree, export — and the answer arrives as the same streaming events the terminal
 draws. A hook can still **ask**: the question goes out as a `hook_ui_request` line and the tool

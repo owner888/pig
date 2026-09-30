@@ -48,6 +48,7 @@ use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\CodingAgent\Timings;
 use Pig\CodingAgent\Version;
+use Pig\CodingAgent\Web\WebMode;
 use Pig\Tui\Style;
 
 // **Asked of Composer rather than written here.** Packagist derives a package's version from its
@@ -123,9 +124,10 @@ if (isset($options['help'])) {
       --no-extensions   start without loading extensions
       --no-update-check do not ask Packagist whether there is a newer pig
       -p, --print       say it, print the answer, exit — the same as --mode text
-      --mode <m>        text, json or rpc. Any of them leaves the terminal behind:
+      --mode <m>        text, json, rpc or web. Any of them leaves the terminal behind:
                         text prints the last answer, json prints every event as it
-                        happens, rpc reads commands as JSON lines on stdin.
+                        happens, rpc reads commands as JSON lines on stdin, web
+                        launches a browser-based chat UI on local HTTP/SSE.
 
     Anything that is not an option is a message, and `@some/file` is read in front of
     the first one — an image goes in as an image. `--` ends the options, for a message
@@ -501,6 +503,9 @@ if ($mode === 'rpc') {
     // One fiber around the whole program: the prompt suspends on a socket, the terminal
     // wakes on a keystroke, and both need the same loop underneath them.
     Async::run(static fn () => $running->run());
+} elseif ($mode === 'web') {
+    $running = new WebMode($session);
+    $exit = (int) Async::run(static fn (): int => $running->run());
 } elseif (!$interactive) {
     $printing = new PrintMode($session, $mode ?? 'text', $hooks, $customTools);
     $exit = (int) Async::run(static fn (): int => $printing->run($messages, $files->images));

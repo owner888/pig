@@ -2814,6 +2814,7 @@ said, and nothing has to ask for it.
 | `-p` / `--mode text` | the last answer, on stdout | `modes/print-mode.ts` |
 | `--mode json` | every event as a JSON line | the same file, its `"json"` branch |
 | `--mode rpc` | JSON lines out, commands in | `modes/rpc/` |
+| `--mode web` / `/web` | a browser chat UI | `Web\WebMode` (Workerman-inspired HTTP/SSE) |
 
 `PrintMode` is the smallest of the three because `RpcMode` did the work: `RpcEvents` already
 encodes the events, and wiring hooks and custom tools with no UI is already something that

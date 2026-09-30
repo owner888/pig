@@ -264,6 +264,11 @@ final class ArgumentsTest extends TestCase
         $this->assertFalse($this->parse('--mode', 'rpc')->needsAMessage());
     }
 
+    public function testWebModeNeedsNoMessageBecauseItServesBrowserClients(): void
+    {
+        $this->assertFalse($this->parse('--mode', 'web')->needsAMessage());
+    }
+
     public function testEveryOtherModeStillNeedsOne(): void
     {
         $this->assertTrue($this->parse('--mode', 'text')->needsAMessage());

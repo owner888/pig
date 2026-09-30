@@ -45,8 +45,8 @@ final readonly class Arguments
         'v' => 'version',
     ];
 
-    /** The three modes `--mode` accepts. */
-    public const array MODES = ['text', 'json', 'rpc'];
+    /** The four modes `--mode` accepts. */
+    public const array MODES = ['text', 'json', 'rpc', 'web'];
 
     /**
      * @param array<string, string> $options a flag is present with an empty value
@@ -169,7 +169,7 @@ final readonly class Arguments
      */
     public function needsAMessage(): bool
     {
-        return !$this->isInteractive() && $this->mode() !== 'rpc';
+        return !$this->isInteractive() && $this->mode() !== 'rpc' && $this->mode() !== 'web';
     }
 
     public function has(string $option): bool

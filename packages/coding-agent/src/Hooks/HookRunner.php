@@ -68,6 +68,8 @@ final class HookRunner
 
     private ?Closure $getApiKey = null;
 
+    private ?\Pig\CodingAgent\Session\AgentSession $session = null;
+
     private ?HookUi $ui = null;
 
     private readonly HookState $state;
@@ -85,6 +87,11 @@ final class HookRunner
     public function setStore(?SessionManager $store): void
     {
         $this->store = $store;
+    }
+
+    public function setSession(?\Pig\CodingAgent\Session\AgentSession $session): void
+    {
+        $this->session = $session;
     }
 
     /**
@@ -275,6 +282,7 @@ final class HookRunner
             $this->getSignal === null ? null : ($this->getSignal)(),
             $this->state,
             $this->getApiKey,
+            $this->session,
         );
     }
 

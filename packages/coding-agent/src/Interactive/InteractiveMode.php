@@ -495,6 +495,8 @@ final class InteractiveMode
         }
 
         $this->running = false;
+        $this->webServer?->stop();
+        $this->webServer = null;
         $this->working?->stop();
         // A frame timer outliving the screen it drew on keeps the loop from ever going idle.
         $this->armin?->dispose();
@@ -1394,6 +1396,7 @@ final class InteractiveMode
         ['tree', 'Go back to an earlier point and take it somewhere else'],
         ['label', 'Name this point, so /tree can find it again — /label with nothing clears it'],
         ['name', 'Show or set the session name'],
+        ['web', 'Launch browser-based web interface (/web [port], /web stop)'],
         ['login', 'Sign in with a subscription instead of an API key'],
         ['logout', 'Forget a sign-in'],
         ['theme', 'Switch between dark and light'],
@@ -1482,6 +1485,7 @@ final class InteractiveMode
             'tree' => $this->showTree(),
             'label' => $this->label(trim(substr($text, strlen($name) + 1))),
             'name' => $this->handleNameCommand(trim(substr($text, strlen($name) + 1))),
+            'web' => $this->handleWebCommand(trim(substr($text, strlen($name) + 1))),
             'login' => $this->showSignIns('login'),
             'logout' => $this->showSignIns('logout'),
             'theme' => $this->switchTheme(),
@@ -2376,6 +2380,8 @@ final class InteractiveMode
         $this->tui->requestRender();
     }
 
+    private ?\Pig\CodingAgent\Web\HttpServer $webServer = null;
+
     /** Show or set the friendly name of the session. */
     private function handleNameCommand(string $name): void
     {
@@ -2393,6 +2399,68 @@ final class InteractiveMode
         $this->session->setSessionName($name);
         $this->say("Session name set: {$name}");
         $this->tui->requestRender();
+    }
+
+    private function handleWebCommand(string $args): void
+    {
+        $args = trim($args);
+
+        if ($args === 'stop') {
+            if ($this->webServer === null || !$this->webServer->isRunning()) {
+                $this->say('Web UI is not running.');
+
+                return;
+            }
+
+            $this->webServer->stop();
+            $this->webServer = null;
+            $this->say('Web UI server stopped.');
+
+            return;
+        }
+
+        if ($this->webServer !== null && $this->webServer->isRunning()) {
+            $url = "http://{$this->webServer->host}:{$this->webServer->port}";
+            $this->say("Web UI is already running at {$url}");
+            $this->openBrowser($url);
+
+            return;
+        }
+
+        $port = is_numeric($args) ? (int) $args : 8088;
+        $bound = false;
+
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $candidatePort = $port + $attempt;
+            try {
+                $this->webServer = new \Pig\CodingAgent\Web\HttpServer($this->session, $candidatePort);
+                $this->webServer->start();
+                $bound = true;
+                $port = $candidatePort;
+                break;
+            } catch (Throwable) {
+                continue;
+            }
+        }
+
+        if (!$bound || $this->webServer === null) {
+            $this->sayError('Failed to bind Web UI server (ports in use).');
+
+            return;
+        }
+
+        $url = "http://127.0.0.1:{$port}";
+        $this->say('Web UI started at ' . $this->palette->fg('accent', $url));
+        $this->openBrowser($url);
+    }
+
+    private function openBrowser(string $url): void
+    {
+        if (PHP_OS_FAMILY === 'Darwin') {
+            Process::run(['open', $url]);
+        } elseif (PHP_OS_FAMILY === 'Linux') {
+            Process::run(['xdg-open', $url]);
+        }
     }
 
     /**

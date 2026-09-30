@@ -324,6 +324,14 @@ bin/pig --mode json -p "..." | jq -r 'select(.type=="message_update") | .delta.d
 echo '{"id":"1","type":"prompt","message":"bin/pig 是干什么的？"}' | bin/pig --mode rpc
 ```
 
+`--mode web` 基于本地 HTTP/SSE 启动轻量现代的浏览器交互聊天界面，零外部依赖：
+
+```bash
+bin/pig --mode web
+```
+
+在终端交互模式下，你也可以随时敲 `/web` 在浏览器中直接唤起图形界面。
+
 二十三条命令——prompt、插话、打断、换模型、压缩上下文、跑一条 shell 命令、在对话树上走、导出——
 回答以终端里画的那同一套流式事件发出来。hook 依然能**问**：问题作为一行 `hook_ui_request` 发出去，
 这次工具调用就停在那儿等宿主回答——和终端里是同一个把戏，换了条传输通道。

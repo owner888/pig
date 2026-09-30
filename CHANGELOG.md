@@ -45,9 +45,21 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### New Features
+
+- Built-in Web UI mode (`--mode web` & `/web`) — Integrated browser-based chat interface powered by an embedded non-blocking HTTP & SSE server (Workerman-inspired framing and backpressure buffer, zero external dependencies).
+
 ### Added
 
 - Added adorable pig mascot icon (`Pig\CodingAgent\Interactive\PigLogo`) to startup banner, matching upstream pi's 4-cell half-block header icon with a custom pink piglet.
+
+### Changed
+
+- Aligned mid-run prompt behavior with upstream pi: submitting via Enter while the agent is streaming now steers immediately (`$session->steer()`) instead of waiting in the follow-up queue until the entire turn finishes.
+
+### Fixed
+
+- Aligned escape abort message with upstream pi from `Aborted` to `Operation aborted`.
 
 ## [0.2.2] - 2026-09-30
 
