@@ -3162,6 +3162,19 @@ final class InteractiveMode
             }
 
             $this->tools = [];
+
+            if ($event->message->stopReason === StopReason::Error) {
+                $hasContent = false;
+                foreach ($event->message->content as $c) {
+                    if ($c instanceof TextContent && trim($c->text) !== '') {
+                        $hasContent = true;
+                        break;
+                    }
+                }
+                if (!$hasContent) {
+                    $this->sayError($said);
+                }
+            }
         } else {
             // The message is whole, so every call in it is whole — which is the moment an
             // edit can be shown before it happens, and the last moment before a `tool_call`
