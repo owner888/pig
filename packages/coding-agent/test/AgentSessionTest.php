@@ -64,12 +64,38 @@ final class AgentSessionTest extends TestCase
     use AssertsThrows;
 
     private ?Agent $current = null;
+    private string $tempHome = '';
 
     #[\Override]
     protected function setUp(): void
     {
         Loop::reset();
         $this->current = null;
+        $this->tempHome = sys_get_temp_dir() . '/pig-test-home-' . bin2hex(random_bytes(4));
+        putenv("PIG_HOME={$this->tempHome}");
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        putenv('PIG_HOME');
+        if (is_dir($this->tempHome)) {
+            self::removeDir($this->tempHome);
+        }
+    }
+
+    private static function removeDir(string $path): void
+    {
+        if (is_dir($path) && !is_link($path)) {
+            foreach (scandir($path) ?: [] as $entry) {
+                if ($entry !== '.' && $entry !== '..') {
+                    self::removeDir($path . '/' . $entry);
+                }
+            }
+            rmdir($path);
+        } elseif (is_file($path) || is_link($path)) {
+            unlink($path);
+        }
     }
 
     // ---- the turn's signal -------------------------------------------------------

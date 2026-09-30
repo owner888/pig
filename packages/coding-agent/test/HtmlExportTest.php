@@ -28,6 +28,24 @@ final class HtmlExportTest extends TestCase
 {
     use \Pig\Test\AssertsThrows;
 
+    private string $tempHome = '';
+
+    #[\Override]
+    protected function setUp(): void
+    {
+        $this->tempHome = sys_get_temp_dir() . '/pig-export-home-' . bin2hex(random_bytes(4));
+        putenv("PIG_HOME={$this->tempHome}");
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        putenv('PIG_HOME');
+        if (is_dir($this->tempHome)) {
+            self::remove($this->tempHome);
+        }
+    }
+
     /** @param list<mixed> $messages */
     private function html(array $messages): string
     {

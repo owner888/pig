@@ -598,7 +598,8 @@ final class InteractiveModeTest extends TestCase
         // above, so the list moved behind ctrl+o.
         $this->assertStringContainsString('pig v0.0.0', $screen);
         $this->assertStringContainsString('escape interrupt · ctrl+c/ctrl+d clear/exit', $screen);
-        $this->assertStringContainsString('Press ctrl+o', $screen);
+        $this->assertStringContainsString('Press ctrl+o to show full startup help and loaded resources.', $screen);
+        $this->assertStringContainsString('Pig can explain its own features', $screen);
         $this->assertStringNotContainsString('suspend', $screen);
     }
 

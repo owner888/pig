@@ -584,8 +584,13 @@ final class InteractiveMode
             $this->palette->fg('muted', implode(' · ', self::SUMMARY)),
         ];
 
+        $onboarding = $this->palette->fg('dim', 'Pig can explain its own features and look up its docs. Ask it how to use or extend Pig.');
+
         if (!$this->expanded) {
-            $lines[] = $this->palette->fg('dim', 'Press ctrl+o for the full list of keys, and what is loaded.');
+            $lines[] = $this->palette->fg('dim', 'Press ctrl+o to show full startup help and loaded resources.');
+            $lines[] = '';
+            $lines[] = $onboarding;
+
             $loaded = $this->loaded(compact: true);
             if ($loaded !== '') {
                 $lines[] = '';
@@ -601,6 +606,8 @@ final class InteractiveMode
             ...$lines,
             '',
             $this->keysAndCommands(),
+            '',
+            $onboarding,
             ...($loaded === '' ? [] : ['', $loaded]),
         ]);
     }
