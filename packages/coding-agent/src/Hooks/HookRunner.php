@@ -66,6 +66,8 @@ final class HookRunner
 
     private ?Closure $getSignal = null;
 
+    private ?Closure $getApiKey = null;
+
     private ?HookUi $ui = null;
 
     private readonly HookState $state;
@@ -74,10 +76,15 @@ final class HookRunner
     public function __construct(
         array $hooks = [],
         private readonly string $cwd = '.',
-        private readonly ?SessionManager $store = null,
+        private ?SessionManager $store = null,
     ) {
         $this->hooks = $hooks;
         $this->state = new HookState();
+    }
+
+    public function setStore(?SessionManager $store): void
+    {
+        $this->store = $store;
     }
 
     /**
@@ -106,12 +113,16 @@ final class HookRunner
         ?HookUi $ui = null,
         ?Closure $send = null,
         ?Closure $note = null,
+        ?Closure $getApiKey = null,
+        ?Closure $setSessionName = null,
+        ?Closure $getSessionName = null,
     ): void {
         $this->getModel = $getModel;
         $this->isIdle = $isIdle;
         $this->abort = $abort;
         $this->hasQueuedMessages = $hasQueuedMessages;
         $this->getSignal = $signal;
+        $this->getApiKey = $getApiKey;
         $this->ui = $ui;
 
         // Handed to each hook's own API object rather than kept here, because that is the
@@ -124,6 +135,7 @@ final class HookRunner
         // handler`, which is an explanation of something that did not happen.
         foreach ($this->hooks as $hook) {
             $hook->api->writesTo($send, $note);
+            $hook->api->bindSessionNames($setSessionName, $getSessionName);
             // The context rather than the signal itself: it is built fresh per emit, so what
             // `$pi->exec()` reads off it is the signal for the turn running *now* rather than
             // whichever one existed when the hooks were wired.
@@ -262,6 +274,7 @@ final class HookRunner
             $this->ui !== null && !$this->ui instanceof NoUi,
             $this->getSignal === null ? null : ($this->getSignal)(),
             $this->state,
+            $this->getApiKey,
         );
     }
 

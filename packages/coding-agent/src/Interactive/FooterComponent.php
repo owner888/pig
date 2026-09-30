@@ -140,6 +140,12 @@ final class FooterComponent implements Component
             $path .= " ({$branch})";
         }
 
+        $sessionName = $this->session->getSessionName();
+
+        if ($sessionName !== null && $sessionName !== '') {
+            $path .= " • {$sessionName}";
+        }
+
         return Width::visible($path) <= $width ? $path : self::elide($path, $width);
     }
 

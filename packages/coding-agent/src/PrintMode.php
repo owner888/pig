@@ -117,6 +117,9 @@ final class PrintMode
             note: function (string $customType, mixed $data): void {
                 $this->session->appendHookEntry($customType, $data);
             },
+            getApiKey: fn (Model $m) => $this->session->keyFor($m),
+            setSessionName: fn (string $name) => $this->session->setSessionName($name),
+            getSessionName: fn () => $this->session->getSessionName(),
         );
 
         // Standard output is the answer, so a broken hook goes to standard error. In `json`

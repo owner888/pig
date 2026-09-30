@@ -1061,6 +1061,24 @@ final class SessionManagerTest extends TestCase
         $this->assertNull(SessionManager::open($session->path)->labelOf($point));
     }
 
+    public function testSettingSessionNamePersistsAndReopens(): void
+    {
+        $session = SessionManager::create($this->cwd());
+        $this->converse($session, 'Hello world');
+
+        $this->assertNull($session->sessionName());
+        $session->setSessionName('仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms');
+        $this->assertSame('仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms', $session->sessionName());
+
+        $reopened = SessionManager::open($session->path);
+        $this->assertSame('仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms', $reopened->sessionName());
+
+        // And in listFor/describe, session name is displayed instead of the first message
+        $list = SessionManager::listFor($this->cwd());
+        $this->assertNotEmpty($list);
+        $this->assertSame('仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms', $list[0]->opening);
+    }
+
     // ---- writing ------------------------------------------------------------------------------
 
     public function testASessionThatCannotBeWrittenSaysSoRatherThanCarryingOnSilently(): void

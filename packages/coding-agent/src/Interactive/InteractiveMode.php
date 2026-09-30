@@ -315,6 +315,9 @@ final class InteractiveMode
             note: static function (string $customType, mixed $data) use ($session): void {
                 $session->appendHookEntry($customType, $data);
             },
+            getApiKey: static fn (Model $m) => $session->keyFor($m),
+            setSessionName: static fn (string $name) => $session->setSessionName($name),
+            getSessionName: static fn () => $session->getSessionName(),
         );
 
         $customTools?->withUi($this->ui);
@@ -340,6 +343,9 @@ final class InteractiveMode
         $this->bindKeys();
         $this->bindEditor();
         $this->reportLoopFailures();
+        $this->session->onSessionNameChanged(function (): void {
+            $this->tui->requestRender();
+        });
         $this->session->subscribe($this->onEvent(...));
 
         $this->replay();
@@ -1381,6 +1387,7 @@ final class InteractiveMode
         ['resume', 'Pick up an earlier conversation'],
         ['tree', 'Go back to an earlier point and take it somewhere else'],
         ['label', 'Name this point, so /tree can find it again — /label with nothing clears it'],
+        ['name', 'Show or set the session name'],
         ['login', 'Sign in with a subscription instead of an API key'],
         ['logout', 'Forget a sign-in'],
         ['theme', 'Switch between dark and light'],
@@ -1468,6 +1475,7 @@ final class InteractiveMode
             'resume' => $this->showSessions(),
             'tree' => $this->showTree(),
             'label' => $this->label(trim(substr($text, strlen($name) + 1))),
+            'name' => $this->handleNameCommand(trim(substr($text, strlen($name) + 1))),
             'login' => $this->showSignIns('login'),
             'logout' => $this->showSignIns('logout'),
             'theme' => $this->switchTheme(),
@@ -2107,6 +2115,9 @@ final class InteractiveMode
             note: static function (string $customType, mixed $data) use ($session): void {
                 $session->appendHookEntry($customType, $data);
             },
+            getApiKey: static fn (Model $m) => $session->keyFor($m),
+            setSessionName: static fn (string $name) => $session->setSessionName($name),
+            getSessionName: static fn () => $session->getSessionName(),
         );
 
         $hooks->onError($this->sayHookError(...));
@@ -2356,6 +2367,25 @@ final class InteractiveMode
         $this->overlay->addChild($picker);
 
         $this->tui->setFocus($picker);
+        $this->tui->requestRender();
+    }
+
+    /** Show or set the friendly name of the session. */
+    private function handleNameCommand(string $name): void
+    {
+        if ($name === '') {
+            $current = $this->session->getSessionName();
+            if ($current !== null && $current !== '') {
+                $this->say("Session name: {$current}");
+            } else {
+                $this->sayWarning('Usage: /name <name>');
+            }
+
+            return;
+        }
+
+        $this->session->setSessionName($name);
+        $this->say("Session name set: {$name}");
         $this->tui->requestRender();
     }
 

@@ -2521,6 +2521,29 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('before the refactor', $this->screen());
     }
 
+    public function testNameCommandSetsAndShowsSessionName(): void
+    {
+        $this->start(answers: ['answered'], store: true);
+        $this->type('/name');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('Usage: /name <name>', $this->screen());
+
+        $this->type('/name 仿写更新日志规则模板');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('Session name set: 仿写更新日志规则模板', $this->screen());
+        $this->assertSame('仿写更新日志规则模板', $this->session->getSessionName());
+
+        $this->type('/name');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('Session name: 仿写更新日志规则模板', $this->screen());
+    }
+
     public function testTreeShowsTheNameBesideWhatWasSaid(): void
     {
         $this->start(answers: ['answered', 'again'], store: true);

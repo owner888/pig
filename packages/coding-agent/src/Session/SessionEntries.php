@@ -68,6 +68,14 @@ final class SessionEntries
             ];
         }
 
+        if ($item instanceof SessionInfoEntry) {
+            return [
+                'type' => 'session_info',
+                ...$base,
+                'name' => $item->name,
+            ];
+        }
+
         if ($item instanceof CustomEntry) {
             return [
                 'type' => 'custom',
@@ -162,6 +170,11 @@ final class SessionEntries
                 // An empty label is how one is cleared, so it and a missing one are the
                 // same thing: no name on that entry any more.
                 ($line['label'] ?? '') === '' ? null : (string) $line['label'],
+                $at,
+            ),
+
+            'session_info' => new SessionInfoEntry(
+                (string) ($line['name'] ?? ''),
                 $at,
             ),
 

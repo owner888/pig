@@ -10,6 +10,7 @@ use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionEntries;
+use Pig\CodingAgent\Session\SessionInfoEntry;
 
 /**
  * A line of the session file, which is pi's file.
@@ -89,6 +90,21 @@ final class SessionEntriesTest extends TestCase
         // that comes back in the wrong place in the conversation.
         $this->assertInstanceOf(CompactionSummary::class, $decoded);
         $this->assertSame(SessionEntries::millis('2026-01-02T21:29:30.123Z'), $decoded->timestamp);
+    }
+
+    public function testSessionInfoEntryEncodesAndDecodes(): void
+    {
+        $encoded = SessionEntries::encode(new SessionInfoEntry('Refactor auth module', 1_767_389_370_123), 'e1', 'root');
+        $this->assertIsArray($encoded);
+        $this->assertSame('session_info', $encoded['type']);
+        $this->assertSame('Refactor auth module', $encoded['name']);
+        $this->assertSame('e1', $encoded['id']);
+        $this->assertSame('root', $encoded['parentId']);
+
+        $decoded = SessionEntries::decode($encoded);
+        $this->assertInstanceOf(SessionInfoEntry::class, $decoded);
+        $this->assertSame('Refactor auth module', $decoded->name);
+        $this->assertSame(1_767_389_370_123, $decoded->timestamp);
     }
 
     // ---- the moment itself ------------------------------------------------------------------

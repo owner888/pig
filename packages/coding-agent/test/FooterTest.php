@@ -143,6 +143,20 @@ final class FooterTest extends TestCase
         $this->assertStringContainsString('(other)', Ansi::strip($footer->render(self::WIDTH)[0]));
     }
 
+    public function testTheSessionNameIsShownBesideTheBranchIfSet(): void
+    {
+        mkdir($this->cwd . '/.git', 0o755, true);
+        file_put_contents($this->cwd . '/.git/HEAD', "ref: refs/heads/main\n");
+
+        $session = $this->session();
+        $session->setSessionName('仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms');
+
+        $footer = new FooterComponent($session, $this->palette, $this->cwd);
+        $topLine = Ansi::strip($footer->render(160)[0]);
+
+        $this->assertStringContainsString('(main) • 仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms', $topLine);
+    }
+
     public function testATooLongPathIsCutFromTheMiddle(): void
     {
         // The end of a path says more than its middle does.

@@ -55,12 +55,17 @@ class HookApi
         'session_before_tree',
         'session_tree',
         'session_shutdown',
+        'session_info_changed',
         'context',
         'before_agent_start',
         'agent_start',
         'agent_end',
+        'agent_settled',
         'turn_start',
         'turn_end',
+        'message_start',
+        'message_update',
+        'message_end',
         'tool_call',
         'tool_result',
     ];
@@ -93,6 +98,10 @@ class HookApi
     private ?Closure $send = null;
 
     private ?Closure $note = null;
+
+    private ?Closure $setSessionName = null;
+
+    private ?Closure $getSessionName = null;
 
     /** @var Closure(): HookContext|null */
     private ?Closure $context = null;
@@ -230,6 +239,30 @@ class HookApi
         $this->context = $context;
     }
 
+    /** The friendly session name, or null if unset. */
+    public function getSessionName(): ?string
+    {
+        if ($this->getSessionName !== null) {
+            return ($this->getSessionName)();
+        }
+
+        return $this->context === null ? null : ($this->context)()->sessionName();
+    }
+
+    /** Set or update the session display name. */
+    public function setSessionName(string $name): void
+    {
+        if ($this->setSessionName !== null) {
+            ($this->setSessionName)($name);
+
+            return;
+        }
+
+        if ($this->context !== null) {
+            ($this->context)()->setSessionName($name);
+        }
+    }
+
     /**
      * Wire the writers, once there is a session to write to.
      *
@@ -245,6 +278,12 @@ class HookApi
     {
         $this->send = $send ?? $this->send;
         $this->note = $note ?? $this->note;
+    }
+
+    public function bindSessionNames(?Closure $setSessionName, ?Closure $getSessionName): void
+    {
+        $this->setSessionName = $setSessionName ?? $this->setSessionName;
+        $this->getSessionName = $getSessionName ?? $this->getSessionName;
     }
 
     /**

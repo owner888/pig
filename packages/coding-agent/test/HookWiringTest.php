@@ -95,7 +95,18 @@ final class HookWiringTest extends TestCase
         Async::run(static fn () => $session->prompt('are you there'));
 
         $this->assertSame(
-            ['before_agent_start', 'agent_start', 'turn_start', 'turn_end', 'agent_end'],
+            [
+                'before_agent_start',
+                'agent_start',
+                'turn_start',
+                'message_start',
+                'message_end',
+                'message_start',
+                'message_end',
+                'turn_end',
+                'agent_end',
+                'agent_settled',
+            ],
             array_column($this->seen, 0),
         );
     }

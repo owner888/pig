@@ -51,6 +51,9 @@ final class SessionManager
     /** @var array<string, string> what each named point is called, by entry id */
     private array $labels = [];
 
+    /** The user-defined or auto-summarized session display name. */
+    private ?string $sessionName = null;
+
 
     /**
      * Whether the header has been written.
@@ -206,6 +209,8 @@ final class SessionManager
                 } else {
                     $session->labels[$item->targetId] = $item->label;
                 }
+            } elseif ($item instanceof SessionInfoEntry) {
+                $session->sessionName = $item->name !== '' ? $item->name : null;
             }
 
             $previous = $id;
@@ -557,7 +562,8 @@ final class SessionManager
             && !$item instanceof CustomEntry
             && !$item instanceof ModelChange
             && !$item instanceof ThinkingLevelChange
-            && !$item instanceof Label;
+            && !$item instanceof Label
+            && !$item instanceof SessionInfoEntry;
     }
 
     /**
@@ -787,6 +793,28 @@ final class SessionManager
         }
 
         $this->labels[$entryId] = $label;
+    }
+
+    /** The friendly display name of the session, or null if unset. */
+    public function sessionName(): ?string
+    {
+        return $this->sessionName;
+    }
+
+    public function getSessionName(): ?string
+    {
+        return $this->sessionName;
+    }
+
+    /**
+     * Set or clear the session display name.
+     * Appends a SessionInfoEntry to the file and updates memory state.
+     */
+    public function setSessionName(string $name): void
+    {
+        $name = trim($name);
+        $this->sessionName = $name !== '' ? $name : null;
+        $this->append(new SessionInfoEntry($name));
     }
 
     /** Record that the model changed here, so resuming this conversation comes back to it. */
@@ -1112,6 +1140,7 @@ final class SessionManager
         }
 
         $opening = '';
+        $sessionName = null;
         $messages = 0;
         $said = [];
 
@@ -1120,6 +1149,13 @@ final class SessionManager
 
             if (!is_array($entry)) {
                 continue;
+            }
+
+            if (($entry['type'] ?? null) === 'session_info' && isset($entry['name']) && is_string($entry['name'])) {
+                $customName = trim($entry['name']);
+                if ($customName !== '') {
+                    $sessionName = $customName;
+                }
             }
 
             // Read without decoding: this runs once per file for every session in a list,
@@ -1154,7 +1190,7 @@ final class SessionManager
             (string) ($header['cwd'] ?? ''),
             SessionEntries::millis($header['timestamp'] ?? null),
             $messages,
-            $opening,
+            $sessionName ?? ($opening === '' ? 'a conversation' : $opening),
             implode(' ', $said),
         );
     }

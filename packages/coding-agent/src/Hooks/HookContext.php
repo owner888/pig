@@ -5,7 +5,13 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Hooks;
 
 use Closure;
+use Pig\Ai\AssistantMessage;
+use Pig\Ai\Context;
 use Pig\Ai\Model;
+use Pig\Ai\SimpleStreamOptions;
+use Pig\Ai\Stream;
+use Pig\Ai\TextContent;
+use Pig\Ai\UserMessage;
 use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Session\SessionManager;
 
@@ -49,6 +55,7 @@ final readonly class HookContext
         public bool $hasUi = false,
         public ?AbortSignal $signal = null,
         ?HookState $state = null,
+        private ?Closure $getApiKey = null,
     ) {
         $this->ui = $ui ?? new NoUi();
         $this->state = $state ?? new HookState();
@@ -67,6 +74,61 @@ final readonly class HookContext
     public function has(string $key): bool
     {
         return $this->state->has($key);
+    }
+
+    public function sessionName(): ?string
+    {
+        return $this->store?->sessionName();
+    }
+
+    public function setSessionName(string $name): void
+    {
+        $this->store?->setSessionName($name);
+    }
+
+    public function apiKey(?Model $model = null): ?string
+    {
+        $target = $model ?? $this->model;
+        if ($target === null) {
+            return null;
+        }
+
+        return $this->getApiKey !== null ? ($this->getApiKey)($target) : null;
+    }
+
+    /**
+     * Run a one-off completion using the session's model and credentials.
+     * Useful for background tasks like auto-summarizing session titles.
+     */
+    public function complete(string $prompt, ?Model $model = null, int $maxTokens = 1000): ?string
+    {
+        $target = $model ?? $this->model;
+        if ($target === null) {
+            return null;
+        }
+
+        $key = $this->apiKey($target);
+        $options = new SimpleStreamOptions(maxTokens: $maxTokens, apiKey: $key);
+        $context = new Context([new UserMessage($prompt)]);
+
+        $stream = Stream::simple($target, $context, $options);
+        foreach ($stream as $event) {
+            // iterate to complete
+        }
+
+        $res = $stream->result()->await();
+        if ($res instanceof AssistantMessage) {
+            $text = '';
+            foreach ($res->content as $c) {
+                if ($c instanceof TextContent) {
+                    $text .= $c->text;
+                }
+            }
+
+            return $text;
+        }
+
+        return null;
     }
 
     public function isIdle(): bool

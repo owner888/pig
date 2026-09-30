@@ -10060,6 +10060,27 @@ Unlike Node.js modules which are wrapped in a private closure and whose module c
 2. `HookLoader::checkTopLevelSymbols()` was added to `HookLoader` and `ExtensionLoader`: before `require`ing an extension or hook, it tokenizes the file with `PhpToken::tokenize()`. If any top-level named function or named class is detected, loading is safely refused as a structured `HookError` / `ExtensionError` with guidance, completely preventing PHP fatal redeclaration crashes.
 3. Clearly document `/reload`'s boundary across `README.md`, `README.zh-CN.md`, `bin/pig --help`, and `CLAUDE.md`: `/reload` live-refreshes extensions, skills, custom commands, tools, settings, and context files (`CLAUDE.md` / `AGENTS.md`), but upgrading `pig`'s own core engine classes still requires restarting `pig`.
 
+### Footer session name display, `/name` command, and full `smart-session` telemetry parity
+
+**Phenomenon**: Upstream pi's footer top line displays `pwd (branch) • <session-name>`, which extensions like `smart-session` use to render dynamic titles and token speed meters (`~/Development/owner/pig (main) • 仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms`), while pig previously only showed `pwd (branch)`. Furthermore, pig had no `/name` command, lacked `session_info` entry encoding/decoding, omitted streaming message hook events (`message_start`, `message_update`, `message_end`, `session_info_changed`, `agent_settled`), and had an incomplete `smart-session.php` stub.
+
+**Cause**:
+1. `FooterComponent::where()` only formatted `$cwd` and git branch, omitting `$this->session->getSessionName()`.
+2. `SessionEntries` did not encode or decode pi's standard `session_info` entry format (`{"type":"session_info","id":...,"name":...}`), and `SessionManager` had no `getSessionName()` / `setSessionName()` API.
+3. `AgentSession::tellHooks()` only dispatched `AgentStartEvent`, `TurnStartEvent`, `TurnEndEvent`, and `AgentEndEvent`. Hook extensions observing streaming tokens or agent settling never received callbacks, so token speeds and auto-summaries could not compute.
+4. In `smart-session.php`, checking `$message->role === 'assistant'` assumed JavaScript plain object conventions. In pig, messages are typed PHP classes (`AssistantMessage`) without a `role` property, causing stream handlers to bail out immediately.
+5. Background LLM summarization lacked the active session's OAuth/API credentials, failing on OAuth-backed providers like Antigravity. Additionally, reasoning models like Gemini 3.8 Flash produce thinking tokens that exhaust small token budgets (e.g. 50 tokens), prematurely terminating on `StopReason::Length`.
+6. `InteractiveMode` lacked an `onSessionNameChanged` listener, so extension updates to session name did not trigger immediate TUI re-renders.
+
+**Countermeasure**:
+1. Added `SessionInfoEntry` and mapped it in `SessionEntries` and `SessionManager` (`sessionName()` / `setSessionName()`), with persistence in `.jsonl` files and preview support in `/resume` (`describe()`).
+2. Added `sessionName()` / `getSessionName()` and `setSessionName()` across `AgentSession`, `HookApi`, and `HookContext`, wired to trigger `onSessionNameChanged` and immediately request a TUI re-render.
+3. Extended `HookApi::EVENTS` with `session_info_changed`, `message_start`, `message_update`, `message_end`, and `agent_settled`, forwarding them from `AgentSession::tellHooks()`.
+4. Provided `$ctx->complete($prompt)` and `$ctx->apiKey($model)` in `HookContext`, enabling background tasks to seamlessly execute LLM completions using active session credentials.
+5. In `smart-session.php`, supported both `instanceof AssistantMessage` and role checks, set title generation budget to 1000 tokens matching upstream, and bound speed telemetry and auto-summarization to `$pi->setSessionName(...)`.
+6. Added `/name` built-in slash command to view or rename the current session on the fly.
+7. In `FooterComponent::where()`, appended ` • {$sessionName}` beside git branch, rendering the identical top line.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;

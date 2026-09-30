@@ -14,6 +14,7 @@ use Pig\Agent\AgentState;
 use Pig\Agent\AgentToolResult;
 use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
+use Pig\Agent\MessageUpdateEvent;
 use Pig\Agent\QueueMode;
 use Pig\Agent\ThinkingLevel;
 use Pig\Agent\TurnEndEvent;
@@ -39,11 +40,16 @@ use Pig\Async\Deferred;
 use Pig\Async\Future;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Hooks\Events\AgentEndEvent as HookAgentEnd;
+use Pig\CodingAgent\Hooks\Events\AgentSettledEvent as HookAgentSettled;
 use Pig\CodingAgent\Hooks\Events\AgentStartEvent as HookAgentStart;
+use Pig\CodingAgent\Hooks\Events\MessageEndEvent as HookMessageEnd;
+use Pig\CodingAgent\Hooks\Events\MessageStartEvent as HookMessageStart;
+use Pig\CodingAgent\Hooks\Events\MessageUpdateEvent as HookMessageUpdate;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeTreeEvent;
 use Pig\CodingAgent\Hooks\Events\SessionCompactEvent;
+use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
 use Pig\CodingAgent\Hooks\Events\SessionSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionTreeEvent;
 use Pig\CodingAgent\Hooks\Events\TurnEndEvent as HookTurnEnd;
@@ -228,6 +234,7 @@ final class AgentSession
     public function writeTo(?SessionManager $store): void
     {
         $this->store = $store;
+        $this->hooks?->setStore($store);
     }
 
     /**
@@ -405,8 +412,27 @@ final class AgentSession
             return;
         }
 
+        if ($event instanceof MessageStartEvent) {
+            $this->hooks->emit(new HookMessageStart($event->message));
+
+            return;
+        }
+
+        if ($event instanceof MessageUpdateEvent) {
+            $this->hooks->emit(new HookMessageUpdate($event->message, $event->assistantMessageEvent));
+
+            return;
+        }
+
+        if ($event instanceof MessageEndEvent) {
+            $this->hooks->emit(new HookMessageEnd($event->message));
+
+            return;
+        }
+
         if ($event instanceof AgentEndEvent) {
             $this->hooks->emit(new HookAgentEnd($event->messages));
+            $this->hooks->emit(new HookAgentSettled($event->messages));
         }
     }
 
@@ -417,9 +443,41 @@ final class AgentSession
         return $this->agent->state;
     }
 
+    private ?string $sessionName = null;
+
+    /** @var list<Closure(string): void> */
+    private array $nameListeners = [];
+
     public function model(): ?Model
     {
         return $this->agent->state->model;
+    }
+
+    public function sessionName(): ?string
+    {
+        return $this->sessionName ?? $this->store?->sessionName();
+    }
+
+    public function getSessionName(): ?string
+    {
+        return $this->sessionName();
+    }
+
+    public function onSessionNameChanged(Closure $listener): void
+    {
+        $this->nameListeners[] = $listener;
+    }
+
+    public function setSessionName(string $name): void
+    {
+        $name = trim($name);
+        $this->sessionName = $name !== '' ? $name : null;
+        $this->store?->setSessionName($name);
+        $this->hooks?->emit(new SessionInfoChangedEvent($name));
+
+        foreach ($this->nameListeners as $listener) {
+            $listener($name);
+        }
     }
 
     /**
@@ -565,7 +623,7 @@ final class AgentSession
      * same place — and asking it means an expiring token is renewed rather than pronounced
      * missing.
      */
-    private function keyFor(Model $model): ?string
+    public function keyFor(Model $model): ?string
     {
         $options = $this->agent->options();
 

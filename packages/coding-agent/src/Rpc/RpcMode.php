@@ -147,6 +147,9 @@ final class RpcMode
             note: function (string $customType, mixed $data): void {
                 $this->session->appendHookEntry($customType, $data);
             },
+            getApiKey: fn (Model $m) => $this->session->keyFor($m),
+            setSessionName: fn (string $name) => $this->session->setSessionName($name),
+            getSessionName: fn () => $this->session->getSessionName(),
         );
 
         $this->hooks?->onError(function (HookError $error): void {
