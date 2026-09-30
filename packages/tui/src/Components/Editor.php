@@ -97,6 +97,13 @@ final class Editor implements Caret, Component, InputHandler
     /** @var Closure(string): void|null */
     private ?Closure $onChange = null;
 
+    /** @var non-empty-list<LayoutLine>|null */
+    private ?array $cachedLayout = null;
+
+    private ?int $cachedLayoutWidth = null;
+
+    private ?string $cachedLayoutKey = null;
+
     /**
      * Enter does nothing while this is set, and the text stays where it is.
      *
@@ -209,7 +216,9 @@ final class Editor implements Caret, Component, InputHandler
     #[\Override]
     public function invalidate(): void
     {
-        // Nothing is cached: the text is laid out fresh each frame.
+        $this->cachedLayout = null;
+        $this->cachedLayoutKey = null;
+        $this->cachedLayoutWidth = null;
     }
 
     /**
@@ -295,6 +304,11 @@ final class Editor implements Caret, Component, InputHandler
             return [new LayoutLine('', 0)];
         }
 
+        $key = "{$this->cursorLine}:{$this->cursorCol}:" . md5(implode("\n", $this->lines));
+        if ($this->cachedLayout !== null && $this->cachedLayoutWidth === $width && $this->cachedLayoutKey === $key) {
+            return $this->cachedLayout;
+        }
+
         $rows = [];
 
         foreach ($this->lines as $index => $line) {
@@ -321,7 +335,13 @@ final class Editor implements Caret, Component, InputHandler
             }
         }
 
-        return $rows === [] ? [new LayoutLine('', 0)] : $rows;
+        $result = $rows === [] ? [new LayoutLine('', 0)] : $rows;
+
+        $this->cachedLayout = $result;
+        $this->cachedLayoutWidth = $width;
+        $this->cachedLayoutKey = $key;
+
+        return $result;
     }
 
     /**

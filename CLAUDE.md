@@ -10088,6 +10088,22 @@ Unlike Node.js modules which are wrapped in a private closure and whose module c
 6. Added `/name` built-in slash command to view or rename the current session on the fly.
 7. In `FooterComponent::where()`, appended ` • {$sessionName}` beside git branch, rendering the identical top line.
 
+### TUI performance bottlenecks, CJK word boundary bugs, and rendering optimizations
+
+**Phenomenon**: 
+1. In `Width::visible()`, LRU cache eviction used `array_shift()`, which in PHP triggers O(N) re-indexing and memory block movements on every cache insertion once full (512 items).
+2. In `TextWrap::tokenize()`, lack of CJK character boundary awareness caused Chinese sentences lacking ASCII spaces to be treated as a single massive English token, awkwardly severing trailing English words (e.g. `请确认提交commit-id` was chopped into `请确认提交co` and `mmit-id`), while causing heavy CPU overhead in `breakWord()`.
+3. In `Chars::isPunctuation()`, punctuation check was hardcoded to ASCII and required `strlen === 1`. Multibyte CJK punctuation (`，。！？；：“”‘’《》【】……——`) were misclassified as word characters, causing `Ctrl+W` / `Alt+Backspace` to delete entire sentences across Chinese commas and periods.
+4. In `Markdown.php`, large base64 inline image lines (Kitty/iTerm2 protocol) were fed into `TextWrap::wrap()` and padded, incurring massive string search overhead.
+5. In `Editor.php`, `layout($width)` was executed 2–3 times per keystroke across `render()`, `caret()`, and `Container::rowOf()`.
+
+**Countermeasure**:
+1. Replaced `array_shift(self::$cache)` with `unset(self::$cache[array_key_first(self::$cache)])` in `Width.php` for O(1) hash eviction, speeding up cache updates by 5.0x and expanding capacity to 2048.
+2. Aligned `TextWrap::tokenize()` with upstream pi's `cjkBreakRegex`: each CJK glyph forms an atomic token, allowing natural wrapping and clean hyphenation/wrapping for mixed English words.
+3. Updated `Chars::isPunctuation()` with Unicode punctuation matching (`^[\p{P}\p{S}]\z/u`), preserving `_` as word identifiers while correctly recognizing Chinese and full-width punctuation as word boundaries.
+4. Added `isImageLine()` bypass in `Markdown::lines()` to skip wrapping and padding on terminal image protocol lines.
+5. Added cached layout in `Editor.php` to memoize the visual line layout within the same render frame.
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;

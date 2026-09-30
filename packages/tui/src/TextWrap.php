@@ -103,11 +103,16 @@ final class TextWrap
         return $lines === [] ? [''] : $lines;
     }
 
+    private const string CJK_PATTERN = '/^[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}\p{Bopomofo}]\z/u';
+
     /**
-     * Split into runs of spaces and runs of non-spaces, escape codes attached to what follows.
+     * Split into runs of spaces, words, and CJK characters with escape codes attached to what follows.
      *
-     * Attaching codes forward rather than leaving them where they fell is what makes a break
-     * safe: the token that gets moved to the next line brings its colour with it.
+     * Matching upstream pi's `splitIntoTokensWithAnsi` and `cjkBreakRegex`:
+     * - CJK characters (Han, Hiragana, Katakana, Hangul, Bopomofo) can break naturally between any glyph,
+     *   so each CJK cluster forms its own atomic token. This avoids prematurely slicing trailing English
+     *   words (e.g. `请确认提交commit-id` cleanly wrapping `commit-id` as a whole unit to the next line).
+     * - Spaces and Latin words group as usual.
      *
      * @return list<string>
      */
@@ -130,19 +135,50 @@ final class TextWrap
                 continue;
             }
 
-            $char = $text[$pos];
-            $isSpace = $char === ' ';
+            $byte = ord($text[$pos]);
+            if ($byte < 0x80) {
+                $char = $text[$pos];
+                $pos++;
+                $isSpace = $char === ' ';
 
-            if ($isSpace !== $inWhitespace && $current !== '') {
+                if ($isSpace !== $inWhitespace && $current !== '') {
+                    $tokens[] = $current;
+                    $current = '';
+                }
+
+                $current .= $pending;
+                $pending = '';
+                $inWhitespace = $isSpace;
+                $current .= $char;
+
+                continue;
+            }
+
+            $sub = substr($text, $pos);
+            $graphemes = Graphemes::split($sub);
+            $cluster = $graphemes[0] ?? $text[$pos];
+            $pos += strlen($cluster);
+
+            if (preg_match(self::CJK_PATTERN, $cluster) === 1) {
+                if ($current !== '') {
+                    $tokens[] = $current;
+                    $current = '';
+                }
+                $tokens[] = $pending . $cluster;
+                $pending = '';
+                $inWhitespace = false;
+
+                continue;
+            }
+
+            if ($inWhitespace && $current !== '') {
                 $tokens[] = $current;
                 $current = '';
             }
 
-            $current .= $pending;
+            $current .= $pending . $cluster;
             $pending = '';
-            $inWhitespace = $isSpace;
-            $current .= $char;
-            $pos++;
+            $inWhitespace = false;
         }
 
         $current .= $pending;

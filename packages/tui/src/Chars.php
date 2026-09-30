@@ -31,7 +31,17 @@ final class Chars
 
     public static function isPunctuation(string $char): bool
     {
-        return strlen($char) === 1 && str_contains(self::PUNCTUATION, $char);
+        if ($char === '') {
+            return false;
+        }
+
+        if (strlen($char) === 1) {
+            return str_contains(self::PUNCTUATION, $char);
+        }
+
+        // Multibyte punctuation (CJK full-width punctuation, Unicode quotes, dashes, symbols)
+        // Never treat '_' as punctuation to keep code identifiers intact.
+        return preg_match('/^[\p{P}\p{S}]\z/u', $char) === 1 && $char !== '_';
     }
 
     /** Neither whitespace nor punctuation: the stuff a word is made of. */

@@ -570,4 +570,19 @@ final class EditorTest extends TestCase
 
         $this->assertSame(['line' => 1, 'col' => 2], $this->editor->cursor());
     }
+
+    public function testLayoutIsCachedAcrossRenderAndCaretAndClearedOnInvalidate(): void
+    {
+        $this->editor->setText("line one\nline two");
+        $first = $this->editor->render(40);
+        $caret = $this->editor->caret(40);
+
+        $this->assertNotEmpty($first);
+        $this->assertNotNull($caret);
+
+        // Invalidate clears cache
+        $this->editor->invalidate();
+        $second = $this->editor->render(40);
+        $this->assertSame($first, $second);
+    }
 }

@@ -28,7 +28,7 @@ final class Width
     private const int REGIONAL_FROM = 0x1F1E6;
     private const int REGIONAL_TO = 0x1F1FF;
 
-    private const int CACHE_SIZE = 512;
+    private const int CACHE_SIZE = 2048;
 
     /** @var array<string, int> */
     private static array $cache = [];
@@ -65,7 +65,7 @@ final class Width
         }
 
         if (count(self::$cache) >= self::CACHE_SIZE) {
-            array_shift(self::$cache);
+            unset(self::$cache[array_key_first(self::$cache)]);
         }
 
         self::$cache[$text] = $width;

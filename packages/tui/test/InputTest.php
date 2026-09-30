@@ -93,6 +93,22 @@ final class InputTest extends TestCase
         $this->assertSame(0, $this->input->cursor());
     }
 
+    public function testDeleteWordBeforeStopsAtChinesePunctuation(): void
+    {
+        $this->given('你好，世界！');
+        // Press Ctrl+W once to delete "！"
+        $this->type("\x17");
+        $this->assertSame('你好，世界', $this->input->value());
+
+        // Press Ctrl+W second time to delete "世界", stopping at "，"
+        $this->type("\x17");
+        $this->assertSame('你好，', $this->input->value());
+
+        // Press Ctrl+W third time to delete "，"
+        $this->type("\x17");
+        $this->assertSame('你好', $this->input->value());
+    }
+
     public function testDeleteRemovesForwards(): void
     {
         $this->given('abc');

@@ -134,6 +134,14 @@ final class Markdown implements Component
         $lines = array_fill(0, $this->paddingY, $blank);
 
         foreach ($drawn as $line) {
+            // Image protocols (Kitty / iTerm2) put tens of kilobytes inline;
+            // skip wrapping and padding them to avoid huge CPU overhead and broken sequences.
+            if (self::isImageLine($line)) {
+                $lines[] = $line;
+
+                continue;
+            }
+
             // Wrapped last, after styling: the wrapper carries escape codes across its
             // own breaks, and a line styled after wrapping would lose them.
             foreach (TextWrap::wrap($line, $contentWidth) as $wrapped) {
@@ -157,6 +165,11 @@ final class Markdown implements Component
         }
 
         return $line . str_repeat(' ', max(0, $width - Width::visible($line)));
+    }
+
+    private static function isImageLine(string $line): bool
+    {
+        return str_contains($line, "\x1b_G") || str_contains($line, "\x1b]1337;File=");
     }
 
     /**

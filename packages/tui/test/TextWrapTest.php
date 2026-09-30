@@ -150,4 +150,12 @@ final class TextWrapTest extends TestCase
 
         $this->assertFalse($tracker->hasActiveCodes());
     }
+
+    public function testCjkTextWithEnglishWordWrapsEnglishWordCleanlyToNextLine(): void
+    {
+        // 12 columns: "请确认提交" (10 cols), "commit-id" (9 cols) wraps cleanly as a whole word to line 2
+        $lines = TextWrap::wrap('请确认提交commit-id之后查看', 12);
+
+        $this->assertSame(['请确认提交', 'commit-id之', '后查看'], $lines);
+    }
 }
