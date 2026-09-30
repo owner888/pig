@@ -1173,10 +1173,11 @@ final class InteractiveMode
                 return;
             }
 
-            // Typed while the agent is working: queued rather than refused, because the
-            // person watching a tool run is exactly who has something to add.
+            // Typed while the agent is working: steer immediately into the active run,
+            // matching upstream pi where Enter during streaming steers the model
+            // instead of waiting until the entire task finishes.
             if ($this->session->isStreaming()) {
-                $this->session->followUp($text);
+                $this->session->steer($text);
                 $this->editor->setText('');
                 $this->showQueue();
                 $this->tui->requestRender();

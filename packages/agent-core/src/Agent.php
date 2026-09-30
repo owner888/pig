@@ -186,7 +186,7 @@ final class Agent
     /** Stop the current run. Does nothing when idle. */
     public function abort(): void
     {
-        $this->controller?->abort('Aborted');
+        $this->controller?->abort('Operation aborted');
     }
 
     /**

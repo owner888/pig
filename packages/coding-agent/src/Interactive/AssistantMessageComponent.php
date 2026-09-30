@@ -175,7 +175,10 @@ final class AssistantMessageComponent extends Container
             $aborted = $this->keep('aborted', static fn (): Component => new Text('', 1, 0));
 
             if ($aborted instanceof Text) {
-                $aborted->setText($this->palette->fg('error', "\nAborted"));
+                $abortMessage = $message->errorMessage !== null && $message->errorMessage !== '' && $message->errorMessage !== 'Request was aborted'
+                    ? $message->errorMessage
+                    : 'Operation aborted';
+                $aborted->setText($this->palette->fg('error', "\n" . $abortMessage));
             }
 
             return;

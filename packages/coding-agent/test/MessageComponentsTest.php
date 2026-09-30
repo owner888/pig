@@ -106,7 +106,7 @@ final class MessageComponentsTest extends TestCase
     {
         $message = $this->assistant([new TextContent('I was saying')], StopReason::Aborted);
 
-        $this->assertStringContainsString('Aborted', $this->text(
+        $this->assertStringContainsString('Operation aborted', $this->text(
             (new AssistantMessageComponent($this->palette, $message))->render(self::WIDTH),
         ));
     }
