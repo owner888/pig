@@ -83,7 +83,20 @@ final class WebModeTest extends TestCase
             $this->assertSame(200, $respMsgs->status);
             $this->assertSame('[]', trim($respMsgs->body->all()));
 
-            // 4. POST /api/abort
+            // 4. GET /api/folders
+            $respFolders = $http->follow(new Request('GET', "http://127.0.0.1:{$port}/api/folders"));
+            $this->assertSame(200, $respFolders->status);
+            $folderData = json_decode($respFolders->body->all(), true);
+            $this->assertIsArray($folderData);
+            $this->assertArrayHasKey('currentCwd', $folderData);
+            $this->assertArrayHasKey('workspaces', $folderData);
+
+            // 5. GET /api/sessions
+            $respSessions = $http->follow(new Request('GET', "http://127.0.0.1:{$port}/api/sessions"));
+            $this->assertSame(200, $respSessions->status);
+            $this->assertSame('[]', trim($respSessions->body->all()));
+
+            // 6. POST /api/abort
             $respAbort = $http->follow(new Request('POST', "http://127.0.0.1:{$port}/api/abort"));
             $this->assertSame(200, $respAbort->status);
 

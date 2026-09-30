@@ -304,9 +304,26 @@ final class HttpServer
             return;
         }
 
-        // 7. Sessions list for sidebar
+        // 7. Folders / Workspaces list (matching pi-web /api/folders)
+        if ($path === '/api/folders') {
+            $currentCwd = $this->session->cwd();
+            $workspaces = $this->listAllWorkspaces($currentCwd);
+
+            $conn->sendResponse(200, [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ], json_encode([
+                'currentCwd' => $currentCwd,
+                'workspaces' => $workspaces,
+            ]));
+
+            return;
+        }
+
+        // 8. Sessions list for a directory (matching pi-web /api/sessions?cwd=...)
         if ($path === '/api/sessions') {
-            $sessions = \Pig\CodingAgent\Session\SessionManager::listFor($this->session->cwd());
+            $targetCwd = $req['query']['cwd'] ?? $this->session->cwd();
+            $sessions = \Pig\CodingAgent\Session\SessionManager::listFor($targetCwd);
             $items = array_map(static fn ($s) => [
                 'id' => $s->id,
                 'path' => $s->path,
@@ -323,7 +340,7 @@ final class HttpServer
             return;
         }
 
-        // 8. Switch session
+        // 9. Switch session
         if ($path === '/api/session/switch' && $req['method'] === 'POST') {
             $data = json_decode($req['body'], true);
             $targetPath = is_array($data) ? ($data['path'] ?? '') : '';
@@ -404,5 +421,78 @@ final class HttpServer
         }
 
         return null;
+    }
+
+    /** @return list<array{path: string, name: string, sessionCount: int, isCurrent: bool}> */
+    private function listAllWorkspaces(string $currentCwd): array
+    {
+        $roots = [
+            \Pig\CodingAgent\Config::home() . '/sessions',
+            \Pig\CodingAgent\Config::piHome() . '/sessions',
+        ];
+
+        $workspaces = [];
+
+        foreach ($roots as $root) {
+            if (!is_dir($root)) {
+                continue;
+            }
+
+            foreach (scandir($root) ?: [] as $dir) {
+                if ($dir === '.' || $dir === '..') {
+                    continue;
+                }
+
+                $fullDir = $root . '/' . $dir;
+                if (!is_dir($fullDir)) {
+                    continue;
+                }
+
+                $files = glob($fullDir . '/*.jsonl') ?: [];
+                if ($files === []) {
+                    continue;
+                }
+
+                $firstLine = file($files[0])[0] ?? '';
+                $header = json_decode($firstLine, true);
+                $cwd = is_array($header) ? ($header['cwd'] ?? null) : null;
+
+                if (is_string($cwd) && $cwd !== '') {
+                    if (!isset($workspaces[$cwd])) {
+                        $workspaces[$cwd] = [
+                            'path' => $cwd,
+                            'name' => basename($cwd) ?: $cwd,
+                            'sessionCount' => count($files),
+                            'isCurrent' => $cwd === $currentCwd,
+                        ];
+                    } else {
+                        $workspaces[$cwd]['sessionCount'] += count($files);
+                    }
+                }
+            }
+        }
+
+        if (!isset($workspaces[$currentCwd]) && is_dir($currentCwd)) {
+            $workspaces[$currentCwd] = [
+                'path' => $currentCwd,
+                'name' => basename($currentCwd) ?: $currentCwd,
+                'sessionCount' => 0,
+                'isCurrent' => true,
+            ];
+        }
+
+        $list = array_values($workspaces);
+        usort($list, static function ($a, $b) {
+            if ($a['isCurrent']) {
+                return -1;
+            }
+            if ($b['isCurrent']) {
+                return 1;
+            }
+
+            return $b['sessionCount'] <=> $a['sessionCount'];
+        });
+
+        return $list;
     }
 }
