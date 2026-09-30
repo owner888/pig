@@ -380,7 +380,7 @@ driving pig from code.
 echo '{"id":"1","type":"prompt","message":"what does bin/pig do?"}' | bin/pig --mode rpc
 ```
 
-`--mode web` launches an interactive browser-based chat interface powered by local HTTP/SSE, with zero external dependencies:
+`--mode web` launches an interactive browser-based chat interface matching `pi-web` with zero external dependencies (pure PHP non-blocking WebSocket & HTTP engine, two-level workspace directory and session drawer, telemetry status bar, and real-time full-duplex RPC streaming):
 
 ```bash
 bin/pig --mode web

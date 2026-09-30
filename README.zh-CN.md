@@ -324,7 +324,7 @@ bin/pig --mode json -p "..." | jq -r 'select(.type=="message_update") | .delta.d
 echo '{"id":"1","type":"prompt","message":"bin/pig 是干什么的？"}' | bin/pig --mode rpc
 ```
 
-`--mode web` 基于本地 HTTP/SSE 启动轻量现代的浏览器交互聊天界面，零外部依赖：
+`--mode web` 基于纯 PHP 原生全双工 WebSocket 与非阻塞 HTTP 引擎启动浏览器交互聊天界面，零外部依赖（1:1 像素级复刻 `pi-web`，支持多工作区目录/会话导航抽屉、实时遥测状态栏与全双工流式 RPC）：
 
 ```bash
 bin/pig --mode web

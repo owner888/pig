@@ -520,8 +520,42 @@
       return currentAssistantBlock;
     }
 
-    // SSE Stream
-    function initEvents() {
+    // Network: WebSocket (Full-duplex RPC) with SSE fallback
+    let ws = null;
+    let wsConnected = false;
+
+    function initNetwork() {
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${protocol}//${location.host}/ws`;
+
+      try {
+        ws = new WebSocket(wsUrl);
+        ws.onopen = () => {
+          wsConnected = true;
+        };
+        ws.onmessage = (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            onEvent(data);
+          } catch (err) {}
+        };
+        ws.onclose = () => {
+          wsConnected = false;
+          setTimeout(initNetwork, 2000);
+        };
+        ws.onerror = () => {
+          wsConnected = false;
+          initSseFallback();
+        };
+      } catch (err) {
+        initSseFallback();
+      }
+    }
+
+    let sseStarted = false;
+    function initSseFallback() {
+      if (sseStarted || wsConnected) return;
+      sseStarted = true;
       const es = new EventSource("/api/events");
       es.onmessage = (e) => {
         try {
@@ -529,7 +563,7 @@
           onEvent(evt);
         } catch (err) {}
       };
-      es.onerror = () => setTimeout(initEvents, 2000);
+      es.onerror = () => setTimeout(() => { sseStarted = false; initSseFallback(); }, 3000);
     }
 
     function onEvent(evt) {
@@ -592,15 +626,23 @@
       appendUserMessage(text);
       setRunningState(true);
 
-      await fetch("/api/prompt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
-      });
+      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "prompt", message: text }));
+      } else {
+        await fetch("/api/prompt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text }),
+        });
+      }
     }
 
     async function abortTurn() {
-      await fetch("/api/abort", { method: "POST" });
+      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "abort" }));
+      } else {
+        await fetch("/api/abort", { method: "POST" });
+      }
     }
 
     async function refreshState() {
@@ -718,7 +760,7 @@
       } catch (err) {}
     }
 
-    initEvents();
+    initNetwork();
     refreshState();
     loadMessages();
   </script>

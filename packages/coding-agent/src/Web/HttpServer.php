@@ -24,12 +24,13 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Web\Protocols\Websocket;
 use Throwable;
 
 /**
- * Micro HTTP & SSE server for Web UI, operating purely on Loop's stream_select.
+ * Micro HTTP, SSE & WebSocket server for Web UI, operating purely on Loop's stream_select.
  *
- * Implements Workerman-style non-blocking connections with zero external dependencies.
+ * Implements Workerman-style non-blocking connections and protocol decoupling with zero external dependencies.
  */
 final class HttpServer
 {
@@ -42,6 +43,9 @@ final class HttpServer
 
     /** @var array<int, Connection> */
     private array $sseClients = [];
+
+    /** @var array<int, Connection> */
+    private array $wsClients = [];
 
     private int $nextConnectionId = 0;
     private bool $isRunning = false;
@@ -103,7 +107,13 @@ final class HttpServer
             $id = ++$this->nextConnectionId;
             $conn = new Connection(
                 $client,
-                onMessage: fn (Connection $c, array $req) => $this->handleRequest($c, $req),
+                onMessage: function (Connection $c, mixed $data) use ($id): void {
+                    if (is_array($data)) {
+                        $this->handleRequest($c, $data, $id);
+                    } elseif (is_string($data)) {
+                        $this->handleWsMessage($c, $data);
+                    }
+                },
                 onClose: fn (Connection $c) => $this->handleClose($id),
             );
 
@@ -153,20 +163,32 @@ final class HttpServer
         }
         $this->connections = [];
         $this->sseClients = [];
+        $this->wsClients = [];
     }
 
     private function handleClose(int $connectionId): void
     {
-        unset($this->connections[$connectionId]);
-        unset($this->sseClients[$connectionId]);
+        unset($this->connections[$connectionId], $this->sseClients[$connectionId], $this->wsClients[$connectionId]);
     }
 
     /**
      * @param array{method: string, uri: string, path: string, query: array<string, string>, headers: array<string, string>, body: string} $req
      */
-    private function handleRequest(Connection $conn, array $req): void
+    private function handleRequest(Connection $conn, array $req, ?int $connectionId = null): void
     {
         $path = $req['path'];
+
+        // 0. WebSocket upgrade handling (RFC 6455)
+        if ($path === '/ws' || ($req['headers']['upgrade'] ?? '') === 'websocket') {
+            if (Websocket::handshake($req, $conn)) {
+                $id = $connectionId ?? array_search($conn, $this->connections, true);
+                if ($id !== false) {
+                    $this->wsClients[$id] = $conn;
+                }
+
+                return;
+            }
+        }
 
         if ($req['method'] === 'OPTIONS') {
             $conn->sendResponse(204, [
@@ -247,59 +269,20 @@ final class HttpServer
 
         // 5. Session state telemetry
         if ($path === '/api/state') {
-            $stats = $this->session->stats();
-            $model = $this->session->model();
-            $window = $model?->contextWindow ?? 0;
-            $percent = $window > 0 ? (int) ($stats->input / $window * 100) : 0;
-
             $conn->sendResponse(200, [
                 'Content-Type' => 'application/json',
                 'Access-Control-Allow-Origin' => '*',
-            ], json_encode([
-                'cwd' => basename($this->session->cwd()),
-                'branch' => 'main',
-                'sessionFile' => basename($this->session->store()?->path ?? ''),
-                'sessionName' => $this->session->getSessionName(),
-                'model' => $model?->id ?? 'no-model',
-                'provider' => $model?->provider ?? 'unknown',
-                'thinkingLevel' => $this->session->thinkingLevel()?->value ?? 'off',
-                'tokensIn' => $stats->input,
-                'tokensOut' => $stats->output,
-                'cost' => number_format($stats->cost, 3),
-                'contextWindow' => $window < 1000000 ? round($window / 1000) . 'k' : sprintf('%.1fM', $window / 1000000),
-                'contextPercent' => sprintf('%.1f', $percent),
-            ]));
+            ], json_encode($this->getStatePayload()));
 
             return;
         }
 
         // 6. Messages history
         if ($path === '/api/messages') {
-            $history = [];
-            foreach ($this->session->messages() as $m) {
-                if ($m instanceof UserMessage) {
-                    $history[] = [
-                        'role' => 'user',
-                        'content' => array_map(static fn ($c) => ['type' => 'text', 'text' => $c->text], $m->content),
-                    ];
-                } elseif ($m instanceof AssistantMessage) {
-                    $blocks = [];
-                    foreach ($m->content as $c) {
-                        if ($c instanceof TextContent) {
-                            $blocks[] = ['type' => 'text', 'text' => $c->text];
-                        }
-                    }
-                    $history[] = [
-                        'role' => 'assistant',
-                        'content' => $blocks,
-                    ];
-                }
-            }
-
             $conn->sendResponse(200, [
                 'Content-Type' => 'application/json',
                 'Access-Control-Allow-Origin' => '*',
-            ], json_encode($history));
+            ], json_encode($this->getMessagesPayload()));
 
             return;
         }
@@ -365,7 +348,7 @@ final class HttpServer
 
     private function broadcastEvent(AgentEvent $event): void
     {
-        if ($this->sseClients === []) {
+        if ($this->sseClients === [] && $this->wsClients === []) {
             return;
         }
 
@@ -400,11 +383,148 @@ final class HttpServer
             return;
         }
 
-        $line = 'data: ' . json_encode($payload) . "\n\n";
-
-        foreach ($this->sseClients as $id => $client) {
-            $client->send($line);
+        if ($this->sseClients !== []) {
+            $line = 'data: ' . json_encode($payload) . "\n\n";
+            foreach ($this->sseClients as $client) {
+                $client->sendRaw($line);
+            }
         }
+
+        foreach ($this->wsClients as $wsClient) {
+            $wsClient->send($payload);
+        }
+    }
+
+    private function handleWsMessage(Connection $conn, string $message): void
+    {
+        $data = json_decode($message, true);
+        if (!is_array($data)) {
+            return;
+        }
+
+        $id = $data['id'] ?? null;
+        $type = (string) ($data['type'] ?? '');
+
+        match ($type) {
+            'prompt' => Async::spawn(function () use ($conn, $id, $data): void {
+                $text = (string) ($data['message'] ?? '');
+                if (trim($text) !== '') {
+                    try {
+                        if ($this->session->isStreaming()) {
+                            $this->session->steer($text);
+                        } else {
+                            $this->session->prompt($text);
+                        }
+                        $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
+                    } catch (Throwable $e) {
+                        $conn->send(['id' => $id, 'type' => 'response', 'success' => false, 'error' => $e->getMessage()]);
+                    }
+                }
+            }),
+            'steer' => Async::spawn(function () use ($conn, $id, $data): void {
+                $text = (string) ($data['message'] ?? '');
+                if (trim($text) !== '') {
+                    $this->session->steer($text);
+                    $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
+                }
+            }),
+            'abort' => Async::spawn(function () use ($conn, $id): void {
+                $this->session->abort();
+                $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
+            }),
+            'set_model' => Async::spawn(function () use ($conn, $id, $data): void {
+                $modelId = (string) ($data['modelId'] ?? '');
+                $provider = isset($data['provider']) ? (string) $data['provider'] : null;
+                if ($modelId !== '') {
+                    try {
+                        $this->session->setModel($modelId, $provider);
+                        $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
+                    } catch (Throwable $e) {
+                        $conn->send(['id' => $id, 'type' => 'response', 'success' => false, 'error' => $e->getMessage()]);
+                    }
+                }
+            }),
+            'set_thinking_level' => Async::spawn(function () use ($conn, $id, $data): void {
+                $level = \Pig\Agent\ThinkingLevel::tryFrom((string) ($data['level'] ?? ''));
+                if ($level !== null) {
+                    $this->session->setThinkingLevel($level);
+                    $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
+                }
+            }),
+            'switch_session' => Async::spawn(function () use ($conn, $id, $data): void {
+                $path = (string) ($data['path'] ?? '');
+                if (is_file($path)) {
+                    try {
+                        $this->session->switchTo($path);
+                        $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
+                    } catch (Throwable $e) {
+                        $conn->send(['id' => $id, 'type' => 'response', 'success' => false, 'error' => $e->getMessage()]);
+                    }
+                }
+            }),
+            'get_state' => $conn->send([
+                'id' => $id,
+                'type' => 'state',
+                'state' => $this->getStatePayload(),
+            ]),
+            'get_messages' => $conn->send([
+                'id' => $id,
+                'type' => 'messages',
+                'messages' => $this->getMessagesPayload(),
+            ]),
+            default => null,
+        };
+    }
+
+    /** @return array<string, mixed> */
+    private function getStatePayload(): array
+    {
+        $stats = $this->session->stats();
+        $model = $this->session->model();
+        $window = $model?->contextWindow ?? 0;
+        $percent = $window > 0 ? (int) ($stats->input / $window * 100) : 0;
+
+        return [
+            'cwd' => basename($this->session->cwd()),
+            'branch' => 'main',
+            'sessionFile' => basename($this->session->store()?->path ?? ''),
+            'sessionName' => $this->session->getSessionName(),
+            'model' => $model?->id ?? 'no-model',
+            'provider' => $model?->provider ?? 'unknown',
+            'thinkingLevel' => $this->session->thinkingLevel()?->value ?? 'off',
+            'tokensIn' => $stats->input,
+            'tokensOut' => $stats->output,
+            'cost' => number_format($stats->cost, 3),
+            'contextWindow' => $window < 1000000 ? round($window / 1000) . 'k' : sprintf('%.1fM', $window / 1000000),
+            'contextPercent' => sprintf('%.1f', $percent),
+        ];
+    }
+
+    /** @return list<array{role: string, content: mixed}> */
+    private function getMessagesPayload(): array
+    {
+        $history = [];
+        foreach ($this->session->messages() as $m) {
+            if ($m instanceof UserMessage) {
+                $history[] = [
+                    'role' => 'user',
+                    'content' => array_map(static fn ($c) => ['type' => 'text', 'text' => $c->text], $m->content),
+                ];
+            } elseif ($m instanceof AssistantMessage) {
+                $blocks = [];
+                foreach ($m->content as $c) {
+                    if ($c instanceof TextContent) {
+                        $blocks[] = ['type' => 'text', 'text' => $c->text];
+                    }
+                }
+                $history[] = [
+                    'role' => 'assistant',
+                    'content' => $blocks,
+                ];
+            }
+        }
+
+        return $history;
     }
 
     /** @return array<string, mixed>|null */

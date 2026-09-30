@@ -106,6 +106,79 @@ final class WebModeTest extends TestCase
         });
     }
 
+    public function testWebSocketUpgradeAndDuplexRpc(): void
+    {
+        $port = 28090;
+        $session = $this->session();
+        $server = new HttpServer($session, $port);
+
+        Async::run(function () use ($server, $port) {
+            $server->start();
+
+            $errno = 0;
+            $errstr = '';
+            $client = stream_socket_client("tcp://127.0.0.1:{$port}", $errno, $errstr, 2.0);
+            $this->assertIsResource($client);
+            stream_set_blocking($client, false);
+
+            // 1. Send WebSocket handshake
+            $key = base64_encode('test-nonce-12345');
+            $handshakeReq = "GET /ws HTTP/1.1\r\n"
+                . "Host: 127.0.0.1:{$port}\r\n"
+                . "Upgrade: websocket\r\n"
+                . "Connection: Upgrade\r\n"
+                . "Sec-WebSocket-Key: {$key}\r\n"
+                . "Sec-WebSocket-Version: 13\r\n\r\n";
+
+            fwrite($client, $handshakeReq);
+
+            // Wait for 101 response
+            $resp = '';
+            for ($i = 0; $i < 20; $i++) {
+                Async::delay(0.01);
+                $chunk = fread($client, 4096);
+                if ($chunk !== false) {
+                    $resp .= $chunk;
+                }
+                if (str_contains($resp, "\r\n\r\n")) {
+                    break;
+                }
+            }
+
+            $this->assertStringContainsString('HTTP/1.1 101 Switching Protocols', $resp);
+            $this->assertStringContainsString('Upgrade: websocket', $resp);
+
+            // 2. Send WebSocket client masked frame: {"type":"get_state","id":42}
+            $payload = json_encode(['type' => 'get_state', 'id' => 42]);
+            $mask = "\x12\x34\x56\x78";
+            $maskedPayload = '';
+            for ($j = 0; $j < strlen($payload); $j++) {
+                $maskedPayload .= $payload[$j] ^ $mask[$j % 4];
+            }
+            $frame = "\x81" . chr(0x80 | strlen($payload)) . $mask . $maskedPayload;
+            fwrite($client, $frame);
+
+            // 3. Receive WebSocket server unmasked frame
+            $wsResp = '';
+            for ($i = 0; $i < 20; $i++) {
+                Async::delay(0.01);
+                $chunk = fread($client, 4096);
+                if ($chunk !== false) {
+                    $wsResp .= $chunk;
+                }
+                if (strlen($wsResp) >= 2) {
+                    break;
+                }
+            }
+
+            $this->assertGreaterThanOrEqual(2, strlen($wsResp));
+            $this->assertSame(0x81, ord($wsResp[0])); // text frame
+
+            fclose($client);
+            $server->stop();
+        });
+    }
+
     public function testWebModeInstantiatesAndExposesStop(): void
     {
         $session = $this->session();

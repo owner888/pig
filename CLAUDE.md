@@ -102,6 +102,10 @@ Both were chosen explicitly, not by default:
   has differential rendering and widgets). Chosen to port `pi-tui` literally.
 - **Event loop is hand-written, not `amphp/amp` v3** (also Fiber-based, with SSE-capable HTTP).
   Chosen to keep the core dependency-free.
+- **Protocol framing is hand-written Workerman-style `ProtocolInterface`, not a framework.**
+  `TcpConnection` manages non-blocking buffered socket transport while `Protocols\Http` and
+  `Protocols\Websocket` decouple wire-framing (`input`), decoding (`decode`), and encoding (`encode`),
+  providing pure PHP RFC 6455 full-duplex WebSocket RPC streaming with zero dependencies.
 
 `Pig\Async` has no counterpart in *upstream* at all — JS ships an event loop, PHP does not. It has a
 reference all the same: it is read against workerman's `EventInterface` in the traps below, which is
