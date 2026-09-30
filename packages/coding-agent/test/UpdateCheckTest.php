@@ -214,6 +214,28 @@ final class UpdateCheckTest extends TestCase
         $this->assertNull(Async::run(static fn () => $untagged->newerThan('1.0.0+no-version-set')));
     }
 
+    #[DataProvider('releaseAndNonReleaseVersions')]
+    public function testIsReleaseTellsReleasesFromCheckouts(string $version, bool $expected): void
+    {
+        $this->assertSame($expected, Version::isRelease($version));
+    }
+
+    /** @return array<string, array{0: string, 1: bool}> */
+    public static function releaseAndNonReleaseVersions(): array
+    {
+        return [
+            'standard three-part release' => ['0.2.0', true],
+            'major release' => ['1.0.0', true],
+            'pre-release beta' => ['0.2.0-beta.1', true],
+            'pre-release rc' => ['1.0.0-RC.2', true],
+            'branch' => ['dev-main', false],
+            'feature branch' => ['dev-feature-x', false],
+            'untagged checkout' => ['1.0.0+no-version-set', false],
+            'arbitrary string' => ['nonsense', false],
+            'empty string' => ['', false],
+        ];
+    }
+
     public function testAPreReleaseOfPigIsStillToldAboutTheRelease(): void
     {
         // The asymmetry, and it is deliberate: a beta is never *offered* to somebody who did not ask

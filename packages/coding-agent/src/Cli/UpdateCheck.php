@@ -50,29 +50,6 @@ final class UpdateCheck
     public const string COMMAND = 'composer global update ' . Version::PACKAGE;
 
     /**
-     * What a released version looks like, and therefore what is worth comparing.
-     *
-     * Composer answers `dev-main` for a branch and `1.0.0+no-version-set` for a working tree with no
-     * tag reachable, and **neither can be out of date** — there is no release to be behind. Left
-     * unchecked the second one is the dangerous shape rather than the first: it reads as `1.0.0`, so
-     * `version_compare()` puts it ahead of every real release and the check goes quiet for a reason
-     * that has nothing to do with the truth. Anchored at both ends, so `+no-version-set` is refused
-     * rather than quietly ignored down to the `1.0.0` in front of it.
-     *
-     * **A pre-release is a release here**, unlike on the other side of the comparison where a beta
-     * is not offered to somebody who did not ask for one. The two are different questions and the
-     * asymmetry is the point: running `0.2.0-beta.1` and not being told that `0.2.0` is out is
-     * exactly the case `Changelog`'s own note is about, where the hand-rolled comparison read
-     * `0.2.0-beta` as equal to the release it precedes. `version_compare()` orders it correctly, so
-     * the only thing needed is not to refuse it.
-     *
-     * Three parts and not two, matching `Changelog::heading()` — pig's own versions are three-part,
-     * and the file that decides what is new and the check that decides what is newer should not
-     * disagree about what a version of pig looks like.
-     */
-    private const string A_RELEASE = '/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?\z/';
-
-    /**
      * Short on purpose: nobody is waiting for this, and a machine behind a hostile network should
      * not have a slow start because of a feature that only ever draws one line.
      */
@@ -93,7 +70,7 @@ final class UpdateCheck
     {
         // Nothing to be behind, and nothing asked of Packagist either — a developer running from a
         // checkout gets no request, which is the other half of not drawing anything.
-        if (preg_match(self::A_RELEASE, $current) !== 1) {
+        if (!Version::isRelease($current)) {
             return null;
         }
 

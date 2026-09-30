@@ -70,6 +70,20 @@ final class Version
     }
 
     /**
+     * What a released version looks like, e.g. `0.2.0` or `0.2.0-beta.1`,
+     * rather than a git branch (`dev-main`) or untagged checkout (`1.0.0+no-version-set`).
+     */
+    public const string A_RELEASE = '/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?\z/';
+
+    /**
+     * Whether a version string represents a formal release rather than a development checkout.
+     */
+    public static function isRelease(string $version): bool
+    {
+        return preg_match(self::A_RELEASE, $version) === 1;
+    }
+
+    /**
      * A version without the `v` a tag may have been cut with.
      *
      * **One rule, two readers, and it was written out twice.** Composer reports `v0.1.0` for a tag
