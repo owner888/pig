@@ -50,14 +50,21 @@ final class Settings
         $this->merged = self::merge($global, $project);
     }
 
-    /** Read both files. A missing one is not a problem; an unreadable one is said out loud. */
-    public static function load(string $cwd, ?string $home = null): self
+    /**
+     * Read both files. A missing one is not a problem; an unreadable one is said out loud.
+     *
+     * An untrusted project's file is not read at all rather than read and ignored — see
+     * `ProjectTrust`. `shellPath` alone is reason enough: it names what every command runs in.
+     */
+    public static function load(string $cwd, ?string $home = null, bool $projectTrusted = true): self
     {
         $home ??= Config::home();
         $path = $home . '/' . self::FILE;
 
         [$global, $globalProblem] = self::read($path);
-        [$project, $projectProblem] = self::read(rtrim($cwd, '/') . '/.pig/' . self::FILE);
+        [$project, $projectProblem] = $projectTrusted
+            ? self::read(rtrim($cwd, '/') . '/.pig/' . self::FILE)
+            : [[], null];
 
         $settings = new self($path, $global, $project);
         $settings->problems = array_values(array_filter([$globalProblem, $projectProblem]));

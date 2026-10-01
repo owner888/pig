@@ -184,6 +184,7 @@ final class InteractiveModeTest extends TestCase
         ?string $changelog = null,
         array $tools = ['read'],
         array $modelScope = [],
+        bool $projectTrusted = true,
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->settings = $settings ?? Settings::inMemory();
@@ -252,9 +253,44 @@ final class InteractiveModeTest extends TestCase
             $initialImages,
             $auth,
             $changelog,
+            projectTrusted: $projectTrusted,
         );
 
         $this->mode->start();
+    }
+
+    // ---- /trust ---------------------------------------------------------------------------------
+
+    public function testAnUntrustedProjectSaysSoOnScreenAndSlashTrustSavesADecision(): void
+    {
+        mkdir($this->cwd . '/.pig/hooks', 0o755, true);
+        $this->start(projectTrusted: false);
+
+        $this->assertStringContainsString('This project is not trusted', $this->screenText());
+
+        $this->type('/trust');
+        $this->type("\r");
+        $this->assertStringContainsString('this session: not trusted, no saved decision', $this->screenText());
+
+        // The first row is "Trust".
+        $this->type("\r");
+
+        $this->assertStringContainsString('Saved trust decision: trusted. Restart pig', $this->screenText());
+        $this->assertTrue(\Pig\CodingAgent\ProjectTrust::decision($this->cwd, $this->home));
+    }
+
+    public function testATrustedProjectIsNotWarnedAboutAndEscapeLeavesTheFileAlone(): void
+    {
+        mkdir($this->cwd . '/.pig/hooks', 0o755, true);
+        $this->start();
+
+        $this->assertStringNotContainsString('This project is not trusted', $this->screenText());
+
+        $this->type('/trust');
+        $this->type("\r");
+        $this->type("\e");
+
+        $this->assertFileDoesNotExist($this->home . '/trust.json');
     }
 
     private function provider(Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream

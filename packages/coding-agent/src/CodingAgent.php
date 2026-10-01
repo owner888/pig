@@ -155,6 +155,9 @@ final class CodingAgent
      *        read-only four rather than narrowing this one.
      * @param list<string>|null $models what `--models` said, already split on commas: the patterns
      *        this session is narrowed to, whose first entry is what it opens on
+     * @param bool $projectTrusted whether `<cwd>/.pig/` may be loaded — `ProjectTrust::resolve()`'s
+     *        answer, decided by the caller because deciding it may need a screen. False keeps the
+     *        project's hooks, tools, extensions, skills and commands out and says so in a warning.
      *
      * @throws CodingAgentError with a sentence worth showing as-is
      */
@@ -178,8 +181,16 @@ final class CodingAgent
         ?array $tools = null,
         ?array $models = null,
         ?array $extensionPaths = null,
+        bool $projectTrusted = true,
     ): StartedSession {
         $warnings = [];
+
+        // Said once, up front, where the loaders below each quietly leave the project's root out.
+        // Upstream's sentence: a project whose hooks are not running must say so, or a guard
+        // somebody wrote looks broken rather than switched off.
+        if (!$projectTrusted && ProjectTrust::hasResources($cwd)) {
+            $warnings[] = ProjectTrust::warning();
+        }
 
         // `--models sonnet:high,'anthropic/*'` narrows the session, which is what upstream's
         // `--models` means. Resolved against the models a key reaches, because a scope holding
@@ -287,7 +298,10 @@ final class CodingAgent
                     'claude-user' => $settings->skillRoot('enableClaudeUser'),
                     'claude-project' => $settings->skillRoot('enableClaudeProject'),
                     'pi-user' => $settings->skillRoot('enablePiUser'),
-                    'pi-project' => $settings->skillRoot('enablePiProject'),
+                    'pi-project' => $projectTrusted && $settings->skillRoot('enablePiProject'),
+                    // pig's own project root has no settings key (see `Skills`' docblock), so
+                    // trust is the only thing that switches it off.
+                    'project' => $projectTrusted,
                 ],
             )
             : [[], []];
@@ -297,7 +311,7 @@ final class CodingAgent
             $warnings[] = "skill {$warning->path}: {$warning->message}";
         }
 
-        $fileCommands = SlashCommands::load($cwd);
+        $fileCommands = SlashCommands::load($cwd, projectTrusted: $projectTrusted);
         Timings::mark('slashCommands');
 
         // Before the agent as well as before any UI, because the hooks are handed the session file
@@ -306,7 +320,9 @@ final class CodingAgent
         $resumed = $save && ($resume !== null || $continue);
         Timings::mark('session');
 
-        [$loadedHooks, $hookProblems] = $withHooks ? HookLoader::load($cwd, $settings->hooks()) : [[], []];
+        [$loadedHooks, $hookProblems] = $withHooks
+            ? HookLoader::load($cwd, $settings->hooks(), projectTrusted: $projectTrusted)
+            : [[], []];
 
         foreach ($hookProblems as $problem) {
             $warnings[] = "hook {$problem->toText()}";
@@ -314,7 +330,7 @@ final class CodingAgent
 
         $cliExtensions = $extensionPaths ?? [];
         [$loadedExtensions, $extensionProblems] = $withExtensions
-            ? ExtensionLoader::load($cwd, $settings->extensions(), $cliExtensions, auth: $auth)
+            ? ExtensionLoader::load($cwd, $settings->extensions(), $cliExtensions, auth: $auth, projectTrusted: $projectTrusted)
             : [[], []];
 
         foreach ($extensionProblems as $problem) {
@@ -343,7 +359,7 @@ final class CodingAgent
         $toolApi = new CustomToolApi($cwd);
 
         [$loadedTools, $toolProblems] = $withTools
-            ? CustomToolLoader::load($cwd, $builtIn, $settings->customTools(), api: $toolApi)
+            ? CustomToolLoader::load($cwd, $builtIn, $settings->customTools(), api: $toolApi, projectTrusted: $projectTrusted)
             : [[], []];
 
         foreach ($toolProblems as $problem) {

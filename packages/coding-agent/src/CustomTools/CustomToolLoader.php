@@ -44,13 +44,15 @@ final class CustomToolLoader
         array $configured = [],
         ?string $home = null,
         ?CustomToolApi $api = null,
+        bool $projectTrusted = true,
     ): array {
         $home ??= Config::home();
         $cwd = rtrim($cwd, '/');
 
+        // `<cwd>/.pig/tools` only for a project somebody said yes to — see `ProjectTrust`.
         $paths = [
             ...self::discover($home . '/tools'),
-            ...self::discover($cwd . '/.pig/tools'),
+            ...($projectTrusted ? self::discover($cwd . '/.pig/tools') : []),
         ];
 
         foreach ($configured as $path) {

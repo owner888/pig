@@ -46,16 +46,18 @@ final class HookLoader
      *
      * @param list<string> $configured extra files, from settings; `~` is expanded and a
      *                                 relative path is resolved against $cwd
+     * @param bool $projectTrusted whether `<cwd>/.pig/hooks` may be read at all — see
+     *                             `ProjectTrust`; the person's own `~/.pig/agent/hooks` always is
      * @return array{0: list<LoadedHook>, 1: list<HookError>}
      */
-    public static function load(string $cwd, array $configured = [], ?string $home = null): array
+    public static function load(string $cwd, array $configured = [], ?string $home = null, bool $projectTrusted = true): array
     {
         $home ??= Config::home();
         $cwd = rtrim($cwd, '/');
 
         $paths = [
             ...self::discover($home . '/hooks'),
-            ...self::discover($cwd . '/.pig/hooks'),
+            ...($projectTrusted ? self::discover($cwd . '/.pig/hooks') : []),
         ];
 
         foreach ($configured as $path) {

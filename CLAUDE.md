@@ -2727,6 +2727,53 @@ skipped what that clause exists to catch. They do not. Left out on purpose: upst
 `isBunBinary` branch, which is a second loader for a packaging mode pig has no equivalent of, and
 `setUIContext`'s `hasUI` parameter for the reason above.
 
+### A stranger's `.pig/` is not loaded until somebody says so
+
+`ProjectTrust` is upstream's `trust-manager.ts` + `project-trust.ts`, and the reason it exists is a
+sentence this file already had: *"a hook runs in this process with this process's permissions …
+one that calls `exit()` takes the session with it."* True of `~/.pig/agent/hooks`, which the person
+wrote — and equally true of `<cwd>/.pig/hooks`, which whoever pushed to the repository wrote. Until
+this, `git clone` and `cd` were the whole distance between a stranger's PHP and `require`.
+
+The shape, all of it upstream's: `~/.pig/agent/trust.json` keyed by absolute path, **nearest
+ancestor wins**; a project with no `.pig/` resources is trusted without a question; a saved answer
+wins; otherwise ask; and with nobody to ask — `-p`, `--mode json|rpc` — **the answer is no.** The
+last is the only safe direction and the one worth stating: a script on a stranger's repository must
+not run that repository's hooks because there was no terminal to refuse on.
+
+Four things pig's arrangement decided:
+
+- **It is asked before `Settings::load()`**, because `.pig/settings.json` is one of the six things
+  being asked about (`shellPath` names what every command runs in). So `bin/pig` resolves it first
+  and the prompt's palette comes from the person's own settings alone — `Settings::load($cwd,
+  projectTrusted: false)` — since the project's are exactly what is not yet allowed in.
+- **The prompt is `Cli\TrustPrompt`, a `SessionPicker`-shaped screen** started and stopped inside
+  the call, because the question gates what `CodingAgent::session()` may `require` and so cannot be
+  asked from inside the session it gates. Upstream asks through its extension UI context during a
+  two-pass bootstrap; pig has no screen at that point and this is the one.
+- **One flag, five loaders**: `projectTrusted` on `Settings`, `HookLoader`, `CustomToolLoader`,
+  `ExtensionLoader` (both of its project roots) and `SlashCommands`, plus `Skills`' `project` root
+  through the switch it already had. Each one *does not open* the directory, rather than reading
+  and discarding — a broken `.pig/settings.json` in an untrusted project is not even a complaint.
+  `ProjectTrustGatesTest` has one case per loader, because a gate on four of five is the first
+  shape from the index, and a single assertion over all five cannot say which one is open.
+- **Not gated**: `AGENTS.md`/`CLAUDE.md` (text the model reads, not code pig runs — upstream does
+  not gate them either), `.claude/skills` (another tool's folder, and gating it would prompt in
+  every repository that has one), and `--list-models`/`--export`, which print and exit without
+  loading anything of the project's and so are not asked.
+
+`/trust` saves a decision for *next* time and says to restart: what was `require`d cannot be
+un-required, and what was left out cannot be loaded half way through a session. The "this session
+only" choices exist at startup and are filtered out there, because this session is already decided.
+No file lock where upstream takes one through `proper-lockfile`: the write is a rename, so a reader
+never sees half a file, and two pigs saving in the same instant is a race over one JSON object that
+the later write wins.
+
+Regression tests: `ProjectTrustTest` (16), `ProjectTrustGatesTest` (6), `TrustPromptTest` (3),
+`CodingAgentSessionTest::testAnUntrustedProjectWithResourcesSaysSoAndLoadsNoneOfThem`, and the two
+`/trust` cases in `InteractiveModeTest`. Verified live: `pig -p` in an undecided project with a
+hook prints the warning on stderr, the answer on stdout, and loads no hook.
+
 ### Picking a failed turn back up
 
 A turn can fail for a reason that undoes itself — the provider is busy — or for a reason the

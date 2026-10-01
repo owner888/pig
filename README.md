@@ -288,6 +288,15 @@ A hook runs inside pig, so it can hand back an object and reach pig's own classe
 hook that loops or calls `exit()` takes the session with it. Broken ones are named on the
 shell at startup rather than crashing; `/hooks` lists what loaded and `--no-hooks` skips them.
 
+Which is why a project's own `.pig/` is **not loaded until you say so.** The first time pig opens a
+directory that has one — hooks, tools, extensions, skills, commands or a `settings.json` under
+`.pig/`, or `extensions/` with PHP in it — it asks whether to trust the project, and remembers the
+answer in `~/.pig/agent/trust.json` (trust a parent folder once and every checkout under it is
+covered). An untrusted project keeps its `.pig/` out and says so on screen; your own
+`~/.pig/agent/` is always yours. `/trust` changes the saved decision, and with no terminal to ask
+on (`-p`, `--mode json|rpc`) an undecided project is **untrusted**, so a script run in a stranger's
+repository cannot run that repository's hooks.
+
 A hook can also **ask**, mid-turn, and wait for the answer:
 
 ```php

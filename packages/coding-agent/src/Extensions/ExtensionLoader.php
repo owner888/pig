@@ -38,14 +38,17 @@ final class ExtensionLoader
         array $cliPaths = [],
         ?string $home = null,
         ?Auth $auth = null,
+        bool $projectTrusted = true,
     ): array {
         $home ??= Config::home();
         $cwd = rtrim($cwd, '/');
 
+        // Both project roots only for a project somebody said yes to — see `ProjectTrust`. An
+        // extension is `require`d into this process, which is the whole reason the question exists.
         $paths = [
             ...self::discover($home . '/extensions'),
-            ...self::discover($cwd . '/.pig/extensions'),
-            ...self::discover($cwd . '/extensions'),
+            ...($projectTrusted ? self::discover($cwd . '/.pig/extensions') : []),
+            ...($projectTrusted ? self::discover($cwd . '/extensions') : []),
         ];
 
         foreach ($configured as $path) {

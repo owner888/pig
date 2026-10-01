@@ -242,6 +242,13 @@ hook 跑在 pig 进程里——所以它能直接返回对象、也能用 pig �
 `exit()` 就能把整个会话带走。写坏了的 hook 会在启动时报到 shell 上而不是直接崩掉；`/hooks` 列出
 加载了哪些，`--no-hooks` 则一个都不加载。
 
+也正因如此，项目自己的 `.pig/` **不经你同意不会被加载。** pig 第一次打开一个带 `.pig/`（hooks、
+tools、extensions、skills、commands 或 `settings.json`）或 `extensions/` 下有 PHP 的目录时，会先问
+一句要不要信任这个项目，答案记在 `~/.pig/agent/trust.json`（信任一次父目录，它下面所有 checkout
+都算）。未信任的项目 `.pig/` 全部不读，并在屏幕上说明；你自己的 `~/.pig/agent/` 永远是你的。
+`/trust` 改保存的决定；没有终端可问的时候（`-p`、`--mode json|rpc`），没决定过的项目一律
+**不信任**——在陌生仓库里跑脚本不会跑起那个仓库的 hooks。
+
 hook 还能在一轮**进行当中**问人，并且等答案：
 
 ```php

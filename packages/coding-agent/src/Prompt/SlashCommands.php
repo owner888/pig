@@ -29,13 +29,13 @@ final class SlashCommands
      *
      * @return list<FileCommand>
      */
-    public static function load(string $cwd, ?string $home = null): array
+    public static function load(string $cwd, ?string $home = null, bool $projectTrusted = true): array
     {
         $home ??= Config::home();
 
         return [
             ...self::scan($home . '/commands', 'user'),
-            ...self::scan(rtrim($cwd, '/') . '/.pig/commands', 'project'),
+            ...($projectTrusted ? self::scan(rtrim($cwd, '/') . '/.pig/commands', 'project') : []),
         ];
     }
 

@@ -32,6 +32,8 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\BugReport;
+use Pig\CodingAgent\ProjectTrust;
+use Pig\CodingAgent\TrustChoice;
 use Pig\CodingAgent\Doctor\Doctor;
 use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\Cli\UpdateCheck;
@@ -260,6 +262,9 @@ final class InteractiveMode
         private readonly ?Auth $auth = null,
         private readonly ?string $changelog = null,
         array $extensions = [],
+        // What `ProjectTrust::resolve()` answered at startup, so the screen can say when the
+        // project's `.pig/` was left out and `/trust` can show which way the saved answer goes.
+        private readonly bool $projectTrusted = true,
     ) {
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
@@ -359,6 +364,12 @@ final class InteractiveMode
         // session — where a release note nobody asked for is an interruption.
         if ($this->changelog !== null && $this->changelog !== '') {
             $this->sayChangelog($this->changelog);
+        }
+
+        // Upstream's `renderProjectTrustWarningIfNeeded()`: hooks that are not running have to
+        // say so on the screen, or a guard somebody wrote reads as broken rather than off.
+        if (!$this->projectTrusted && ProjectTrust::hasResources($this->cwd)) {
+            $this->sayWarning(ProjectTrust::warning());
         }
 
         $this->running = true;
@@ -1412,6 +1423,7 @@ final class InteractiveMode
         ['tools', 'What the model can call, built-in and loaded'],
         ['doctor', 'Inspect system health, PHP runtime, binaries, and auth tokens'],
         ['bug', 'Write a bug report and open a GitHub issue for it (/bug [what went wrong])'],
+        ['trust', 'Decide whether this project\'s .pig/ hooks, tools and extensions may load'],
         ['exit', 'Quit'],
     ];
 
@@ -1507,6 +1519,7 @@ final class InteractiveMode
             'tools' => $this->say($this->toolList()),
             'doctor' => $this->say($this->doctorReport()),
             'bug' => $this->reportBug(trim(substr($text, strlen($name) + 1))),
+            'trust' => $this->showTrust(),
             'exit', 'quit' => $this->stop(),
             // A hook's or a file's, which is all that is left: `commandName()` only hands
             // over names something answers to, and the built-ins are above, so a built-in
@@ -1610,6 +1623,57 @@ final class InteractiveMode
         $report = Doctor::inspect($this->session, $this->auth);
 
         return Doctor::renderTui($report, $this->palette);
+    }
+
+    /**
+     * `/trust`: upstream's `showTrustSelector()`. Saves a decision for next time; the one in
+     * force now stays, because what was already `require`d cannot be un-required and what was
+     * left out cannot be loaded half way through a session — so the answer says to restart.
+     */
+    private function showTrust(): void
+    {
+        $saved = ProjectTrust::entry($this->cwd);
+        $choices = array_values(array_filter(
+            ProjectTrust::choices($this->cwd),
+            // "This session only" has nothing to say mid-session: this session is already decided.
+            static fn (TrustChoice $choice): bool => $choice->updates !== [],
+        ));
+
+        $items = [];
+
+        foreach ($choices as $index => $choice) {
+            $items[] = new SelectItem((string) $index, $choice->label, '');
+        }
+
+        $picker = new SelectList($items, count($items), $this->palette->selectListTheme());
+        $picker->setSelectHandler(function (SelectItem $item) use ($choices): void {
+            $this->closePicker();
+            $choice = $choices[(int) $item->value];
+
+            try {
+                ProjectTrust::remember($choice->updates);
+            } catch (Throwable $error) {
+                $this->sayError('Could not save the trust decision: ' . $error->getMessage());
+
+                return;
+            }
+
+            $this->say('Saved trust decision: ' . ($choice->trusted ? 'trusted' : 'untrusted') . '. Restart pig for this to take effect.');
+        });
+        $picker->setCancelHandler($this->closePicker(...));
+
+        $now = $this->projectTrusted ? 'trusted' : 'not trusted';
+        $was = $saved === null
+            ? 'no saved decision'
+            : 'saved: ' . ($saved['decision'] ? 'trusted' : 'untrusted') . " at {$saved['path']}";
+
+        $this->overlay->clear();
+        $this->overlay->addChild(new Spacer(1));
+        $this->overlay->addChild(new Text($this->palette->fg('muted', "Trust {$this->cwd}? — this session: {$now}, {$was}"), 1, 0));
+        $this->overlay->addChild($picker);
+
+        $this->tui->setFocus($picker);
+        $this->tui->requestRender();
     }
 
     /** Shown once per session, after an error that is neither retryable nor an abort. */

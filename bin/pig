@@ -36,6 +36,8 @@ use Pig\CodingAgent\Cli\SelfUpdate;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\Cli\SessionPicker;
+use Pig\CodingAgent\Cli\TrustPrompt;
+use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\CodingAgentError;
 use Pig\CodingAgent\Antigravity\Catalog as AntigravityCatalog;
@@ -184,9 +186,27 @@ if ($arguments->needsAMessage() && $messages === [] && $fileArgs === []) {
     exit(1);
 }
 
+// Whether this project's own `.pig/` may be loaded at all — asked **before** the settings, because
+// `.pig/settings.json` is one of the things being asked about. A project with nothing to gate is
+// trusted without a question; a saved answer wins; otherwise the terminal asks, and a mode with
+// no terminal answers no. The prompt's palette comes from the person's own settings alone, since
+// the project's are exactly what is not yet allowed in.
+// `--list-models` and `--export` print and exit without loading anything of the project's, so
+// they are not asked either.
+$startsASession = !isset($options['list-models']) && !isset($options['export']);
+$projectTrusted = ProjectTrust::resolve($cwd, $interactive && $startsASession
+    ? static function (array $choices) use ($cwd, $options): ?Pig\CodingAgent\TrustChoice {
+        $own = Settings::load($cwd, projectTrusted: false);
+        $theme = $options['theme'] ?? (getenv('PIG_THEME') ?: ($own->theme() ?? 'dark'));
+
+        return TrustPrompt::ask($cwd, $choices, Palette::named(in_array($theme, Palette::names(), true) ? $theme : 'dark'));
+    }
+    : null);
+Timings::mark('trust');
+
 // The order everywhere below: what was typed, then the environment, then what was chosen
 // last time, then the built-in default.
-$settings = isset($options['no-save']) ? Settings::inMemory() : Settings::load($cwd);
+$settings = isset($options['no-save']) ? Settings::inMemory() : Settings::load($cwd, projectTrusted: $projectTrusted);
 
 foreach ($settings->problems() as $problem) {
     fwrite(STDERR, Style::yellow("settings: {$problem}\n"));
@@ -445,6 +465,7 @@ try {
         tools: $toolNames,
         models: $modelPatterns,
         extensionPaths: isset($options['extension']) ? [$options['extension']] : null,
+        projectTrusted: $projectTrusted,
     );
 } catch (CodingAgentError $error) {
     // Almost always a model name that matches nothing or a missing API key, both worth saying
@@ -558,6 +579,7 @@ if ($mode === 'rpc') {
         initialImages: $files->images,
         changelog: $changelog,
         extensions: $extensions,
+        projectTrusted: $projectTrusted,
     );
 
     // **Spawned, and inside the one `Async::run()` that owns the program.** It is one HTTPS

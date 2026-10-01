@@ -120,6 +120,28 @@ final class CodingAgentSessionTest extends TestCase
      * @param array<string, string|false> $environment
      * @param array<string, mixed>        $named
      */
+    public function testAnUntrustedProjectWithResourcesSaysSoAndLoadsNoneOfThem(): void
+    {
+        mkdir($this->cwd . '/.pig/commands', 0o755, true);
+        file_put_contents($this->cwd . '/.pig/commands/deploy.md', "ship it\n");
+
+        $trusted = $this->start();
+        $this->assertSame(['deploy'], array_map(static fn ($c) => $c->name, $trusted->fileCommands));
+        $this->assertSame([], $trusted->warnings);
+
+        $untrusted = $this->start([], ['projectTrusted' => false]);
+        $this->assertSame([], $untrusted->fileCommands);
+        $this->assertContains(\Pig\CodingAgent\ProjectTrust::warning(), $untrusted->warnings);
+    }
+
+    public function testAnUntrustedProjectWithNothingToTrustIsNotWarnedAbout(): void
+    {
+        $started = $this->start([], ['projectTrusted' => false]);
+
+        // Nothing under `.pig/` worth gating, so a warning would be about nothing.
+        $this->assertSame([], $started->warnings);
+    }
+
     public function testAContextFileThatCannotBeReadIsAmongTheStartupWarnings(): void
     {
         $path = $this->cwd . '/AGENTS.md';
