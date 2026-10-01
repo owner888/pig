@@ -433,6 +433,34 @@ final class HttpServer
             return;
         }
 
+        // 10.3b Bug report: write it, answer the path and a prefilled GitHub issue URL
+        if ($path === '/api/bug' && $req['method'] === 'POST') {
+            $data = json_decode($req['body'], true);
+            $hint = is_array($data) ? trim((string) ($data['hint'] ?? '')) : '';
+            $includeTranscript = is_array($data) && ($data['includeTranscript'] ?? false) === true;
+
+            try {
+                $report = \Pig\CodingAgent\BugReport::build($this->session, $this->auth, $hint, $includeTranscript);
+                $written = \Pig\CodingAgent\BugReport::write($report);
+                $conn->sendResponse(200, [
+                    'Content-Type' => 'application/json',
+                    'Access-Control-Allow-Origin' => '*',
+                ], json_encode([
+                    'ok' => true,
+                    'path' => $written,
+                    'issueUrl' => \Pig\CodingAgent\BugReport::issueUrl($hint, $report),
+                    'report' => $report,
+                ]));
+            } catch (Throwable $e) {
+                $conn->sendResponse(500, [
+                    'Content-Type' => 'application/json',
+                    'Access-Control-Allow-Origin' => '*',
+                ], json_encode(['ok' => false, 'error' => $e->getMessage()]));
+            }
+
+            return;
+        }
+
         // 10.4 Export session as HTML, Markdown, or PR Description
         if ($path === '/api/export') {
             $format = $req['query']['format'] ?? 'html';

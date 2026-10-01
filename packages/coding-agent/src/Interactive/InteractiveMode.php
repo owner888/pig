@@ -31,6 +31,7 @@ use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\BugReport;
 use Pig\CodingAgent\Doctor\Doctor;
 use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\Cli\UpdateCheck;
@@ -1410,6 +1411,7 @@ final class InteractiveMode
         ['hooks', 'What hooks loaded, and what they added'],
         ['tools', 'What the model can call, built-in and loaded'],
         ['doctor', 'Inspect system health, PHP runtime, binaries, and auth tokens'],
+        ['bug', 'Write a bug report and open a GitHub issue for it (/bug [what went wrong])'],
         ['exit', 'Quit'],
     ];
 
@@ -1504,6 +1506,7 @@ final class InteractiveMode
             'hooks' => $this->say($this->hookList()),
             'tools' => $this->say($this->toolList()),
             'doctor' => $this->say($this->doctorReport()),
+            'bug' => $this->reportBug(trim(substr($text, strlen($name) + 1))),
             'exit', 'quit' => $this->stop(),
             // A hook's or a file's, which is all that is left: `commandName()` only hands
             // over names something answers to, and the built-ins are above, so a built-in
@@ -1607,6 +1610,54 @@ final class InteractiveMode
         $report = Doctor::inspect($this->session, $this->auth);
 
         return Doctor::renderTui($report, $this->palette);
+    }
+
+    /** Shown once per session, after an error that is neither retryable nor an abort. */
+    private bool $bugHintShown = false;
+
+    private function suggestBugReport(): void
+    {
+        if ($this->bugHintShown) {
+            return;
+        }
+
+        $this->bugHintShown = true;
+        $this->say('If this looks like a pig bug, /bug writes a report and opens a GitHub issue for it.');
+    }
+
+    /**
+     * `/bug [hint]`: ask whether to attach the transcript, write the report, copy it, open GitHub.
+     *
+     * Spawned because the confirm parks the fiber it is asked on, and this runs inside the
+     * loop's own input callback.
+     */
+    private function reportBug(string $hint): void
+    {
+        Async::spawn(function () use ($hint): void {
+            $includeTranscript = $this->terminalUi->confirm(
+                'Include the session transcript?',
+                'It holds your messages, the model\'s output, and every file and command result read this session.',
+            );
+
+            try {
+                $report = BugReport::build($this->session, $this->auth, $hint, $includeTranscript);
+                $path = BugReport::write($report);
+            } catch (Throwable $error) {
+                $this->sayError('Could not write the bug report: ' . $error->getMessage());
+
+                return;
+            }
+
+            SystemClipboard::default()->write($report);
+
+            $url = BugReport::issueUrl($hint, $report);
+            $this->say(
+                $this->palette->fg('accent', '✓ Bug report written to ') . $path . "\n"
+                . $this->palette->fg('dim', 'It is on the clipboard too. Opening a GitHub issue with it prefilled; attach the file if the body was cut.'),
+            );
+            $this->openBrowser($url);
+            $this->tui->requestRender();
+        });
     }
 
     /**
@@ -3452,6 +3503,10 @@ final class InteractiveMode
                 }
                 if (!$hasContent) {
                     $this->sayError($said);
+                }
+
+                if (BugReport::worthReporting($event->message, $this->session->model()?->contextWindow)) {
+                    $this->suggestBugReport();
                 }
             }
         } else {

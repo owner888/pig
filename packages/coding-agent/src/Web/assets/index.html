@@ -1204,6 +1204,34 @@
         return;
       }
 
+      // Intercept /bug command in Web UI
+      if (text === "/bug" || text.startsWith("/bug ")) {
+        appendUserMessage(text);
+        const hint = text.slice(4).trim();
+        const includeTranscript = confirm("Include the session transcript in the bug report?\n\nIt holds your messages, the model's output, and every file and command result read this session.");
+        try {
+          const res = await fetch("/api/bug", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ hint, includeTranscript }),
+          });
+          const data = await res.json();
+          if (data && data.ok) {
+            const block = document.createElement("div");
+            block.className = "msg-block msg-assistant prose";
+            block.innerHTML = `<p>\u2713 Bug report written to <code>${escapeHtml(data.path)}</code>.</p><p><a href="${escapeHtml(data.issueUrl)}" target="_blank" rel="noopener" style="color:#38bdf8;">Open a GitHub issue with it prefilled \u2197</a></p>`;
+            chatScroll.appendChild(block);
+            if (navigator.clipboard) navigator.clipboard.writeText(data.report).catch(() => {});
+          } else {
+            appendErrorMessage(data.error || "Failed to write bug report.");
+          }
+        } catch (err) {
+          appendErrorMessage("Failed to write bug report.");
+        }
+        scrollToBottomIfNeeded();
+        return;
+      }
+
       // Intercept /export command in Web UI
       if (text === "/export" || text.startsWith("/export ")) {
         appendUserMessage(text);
