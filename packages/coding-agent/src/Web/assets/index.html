@@ -1204,6 +1204,46 @@
         return;
       }
 
+      // Intercept /export command in Web UI
+      if (text === "/export" || text.startsWith("/export ")) {
+        appendUserMessage(text);
+        const sub = text.slice(7).trim();
+        if (sub === "pr" || sub.startsWith("pr ")) {
+          const loadingBlock = document.createElement("div");
+          loadingBlock.className = "msg-block msg-assistant";
+          loadingBlock.innerText = "Generating Pull Request description from session…";
+          chatScroll.appendChild(loadingBlock);
+          scrollToBottomIfNeeded();
+
+          try {
+            const res = await fetch("/api/export?format=pr");
+            const data = await res.json();
+            chatScroll.removeChild(loadingBlock);
+            if (data && data.markdown) {
+              const card = document.createElement("div");
+              card.className = "msg-block msg-assistant prose";
+              card.innerHTML = renderMarkdown(data.markdown);
+              chatScroll.appendChild(card);
+            } else {
+              appendErrorMessage(data.error || "Failed to generate PR description.");
+            }
+          } catch (err) {
+            chatScroll.removeChild(loadingBlock);
+            appendErrorMessage("Failed to generate PR description.");
+          }
+          scrollToBottomIfNeeded();
+          return;
+        }
+
+        if (sub === "md" || sub === "markdown") {
+          window.open("/api/export?format=md", "_blank");
+          return;
+        }
+
+        window.open("/api/export?format=html", "_blank");
+        return;
+      }
+
       // Intercept /diff command directly in Web UI
       if (text === "/diff" || text.startsWith("/diff ")) {
         appendUserMessage(text);

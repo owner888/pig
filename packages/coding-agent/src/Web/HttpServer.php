@@ -433,6 +433,50 @@ final class HttpServer
             return;
         }
 
+        // 10.4 Export session as HTML, Markdown, or PR Description
+        if ($path === '/api/export') {
+            $format = $req['query']['format'] ?? 'html';
+            $store = $this->session->store();
+
+            if ($format === 'pr') {
+                try {
+                    $pr = \Pig\CodingAgent\Export\MarkdownExport::generatePrDescription($this->session);
+                    $conn->sendResponse(200, [
+                        'Content-Type' => 'application/json',
+                        'Access-Control-Allow-Origin' => '*',
+                    ], json_encode(['ok' => true, 'markdown' => $pr, 'format' => 'pr']));
+                } catch (Throwable $e) {
+                    $conn->sendResponse(500, [
+                        'Content-Type' => 'application/json',
+                        'Access-Control-Allow-Origin' => '*',
+                    ], json_encode(['ok' => false, 'error' => $e->getMessage()]));
+                }
+
+                return;
+            }
+
+            if ($format === 'md' || $format === 'markdown') {
+                $md = $store !== null ? \Pig\CodingAgent\Export\MarkdownExport::render($store->messages(), $this->session->cwd()) : '';
+                $conn->sendResponse(200, [
+                    'Content-Type' => 'text/markdown; charset=utf-8',
+                    'Access-Control-Allow-Origin' => '*',
+                    'Content-Disposition' => 'attachment; filename="session.md"',
+                ], $md);
+
+                return;
+            }
+
+            // Default HTML export
+            $html = $store !== null ? \Pig\CodingAgent\Export\HtmlExport::render($store->messages(), $this->session->cwd()) : '';
+            $conn->sendResponse(200, [
+                'Content-Type' => 'text/html; charset=utf-8',
+                'Access-Control-Allow-Origin' => '*',
+                'Content-Disposition' => 'attachment; filename="session.html"',
+            ], $html);
+
+            return;
+        }
+
         // 11. Switch model via HTTP POST
         if ($path === '/api/model' && $req['method'] === 'POST') {
             $data = json_decode($req['body'], true);

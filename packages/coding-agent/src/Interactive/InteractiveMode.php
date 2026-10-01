@@ -38,6 +38,7 @@ use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Cli\SessionList;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Export\HtmlExport;
+use Pig\CodingAgent\Export\MarkdownExport;
 use Pig\CodingAgent\CustomTools\CustomToolApi;
 use Pig\CodingAgent\CustomTools\CustomToolLoader;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
@@ -1391,7 +1392,7 @@ final class InteractiveMode
         ['thinking', 'Set thinking level, or choose from a list'],
         ['skills', 'What the model can reach for, and where it came from'],
         ['copy', 'Put the last answer on the clipboard'],
-        ['export', 'Write this conversation out as an HTML file'],
+        ['export', 'Export conversation as HTML, Markdown, or PR description (/export [md|pr])'],
         ['compact', 'Summarise the conversation so far and carry on from the summary'],
         ['resume', 'Pick up an earlier conversation'],
         ['tree', 'Go back to an earlier point and take it somewhere else'],
@@ -1626,16 +1627,24 @@ final class InteractiveMode
     }
 
     /**
-     * Write the conversation out as one HTML file.
+     * Write the conversation out as HTML, Markdown, or GitHub PR description.
      *
-     * Only a saved session can be exported, because the file is built from what is on
-     * disk rather than from what is on screen — a `--no-save` run has nothing to build
-     * from, and saying so beats writing an empty page.
-     *
-     * @param string $path from `/export somewhere.html`; beside the session when empty
+     * @param string $path from `/export [md|pr] [somewhere]`; beside the session when empty
      */
     private function exportSession(string $path): void
     {
+        $path = trim($path);
+
+        // 1. Export as GitHub PR description (/export pr [targetPath])
+        if ($path === 'pr' || str_starts_with($path, 'pr ')) {
+            $targetPath = trim(substr($path, 2));
+            Async::spawn(function () use ($targetPath): void {
+                $this->exportPrDescription($targetPath);
+            });
+
+            return;
+        }
+
         $store = $this->session->store();
 
         if ($store === null) {
@@ -1644,6 +1653,21 @@ final class InteractiveMode
             return;
         }
 
+        // 2. Export as Markdown (/export md [targetPath])
+        if ($path === 'md' || $path === 'markdown' || str_starts_with($path, 'md ') || str_starts_with($path, 'markdown ')) {
+            $cleanArg = trim((string) preg_replace('/^(md|markdown)\s*/i', '', $path));
+            $target = $cleanArg !== '' ? $cleanArg : MarkdownExport::defaultPath($store, $this->cwd);
+            try {
+                $written = MarkdownExport::write($store, $target);
+                $this->say('Exported Markdown to ' . $written);
+            } catch (Throwable $error) {
+                $this->sayError($error->getMessage());
+            }
+
+            return;
+        }
+
+        // 3. Default: export as single-file HTML
         try {
             $written = HtmlExport::write(
                 $store,
@@ -1657,6 +1681,34 @@ final class InteractiveMode
         }
 
         $this->say('Exported to ' . $written);
+    }
+
+    private function exportPrDescription(string $customPath): void
+    {
+        $this->say('Generating GitHub Pull Request description from session…');
+
+        try {
+            $prMarkdown = MarkdownExport::generatePrDescription($this->session);
+
+            // Copy to clipboard automatically for convenient pasting into GitHub PR
+            SystemClipboard::default()->write($prMarkdown);
+
+            $savePath = $customPath !== ''
+                ? $customPath
+                : $this->cwd . '/.pig/PULL_REQUEST.md';
+
+            $dir = dirname($savePath);
+            if (!is_dir($dir)) {
+                mkdir($dir, 0700, true);
+            }
+            file_put_contents($savePath, $prMarkdown);
+
+            $this->say($this->palette->fg('accent', '✓ PR Description generated and copied to clipboard!'));
+            $this->say($this->palette->fg('dim', "Saved to: {$savePath}\n\n") . $prMarkdown);
+            $this->tui->requestRender();
+        } catch (Throwable $e) {
+            $this->sayError('Failed to generate PR description: ' . $e->getMessage());
+        }
     }
 
     /**
@@ -2562,16 +2614,20 @@ final class InteractiveMode
                 return;
             }
 
-            $reply = \Pig\Ai\Stream::simple(
+            $stream = \Pig\Ai\Stream::simple(
                 $model,
-                new \Pig\Ai\Context([], systemPrompt: 'You are an expert software developer writing clean Conventional Commits git messages.'),
-                $prompt,
-                new \Pig\Ai\SimpleStreamOptions(temperature: 0.2),
-                apiKey: $this->session->keyFor($model),
+                new \Pig\Ai\Context([new \Pig\Ai\UserMessage($prompt)], systemPrompt: 'You are an expert software developer writing clean Conventional Commits git messages.'),
+                new \Pig\Ai\SimpleStreamOptions(temperature: 0.2, apiKey: $this->session->keyFor($model)),
             );
 
-            $generated = trim($reply->text());
-            $generated = trim((string) preg_replace('/^```[a-z]*\n|```$/i', '', $generated));
+            $assistantMsg = $stream->result()->await();
+            $generated = '';
+            foreach ($assistantMsg->content as $c) {
+                if ($c instanceof \Pig\Ai\TextContent) {
+                    $generated .= $c->text;
+                }
+            }
+            $generated = trim((string) preg_replace('/^```[a-z]*\n|```$/i', '', trim($generated)));
 
             if ($generated === '') {
                 $this->sayError('Failed to generate commit message.');
