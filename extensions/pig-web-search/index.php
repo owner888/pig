@@ -10,6 +10,15 @@ use Pig\Async\AbortSignal;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Hooks\HookContext;
+use PigWebSearch\HeadlessBrowser;
+
+// A class file beside the entry. Guarded by *class* and not by `require_once`, which dedups by
+// path: a global copy under `~/.pig/agent/extensions` and a project copy are two paths holding
+// one class, and the second `require` of either is a fatal redeclaration. Whichever loaded first
+// serves both; the entry files are deduplicated by name upstream of this anyway.
+if (!class_exists(HeadlessBrowser::class, false)) {
+    require __DIR__ . '/HeadlessBrowser.php';
+}
 
 /**
  * Pure PHP web search and web page reading extension for pig.
@@ -199,7 +208,8 @@ return function (ExtensionApi $pi): void {
         name: 'fetch_web_page',
         label: 'Fetch Web Page',
         description: 'Fetch the readable text content of a web page by URL, stripped of scripts, navigation, and styles. '
-            . 'Useful for reading documentation, API references, or articles found via web_search.',
+            . 'Useful for reading documentation, API references, or articles found via web_search. '
+            . 'Reads what the server sends: if the result is empty or a "enable JavaScript" shell, use browse_web_page instead.',
         parameters: [
             'type' => 'object',
             'properties' => [
@@ -266,7 +276,73 @@ return function (ExtensionApi $pi): void {
         },
     ));
 
-    // 3. Command: /search <query>
+    // 3. Tool: browse_web_page — the same page, rendered by the Chrome on this machine
+    $pi->registerTool(new CustomTool(
+        name: 'browse_web_page',
+        label: 'Browse Web Page',
+        description: 'Render a web page in a headless Chrome and return the text of the live DOM after its JavaScript has run. '
+            . 'For single-page apps, dashboards and docs sites that fetch_web_page returns empty or as a loading shell. '
+            . 'Slower than fetch_web_page (a few seconds) and needs Chrome installed; prefer fetch_web_page for plain pages.',
+        parameters: [
+            'type' => 'object',
+            'properties' => [
+                'url' => [
+                    'type' => 'string',
+                    'description' => 'The full HTTP or HTTPS URL of the page to render',
+                ],
+                'maxLength' => [
+                    'type' => 'integer',
+                    'description' => 'Maximum characters of text to return (default 30000, max 60000)',
+                ],
+                'waitSeconds' => [
+                    'type' => 'number',
+                    'description' => 'How long to wait for the page to load before reading it (default 25, max 60)',
+                ],
+            ],
+            'required' => ['url'],
+        ],
+        execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal): AgentToolResult {
+            $signal?->throwIfAborted();
+
+            $url = trim((string) ($params['url'] ?? ''));
+            if ($url === '' || (!str_starts_with($url, 'http://') && !str_starts_with($url, 'https://'))) {
+                throw new \InvalidArgumentException("Invalid web page URL '{$url}'. URL must start with http:// or https://");
+            }
+
+            $maxLength = max(1000, min(60000, (int) ($params['maxLength'] ?? 30000)));
+            $wait = max(1.0, min(60.0, (float) ($params['waitSeconds'] ?? 25.0)));
+
+            if ($onUpdate !== null) {
+                $onUpdate(new AgentToolResult([new TextContent("Starting Chrome and loading {$url}…")]));
+            }
+
+            $browser = HeadlessBrowser::launch($signal);
+
+            try {
+                $page = $browser->read($url, $wait, $signal);
+            } finally {
+                $browser->close();
+            }
+
+            $text = $page['text'];
+            $truncated = false;
+
+            if (mb_strlen($text) > $maxLength) {
+                $text = mb_substr($text, 0, $maxLength) . "\n\n... [Content truncated at {$maxLength} characters]";
+                $truncated = true;
+            }
+
+            $title = $page['title'] !== '' ? $page['title'] : 'Web Page';
+            $output = "# {$title}\nSource: {$page['url']}\nRendered by: headless Chrome\n\n" . ($text !== '' ? $text : '(the page rendered no visible text)');
+
+            return new AgentToolResult(
+                [new TextContent($output)],
+                ['url' => $page['url'], 'title' => $title, 'truncated' => $truncated, 'rendered' => true],
+            );
+        },
+    ));
+
+    // 4. Command: /search <query>
     $pi->registerCommand(
         'search',
         static function (string $query, HookContext $ctx) use ($pi): void {

@@ -376,7 +376,12 @@ pig 默认携带与 upstream 对齐的 4 个基础编程工具：`read`、`bash`
 bin/pig --tools read,bash,edit,write,grep,find,ls
 ```
 
-网络搜索与网页抓取通过纯 PHP 原生扩展 `extensions/pig-web-search/` 提供（支持 `web_search`、`fetch_web_page` 与 `/search <query>`），保持 Agent 核心极简纯粹，同时便于未来灵活接入 Puppeteer 或 Headless 浏览器。
+网络搜索与网页抓取通过纯 PHP 原生扩展 `extensions/pig-web-search/` 提供——`web_search`（DuckDuckGo）、
+`fetch_web_page`（服务端发来的 HTML 转成文字）、`browse_web_page` 与 `/search <query>`——核心 Agent
+仍然只有四个工具。`browse_web_page` 专治靠 JavaScript 拼出来的页面：用本机已装的 Chrome 以 headless
+模式启动，通过 pig 自己写的 WebSocket 客户端说 DevTools Protocol，等页面加载完，再从活的 DOM 里把文字
+读出来。没有 Puppeteer、没有 driver、不下载任何东西——大约两百行 PHP；没装 Chrome 的机器会被明确告知，
+而不是在三层之下莫名失败。
 
 ## 环境要求
 

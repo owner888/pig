@@ -10202,6 +10202,17 @@ Unlike Node.js modules which are wrapped in a private closure and whose module c
 2. `HookLoader::checkTopLevelSymbols()` was added to `HookLoader` and `ExtensionLoader`: before `require`ing an extension or hook, it tokenizes the file with `PhpToken::tokenize()`. If any top-level named function or named class is detected, loading is safely refused as a structured `HookError` / `ExtensionError` with guidance, completely preventing PHP fatal redeclaration crashes.
 3. Clearly document `/reload`'s boundary across `README.md`, `README.zh-CN.md`, `bin/pig --help`, and `CLAUDE.md`: `/reload` live-refreshes extensions, skills, custom commands, tools, settings, and context files (`CLAUDE.md` / `AGENTS.md`), but upgrading `pig`'s own core engine classes still requires restarting `pig`.
 
+**An extension with a class file beside its entry has the same problem one level up**, and
+`require_once` does not solve it. `pig-web-search` keeps `HeadlessBrowser` in its own file; the
+entry `require_once`d it, and the full suite died with `Cannot redeclare class
+PigWebSearch\HeadlessBrowser (previously declared in ~/.pig/agent/extensions/…)`. `require_once`
+deduplicates by **path**, and the same class lives at two paths — the installed copy under
+`~/.pig/agent/extensions` and the repository's — so a process that touches both (the test suite;
+in production, one pig moving between a project with its own copy and one without) loads the class
+twice. The entry guards by *class* now: `if (!class_exists(HeadlessBrowser::class, false)) require`.
+Whichever copy loaded first serves both, which is the trade; the alternative is a loader that
+refuses a second copy of a class, which is the fatal error with a politer message.
+
 ### Footer session name display, `/name` command, and full `smart-session` telemetry parity
 
 **Phenomenon**: Upstream pi's footer top line displays `pwd (branch) • <session-name>`, which extensions like `smart-session` use to render dynamic titles and token speed meters (`~/Development/owner/pig (main) • 仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms`), while pig previously only showed `pwd (branch)`. Furthermore, pig had no `/name` command, lacked `session_info` entry encoding/decoding, omitted streaming message hook events (`message_start`, `message_update`, `message_end`, `session_info_changed`, `agent_settled`), and had an incomplete `smart-session.php` stub.

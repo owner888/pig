@@ -441,7 +441,14 @@ Advanced file search (`grep`, `find`, `ls`) is reachable via `--tools`:
 bin/pig --tools read,bash,edit,write,grep,find,ls
 ```
 
-Web search and documentation reading are provided via the pure PHP `extensions/pig-web-search/` extension (`web_search`, `fetch_web_page`, `/search <query>`), preserving core agent minimalism while keeping it flexible for future headless browser (Puppeteer / CDP) expansions.
+Web search and documentation reading are provided via the pure PHP `extensions/pig-web-search/`
+extension — `web_search` (DuckDuckGo), `fetch_web_page` (the HTML the server sends, as text),
+`browse_web_page` and `/search <query>` — keeping the core agent at its four tools.
+`browse_web_page` is the one for pages that are built by JavaScript: it launches the Chrome already
+installed on the machine in headless mode, speaks the DevTools Protocol to it over pig's own
+WebSocket client, waits for the page to load, and reads the text out of the live DOM. No
+Puppeteer, no driver, nothing downloaded — about two hundred lines of PHP, and a machine without
+Chrome is told so rather than failed three layers down.
 
 ## Requirements
 
