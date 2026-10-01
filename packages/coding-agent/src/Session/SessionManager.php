@@ -8,6 +8,7 @@ use Pig\Agent\AgentError;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\Timestamp;
+use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Config;
 
@@ -31,7 +32,12 @@ use Pig\CodingAgent\Config;
 final class SessionManager
 {
     /** Bumped when the format changes in a way an older pig could not read. */
-    private const int VERSION = 2;
+    /**
+     * pi's current format. v3 differs from v2 in one rename pig never wrote (`hookMessage` →
+     * `custom` on a message's role) and in two entry kinds pig now reads and writes:
+     * `context_edit` and `usage`. Writing 3 is what stops pi rewriting every pig file on open.
+     */
+    private const int VERSION = 3;
 
     /** How many to offer in a list before it stops being a list. */
     private const int LISTED = 30;
@@ -245,8 +251,14 @@ final class SessionManager
      */
     private static function upgrade(array $lines, array $header): ?array
     {
-        if ((int) ($header['version'] ?? 1) >= self::VERSION) {
+        $version = (int) ($header['version'] ?? 1);
+
+        if ($version >= self::VERSION) {
             return null;
+        }
+
+        if ($version === 2) {
+            return self::upgradeFromV2($lines, $header);
         }
 
         $decoded = [$header];
@@ -295,6 +307,33 @@ final class SessionManager
         $decoded[0]['version'] = self::VERSION;
 
         return array_map(static fn (array $raw): string => (string) json_encode($raw), $decoded);
+    }
+
+    /**
+     * pi's `migrateV2ToV3()`: the one rename, and the header. A v2 file already has the tree, so
+     * ids and parents are left exactly as they are — this must not re-id anything.
+     *
+     * @param list<string>         $lines
+     * @param array<string, mixed> $header
+     * @return list<string>
+     */
+    private static function upgradeFromV2(array $lines, array $header): array
+    {
+        $header['version'] = self::VERSION;
+        $out = [(string) json_encode($header)];
+
+        foreach (array_slice($lines, 1) as $line) {
+            $raw = json_decode($line, true);
+
+            if (is_array($raw) && ($raw['type'] ?? null) === 'message' && (($raw['message']['role'] ?? null) === 'hookMessage')) {
+                $raw['message']['role'] = 'custom';
+                $line = (string) json_encode($raw);
+            }
+
+            $out[] = $line;
+        }
+
+        return $out;
     }
 
     /**
@@ -563,7 +602,8 @@ final class SessionManager
             && !$item instanceof ModelChange
             && !$item instanceof ThinkingLevelChange
             && !$item instanceof Label
-            && !$item instanceof SessionInfoEntry;
+            && !$item instanceof SessionInfoEntry
+            && !$item instanceof ContextEdit;
     }
 
     /**
@@ -640,6 +680,17 @@ final class SessionManager
      */
     private static function resolve(array $path): array
     {
+        // pi's `buildSessionProjection()`: the latest `context_edit` on this path for each target
+        // decides what the model is shown of it. Collected first because an edit sits *after* the
+        // message it edits, and branch-relative by construction — only edits on this path count.
+        $edits = [];
+
+        foreach ($path as [, $item]) {
+            if ($item instanceof ContextEdit) {
+                $edits[$item->targetId] = $item;
+            }
+        }
+
         $messages = [];
 
         foreach ($path as [$id, $item]) {
@@ -648,7 +699,7 @@ final class SessionManager
             }
 
             if ($item instanceof CompactionSummary) {
-                $kept = self::keptFrom($path, $item->firstKeptEntryId, $id);
+                $kept = self::edited(self::keptFrom($path, $item->firstKeptEntryId, $id), $edits);
 
                 // Replaced, not seen: what came before minus what is being kept. Counting
                 // everything before the compaction would say a summary that kept the last
@@ -658,10 +709,90 @@ final class SessionManager
                 continue;
             }
 
-            $messages[] = [$id, $item];
+            $messages = [...$messages, ...self::edited([[$id, $item]], $edits)];
         }
 
         return $messages;
+    }
+
+    /**
+     * Apply the edits to a run of messages: an omitted target produces nothing, a replaced one
+     * keeps its role and metadata with the new content.
+     *
+     * @param list<array{0: string, 1: mixed}> $messages
+     * @param array<string, ContextEdit>       $edits
+     * @return list<array{0: string, 1: mixed}>
+     */
+    private static function edited(array $messages, array $edits): array
+    {
+        if ($edits === []) {
+            return $messages;
+        }
+
+        $out = [];
+
+        foreach ($messages as [$id, $item]) {
+            $edit = $edits[$id] ?? null;
+
+            if ($edit === null) {
+                $out[] = [$id, $item];
+                continue;
+            }
+
+            if ($edit->replacement === null) {
+                continue;
+            }
+
+            $replaced = self::withContent($item, $edit->replacement);
+
+            if ($replaced !== null) {
+                $out[] = [$id, $replaced];
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * The same message with other content. A string becomes one text block — pi's rule for the
+     * roles whose content has to be an array — and a message of a kind that has no content to
+     * replace is left as it was rather than guessed at.
+     *
+     * @param string|list<\Pig\Ai\Content> $replacement
+     */
+    private static function withContent(mixed $message, string|array $replacement): mixed
+    {
+        $content = is_string($replacement) ? [new TextContent($replacement)] : $replacement;
+
+        return match (true) {
+            $message instanceof UserMessage => new UserMessage($content, $message->timestamp),
+            $message instanceof AssistantMessage => new AssistantMessage(
+                $content,
+                $message->api,
+                $message->provider,
+                $message->model,
+                $message->usage,
+                $message->stopReason,
+                $message->errorMessage,
+                $message->timestamp,
+            ),
+            $message instanceof ToolResultMessage => new ToolResultMessage(
+                $message->toolCallId,
+                $message->toolName,
+                $content,
+                $message->isError,
+                $message->details,
+                $message->timestamp,
+            ),
+            $message instanceof HookMessage => new HookMessage(
+                $message->customType,
+                $content,
+                $message->display,
+                $message->details,
+                $message->timestamp,
+            ),
+            default => $message,
+        };
     }
 
     /**
@@ -742,6 +873,39 @@ final class SessionManager
         }
 
         $this->write($entry);
+    }
+
+    /**
+     * Edit what the model is shown of an earlier entry, without touching the entry — pi's
+     * `appendContextEdit()`. Null omits it; a string or content list replaces its content.
+     *
+     * Refused for an id this file has not got, as a label is: it would be a line nobody reads
+     * back, and the mistake is in the caller.
+     */
+    public function appendContextEdit(string $targetId, string|array|null $replacement): void
+    {
+        if (!isset($this->entries[$targetId])) {
+            throw new AgentError("No entry {$targetId} to edit the context of.");
+        }
+
+        $this->append(new ContextEdit($targetId, $replacement));
+    }
+
+    /**
+     * The id of the entry holding exactly this message object, or null.
+     *
+     * Identity and not equality: two turns can say the same words, and the one being asked
+     * about is the one the agent's state holds — the very object `append()` was handed.
+     */
+    public function entryOf(mixed $message): ?string
+    {
+        foreach ($this->entries as $id => $entry) {
+            if ($entry['message'] === $message) {
+                return (string) $id;
+            }
+        }
+
+        return null;
     }
 
     /**

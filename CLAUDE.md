@@ -395,8 +395,9 @@ Three things this changed that are worth knowing:
 - **A compaction is resolved on the way out, every time.** It used to be applied once as the
   file was read, which was correct while the log was a line and wrong the moment a branch is
   taken from *before* the compaction — that branch never had it.
-- **Format version 2, and it is pi's version 2.** See below — it was not, for a while, and
-  that was worse than a different number. There is no reader for what pig wrote in between.
+- **Format version 3, and it is pi's version 3.** It was 2 — pi's 2 — until pi moved, and a
+  pig file under the old number was rewritten by pi on every open. See the `context_edit` trap
+  below for what v3 adds; there is still no reader for the shape pig briefly wrote under `2`.
 - **The end of the file is the leaf.** A branch is only ever made by appending, so the newest
   entry is always on the branch that was being talked on when the session was last open.
 
@@ -420,6 +421,7 @@ It is pi's now, field for field:
 | compaction | `type:"compaction"` with `firstKeptEntryId` | `role:"compactionSummary"` with `replaced` |
 | a hook's message | `type:"custom_message"` | `role:"hookMessage"` |
 | a hook's note | `type:"custom"`, in the tree | `type:"custom"`, outside it |
+| what the model is not shown | `type:"context_edit"` with `targetId` and `replacement` | nothing — the message was taken off the state and the file said nothing |
 
 `Session\SessionEntries` encodes the **line**; `Session\SessionCodec` encodes the **message**
 that sits inside one. Upstream keeps them apart for a reason that only shows up here: not
@@ -9944,6 +9946,56 @@ Two tests were rewritten rather than moved, because what they asserted no longer
 comparing Antigravity's client pair against Gemini CLI's now asserts that the reader looks at *its
 own* names and refuses rather than falling back, and `GoogleTest`'s Gemini 3 Pro level test is
 replaced by the drift note below.
+
+### pi pruned a message from the model's context and pig sent it anyway
+
+Found by reading the developer's own session file — 24MB, written by pi 0.87, header `version: 3`
+where pig's reader and writer knew only 2. The v3 diff is small and one piece of it is a whole
+mechanism pig did not have: **`context_edit`**, an append-only line saying *what the model is shown
+of an earlier entry has changed* — `replacement: null` omits it, a string or content list replaces
+its content — while the entry itself stays in the file, the tree, the UI and the money. pi's
+`buildSessionProjection()` applies the latest edit per target on the active branch; pig's rule for
+a line it cannot read is "a node holding nothing, walked past", so **the target was walked past too,
+and sent to the model whole.** Five of them in that file; all small, which is luck and not design —
+the same entry is what pi writes when it prunes a tool result that has outlived its use.
+
+**And the write side was pig's own gap, under a sentence this file already had.** *"The failed
+message comes off the agent's state before the retry, and stays in the session file"* — true, and
+it stops one step short: nothing in the file said it had come off, so **`--resume` put the failed
+turn back into the agent's state.** Upstream's `_omitRecoveryAttempt()` writes a `context_edit(null)`
+for exactly this. `AgentSession::dropLastAssistantMessage()` does now, through
+`SessionManager::entryOf()` — identity on the message object, because the one `append()` was handed
+on `message_end` is the one the agent's state holds — and `appendContextEdit()`, which refuses an id
+the file has not got the way a label does.
+
+Three things decided in the projection:
+
+- **Edits are collected before the walk**, because an edit sits *after* the message it edits, and
+  only edits on the path count — which is pi's "branch-relative" for free, since `pathTo()` is the
+  branch. The test puts two edits of one target on the live branch and a third on an abandoned one.
+- **A string replacement is one text block**, pi's rule for the roles whose content has to be an
+  array, and the role and metadata are kept — a replaced tool result still answers its call id.
+- **The kept range of a compaction is edited too**, or a pruned result inside the kept window would
+  come back the moment the conversation was compacted.
+
+**`VERSION` is 3 now, and `upgrade()` had to learn the difference between 1 and 2.** It read
+`version < VERSION` as "v1" and ran the re-id-every-line path — correct for v1, destructive for a
+v2 file that already has its tree. `upgradeFromV2()` is pi's `migrateV2ToV3()`: the header and the
+one rename (`hookMessage` → `custom` on a message's role, which pig never wrote), nothing else
+touched. Two tests pinned `version === 2` and both were pinning the number rather than the rule —
+"pi's current version" — and say 3 now.
+
+What this does **not** port: `usage` entries (pi's cache-warm accounting lines, read as nothing here
+and summed nowhere), and `systemMessage` on a compaction. Both are read-and-walk-past, which is the
+right answer until something here needs them.
+
+Regression tests: `PiFormatTest::testAContextEditWithNullOmitsItsTargetFromTheModelAndFromNowhereElse`,
+`testAContextEditWithAStringReplacesTheContentAndKeepsTheRole`,
+`testTheLatestEditOnTheBranchWinsAndOneOnAnotherBranchDoesNot`, `testAnEditIsWrittenInPisShapeAndReadBack`,
+`testAV2FileIsBroughtToV3WithoutReIdingAnything`, and
+`AgentSessionTest::testAFailedTurnTakenOffTheStateStaysOffItWhenTheSessionIsResumed` — which goes
+red when the `appendContextEdit()` in `dropLastAssistantMessage()` is removed. Verified against the
+real file: 0 of the 5 pruned targets reach the model.
 
 ### A crash is written down, so `/bug` has something to attach
 

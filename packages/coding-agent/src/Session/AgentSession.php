@@ -1583,19 +1583,33 @@ final class AgentSession
     }
 
     /**
-     * Take the failed turn off the agent's state, leaving it in the session file.
+     * Take the failed turn off the agent's state, leaving it in the session file — and write
+     * down that it was taken off.
      *
      * The model must not be shown its own error as though it were part of the conversation:
      * the next request would carry "Anthropic returned 503" in the transcript, and the model
-     * would try to make sense of it.
+     * would try to make sense of it. The `context_edit` is upstream's `_omitRecoveryAttempt()`
+     * and the half pig was missing: without it the message came back into the agent's state on
+     * the next `--resume`, which is the one time nobody is there to see it being retried.
      */
     private function dropLastAssistantMessage(): void
     {
         $messages = $this->agent->state->messages;
         $last = $messages === [] ? null : $messages[count($messages) - 1];
 
-        if ($last instanceof AssistantMessage) {
-            $this->agent->replaceMessages(array_slice($messages, 0, -1));
+        if (!$last instanceof AssistantMessage) {
+            return;
+        }
+
+        $this->agent->replaceMessages(array_slice($messages, 0, -1));
+
+        // The same object `append()` was handed on `message_end`, so identity finds it. A
+        // failed turn in a session that was never written has nothing to edit, which is fine:
+        // there is no file for a resume to put it back from.
+        $entryId = $this->store?->entryOf($last);
+
+        if ($entryId !== null) {
+            $this->store?->appendContextEdit($entryId, null);
         }
     }
 

@@ -14,6 +14,7 @@ use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\ContextEdit;
 use Pig\CodingAgent\Session\CustomEntry;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionManager;
@@ -104,7 +105,8 @@ final class PiFormatTest extends TestCase
         $header = self::linesOf($session->path)[0];
 
         $this->assertSame('session', $header['type']);
-        $this->assertSame(2, $header['version']);
+        // pi's *current* version, which is what this file is a copy of: 3 since `context_edit`.
+        $this->assertSame(3, $header['version']);
         $this->assertSame('/some/project', $header['cwd']);
 
         // An ISO string, not milliseconds. pi parses it with `new Date(...)`.
@@ -632,7 +634,7 @@ final class PiFormatTest extends TestCase
         // Rewritten, because pi rewrites it on its next start: converging on one shape rather than
         // leaving a file that pig appends v2 entries to and pi then re-ids from top to bottom,
         // flattening whatever branches pig made in between.
-        $this->assertSame(2, $lines[0]['version']);
+        $this->assertSame(3, $lines[0]['version']);
         $this->assertIsString($lines[1]['id']);
         $this->assertNull($lines[1]['parentId']);
         $this->assertSame($lines[1]['id'], $lines[2]['parentId']);
@@ -756,5 +758,147 @@ final class PiFormatTest extends TestCase
         $this->assertCount(1, $notes);
         $this->assertInstanceOf(CustomEntry::class, $notes[0]);
         $this->assertSame(['level' => 'full'], $notes[0]->data);
+    }
+
+    // ---- pi's v3: context_edit ---------------------------------------------------------------
+
+    private static function textOf(mixed $message): string
+    {
+        $text = '';
+
+        foreach ($message->content ?? [] as $block) {
+            if ($block instanceof TextContent) {
+                $text .= $block->text;
+            }
+        }
+
+        return $text;
+    }
+
+    /** @return list<string> a pi v3 file: a question, an answer, a tool result, a second answer */
+    private static function v3Lines(string ...$extra): array
+    {
+        return [
+            json_encode(['type' => 'session', 'version' => 3, 'id' => 'abc', 'timestamp' => '2026-01-02T21:29:30.123Z', 'cwd' => '/p']),
+            json_encode(['type' => 'message', 'id' => 'aaaaaaaa', 'parentId' => null, 'timestamp' => '2026-01-02T21:29:31.000Z', 'message' => ['role' => 'user', 'content' => [['type' => 'text', 'text' => 'read it']]]]),
+            json_encode(['type' => 'message', 'id' => 'bbbbbbbb', 'parentId' => 'aaaaaaaa', 'timestamp' => '2026-01-02T21:29:32.000Z', 'message' => ['role' => 'assistant', 'content' => [['type' => 'toolCall', 'id' => 'call_1', 'name' => 'read', 'arguments' => ['path' => 'big.log']]], 'api' => 'anthropic-messages', 'provider' => 'anthropic', 'model' => 'claude', 'usage' => [], 'stopReason' => 'toolUse']]),
+            json_encode(['type' => 'message', 'id' => 'cccccccc', 'parentId' => 'bbbbbbbb', 'timestamp' => '2026-01-02T21:29:33.000Z', 'message' => ['role' => 'toolResult', 'toolCallId' => 'call_1', 'toolName' => 'read', 'content' => [['type' => 'text', 'text' => str_repeat('a very long log line ', 50)]], 'isError' => false]]),
+            json_encode(['type' => 'message', 'id' => 'dddddddd', 'parentId' => 'cccccccc', 'timestamp' => '2026-01-02T21:29:34.000Z', 'message' => ['role' => 'assistant', 'content' => [['type' => 'text', 'text' => 'it says hello']], 'api' => 'anthropic-messages', 'provider' => 'anthropic', 'model' => 'claude', 'usage' => [], 'stopReason' => 'stop']]),
+            ...$extra,
+        ];
+    }
+
+    private function openV3(string ...$extra): SessionManager
+    {
+        $path = $this->home . '/v3.jsonl';
+        mkdir(dirname($path), 0o755, true);
+        file_put_contents($path, implode("\n", self::v3Lines(...$extra)) . "\n");
+
+        return SessionManager::open($path);
+    }
+
+    public function testAContextEditWithNullOmitsItsTargetFromTheModelAndFromNowhereElse(): void
+    {
+        $session = $this->openV3(
+            json_encode(['type' => 'context_edit', 'id' => 'eeeeeeee', 'parentId' => 'dddddddd', 'timestamp' => '2026-01-02T21:29:35.000Z', 'targetId' => 'cccccccc', 'replacement' => null]),
+        );
+
+        $messages = $session->messages();
+
+        // The tool result pi pruned is not in what the model is shown...
+        $this->assertCount(3, $messages);
+        $this->assertSame(['read it', '', 'it says hello'], array_map(self::textOf(...), $messages));
+
+        // ...and is still in the file, in the tree and in the money.
+        $results = array_filter($session->everyMessage(), static fn ($m) => $m instanceof \Pig\Ai\ToolResultMessage);
+        $this->assertCount(1, $results);
+        $this->assertNotNull($session->entry('cccccccc'));
+        $this->assertSame('eeeeeeee', $session->leaf(), 'the edit is an ordinary entry the next message hangs off');
+    }
+
+    public function testAContextEditWithAStringReplacesTheContentAndKeepsTheRole(): void
+    {
+        $session = $this->openV3(
+            json_encode(['type' => 'context_edit', 'id' => 'eeeeeeee', 'parentId' => 'dddddddd', 'timestamp' => '2026-01-02T21:29:35.000Z', 'targetId' => 'cccccccc', 'replacement' => '[log pruned: 50 lines]']),
+        );
+
+        $messages = $session->messages();
+
+        $this->assertCount(4, $messages);
+        $this->assertInstanceOf(\Pig\Ai\ToolResultMessage::class, $messages[2]);
+        $this->assertSame('call_1', $messages[2]->toolCallId, 'the result still answers its call');
+        $this->assertSame('[log pruned: 50 lines]', self::textOf($messages[2]));
+    }
+
+    public function testTheLatestEditOnTheBranchWinsAndOneOnAnotherBranchDoesNot(): void
+    {
+        $session = $this->openV3(
+            // Two edits of the same target on the live branch: the later one is what counts.
+            json_encode(['type' => 'context_edit', 'id' => 'eeeeeeee', 'parentId' => 'dddddddd', 'timestamp' => '2026-01-02T21:29:35.000Z', 'targetId' => 'cccccccc', 'replacement' => null]),
+            json_encode(['type' => 'context_edit', 'id' => 'ffffffff', 'parentId' => 'eeeeeeee', 'timestamp' => '2026-01-02T21:29:36.000Z', 'targetId' => 'cccccccc', 'replacement' => 'second thoughts']),
+            // And one hanging off the first answer — a branch that was walked away from.
+            json_encode(['type' => 'context_edit', 'id' => '99999999', 'parentId' => 'bbbbbbbb', 'timestamp' => '2026-01-02T21:29:37.000Z', 'targetId' => 'aaaaaaaa', 'replacement' => null]),
+        );
+
+        // The file's last line is on the abandoned branch, so put the leaf back on the live one.
+        $session->goTo('ffffffff');
+        $messages = $session->messages();
+
+        $this->assertSame(['read it', '', 'second thoughts', 'it says hello'], array_map(self::textOf(...), $messages));
+
+        // Walking back onto the other branch, the question is omitted there — and the result is
+        // not on that branch at all, so neither edit of it has anything to apply to.
+        $session->goTo('99999999');
+        $this->assertSame([''], array_map(self::textOf(...), $session->messages()));
+    }
+
+    public function testAnEditIsWrittenInPisShapeAndReadBack(): void
+    {
+        $store = SessionManager::create('/p');
+        $store->append(new UserMessage('q'));
+        $store->append(new AssistantMessage([new TextContent('a')], Api::AnthropicMessages, 'anthropic', 'm', new Usage(), StopReason::Stop));
+        $target = $store->leaf();
+        $store->appendContextEdit($target, null);
+
+        $lines = array_values(array_filter(explode("\n", (string) file_get_contents($store->path))));
+        $edit = json_decode($lines[count($lines) - 1], true);
+
+        $this->assertSame('context_edit', $edit['type']);
+        $this->assertSame($target, $edit['targetId']);
+        $this->assertArrayHasKey('replacement', $edit, 'null is written, not left out: pi reads the key');
+        $this->assertNull($edit['replacement']);
+        $this->assertSame(3, json_decode($lines[0], true)['version'], 'what pig writes is v3');
+
+        $reopened = SessionManager::open($store->path);
+        $this->assertInstanceOf(ContextEdit::class, $reopened->entry($reopened->leaf())['message']);
+        $this->assertSame(['q'], array_map(self::textOf(...), $reopened->messages()));
+
+        // An id nothing has is refused, as a label on one is.
+        $this->expectException(\Pig\Agent\AgentError::class);
+        $store->appendContextEdit('nope', null);
+    }
+
+    public function testAV2FileIsBroughtToV3WithoutReIdingAnything(): void
+    {
+        $path = $this->home . '/v2.jsonl';
+        mkdir(dirname($path), 0o755, true);
+        file_put_contents($path, implode("\n", [
+            json_encode(['type' => 'session', 'version' => 2, 'id' => 'abc', 'timestamp' => '2026-01-02T21:29:30.123Z', 'cwd' => '/p']),
+            json_encode(['type' => 'message', 'id' => 'aaaaaaaa', 'parentId' => null, 'timestamp' => '2026-01-02T21:29:31.000Z', 'message' => ['role' => 'user', 'content' => [['type' => 'text', 'text' => 'from pi']]]]),
+            json_encode(['type' => 'message', 'id' => 'hhhhhhhh', 'parentId' => 'aaaaaaaa', 'timestamp' => '2026-01-02T21:29:32.000Z', 'message' => ['role' => 'hookMessage', 'customType' => 'note', 'content' => [['type' => 'text', 'text' => 'from a hook']]]]),
+            json_encode(['type' => 'message', 'id' => 'cccccccc', 'parentId' => 'hhhhhhhh', 'timestamp' => '2026-01-02T21:29:33.000Z', 'message' => ['role' => 'assistant', 'content' => [['type' => 'text', 'text' => 'answered']], 'api' => 'anthropic-messages', 'provider' => 'anthropic', 'model' => 'claude', 'usage' => [], 'stopReason' => 'stop']]),
+        ]) . "\n");
+
+        SessionManager::open($path);
+
+        $lines = array_values(array_filter(explode("\n", (string) file_get_contents($path))));
+        $rows = array_map(static fn (string $l): array => json_decode($l, true), $lines);
+
+        // pi's `migrateV2ToV3()`: the header and the one rename, and nothing else moves — the v1
+        // path re-ids every line, and a v2 file already has its tree.
+        $this->assertSame(3, $rows[0]['version']);
+        $this->assertSame(['aaaaaaaa', 'hhhhhhhh', 'cccccccc'], array_column(array_slice($rows, 1), 'id'));
+        $this->assertSame([null, 'aaaaaaaa', 'hhhhhhhh'], array_column(array_slice($rows, 1), 'parentId'));
+        $this->assertSame('custom', $rows[2]['message']['role']);
     }
 }

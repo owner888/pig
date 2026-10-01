@@ -15,7 +15,7 @@ use Pig\Ai\Timestamp;
  * of their own with its own `type`, and two of them are not part of the conversation at all.
  *
  * ```
- *   {"type":"session","version":2,"id":"…","timestamp":"2026-01-02T21:29:30.123Z","cwd":"…"}
+ *   {"type":"session","version":3,"id":"…","timestamp":"2026-01-02T21:29:30.123Z","cwd":"…"}
  *   {"type":"message","id":"a1b2c3d4","parentId":null,"timestamp":"…","message":{"role":"user",…}}
  *   {"type":"compaction","id":"…","parentId":"…","timestamp":"…","summary":"…","firstKeptEntryId":"…"}
  * ```
@@ -73,6 +73,18 @@ final class SessionEntries
                 'type' => 'session_info',
                 ...$base,
                 'name' => $item->name,
+            ];
+        }
+
+        if ($item instanceof ContextEdit) {
+            return [
+                'type' => 'context_edit',
+                ...$base,
+                'targetId' => $item->targetId,
+                // Null is omission and is written as null, not left out: pi reads the key.
+                'replacement' => is_array($item->replacement)
+                    ? SessionCodec::encodeContent($item->replacement)
+                    : $item->replacement,
             ];
         }
 
@@ -181,6 +193,16 @@ final class SessionEntries
             'custom' => new CustomEntry(
                 (string) ($line['customType'] ?? ''),
                 $line['data'] ?? null,
+                $at,
+            ),
+
+            'context_edit' => new ContextEdit(
+                (string) ($line['targetId'] ?? ''),
+                match (true) {
+                    is_string($line['replacement'] ?? null) => $line['replacement'],
+                    is_array($line['replacement'] ?? null) => SessionCodec::decodeContent(self::contentOf($line['replacement'])),
+                    default => null,
+                },
                 $at,
             ),
 

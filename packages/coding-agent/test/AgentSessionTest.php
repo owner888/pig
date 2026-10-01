@@ -843,6 +843,38 @@ final class AgentSessionTest extends TestCase
         }
     }
 
+    public function testAFailedTurnTakenOffTheStateStaysOffItWhenTheSessionIsResumed(): void
+    {
+        $store = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([['error' => 'Anthropic returned 503: overloaded'], 'here you go']),
+            store: $store,
+            settings: self::quickRetries(),
+        );
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+
+        // The file is the record: the failed turn is still in it, and so is the line saying the
+        // model is not to be shown it — upstream's `_omitRecoveryAttempt()`. Before this the message
+        // was taken off the agent's state and nothing was written, so a `--resume` put it back.
+        $lines = array_values(array_filter(explode("\n", (string) file_get_contents($store->path))));
+        $this->assertStringContainsString('"type":"context_edit"', implode("\n", $lines));
+        $this->assertStringContainsString('503', implode("\n", $lines), 'the failure is still in the file');
+
+        $reopened = SessionManager::open($store->path)->messages();
+        $this->assertCount(2, $reopened);
+
+        foreach ($reopened as $message) {
+            $this->assertStringNotContainsString('503', self::textOf($message));
+        }
+
+        $this->assertSame('here you go', self::textOf($reopened[1]));
+    }
+
     public function testItGivesUpAfterTheAttemptsRunOut(): void
     {
         $session = $this->session(
