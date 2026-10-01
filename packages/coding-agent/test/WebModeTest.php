@@ -272,6 +272,59 @@ final class WebModeTest extends TestCase
         }
     }
 
+    public function testTheAccountsPanelReadsAndMovesTheStoreThroughAuth(): void
+    {
+        $port = 28094;
+        $home = $this->cwd . '-home';
+        mkdir($home, 0o700, true);
+        file_put_contents($home . '/auth.json', '{}');
+        file_put_contents($home . '/antigravity-accounts.json', json_encode([
+            'version' => 1,
+            'activeAccountId' => 'first@example',
+            'accounts' => [
+                'first@example' => ['refresh' => 'ref-1', 'access' => 'acc-1', 'expires' => 9_000_000_000_000, 'email' => 'first@example'],
+                'second@example' => ['refresh' => 'ref-2', 'access' => 'acc-2', 'expires' => 1_000, 'email' => 'second@example'],
+            ],
+        ]));
+        $auth = new \Pig\CodingAgent\Auth($home . '/auth.json');
+        $server = new HttpServer($this->session(), $port, auth: $auth);
+
+        try {
+            Async::run(function () use ($server, $port, $auth) {
+                $server->start();
+                $http = new HttpClient(2.0);
+                $base = "http://127.0.0.1:{$port}";
+                $post = static fn (string $path, array $body) => new Request('POST', $base . $path, ['Content-Type' => 'application/json'], json_encode($body));
+
+                $list = json_decode($http->follow(new Request('GET', "{$base}/api/accounts"))->body->all(), true);
+                $this->assertTrue($list['ok']);
+                $this->assertSame(['first@example', 'second@example'], array_column($list['accounts'], 'email'));
+                $this->assertSame([true, false], array_column($list['accounts'], 'active'));
+                $this->assertSame(1_000, $list['accounts'][1]['expires'], 'milliseconds, as the file has them');
+
+                $used = $http->follow($post('/api/accounts/activate', ['id' => 'second@example']));
+                $this->assertSame(200, $used->status);
+                $this->assertSame('acc-2', $auth->credentials(\Pig\Ai\Utils\Oauth\Provider::Antigravity)?->access, 'auth.json moved with the store');
+                $this->assertSame([false, true], array_column(json_decode($used->body->all(), true)['accounts'], 'active'), 'and the answer is already the new list');
+
+                $rotated = $http->follow($post('/api/accounts/rotate', []));
+                $this->assertSame(200, $rotated->status);
+                $this->assertSame('acc-1', $auth->credentials(\Pig\Ai\Utils\Oauth\Provider::Antigravity)?->access);
+
+                $missing = $http->follow($post('/api/accounts/remove', ['id' => 'nobody@example']));
+                $this->assertSame(400, $missing->status);
+
+                $removed = $http->follow($post('/api/accounts/remove', ['id' => 'first@example']));
+                $this->assertSame(200, $removed->status);
+                $this->assertSame('acc-2', $auth->credentials(\Pig\Ai\Utils\Oauth\Provider::Antigravity)?->access, 'removing the live one makes the other live');
+
+                $server->stop();
+            });
+        } finally {
+            $this->rmrf($home);
+        }
+    }
+
     public function testWebModelSwitchDoesNotOverwriteDefaultSettings(): void
     {
         $port = 28091;

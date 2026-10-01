@@ -125,11 +125,7 @@ return function (ExtensionApi $pi): void {
                     return;
                 }
 
-                $accounts->activate($foundId);
-                $active = $accounts->active();
-                if ($active !== null) {
-                    $auth->setCredentials(Provider::Antigravity, $active);
-                }
+                $auth->activateAntigravityAccount($foundId);
                 $emit($ctx, "Active Antigravity account: {$foundId}", 'info');
                 return;
             }
@@ -157,13 +153,7 @@ return function (ExtensionApi $pi): void {
                     return;
                 }
 
-                $accounts->remove($foundId);
-                $active = $accounts->active();
-                if ($active !== null) {
-                    $auth->setCredentials(Provider::Antigravity, $active);
-                } else {
-                    $auth->remove(Provider::Antigravity->value);
-                }
+                $auth->removeAntigravityAccount($foundId);
                 $emit($ctx, "Antigravity account removed: {$foundId}", 'info');
                 return;
             }

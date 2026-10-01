@@ -234,7 +234,7 @@ final class Auth
      * only read once. Null path — `--no-save`, a test — gets a store that reads and writes
      * nothing, which is what `Accounts::beside(null)` is.
      */
-    private function accounts(): Accounts
+    public function accounts(): Accounts
     {
         return $this->accounts ??= Accounts::beside($this->path);
     }
@@ -282,6 +282,53 @@ final class Auth
         }
 
         return $newActive;
+    }
+
+    /**
+     * Make one of the stored Antigravity accounts the active one, in both files at once.
+     *
+     * `rotateAntigravityAccount()`'s sibling, and the one rule all three share: the store is
+     * changed and `auth.json`'s `antigravity` entry is rewritten to match, because that entry is
+     * a copy of the active account and two files that disagree about which account is in use is
+     * exactly the state `Accounts`' docblock describes as the thing to avoid.
+     */
+    public function activateAntigravityAccount(string $id): ?Credentials
+    {
+        $accounts = $this->accounts();
+
+        if (!isset($accounts->accounts()[$id])) {
+            return null;
+        }
+
+        $accounts->activate($id);
+        $active = $accounts->active();
+
+        if ($active !== null) {
+            $this->setCredentials(Provider::Antigravity, $active);
+        }
+
+        return $active;
+    }
+
+    /** Forget one; if it was the active one, whichever is left becomes active — or nothing is. */
+    public function removeAntigravityAccount(string $id): bool
+    {
+        $accounts = $this->accounts();
+
+        if (!isset($accounts->accounts()[$id])) {
+            return false;
+        }
+
+        $accounts->remove($id);
+        $active = $accounts->active();
+
+        if ($active !== null) {
+            $this->setCredentials(Provider::Antigravity, $active);
+        } else {
+            $this->remove(Provider::Antigravity->value);
+        }
+
+        return true;
     }
 
     public function setApiKey(string $provider, string $key): void

@@ -63,7 +63,7 @@ final class HttpServer
 
     private int $nextConnectionId = 0;
     private bool $isRunning = false;
-    private ?Auth $auth = null;
+    private readonly Auth $auth;
 
     public function __construct(
         private readonly AgentSession $session,
@@ -434,6 +434,15 @@ final class HttpServer
         }
 
         // 10.3 System health doctor inspection
+        // 10.3c Antigravity accounts: the several Google sign-ins the extension keeps, which one is
+        // live, and the active one's quota. Every write goes through `Auth`, so the store and
+        // `auth.json` move together — the same methods `/antigravity.accounts` uses.
+        if (str_starts_with($path, '/api/accounts')) {
+            $this->handleAccounts($conn, $path, $req);
+
+            return;
+        }
+
         if ($path === '/api/doctor') {
             $report = Doctor::inspect($this->session, $this->auth);
 
@@ -788,7 +797,7 @@ final class HttpServer
     /** @return list<array<string, mixed>> */
     private function getModelsPayload(): array
     {
-        $models = $this->auth?->availableModels() ?? Models::all();
+        $models = $this->auth->availableModels();
 
         return array_values(array_map(static fn ($m) => [
             'id' => $m->id,
@@ -800,6 +809,108 @@ final class HttpServer
             'contextWindow' => $m->contextWindow,
             'maxTokens' => $m->maxTokens,
         ], $models));
+    }
+
+    /** @param array{method: string, body: string, query: array<string, string>} $req */
+    private function handleAccounts(Connection $conn, string $path, array $req): void
+    {
+        $headers = ['Content-Type' => 'application/json', 'Access-Control-Allow-Origin' => '*'];
+        $json = static fn (array $data): string => (string) json_encode($data);
+
+        if ($path === '/api/accounts' && $req['method'] === 'GET') {
+            $conn->sendResponse(200, $headers, $json($this->accountsPayload()));
+
+            return;
+        }
+
+        if ($path === '/api/accounts/usage' && $req['method'] === 'GET') {
+            if ($this->auth->credentials(\Pig\Ai\Utils\Oauth\Provider::Antigravity) === null) {
+                $conn->sendResponse(404, $headers, $json(['ok' => false, 'error' => 'No Antigravity account is signed in.']));
+
+                return;
+            }
+
+            // A network call, so answered from a fiber: the loop keeps serving the page meanwhile.
+            // The token comes through `apiKey()` and not `credentials()`, because only the first
+            // renews one that has expired — and the stored one usually has, which is a 401 from
+            // the quota endpoint that reads as the account being broken.
+            Async::spawn(function () use ($conn, $headers, $json): void {
+                try {
+                    $decoded = json_decode((string) $this->auth->apiKey(\Pig\Ai\Utils\Oauth\Provider::Antigravity->value), true);
+                    $token = is_array($decoded) ? (string) ($decoded['token'] ?? '') : '';
+                    $project = is_array($decoded) ? ($decoded['projectId'] ?? null) : null;
+                    $usage = (new \Pig\CodingAgent\Antigravity\QuotaClient())->fetchUsage($token, is_string($project) ? $project : null);
+                    $conn->sendResponse(200, $headers, $json(['ok' => true, 'usage' => $usage]));
+                } catch (Throwable $e) {
+                    $conn->sendResponse(502, $headers, $json(['ok' => false, 'error' => $e->getMessage()]));
+                }
+            });
+
+            return;
+        }
+
+        if ($req['method'] !== 'POST') {
+            $conn->sendResponse(405, $headers, $json(['ok' => false, 'error' => 'POST only.']));
+
+            return;
+        }
+
+        $data = json_decode($req['body'], true);
+        $id = is_array($data) ? (string) ($data['id'] ?? '') : '';
+
+        try {
+            $result = match ($path) {
+                '/api/accounts/activate' => $this->auth->activateAntigravityAccount($id) !== null
+                    ? ['ok' => true]
+                    : ['ok' => false, 'error' => "No account called '{$id}'."],
+                '/api/accounts/remove' => $this->auth->removeAntigravityAccount($id)
+                    ? ['ok' => true]
+                    : ['ok' => false, 'error' => "No account called '{$id}'."],
+                '/api/accounts/rotate' => $this->auth->rotateAntigravityAccount() !== null
+                    ? ['ok' => true]
+                    : ['ok' => false, 'error' => 'Only one Antigravity account; nothing to rotate to.'],
+                default => null,
+            };
+        } catch (Throwable $e) {
+            $conn->sendResponse(500, $headers, $json(['ok' => false, 'error' => $e->getMessage()]));
+
+            return;
+        }
+
+        if ($result === null) {
+            $conn->sendResponse(404, $headers, $json(['ok' => false, 'error' => 'No such endpoint.']));
+
+            return;
+        }
+
+        $conn->sendResponse($result['ok'] ? 200 : 400, $headers, $json([...$result, ...$this->accountsPayload()]));
+    }
+
+    /** @return array<string, mixed> */
+    private function accountsPayload(): array
+    {
+        $accounts = $this->auth->accounts();
+        $rows = [];
+
+        foreach ($accounts->accounts() as $id => $entry) {
+            $expires = is_int($entry['expires'] ?? null) ? $entry['expires'] : null;
+            $rows[] = [
+                'id' => (string) $id,
+                'email' => is_string($entry['email'] ?? null) ? $entry['email'] : (string) $id,
+                'projectId' => is_string($entry['projectId'] ?? null) ? $entry['projectId'] : null,
+                // Milliseconds since the epoch, as `Credentials::$expires` and the file have it.
+                'expires' => $expires,
+                'active' => (string) $id === $accounts->activeId(),
+            ];
+        }
+
+        return [
+            'ok' => true,
+            'accounts' => $rows,
+            'activeId' => $accounts->activeId(),
+            'path' => $accounts->path(),
+            'problems' => $accounts->problems(),
+        ];
     }
 
     /** The first thing said in this conversation, as a tab label when nobody named it. */

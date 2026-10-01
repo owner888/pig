@@ -198,6 +198,63 @@
       color: #fff;
     }
 
+    /* Accounts panel: the Antigravity sign-ins, which one is live, and its quota */
+    .modal-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.55);
+      display: flex; align-items: flex-start; justify-content: center;
+      padding-top: 8vh;
+      z-index: 200;
+    }
+    .modal {
+      width: min(640px, 92vw);
+      max-height: 80vh;
+      overflow: auto;
+      background: var(--bg-sidebar);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      font-size: 13px;
+    }
+    .modal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+    }
+    .modal-close { cursor: pointer; color: var(--text-dim); font-size: 18px; line-height: 1; }
+    .modal-close:hover { color: var(--text); }
+    .modal-body { padding: 12px 16px 16px; }
+    .modal-section { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin: 14px 0 6px; }
+    .account-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+    }
+    .account-row:hover { background: rgba(255,255,255,0.03); }
+    .account-row.active { border-color: rgba(56,189,248,0.4); background: rgba(56,189,248,0.06); }
+    .account-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
+    .account-row.active .account-dot { background: #38bdf8; }
+    .account-email { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .account-meta { color: var(--text-dim); font-size: 11px; font-family: var(--font-mono); white-space: nowrap; }
+    .account-meta.expired { color: #f87171; }
+    .mini-btn {
+      background: #182232; border: 1px solid var(--border); color: var(--text-muted);
+      border-radius: 5px; padding: 3px 9px; font-size: 11px; cursor: pointer;
+    }
+    .mini-btn:hover { color: var(--text); border-color: #334155; }
+    .mini-btn.danger:hover { color: #f87171; border-color: rgba(248,113,113,0.5); }
+    .quota-group { margin-bottom: 10px; }
+    .quota-group-name { font-weight: 600; margin-bottom: 4px; }
+    .quota-row { display: grid; grid-template-columns: 1fr 140px 56px; gap: 10px; align-items: center; padding: 3px 0; color: var(--text-muted); }
+    .quota-bar { height: 6px; background: #182232; border-radius: 3px; overflow: hidden; }
+    .quota-bar > div { height: 100%; background: #38bdf8; }
+    .quota-bar.low > div { background: #fbbf24; }
+    .quota-bar.empty > div { background: #f87171; }
+    .quota-pct { text-align: right; font-family: var(--font-mono); font-size: 11px; }
+    .quota-reset { color: var(--text-dim); font-size: 11px; }
+
     /* Session tabs: the conversations opened in this browser, the live one highlighted */
     .session-tabs {
       display: flex;
@@ -666,7 +723,10 @@
         <span id="cwd-display" class="path-cwd">~</span>
         <span id="filename-display" class="path-file">Loading session...</span>
       </div>
-      <button id="toggle-sidebar" class="toggle-sidebar-btn" title="Toggle Sidebar">‹</button>
+      <div style="display:flex; gap:8px;">
+        <button id="accounts-btn" class="toggle-sidebar-btn" title="Accounts &amp; quota" style="width:auto; padding:0 10px; font-size:12px;">accounts</button>
+        <button id="toggle-sidebar" class="toggle-sidebar-btn" title="Toggle Sidebar">‹</button>
+      </div>
     </div>
     <div id="session-tabs" class="session-tabs"></div>
     <div id="status-banner" class="status-banner" style="display:none;"></div>
@@ -1277,6 +1337,14 @@
         return;
       }
 
+      // The accounts panel is this page's answer to /antigravity.accounts
+      if (text === "/accounts" || text === "/antigravity.accounts") {
+        promptInput.value = "";
+        promptInput.style.height = "38px";
+        openAccounts();
+        return;
+      }
+
       // Intercept /bug command in Web UI
       if (text === "/bug" || text.startsWith("/bug ")) {
         appendUserMessage(text);
@@ -1409,6 +1477,172 @@
       } catch (err) {}
     }
 
+    // ---- accounts panel -----------------------------------------------------------------
+    //
+    // The Antigravity sign-ins `antigravity-accounts.json` keeps: which one is live, when each
+    // token runs out, and the live one's quota pools. Every button is an endpoint that goes
+    // through `Auth`, so the store and `auth.json` move together exactly as `/antigravity.accounts`
+    // moves them. Nothing here is cached: the panel re-asks every time it opens or changes.
+    const accountsBtn = document.getElementById("accounts-btn");
+    let accountsModal = null;
+
+    function closeAccounts() {
+      if (accountsModal) { accountsModal.remove(); accountsModal = null; }
+    }
+
+    async function openAccounts() {
+      closeAccounts();
+      accountsModal = document.createElement("div");
+      accountsModal.className = "modal-backdrop";
+      accountsModal.addEventListener("click", (e) => { if (e.target === accountsModal) closeAccounts(); });
+      accountsModal.innerHTML = `
+        <div class="modal">
+          <div class="modal-header">
+            <span>Antigravity accounts</span>
+            <span style="display:flex; gap:8px; align-items:center;">
+              <button class="mini-btn" id="accounts-rotate" title="Switch to the next account">rotate</button>
+              <button class="mini-btn" id="accounts-refresh" title="Fetch quota again">refresh</button>
+              <span class="modal-close" id="accounts-close">×</span>
+            </span>
+          </div>
+          <div class="modal-body">
+            <div id="accounts-list"><span style="color:var(--text-dim)">Loading…</span></div>
+            <div class="modal-section">Quota — active account</div>
+            <div id="accounts-usage"><span style="color:var(--text-dim)">Fetching…</span></div>
+          </div>
+        </div>`;
+      document.body.appendChild(accountsModal);
+      document.getElementById("accounts-close").addEventListener("click", closeAccounts);
+      document.getElementById("accounts-refresh").addEventListener("click", () => { loadAccounts(); loadUsage(); });
+      document.getElementById("accounts-rotate").addEventListener("click", () => accountAction("/api/accounts/rotate", {}));
+      await loadAccounts();
+      loadUsage();
+    }
+
+    function expiryLabel(ms) {
+      if (!ms) return "";
+      const left = ms - Date.now();
+      if (left <= 0) return "token expired";
+      const m = Math.round(left / 60000);
+      return m < 60 ? `token ${m}m left` : `token ${Math.round(m / 60)}h left`;
+    }
+
+    function renderAccounts(d) {
+      const list = document.getElementById("accounts-list");
+      if (!list) return;
+      list.innerHTML = "";
+      if (!d.ok) {
+        list.innerHTML = `<span style="color:var(--error)">${escapeHtml(d.error || "Could not read accounts")}</span>`;
+        return;
+      }
+      if (!d.accounts || d.accounts.length === 0) {
+        list.innerHTML = `<span style="color:var(--text-dim)">No Antigravity accounts. Run <code>/login antigravity</code> in the terminal.</span>`;
+        return;
+      }
+      for (const a of d.accounts) {
+        const row = document.createElement("div");
+        row.className = "account-row" + (a.active ? " active" : "");
+        const expired = a.expires && a.expires <= Date.now();
+        row.innerHTML = `
+          <span class="account-dot"></span>
+          <span class="account-email" title="${escapeHtml(a.id)}">${escapeHtml(a.email)}</span>
+          <span class="account-meta ${expired ? "expired" : ""}">${escapeHtml(expiryLabel(a.expires))}</span>
+          ${a.active ? `<span class="account-meta">active</span>` : `<button class="mini-btn act-use">use</button>`}
+          <button class="mini-btn danger act-remove" title="Forget this account">remove</button>`;
+        const use = row.querySelector(".act-use");
+        if (use) use.addEventListener("click", () => accountAction("/api/accounts/activate", { id: a.id }));
+        row.querySelector(".act-remove").addEventListener("click", () => {
+          if (confirm(`Forget ${a.email}? Its tokens are removed from this machine.`)) accountAction("/api/accounts/remove", { id: a.id });
+        });
+        list.appendChild(row);
+      }
+      for (const p of d.problems || []) {
+        const line = document.createElement("div");
+        line.style.cssText = "color:var(--error); font-size:11px; margin-top:6px;";
+        line.textContent = p;
+        list.appendChild(line);
+      }
+    }
+
+    async function loadAccounts() {
+      try {
+        const res = await fetch("/api/accounts");
+        renderAccounts(await res.json());
+      } catch (e) {
+        renderAccounts({ ok: false, error: "Could not reach pig." });
+      }
+    }
+
+    async function accountAction(url, body) {
+      try {
+        const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const d = await res.json();
+        if (!d.ok) appendErrorMessage(d.error || "Account change failed.");
+        renderAccounts(d);
+        loadUsage();
+        refreshState();
+      } catch (e) {
+        appendErrorMessage("Account change failed.");
+      }
+    }
+
+    function resetLabel(iso) {
+      if (!iso) return "";
+      const t = Date.parse(iso);
+      if (isNaN(t)) return iso;
+      const left = t - Date.now();
+      if (left <= 0) return "resets now";
+      const m = Math.round(left / 60000);
+      if (m < 60) return `resets in ${m}m`;
+      const h = Math.floor(m / 60);
+      return h < 48 ? `resets in ${h}h ${m % 60}m` : `resets in ${Math.round(h / 24)}d`;
+    }
+
+    async function loadUsage() {
+      const box = document.getElementById("accounts-usage");
+      if (!box) return;
+      box.innerHTML = `<span style="color:var(--text-dim)">Fetching…</span>`;
+      try {
+        const res = await fetch("/api/accounts/usage");
+        const d = await res.json();
+        if (!document.getElementById("accounts-usage")) return;
+        if (!d.ok) { box.innerHTML = `<span style="color:var(--error)">${escapeHtml(d.error || "Quota unavailable")}</span>`; return; }
+        const u = d.usage;
+        box.innerHTML = "";
+        if (u.planLabel) {
+          const plan = document.createElement("div");
+          plan.style.cssText = "color:var(--text-muted); margin-bottom:8px;";
+          plan.textContent = u.planLabel;
+          box.appendChild(plan);
+        }
+        if (!u.groups || u.groups.length === 0) {
+          box.innerHTML += `<span style="color:var(--text-dim)">${escapeHtml(u.quotaError || "No quota groups returned.")}</span>`;
+          return;
+        }
+        for (const g of u.groups) {
+          const el = document.createElement("div");
+          el.className = "quota-group";
+          el.innerHTML = `<div class="quota-group-name">${escapeHtml(g.displayName)}</div>`;
+          for (const b of g.buckets) {
+            const pct = Math.max(0, Math.min(100, Math.round(b.remainingFraction * 100)));
+            const cls = pct === 0 ? "empty" : pct < 20 ? "low" : "";
+            el.innerHTML += `
+              <div class="quota-row">
+                <span>${escapeHtml(b.displayName)} <span class="quota-reset">${escapeHtml(resetLabel(b.resetTime))}</span></span>
+                <div class="quota-bar ${cls}"><div style="width:${pct}%"></div></div>
+                <span class="quota-pct">${pct}%</span>
+              </div>`;
+          }
+          box.appendChild(el);
+        }
+      } catch (e) {
+        if (box.isConnected) box.innerHTML = `<span style="color:var(--error)">Could not reach pig.</span>`;
+      }
+    }
+
+    accountsBtn.addEventListener("click", openAccounts);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && accountsModal) closeAccounts(); });
+
     // ---- session tabs -------------------------------------------------------------------
     //
     // The conversations opened in this browser, one tab each, kept in localStorage per server.
@@ -1430,7 +1664,8 @@
     }
 
     function tabLabel(t) {
-      return t.name || t.opening || t.filename || "new session";
+      // Not the filename: a UUID is not a label anybody can tell from the next one.
+      return t.name || t.opening || "new session";
     }
 
     function upsertTab(d) {

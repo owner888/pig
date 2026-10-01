@@ -349,6 +349,11 @@ bin/pig --mode web
 时刻只跑一个会话（终端和网页共用），所以标签页是回到某段对话的入口而不是第二个 agent；终端切到别
 的会话时，网页会跟着切。
 
+**accounts** 按钮（或输入 `/accounts`）打开 `pig-antigravity` 扩展保存的 Antigravity 账号面板：哪个
+Google 账号正在用、每个 token 还剩多久、使用 / 移除 / 轮换，以及当前账号各配额池的剩余与重置时间——
+和 `/antigravity.usage` 打印的是同一组数字。所有改动走的是 `/antigravity.accounts` 同一套代码，所以
+账号库和 `auth.json` 一起动。
+
 二十三条命令——prompt、插话、打断、换模型、压缩上下文、跑一条 shell 命令、在对话树上走、导出——
 回答以终端里画的那同一套流式事件发出来。hook 依然能**问**：问题作为一行 `hook_ui_request` 发出去，
 这次工具调用就停在那儿等宿主回答——和终端里是同一个把戏，换了条传输通道。

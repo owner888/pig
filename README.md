@@ -411,6 +411,12 @@ drawer. The process runs one session at a time (the terminal and the page share 
 a way back to a conversation rather than a second agent; when the terminal moves to another
 session the page follows.
 
+The **accounts** button (or `/accounts`) opens the Antigravity accounts the `pig-antigravity`
+extension keeps: which Google account is live, when each token runs out, use / remove / rotate,
+and the live account's quota pools with their reset times — the same figures `/antigravity.usage`
+prints. Every change goes through the same code as `/antigravity.accounts`, so the store and
+`auth.json` move together.
+
 Twenty-three commands — prompt, steer, abort, switch models, compact, run a shell command,
 walk the conversation tree, export — and the answer arrives as the same streaming events the terminal
 draws. A hook can still **ask**: the question goes out as a `hook_ui_request` line and the tool

@@ -237,6 +237,50 @@ final class AuthTest extends TestCase
         $this->assertSame('acc-2', $current->access);
     }
 
+    private function twoAccounts(): Auth
+    {
+        $auth = $this->given('{}');
+
+        file_put_contents($this->home . '/antigravity-accounts.json', json_encode([
+            'version' => 1,
+            'activeAccountId' => 'first@example',
+            'accounts' => [
+                'first@example' => ['refresh' => 'ref-1', 'access' => 'acc-1', 'expires' => 9_000_000_000_000, 'email' => 'first@example'],
+                'second@example' => ['refresh' => 'ref-2', 'access' => 'acc-2', 'expires' => 9_000_000_000_000, 'email' => 'second@example'],
+            ],
+        ]));
+
+        return $auth;
+    }
+
+    public function testActivatingAnAccountMovesBothFilesTogether(): void
+    {
+        $auth = $this->twoAccounts();
+
+        $active = $auth->activateAntigravityAccount('second@example');
+
+        $this->assertSame('second@example', $active?->email);
+        $this->assertSame('acc-2', $auth->credentials(Provider::Antigravity)?->access, 'auth.json follows the store');
+
+        $store = json_decode((string) file_get_contents($this->home . '/antigravity-accounts.json'), true);
+        $this->assertSame('second@example', $store['activeAccountId']);
+
+        $this->assertNull($auth->activateAntigravityAccount('nobody@example'), 'an id nothing has is refused, not invented');
+    }
+
+    public function testRemovingTheActiveAccountFallsBackToWhatIsLeftAndThenToNothing(): void
+    {
+        $auth = $this->twoAccounts();
+
+        $this->assertTrue($auth->removeAntigravityAccount('first@example'));
+        $this->assertSame('acc-2', $auth->credentials(Provider::Antigravity)?->access, 'the other one is live now');
+
+        $this->assertTrue($auth->removeAntigravityAccount('second@example'));
+        $this->assertNull($auth->credentials(Provider::Antigravity), 'nothing left means signed out, not a stale token');
+
+        $this->assertFalse($auth->removeAntigravityAccount('second@example'));
+    }
+
     public function testThisFileWinsWhenItHasAnAntigravityEntryOfItsOwn(): void
     {
         // A credential that is in `auth.json` is the one both tools are using — the store is
