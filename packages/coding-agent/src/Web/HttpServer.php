@@ -362,6 +362,49 @@ final class HttpServer
             return;
         }
 
+        // 11. Switch model via HTTP POST
+        if ($path === '/api/model' && $req['method'] === 'POST') {
+            $data = json_decode($req['body'], true);
+            $modelId = is_array($data) ? (string) ($data['modelId'] ?? $data['model'] ?? '') : '';
+            $provider = is_array($data) && isset($data['provider']) ? (string) $data['provider'] : null;
+
+            if ($modelId !== '') {
+                try {
+                    $model = Models::get($provider === null ? $modelId : "{$provider}/{$modelId}") ?? Models::get($modelId);
+                    if ($model !== null) {
+                        $this->session->setModel($model);
+                    }
+                } catch (Throwable) {}
+            }
+
+            $conn->sendResponse(200, [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ], json_encode(['ok' => true, 'state' => $this->getStatePayload()]));
+
+            return;
+        }
+
+        // 12. Switch thinking level via HTTP POST
+        if ($path === '/api/thinking' && $req['method'] === 'POST') {
+            $data = json_decode($req['body'], true);
+            $levelStr = is_array($data) ? (string) ($data['level'] ?? '') : '';
+            $level = ThinkingLevel::tryFrom($levelStr);
+
+            if ($level !== null) {
+                try {
+                    $this->session->setThinkingLevel($level);
+                } catch (Throwable) {}
+            }
+
+            $conn->sendResponse(200, [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ], json_encode(['ok' => true, 'state' => $this->getStatePayload()]));
+
+            return;
+        }
+
         $conn->sendResponse(404, ['Content-Type' => 'text/plain'], "Not Found: {$path}");
     }
 
@@ -459,8 +502,12 @@ final class HttpServer
                 $provider = isset($data['provider']) ? (string) $data['provider'] : null;
                 if ($modelId !== '') {
                     try {
-                        $this->session->setModel($modelId, $provider);
-                        $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
+                        $model = Models::get($provider === null ? $modelId : "{$provider}/{$modelId}") ?? Models::get($modelId);
+                        if ($model === null) {
+                            throw new \RuntimeException("No such model: {$provider}/{$modelId}");
+                        }
+                        $this->session->setModel($model);
+                        $conn->send(['id' => $id, 'type' => 'response', 'success' => true, 'state' => $this->getStatePayload()]);
                     } catch (Throwable $e) {
                         $conn->send(['id' => $id, 'type' => 'response', 'success' => false, 'error' => $e->getMessage()]);
                     }

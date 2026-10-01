@@ -532,6 +532,7 @@
     let currentModelId = "";
     let availableModels = [];
     let pendingImages = []; // list of {mimeType: string, data: string, url: string}
+    let userIsInteracting = false;
 
     // Sidebar Toggle
     toggleSidebar.addEventListener("click", () => {
@@ -932,22 +933,29 @@
       try {
         const res = await fetch("/api/state");
         const d = await res.json();
-        cwdDisplay.innerText = d.cwd || "~";
-        filenameDisplay.innerText = d.sessionFile || d.sessionName || "Active Session";
-        telemetryStats.innerText = `↑${formatK(d.tokensIn)} ↓${formatK(d.tokensOut)} $${d.cost} ${d.contextPercent}%/${d.contextWindow}`;
-
-        if (d.provider && (!currentProvider || providerSelect.value !== d.provider)) {
-          currentProvider = d.provider;
-          providerSelect.value = d.provider;
-          updateModelsForProvider(d.provider, d.model);
-        } else if (d.model && (!currentModelId || modelSelect.value !== d.model)) {
-          currentModelId = d.model;
-          modelSelect.value = d.model;
-          updateThinkingLevels(d.model, d.thinkingLevel);
-        } else if (d.thinkingLevel && thinkingSelect.value !== d.thinkingLevel) {
-          thinkingSelect.value = d.thinkingLevel;
-        }
+        applyState(d);
       } catch (err) {}
+    }
+
+    function applyState(d) {
+      if (!d) return;
+      cwdDisplay.innerText = d.cwd || "~";
+      filenameDisplay.innerText = d.sessionFile || d.sessionName || "Active Session";
+      telemetryStats.innerText = `↑${formatK(d.tokensIn)} ↓${formatK(d.tokensOut)} $${d.cost} ${d.contextPercent}%/${d.contextWindow}`;
+
+      if (userIsInteracting) return;
+
+      if (d.provider && availableModels.length > 0 && providerSelect.value !== d.provider) {
+        currentProvider = d.provider;
+        providerSelect.value = d.provider;
+        updateModelsForProvider(d.provider, d.model);
+      } else if (d.model && availableModels.length > 0 && modelSelect.value !== d.model) {
+        currentModelId = d.model;
+        modelSelect.value = d.model;
+        updateThinkingLevels(d.model, d.thinkingLevel);
+      } else if (d.thinkingLevel && thinkingSelect.value !== d.thinkingLevel) {
+        thinkingSelect.value = d.thinkingLevel;
+      }
     }
 
     function formatK(n) {
@@ -1041,7 +1049,7 @@
       sendModelChange();
     });
 
-    thinkingSelect.addEventListener("change", () => {
+    thinkingSelect.addEventListener("change", async () => {
       const level = thinkingSelect.value;
       const msg = {
         type: "set_thinking_level",
@@ -1051,20 +1059,49 @@
       if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(msg));
       }
-      refreshState();
+
+      try {
+        const res = await fetch("/api/thinking", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ level }),
+        });
+        const d = await res.json();
+        if (d && d.state) {
+          applyState(d.state);
+        }
+      } catch (err) {}
     });
 
-    function sendModelChange() {
+    async function sendModelChange() {
+      userIsInteracting = true;
+      const modelId = modelSelect.value;
+      const provider = providerSelect.value;
       const msg = {
         type: "set_model",
-        modelId: modelSelect.value,
-        provider: providerSelect.value,
+        modelId,
+        provider,
       };
 
       if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(msg));
       }
-      refreshState();
+
+      try {
+        const res = await fetch("/api/model", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ modelId, provider }),
+        });
+        const d = await res.json();
+        if (d && d.state) {
+          userIsInteracting = false;
+          applyState(d.state);
+        }
+      } catch (err) {
+      } finally {
+        setTimeout(() => { userIsInteracting = false; }, 300);
+      }
     }
 
     // 1. Level 1: Workspaces/Directories
