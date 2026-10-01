@@ -182,6 +182,7 @@ final class Models
         'claude-sonnet-4-5-20250929' => ['Claude Sonnet 4.5', 1_000_000, 64_000, true, 3.0, 15.0, 0.3, 3.75],
         'claude-sonnet-4-6' => ['Claude Sonnet 4.6', 1_000_000, 128_000, true, 3.0, 15.0, 0.3, 3.75],
         'claude-sonnet-5' => ['Claude Sonnet 5', 1_000_000, 128_000, true, 2.0, 10.0, 0.2, 2.5],
+        'claude-sonnet-5-5' => ['Claude Sonnet 5.5', 1_000_000, 128_000, true, 2.0, 10.0, 0.2, 2.5],
         // <<< generated
     ];
 
@@ -191,7 +192,7 @@ final class Models
     private const array CEREBRAS_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
         'gpt-oss-120b' => ['GPT OSS 120B', 131_072, 40_960, true, false, 0.35, 0.75, 0.0, 0.0],
-        'qwen-3.8-27b' => ['Qwen3.8 27B', 131_072, 40_960, true, true, 0.99, 1.49, 0.0, 0.0],
+        'qwen-3.8-27b' => ['Qwen3.8 27B', 131_072, 40_960, true, true, 0.99, 1.49, 0.99, 0.0],
         // <<< generated
     ];
 
@@ -215,22 +216,21 @@ final class Models
      */
     private const array MISTRAL_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'codestral-latest' => ['Codestral (latest)', 256_000, 4_096, false, false, 0.3, 0.9, 0.0, 0.0],
+        'codestral-latest' => ['Codestral (latest)', 256_000, 4_096, false, false, 0.3, 0.9, 0.03, 0.0],
         'magistral-medium-latest' => ['Magistral Medium (latest)', 128_000, 16_384, true, false, 2.0, 5.0, 0.0, 0.0],
-        'magistral-small' => ['Magistral Small', 128_000, 128_000, true, false, 0.5, 1.5, 0.0, 0.0],
         'ministral-3b-latest' => ['Ministral 3B (latest)', 128_000, 128_000, false, false, 0.04, 0.04, 0.0, 0.0],
         'ministral-8b-latest' => ['Ministral 8B (latest)', 128_000, 128_000, false, false, 0.1, 0.1, 0.0, 0.0],
         'mistral-large-2411' => ['Mistral Large 2.1', 131_072, 16_384, false, false, 2.0, 6.0, 0.0, 0.0],
-        'mistral-large-2512' => ['Mistral Large 3', 262_144, 262_144, false, true, 0.5, 1.5, 0.0, 0.0],
-        'mistral-large-latest' => ['Mistral Large (latest)', 262_144, 262_144, false, true, 0.5, 1.5, 0.0, 0.0],
+        'mistral-large-2512' => ['Mistral Large 3', 262_144, 262_144, false, true, 0.5, 1.5, 0.05, 0.0],
+        'mistral-large-latest' => ['Mistral Large (latest)', 262_144, 262_144, false, true, 0.5, 1.5, 0.05, 0.0],
         'mistral-medium-2505' => ['Mistral Medium 3', 131_072, 131_072, false, true, 0.4, 2.0, 0.0, 0.0],
         'mistral-medium-2508' => ['Mistral Medium 3.1', 262_144, 262_144, false, true, 0.4, 2.0, 0.0, 0.0],
-        'mistral-medium-2604' => ['Mistral Medium 3.5', 262_144, 262_144, true, true, 1.5, 7.5, 0.0, 0.0],
-        'mistral-medium-latest' => ['Mistral Medium (latest)', 262_144, 262_144, true, true, 1.5, 7.5, 0.0, 0.0],
+        'mistral-medium-2604' => ['Mistral Medium 3.5', 262_144, 262_144, true, true, 1.5, 7.5, 0.15, 0.0],
+        'mistral-medium-latest' => ['Mistral Medium (latest)', 262_144, 262_144, true, true, 1.5, 7.5, 0.15, 0.0],
         'mistral-nemo' => ['Mistral Nemo', 128_000, 128_000, false, false, 0.15, 0.15, 0.0, 0.0],
         'mistral-small-2506' => ['Mistral Small 3.2', 128_000, 16_384, false, true, 0.1, 0.3, 0.0, 0.0],
-        'mistral-small-2603' => ['Mistral Small 4', 256_000, 256_000, true, true, 0.15, 0.6, 0.0, 0.0],
-        'mistral-small-latest' => ['Mistral Small (latest)', 256_000, 256_000, true, true, 0.15, 0.6, 0.0, 0.0],
+        'mistral-small-2603' => ['Mistral Small 4', 256_000, 256_000, true, true, 0.15, 0.6, 0.015, 0.0],
+        'mistral-small-latest' => ['Mistral Small (latest)', 256_000, 256_000, true, true, 0.15, 0.6, 0.015, 0.0],
         'open-mistral-7b' => ['Mistral 7B', 8_000, 8_000, false, false, 0.25, 0.25, 0.0, 0.0],
         'open-mixtral-8x22b' => ['Mixtral 8x22B', 64_000, 64_000, false, false, 2.0, 6.0, 0.0, 0.0],
         'open-mixtral-8x7b' => ['Mixtral 8x7B', 32_000, 32_000, false, false, 0.7, 0.7, 0.0, 0.0],
@@ -316,6 +316,7 @@ final class Models
         'gpt-6-astra' => ['GPT-6 Astra', 1_050_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5],
         'gpt-6-luna' => ['GPT-6 Luna', 1_050_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125],
         'gpt-6-sol' => ['GPT-6 Sol', 1_050_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5],
+        'gpt-6.1-sol' => ['GPT-6.1 Sol', 1_050_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5],
         'gpt-daybreak-blue-latest' => ['Daybreak Blue', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0],
         'gpt-daybreak-red-latest' => ['Daybreak Red', 400_000, 128_000, true, true, 12.5, 75.0, 1.25, 15.625],
         'gpt-realtime-2.1' => ['GPT-Realtime-2.1', 128_000, 32_000, true, true, 4.0, 24.0, 0.4, 0.0],
@@ -327,7 +328,11 @@ final class Models
     /**
      * Google's, on the Generative Language API.
      *
-     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float}>
+     * The optional tenth cell is a `thinkingLevelMap`, present only on rows whose endpoint
+     * refuses a level — supplied by the generator's overrides from a measurement, never by
+     * models.dev, which does not know.
+     *
+     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float, 9?: array<string, string|null>}>
      */
     private const array GOOGLE_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
@@ -341,13 +346,13 @@ final class Models
         'gemini-3.1-flash-lite' => ['Gemini 3.1 Flash Lite', 1_048_576, 65_536, true, true, 0.25, 1.5, 0.025, 0.0],
         'gemini-3.1-flash-lite-image' => ['Nano Banana 2 Lite', 65_536, 4_096, true, true, 0.25, 30.0, 0.0, 0.0],
         'gemini-3.1-flash-live-preview' => ['Gemini 3.1 Flash Live Preview', 131_072, 65_536, true, true, 0.75, 4.5, 0.0, 0.0],
-        'gemini-3.1-pro-preview' => ['Gemini 3.1 Pro Preview', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0],
-        'gemini-3.1-pro-preview-customtools' => ['Gemini 3.1 Pro Preview Custom Tools', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0],
+        'gemini-3.1-pro-preview' => ['Gemini 3.1 Pro Preview', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, ['off' => null, 'minimal' => null]],
+        'gemini-3.1-pro-preview-customtools' => ['Gemini 3.1 Pro Preview Custom Tools', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, ['off' => null, 'minimal' => null]],
         'gemini-3.5-flash' => ['Gemini 3.5 Flash', 1_048_576, 65_536, true, true, 1.5, 9.0, 0.15, 0.0],
-        'gemini-3.5-flash-lite' => ['Gemini 3.5 Flash Lite', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0],
+        'gemini-3.5-flash-lite' => ['Gemini 3.5 Flash Lite', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0, ['off' => null]],
         'gemini-3.6-flash' => ['Gemini 3.6 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0],
-        'gemini-3.7-flash' => ['Gemini 3.7 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0],
-        'gemini-3.8-flash' => ['Gemini 3.8 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0],
+        'gemini-3.7-flash' => ['Gemini 3.7 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, ['off' => null, 'minimal' => null]],
+        'gemini-3.8-flash' => ['Gemini 3.8 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, ['off' => null, 'minimal' => null]],
         'gemini-flash-latest' => ['Gemini Flash Latest', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0],
         'gemini-flash-lite-latest' => ['Gemini Flash-Lite Latest', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0],
         'gemma-4-26b-a4b-it' => ['Gemma 4 26B A4B IT', 262_144, 32_768, true, true, 0.0, 0.0, 0.0, 0.0],
@@ -379,6 +384,7 @@ final class Models
         'claude-opus-5.5' => ['Claude Opus 5.5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
         'claude-sonnet-4.6' => ['Claude Sonnet 4.6', Api::OpenAiCompletions, 1_000_000, 32_000, true, true],
         'claude-sonnet-5' => ['Claude Sonnet 5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
+        'claude-sonnet-5.5' => ['Claude Sonnet 5.5', Api::OpenAiCompletions, 1_000_000, 128_000, true, true],
         'gemini-3.5-flash' => ['Gemini 3.5 Flash', Api::OpenAiCompletions, 200_000, 64_000, true, true],
         'gemini-3.6-flash' => ['Gemini 3.6 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
         'gemini-3.7-flash' => ['Gemini 3.7 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
@@ -395,6 +401,7 @@ final class Models
         'gpt-6-astra' => ['GPT-6 Astra', Api::OpenAiCompletions, 1_050_000, 128_000, true, true],
         'gpt-6-luna' => ['GPT-6 Luna', Api::OpenAiCompletions, 1_050_000, 128_000, true, true],
         'gpt-6-sol' => ['GPT-6 Sol', Api::OpenAiCompletions, 1_050_000, 128_000, true, true],
+        'gpt-6.1-sol' => ['GPT-6.1 Sol', Api::OpenAiCompletions, 1_050_000, 128_000, true, true],
         'grok-4.5' => ['Grok 4.5', Api::OpenAiCompletions, 500_000, 128_000, true, true],
         'grok-4.6' => ['Grok 4.6', Api::OpenAiCompletions, 500_000, 128_000, true, true],
         'grok-4.7' => ['Grok 4.7', Api::OpenAiCompletions, 500_000, 128_000, true, true],
@@ -589,7 +596,9 @@ final class Models
             );
         }
 
-        foreach (self::GOOGLE_MODELS as $id => [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write]) {
+        foreach (self::GOOGLE_MODELS as $id => $row) {
+            [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write] = $row;
+
             $models['google/' . $id] = new Model(
                 $id,
                 $name,
@@ -601,6 +610,9 @@ final class Models
                 $reasoning,
                 $images ? ['text', 'image'] : ['text'],
                 new Pricing($in, $out, $read, $write),
+                // A tenth cell on the rows whose endpoint refuses a level — the generator's
+                // overrides put it there, from a measurement; see `scripts/generate-models.php`.
+                thinkingLevelMap: $row[9] ?? [],
             );
         }
 

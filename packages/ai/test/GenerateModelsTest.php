@@ -99,6 +99,23 @@ final class GenerateModelsTest extends TestCase
         );
     }
 
+    public function testALevelTheEndpointRefusesIsWrittenAsATenthCellAndOnlyThere(): void
+    {
+        $output = $this->generated();
+
+        // The measurement lives in the override; the row carries it as a map `Models::all()` reads.
+        self::assertStringContainsString('google/gemini-3.1-pro-preview corrected: only works in thinking mode', $output);
+        self::assertStringContainsString(
+            "'gemini-3.1-pro-preview' => ['Gemini 3.1 Pro Preview', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, ['off' => null, 'minimal' => null]],",
+            $output,
+        );
+        // And a row with nothing to say keeps its nine cells.
+        self::assertStringContainsString(
+            "'gemini-9-flash' => ['Gemini 9 Flash', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.075, 0.0],",
+            $output,
+        );
+    }
+
     public function testAModelTheCatalogueDoesNotCarryIsAddedAndSaysSo(): void
     {
         $output = $this->generated();
@@ -285,6 +302,13 @@ final class GenerateModelsTest extends TestCase
                     'name' => 'Gemini 9 Flash', 'tool_call' => true, 'reasoning' => true,
                     'limit' => ['context' => 1_048_576, 'output' => 65_536],
                     'cost' => ['input' => 0.3, 'output' => 2.5, 'cache_read' => 0.075],
+                    'modalities' => ['input' => ['text', 'image']],
+                ],
+                // One the overrides carry a level map for, so the tenth cell can be seen rendered.
+                'gemini-3.1-pro-preview' => [
+                    'name' => 'Gemini 3.1 Pro Preview', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 1_048_576, 'output' => 65_536],
+                    'cost' => ['input' => 2.0, 'output' => 12.0, 'cache_read' => 0.2],
                     'modalities' => ['input' => ['text', 'image']],
                 ],
             ]],

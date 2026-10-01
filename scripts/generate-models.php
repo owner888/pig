@@ -140,6 +140,39 @@ const OVERRIDES = [
         'why' => "GitHub gives it the extended window; models.dev reports 400,000",
         'row' => ['context' => 1_000_000],
     ],
+    // Measured against the public endpoint on 2026-10-01, one request per model and level —
+    // see CLAUDE.md, "Gemini 3.x on the public endpoint". models.dev says nothing about which
+    // levels a model refuses, and the refusal is a 400 on every turn: `thinkingBudget: 0` is
+    // "Budget 0 is invalid. This model only works in thinking mode" on the Pro models and
+    // "invalid argument" on 3.5 Flash Lite; 3.7 and 3.8 Flash accept it and think anyway; and
+    // MINIMAL is "not supported for this model" on five of the nine. The map makes `off` and
+    // `minimal` clamp to `low` *before* a request is built, which is `ThinkingLevel::clampedFor()`'s
+    // job and the only place it can be done without a round trip to find out.
+    'google/gemini-3.8-flash' => [
+        'kind' => 'fix',
+        'why' => 'always thinks (budget 0 is accepted and ignored); MINIMAL is refused',
+        'row' => ['thinkingLevelMap' => ['off' => null, 'minimal' => null]],
+    ],
+    'google/gemini-3.7-flash' => [
+        'kind' => 'fix',
+        'why' => 'always thinks (budget 0 is accepted and ignored); MINIMAL is refused',
+        'row' => ['thinkingLevelMap' => ['off' => null, 'minimal' => null]],
+    ],
+    'google/gemini-3.5-flash-lite' => [
+        'kind' => 'fix',
+        'why' => 'budget 0 is refused as an invalid argument',
+        'row' => ['thinkingLevelMap' => ['off' => null]],
+    ],
+    'google/gemini-3.1-pro-preview' => [
+        'kind' => 'fix',
+        'why' => 'only works in thinking mode, and MINIMAL is refused',
+        'row' => ['thinkingLevelMap' => ['off' => null, 'minimal' => null]],
+    ],
+    'google/gemini-3.1-pro-preview-customtools' => [
+        'kind' => 'fix',
+        'why' => 'only works in thinking mode, and MINIMAL is refused',
+        'row' => ['thinkingLevelMap' => ['off' => null, 'minimal' => null]],
+    ],
     'openai/gpt-5-chat-latest' => [
         'kind' => 'add',
         'why' => 'models.dev does not list it',
@@ -432,10 +465,27 @@ function render(array $rows, string $constant): string
             }
         }
 
+        // A tenth cell only where an override supplied one, so every other row keeps its shape.
+        if (isset($row['thinkingLevelMap'])) {
+            $cells[] = levelMap($row['thinkingLevelMap']);
+        }
+
         $lines[] = sprintf("        %s => [%s],", var_export($id, true), implode(', ', $cells));
     }
 
     return implode("\n", $lines);
+}
+
+/** `['off' => null, 'minimal' => null]` as the generated file writes it. */
+function levelMap(array $map): string
+{
+    $cells = [];
+
+    foreach ($map as $level => $sent) {
+        $cells[] = sprintf('%s => %s', var_export($level, true), $sent === null ? 'null' : var_export($sent, true));
+    }
+
+    return '[' . implode(', ', $cells) . ']';
 }
 
 /**
@@ -524,6 +574,10 @@ function report(array $before, array $after): void
 
         if ($was->acceptsImages() !== $model->acceptsImages()) {
             $fields[] = sprintf('images %s → %s', $was->acceptsImages() ? 'yes' : 'no', $model->acceptsImages() ? 'yes' : 'no');
+        }
+
+        if ($was->thinkingLevelMap !== $model->thinkingLevelMap) {
+            $fields[] = sprintf('levels %s → %s', json_encode($was->thinkingLevelMap), json_encode($model->thinkingLevelMap));
         }
 
         foreach (['input', 'output', 'cacheRead', 'cacheWrite'] as $field) {
@@ -639,7 +693,7 @@ $reload = sprintf(
         . 'foreach (Pig\Ai\Models::all() as $m) { echo $m->provider, "/", $m->id, "\t", $m->name, "\t",'
         . '$m->contextWindow, "\t", $m->maxTokens, "\t", $m->reasoning ? 1 : 0, "\t",'
         . '$m->acceptsImages() ? 1 : 0, "\t", $m->pricing->input, "\t", $m->pricing->output, "\t",'
-        . '$m->pricing->cacheRead, "\t", $m->pricing->cacheWrite, "\n"; }',
+        . '$m->pricing->cacheRead, "\t", $m->pricing->cacheWrite, "\t", json_encode($m->thinkingLevelMap), "\n"; }',
     ),
 );
 
@@ -652,7 +706,7 @@ if ($status !== 0) {
 $after = [];
 
 foreach ($output as $line) {
-    [$key, $name, $window, $max, $reasoning, $images, $in, $out, $read, $write] = explode("\t", $line);
+    [$key, $name, $window, $max, $reasoning, $images, $in, $out, $read, $write, $levels] = explode("\t", $line);
     [$provider, $id] = explode('/', $key, 2);
     $after[$key] = new Model(
         $id,
@@ -665,6 +719,8 @@ foreach ($output as $line) {
         $reasoning === '1',
         $images === '1' ? ['text', 'image'] : ['text'],
         new Pig\Ai\Pricing((float) $in, (float) $out, (float) $read, (float) $write),
+        // `[]` encodes as a list and decodes as one, which is the same empty map.
+        thinkingLevelMap: (array) json_decode($levels, true),
     );
 }
 

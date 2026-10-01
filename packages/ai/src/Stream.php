@@ -196,10 +196,13 @@ final class Stream
             return new GoogleOptions(...$base, thinkingEnabled: false);
         }
 
-        // Upstream's two checks rather than one on `gemini-3`: a Gemini 3 model that is neither
-        // pro nor flash takes the budget path there, and two arms of one file disagreeing about
-        // which models are Gemini 3 is the shape this audit keeps finding.
-        if (str_contains($model->id, '3-pro') || str_contains($model->id, '3-flash')) {
+        // Every Gemini 3.x model takes a *level*, which was measured rather than read — one
+        // request per model and level against the public endpoint, 2026-10-01 (CLAUDE.md, "Gemini
+        // 3.x on the public endpoint"). Upstream's two checks, `3-pro` and `3-flash`, matched the
+        // anchor-era ids and stopped matching once the catalogue moved to `gemini-3.1-pro-preview`
+        // and `gemini-3.5-flash`: every one of those fell through to `thinkingBudget: -1`, which
+        // thinks as much as it likes and ignores the level entirely.
+        if (str_contains($model->id, 'gemini-3')) {
             return new GoogleOptions(...$base, thinkingEnabled: true, thinkingLevel: self::geminiLevel($model, $effort));
         }
 
@@ -230,17 +233,19 @@ final class Stream
         );
     }
 
-    /** Gemini 3 Pro offers two levels; Flash offers four. */
+    /**
+     * The level's own name, upper-cased, unless the model's map says otherwise.
+     *
+     * Upstream folded Pro down to two levels (`gemini-3-pro-preview` took LOW and HIGH). Measured
+     * on `gemini-3.1-pro-preview`, MEDIUM is a real level there — 111 thinking tokens against
+     * 87 and 142 — so there is nothing to fold any more. Which levels a model *refuses* (MINIMAL
+     * on five of the nine, `off` on five) is per model with no pattern in the name, so it lives
+     * in the row's `thinkingLevelMap` and is clamped away before a request is built; a level that
+     * still reaches here is sent as it is, and a provider that refuses it says so by name.
+     */
     private static function geminiLevel(Model $model, ReasoningEffort $effort): string
     {
-        if (str_contains($model->id, 'gemini-3-pro')) {
-            return match ($effort) {
-                ReasoningEffort::Minimal, ReasoningEffort::Low => 'LOW',
-                default => 'HIGH',
-            };
-        }
-
-        return strtoupper($effort->value);
+        return strtoupper($model->thinkingEffort($effort->value) ?? $effort->value);
     }
 
     /** https://ai.google.dev/gemini-api/docs/thinking#set-budget */

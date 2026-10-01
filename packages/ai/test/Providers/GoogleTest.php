@@ -554,23 +554,13 @@ final class GoogleTest extends TestCase
         $this->assertNull($options->thinkingBudget);
     }
 
-    public function testTheLevelPathOnlyStillCatchesOnePublicModel(): void
+    public function testEveryGemini3ModelInTheTableTakesALevelAndNoneABudget(): void
     {
-        // **A drift, pinned rather than papered over.** `Stream::gemini()` picks the level path
-        // with `str_contains($id, '3-pro') || str_contains($id, '3-flash')`, and the generated
-        // table has moved on to `gemini-3.1-pro-preview`, `gemini-3.5-flash`, `gemini-3.8-flash`
-        // — none of which contain either string. So every Gemini 3.x model but the one preview
-        // id takes the *budget* path and is sent `thinkingBudget: -1`.
-        //
-        // Whether that is wrong depends on what Google's public endpoint accepts for 3.5 and
-        // 3.8, which is not a question this suite can answer. What it can do is fail the moment
-        // somebody acts on the answer, so the decision does not get lost.
-        //
-        // `geminiLevel()`'s pro branch — `gemini-3-pro` gets two levels rather than four — is
-        // unreachable for every model in the table for the same reason. This test replaced the
-        // one that covered it, which only ever passed because its fixture was a *Gemini CLI*
-        // model: the one table where the literal `gemini-3-pro-preview` still existed.
-        $levelled = [];
+        // Measured, not read: one request per model and level against the public endpoint on
+        // 2026-10-01 — every 3.x id in the table accepts `thinkingLevel` LOW/MEDIUM/HIGH, and the
+        // old `3-pro`/`3-flash` check matched exactly one of them. See CLAUDE.md, "Gemini 3.x on
+        // the public endpoint". A model this check misses is one that is asked for `thinkingBudget:
+        // -1` and ignores the level entirely, which is what every 3.x model but one did.
         $budgeted = [];
 
         foreach (Models::all() as $model) {
@@ -579,12 +569,46 @@ final class GoogleTest extends TestCase
             }
 
             $options = $this->translate($model, ReasoningEffort::Medium);
-            $options->thinkingLevel !== null ? $levelled[] = $model->id : $budgeted[] = $model->id;
+
+            if ($options->thinkingLevel !== 'MEDIUM') {
+                $budgeted[] = $model->id;
+            }
         }
 
-        $this->assertSame(['gemini-3-flash-preview'], $levelled);
-        $this->assertContains('gemini-3.8-flash', $budgeted);
-        $this->assertContains('gemini-3.1-pro-preview', $budgeted);
+        $this->assertSame([], $budgeted);
+    }
+
+    public function testAModelThatRefusesALevelSaysSoInItsRowRatherThanAtTheProvider(): void
+    {
+        // The same measurement: `thinkingBudget: 0` is a 400 on the Pro models ("only works in
+        // thinking mode") and on 3.5 Flash Lite, and MINIMAL is "not supported" on five of nine.
+        // The row carries that so `ThinkingLevel::clampedFor()` moves the level *before* a request
+        // is built — the generator's override is the one place the fact is written down.
+        $pro = Models::find('google', 'gemini-3.1-pro-preview');
+        $flash = Models::find('google', 'gemini-3.8-flash');
+        $lite = Models::find('google', 'gemini-3.5-flash-lite');
+        $older = Models::find('google', 'gemini-3.5-flash');
+
+        $this->assertNotNull($pro);
+        $this->assertNotNull($flash);
+        $this->assertNotNull($lite);
+        $this->assertNotNull($older);
+
+        foreach ([$pro, $flash] as $model) {
+            $this->assertFalse($model->hasThinkingLevel('off'), $model->id);
+            $this->assertFalse($model->hasThinkingLevel('minimal'), $model->id);
+            $this->assertTrue($model->hasThinkingLevel('low'), $model->id);
+        }
+
+        $this->assertFalse($lite->hasThinkingLevel('off'));
+        $this->assertTrue($lite->hasThinkingLevel('minimal'), 'measured: 3.5 Flash Lite takes MINIMAL');
+
+        // And a 3.x model the endpoint accepts everything on carries no map at all.
+        $this->assertSame([], $older->thinkingLevelMap);
+
+        // MEDIUM really is a level on Pro now (111 thinking tokens against LOW 87 and HIGH 142), so
+        // upstream's fold of Pro to two levels is gone with the model it was measured on.
+        $this->assertSame('MEDIUM', $this->translate($pro, ReasoningEffort::Medium)->thinkingLevel);
     }
 
     public function testAModelWithNoPublishedCeilingIsLeftToDecide(): void

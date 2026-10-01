@@ -9945,27 +9945,65 @@ comparing Antigravity's client pair against Gemini CLI's now asserts that the re
 own* names and refuses rather than falling back, and `GoogleTest`'s Gemini 3 Pro level test is
 replaced by the drift note below.
 
-### `Stream::gemini()`'s Gemini 3 check stopped matching Gemini 3
+### Gemini 3.x on the public endpoint
 
-Found by the removal, not caused by it. The public Google arm picks the *level* path with
+The entry this replaces was an open question: `Stream::gemini()` picked the level path with
+`str_contains($id, '3-pro') || str_contains($id, '3-flash')`, the generated table had moved on to
+`gemini-3.1-pro-preview`, `gemini-3.5-flash` and `gemini-3.8-flash`, and so every Gemini 3.x model but
+`gemini-3-flash-preview` fell through to `thinkingBudget: -1` — "think as much as you like", with the
+level ignored. It was pinned rather than fixed because fixing it needed a fact nobody here had:
+what the endpoint takes for 3.5 and 3.8.
 
-    str_contains($id, '3-pro') || str_contains($id, '3-flash')
+**Measured, one request per model and level, 2026-10-01**, with a `GEMINI_API_KEY` on a machine
+that can reach `generativelanguage.googleapis.com`:
 
-and the generated table has moved on to `gemini-3.1-pro-preview`, `gemini-3.5-flash`,
-`gemini-3.8-flash` — **none of which contain either string.** Measured across the registry: exactly
-one public model, `gemini-3-flash-preview`, still takes the level path; every other Gemini 3.x model
-falls through to `thinkingBudget: -1`. `geminiLevel()`'s pro branch, which gives Pro two levels
-instead of four, is unreachable for every model in the table.
+| | `LOW` | `MEDIUM` | `HIGH` | `MINIMAL` | `thinkingBudget: 0` |
+|---|---|---|---|---|---|
+| gemini-3-flash-preview | ok | ok | ok | ok | ok, no thoughts |
+| gemini-3.1-flash-lite | ok | — | — | ok | ok, no thoughts |
+| gemini-3.5-flash | ok | ok | ok | ok | ok, no thoughts |
+| gemini-3.6-flash | ok | — | — | ok | ok, no thoughts |
+| **gemini-3.5-flash-lite** | ok | ok | ok | ok | **400** `invalid argument` |
+| **gemini-3.7-flash** | ok | — | — | **400** `not supported` | accepted, **thinks anyway** (79) |
+| **gemini-3.8-flash** | ok | ok | ok | **400** `not supported` | accepted, **thinks anyway** (93) |
+| **gemini-3.1-pro-preview** | ok | ok (111 thoughts) | ok | **400** `not supported` | **400** `only works in thinking mode` |
+| **gemini-3.1-pro-preview-customtools** | ok | — | — | **400** | **400** |
 
-Two tests hid this. Both used `gemini-3-pro-preview` as their fixture — an id that existed **only in
-the Gemini CLI table**, the one place the old literal naming survived, and which was dispatched
-through the Gemini CLI arm rather than the public one they were filed under. Deleting that table
-made them fail, which is how the drift surfaced.
+Three things came out of it, and the first is worse than the question that was asked:
 
-Not fixed, because fixing it needs a fact this repository cannot check: whether Google's public
-endpoint takes `thinkingLevel` for 3.5 and 3.8 or wants a budget. What is in place is
-`GoogleTest::testTheLevelPathOnlyStillCatchesOnePublicModel`, which pins the measurement so the
-decision fails loudly the moment somebody acts on it.
+- **Thinking *off* was a 400 on three models, every turn.** `pig --model google/gemini-3.1-pro-preview`
+  with the default level failed before the model said a word — `Budget 0 is invalid. This model only
+  works in thinking mode` — and 3.5 Flash Lite the same with a less helpful sentence. 3.7 and 3.8
+  Flash *accept* the zero and think anyway, so "off" there was a label on a thing that was on. None
+  of this was the drift; it was the `thinkingEnabled: false` arm, which was right for 2.5 and is
+  wrong for the models that cannot stop.
+- **Every 3.x model takes a level**, so the check is `str_contains($id, 'gemini-3')` and the budget
+  arm is for 2.5 alone. `MEDIUM` is a real level on Pro now — 111 thinking tokens against LOW's 87
+  and HIGH's 142 — so upstream's fold of Pro to two levels went with `gemini-3-pro-preview`, the
+  model it was measured on.
+- **Which levels a model refuses has no pattern in its name.** MINIMAL is refused on 3.7, 3.8 and
+  both Pro ids and accepted on 3.5, 3.6, 3.1 Flash Lite and 3.5 Flash Lite; `off` is refused on Pro
+  and 3.5 Flash Lite, ignored on 3.7/3.8, honoured on the rest. So it is **data, per row**: the
+  Google table gained an optional tenth cell, a `thinkingLevelMap` — the same machinery the
+  Antigravity rows already use — and `ThinkingLevel::clampedFor()` moves `off` and `minimal` up to
+  `low` *before* a request is built. The map comes from `scripts/generate-models.php`'s `OVERRIDES`,
+  each with the measurement as its `why`, because models.dev knows nothing about refusals and a
+  regeneration must not lose them. A row with nothing to say keeps its nine cells.
+
+**And the generator's own report was lying about it**, which is worth more than the fix: the first
+regeneration printed `antigravity/gemini-3.8-flash: levels {…} → []` for every Antigravity row, as
+though the maps had been wiped. The file was untouched. The report reloads the written table in a
+fresh process over a tab-separated line, and that line had no column for the map — so "after" read
+as empty for every model that has one. It carries the map now, and the second run is `0 added, 0
+gone, 0 changed`. *A diff printed by the tool that made the change is a claim like any other*; the
+`git diff` is what said the file was fine.
+
+Verified end to end through `bin/pig -p` against the real endpoint: 3.1 Pro with thinking off
+answers (clamped to low), 3.8 Flash with `--thinking high` answers, 3.5 Flash with thinking off
+answers with no thoughts. Regression tests:
+`GoogleTest::testEveryGemini3ModelInTheTableTakesALevelAndNoneABudget`,
+`testAModelThatRefusesALevelSaysSoInItsRowRatherThanAtTheProvider`, and
+`GenerateModelsTest::testALevelTheEndpointRefusesIsWrittenAsATenthCellAndOnlyThere`.
 
 ### Verified against the real deployment
 
