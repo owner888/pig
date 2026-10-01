@@ -45,8 +45,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### New Features
+
+- Git development workflow commands (`/diff` and `/commit [message]`) — Added `/diff` to inspect working tree changes with colorized diffs in both TUI and Web UI, and `/commit [message]` with automatic Conventional Commits message generation from diffs and interactive confirmation.
+
 ### Added
 
+- Added `+ New Session` button in Web UI sidebar and `/api/session/new` endpoint for instant standalone session creation.
+- Direct `/diff` inspection rendering in Web UI with unified diff cards.
 - Code block copy buttons (`Copy` / `Copied! ✓`) with language tags across all Markdown code outputs in Web UI.
 - Smart auto-scroll and reading-pinning in Web UI: preserves scroll position when user scrolls up to read history without jarring forced auto-scroll, with floating `↓ New messages` return button.
 - Antigravity multi-account automatic 429 failover — Automatically rotates to the next available account in `antigravity-accounts.json` when encountering 429 Rate Limit / Quota Exceeded errors, seamlessly continuing active turns with zero manual intervention.

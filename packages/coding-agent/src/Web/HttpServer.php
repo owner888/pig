@@ -38,6 +38,7 @@ use Pig\CodingAgent\Session\AutoCompactionStartEvent;
 use Pig\CodingAgent\Session\RetryEndEvent;
 use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Web\Protocols\Websocket;
+use Pig\Tui\Process;
 use Throwable;
 
 /**
@@ -371,6 +372,44 @@ final class HttpServer
             return;
         }
 
+        // 10.1 New session
+        if ($path === '/api/session/new' && $req['method'] === 'POST') {
+            Async::spawn(function (): void {
+                try {
+                    $this->session->startNew();
+                } catch (Throwable) {}
+            });
+
+            $conn->sendResponse(200, [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ], json_encode([
+                'ok' => true,
+                'sessionFile' => basename($this->session->store()?->path ?? ''),
+                'state' => $this->getStatePayload(),
+            ]));
+
+            return;
+        }
+
+        // 10.2 Git diff of current working directory
+        if ($path === '/api/diff') {
+            $cwd = $this->session->cwd();
+            $res = Process::run(['git', 'diff'], cwd: $cwd);
+            $diffText = $res->exitCode === 0 ? $res->stdout : '';
+
+            $conn->sendResponse(200, [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ], json_encode([
+                'ok' => $res->exitCode === 0,
+                'diff' => $diffText,
+                'cwd' => $cwd,
+            ]));
+
+            return;
+        }
+
         // 11. Switch model via HTTP POST
         if ($path === '/api/model' && $req['method'] === 'POST') {
             $data = json_decode($req['body'], true);
@@ -575,6 +614,20 @@ final class HttpServer
                     } catch (Throwable $e) {
                         $conn->send(['id' => $id, 'type' => 'response', 'success' => false, 'error' => $e->getMessage()]);
                     }
+                }
+            }),
+            'new_session' => Async::spawn(function () use ($conn, $id): void {
+                try {
+                    $this->session->startNew();
+                    $conn->send([
+                        'id' => $id,
+                        'type' => 'response',
+                        'success' => true,
+                        'sessionFile' => basename($this->session->store()?->path ?? ''),
+                        'state' => $this->getStatePayload(),
+                    ]);
+                } catch (Throwable $e) {
+                    $conn->send(['id' => $id, 'type' => 'response', 'success' => false, 'error' => $e->getMessage()]);
                 }
             }),
             'get_state' => $conn->send([

@@ -1396,6 +1396,8 @@ final class InteractiveMode
         ['tree', 'Go back to an earlier point and take it somewhere else'],
         ['label', 'Name this point, so /tree can find it again — /label with nothing clears it'],
         ['name', 'Show or set the session name'],
+        ['diff', 'Show git working tree changes (/diff [--staged])'],
+        ['commit', 'Review changes and commit with Conventional Commits message'],
         ['web', 'Launch browser-based web interface (/web [port], /web stop)'],
         ['login', 'Sign in with a subscription instead of an API key'],
         ['logout', 'Forget a sign-in'],
@@ -1485,6 +1487,8 @@ final class InteractiveMode
             'tree' => $this->showTree(),
             'label' => $this->label(trim(substr($text, strlen($name) + 1))),
             'name' => $this->handleNameCommand(trim(substr($text, strlen($name) + 1))),
+            'diff' => $this->handleDiffCommand(trim(substr($text, strlen($name) + 1))),
+            'commit' => $this->handleCommitCommand(trim(substr($text, strlen($name) + 1))),
             'web' => $this->handleWebCommand(trim(substr($text, strlen($name) + 1))),
             'login' => $this->showSignIns('login'),
             'logout' => $this->showSignIns('logout'),
@@ -2461,6 +2465,139 @@ final class InteractiveMode
         } elseif (PHP_OS_FAMILY === 'Linux') {
             Process::run(['xdg-open', $url]);
         }
+    }
+
+    private function handleDiffCommand(string $args): void
+    {
+        $cwd = $this->session->cwd();
+        $cmd = ['git', 'diff'];
+        if ($args !== '') {
+            $tokens = preg_split('/\s+/', $args, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+            $cmd = array_merge($cmd, $tokens);
+        }
+
+        $res = Process::run($cmd, cwd: $cwd);
+        if ($res->exitCode !== 0) {
+            $this->sayError('git diff failed: ' . ($res->stderr ?: 'Not a git repository or git error.'));
+
+            return;
+        }
+
+        $diff = trim($res->stdout);
+        if ($diff === '') {
+            $this->say('No git changes in working tree.');
+
+            return;
+        }
+
+        $this->chat->addChild(new DiffView($diff, $this->palette));
+        $this->tui->requestRender();
+    }
+
+    private function handleCommitCommand(string $args): void
+    {
+        $cwd = $this->session->cwd();
+        $status = Process::run(['git', 'status', '--porcelain'], cwd: $cwd);
+        if ($status->exitCode !== 0) {
+            $this->sayError('Not a git repository.');
+
+            return;
+        }
+
+        if (trim($status->stdout) === '') {
+            $this->say('Nothing to commit (working tree clean).');
+
+            return;
+        }
+
+        $msg = trim($args);
+
+        if ($msg !== '') {
+            $this->executeGitCommit($cwd, $msg);
+
+            return;
+        }
+
+        Async::spawn(function () use ($cwd): void {
+            $this->generateAndCommit($cwd);
+        });
+    }
+
+    private function generateAndCommit(string $cwd): void
+    {
+        $diff = Process::run(['git', 'diff', 'HEAD'], cwd: $cwd)->stdout;
+        if (trim($diff) === '') {
+            $diff = Process::run(['git', 'diff'], cwd: $cwd)->stdout;
+        }
+        if (trim($diff) === '') {
+            $diff = Process::run(['git', 'status', '-s'], cwd: $cwd)->stdout;
+        }
+
+        if (strlen($diff) > 20000) {
+            $diff = substr($diff, 0, 20000) . "\n... [diff truncated]";
+        }
+
+        $prompt = "Based on the following git changes, write a concise, precise git commit message following Conventional Commits format (e.g. 'feat(core): add feature' or 'fix(auth): fix token bug').\n"
+            . "Output ONLY the commit message itself on 1-2 lines, with no quotes, no markdown fences, no extra explanations:\n\n"
+            . $diff;
+
+        $this->say('Reviewing changes to generate commit message…');
+
+        try {
+            $model = $this->session->model();
+            if ($model === null) {
+                $this->sayError('No model selected to generate commit message.');
+
+                return;
+            }
+
+            $reply = \Pig\Ai\Stream::simple(
+                $model,
+                new \Pig\Ai\Context([], systemPrompt: 'You are an expert software developer writing clean Conventional Commits git messages.'),
+                $prompt,
+                new \Pig\Ai\SimpleStreamOptions(temperature: 0.2),
+                apiKey: $this->session->keyFor($model),
+            );
+
+            $generated = trim($reply->text());
+            $generated = trim((string) preg_replace('/^```[a-z]*\n|```$/i', '', $generated));
+
+            if ($generated === '') {
+                $this->sayError('Failed to generate commit message.');
+
+                return;
+            }
+
+            $confirmed = $this->terminalUi->confirm('Commit with message?', $generated);
+            if ($confirmed) {
+                $this->executeGitCommit($cwd, $generated);
+            } else {
+                $this->say('Commit cancelled.');
+            }
+        } catch (Throwable $e) {
+            $this->sayError('Commit generation failed: ' . $e->getMessage());
+        }
+    }
+
+    private function executeGitCommit(string $cwd, string $message): void
+    {
+        $add = Process::run(['git', 'add', '-A'], cwd: $cwd);
+        if ($add->exitCode !== 0) {
+            $this->sayError('git add failed: ' . ($add->stderr ?: 'Unknown error'));
+
+            return;
+        }
+
+        $commit = Process::run(['git', 'commit', '-m', $message], cwd: $cwd);
+        if ($commit->exitCode !== 0) {
+            $this->sayError('git commit failed: ' . ($commit->stderr ?: $commit->stdout));
+
+            return;
+        }
+
+        $this->say($this->palette->fg('accent', '✓ Committed: ') . $this->palette->fg('dim', trim($commit->stdout)));
+        $this->footer->invalidate();
+        $this->tui->requestRender();
     }
 
     /**

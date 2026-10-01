@@ -174,6 +174,30 @@
     }
     .toggle-sidebar-btn:hover { color: var(--text); border-color: #475569; }
 
+    /* New Session Button in Sidebar */
+    .new-session-btn {
+      width: 100%;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: #38bdf8;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s;
+      outline: none;
+    }
+    .new-session-btn:hover {
+      background: rgba(56, 189, 248, 0.22);
+      border-color: #38bdf8;
+      color: #fff;
+    }
+
     /* Top Status/Notification Banner */
     .status-banner {
       background: rgba(56, 189, 248, 0.15);
@@ -571,6 +595,9 @@
       <span id="sidebar-title">Workspaces</span>
       <span id="sidebar-subtitle" style="font-size:11px; color:var(--text-dim);">directories</span>
     </div>
+    <div style="padding: 8px 12px; border-bottom: 1px solid var(--border);">
+      <button id="new-session-btn" class="new-session-btn" title="Create a new session">+ New Session</button>
+    </div>
     <div id="sidebar-list" class="sidebar-scroll"></div>
   </aside>
 
@@ -632,6 +659,7 @@
     const modelSelect = document.getElementById("model-select");
     const thinkingSelect = document.getElementById("thinking-select");
     const scrollBottomBtn = document.getElementById("scroll-bottom-btn");
+    const newSessionBtn = document.getElementById("new-session-btn");
 
     let isRunning = false;
     let currentAssistantBlock = null;
@@ -703,6 +731,7 @@
     sendBtn.addEventListener("click", submitMessage);
     stopBtn.addEventListener("click", abortTurn);
     attachBtn.addEventListener("click", () => fileInput.click());
+    newSessionBtn.addEventListener("click", startNewSession);
 
     // File input attachment
     fileInput.addEventListener("change", (e) => {
@@ -1122,6 +1151,25 @@
       return html;
     }
 
+    async function startNewSession() {
+      chatScroll.innerHTML = "";
+      pendingImages = [];
+      renderPendingImages();
+
+      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "new_session" }));
+      } else {
+        await fetch("/api/session/new", { method: "POST" });
+      }
+
+      await refreshState();
+      if (currentView === "sessions" && selectedWorkspace) {
+        enterWorkspace(selectedWorkspace);
+      } else {
+        loadWorkspaces();
+      }
+    }
+
     async function submitMessage() {
       const text = promptInput.value.trim();
       const imgsToSend = [...pendingImages];
@@ -1132,6 +1180,34 @@
       promptInput.style.height = "38px";
       pendingImages = [];
       renderPendingImages();
+
+      // Intercept /diff command directly in Web UI
+      if (text === "/diff" || text.startsWith("/diff ")) {
+        appendUserMessage(text);
+        try {
+          const res = await fetch("/api/diff");
+          const data = await res.json();
+          if (data && data.diff) {
+            const card = document.createElement("div");
+            card.className = "tool-card";
+            card.innerHTML = `
+              <div class="tool-header">
+                <span class="tool-header-title">git diff</span>
+                <span class="tool-header-status">working tree</span>
+              </div>
+              <div class="tool-body">${renderDiffFromUnified(data.diff)}</div>
+            `;
+            chatScroll.appendChild(card);
+          } else {
+            const emptyBlock = document.createElement("div");
+            emptyBlock.className = "msg-block msg-assistant";
+            emptyBlock.innerText = "No git changes in working tree.";
+            chatScroll.appendChild(emptyBlock);
+          }
+          scrollToBottomIfNeeded();
+        } catch (err) {}
+        return;
+      }
 
       appendUserMessage(text, imgsToSend);
       setRunningState(true);
