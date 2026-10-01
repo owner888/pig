@@ -31,6 +31,7 @@ use Pig\Ai\UserMessage;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\Doctor\Doctor;
 use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\AutoCompactionEndEvent;
@@ -405,6 +406,28 @@ final class HttpServer
                 'ok' => $res->exitCode === 0,
                 'diff' => $diffText,
                 'cwd' => $cwd,
+            ]));
+
+            return;
+        }
+
+        // 10.3 System health doctor inspection
+        if ($path === '/api/doctor') {
+            $report = Doctor::inspect($this->session, $this->auth);
+
+            $conn->sendResponse(200, [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ], json_encode([
+                'ok' => true,
+                'plain' => Doctor::renderPlain($report),
+                'report' => [
+                    'php' => $report->php,
+                    'binaries' => $report->binaries,
+                    'auth' => $report->auth,
+                    'proxy' => $report->proxy,
+                    'session' => $report->session,
+                ],
             ]));
 
             return;

@@ -31,6 +31,7 @@ use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\Doctor\Doctor;
 use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\Config;
@@ -1407,6 +1408,7 @@ final class InteractiveMode
         ['reload', 'Reload extensions, skills, commands, tools, and context files'],
         ['hooks', 'What hooks loaded, and what they added'],
         ['tools', 'What the model can call, built-in and loaded'],
+        ['doctor', 'Inspect system health, PHP runtime, binaries, and auth tokens'],
         ['exit', 'Quit'],
     ];
 
@@ -1500,6 +1502,7 @@ final class InteractiveMode
             'debug' => $this->writeDebugLog(),
             'hooks' => $this->say($this->hookList()),
             'tools' => $this->say($this->toolList()),
+            'doctor' => $this->say($this->doctorReport()),
             'exit', 'quit' => $this->stop(),
             // A hook's or a file's, which is all that is left: `commandName()` only hands
             // over names something answers to, and the built-ins are above, so a built-in
@@ -1596,6 +1599,13 @@ final class InteractiveMode
         }
 
         return $lines === [] ? 'This session has no tools at all.' : implode("\n", $lines);
+    }
+
+    private function doctorReport(): string
+    {
+        $report = Doctor::inspect($this->session, $this->auth);
+
+        return Doctor::renderTui($report, $this->palette);
     }
 
     /**
@@ -2477,13 +2487,14 @@ final class InteractiveMode
         }
 
         $res = Process::run($cmd, cwd: $cwd);
-        if ($res->exitCode !== 0) {
-            $this->sayError('git diff failed: ' . ($res->stderr ?: 'Not a git repository or git error.'));
+        [$code, $stdout, $stderr] = $res;
+        if ($code !== 0) {
+            $this->sayError('git diff failed: ' . ($stderr ?: 'Not a git repository or git error.'));
 
             return;
         }
 
-        $diff = trim($res->stdout);
+        $diff = trim($stdout);
         if ($diff === '') {
             $this->say('No git changes in working tree.');
 
@@ -2497,14 +2508,14 @@ final class InteractiveMode
     private function handleCommitCommand(string $args): void
     {
         $cwd = $this->session->cwd();
-        $status = Process::run(['git', 'status', '--porcelain'], cwd: $cwd);
-        if ($status->exitCode !== 0) {
+        [$statusCode, $statusOut] = Process::run(['git', 'status', '--porcelain'], cwd: $cwd);
+        if ($statusCode !== 0) {
             $this->sayError('Not a git repository.');
 
             return;
         }
 
-        if (trim($status->stdout) === '') {
+        if (trim($statusOut) === '') {
             $this->say('Nothing to commit (working tree clean).');
 
             return;
@@ -2525,12 +2536,12 @@ final class InteractiveMode
 
     private function generateAndCommit(string $cwd): void
     {
-        $diff = Process::run(['git', 'diff', 'HEAD'], cwd: $cwd)->stdout;
+        [, $diff] = Process::run(['git', 'diff', 'HEAD'], cwd: $cwd);
         if (trim($diff) === '') {
-            $diff = Process::run(['git', 'diff'], cwd: $cwd)->stdout;
+            [, $diff] = Process::run(['git', 'diff'], cwd: $cwd);
         }
         if (trim($diff) === '') {
-            $diff = Process::run(['git', 'status', '-s'], cwd: $cwd)->stdout;
+            [, $diff] = Process::run(['git', 'status', '-s'], cwd: $cwd);
         }
 
         if (strlen($diff) > 20000) {
@@ -2581,21 +2592,21 @@ final class InteractiveMode
 
     private function executeGitCommit(string $cwd, string $message): void
     {
-        $add = Process::run(['git', 'add', '-A'], cwd: $cwd);
-        if ($add->exitCode !== 0) {
-            $this->sayError('git add failed: ' . ($add->stderr ?: 'Unknown error'));
+        [$addCode, , $addErr] = Process::run(['git', 'add', '-A'], cwd: $cwd);
+        if ($addCode !== 0) {
+            $this->sayError('git add failed: ' . ($addErr ?: 'Unknown error'));
 
             return;
         }
 
-        $commit = Process::run(['git', 'commit', '-m', $message], cwd: $cwd);
-        if ($commit->exitCode !== 0) {
-            $this->sayError('git commit failed: ' . ($commit->stderr ?: $commit->stdout));
+        [$commitCode, $commitOut, $commitErr] = Process::run(['git', 'commit', '-m', $message], cwd: $cwd);
+        if ($commitCode !== 0) {
+            $this->sayError('git commit failed: ' . ($commitErr ?: $commitOut));
 
             return;
         }
 
-        $this->say($this->palette->fg('accent', '✓ Committed: ') . $this->palette->fg('dim', trim($commit->stdout)));
+        $this->say($this->palette->fg('accent', '✓ Committed: ') . $this->palette->fg('dim', trim($commitOut)));
         $this->footer->invalidate();
         $this->tui->requestRender();
     }

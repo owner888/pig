@@ -1181,6 +1181,29 @@
       pendingImages = [];
       renderPendingImages();
 
+      // Intercept /doctor command directly in Web UI
+      if (text === "/doctor") {
+        appendUserMessage(text);
+        try {
+          const res = await fetch("/api/doctor");
+          const data = await res.json();
+          if (data && data.plain) {
+            const card = document.createElement("div");
+            card.className = "tool-card";
+            card.innerHTML = `
+              <div class="tool-header">
+                <span class="tool-header-title">pig doctor</span>
+                <span class="tool-header-status">diagnostics</span>
+              </div>
+              <div class="tool-body"><pre><code>${escapeHtml(data.plain)}</code></pre></div>
+            `;
+            chatScroll.appendChild(card);
+          }
+          scrollToBottomIfNeeded();
+        } catch (err) {}
+        return;
+      }
+
       // Intercept /diff command directly in Web UI
       if (text === "/diff" || text.startsWith("/diff ")) {
         appendUserMessage(text);

@@ -111,7 +111,7 @@ final class ExternalTool
     }
 
     /** @return string|false */
-    private static function locate(string $tool): string|false
+    public static function locate(string $tool): string|false
     {
         if (array_key_exists($tool, self::$found)) {
             return self::$found[$tool];
