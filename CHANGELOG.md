@@ -52,6 +52,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Added
 
+- 1:1 aligned Web UI event dispatch with TUI: added streaming tool execution updates (`ToolExecutionUpdateEvent`), retry countdowns (`RetryStartEvent` & `RetryEndEvent`), and compaction alerts (`AutoCompactionStartEvent` & `AutoCompactionEndEvent`) with real-time console scrolling and top notification banners.
 - Added dynamic model catalog and thinking level selector to Web UI, fetching authorized models via `/api/models` and dynamically constraining thinking levels (e.g. low/medium/high for Antigravity) with instant WebSocket switching.
 - Added multimodal image support to Web UI: clipboard paste (`Ctrl+V` / `Cmd+V`), drag-and-drop, attachment button (`📎`), thumbnail preview with deletion, and rendering of sent images.
 - Added rich tool execution rendering in Web UI: git-style unified diffs (`+` green, `-` red) for `edit` operations and simulated dark terminal consoles for `bash` commands.

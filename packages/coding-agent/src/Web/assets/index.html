@@ -174,6 +174,20 @@
     }
     .toggle-sidebar-btn:hover { color: var(--text); border-color: #475569; }
 
+    /* Top Status/Notification Banner */
+    .status-banner {
+      background: rgba(56, 189, 248, 0.15);
+      border-bottom: 1px solid rgba(56, 189, 248, 0.3);
+      color: #38bdf8;
+      padding: 6px 16px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      animation: fadeIn 0.15s ease-out;
+    }
+
     /* Messages container */
     #chat-scroll {
       flex: 1;
@@ -493,6 +507,7 @@
       </div>
       <button id="toggle-sidebar" class="toggle-sidebar-btn" title="Toggle Sidebar">‹</button>
     </div>
+    <div id="status-banner" class="status-banner" style="display:none;"></div>
 
     <div id="chat-scroll"></div>
 
@@ -823,10 +838,22 @@
         const card = createToolCard(evt);
         chatScroll.appendChild(card);
         chatScroll.scrollTop = chatScroll.scrollHeight;
+      } else if (evt.type === "tool_execution_update") {
+        updateToolCardProgress(evt);
       } else if (evt.type === "tool_execution_end") {
         updateToolCard(evt);
         currentAssistantBlock = null;
         currentAssistantText = "";
+      } else if (evt.type === "retry_start") {
+        showStatusBanner(`⟳ Retrying in ${Math.round(evt.delaySeconds)}s (attempt ${evt.attempt}/${evt.maxAttempts}): ${evt.error}`);
+      } else if (evt.type === "retry_end") {
+        hideStatusBanner();
+        refreshState();
+      } else if (evt.type === "auto_compaction_start") {
+        showStatusBanner(`Context is full — compacting conversation summary...`);
+      } else if (evt.type === "auto_compaction_end") {
+        hideStatusBanner();
+        refreshState();
       } else if (evt.type === "session_info_changed") {
         refreshState();
       }
@@ -903,6 +930,33 @@
         } else {
           body.innerHTML = `<div class="tool-terminal">${escapeHtml(JSON.stringify(evt.result, null, 2))}</div>`;
         }
+      }
+    }
+
+    function updateToolCardProgress(evt) {
+      const card = document.getElementById(`tool-${evt.toolCallId}`);
+      if (!card) return;
+
+      const body = card.querySelector(".tool-body");
+      if (body && evt.output) {
+        body.innerHTML = `<div class="tool-terminal">${escapeHtml(evt.output)}</div>`;
+        body.scrollTop = body.scrollHeight;
+      }
+    }
+
+    function showStatusBanner(text) {
+      const banner = document.getElementById("status-banner");
+      if (banner) {
+        banner.innerText = text;
+        banner.style.display = "flex";
+      }
+    }
+
+    function hideStatusBanner() {
+      const banner = document.getElementById("status-banner");
+      if (banner) {
+        banner.style.display = "none";
+        banner.innerText = "";
       }
     }
 

@@ -8,12 +8,14 @@ use Closure;
 use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentStartEvent;
+use Pig\Agent\AgentToolResult;
 use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\MessageUpdateEvent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Agent\ToolExecutionEndEvent;
 use Pig\Agent\ToolExecutionStartEvent;
+use Pig\Agent\ToolExecutionUpdateEvent;
 use Pig\Agent\TurnEndEvent;
 use Pig\Agent\TurnStartEvent;
 use Pig\Ai\AssistantMessage;
@@ -31,6 +33,10 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\AutoCompactionEndEvent;
+use Pig\CodingAgent\Session\AutoCompactionStartEvent;
+use Pig\CodingAgent\Session\RetryEndEvent;
+use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Web\Protocols\Websocket;
 use Throwable;
 
@@ -434,11 +440,40 @@ final class HttpServer
                 'toolName' => $event->toolName,
                 'arguments' => $event->arguments,
             ],
+            $event instanceof ToolExecutionUpdateEvent => [
+                'type' => 'tool_execution_update',
+                'toolCallId' => $event->toolCallId,
+                'toolName' => $event->toolName,
+                'output' => $this->extractToolOutput($event->partialResult),
+            ],
             $event instanceof ToolExecutionEndEvent => [
                 'type' => 'tool_execution_end',
                 'toolCallId' => $event->toolCallId,
                 'result' => $event->result,
                 'isError' => $event->isError,
+            ],
+            $event instanceof RetryStartEvent => [
+                'type' => 'retry_start',
+                'attempt' => $event->attempt,
+                'maxAttempts' => $event->maxAttempts,
+                'delaySeconds' => $event->delaySeconds,
+                'error' => $event->error,
+            ],
+            $event instanceof RetryEndEvent => [
+                'type' => 'retry_end',
+                'succeeded' => $event->succeeded,
+                'attempts' => $event->attempts,
+                'error' => $event->error,
+            ],
+            $event instanceof AutoCompactionStartEvent => [
+                'type' => 'auto_compaction_start',
+                'error' => $event->error,
+            ],
+            $event instanceof AutoCompactionEndEvent => [
+                'type' => 'auto_compaction_end',
+                'succeeded' => $event->succeeded,
+                'willRetry' => $event->willRetry,
+                'error' => $event->error,
             ],
             $event instanceof SessionInfoChangedEvent => [
                 'type' => 'session_info_changed',
@@ -689,6 +724,29 @@ final class HttpServer
         }
 
         return null;
+    }
+
+    private function extractToolOutput(mixed $result): string
+    {
+        if ($result instanceof AgentToolResult) {
+            if (is_array($result->details) && isset($result->details['output']) && is_string($result->details['output'])) {
+                return $result->details['output'];
+            }
+            $out = '';
+            foreach ($result->content as $c) {
+                if ($c instanceof TextContent) {
+                    $out .= $c->text;
+                }
+            }
+
+            return $out;
+        }
+
+        if (is_string($result)) {
+            return $result;
+        }
+
+        return '';
     }
 
     /** @return list<array{path: string, name: string, sessionCount: int, isCurrent: bool}> */
