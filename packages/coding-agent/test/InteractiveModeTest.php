@@ -259,6 +259,39 @@ final class InteractiveModeTest extends TestCase
         $this->mode->start();
     }
 
+    // ---- crashes --------------------------------------------------------------------------------
+
+    public function testTheLastCrashIsAnnouncedOnceAtStartup(): void
+    {
+        \Pig\CodingAgent\CrashLog::record('fatal_error', new RuntimeException('it fell over'), null, $this->cwd);
+
+        $this->start();
+        $this->assertStringContainsString('pig crashed on', $this->screenText());
+        $this->assertStringContainsString('(it fell over). Run /bug', $this->screenText());
+
+        $this->mode->stop();
+        Loop::reset();
+        $this->start();
+        $this->assertStringNotContainsString('pig crashed on', $this->screenText());
+    }
+
+    public function testAThrowTheLoopCaughtIsWrittenDownForBug(): void
+    {
+        $this->start();
+        $this->assertSame([], \Pig\CodingAgent\CrashLog::read());
+
+        Loop::get()->defer(static function (): void {
+            throw new RuntimeException('render died');
+        });
+        $this->settle();
+
+        $records = \Pig\CodingAgent\CrashLog::read();
+        $this->assertCount(1, $records);
+        $this->assertSame('loop_error', $records[0]['kind']);
+        $this->assertSame('render died', $records[0]['message']);
+        $this->assertStringContainsString('render died', $this->screenText(), 'and it is still drawn');
+    }
+
     // ---- /trust ---------------------------------------------------------------------------------
 
     public function testAnUntrustedProjectSaysSoOnScreenAndSlashTrustSavesADecision(): void

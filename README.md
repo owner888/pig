@@ -207,6 +207,13 @@ upgrade (not when you resume a conversation).
 code highlighted, no JavaScript in it at all. `pig --export <session.jsonl> [out.html]` does the
 same to a session on disk without opening it.
 
+`/bug [what went wrong]` writes a bug report — pig, PHP and OS versions, the model and provider
+(never a key), the last provider error, `/doctor`'s findings, the last few crashes, and the
+transcript only if you say yes — to `~/.pig/agent/bug-reports/`, copies it, and opens a GitHub
+issue with it prefilled. Nothing leaves the machine unless you open that link. When pig itself
+falls over, the crash is written down and the next start says so, with `/bug` as the way to
+report it.
+
 A turn that fails because the provider is busy — a 429, a 503, a socket that died — is
 **waited out and sent again**, doubling from two seconds, up to three times, with what the
 provider said and a countdown on screen and escape to stop. When the provider names the moment

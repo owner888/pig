@@ -103,6 +103,24 @@ final class BugReportTest extends TestCase
         $this->assertStringContainsString(rawurlencode('# pig bug report'), $url);
     }
 
+    public function testRecentCrashesAreAttachedAndHandedOverOnceWritten(): void
+    {
+        \Pig\CodingAgent\CrashLog::record('loop_error', new \RuntimeException('Grapheme split failed'), null, $this->home);
+
+        $session = $this->session([new UserMessage('x'), $this->assistant('y', StopReason::Stop)]);
+        $report = BugReport::build($session, Auth::inMemory(), '', includeTranscript: false);
+
+        $this->assertStringContainsString('## Recent crashes', $report);
+        $this->assertStringContainsString('loop_error', $report);
+        $this->assertStringContainsString('RuntimeException: Grapheme split failed', $report);
+
+        BugReport::write($report);
+
+        // Attached to a report that is out, so they are not attached to the next one as well.
+        $this->assertSame([], \Pig\CodingAgent\CrashLog::read());
+        $this->assertStringNotContainsString('## Recent crashes', BugReport::build($session, Auth::inMemory(), '', false));
+    }
+
     public function testTheHintFiresForARealErrorAndNotForAQuotaWallOrAnAbort(): void
     {
         $this->assertTrue(BugReport::worthReporting(

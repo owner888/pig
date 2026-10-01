@@ -9945,6 +9945,39 @@ comparing Antigravity's client pair against Gemini CLI's now asserts that the re
 own* names and refuses rather than falling back, and `GoogleTest`'s Gemini 3 Pro level test is
 replaced by the drift note below.
 
+### A crash is written down, so `/bug` has something to attach
+
+`CrashLog` is upstream's `core/crash-log.ts`: `~/.pig/agent/crashes.json`, five records, the newest
+last, each with the time, version, kind, message, stack, session file and directory. Three writers
+and two readers:
+
+- **`bin/pig`'s `set_exception_handler`** writes `fatal_error`, hands the terminal back, prints the
+  message with the throw site, and says how to report it — upstream's `handleFatalRuntimeError()`.
+  Verified live with a malformed `trust.json`, which is an uncaught throw before any screen exists.
+- **`InteractiveMode::reportLoopFailures()`** writes `loop_error` for a throw the loop *caught*.
+  pig survives those and draws a red line, which is the entry on `Loop::setErrorHandler`; they are
+  recorded anyway, because a thing the loop had to catch is a pig bug by definition and the person
+  looking at the red line is exactly who `/bug` is for. Once per message, like the line.
+- **`start()`** says the newest unnotified crash once, if it is under a week old — upstream's
+  wording — and marks them all told.
+- **`BugReport::build()`** attaches them under `## Recent crashes`, and **`write()` clears the
+  file**, as upstream clears it once a report is out: attached to a report that was sent, they
+  are not attached to the next one too.
+
+**Everything in it is best effort, and that took two goes.** A crash log that throws is a second
+crash with the first one lost, so `record()` swallows everything — the one place in `coding-agent`
+allowed to. The first version still leaked a *warning*: `mkdir()` warns *and* answers false, and
+`phpunit.xml`'s `failOnWarning` is what said so. A `set_error_handler` scoped to the write turns
+the warning into the throw the swallow already covers; `@` is not allowed here.
+
+And `getTraceAsString()` **starts at the caller of the throwing frame**, so the throw site — the
+one line a report needs most — is not in it. The stack is `Class: message in file:line` and then
+the trace, which is what the test asserts and what the first version did not have.
+
+Regression tests: `CrashLogTest` (7), `BugReportTest::testRecentCrashesAreAttachedAndHandedOverOnceWritten`,
+`InteractiveModeTest::testTheLastCrashIsAnnouncedOnceAtStartup` and
+`testAThrowTheLoopCaughtIsWrittenDownForBug`.
+
 ### Gemini 3.x on the public endpoint
 
 The entry this replaces was an open question: `Stream::gemini()` picked the level path with

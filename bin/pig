@@ -40,6 +40,7 @@ use Pig\CodingAgent\Cli\TrustPrompt;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\CodingAgentError;
+use Pig\CodingAgent\CrashLog;
 use Pig\CodingAgent\Antigravity\Catalog as AntigravityCatalog;
 use Pig\CodingAgent\CustomModels;
 use Pig\CodingAgent\Interactive\InteractiveMode;
@@ -66,6 +67,36 @@ define('VERSION', Version::current());
 // last. All of them are no-ops unless `PIG_TIMING=1`, which is why they can sit in the flow
 // rather than behind an `if` at each step.
 Timings::mark('start');
+
+// What happens when pig falls over: the crash is written down for `/bug` to attach, the terminal
+// is handed back, and the message is printed with the way to report it — upstream's
+// `handleFatalRuntimeError()`. `$running` and `$session` are filled in below as they come to
+// exist; before they do, there is no screen to restore and no session file to name.
+$running = null;
+$session = null;
+
+set_exception_handler(static function (Throwable $error) use (&$running, &$session): void {
+    $store = $session instanceof Pig\CodingAgent\Session\AgentSession ? $session->store() : null;
+    $recorded = CrashLog::record('fatal_error', $error, $store?->path, getcwd() ?: '.');
+
+    if ($running instanceof InteractiveMode) {
+        try {
+            $running->stop();
+        } catch (Throwable) {
+            // The screen is already lost; what matters is the message below.
+        }
+    }
+
+    fwrite(STDERR, Style::red('pig crashed: ' . $error->getMessage() . "\n"));
+    fwrite(STDERR, Style::dim($error::class . ' at ' . $error->getFile() . ':' . $error->getLine() . "\n"));
+
+    if ($recorded !== null) {
+        $how = $store !== null ? 'run `pig -r` to resume the session, then' : 'start pig and';
+        fwrite(STDERR, Style::dim("To report this crash: {$how} run /bug. The crash details are attached automatically.\n"));
+    }
+
+    exit(1);
+});
 
 if (($argv[1] ?? '') === 'update') {
     $updater = new SelfUpdate();

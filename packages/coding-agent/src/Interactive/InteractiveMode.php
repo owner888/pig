@@ -32,6 +32,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\BugReport;
+use Pig\CodingAgent\CrashLog;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\TrustChoice;
 use Pig\CodingAgent\Doctor\Doctor;
@@ -372,6 +373,14 @@ final class InteractiveMode
             $this->sayWarning(ProjectTrust::warning());
         }
 
+        // Upstream's startup notice: the last time pig fell over, said once, with the way to
+        // report it. A week old is too old to greet somebody with.
+        $crash = CrashLog::takeUnnotified();
+
+        if ($crash !== null) {
+            $this->sayWarning(CrashLog::notice($crash));
+        }
+
         $this->running = true;
         $this->hooks?->emit(new SessionStartEvent());
         $this->sayToolProblems($this->customTools?->notify('start') ?? []);
@@ -569,6 +578,10 @@ final class InteractiveMode
 
             $said[$message] = true;
             $this->sayError($message);
+
+            // Survived, drawn, and written down: a throw the loop had to catch is a pig bug by
+            // definition, and `/bug` attaches these. Once per message, like the line above.
+            CrashLog::record('loop_error', $error, $this->session->store()?->path, $this->cwd);
         });
     }
 

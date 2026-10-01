@@ -19,8 +19,9 @@ use Pig\CodingAgent\Session\AgentSession;
  * belongs anyway. Nothing leaves the machine unless the person opens that URL.
  *
  * What goes in follows upstream's disclaimer: version, OS, PHP, the model and provider (never a
- * key), loaded extensions, the last provider error, and `/doctor`'s findings. The transcript is
- * opt-in, because it holds whatever the model read.
+ * key), the last provider error, the recent crashes `CrashLog` wrote down, and `/doctor`'s
+ * findings. The transcript is opt-in, because it holds whatever the model read. `write()` clears
+ * the crash log, as upstream does once a report is out: they have been handed over.
  */
 final class BugReport
 {
@@ -62,6 +63,22 @@ final class BugReport
             $lines[] = '';
         }
 
+        $crashes = CrashLog::read();
+
+        if ($crashes !== []) {
+            $lines[] = '## Recent crashes';
+            $lines[] = '';
+
+            foreach (array_reverse($crashes) as $crash) {
+                $lines[] = "### {$crash['timestamp']} — {$crash['kind']} (pig {$crash['version']})";
+                $lines[] = '';
+                $lines[] = '```';
+                $lines[] = $crash['stack'] ?? $crash['message'];
+                $lines[] = '```';
+                $lines[] = '';
+            }
+        }
+
         $lines[] = '## Doctor';
         $lines[] = '';
         $lines[] = '```';
@@ -92,6 +109,8 @@ final class BugReport
         if (file_put_contents($path, $report) === false) {
             throw new \RuntimeException("Could not write {$path}");
         }
+
+        CrashLog::clear();
 
         return $path;
     }
