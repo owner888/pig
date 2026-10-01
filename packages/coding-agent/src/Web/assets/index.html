@@ -475,13 +475,12 @@
     <div id="chat-scroll"></div>
 
     <div class="bottom-panel">
-      <!-- Selectors & Telemetry Row matching pi-web -->
+      <!-- Selectors & Telemetry Row matching pi-web 3-level cascade -->
       <div class="controls-row">
         <div class="selectors-group">
-          <select id="model-select" class="select-pill" title="Choose Model"></select>
-          <select id="thinking-select" class="select-pill" title="Thinking Level">
-            <option value="off">off</option>
-          </select>
+          <select id="provider-select" class="select-pill" title="Provider"></select>
+          <select id="model-select" class="select-pill" title="Model"></select>
+          <select id="thinking-select" class="select-pill" title="Thinking Level"></select>
         </div>
         <div id="telemetry-stats" class="status-telemetry">↑0 ↓0 $0.00 0%/1.0M</div>
       </div>
@@ -515,6 +514,7 @@
     const cwdDisplay = document.getElementById("cwd-display");
     const filenameDisplay = document.getElementById("filename-display");
     const telemetryStats = document.getElementById("telemetry-stats");
+    const providerSelect = document.getElementById("provider-select");
     const modelSelect = document.getElementById("model-select");
     const thinkingSelect = document.getElementById("thinking-select");
 
@@ -527,9 +527,10 @@
     let currentView = "workspaces"; // "workspaces" | "sessions"
     let selectedWorkspace = null;
 
-    // Available models state
-    let availableModels = [];
+    // 3-Level Cascading Selectors: Provider -> Model -> Thinking Level
+    let currentProvider = "";
     let currentModelId = "";
+    let availableModels = [];
     let pendingImages = []; // list of {mimeType: string, data: string, url: string}
 
     // Sidebar Toggle
@@ -934,11 +935,18 @@
         cwdDisplay.innerText = d.cwd || "~";
         filenameDisplay.innerText = d.sessionFile || d.sessionName || "Active Session";
         telemetryStats.innerText = `↑${formatK(d.tokensIn)} ↓${formatK(d.tokensOut)} $${d.cost} ${d.contextPercent}%/${d.contextWindow}`;
-        currentModelId = d.model;
-        if (modelSelect.value !== d.model) {
+
+        if (d.provider && (!currentProvider || providerSelect.value !== d.provider)) {
+          currentProvider = d.provider;
+          providerSelect.value = d.provider;
+          updateModelsForProvider(d.provider, d.model);
+        } else if (d.model && (!currentModelId || modelSelect.value !== d.model)) {
+          currentModelId = d.model;
           modelSelect.value = d.model;
+          updateThinkingLevels(d.model, d.thinkingLevel);
+        } else if (d.thinkingLevel && thinkingSelect.value !== d.thinkingLevel) {
+          thinkingSelect.value = d.thinkingLevel;
         }
-        updateThinkingLevels(d.model, d.thinkingLevel);
       } catch (err) {}
     }
 
@@ -948,42 +956,59 @@
       return (n / 1000000).toFixed(1) + "M";
     }
 
-    // Dynamic Models and Thinking Levels
+    // 3-Level Cascading Selectors: Provider -> Model -> Thinking Level
     async function loadModels() {
       try {
         const res = await fetch("/api/models");
         availableModels = await res.json();
-        populateModels(availableModels);
+        populateProviders(availableModels);
       } catch (err) {}
     }
 
-    function populateModels(models) {
-      modelSelect.innerHTML = "";
-      const grouped = {};
-      for (const m of models) {
-        grouped[m.provider] = grouped[m.provider] || [];
-        grouped[m.provider].push(m);
+    function populateProviders(models) {
+      const providers = [...new Set(models.map(m => m.provider))].filter(Boolean);
+      providerSelect.innerHTML = "";
+      for (const p of providers) {
+        const opt = document.createElement("option");
+        opt.value = p;
+        opt.innerText = p;
+        providerSelect.appendChild(opt);
       }
 
-      for (const [provider, list] of Object.entries(grouped)) {
-        const optgroup = document.createElement("optgroup");
-        optgroup.label = provider;
-        for (const m of list) {
-          const opt = document.createElement("option");
-          opt.value = m.id;
-          opt.innerText = m.name || m.id;
-          optgroup.appendChild(opt);
-        }
-        modelSelect.appendChild(optgroup);
+      if (currentProvider && providers.includes(currentProvider)) {
+        providerSelect.value = currentProvider;
+      } else if (providers.includes("antigravity")) {
+        providerSelect.value = "antigravity";
+      } else if (providers.length > 0) {
+        providerSelect.value = providers[0];
       }
 
-      if (currentModelId) {
-        modelSelect.value = currentModelId;
-      }
-      updateThinkingLevels(modelSelect.value);
+      currentProvider = providerSelect.value;
+      updateModelsForProvider(currentProvider, currentModelId);
     }
 
-    function updateThinkingLevels(modelId, currentLevel = null) {
+    function updateModelsForProvider(provider, targetModelId = null) {
+      const filtered = availableModels.filter(m => m.provider === provider);
+      modelSelect.innerHTML = "";
+
+      for (const m of filtered) {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.innerText = m.id;
+        modelSelect.appendChild(opt);
+      }
+
+      if (targetModelId && filtered.some(m => m.id === targetModelId)) {
+        modelSelect.value = targetModelId;
+      } else if (filtered.length > 0) {
+        modelSelect.value = filtered[0].id;
+      }
+
+      currentModelId = modelSelect.value;
+      updateThinkingLevels(currentModelId);
+    }
+
+    function updateThinkingLevels(modelId, targetLevel = null) {
       const model = availableModels.find(m => m.id === modelId);
       const levels = model?.thinkingLevels || ["off", "low", "medium", "high"];
 
@@ -995,8 +1020,8 @@
         thinkingSelect.appendChild(opt);
       }
 
-      if (currentLevel && levels.includes(currentLevel)) {
-        thinkingSelect.value = currentLevel;
+      if (targetLevel && levels.includes(targetLevel)) {
+        thinkingSelect.value = targetLevel;
       } else if (levels.includes("medium")) {
         thinkingSelect.value = "medium";
       } else {
@@ -1004,21 +1029,16 @@
       }
     }
 
+    providerSelect.addEventListener("change", () => {
+      currentProvider = providerSelect.value;
+      updateModelsForProvider(currentProvider);
+      sendModelChange();
+    });
+
     modelSelect.addEventListener("change", () => {
-      const selectedId = modelSelect.value;
-      const model = availableModels.find(m => m.id === selectedId);
-      updateThinkingLevels(selectedId);
-
-      const msg = {
-        type: "set_model",
-        modelId: selectedId,
-        provider: model?.provider,
-      };
-
-      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(msg));
-      }
-      refreshState();
+      currentModelId = modelSelect.value;
+      updateThinkingLevels(currentModelId);
+      sendModelChange();
     });
 
     thinkingSelect.addEventListener("change", () => {
@@ -1033,6 +1053,19 @@
       }
       refreshState();
     });
+
+    function sendModelChange() {
+      const msg = {
+        type: "set_model",
+        modelId: modelSelect.value,
+        provider: providerSelect.value,
+      };
+
+      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(msg));
+      }
+      refreshState();
+    }
 
     // 1. Level 1: Workspaces/Directories
     async function loadWorkspaces() {
