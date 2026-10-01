@@ -411,6 +411,12 @@ drawer. The process runs one session at a time (the terminal and the page share 
 a way back to a conversation rather than a second agent; when the terminal moves to another
 session the page follows.
 
+A hook that **asks** — a `tool_call` guard's `confirm()`, a `select`, an `input`, an `editor` —
+asks in the page when pig was started with `--mode web`: the question goes out over the WebSocket
+as the same `hook_ui_request` line RPC mode uses, a dialog opens, and the answer resumes the parked
+tool call. Escape is no. Started from inside the terminal with `/web`, the terminal stays the place
+hooks ask, because two places asking one question is one too many.
+
 The **accounts** button (or `/accounts`) opens the Antigravity accounts the `pig-antigravity`
 extension keeps: which Google account is live, when each token runs out, use / remove / rotate,
 and the live account's quota pools with their reset times — the same figures `/antigravity.usage`

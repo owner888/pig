@@ -37,11 +37,21 @@ final class RpcUi implements HookUi
 
     private int $next = 0;
 
+    /**
+     * Makes this process's question ids unlike any other's. A counter alone restarts at `ui-1`
+     * with every pig, and a browser tab left over from the last one reconnects to the next and
+     * still holds a dialog called `ui-1` — which its "one question at a time" rule then cancels
+     * on sight, refusing a tool call nobody was asked about. Measured, not imagined: one run in
+     * two failed that way until the stale tab was found.
+     */
+    private readonly string $epoch;
+
     /** @param Closure(array<string, mixed>): void $send one JSON line out */
     public function __construct(
         private readonly Closure $send,
         private readonly Palette $palette,
     ) {
+        $this->epoch = bin2hex(random_bytes(4));
     }
 
     /**
@@ -162,7 +172,7 @@ final class RpcUi implements HookUi
      */
     private function ask(array $request): array
     {
-        $id = 'ui-' . (++$this->next);
+        $id = "ui-{$this->epoch}-" . (++$this->next);
         $answer = new Deferred();
         $this->pending[$id] = $answer;
 

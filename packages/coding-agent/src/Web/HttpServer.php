@@ -31,8 +31,16 @@ use Pig\Ai\UserMessage;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Doctor\Doctor;
+use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
+use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Hooks\HookError;
+use Pig\CodingAgent\Hooks\HookRunner;
+use Pig\CodingAgent\Rpc\RpcUi;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\HookMessage;
+use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Session\AutoCompactionEndEvent;
 use Pig\CodingAgent\Session\AutoCompactionStartEvent;
 use Pig\CodingAgent\Session\RetryEndEvent;
@@ -65,13 +73,76 @@ final class HttpServer
     private bool $isRunning = false;
     private readonly Auth $auth;
 
+    /**
+     * The hooks' and custom tools' UI, when this server is the mode — `RpcUi` over the browser.
+     *
+     * Null when the server was started from inside the terminal with `/web`: there the TUI is the
+     * mode, it wired the hooks to its own dialogs, and a second UI would be two places asking one
+     * question. Standalone `--mode web` had **no** UI at all until this — a `tool_call` guard got
+     * `NoUi`, every `confirm()` was false, and every tool call was refused without a word.
+     */
+    private ?RpcUi $ui = null;
+
     public function __construct(
         private readonly AgentSession $session,
         public readonly int $port = 8088,
         public readonly string $host = '127.0.0.1',
         ?Auth $auth = null,
+        private readonly ?HookRunner $hooks = null,
+        private readonly ?CustomToolSet $customTools = null,
     ) {
         $this->auth = $auth ?? Auth::discover();
+    }
+
+    /**
+     * Wire the hooks and custom tools to the browser — what `RpcMode::start()` does for its
+     * host, with the same `RpcUi` and the same `hook_ui_request` / `hook_ui_response` lines, so
+     * a hook's `confirm()` is a dialog in the page and the answer resumes the parked tool call.
+     * Called by `WebMode` and not by `/web`, for the reason on `$ui`.
+     */
+    public function wireHooks(): void
+    {
+        $this->ui = new RpcUi(fn (array $payload) => $this->broadcast($payload), Palette::named('dark'));
+
+        $this->hooks?->initialize(
+            getModel: fn () => $this->session->model(),
+            isIdle: fn (): bool => !$this->session->isStreaming(),
+            abort: function (): void {
+                $this->session->abort();
+            },
+            hasQueuedMessages: fn (): bool => $this->session->queued() !== [],
+            signal: fn () => $this->session->signal(),
+            ui: $this->ui,
+            send: function (HookMessage $message, bool $triggerTurn): void {
+                $this->session->sendHookMessage($message, $triggerTurn);
+            },
+            note: function (string $customType, mixed $data): void {
+                $this->session->appendHookEntry($customType, $data);
+            },
+            getApiKey: fn ($m) => $this->session->keyFor($m),
+            setSessionName: fn (string $name) => $this->session->setSessionName($name),
+            getSessionName: fn () => $this->session->getSessionName(),
+        );
+
+        $this->hooks?->onError(function (HookError $error): void {
+            $this->broadcast([
+                'type' => 'hook_error',
+                'hookPath' => $error->hookPath,
+                'event' => $error->event,
+                'error' => $error->error,
+            ]);
+        });
+
+        $this->customTools?->withUi($this->ui);
+        $this->customTools?->withContext(
+            fn () => $this->hooks?->context() ?? new HookContext($this->session->cwd(), ui: $this->ui, hasUi: true),
+        );
+
+        $this->hooks?->emit(new SessionStartEvent());
+
+        foreach ($this->customTools?->notify('start') ?? [] as $problem) {
+            $this->broadcast(['type' => 'tool_error', 'error' => $problem->toText()]);
+        }
     }
 
     /**
@@ -283,6 +354,19 @@ final class HttpServer
         }
 
         // 4. Abort turn
+        // The SSE fallback's way to answer a hook's question; over WebSocket it is a message.
+        if ($path === '/api/hook_ui_response' && $req['method'] === 'POST') {
+            $data = json_decode($req['body'], true);
+
+            if (is_array($data)) {
+                $this->ui?->answer($data);
+            }
+
+            $conn->sendResponse(200, ['Content-Type' => 'application/json', 'Access-Control-Allow-Origin' => '*'], json_encode(['ok' => true]));
+
+            return;
+        }
+
         if ($path === '/api/abort' && $req['method'] === 'POST') {
             Async::spawn(function (): void {
                 $this->session->abort();
@@ -676,6 +760,14 @@ final class HttpServer
 
         $id = $data['id'] ?? null;
         $type = (string) ($data['type'] ?? '');
+
+        // A hook's question being answered: not a command, and it must not be spawned — the
+        // fiber it resumes is the one parked inside the tool call.
+        if ($type === 'hook_ui_response') {
+            $this->ui?->answer($data);
+
+            return;
+        }
 
         match ($type) {
             'prompt' => Async::spawn(function () use ($conn, $id, $data): void {

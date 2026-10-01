@@ -558,7 +558,7 @@ if ($mode === 'rpc') {
     // wakes on a keystroke, and both need the same loop underneath them.
     Async::run(static fn () => $running->run());
 } elseif ($mode === 'web') {
-    $running = new WebMode($session, auth: $auth);
+    $running = new WebMode($session, auth: $auth, hooks: $hooks, customTools: $customTools);
     $exit = (int) Async::run(static fn (): int => $running->run());
 } elseif (!$interactive) {
     $printing = new PrintMode($session, $mode ?? 'text', $hooks, $customTools);

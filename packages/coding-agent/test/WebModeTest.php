@@ -18,6 +18,7 @@ use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
@@ -323,6 +324,68 @@ final class WebModeTest extends TestCase
         } finally {
             $this->rmrf($home);
         }
+    }
+
+    /**
+     * Standalone `--mode web` had no hook UI at all: a guard's `confirm()` was `NoUi`'s false and
+     * every tool call was refused without a word. This drives the wire end to end — the question
+     * goes to the browser as `hook_ui_request`, the browser answers, the parked fiber gets a yes.
+     */
+    public function testAHooksQuestionReachesTheBrowserAndItsAnswerResumesTheHook(): void
+    {
+        $port = 28096;
+        $hooks = new HookRunner([], $this->cwd);
+        $server = new HttpServer($this->session(), $port, hooks: $hooks);
+
+        Async::run(function () use ($server, $port, $hooks) {
+            $server->start();
+            $server->wireHooks();
+
+            $client = stream_socket_client("tcp://127.0.0.1:{$port}", $errno, $errstr, 2.0);
+            stream_set_blocking($client, false);
+            fwrite($client, "GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                . "Sec-WebSocket-Key: " . base64_encode('nonce-nonce-1234') . "\r\nSec-WebSocket-Version: 13\r\n\r\n");
+            Async::delay(0.05);
+            fread($client, 65536);
+
+            // The hook asks, from a fiber of its own, as a tool_call guard would.
+            $answer = null;
+            Async::spawn(static function () use ($hooks, &$answer): void {
+                $answer = $hooks->context()->ui->confirm('Let bash run?', 'git push --force');
+            });
+            Async::delay(0.05);
+
+            $frames = (string) fread($client, 65536);
+            $this->assertStringContainsString('"type":"hook_ui_request"', $frames);
+            $this->assertStringContainsString('"method":"confirm"', $frames);
+            $this->assertStringContainsString('Let bash run?', $frames);
+            $this->assertNull($answer, 'parked until the browser answers');
+
+            preg_match('/"id":"(ui-[0-9a-f]+-\d+)"/', $frames, $m);
+            $reply = json_encode(['type' => 'hook_ui_response', 'id' => $m[1], 'confirmed' => true]);
+            $mask = "\x01\x02\x03\x04";
+            $masked = '';
+            for ($i = 0, $n = strlen($reply); $i < $n; $i++) {
+                $masked .= $reply[$i] ^ $mask[$i % 4];
+            }
+            fwrite($client, "\x81" . chr(0x80 | strlen($reply)) . $mask . $masked);
+            Async::delay(0.05);
+
+            $this->assertTrue($answer, 'the yes from the page is the yes the hook gets');
+            $this->assertTrue($hooks->context()->hasUi, 'and a hook that checks first is told there is somebody to ask');
+
+            fclose($client);
+            $server->stop();
+        });
+    }
+
+    public function testWithoutWiringAHookHasNobodyToAskWhichIsTheSlashWebCase(): void
+    {
+        $hooks = new HookRunner([], $this->cwd);
+        new HttpServer($this->session(), 28097, hooks: $hooks);
+
+        // `/web` from the terminal leaves the TUI as the hooks' UI; this server must not claim it.
+        $this->assertFalse($hooks->context()->hasUi);
     }
 
     public function testWebModelSwitchDoesNotOverwriteDefaultSettings(): void

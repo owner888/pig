@@ -349,6 +349,11 @@ bin/pig --mode web
 时刻只跑一个会话（终端和网页共用），所以标签页是回到某段对话的入口而不是第二个 agent；终端切到别
 的会话时，网页会跟着切。
 
+会**提问**的 hook——`tool_call` 守卫里的 `confirm()`、`select`、`input`、`editor`——在 `--mode web`
+启动时会在网页里问：问题以 RPC 模式同一条 `hook_ui_request` 经 WebSocket 发出，页面弹出对话框，答案
+恢复停在那里的工具调用。Esc 就是不。从终端里用 `/web` 唤起的情况下，提问仍在终端里，因为两个地方问
+同一个问题，多了一个。
+
 **accounts** 按钮（或输入 `/accounts`）打开 `pig-antigravity` 扩展保存的 Antigravity 账号面板：哪个
 Google 账号正在用、每个 token 还剩多久、使用 / 移除 / 轮换，以及当前账号各配额池的剩余与重置时间——
 和 `/antigravity.usage` 打印的是同一组数字。所有改动走的是 `/antigravity.accounts` 同一套代码，所以

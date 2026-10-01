@@ -198,6 +198,16 @@
       color: #fff;
     }
 
+    /* A hook's question: the same four dialogs TerminalUi draws, in the page */
+    .hook-dialog .modal-body { display: flex; flex-direction: column; gap: 10px; }
+    .hook-message { white-space: pre-wrap; color: var(--text-muted); font-family: var(--font-mono); font-size: 12px; max-height: 40vh; overflow: auto; }
+    .hook-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .hook-option { padding: 8px 10px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
+    .hook-option:hover, .hook-option.focus { background: rgba(56,189,248,0.08); border-color: rgba(56,189,248,0.4); }
+    .hook-input, .hook-editor { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font: inherit; }
+    .hook-editor { min-height: 160px; font-family: var(--font-mono); font-size: 12px; resize: vertical; }
+    .hook-hint { color: var(--text-dim); font-size: 11px; }
+
     /* Accounts panel: the Antigravity sign-ins, which one is live, and its quota */
     .modal-backdrop {
       position: fixed; inset: 0;
@@ -1024,6 +1034,10 @@
         ws = new WebSocket(wsUrl);
         ws.onopen = () => {
           wsConnected = true;
+          // One channel. An SSE stream started while the socket was still failing would
+          // otherwise stay open beside it and deliver every event twice — a hook's question
+          // included, and the second copy of a question cancels the first.
+          if (sse) { sse.close(); sse = null; sseStarted = false; }
           loadModels();
         };
         ws.onmessage = (e) => {
@@ -1031,6 +1045,10 @@
             const data = JSON.parse(e.data);
             if (data.type === "models") {
               populateProviders(data.models);
+            } else if (data.type === "hook_ui_request") {
+              onHookUiRequest(data);
+            } else if (data.type === "hook_error" || data.type === "tool_error") {
+              appendErrorMessage((data.hookPath ? data.hookPath + ": " : "") + data.error);
             } else {
               onEvent(data);
             }
@@ -1050,17 +1068,21 @@
     }
 
     let sseStarted = false;
+    let sse = null;
     function initSseFallback() {
       if (sseStarted || wsConnected) return;
       sseStarted = true;
       const es = new EventSource("/api/events");
+      sse = es;
       es.onmessage = (e) => {
         try {
           const evt = JSON.parse(e.data);
-          onEvent(evt);
+          if (evt.type === "hook_ui_request") onHookUiRequest(evt);
+          else if (evt.type === "hook_error" || evt.type === "tool_error") appendErrorMessage((evt.hookPath ? evt.hookPath + ": " : "") + evt.error);
+          else onEvent(evt);
         } catch (err) {}
       };
-      es.onerror = () => setTimeout(() => { sseStarted = false; initSseFallback(); }, 3000);
+      es.onerror = () => { es.close(); if (sse === es) sse = null; setTimeout(() => { sseStarted = false; initSseFallback(); }, 3000); };
     }
 
     function onEvent(evt) {
@@ -1497,6 +1519,115 @@
       } catch (err) { pigUnreachable("the session state", err); }
     }
 
+    // ---- a hook asks ----------------------------------------------------------------------
+    //
+    // `hook_ui_request` is the RPC protocol's line, sent to every browser; the first to answer
+    // wins and the rest see the dialog go. A tool call is parked on the other end until the
+    // answer arrives, so every dialog here can be escaped — escape is "no" for a confirm and
+    // "nothing chosen" for the rest, which is the only safe reading of a question nobody answered.
+    let hookDialog = null;
+
+    function hookReply(reply) {
+      const payload = { type: "hook_ui_response", ...reply };
+      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(payload));
+      } else {
+        fetch("/api/hook_ui_response", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(() => {});
+      }
+    }
+
+    function closeHookDialog() {
+      if (hookDialog) { hookDialog.el.remove(); hookDialog = null; }
+    }
+
+    function openHookDialog(req) {
+      // The same question arriving again is not a second question.
+      if (hookDialog && hookDialog.id === req.id) return;
+      // One at a time, as TerminalUi has it: a second question would take the keys from the first.
+      if (hookDialog) hookReply({ id: hookDialog.id, cancelled: true });
+      closeHookDialog();
+
+      const el = document.createElement("div");
+      el.className = "modal-backdrop hook-dialog";
+      const answered = (reply) => { closeHookDialog(); hookReply({ id: req.id, ...reply }); };
+      el.addEventListener("click", (e) => { if (e.target === el) answered({ cancelled: true }); });
+
+      let body = "";
+      if (req.method === "confirm") {
+        body = `<div class="hook-message">${escapeHtml(req.message || "")}</div>
+          <div class="hook-actions"><button class="mini-btn" data-no>No</button><button class="mini-btn" data-yes autofocus>Yes</button></div>
+          <div class="hook-hint">enter yes · esc no</div>`;
+      } else if (req.method === "select") {
+        body = `<div>${(req.options || []).map((o, i) => `<div class="hook-option" data-i="${i}">${escapeHtml(o)}</div>`).join("")}</div>
+          <div class="hook-hint">↑↓ move · enter choose · esc cancel</div>`;
+      } else if (req.method === "input") {
+        body = `<input class="hook-input" placeholder="${escapeHtml(req.placeholder || "")}" autofocus>
+          <div class="hook-actions"><button class="mini-btn" data-cancel>Cancel</button><button class="mini-btn" data-ok>OK</button></div>
+          <div class="hook-hint">enter submit · esc cancel</div>`;
+      } else if (req.method === "editor") {
+        body = `<textarea class="hook-editor" autofocus>${escapeHtml(req.prefill || "")}</textarea>
+          <div class="hook-actions"><button class="mini-btn" data-cancel>Cancel</button><button class="mini-btn" data-ok>Submit</button></div>
+          <div class="hook-hint">ctrl+enter submit · esc cancel</div>`;
+      } else {
+        return;
+      }
+
+      el.innerHTML = `<div class="modal"><div class="modal-header"><span>${escapeHtml(req.title || "A hook asks")}</span><span class="modal-close">×</span></div><div class="modal-body">${body}</div></div>`;
+      document.body.appendChild(el);
+      hookDialog = { id: req.id, el };
+      el.querySelector(".modal-close").addEventListener("click", () => answered({ cancelled: true }));
+
+      if (req.method === "confirm") {
+        el.querySelector("[data-yes]").addEventListener("click", () => answered({ confirmed: true }));
+        el.querySelector("[data-no]").addEventListener("click", () => answered({ confirmed: false }));
+        el.querySelector("[data-yes]").focus();
+        el.onkeydown = (e) => { if (e.key === "Enter") answered({ confirmed: true }); };
+      } else if (req.method === "select") {
+        const opts = [...el.querySelectorAll(".hook-option")];
+        let at = 0;
+        const focus = () => opts.forEach((o, i) => o.classList.toggle("focus", i === at));
+        focus();
+        opts.forEach((o) => o.addEventListener("click", () => answered({ value: req.options[+o.dataset.i] })));
+        el.tabIndex = -1; el.focus();
+        el.onkeydown = (e) => {
+          if (e.key === "ArrowDown") { at = Math.min(opts.length - 1, at + 1); focus(); e.preventDefault(); }
+          else if (e.key === "ArrowUp") { at = Math.max(0, at - 1); focus(); e.preventDefault(); }
+          else if (e.key === "Enter" && opts.length) answered({ value: req.options[at] });
+        };
+      } else {
+        const field = el.querySelector(".hook-input, .hook-editor");
+        field.focus();
+        el.querySelector("[data-ok]").addEventListener("click", () => answered({ value: field.value }));
+        el.querySelector("[data-cancel]").addEventListener("click", () => answered({ cancelled: true }));
+        field.onkeydown = (e) => {
+          if (e.key === "Enter" && (req.method === "input" || e.ctrlKey || e.metaKey)) { e.preventDefault(); answered({ value: field.value }); }
+        };
+      }
+    }
+
+    const hookStatuses = {};
+    function onHookUiRequest(req) {
+      if (req.method === "notify") {
+        const level = req.level || "info";
+        if (level === "error") appendErrorMessage(req.message);
+        else { showStatusBanner(req.message); setTimeout(() => { if (document.getElementById("status-banner").innerText === req.message) hideStatusBanner(); }, 6000); }
+        return;
+      }
+      if (req.method === "set_status") {
+        if (req.statusText) hookStatuses[req.statusKey] = req.statusText; else delete hookStatuses[req.statusKey];
+        const extra = Object.values(hookStatuses).join(" · ");
+        telemetryStats.dataset.hook = extra;
+        refreshState();
+        return;
+      }
+      if (req.method === "set_editor_text") { promptInput.value = req.text || ""; return; }
+      openHookDialog(req);
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && hookDialog) { const id = hookDialog.id; closeHookDialog(); hookReply({ id, cancelled: true }); }
+    });
+
     // ---- accounts panel -----------------------------------------------------------------
     //
     // The Antigravity sign-ins `antigravity-accounts.json` keeps: which one is live, when each
@@ -1754,7 +1885,7 @@
       filenameDisplay.innerText = d.sessionName || d.sessionFile || "Active Session";
       upsertTab(d);
       renderTabs();
-      telemetryStats.innerText = `↑${formatK(d.tokensIn)} ↓${formatK(d.tokensOut)} $${d.cost} ${d.contextPercent}%/${d.contextWindow}`;
+      telemetryStats.innerText = (telemetryStats.dataset.hook ? telemetryStats.dataset.hook + "  " : "") + `↑${formatK(d.tokensIn)} ↓${formatK(d.tokensOut)} $${d.cost} ${d.contextPercent}%/${d.contextWindow}`;
 
       if (userIsInteracting) return;
 
