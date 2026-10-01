@@ -257,36 +257,50 @@
     .thinking-box[open] summary::before { transform: rotate(90deg); }
     .thinking-content { white-space: pre-wrap; margin-top: 6px; }
 
-    /* Tool execution cards */
+    /* Tool execution cards matching pi-web */
     .tool-card {
-      background: #090d16;
+      width: 100%;
+      background: #111827;
       border: 1px solid var(--border);
-      border-radius: 6px;
-      margin: 10px 0;
+      border-radius: 8px;
+      margin: 4px 0;
       font-family: var(--font-mono);
       font-size: 13px;
       overflow: hidden;
+      animation: fadeIn 0.15s ease-out;
     }
     .tool-header {
-      padding: 6px 12px;
-      background: rgba(30, 41, 59, 0.6);
+      padding: 10px 14px;
+      background: rgba(30, 41, 59, 0.4);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      color: var(--text-muted);
+      color: #94a3b8;
       cursor: pointer;
       user-select: none;
+      font-size: 13px;
     }
-    .tool-header-title { font-weight: 600; color: #cbd5e1; }
+    .tool-header:hover { background: rgba(51, 65, 85, 0.4); }
+    .tool-header-title { font-weight: 500; color: #cbd5e1; }
     .tool-header-status { font-size: 11px; color: var(--text-dim); }
     .tool-body {
-      padding: 10px 12px;
-      color: var(--text);
+      padding: 12px 14px;
+      background: #090d16;
+      color: #e2e8f0;
       white-space: pre-wrap;
-      max-height: 320px;
+      max-height: 380px;
       overflow-y: auto;
-      font-size: 12px;
+      font-size: 13px;
       line-height: 1.5;
+      border-top: 1px solid rgba(30, 41, 59, 0.6);
+    }
+    .tool-terminal {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.5;
+      color: #cbd5e1;
+      white-space: pre-wrap;
+      word-break: break-all;
     }
 
     /* Diff View */
@@ -803,12 +817,16 @@
         prose.innerHTML = renderMarkdown(currentAssistantText);
         chatScroll.scrollTop = chatScroll.scrollHeight;
       } else if (evt.type === "tool_execution_start") {
-        const box = ensureAssistantBlock();
+        currentAssistantBlock = null;
+        currentAssistantText = "";
+
         const card = createToolCard(evt);
-        box.appendChild(card);
+        chatScroll.appendChild(card);
         chatScroll.scrollTop = chatScroll.scrollHeight;
       } else if (evt.type === "tool_execution_end") {
         updateToolCard(evt);
+        currentAssistantBlock = null;
+        currentAssistantText = "";
       } else if (evt.type === "session_info_changed") {
         refreshState();
       }
@@ -822,19 +840,30 @@
       let title = evt.toolName;
       let bodyHtml = "";
 
-      if (evt.toolName === "edit") {
+      if (evt.toolName === "bash") {
+        const cmd = evt.arguments?.command || "";
+        const timeout = evt.arguments?.timeout;
+        title = `$ ${cmd}` + (timeout ? ` (timeout ${timeout}s)` : "");
+        bodyHtml = `<div class="tool-terminal">... executing command</div>`;
+      } else if (evt.toolName === "read") {
+        const path = evt.arguments?.path || "";
+        const offset = evt.arguments?.offset;
+        title = `read ${path}` + (offset ? `:${offset}` : "");
+        bodyHtml = `<div class="tool-terminal">Reading file...</div>`;
+      } else if (evt.toolName === "edit") {
         const path = evt.arguments?.path || "";
         const oldText = evt.arguments?.oldText || "";
         const newText = evt.arguments?.newText || "";
         title = `edit ${path}`;
         bodyHtml = renderDiff(oldText, newText);
-      } else if (evt.toolName === "bash") {
-        const cmd = evt.arguments?.command || "";
-        title = `bash $ ${cmd}`;
-        bodyHtml = `<div style="color:var(--text-dim);">$ ${escapeHtml(cmd)}</div>`;
-      } else if (evt.toolName === "read") {
-        title = `read ${evt.arguments?.path || ""}`;
-        bodyHtml = `<div style="color:var(--text-dim);">Reading file...</div>`;
+      } else if (evt.toolName === "write") {
+        const path = evt.arguments?.path || "";
+        title = `write ${path}`;
+        bodyHtml = `<div class="tool-terminal">Writing to file...</div>`;
+      } else if (evt.toolName === "grep") {
+        const pattern = evt.arguments?.pattern || "";
+        title = `grep /${pattern}/`;
+        bodyHtml = `<div class="tool-terminal">Searching...</div>`;
       } else {
         bodyHtml = `<pre><code>${escapeHtml(JSON.stringify(evt.arguments || {}, null, 2))}</code></pre>`;
       }
@@ -861,16 +890,18 @@
 
       const statusEl = card.querySelector(".tool-header-status");
       statusEl.innerText = evt.isError ? "Failed" : "Done";
-      statusEl.style.color = evt.isError ? "#ef4444" : "#4ade80";
+      statusEl.style.color = evt.isError ? "#ef4444" : "#94a3b8";
 
       const body = card.querySelector(".tool-body");
-      if (evt.result) {
+      if (evt.result !== undefined && evt.result !== null) {
         if (typeof evt.result === "string") {
-          body.innerHTML = `<pre><code>${escapeHtml(evt.result)}</code></pre>`;
+          body.innerHTML = `<div class="tool-terminal">${escapeHtml(evt.result)}</div>`;
         } else if (evt.result.diff) {
           body.innerHTML = renderDiffFromUnified(evt.result.diff);
         } else if (evt.result.output) {
-          body.innerHTML = `<pre><code>${escapeHtml(evt.result.output)}</code></pre>`;
+          body.innerHTML = `<div class="tool-terminal">${escapeHtml(evt.result.output)}</div>`;
+        } else {
+          body.innerHTML = `<div class="tool-terminal">${escapeHtml(JSON.stringify(evt.result, null, 2))}</div>`;
         }
       }
     }
@@ -1219,17 +1250,40 @@
             }
             appendUserMessage(text, images);
           } else if (m.role === "assistant") {
-            const text = m.content?.filter(c => c.type === "text").map(c => c.text).join("") || "";
-            if (text) {
-              const block = document.createElement("div");
-              block.className = "msg-block msg-assistant prose";
-              block.innerHTML = renderMarkdown(text);
-              chatScroll.appendChild(block);
-            } else if (m.stopReason === "error" && m.errorMessage) {
+            if (Array.isArray(m.content)) {
+              for (const c of m.content) {
+                if (c.type === "thinking" && c.text) {
+                  const box = document.createElement("details");
+                  box.className = "thinking-box";
+                  box.innerHTML = `<summary>Thinking...</summary><div class="thinking-content">${escapeHtml(c.text)}</div>`;
+                  chatScroll.appendChild(box);
+                } else if (c.type === "tool_call") {
+                  const card = createToolCard({
+                    toolCallId: c.id,
+                    toolName: c.name,
+                    arguments: c.arguments,
+                  });
+                  chatScroll.appendChild(card);
+                } else if (c.type === "text" && c.text) {
+                  const block = document.createElement("div");
+                  block.className = "msg-block msg-assistant prose";
+                  block.innerHTML = renderMarkdown(c.text);
+                  chatScroll.appendChild(block);
+                }
+              }
+            }
+            if (m.stopReason === "error" && m.errorMessage) {
               appendErrorMessage(m.errorMessage);
             }
+          } else if (m.role === "tool_result") {
+            updateToolCard({
+              toolCallId: m.toolCallId,
+              result: m.result || m.details,
+              isError: m.isError,
+            });
           }
         }
+        chatScroll.scrollTop = chatScroll.scrollHeight;
       } catch (err) {}
     }
 

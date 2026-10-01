@@ -21,7 +21,10 @@ use Pig\Ai\ImageContent;
 use Pig\Ai\Models;
 use Pig\Ai\TextContent;
 use Pig\Ai\TextDeltaEvent;
+use Pig\Ai\ThinkingContent;
 use Pig\Ai\ThinkingDeltaEvent;
+use Pig\Ai\ToolCall;
+use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -634,6 +637,15 @@ final class HttpServer
                 foreach ($m->content as $c) {
                     if ($c instanceof TextContent) {
                         $blocks[] = ['type' => 'text', 'text' => $c->text];
+                    } elseif ($c instanceof ThinkingContent) {
+                        $blocks[] = ['type' => 'thinking', 'text' => $c->thinking];
+                    } elseif ($c instanceof ToolCall) {
+                        $blocks[] = [
+                            'type' => 'tool_call',
+                            'id' => $c->id,
+                            'name' => $c->name,
+                            'arguments' => $c->arguments,
+                        ];
                     }
                 }
                 $history[] = [
@@ -641,6 +653,21 @@ final class HttpServer
                     'content' => $blocks,
                     'stopReason' => $m->stopReason->value,
                     'errorMessage' => $m->errorMessage,
+                ];
+            } elseif ($m instanceof ToolResultMessage) {
+                $textResult = '';
+                foreach ($m->content as $c) {
+                    if ($c instanceof TextContent) {
+                        $textResult .= $c->text;
+                    }
+                }
+                $history[] = [
+                    'role' => 'tool_result',
+                    'toolCallId' => $m->toolCallId,
+                    'toolName' => $m->toolName,
+                    'result' => $textResult,
+                    'isError' => $m->isError,
+                    'details' => $m->details,
                 ];
             }
         }
