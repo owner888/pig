@@ -570,6 +570,7 @@
     let availableModels = [];
     let pendingImages = []; // list of {mimeType: string, data: string, url: string}
     let userIsInteracting = false;
+    let preferredThinkingLevel = "medium";
 
     // Sidebar Toggle
     toggleSidebar.addEventListener("click", () => {
@@ -1123,6 +1124,7 @@
     function updateThinkingLevels(modelId, targetLevel = null) {
       const model = availableModels.find(m => m.id === modelId);
       const levels = model?.thinkingLevels || ["off", "low", "medium", "high"];
+      const canReason = model ? (model.reasoning && levels.some(l => l !== "off")) : true;
 
       thinkingSelect.innerHTML = "";
       for (const lvl of levels) {
@@ -1132,12 +1134,31 @@
         thinkingSelect.appendChild(opt);
       }
 
+      // Determine active level preserving user preference
+      let chosen = null;
+
       if (targetLevel && levels.includes(targetLevel)) {
-        thinkingSelect.value = targetLevel;
-      } else if (levels.includes("medium")) {
-        thinkingSelect.value = "medium";
+        chosen = targetLevel;
+      } else if (canReason) {
+        // If model supports thinking, NEVER default to off!
+        if (levels.includes(preferredThinkingLevel)) {
+          chosen = preferredThinkingLevel;
+        } else if (levels.includes("medium")) {
+          chosen = "medium";
+        } else if (levels.includes("high")) {
+          chosen = "high";
+        } else {
+          // First non-off level available
+          chosen = levels.find(l => l !== "off") || levels[0] || "medium";
+        }
       } else {
-        thinkingSelect.value = levels[0] || "off";
+        // Non-reasoning model can only be off
+        chosen = "off";
+      }
+
+      thinkingSelect.value = chosen;
+      if (chosen !== "off") {
+        preferredThinkingLevel = chosen;
       }
     }
 
@@ -1155,6 +1176,9 @@
 
     thinkingSelect.addEventListener("change", async () => {
       const level = thinkingSelect.value;
+      if (level !== "off") {
+        preferredThinkingLevel = level;
+      }
       const msg = {
         type: "set_thinking_level",
         level: level,
@@ -1181,10 +1205,12 @@
       userIsInteracting = true;
       const modelId = modelSelect.value;
       const provider = providerSelect.value;
+      const thinkingLevel = thinkingSelect.value;
       const msg = {
         type: "set_model",
         modelId,
         provider,
+        thinkingLevel,
       };
 
       if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
@@ -1195,7 +1221,7 @@
         const res = await fetch("/api/model", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ modelId, provider }),
+          body: JSON.stringify({ modelId, provider, thinkingLevel }),
         });
         const d = await res.json();
         if (d && d.state) {

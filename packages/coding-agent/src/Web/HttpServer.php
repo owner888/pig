@@ -376,12 +376,14 @@ final class HttpServer
             $data = json_decode($req['body'], true);
             $modelId = is_array($data) ? (string) ($data['modelId'] ?? $data['model'] ?? '') : '';
             $provider = is_array($data) && isset($data['provider']) ? (string) $data['provider'] : null;
+            $thinkingStr = is_array($data) && isset($data['thinkingLevel']) ? (string) $data['thinkingLevel'] : null;
+            $thinking = $thinkingStr !== null ? ThinkingLevel::tryFrom($thinkingStr) : null;
 
             if ($modelId !== '') {
                 try {
                     $model = Models::get($provider === null ? $modelId : "{$provider}/{$modelId}") ?? Models::get($modelId);
                     if ($model !== null) {
-                        $this->session->setModel($model);
+                        $this->session->setModel($model, $thinking);
                     }
                 } catch (Throwable) {}
             }
@@ -541,13 +543,16 @@ final class HttpServer
             'set_model' => Async::spawn(function () use ($conn, $id, $data): void {
                 $modelId = (string) ($data['modelId'] ?? '');
                 $provider = isset($data['provider']) ? (string) $data['provider'] : null;
+                $thinkingStr = isset($data['thinkingLevel']) ? (string) $data['thinkingLevel'] : null;
+                $thinking = $thinkingStr !== null ? ThinkingLevel::tryFrom($thinkingStr) : null;
+
                 if ($modelId !== '') {
                     try {
                         $model = Models::get($provider === null ? $modelId : "{$provider}/{$modelId}") ?? Models::get($modelId);
                         if ($model === null) {
                             throw new \RuntimeException("No such model: {$provider}/{$modelId}");
                         }
-                        $this->session->setModel($model);
+                        $this->session->setModel($model, $thinking);
                         $conn->send(['id' => $id, 'type' => 'response', 'success' => true, 'state' => $this->getStatePayload()]);
                     } catch (Throwable $e) {
                         $conn->send(['id' => $id, 'type' => 'response', 'success' => false, 'error' => $e->getMessage()]);
