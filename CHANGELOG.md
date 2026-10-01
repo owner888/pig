@@ -47,14 +47,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### New Features
 
-- Pure PHP zero-dependency web search agent tools (`web_search` & `fetch_web_page`) — Added native real-time web search via DuckDuckGo HTML scraping and readable web page text extraction via `HttpClient`. Zero API keys, zero external composer packages, fully non-blocking and Fiber-based with global HTTP/SOCKS5 proxy support.
+- Pure PHP web search extension (`extensions/pig-web-search/`) — Added standalone, zero-dependency web search extension providing `web_search` (DuckDuckGo HTML scraping), `fetch_web_page` (clean documentation text extraction), and `/search <query>` slash command. Keeps core tools 1:1 pure with upstream pi while enabling real-time web retrieval.
 - Workerman-inspired protocol decoupling and RFC 6455 pure PHP WebSocket engine — Decoupled network I/O from wire protocols with `ProtocolInterface` (`input`, `decode`, `encode`). Implemented pure PHP `Websocket` protocol supporting handshake, masking/unmasking, ping/pong keepalive, and full-duplex RPC streaming for Web UI (`--mode web` & `/web`).
 - Built-in Web UI mode (`--mode web` & `/web`) — 1:1 pixel-level TUI replica matching `pi-web` with two-level workspace directory and session drawer, telemetry status, thinking blocks, and tool execution views.
 
 ### Added
 
-- Added `web_search` tool for real-time web documentation and news retrieval and `fetch_web_page` for deep reading of web pages, reachable by name or via `--tools`.
-- Added TUI and Web UI cards for `web_search 🔍` and `fetch_web_page 🌐`.
+- Added `extensions/pig-web-search/` extension registering `web_search`, `fetch_web_page` and `/search` command with zero external packages.
 - 1:1 aligned Web UI event dispatch with TUI: added streaming tool execution updates (`ToolExecutionUpdateEvent`), retry countdowns (`RetryStartEvent` & `RetryEndEvent`), and compaction alerts (`AutoCompactionStartEvent` & `AutoCompactionEndEvent`) with real-time console scrolling and top notification banners.
 - Added dynamic model catalog and thinking level selector to Web UI, fetching authorized models via `/api/models` and dynamically constraining thinking levels (e.g. low/medium/high for Antigravity) with instant WebSocket switching.
 - Added multimodal image support to Web UI: clipboard paste (`Ctrl+V` / `Cmd+V`), drag-and-drop, attachment button (`📎`), thumbnail preview with deletion, and rendering of sent images.

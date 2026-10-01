@@ -18,8 +18,7 @@ another way — searching through `bash` rather than a third search tool — the
 added for convenience.
 
 This is the rule that decided the built-in tool set: four by default, as upstream has it, with
-`grep`, `find`, `ls`, and zero-dependency web retrieval tools (`web_search`, `fetch_web_page`)
-reachable by name through `--tools`.
+`grep`, `find` and `ls` reachable by name through `--tools`.
 
 ### The developer's name does not appear in this repository
 
@@ -2703,6 +2702,11 @@ quota monitoring (`/antigravity.usage`, `/antigravity.models`), account manageme
 (`/antigravity.accounts`), doctor diagnostics (`/antigravity.doctor`), model catalog refresh
 (`/antigravity.refresh`), image command (`/antigravity.image`), and the `generate_image` agent tool.
 All extensions in pig are pure PHP implementations without Node.js or npm dependencies.
+
+`extensions/pig-web-search/index.php` provides real-time web search via DuckDuckGo HTML scraping
+(`web_search`), readable page text extraction (`fetch_web_page`), and `/search <query>`. Future
+headless browser or Puppeteer / CDP scraping extensions belong in this extension, preserving core
+agent minimalism.
 
 Audited difference by difference against `wrapper.ts`, `types.ts` and `loader.ts`. `wrapper.ts` is
 `WrappedCustomTool` line for line, argument order included. What the rest found is one bug — the

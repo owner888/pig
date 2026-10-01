@@ -17,7 +17,7 @@ use Pig\Agent\AgentTool;
 final class ToolSet
 {
     /** Everything there is, in the order a prompt lists them. */
-    public const array ALL = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'fetch_web_page'];
+    public const array ALL = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
 
     /** The default: enough to do work. */
     public const array CODING = ['read', 'bash', 'edit', 'write'];
@@ -34,8 +34,6 @@ final class ToolSet
         'grep' => 'Search file contents for a pattern (respects .gitignore)',
         'find' => 'Find files by glob pattern (respects .gitignore)',
         'ls' => 'List a directory',
-        'web_search' => 'Search the web for real-time documentation, news, and technical references',
-        'fetch_web_page' => 'Fetch and read the clean text of a web page by URL',
     ];
 
     /**
@@ -59,8 +57,6 @@ final class ToolSet
             'grep' => new GrepTool($cwd),
             'find' => new FindTool($cwd),
             'ls' => new LsTool($cwd),
-            'web_search' => new WebSearchTool($cwd),
-            'fetch_web_page' => new FetchWebPageTool($cwd),
             default => throw new AgentError("Unknown tool '{$name}'. Available: " . implode(', ', self::ALL)),
         };
     }

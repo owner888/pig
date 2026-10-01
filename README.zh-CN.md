@@ -348,11 +348,13 @@ ANTHROPIC_API_KEY=sk-ant-... php examples/ask.php "天为什么是蓝的？"
 ### 内置工具
 
 pig 默认携带与 upstream 对齐的 4 个基础编程工具：`read`、`bash`、`edit`、`write`。
-高级文件检索（`grep`、`find`、`ls`）与零依赖原生联网检索双子工具（`web_search`、`fetch_web_page`）可通过 `--tools` 开启：
+高级文件检索（`grep`、`find`、`ls`）可通过 `--tools` 开启：
 
 ```bash
-bin/pig --tools read,bash,edit,write,web_search,fetch_web_page
+bin/pig --tools read,bash,edit,write,grep,find,ls
 ```
+
+网络搜索与网页抓取通过纯 PHP 原生扩展 `extensions/pig-web-search/` 提供（支持 `web_search`、`fetch_web_page` 与 `/search <query>`），保持 Agent 核心极简纯粹，同时便于未来灵活接入 Puppeteer 或 Headless 浏览器。
 
 ## 环境要求
 

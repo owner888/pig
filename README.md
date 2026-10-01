@@ -406,11 +406,13 @@ the TUI uses.
 ### Built-in Tools
 
 pig ships with four default coding tools matching upstream: `read`, `bash`, `edit`, `write`.
-Advanced file search (`grep`, `find`, `ls`) and native zero-dependency web retrieval (`web_search`, `fetch_web_page`) are reachable via `--tools`:
+Advanced file search (`grep`, `find`, `ls`) is reachable via `--tools`:
 
 ```bash
-bin/pig --tools read,bash,edit,write,web_search,fetch_web_page
+bin/pig --tools read,bash,edit,write,grep,find,ls
 ```
+
+Web search and documentation reading are provided via the pure PHP `extensions/pig-web-search/` extension (`web_search`, `fetch_web_page`, `/search <query>`), preserving core agent minimalism while keeping it flexible for future headless browser (Puppeteer / CDP) expansions.
 
 ## Requirements
 
