@@ -47,6 +47,8 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Added
 
+- Code block copy buttons (`Copy` / `Copied! ✓`) with language tags across all Markdown code outputs in Web UI.
+- Smart auto-scroll and reading-pinning in Web UI: preserves scroll position when user scrolls up to read history without jarring forced auto-scroll, with floating `↓ New messages` return button.
 - Antigravity multi-account automatic 429 failover — Automatically rotates to the next available account in `antigravity-accounts.json` when encountering 429 Rate Limit / Quota Exceeded errors, seamlessly continuing active turns with zero manual intervention.
 - Added `/antigravity.accounts rotate` slash command to manually cycle to the next linked Google account.
 

@@ -328,15 +328,64 @@
     .diff-del { background: var(--diff-del-bg); color: var(--diff-del-text); }
     .diff-ctx { color: var(--text-dim); }
 
-    /* Prose / Markdown */
+    /* Prose / Markdown with code block header and copy button */
     .prose p { margin-bottom: 0.75em; }
     .prose p:last-child { margin-bottom: 0; }
-    .prose pre {
+    .code-block-wrapper {
+      position: relative;
+      margin: 10px 0;
       background: #090d16;
       border: 1px solid #1e293b;
       border-radius: 6px;
+      overflow: hidden;
+    }
+    .code-block-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5px 12px;
+      background: rgba(18, 24, 36, 0.8);
+      border-bottom: 1px solid rgba(30, 41, 59, 0.5);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .code-lang-tag {
+      text-transform: lowercase;
+      color: #94a3b8;
+      font-weight: 500;
+    }
+    .code-copy-btn {
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid rgba(51, 65, 85, 0.4);
+      color: #cbd5e1;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-family: var(--font-sans);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s;
+      outline: none;
+    }
+    .code-copy-btn:hover {
+      background: #334155;
+      color: #fff;
+      border-color: #475569;
+    }
+    .code-copy-btn.copied {
+      background: rgba(34, 197, 94, 0.2);
+      border-color: #22c55e;
+      color: #4ade80;
+    }
+    .prose pre {
+      background: transparent;
+      border: none;
+      border-radius: 0;
       padding: 10px 14px;
-      margin: 8px 0;
+      margin: 0;
       overflow-x: auto;
       font-family: var(--font-mono);
       font-size: 13px;
@@ -349,6 +398,33 @@
       font-size: 0.9em;
     }
     .prose pre code { background: transparent; padding: 0; font-size: inherit; }
+
+    /* Scroll to bottom floating pill */
+    .scroll-bottom-pill {
+      position: absolute;
+      right: 24px;
+      bottom: 124px;
+      background: #1e293b;
+      border: 1px solid #38bdf8;
+      color: #38bdf8;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-family: var(--font-sans);
+      font-weight: 500;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      z-index: 40;
+      transition: all 0.2s ease;
+      animation: fadeIn 0.2s ease-out;
+    }
+    .scroll-bottom-pill:hover {
+      background: #334155;
+      color: #fff;
+    }
 
     /* Pending images bar above input */
     .pending-images-bar {
@@ -510,6 +586,7 @@
     <div id="status-banner" class="status-banner" style="display:none;"></div>
 
     <div id="chat-scroll"></div>
+    <button id="scroll-bottom-btn" class="scroll-bottom-pill" style="display:none;" title="Scroll to bottom">↓ New messages</button>
 
     <div class="bottom-panel">
       <!-- Selectors & Telemetry Row matching pi-web 3-level cascade -->
@@ -554,6 +631,7 @@
     const providerSelect = document.getElementById("provider-select");
     const modelSelect = document.getElementById("model-select");
     const thinkingSelect = document.getElementById("thinking-select");
+    const scrollBottomBtn = document.getElementById("scroll-bottom-btn");
 
     let isRunning = false;
     let currentAssistantBlock = null;
@@ -561,6 +639,7 @@
     let currentThinkingText = "";
     let currentThinkingBox = null;
 
+    let userScrolledUp = false;
     let currentView = "workspaces"; // "workspaces" | "sessions"
     let selectedWorkspace = null;
 
@@ -586,6 +665,30 @@
       promptInput.style.height = "auto";
       promptInput.style.height = Math.min(promptInput.scrollHeight, 160) + "px";
     });
+
+    // Smart scroll pinning & return to bottom
+    chatScroll.addEventListener("scroll", () => {
+      const distanceFromBottom = chatScroll.scrollHeight - chatScroll.scrollTop - chatScroll.clientHeight;
+      if (distanceFromBottom > 80) {
+        userScrolledUp = true;
+        scrollBottomBtn.style.display = "flex";
+      } else {
+        userScrolledUp = false;
+        scrollBottomBtn.style.display = "none";
+      }
+    });
+
+    scrollBottomBtn.addEventListener("click", () => {
+      userScrolledUp = false;
+      scrollBottomBtn.style.display = "none";
+      chatScroll.scrollTo({ top: chatScroll.scrollHeight, behavior: "smooth" });
+    });
+
+    function scrollToBottomIfNeeded() {
+      if (!userScrolledUp) {
+        chatScroll.scrollTop = chatScroll.scrollHeight;
+      }
+    }
 
     promptInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
@@ -688,7 +791,8 @@
       let html = md
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
         .replace(/```([a-zA-Z0-9_\-\+\.]*)\n([\s\S]*?)```/g, (m, lang, code) => {
-          return `<pre><code class="language-${lang}">${code.trim()}</code></pre>`;
+          const l = lang ? lang.trim() : "code";
+          return `<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang-tag">${escapeHtml(l)}</span><button class="code-copy-btn" onclick="copyCode(this)" title="Copy code">📋 Copy</button></div><pre><code class="language-${l}">${code.trim()}</code></pre></div>`;
         })
         .replace(/`([^`]+)`/g, "<code>$1</code>")
         .replace(/^### (.*$)/gim, "<h3>$1</h3>")
@@ -696,6 +800,21 @@
         .replace(/^# (.*$)/gim, "<h1>$1</h1>")
         .replace(/\n\n/g, "</p><p>");
       return `<p>${html}</p>`;
+    }
+
+    function copyCode(btn) {
+      const wrapper = btn.closest(".code-block-wrapper");
+      const codeEl = wrapper?.querySelector("code");
+      if (!codeEl) return;
+      const text = codeEl.innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        btn.classList.add("copied");
+        btn.innerText = "✓ Copied!";
+        setTimeout(() => {
+          btn.classList.remove("copied");
+          btn.innerText = "📋 Copy";
+        }, 1500);
+      });
     }
 
     function appendUserMessage(text, images = []) {
@@ -725,7 +844,7 @@
       }
 
       chatScroll.appendChild(block);
-      chatScroll.scrollTop = chatScroll.scrollHeight;
+      scrollToBottomIfNeeded();
     }
 
     function appendErrorMessage(errorText) {
@@ -733,7 +852,7 @@
       block.className = "msg-block msg-error";
       block.innerHTML = `<strong>Error:</strong> ${escapeHtml(errorText)}`;
       chatScroll.appendChild(block);
-      chatScroll.scrollTop = chatScroll.scrollHeight;
+      scrollToBottomIfNeeded();
     }
 
     function ensureAssistantBlock() {
@@ -820,7 +939,7 @@
           box.insertBefore(currentThinkingBox, box.firstChild);
         }
         currentThinkingBox.querySelector(".thinking-content").innerText = currentThinkingText;
-        chatScroll.scrollTop = chatScroll.scrollHeight;
+        scrollToBottomIfNeeded();
       } else if (evt.type === "text_delta") {
         currentAssistantText += evt.delta || "";
         const box = ensureAssistantBlock();
@@ -831,14 +950,14 @@
           box.appendChild(prose);
         }
         prose.innerHTML = renderMarkdown(currentAssistantText);
-        chatScroll.scrollTop = chatScroll.scrollHeight;
+        scrollToBottomIfNeeded();
       } else if (evt.type === "tool_execution_start") {
         currentAssistantBlock = null;
         currentAssistantText = "";
 
         const card = createToolCard(evt);
         chatScroll.appendChild(card);
-        chatScroll.scrollTop = chatScroll.scrollHeight;
+        scrollToBottomIfNeeded();
       } else if (evt.type === "tool_execution_update") {
         updateToolCardProgress(evt);
       } else if (evt.type === "tool_execution_end") {
