@@ -450,6 +450,26 @@ final class EditorTest extends TestCase
         $this->assertTrue($this->editor->isShowingSuggestions());
     }
 
+    public function testDeletingTheSlashLeavesNoListBehind(): void
+    {
+        $this->editor->setAutocompleteProvider(new CombinedAutocompleteProvider([new SlashCommand('model')], getcwd()));
+
+        $this->typeText('/');
+        $this->assertTrue($this->editor->isShowingSuggestions(), 'the command list, while the slash is there');
+
+        $this->type("\x7f");
+
+        // The line is empty: nothing is being completed, so nothing is offered. The reopen-after-
+        // delete rule asked the provider, and the provider answered with the whole directory —
+        // upstream's own comment on this case is "Empty text should not trigger file suggestions".
+        $this->assertSame('', $this->editor->text());
+        $this->assertFalse($this->editor->isShowingSuggestions());
+
+        // Tab on that empty line is still the way to ask for files, which is a different gesture.
+        $this->type("\t");
+        $this->assertTrue($this->editor->isShowingSuggestions());
+    }
+
     public function testNoProviderMeansTabDoesNothing(): void
     {
         $this->typeText('/mo');

@@ -272,9 +272,13 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
             return $prefix;
         }
 
-        // An empty prefix is a path context only at the start of a line or after a space;
-        // after a quote or an `=` it is more likely the start of a value.
-        return $prefix === '' && ($text === '' || str_ends_with($text, ' ')) ? '' : null;
+        // An empty prefix is a path context after a space — and **not on an empty line**, which
+        // upstream's comment spells out ("Empty text should not trigger file suggestions — that's
+        // for forced Tab completion") and this port had dropped: typing `/` and deleting it left
+        // the line empty, `refreshOrReopenSuggestions()` asked, and the whole directory listing
+        // came up under a prompt with nothing in it. Tab on an empty line still lists files, through
+        // `forcedFileSuggestions()`, because that is what Tab there asks for.
+        return $prefix === '' && $text !== '' && str_ends_with($text, ' ') ? '' : null;
     }
 
     /**
