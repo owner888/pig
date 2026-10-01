@@ -50,15 +50,32 @@ final class ProjectTrust
      */
     public static function hasResources(string $cwd): bool
     {
+        return self::resources($cwd) !== [];
+    }
+
+    /**
+     * What, exactly, a trust decision would apply to here — relative paths, so the question can
+     * say *why* it is being asked. A prompt about a directory with no visible `.pig/` reads as
+     * a mistake until it says `extensions/pig-antigravity/index.php`.
+     *
+     * @return list<string>
+     */
+    public static function resources(string $cwd): array
+    {
         $cwd = rtrim($cwd, '/');
+        $found = [];
 
         foreach (self::RESOURCES as $entry) {
             if (file_exists($cwd . '/.pig/' . $entry)) {
-                return true;
+                $found[] = '.pig/' . $entry;
             }
         }
 
-        return glob($cwd . '/extensions/*.php') !== [] || glob($cwd . '/extensions/*/index.php') !== [];
+        foreach ([...(glob($cwd . '/extensions/*.php') ?: []), ...(glob($cwd . '/extensions/*/index.php') ?: [])] as $path) {
+            $found[] = substr($path, strlen($cwd) + 1);
+        }
+
+        return $found;
     }
 
     /** The saved decision for this directory or its nearest ancestor, or null when none. */
@@ -152,10 +169,16 @@ final class ProjectTrust
         return $choices;
     }
 
-    /** The question, worded as upstream words it. */
+    /** The question, worded as upstream words it — plus what was found, which upstream leaves out. */
     public static function prompt(string $cwd): string
     {
-        return "Trust project folder?\n{$cwd}\n\nThis allows pig to load .pig settings and resources and execute project hooks, tools and extensions.";
+        $found = self::resources($cwd);
+        $shown = array_slice($found, 0, 6);
+        $more = count($found) - count($shown);
+        $list = implode(', ', $shown) . ($more > 0 ? " and {$more} more" : '');
+
+        return "Trust project folder?\n{$cwd}\n\nIt has: {$list}\n"
+            . 'This allows pig to load .pig settings and resources and execute project hooks, tools and extensions.';
     }
 
     /**

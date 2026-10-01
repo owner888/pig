@@ -15,10 +15,24 @@ use Pig\Tui\Test\FakeTerminal;
 
 final class TrustPromptTest extends TestCase
 {
+    private string $cwd;
+
     #[\Override]
     protected function setUp(): void
     {
         Loop::reset();
+        $this->cwd = sys_get_temp_dir() . '/pig-trustprompt-' . bin2hex(random_bytes(4));
+        mkdir($this->cwd . '/extensions/acme', 0o755, true);
+        file_put_contents($this->cwd . '/extensions/acme/index.php', '<?php');
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        unlink($this->cwd . '/extensions/acme/index.php');
+        rmdir($this->cwd . '/extensions/acme');
+        rmdir($this->cwd . '/extensions');
+        rmdir($this->cwd);
     }
 
     /** @param list<string> $keys queued before the prompt opens — there is no "after" */
@@ -30,7 +44,7 @@ final class TrustPromptTest extends TestCase
             $terminal->queue($key);
         }
 
-        $cwd = '/Users/dev/work/acme';
+        $cwd = $this->cwd;
         $chosen = TrustPrompt::ask($cwd, ProjectTrust::choices($cwd), Palette::dark(true), $terminal);
 
         return [$chosen, Ansi::strip($terminal->output())];
@@ -44,15 +58,20 @@ final class TrustPromptTest extends TestCase
         $this->assertSame('Trust', $chosen->label);
         $this->assertTrue($chosen->trusted);
         $this->assertStringContainsString('Trust project folder?', $screen);
-        $this->assertStringContainsString('/Users/dev/work/acme', $screen);
+        $this->assertStringContainsString($this->cwd, $screen);
+        // Why it is asking — with no `.pig/` in sight, the prompt otherwise reads as a mistake.
+        $this->assertStringContainsString('It has: extensions/acme/index.php', $screen);
+        // And the parent folder's whole path, which a 30-column label cap used to cut in half.
+        $this->assertStringContainsString('Trust parent folder (' . dirname(realpath($this->cwd)) . ')', $screen);
     }
 
     public function testDownToTheParentFolderNamesIt(): void
     {
         [$chosen] = $this->ask(["\e[B", "\r"]);
 
-        $this->assertSame('Trust parent folder (/Users/dev/work)', $chosen->label);
-        $this->assertSame(['/Users/dev/work' => true, '/Users/dev/work/acme' => null], $chosen->updates);
+        $parent = dirname(realpath($this->cwd));
+        $this->assertSame("Trust parent folder ({$parent})", $chosen->label);
+        $this->assertSame([$parent => true, realpath($this->cwd) => null], $chosen->updates);
     }
 
     public function testEscapeAnswersNothingWhichTheCallerReadsAsNo(): void

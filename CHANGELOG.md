@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- The trust prompt now says *what* it found (`It has: extensions/pig-antigravity/index.php, …`) — a project with no visible `.pig/` but PHP under `extensions/` was being asked with no reason on screen — and its options are no longer cut at 30 columns, so "Trust parent folder (…)" shows the whole path.
+
 ## [0.2.7] - 2026-10-01
 
 ### Added

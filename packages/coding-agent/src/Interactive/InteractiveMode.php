@@ -1655,7 +1655,7 @@ final class InteractiveMode
         $items = [];
 
         foreach ($choices as $index => $choice) {
-            $items[] = new SelectItem((string) $index, $choice->label, '');
+            $items[] = new SelectItem((string) $index, $choice->label);
         }
 
         $picker = new SelectList($items, count($items), $this->palette->selectListTheme());

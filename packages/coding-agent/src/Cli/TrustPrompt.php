@@ -42,7 +42,9 @@ final class TrustPrompt
         $items = [];
 
         foreach ($choices as $index => $choice) {
-            $items[] = new SelectItem((string) $index, $choice->label, '');
+            // No description: a label beside one is capped at thirty columns, which cut
+            // `Trust parent folder (/Users/ka` off at the point that said which folder.
+            $items[] = new SelectItem((string) $index, $choice->label);
         }
 
         $list = new SelectList($items, count($items), $palette->selectListTheme());
