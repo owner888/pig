@@ -404,6 +404,13 @@ bin/pig --mode web
 
 You can also type `/web` from inside any interactive terminal session to launch the web interface on the fly.
 
+Every conversation you open in the browser gets a **tab** above the chat — labelled by its name
+or its first line, the live one marked, `×` to close, `+` for a new one — kept in the browser, so
+switching between the three things you are working on is one click rather than two levels of
+drawer. The process runs one session at a time (the terminal and the page share it), so a tab is
+a way back to a conversation rather than a second agent; when the terminal moves to another
+session the page follows.
+
 Twenty-three commands — prompt, steer, abort, switch models, compact, run a shell command,
 walk the conversation tree, export — and the answer arrives as the same streaming events the terminal
 draws. A hook can still **ask**: the question goes out as a `hook_ui_request` line and the tool

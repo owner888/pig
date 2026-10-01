@@ -470,6 +470,30 @@ final class AgentSession
         $this->nameListeners[] = $listener;
     }
 
+    /** @var list<Closure(string, ?string): void> */
+    private array $switchListeners = [];
+
+    /**
+     * Told after `startNew()` or `switchTo()` has finished, with the reason and the file left.
+     *
+     * The hook event (`session_switch`) is for hooks; this is for a front end that has to redraw
+     * — the Web UI's tab bar, which otherwise cannot know the terminal just moved to another
+     * conversation underneath it.
+     *
+     * @param Closure('new'|'resume', ?string): void $listener
+     */
+    public function onSessionSwitched(Closure $listener): void
+    {
+        $this->switchListeners[] = $listener;
+    }
+
+    private function tellSwitched(string $reason, ?string $previous): void
+    {
+        foreach ($this->switchListeners as $listener) {
+            $listener($reason, $previous);
+        }
+    }
+
     public function setSessionName(string $name): void
     {
         $name = trim($name);
@@ -1085,6 +1109,7 @@ final class AgentSession
 
         $this->agent->reset();
         $this->hooks?->emit(new SessionSwitchEvent('new', $previous));
+        $this->tellSwitched('new', $previous);
 
         return new SessionSwitch(switched: true, previous: $previous);
     }
@@ -1133,6 +1158,7 @@ final class AgentSession
         // so the file wins outright, which is what "resume" means.
         $this->restoreSettings();
         $this->hooks?->emit(new SessionSwitchEvent('resume', $previous));
+        $this->tellSwitched('resume', $previous);
 
         return new SessionSwitch(switched: true, previous: $previous, messages: count($opened->messages()));
     }

@@ -8,11 +8,18 @@ use PHPUnit\Framework\TestCase;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentOptions;
 use Pig\Agent\ThinkingLevel;
+use Pig\Ai\Api;
+use Pig\Ai\AssistantMessage;
+use Pig\Ai\StopReason;
+use Pig\Ai\TextContent;
+use Pig\Ai\Usage;
+use Pig\Ai\UserMessage;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Web\HttpServer;
 use Pig\CodingAgent\Web\WebMode;
@@ -188,6 +195,81 @@ final class WebModeTest extends TestCase
             fclose($client);
             $server->stop();
         });
+    }
+
+    public function testASessionSwitchIsAnsweredAfterItHappenedAndIsBroadcast(): void
+    {
+        $port = 28092;
+        $home = $this->cwd . '-home';
+        mkdir($home, 0o700, true);
+        putenv("PIG_HOME={$home}");
+
+        try {
+            // Two conversations on disk, the session opened on the first.
+            $one = SessionManager::create($this->cwd);
+            $one->append(new UserMessage('first conversation'));
+            $one->append(new AssistantMessage([new TextContent('a')], Api::AnthropicMessages, 'anthropic', 'm', new Usage(), StopReason::Stop));
+            $two = SessionManager::create($this->cwd);
+            $two->append(new UserMessage('second conversation'));
+            $two->append(new AssistantMessage([new TextContent('b')], Api::AnthropicMessages, 'anthropic', 'm', new Usage(), StopReason::Stop));
+
+            $session = new AgentSession(new Agent(new AgentOptions(apiKey: 'k')), $this->cwd, SessionManager::open($one->path));
+            $session->restore(SessionManager::open($one->path)->messages());
+            $server = new HttpServer($session, $port);
+
+            Async::run(function () use ($server, $port, $two, $session) {
+                $server->start();
+                $http = new HttpClient(2.0);
+
+                // A WebSocket client, to see the broadcast.
+                $client = stream_socket_client("tcp://127.0.0.1:{$port}", $errno, $errstr, 2.0);
+                stream_set_blocking($client, false);
+                fwrite($client, "GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                    . "Sec-WebSocket-Key: " . base64_encode('nonce-nonce-1234') . "\r\nSec-WebSocket-Version: 13\r\n\r\n");
+                Async::delay(0.05);
+                fread($client, 65536);
+
+                // The state names the live file and its opening line, which is what a tab is labelled with.
+                $state = json_decode($http->follow(new Request('GET', "http://127.0.0.1:{$port}/api/state"))->body->all(), true);
+                $this->assertSame('first conversation', $state['opening']);
+                $this->assertStringEndsWith('.jsonl', $state['sessionPath']);
+
+                // Switch, and the *response* already describes the other conversation.
+                $switched = $http->follow(new Request(
+                    'POST',
+                    "http://127.0.0.1:{$port}/api/session/switch",
+                    ['Content-Type' => 'application/json'],
+                    json_encode(['path' => $two->path]),
+                ));
+                $this->assertSame(200, $switched->status);
+                $this->assertSame($two->path, $session->store()?->path);
+
+                $after = json_decode($http->follow(new Request('GET', "http://127.0.0.1:{$port}/api/state"))->body->all(), true);
+                $this->assertSame('second conversation', $after['opening']);
+                $this->assertSame($two->path, $after['sessionPath']);
+
+                // And the WebSocket client was told.
+                Async::delay(0.05);
+                $frames = (string) fread($client, 65536);
+                $this->assertStringContainsString('"type":"session_switch"', $frames);
+                $this->assertStringContainsString('"reason":"resume"', $frames);
+
+                // A path with no session behind it is a 404, not a 200 that changed nothing.
+                $missing = $http->follow(new Request(
+                    'POST',
+                    "http://127.0.0.1:{$port}/api/session/switch",
+                    ['Content-Type' => 'application/json'],
+                    json_encode(['path' => $this->cwd . '/nope.jsonl']),
+                ));
+                $this->assertSame(404, $missing->status);
+
+                fclose($client);
+                $server->stop();
+            });
+        } finally {
+            putenv('PIG_HOME');
+            $this->rmrf($home);
+        }
     }
 
     public function testWebModelSwitchDoesNotOverwriteDefaultSettings(): void

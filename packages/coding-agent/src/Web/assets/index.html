@@ -198,6 +198,64 @@
       color: #fff;
     }
 
+    /* Session tabs: the conversations opened in this browser, the live one highlighted */
+    .session-tabs {
+      display: flex;
+      align-items: stretch;
+      gap: 2px;
+      padding: 0 8px;
+      background: var(--bg-sidebar);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+      scrollbar-width: none;
+      flex-shrink: 0;
+      min-height: 34px;
+    }
+    .session-tabs::-webkit-scrollbar { display: none; }
+    .session-tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 10px 0 12px;
+      max-width: 220px;
+      min-width: 0;
+      font-size: 12px;
+      color: var(--text-dim);
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    .session-tab:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+    .session-tab.active { color: var(--text); border-bottom-color: #38bdf8; }
+    .session-tab.working::before {
+      content: "";
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #38bdf8; flex-shrink: 0;
+      animation: tab-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes tab-pulse { 0%,100% { opacity: .3 } 50% { opacity: 1 } }
+    .session-tab-label { overflow: hidden; text-overflow: ellipsis; }
+    .session-tab-close {
+      opacity: 0;
+      font-size: 14px;
+      line-height: 1;
+      padding: 2px 4px;
+      border-radius: 3px;
+      color: var(--text-dim);
+    }
+    .session-tab:hover .session-tab-close, .session-tab.active .session-tab-close { opacity: .7; }
+    .session-tab-close:hover { opacity: 1 !important; background: rgba(255,255,255,0.08); color: var(--text); }
+    .session-tab-new {
+      display: flex; align-items: center;
+      padding: 0 10px;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
+    }
+    .session-tab-new:hover { color: var(--text); }
+
     /* Top Status/Notification Banner */
     .status-banner {
       background: rgba(56, 189, 248, 0.15);
@@ -610,6 +668,7 @@
       </div>
       <button id="toggle-sidebar" class="toggle-sidebar-btn" title="Toggle Sidebar">‹</button>
     </div>
+    <div id="session-tabs" class="session-tabs"></div>
     <div id="status-banner" class="status-banner" style="display:none;"></div>
 
     <div id="chat-scroll"></div>
@@ -1005,7 +1064,20 @@
         refreshState();
       } else if (evt.type === "session_info_changed") {
         refreshState();
+      } else if (evt.type === "session_switch") {
+        // The terminal (or another browser) moved to another conversation: this page follows,
+        // because the process is in that one now whatever the tab bar was claiming. A switch
+        // this page asked for has already redrawn itself.
+        if (switchAskedHere) {
+          switchAskedHere = false;
+        } else {
+          chatScroll.innerHTML = "";
+          loadMessages();
+          refreshState();
+        }
       }
+      if (evt.type === "agent_start") { agentWorking = true; renderTabs(); }
+      if (evt.type === "agent_end") { agentWorking = false; renderTabs(); }
     }
 
     function createToolCard(evt) {
@@ -1152,6 +1224,7 @@
     }
 
     async function startNewSession() {
+      switchAskedHere = true;
       chatScroll.innerHTML = "";
       pendingImages = [];
       renderPendingImages();
@@ -1336,10 +1409,96 @@
       } catch (err) {}
     }
 
+    // ---- session tabs -------------------------------------------------------------------
+    //
+    // The conversations opened in this browser, one tab each, kept in localStorage per server.
+    // The process runs one session at a time (the TUI and this page share it), so a tab is a
+    // way back to a conversation rather than a second agent: clicking one is a session switch,
+    // and the live one — whatever `/api/state` says — is always a tab, added if it was not.
+    const sessionTabs = document.getElementById("session-tabs");
+    const TABS_KEY = "pig-session-tabs:" + location.host;
+    let tabs = [];
+    let activeTabPath = null;
+    let agentWorking = false;
+    let switchAskedHere = false;
+
+    try { tabs = JSON.parse(localStorage.getItem(TABS_KEY) || "[]"); } catch (e) { tabs = []; }
+    if (!Array.isArray(tabs)) tabs = [];
+
+    function saveTabs() {
+      try { localStorage.setItem(TABS_KEY, JSON.stringify(tabs)); } catch (e) {}
+    }
+
+    function tabLabel(t) {
+      return t.name || t.opening || t.filename || "new session";
+    }
+
+    function upsertTab(d) {
+      if (!d.sessionPath) return;
+      let t = tabs.find((x) => x.path === d.sessionPath);
+      if (!t) {
+        t = { path: d.sessionPath };
+        tabs.push(t);
+      }
+      t.filename = d.sessionFile || t.filename;
+      t.cwd = d.cwdPath || t.cwd;
+      // A name somebody gave it beats the opening line; a cleared name falls back to it.
+      t.name = d.sessionName || null;
+      if (d.opening) t.opening = d.opening;
+      activeTabPath = d.sessionPath;
+      saveTabs();
+    }
+
+    function renderTabs() {
+      sessionTabs.innerHTML = "";
+      for (const t of tabs) {
+        const el = document.createElement("div");
+        const active = t.path === activeTabPath;
+        el.className = "session-tab" + (active ? " active" : "") + (active && agentWorking ? " working" : "");
+        el.title = (t.cwd ? t.cwd + "\n" : "") + (t.filename || "");
+        const label = document.createElement("span");
+        label.className = "session-tab-label";
+        label.textContent = tabLabel(t);
+        const close = document.createElement("span");
+        close.className = "session-tab-close";
+        close.textContent = "×";
+        close.title = "Close tab";
+        close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(t.path); });
+        el.appendChild(label);
+        el.appendChild(close);
+        el.addEventListener("click", () => { if (!active) switchSession(t.path, t.filename || "", t.cwd || ""); });
+        sessionTabs.appendChild(el);
+      }
+      const plus = document.createElement("div");
+      plus.className = "session-tab-new";
+      plus.textContent = "+";
+      plus.title = "New session";
+      plus.addEventListener("click", startNewSession);
+      sessionTabs.appendChild(plus);
+    }
+
+    async function closeTab(path) {
+      const at = tabs.findIndex((t) => t.path === path);
+      if (at === -1) return;
+      const wasActive = path === activeTabPath;
+      tabs.splice(at, 1);
+      saveTabs();
+      if (!wasActive) { renderTabs(); return; }
+      // Closing the live one: move to the neighbour, or start fresh if it was the last.
+      const next = tabs[Math.min(at, tabs.length - 1)];
+      if (next) {
+        await switchSession(next.path, next.filename || "", next.cwd || "");
+      } else {
+        await startNewSession();
+      }
+    }
+
     function applyState(d) {
       if (!d) return;
       cwdDisplay.innerText = d.cwd || "~";
-      filenameDisplay.innerText = d.sessionFile || d.sessionName || "Active Session";
+      filenameDisplay.innerText = d.sessionName || d.sessionFile || "Active Session";
+      upsertTab(d);
+      renderTabs();
       telemetryStats.innerText = `↑${formatK(d.tokensIn)} ↓${formatK(d.tokensOut)} $${d.cost} ${d.contextPercent}%/${d.contextWindow}`;
 
       if (userIsInteracting) return;
@@ -1594,15 +1753,23 @@
     }
 
     async function switchSession(path, filename, cwd) {
+      switchAskedHere = true;
       filenameDisplay.innerText = filename;
       chatScroll.innerHTML = "";
-      await fetch("/api/session/switch", {
+      const res = await fetch("/api/session/switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path }),
       });
-      loadMessages();
-      refreshState();
+      if (!res.ok) {
+        // A tab whose file has gone (deleted, moved) is a tab with nothing behind it.
+        switchAskedHere = false;
+        tabs = tabs.filter((t) => t.path !== path);
+        saveTabs();
+        appendErrorMessage("That session could not be opened; its tab was removed.");
+      }
+      await loadMessages();
+      await refreshState();
     }
 
     async function loadMessages() {

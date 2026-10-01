@@ -32,7 +32,6 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Doctor\Doctor;
-use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\AutoCompactionEndEvent;
 use Pig\CodingAgent\Session\AutoCompactionStartEvent;
@@ -143,6 +142,16 @@ final class HttpServer
         // Subscribe to agent session events to broadcast over SSE
         $this->unsubscribeSession = $this->session->subscribe(function (AgentEvent $event): void {
             $this->broadcastEvent($event);
+        });
+
+        // Two things that are not agent events and change what the page shows: a rename, and the
+        // terminal moving to another conversation. Without the second the tab bar is a claim
+        // about a session the process is no longer in.
+        $this->session->onSessionNameChanged(function (string $name): void {
+            $this->broadcast(['type' => 'session_info_changed', 'name' => $name]);
+        });
+        $this->session->onSessionSwitched(function (string $reason, ?string $previous): void {
+            $this->broadcast(['type' => 'session_switch', 'reason' => $reason, 'previous' => $previous]);
         });
 
         $this->isRunning = true;
@@ -356,39 +365,52 @@ final class HttpServer
         // 10. Switch session
         if ($path === '/api/session/switch' && $req['method'] === 'POST') {
             $data = json_decode($req['body'], true);
-            $targetPath = is_array($data) ? ($data['path'] ?? '') : '';
-            if (is_file($targetPath)) {
-                Async::spawn(function () use ($targetPath): void {
-                    try {
-                        $this->session->switchTo($targetPath);
-                    } catch (Throwable) {}
-                });
+            $targetPath = is_array($data) ? (string) ($data['path'] ?? '') : '';
+            $headers = ['Content-Type' => 'application/json', 'Access-Control-Allow-Origin' => '*'];
+
+            if (!is_file($targetPath)) {
+                $conn->sendResponse(404, $headers, json_encode(['ok' => false, 'error' => 'No session file at that path.']));
+
+                return;
             }
 
-            $conn->sendResponse(200, [
-                'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
-            ], json_encode(['ok' => true]));
+            // Answered from inside the fiber, *after* the switch: `switchTo()` may wait for a turn
+            // in flight to stop, and a page that reloads its messages on the response must find
+            // the new conversation there rather than the old one still being left.
+            Async::spawn(function () use ($conn, $targetPath, $headers): void {
+                try {
+                    $result = $this->session->switchTo($targetPath);
+                    $conn->sendResponse(
+                        $result->switched ? 200 : 409,
+                        $headers,
+                        json_encode(['ok' => $result->switched, 'error' => $result->switched ? null : 'A hook declined to leave this session.']),
+                    );
+                } catch (Throwable $e) {
+                    $conn->sendResponse(500, $headers, json_encode(['ok' => false, 'error' => $e->getMessage()]));
+                }
+            });
 
             return;
         }
 
         // 10.1 New session
         if ($path === '/api/session/new' && $req['method'] === 'POST') {
-            Async::spawn(function (): void {
-                try {
-                    $this->session->startNew();
-                } catch (Throwable) {}
-            });
+            $headers = ['Content-Type' => 'application/json', 'Access-Control-Allow-Origin' => '*'];
 
-            $conn->sendResponse(200, [
-                'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
-            ], json_encode([
-                'ok' => true,
-                'sessionFile' => basename($this->session->store()?->path ?? ''),
-                'state' => $this->getStatePayload(),
-            ]));
+            // After the switch, for the reason the switch endpoint gives — and because the state
+            // this used to answer with was read *before* `startNew()` had run: the old session's.
+            Async::spawn(function () use ($conn, $headers): void {
+                try {
+                    $result = $this->session->startNew();
+                    $conn->sendResponse($result->switched ? 200 : 409, $headers, json_encode([
+                        'ok' => $result->switched,
+                        'sessionFile' => basename($this->session->store()?->path ?? ''),
+                        'state' => $this->getStatePayload(),
+                    ]));
+                } catch (Throwable $e) {
+                    $conn->sendResponse(500, $headers, json_encode(['ok' => false, 'error' => $e->getMessage()]));
+                }
+            });
 
             return;
         }
@@ -611,10 +633,6 @@ final class HttpServer
                 'willRetry' => $event->willRetry,
                 'error' => $event->error,
             ],
-            $event instanceof SessionInfoChangedEvent => [
-                'type' => 'session_info_changed',
-                'name' => $event->name,
-            ],
             default => null,
         };
 
@@ -622,6 +640,12 @@ final class HttpServer
             return;
         }
 
+        $this->broadcast($payload);
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function broadcast(array $payload): void
+    {
         if ($this->sseClients !== []) {
             $line = 'data: ' . json_encode($payload) . "\n\n";
             foreach ($this->sseClients as $client) {
@@ -778,6 +802,22 @@ final class HttpServer
         ], $models));
     }
 
+    /** The first thing said in this conversation, as a tab label when nobody named it. */
+    private function opening(): string
+    {
+        foreach ($this->session->messages() as $message) {
+            if ($message instanceof \Pig\Ai\UserMessage) {
+                foreach ($message->content as $block) {
+                    if ($block instanceof \Pig\Ai\TextContent && trim($block->text) !== '') {
+                        return mb_substr(preg_replace('/\s+/u', ' ', trim($block->text)) ?? '', 0, 60);
+                    }
+                }
+            }
+        }
+
+        return '';
+    }
+
     /** @return array<string, mixed> */
     private function getStatePayload(): array
     {
@@ -790,7 +830,10 @@ final class HttpServer
             'cwd' => basename($this->session->cwd()),
             'branch' => 'main',
             'sessionFile' => basename($this->session->store()?->path ?? ''),
+            'sessionPath' => $this->session->store()?->path,
             'sessionName' => $this->session->getSessionName(),
+            'opening' => $this->opening(),
+            'cwdPath' => $this->session->cwd(),
             'model' => $model?->id ?? 'no-model',
             'provider' => $model?->provider ?? 'unknown',
             'thinkingLevel' => $this->session->thinkingLevel()?->value ?? 'off',
