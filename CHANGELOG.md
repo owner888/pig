@@ -47,6 +47,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Fixed
 
+- `/reload` no longer warns `extension <cwd>/copy.php (load): not a readable file` for every extension: it was handing the loader the banner's display labels as if they were `--extension` paths. The reload also applies the project-trust gate the startup applies, so an untrusted project's `.pig/` cannot come in through `/reload`.
 - Typing `/` and deleting it no longer pops the whole directory listing under an empty prompt: an empty line is not a path context (upstream's own rule — "Empty text should not trigger file suggestions"), while Tab on an empty line still lists files.
 
 ## [0.2.9] - 2026-10-01

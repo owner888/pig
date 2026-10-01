@@ -2297,27 +2297,32 @@ final class InteractiveMode
                 'claude-user' => $this->settings->skillRoot('enableClaudeUser'),
                 'claude-project' => $this->settings->skillRoot('enableClaudeProject'),
                 'pi-user' => $this->settings->skillRoot('enablePiUser'),
-                'pi-project' => $this->settings->skillRoot('enablePiProject'),
+                // The same gate `CodingAgent::session()` applies: `/reload` must not be the door
+                // an untrusted project's `.pig/` comes in by.
+                'pi-project' => $this->projectTrusted && $this->settings->skillRoot('enablePiProject'),
+                'project' => $this->projectTrusted,
             ],
         );
         $this->skills = $skills;
 
         // 3. Reload file commands
-        $this->fileCommands = SlashCommands::load($this->cwd);
+        $this->fileCommands = SlashCommands::load($this->cwd, projectTrusted: $this->projectTrusted);
         $this->session->setFileCommands($this->fileCommands);
 
-        // 4. Reload extensions
-        $discovered = ExtensionDiscovery::discover($this->cwd, $this->settings->extensions());
-
-        // 5. Reload hooks and extension hooks
-        [$loadedHooks, $hookProblems] = HookLoader::load($this->cwd, $this->settings->hooks());
+        // 4. Reload hooks, and extensions with theirs
+        [$loadedHooks, $hookProblems] = HookLoader::load($this->cwd, $this->settings->hooks(), projectTrusted: $this->projectTrusted);
         $loadedTools = [];
 
+        // The loader scans the three extension roots itself. The third argument is for paths
+        // typed on the command line (`--extension`), which this mode is not given — and for a
+        // while it was handed `ExtensionDiscovery::discover()`'s *display labels* instead, so every
+        // reload complained that `copy.php` and `pig-antigravity` were not readable files under
+        // the project directory. A label for a banner is not a path.
         [$loadedExtensions, $extensionProblems] = ExtensionLoader::load(
             $this->cwd,
             $this->settings->extensions(),
-            $discovered,
             auth: $this->auth,
+            projectTrusted: $this->projectTrusted,
         );
         $this->extensions = $loadedExtensions;
 
@@ -2368,6 +2373,7 @@ final class InteractiveMode
             $this->builtInTools,
             $this->settings->customTools(),
             api: $toolApi,
+            projectTrusted: $this->projectTrusted,
         );
         $allCustomTools = [...$diskTools, ...$loadedTools];
         $customTools = new CustomToolSet($allCustomTools, $toolApi);

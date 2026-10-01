@@ -882,6 +882,33 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('Reloaded extensions, skills, commands, tools, and context files', $this->screen());
     }
 
+    public function testReloadLoadsTheExtensionsThatAreThereAndComplainsAboutNoneOfThem(): void
+    {
+        // A global extension, as `~/.pig/agent/extensions/copy.php` is on a real machine.
+        mkdir($this->home . '/extensions', 0o755, true);
+        file_put_contents($this->home . '/extensions/greeter.php', <<<'PHP'
+            <?php
+            return function ($pi): void { $pi->registerCommand('greet', fn () => null, 'Say hello'); };
+            PHP);
+
+        $this->start();
+        $this->type('/reload');
+        $this->type(self::ENTER);
+
+        $screen = $this->screenText();
+
+        // The reload used to hand the loader the *banner labels* of the discovered extensions as if
+        // they were command-line paths, so every one of them came back as
+        // `<cwd>/greeter.php (load): not a readable file`.
+        $this->assertStringNotContainsString('not a readable file', $screen);
+        $this->assertStringContainsString('Reloaded extensions', $screen);
+
+        // And the extension is live afterwards: its command is known.
+        $this->type('/greet');
+        $this->type(self::ENTER);
+        $this->assertStringNotContainsString('No command called', $this->screenText());
+    }
+
     public function testReloadCommandWarnsWhenStreaming(): void
     {
         $this->start(['done']);
