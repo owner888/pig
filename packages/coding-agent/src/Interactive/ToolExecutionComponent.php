@@ -499,6 +499,8 @@ final class ToolExecutionComponent extends Container
             'ls' => $this->listing('ls', $this->path('.'), self::LIST_LINES),
             'find' => $this->find(),
             'grep' => $this->grep(),
+            'web_search' => $this->webSearch(),
+            'fetch_web_page' => $this->fetchWebPage(),
             default => $this->generic(),
         };
     }
@@ -582,6 +584,22 @@ final class ToolExecutionComponent extends Container
             . ($glob === null ? '' : $this->palette->fg('toolOutput', " ({$glob})"));
 
         return $this->withOutput($heading . $this->limit(), self::MATCH_LINES);
+    }
+
+    private function webSearch(): string
+    {
+        $query = (string) ($this->arguments['query'] ?? '...');
+        $heading = $this->heading('web_search') . ' ' . $this->palette->fg('accent', "\"{$query}\"");
+
+        return $this->withOutput($heading, self::GENERIC_LINES);
+    }
+
+    private function fetchWebPage(): string
+    {
+        $url = (string) ($this->arguments['url'] ?? '...');
+        $heading = $this->heading('fetch_web_page') . ' ' . $this->palette->fg('accent', $url);
+
+        return $this->withOutput($heading, self::GENERIC_LINES);
     }
 
     private function listing(string $name, string $path, int $lines): string

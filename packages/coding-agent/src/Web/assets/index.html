@@ -892,6 +892,14 @@
         const pattern = evt.arguments?.pattern || "";
         title = `grep /${pattern}/`;
         bodyHtml = `<div class="tool-terminal">Searching...</div>`;
+      } else if (evt.toolName === "web_search") {
+        const query = evt.arguments?.query || "";
+        title = `web_search 🔍 "${query}"`;
+        bodyHtml = `<div class="tool-terminal">Searching web...</div>`;
+      } else if (evt.toolName === "fetch_web_page") {
+        const url = evt.arguments?.url || "";
+        title = `fetch_web_page 🌐 ${url}`;
+        bodyHtml = `<div class="tool-terminal">Fetching web page...</div>`;
       } else {
         bodyHtml = `<pre><code>${escapeHtml(JSON.stringify(evt.arguments || {}, null, 2))}</code></pre>`;
       }

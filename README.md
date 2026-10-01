@@ -403,6 +403,15 @@ Everything under that line is pig's own: one non-blocking TLS socket, HTTP/1.1 w
 SSE parsed as it arrives, coroutines on `Fiber`. Ctrl-C mid-answer exercises the same abort path
 the TUI uses.
 
+### Built-in Tools
+
+pig ships with four default coding tools matching upstream: `read`, `bash`, `edit`, `write`.
+Advanced file search (`grep`, `find`, `ls`) and native zero-dependency web retrieval (`web_search`, `fetch_web_page`) are reachable via `--tools`:
+
+```bash
+bin/pig --tools read,bash,edit,write,web_search,fetch_web_page
+```
+
 ## Requirements
 
 PHP >= 8.3 with `ext-json`, `ext-mbstring`, `ext-openssl`, and `ext-pcntl` for the terminal UI.

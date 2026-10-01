@@ -18,7 +18,8 @@ another way — searching through `bash` rather than a third search tool — the
 added for convenience.
 
 This is the rule that decided the built-in tool set: four by default, as upstream has it, with
-`grep`, `find` and `ls` reachable by name through `--tools`.
+`grep`, `find`, `ls`, and zero-dependency web retrieval tools (`web_search`, `fetch_web_page`)
+reachable by name through `--tools`.
 
 ### The developer's name does not appear in this repository
 

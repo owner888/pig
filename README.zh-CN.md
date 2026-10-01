@@ -345,6 +345,15 @@ ANTHROPIC_API_KEY=sk-ant-... php examples/ask.php "天为什么是蓝的？"
 这行命令底下的每一层都是 pig 自己的：一个非阻塞 TLS socket、手写的 HTTP/1.1、边到边解的 SSE、
 建在 `Fiber` 上的协程。回答途中按 Ctrl-C，走的就是 TUI 用的那条 abort 路径。
 
+### 内置工具
+
+pig 默认携带与 upstream 对齐的 4 个基础编程工具：`read`、`bash`、`edit`、`write`。
+高级文件检索（`grep`、`find`、`ls`）与零依赖原生联网检索双子工具（`web_search`、`fetch_web_page`）可通过 `--tools` 开启：
+
+```bash
+bin/pig --tools read,bash,edit,write,web_search,fetch_web_page
+```
+
 ## 环境要求
 
 PHP >= 8.3，需要 `ext-json`、`ext-mbstring`、`ext-openssl`，终端 UI 还需要 `ext-pcntl`。
