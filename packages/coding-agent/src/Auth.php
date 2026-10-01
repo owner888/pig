@@ -271,6 +271,19 @@ final class Auth
         );
     }
 
+    /**
+     * Failover to the next available Antigravity account and sync active state.
+     */
+    public function rotateAntigravityAccount(): ?Credentials
+    {
+        $newActive = $this->accounts()->rotateNext();
+        if ($newActive !== null) {
+            $this->setCredentials(Provider::Antigravity, $newActive);
+        }
+
+        return $newActive;
+    }
+
     public function setApiKey(string $provider, string $key): void
     {
         $this->data[$provider] = ['type' => 'api_key', 'key' => $key];

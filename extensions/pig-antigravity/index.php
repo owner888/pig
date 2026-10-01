@@ -91,6 +91,17 @@ return function (ExtensionApi $pi): void {
             $accounts = Accounts::beside($auth->path());
             $trimmed = trim($args);
 
+            if ($trimmed === 'rotate') {
+                $newActive = $auth->rotateAntigravityAccount();
+                if ($newActive !== null) {
+                    $email = $newActive->email ?? 'next';
+                    $emit($ctx, "Rotated Antigravity account to: {$email}", 'info');
+                } else {
+                    $emit($ctx, 'Only one Antigravity account available; cannot rotate.', 'warning');
+                }
+                return;
+            }
+
             if (str_starts_with($trimmed, 'switch ')) {
                 $target = trim(substr($trimmed, 7));
                 $all = $accounts->accounts();
@@ -174,7 +185,7 @@ return function (ExtensionApi $pi): void {
                 $i++;
             }
 
-            $emit($ctx, implode("\n", $lines) . "\n\nUse /antigravity.accounts switch <index|email> or /antigravity.accounts remove <index|email>.", 'info');
+            $emit($ctx, implode("\n", $lines) . "\n\nUse /antigravity.accounts rotate, /antigravity.accounts switch <index|email> or /antigravity.accounts remove <index|email>.", 'info');
         },
         'List, switch, or remove linked Antigravity Google accounts',
     );

@@ -39,6 +39,7 @@ use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\Async\Future;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Hooks\Events\AgentEndEvent as HookAgentEnd;
 use Pig\CodingAgent\Hooks\Events\AgentSettledEvent as HookAgentSettled;
 use Pig\CodingAgent\Hooks\Events\AgentStartEvent as HookAgentStart;
@@ -162,6 +163,7 @@ final class AgentSession
         private ?HookRunner $hooks = null,
         array $fileCommands = [],
         array $modelScope = [],
+        public readonly ?Auth $auth = null,
     ) {
         $this->fileCommands = $fileCommands;
         $this->modelScope = $modelScope;
@@ -1442,6 +1444,30 @@ final class AgentSession
 
         $max = $this->settings?->retryMaxAttempts(Retry::MAX_ATTEMPTS) ?? Retry::MAX_ATTEMPTS;
         $error = $failed->errorMessage ?? 'Unknown error';
+
+        // Check if we can failover to another Antigravity account on quota exhaustion (429)
+        $isAntigravityRateLimit = $this->model()?->provider === 'antigravity'
+            && (str_contains($error, '429') || stripos($error, 'quota') !== false || str_contains($error, 'RESOURCE_EXHAUSTED'));
+
+        if ($isAntigravityRateLimit && $this->auth !== null) {
+            $newCred = $this->auth->rotateAntigravityAccount();
+            if ($newCred !== null) {
+                $email = $newCred->email ?? 'next account';
+                $this->attempt = 0; // Reset retry attempt counter for fresh account
+                $delay = 0.5; // Fast failover without waiting out the old account's quota reset window
+                $this->announce(new RetryStartEvent(1, $max, $delay, "Antigravity quota reached. Switched to account {$email}."));
+                $this->dropLastAssistantMessage();
+
+                $signal = $this->retrying?->signal;
+                if ($signal === null || !$this->sleep($delay, $signal)) {
+                    return;
+                }
+
+                $this->carryOn();
+
+                return;
+            }
+        }
 
         if ($this->attempt > $max) {
             $this->attempt = 0;

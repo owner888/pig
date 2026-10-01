@@ -1638,6 +1638,12 @@ Two more things worth knowing:
   worth knowing rather than discovering. Discovery swallows every failure on purpose: a 403 from
   the production endpoint is the normal case for an account that was always going to use the
   sandbox.
+- **Multi-account store (`antigravity-accounts.json`) and 429 auto-failover.** `Accounts.php` manages
+  multiple linked Google accounts alongside `auth.json`. When Antigravity returns 429 (Resource has
+  been exhausted / quota exceeded), `AgentSession::waitAndCarryOn()` automatically invokes
+  `$auth->rotateAntigravityAccount()` to activate the next account in round-robin order, syncs credentials
+  back to `auth.json`, resets retry attempts, and carries on with a minimal 0.5s delay. The turn continues
+  seamlessly without human intervention. Manual cycling is also available via `/antigravity.accounts rotate`.
 
 `available()` is true for all four now, so nothing in `/login` is greyed and the "not ported yet"
 label has no case left to describe. The method stays, **as a table and not as a computed answer**:

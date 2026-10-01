@@ -213,6 +213,45 @@ final class AccountsTest extends TestCase
         self::assertSame('refresh-first@example', $this->accounts()->active()?->refresh);
     }
 
+    public function testRotateNextCyclesThroughAccounts(): void
+    {
+        $this->write([
+            'version' => 1,
+            'activeAccountId' => 'first@example',
+            'accounts' => [
+                'first@example' => $this->account('first@example'),
+                'second@example' => $this->account('second@example'),
+                'third@example' => $this->account('third@example'),
+            ],
+        ]);
+
+        $accounts = $this->accounts();
+
+        // 1st rotation: first -> second
+        $next1 = $accounts->rotateNext();
+        self::assertNotNull($next1);
+        self::assertSame('second@example', $next1->email);
+        self::assertSame('second@example', $accounts->activeId());
+
+        // 2nd rotation: second -> third
+        $next2 = $accounts->rotateNext();
+        self::assertNotNull($next2);
+        self::assertSame('third@example', $next2->email);
+
+        // 3rd rotation: third -> wrap around to first
+        $next3 = $accounts->rotateNext();
+        self::assertNotNull($next3);
+        self::assertSame('first@example', $next3->email);
+
+        // Single account cannot rotate
+        $this->write([
+            'version' => 1,
+            'activeAccountId' => 'solo@example',
+            'accounts' => ['solo@example' => $this->account('solo@example')],
+        ]);
+        self::assertNull($this->accounts()->rotateNext());
+    }
+
     public function testAnAccountIsFoundByItsEmailWhenTheRefreshTokenHasChanged(): void
     {
         // Upstream's `findAccount` matches on either, case-folded and trimmed: a store written

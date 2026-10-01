@@ -374,7 +374,7 @@ final class CodingAgent
         );
         Timings::mark('agent');
 
-        $session = new AgentSession($agent, $cwd, $store, $settings, $hooks, $fileCommands, $scope);
+        $session = new AgentSession($agent, $cwd, $store, $settings, $hooks, $fileCommands, $scope, auth: $auth);
 
         // What the hooks and the custom tools are told about the session is wired by the mode, not
         // here: the interactive one is what has a screen to draw a dialog on, and upstream says the

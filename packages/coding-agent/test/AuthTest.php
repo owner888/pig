@@ -202,6 +202,41 @@ final class AuthTest extends TestCase
         $this->assertSame('a-cloud-project', $credentials->projectId);
     }
 
+    public function testRotateAntigravityAccountRotatesAndSyncsCredentials(): void
+    {
+        $auth = $this->given('{}');
+
+        file_put_contents($this->home . '/antigravity-accounts.json', json_encode([
+            'version' => 1,
+            'activeAccountId' => 'first@example',
+            'accounts' => [
+                'first@example' => [
+                    'refresh' => 'ref-1',
+                    'access' => 'acc-1',
+                    'expires' => 9_000_000_000_000,
+                    'email' => 'first@example',
+                ],
+                'second@example' => [
+                    'refresh' => 'ref-2',
+                    'access' => 'acc-2',
+                    'expires' => 9_000_000_000_000,
+                    'email' => 'second@example',
+                ],
+            ],
+        ]));
+
+        $rotated = $auth->rotateAntigravityAccount();
+        $this->assertNotNull($rotated);
+        $this->assertSame('second@example', $rotated->email);
+        $this->assertSame('acc-2', $rotated->access);
+
+        // Verify that auth.json has been synced with the new active credential
+        $current = $auth->credentials(Provider::Antigravity);
+        $this->assertNotNull($current);
+        $this->assertSame('second@example', $current->email);
+        $this->assertSame('acc-2', $current->access);
+    }
+
     public function testThisFileWinsWhenItHasAnAntigravityEntryOfItsOwn(): void
     {
         // A credential that is in `auth.json` is the one both tools are using — the store is

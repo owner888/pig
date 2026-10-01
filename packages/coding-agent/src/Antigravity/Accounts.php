@@ -130,6 +130,33 @@ final class Accounts
         }
     }
 
+    /**
+     * Switch to the next available account in the store (round-robin failover).
+     *
+     * @return Credentials|null Returns new active credentials if rotated, or null if only one or no accounts.
+     */
+    public function rotateNext(): ?Credentials
+    {
+        $keys = array_keys($this->accounts);
+        $total = count($keys);
+
+        if ($total <= 1) {
+            return null;
+        }
+
+        $currentIndex = array_search($this->active, $keys, true);
+        $nextIndex = $currentIndex === false ? 0 : ($currentIndex + 1) % $total;
+        $nextId = $keys[$nextIndex];
+
+        if ($nextId === $this->active) {
+            return null;
+        }
+
+        $this->activate($nextId);
+
+        return $this->active();
+    }
+
     /** How many sign-ins are in the store, which is the only thing `/login` would want to say. */
     public function count(): int
     {

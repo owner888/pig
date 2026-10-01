@@ -28,6 +28,7 @@ use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\Timestamp;
 use Pig\Ai\ToolCall;
+use Pig\CodingAgent\Auth;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
@@ -1257,6 +1258,58 @@ final class AgentSessionTest extends TestCase
 
     // ---- the overflow half --------------------------------------------------------------
 
+    public function testAntigravityAccountRotatesAutomaticallyOnRateLimit(): void
+    {
+        $home = $this->tempHome;
+        mkdir($home, 0700, true);
+        putenv("PI_HOME={$home}");
+
+        file_put_contents($home . '/antigravity-accounts.json', json_encode([
+            'version' => 1,
+            'activeAccountId' => 'account1@example.com',
+            'accounts' => [
+                'account1@example.com' => [
+                    'refresh' => 'ref-1',
+                    'access' => 'acc-1',
+                    'expires' => 9_000_000_000_000,
+                    'email' => 'account1@example.com',
+                ],
+                'account2@example.com' => [
+                    'refresh' => 'ref-2',
+                    'access' => 'acc-2',
+                    'expires' => 9_000_000_000_000,
+                    'email' => 'account2@example.com',
+                ],
+            ],
+        ]));
+
+        $auth = Auth::discover();
+        $model = Models::find('antigravity', 'gemini-3.8-flash');
+
+        $session = $this->session(
+            [],
+            model: $model,
+            streamFn: $this->flaky([
+                ['error' => 'Antigravity returned 429: Resource has been exhausted (quota exceeded)'],
+                'Recovered with account 2!',
+            ]),
+            settings: self::quickRetries(['baseDelayMs' => 10]),
+            auth: $auth,
+        );
+
+        Async::run(static function () use ($session) {
+            $session->prompt('hi');
+        });
+
+        // Verify account rotated in auth and store
+        $this->assertSame('account2@example.com', $auth->credentials(\Pig\Ai\Utils\Oauth\Provider::Antigravity)?->email);
+
+        // Turn succeeded
+        $messages = $session->messages();
+        $this->assertCount(2, $messages);
+        $this->assertSame('Recovered with account 2!', $messages[1]->content[0]->text);
+    }
+
     public function testAPromptTooLongIsSummarisedAndSentAgainRatherThanRetried(): void
     {
         $session = $this->session(
@@ -2067,6 +2120,7 @@ final class AgentSessionTest extends TestCase
         ?Settings $settings = null,
         ?Closure $getApiKey = null,
         ?HookRunner $hooks = null,
+        ?Auth $auth = null,
     ): AgentSession {
         $agent = new Agent(new AgentOptions(
             streamFn: $streamFn ?? $this->provider($answers, $hook),
@@ -2079,7 +2133,7 @@ final class AgentSessionTest extends TestCase
         $agent->setModel($model ?? $this->model());
         $this->current = $agent;
 
-        return new AgentSession($agent, sys_get_temp_dir(), $store, $settings, $hooks);
+        return new AgentSession($agent, sys_get_temp_dir(), $store, $settings, $hooks, auth: $auth);
     }
 
     /**
