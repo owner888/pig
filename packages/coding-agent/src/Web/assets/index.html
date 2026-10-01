@@ -1241,6 +1241,28 @@
       }
     }
 
+    // A page that cannot reach pig must say so. Every loader used to swallow its failure, so a
+    // server that was not answering looked like a page that was still loading — "Loading
+    // session..." in the header, for ever, with nothing to read. One function owns the sentence
+    // and retries; a later success clears it.
+    let unreachable = null;
+    function pigUnreachable(what, err) {
+      const why = err && err.message ? err.message : String(err);
+      unreachable = `Cannot reach pig for ${what}: ${why} — retrying…`;
+      showStatusBanner(unreachable);
+      setTimeout(() => { refreshState(); loadMessages(); if (availableModels.length === 0) loadModels(); }, 3000);
+    }
+    function pigReachable() {
+      if (unreachable) { unreachable = null; hideStatusBanner(); }
+    }
+    async function fetchJson(url, what) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      pigReachable();
+      return d;
+    }
+
     function hideStatusBanner() {
       const banner = document.getElementById("status-banner");
       if (banner) {
@@ -1471,10 +1493,8 @@
 
     async function refreshState() {
       try {
-        const res = await fetch("/api/state");
-        const d = await res.json();
-        applyState(d);
-      } catch (err) {}
+        applyState(await fetchJson("/api/state", "the session state"));
+      } catch (err) { pigUnreachable("the session state", err); }
     }
 
     // ---- accounts panel -----------------------------------------------------------------
@@ -1760,10 +1780,9 @@
     // 3-Level Cascading Selectors: Provider -> Model -> Thinking Level
     async function loadModels() {
       try {
-        const res = await fetch("/api/models");
-        availableModels = await res.json();
+        availableModels = await fetchJson("/api/models", "the model list");
         populateProviders(availableModels);
-      } catch (err) {}
+      } catch (err) { pigUnreachable("the model list", err); }
     }
 
     function populateProviders(models) {
@@ -2009,8 +2028,7 @@
 
     async function loadMessages() {
       try {
-        const res = await fetch("/api/messages");
-        const msgs = await res.json();
+        const msgs = await fetchJson("/api/messages", "the conversation");
         chatScroll.innerHTML = "";
         for (const m of msgs) {
           if (m.role === "user") {
@@ -2060,7 +2078,7 @@
           }
         }
         chatScroll.scrollTop = chatScroll.scrollHeight;
-      } catch (err) {}
+      } catch (err) { pigUnreachable("the conversation", err); }
     }
 
     initNetwork();
