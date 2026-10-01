@@ -364,7 +364,20 @@ final class Anthropic
         }
 
         if (($options?->thinkingEnabled ?? false) && $model->reasoning) {
-            $body['thinking'] = ['type' => 'enabled', 'budget_tokens' => $options->thinkingBudgetTokens];
+            $isAdaptive = ($model->compat?->forceAdaptiveThinking ?? false)
+                || str_contains($model->id, 'fable')
+                || str_contains($model->id, 'opus-4-7')
+                || str_contains($model->id, 'opus-4-8')
+                || str_contains($model->id, 'sonnet-5');
+
+            if ($isAdaptive) {
+                $body['thinking'] = ['type' => 'adaptive'];
+                if ($options->effort !== null) {
+                    $body['output_config'] = ['effort' => $options->effort];
+                }
+            } else {
+                $body['thinking'] = ['type' => 'enabled', 'budget_tokens' => $options->thinkingBudgetTokens];
+            }
         }
 
         return $body;

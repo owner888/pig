@@ -418,7 +418,10 @@ final class HttpServer
             $event instanceof AgentStartEvent => ['type' => 'agent_start'],
             $event instanceof TurnStartEvent => ['type' => 'turn_start'],
             $event instanceof TurnEndEvent => ['type' => 'turn_end'],
-            $event instanceof AgentEndEvent => ['type' => 'agent_end'],
+            $event instanceof AgentEndEvent => [
+                'type' => 'agent_end',
+                'error' => $this->session->agent->state->error,
+            ],
             $event instanceof MessageStartEvent => ['type' => 'message_start'],
             $event instanceof MessageEndEvent => ['type' => 'message_end'],
             $event instanceof MessageUpdateEvent => $this->serializeMessageUpdate($event),
@@ -636,6 +639,8 @@ final class HttpServer
                 $history[] = [
                     'role' => 'assistant',
                     'content' => $blocks,
+                    'stopReason' => $m->stopReason->value,
+                    'errorMessage' => $m->errorMessage,
                 ];
             }
         }

@@ -208,6 +208,14 @@
       color: var(--assistant-text);
     }
 
+    .msg-error {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+
     /* Images grid in message */
     .msg-images-grid {
       display: flex;
@@ -690,6 +698,14 @@
       chatScroll.scrollTop = chatScroll.scrollHeight;
     }
 
+    function appendErrorMessage(errorText) {
+      const block = document.createElement("div");
+      block.className = "msg-block msg-error";
+      block.innerHTML = `<strong>Error:</strong> ${escapeHtml(errorText)}`;
+      chatScroll.appendChild(block);
+      chatScroll.scrollTop = chatScroll.scrollHeight;
+    }
+
     function ensureAssistantBlock() {
       if (!currentAssistantBlock) {
         currentAssistantBlock = document.createElement("div");
@@ -717,7 +733,7 @@
           try {
             const data = JSON.parse(e.data);
             if (data.type === "models") {
-              populateModels(data.models);
+              populateProviders(data.models);
             } else {
               onEvent(data);
             }
@@ -760,6 +776,9 @@
         currentThinkingText = "";
         currentThinkingBox = null;
         refreshState();
+        if (evt.error) {
+          appendErrorMessage(evt.error);
+        }
       } else if (evt.type === "thinking_delta") {
         currentThinkingText += evt.delta || "";
         const box = ensureAssistantBlock();
@@ -1206,6 +1225,8 @@
               block.className = "msg-block msg-assistant prose";
               block.innerHTML = renderMarkdown(text);
               chatScroll.appendChild(block);
+            } else if (m.stopReason === "error" && m.errorMessage) {
+              appendErrorMessage(m.errorMessage);
             }
           }
         }

@@ -143,6 +143,7 @@ final class Stream
                 // the provider's default — Anthropic's is off, but Gemini's is not.
                 thinkingEnabled: $options?->reasoning !== null,
                 thinkingBudgetTokens: self::anthropicBudget($options?->reasoning),
+                effort: self::anthropicEffort($model, $options?->reasoning),
             ),
         };
     }
@@ -162,6 +163,21 @@ final class Stream
         }
 
         return new AnthropicOptions($options?->temperature, $options?->maxTokens, $options?->signal, $apiKey);
+    }
+
+    private static function anthropicEffort(Model $model, ?ReasoningEffort $reasoning): string
+    {
+        $mapped = $reasoning !== null ? ($model->thinkingLevelMap[$reasoning->value] ?? null) : null;
+        if (is_string($mapped)) {
+            return $mapped;
+        }
+
+        return match ($reasoning?->value) {
+            'minimal', 'low' => 'low',
+            'medium' => 'medium',
+            'high', 'xhigh' => 'high',
+            default => 'high',
+        };
     }
 
     /**

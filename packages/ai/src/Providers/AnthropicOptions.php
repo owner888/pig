@@ -23,6 +23,7 @@ final readonly class AnthropicOptions extends StreamOptions
         public bool $thinkingEnabled = false,
         public int $thinkingBudgetTokens = 1024,
         public bool $interleavedThinking = true,
+        public ?string $effort = null,
     ) {
         parent::__construct($temperature, $maxTokens, $signal, $apiKey);
     }
