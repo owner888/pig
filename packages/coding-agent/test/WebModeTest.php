@@ -7,11 +7,13 @@ namespace Pig\CodingAgent\Test;
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentOptions;
+use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Session\AgentSession;
+use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Web\HttpServer;
 use Pig\CodingAgent\Web\WebMode;
 
@@ -184,6 +186,39 @@ final class WebModeTest extends TestCase
             $this->assertSame(0x81, ord($wsResp[0])); // text frame
 
             fclose($client);
+            $server->stop();
+        });
+    }
+
+    public function testWebModelSwitchDoesNotOverwriteDefaultSettings(): void
+    {
+        $port = 28091;
+        $agent = new Agent(new AgentOptions(apiKey: 'k'));
+        $settings = Settings::inMemory();
+        $settings->setDefaultModel('original-default-model', 'provider-a');
+        $settings->setDefaultThinkingLevel(ThinkingLevel::Low);
+
+        $session = new AgentSession($agent, $this->cwd, settings: $settings);
+        $server = new HttpServer($session, $port);
+
+        Async::run(function () use ($server, $port, $session, $settings) {
+            $server->start();
+            $http = new HttpClient(2.0);
+
+            // Switch model via Web API
+            $body = json_encode(['modelId' => 'gemini-2.5-flash', 'provider' => 'google', 'thinkingLevel' => 'high']);
+            $resp = $http->follow(new Request('POST', "http://127.0.0.1:{$port}/api/model", body: $body));
+            $this->assertSame(200, $resp->status);
+
+            // Session active model was updated
+            $this->assertSame('gemini-2.5-flash', $session->model()?->id);
+            $this->assertSame(ThinkingLevel::High, $session->thinkingLevel());
+
+            // But default settings were NOT overwritten!
+            $this->assertSame('original-default-model', $settings->defaultModel());
+            $this->assertSame('provider-a', $settings->defaultProvider());
+            $this->assertSame(ThinkingLevel::Low, $settings->defaultThinkingLevel());
+
             $server->stop();
         });
     }

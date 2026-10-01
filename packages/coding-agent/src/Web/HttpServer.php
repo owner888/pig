@@ -383,7 +383,7 @@ final class HttpServer
                 try {
                     $model = Models::get($provider === null ? $modelId : "{$provider}/{$modelId}") ?? Models::get($modelId);
                     if ($model !== null) {
-                        $this->session->setModel($model, $thinking);
+                        $this->session->setModel($model, $thinking, persistAsDefault: false);
                     }
                 } catch (Throwable) {}
             }
@@ -404,7 +404,7 @@ final class HttpServer
 
             if ($level !== null) {
                 try {
-                    $this->session->setThinkingLevel($level);
+                    $this->session->setThinkingLevel($level, persistAsDefault: false);
                 } catch (Throwable) {}
             }
 
@@ -552,7 +552,7 @@ final class HttpServer
                         if ($model === null) {
                             throw new \RuntimeException("No such model: {$provider}/{$modelId}");
                         }
-                        $this->session->setModel($model, $thinking);
+                        $this->session->setModel($model, $thinking, persistAsDefault: false);
                         $conn->send(['id' => $id, 'type' => 'response', 'success' => true, 'state' => $this->getStatePayload()]);
                     } catch (Throwable $e) {
                         $conn->send(['id' => $id, 'type' => 'response', 'success' => false, 'error' => $e->getMessage()]);
@@ -562,7 +562,7 @@ final class HttpServer
             'set_thinking_level' => Async::spawn(function () use ($conn, $id, $data): void {
                 $level = \Pig\Agent\ThinkingLevel::tryFrom((string) ($data['level'] ?? ''));
                 if ($level !== null) {
-                    $this->session->setThinkingLevel($level);
+                    $this->session->setThinkingLevel($level, persistAsDefault: false);
                     $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
                 }
             }),

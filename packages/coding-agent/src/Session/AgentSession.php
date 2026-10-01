@@ -566,7 +566,7 @@ final class AgentSession
      * model would have no idea why. Dropped silently to what the model can do, because
      * they asked for the model, not for the level.
      */
-    public function setModel(Model $model, ?ThinkingLevel $thinking = null): void
+    public function setModel(Model $model, ?ThinkingLevel $thinking = null, bool $persistAsDefault = true): void
     {
         // Upstream's first two lines, and they were missing: switching to a model this machine
         // has no key for used to succeed, be written into the session file as the model this
@@ -589,14 +589,13 @@ final class AgentSession
             $this->store?->appendModelChange($model->provider, $model->id);
         }
 
-        // And remembered for the next run, which upstream does from here for the reason
-        // `setQueueMode()` gives: this is the class that holds both the session and the
-        // settings. It used to be the terminal's line, so `/model haiku` was remembered and a
-        // host's `set_model` was forgotten — the same operation in two modes with the rule on
-        // only one of them, which is this audit's recurring find.
-        $this->settings?->setDefaultModel($model->id, $model->provider);
+        // Remembered for the next run when enabled (e.g. CLI interactive mode).
+        // Web UI and lightweight switches pass persistAsDefault: false so they don't overwrite settings.json.
+        if ($persistAsDefault) {
+            $this->settings?->setDefaultModel($model->id, $model->provider);
+        }
 
-        $this->setThinkingLevel($this->clampThinking($thinking ?? $this->thinkingLevel()));
+        $this->setThinkingLevel($this->clampThinking($thinking ?? $this->thinkingLevel()), persistAsDefault: $persistAsDefault);
     }
 
     /**
@@ -1882,7 +1881,7 @@ final class AgentSession
         return $this->agent->state->thinkingLevel;
     }
 
-    public function setThinkingLevel(ThinkingLevel $level): void
+    public function setThinkingLevel(ThinkingLevel $level, bool $persistAsDefault = true): void
     {
         $changed = $this->thinkingLevel() !== $level;
 
@@ -1892,10 +1891,11 @@ final class AgentSession
             $this->store?->appendThinkingLevelChange($level->value);
         }
 
-        // Remembered for the next run, here rather than in each mode — see `setModel()`. Written
-        // even when the level did not change, as upstream does: a level the settings have never
-        // heard of is the case this is for, and it is not a change.
-        $this->settings?->setDefaultThinkingLevel($level);
+        // Remembered for the next run when enabled.
+        // Web UI passes persistAsDefault: false so it does not overwrite settings.json.
+        if ($persistAsDefault) {
+            $this->settings?->setDefaultThinkingLevel($level);
+        }
     }
 
     /**

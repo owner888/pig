@@ -64,6 +64,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Changed
 
+- Switching models and thinking levels in Web UI now exclusively affects the active session without overwriting global `settings.json` defaults, matching upstream pi behavior.
 - Web UI communication upgraded to full-duplex WebSocket RPC streaming with automatic SSE/HTTP fallback.
 - Aligned mid-run prompt behavior with upstream pi: submitting via Enter while the agent is streaming now steers immediately (`$session->steer()`) instead of waiting in the follow-up queue until the entire turn finishes.
 
