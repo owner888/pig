@@ -8,6 +8,7 @@ use Closure;
 use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\CodingAgent\Hooks\HookUi;
+use Pig\CodingAgent\Keybindings;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Components\Editor;
 use Pig\Tui\Components\Input;
@@ -108,6 +109,7 @@ final class TerminalUi implements HookUi
         private readonly FooterComponent $footer,
         private readonly Closure $palette,
         private readonly ?Closure $externalEditor = null,
+        private readonly Keybindings $keybindings = new Keybindings(),
     ) {
     }
 
@@ -196,7 +198,7 @@ final class TerminalUi implements HookUi
 
         $this->busy = true;
         $answer = new Deferred();
-        $field = new CustomEditor(new Editor($this->palette()->editorTheme()));
+        $field = new CustomEditor(new Editor($this->palette()->editorTheme()), $this->keybindings);
         $field->setText($prefill);
 
         $field->setSubmitHandler(function (string $value) use ($answer): void {
@@ -204,7 +206,8 @@ final class TerminalUi implements HookUi
             $answer->complete($value);
         });
 
-        $field->on('escape', function () use ($answer): void {
+        // Actions, not keys: the hook's editor answers to the same bindings as the prompt.
+        $field->on('app.interrupt', function () use ($answer): void {
             $this->close();
             $answer->complete(null);
         });
@@ -216,7 +219,7 @@ final class TerminalUi implements HookUi
         // hand-off suspends while the editor is open — which from here would suspend the
         // loop that called it. The dialog's own fiber is parked on the deferred below and
         // cannot be borrowed for this.
-        $field->on('ctrl+g', function () use ($field): void {
+        $field->on('app.editor.external', function () use ($field): void {
             Async::spawn(function () use ($field): void {
                 $edited = $this->externalEditor === null ? null : ($this->externalEditor)($field->text());
 
@@ -235,7 +238,7 @@ final class TerminalUi implements HookUi
         // rule for the same hint: a key in the list that does nothing is worse than a key missing
         // from it.
         $this->open($title, $field, 'enter to finish, shift+enter for a line, esc to cancel'
-            . ($this->externalEditor === null ? '' : ', ctrl+g for $VISUAL'));
+            . ($this->externalEditor === null ? '' : ', ' . $this->keybindings->label('app.editor.external') . ' for $VISUAL'));
 
         $value = $answer->future->await();
 

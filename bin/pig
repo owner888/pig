@@ -41,6 +41,7 @@ use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\CodingAgentError;
 use Pig\CodingAgent\CrashLog;
+use Pig\CodingAgent\Keybindings;
 use Pig\CodingAgent\Antigravity\Catalog as AntigravityCatalog;
 use Pig\CodingAgent\CustomModels;
 use Pig\CodingAgent\Interactive\InteractiveMode;
@@ -593,6 +594,15 @@ if ($mode === 'rpc') {
         }
     }
 
+    // `~/.pig/agent/keybindings.json`, read here and complained about here like every other
+    // file of the person's: a key this cannot read is a line on the shell, not a binding that
+    // silently never fires.
+    $keybindings = Keybindings::load();
+
+    foreach ($keybindings->problems() as $problem) {
+        fwrite(STDERR, Style::yellow($problem . "\n"));
+    }
+
     $running = new InteractiveMode(
         $session,
         Palette::named($theme),
@@ -611,6 +621,7 @@ if ($mode === 'rpc') {
         changelog: $changelog,
         extensions: $extensions,
         projectTrusted: $projectTrusted,
+        keybindings: $keybindings,
     );
 
     // **Spawned, and inside the one `Async::run()` that owns the program.** It is one HTTPS

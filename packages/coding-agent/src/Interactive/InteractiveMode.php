@@ -33,6 +33,7 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\BugReport;
 use Pig\CodingAgent\CrashLog;
+use Pig\CodingAgent\Keybindings;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\TrustChoice;
 use Pig\CodingAgent\Doctor\Doctor;
@@ -266,6 +267,8 @@ final class InteractiveMode
         // What `ProjectTrust::resolve()` answered at startup, so the screen can say when the
         // project's `.pig/` was left out and `/trust` can show which way the saved answer goes.
         private readonly bool $projectTrusted = true,
+        // Which key means which action — `keybindings.json`'s answer, or the defaults.
+        private readonly Keybindings $keybindings = new Keybindings(),
     ) {
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
@@ -288,7 +291,7 @@ final class InteractiveMode
         $this->pending = new Container();
         $this->status = new Container();
         $this->overlay = new Container();
-        $this->editor = new CustomEditor(new Editor($palette->editorTheme()));
+        $this->editor = new CustomEditor(new Editor($palette->editorTheme()), $this->keybindings);
         // `$this->settings` rather than the argument: with none given it is the in-memory one
         // that `/settings` writes to, and the footer has to read what that screen changes.
         $this->footer = new FooterComponent($session, $palette, $cwd, $this->settings, $auth);
@@ -307,6 +310,7 @@ final class InteractiveMode
             // The same `$VISUAL` hand-off Ctrl+G at the prompt uses, so the key means one
             // thing in both places and there is one piece of code to get right.
             fn (string $text): ?string => $this->externalEditor($text),
+            $this->keybindings,
         );
 
         $hooks?->initialize(
@@ -735,24 +739,45 @@ final class InteractiveMode
     ];
 
     /** @var array<string, string> */
+    /**
+     * The keys the application binds, by action where `keybindings.json` can move them and by
+     * key where it cannot (ctrl+v and shift+ctrl+d belong to the terminal layer, `/` `@` `!` to
+     * the prompt). `keys()` turns this into the table the banner and `/help` print, with the
+     * key each action is *actually* on — a help screen that names ctrl+o for a key somebody
+     * moved to ctrl+e is a help screen that lies.
+     */
     private const array KEYS = [
-        'esc' => 'interrupt the agent',
-        'ctrl+c' => 'clear the prompt, twice to exit',
-        'ctrl+d' => 'exit from an empty prompt',
-        'ctrl+z' => 'suspend',
+        'app.interrupt' => 'interrupt the agent',
+        'app.clear' => 'clear the prompt, twice to exit',
+        'app.exit' => 'exit from an empty prompt',
+        'app.suspend' => 'suspend',
         'ctrl+v' => 'paste, including an image from the clipboard',
-        'ctrl+g' => 'edit the prompt in $VISUAL or $EDITOR',
-        'shift+tab' => 'cycle the thinking level',
+        'app.editor.external' => 'edit the prompt in $VISUAL or $EDITOR',
+        'app.thinking.cycle' => 'cycle the thinking level',
         'shift+ctrl+d' => 'write a debug log: this frame, its line widths, the conversation',
-        'ctrl+p' => 'next model, shift+ctrl+p for the previous one',
-        'ctrl+l' => 'choose a model from the list',
-        'ctrl+o' => 'show more: tool output, and this list',
-        'ctrl+t' => 'show or hide thinking',
+        'app.model.cycleForward' => 'next model',
+        'app.model.cycleBackward' => 'previous model',
+        'app.model.select' => 'choose a model from the list',
+        'app.tools.expand' => 'show more: tool output, and this list',
+        'app.thinking.toggle' => 'show or hide thinking',
         '/' => 'commands',
         '@' => 'files',
         '!' => 'run a command, and let the model see the output',
         '!!' => 'run a command and keep it out of the conversation',
     ];
+
+    /** @return array<string, string> key label => what it does, with the bindings applied */
+    private function keys(): array
+    {
+        $rows = [];
+
+        foreach (self::KEYS as $what => $does) {
+            $label = str_starts_with($what, 'app.') ? $this->keybindings->label($what) : $what;
+            $rows[$label] = $does;
+        }
+
+        return $rows;
+    }
 
     /**
      * What the prompt itself answers to, which is upstream's `/hotkeys` table.
@@ -793,31 +818,34 @@ final class InteractiveMode
         // end. Not on the editor, because the point of it is that the editor may not be listening.
         $this->tui->setDebugHandler($this->writeDebugLog(...));
 
-        $this->editor->on('escape', $this->interrupt(...));
-        $this->editor->on('ctrl+c', $this->onCtrlC(...));
-        $this->editor->on('ctrl+d', $this->stop(...));
-        $this->editor->on('ctrl+z', $this->suspend(...));
-        $this->editor->on('shift+tab', $this->cycleThinking(...));
+        // Bound by *action*, upstream's names: which key each one is on is `Keybindings`'
+        // business, and the editor claims whatever keys the bindings say — so a `keybindings.json`
+        // that moves ctrl+o to ctrl+e frees ctrl+o for the text field in the same move.
+        $this->editor->on('app.interrupt', $this->interrupt(...));
+        $this->editor->on('app.clear', $this->onCtrlC(...));
+        $this->editor->on('app.exit', $this->stop(...));
+        $this->editor->on('app.suspend', $this->suspend(...));
+        $this->editor->on('app.thinking.cycle', $this->cycleThinking(...));
 
         // `CustomEditor` has always claimed these two — taken them off the text field — and
         // nothing was listening: upstream binds them to cycling the model, and pig had the keys
         // reserved for a method it never ported. A key that is taken away and then does nothing
         // is worse than either.
-        $this->editor->on('ctrl+p', fn () => $this->cycleModel());
-        $this->editor->on('shift+ctrl+p', fn () => $this->cycleModel(backward: true));
+        $this->editor->on('app.model.cycleForward', fn () => $this->cycleModel());
+        $this->editor->on('app.model.cycleBackward', fn () => $this->cycleModel(backward: true));
 
         // And ctrl+l, which was the third of them: claimed since it was ported, bound to nothing,
         // and the one key in the set a terminal already has a meaning for — so pressing it out of
         // habit to clear the screen did not even do that. Upstream's `onCtrlL` opens its model
         // selector, which is `/model` with nothing after it here.
-        $this->editor->on('ctrl+l', fn () => $this->showModels(''));
-        $this->editor->on('ctrl+g', function (): void {
+        $this->editor->on('app.model.select', fn () => $this->showModels(''));
+        $this->editor->on('app.editor.external', function (): void {
             // In a fiber of its own, the same reason `send()` is: this runs inside the
             // input callback, and it suspends — which would suspend the loop that called it.
             Async::spawn($this->editPromptExternally(...));
         });
 
-        $this->editor->on('ctrl+o', function (): void {
+        $this->editor->on('app.tools.expand', function (): void {
             $this->expanded = !$this->expanded;
             $this->banner?->setText($this->banner());
 
@@ -834,7 +862,7 @@ final class InteractiveMode
             $this->tui->requestRender();
         });
 
-        $this->editor->on('ctrl+t', function (): void {
+        $this->editor->on('app.thinking.toggle', function (): void {
             $this->useHideThinking(!$this->hideThinking);
             $this->say($this->hideThinking ? 'Thinking hidden' : 'Thinking shown');
         });
@@ -1955,8 +1983,9 @@ final class InteractiveMode
      */
     private function keysAndCommands(): string
     {
+        $keys = $this->keys();
         $labels = [
-            ...array_keys(self::KEYS),
+            ...array_keys($keys),
             ...array_keys(self::EDITING_KEYS),
             ...array_map(static fn (array $row): string => '/' . $row[0], self::COMMANDS),
         ];
@@ -1968,7 +1997,7 @@ final class InteractiveMode
 
         $rows = [];
 
-        foreach ([self::KEYS, self::EDITING_KEYS] as $table) {
+        foreach ([$keys, self::EDITING_KEYS] as $table) {
             foreach ($table as $key => $does) {
                 $rows[] = $this->palette->fg('dim', Width::pad($key, $column)) . $this->palette->fg('muted', $does);
             }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Interactive;
 
 use Closure;
+use Pig\CodingAgent\Keybindings;
 use Pig\Tui\Autocomplete\AutocompleteProvider;
 use Pig\Tui\Clipboard\Clipboard;
 use Pig\Tui\Caret;
@@ -32,8 +33,13 @@ final class CustomEditor implements Caret, Component, InputHandler
     /** @var array<string, Closure(): void> */
     private array $handlers = [];
 
-    public function __construct(private readonly Editor $editor)
-    {
+    public function __construct(
+        private readonly Editor $editor,
+        // Which key means which action. The defaults are upstream's; `keybindings.json` moves
+        // one, and this is the one place that reads the file's answer, so `on()` binds actions
+        // and never keys.
+        private readonly Keybindings $keybindings = new Keybindings(),
+    ) {
     }
 
     /**
@@ -73,21 +79,15 @@ final class CustomEditor implements Caret, Component, InputHandler
      */
     private function claimed(string $data): ?string
     {
-        return match (true) {
-            Keys::isCtrlG($data) => 'ctrl+g',
-            Keys::isCtrlZ($data) => 'ctrl+z',
-            Keys::isCtrlT($data) => 'ctrl+t',
-            Keys::isCtrlL($data) => 'ctrl+l',
-            Keys::isCtrlO($data) => 'ctrl+o',
-            Keys::isShiftCtrlP($data) => 'shift+ctrl+p',
-            Keys::isCtrlP($data) => 'ctrl+p',
-            Keys::isShiftTab($data) => 'shift+tab',
+        $action = $this->keybindings->actionFor($data);
+
+        return match ($action) {
             // While the completion list is open, Escape belongs to it: it closes the
             // list, which is what someone who pressed it there meant.
-            Keys::isEscape($data) => $this->editor->isShowingSuggestions() ? null : 'escape',
-            Keys::isCtrlC($data) => 'ctrl+c',
-            Keys::isCtrlD($data) => $this->editor->text() === '' ? 'ctrl+d' : null,
-            default => null,
+            'app.interrupt' => $this->editor->isShowingSuggestions() ? null : $action,
+            // Exit only from an empty prompt; with text in it the key is end-of-input, swallowed.
+            'app.exit' => $this->editor->text() === '' ? $action : null,
+            default => $action,
         };
     }
 

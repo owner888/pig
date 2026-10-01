@@ -278,6 +278,118 @@ final class Keys
     }
 
     /** Whether $data is that key with exactly that modifier, lock keys disregarded. */
+    /**
+     * Whether $data is the key a person would write as $name — upstream's `matchesKey()`, the
+     * half of `keybindings.json` that reads the right-hand side.
+     *
+     * `ctrl+x`, `shift+ctrl+p`, `alt+enter`, `escape`, `shift+tab`, `up`, `ctrl+left`, `home`,
+     * `delete`, `pageup` — modifiers in any order, case-insensitive, `esc` for `escape`. The
+     * legacy sequences are honoured where the terminal sends them: Ctrl+<letter> as the control
+     * character, Alt+<letter> as ESC then the letter, plain arrows as `\e[A`. Anything this
+     * cannot read is a key that never matches — and `Keybindings::problems()` names it at load,
+     * so the silence is not where the mistake is discovered.
+     */
+    public static function matchesName(string $data, string $name): bool
+    {
+        $spec = self::spec($name);
+
+        if ($spec === null) {
+            return false;
+        }
+
+        [$codepoint, $modifier, $legacy] = $spec;
+
+        foreach ($legacy as $raw) {
+            if ($data === $raw) {
+                return true;
+            }
+        }
+
+        return self::matches($data, $codepoint, $modifier);
+    }
+
+    /** Whether $name is a key this can read at all. */
+    public static function isKeyName(string $name): bool
+    {
+        return self::spec($name) !== null;
+    }
+
+    /**
+     * @return array{0: int, 1: int, 2: list<string>}|null codepoint, modifier bits, legacy sequences
+     */
+    private static function spec(string $name): ?array
+    {
+        $parts = array_map('strtolower', array_map('trim', explode('+', $name)));
+        $key = array_pop($parts);
+        $modifier = 0;
+
+        foreach ($parts as $part) {
+            $bit = match ($part) {
+                'ctrl', 'control' => self::CTRL,
+                'shift' => self::SHIFT,
+                'alt', 'option', 'meta' => self::ALT,
+                default => null,
+            };
+
+            if ($bit === null) {
+                return null;
+            }
+
+            $modifier |= $bit;
+        }
+
+        if ($key === null || $key === '') {
+            return null;
+        }
+
+        if (strlen($key) === 1 && $key >= 'a' && $key <= 'z') {
+            $legacy = match ($modifier) {
+                self::CTRL => [chr(ord($key) - 96)],
+                self::ALT => ["\x1b" . $key],
+                0 => [$key],
+                default => [],
+            };
+
+            return [ord($key), $modifier, $legacy];
+        }
+
+        $named = [
+            'escape' => [self::ESCAPE, ["\x1b"]],
+            'esc' => [self::ESCAPE, ["\x1b"]],
+            'tab' => [self::TAB, ["\t"]],
+            'enter' => [self::ENTER, ["\r"]],
+            'return' => [self::ENTER, ["\r"]],
+            'backspace' => [self::BACKSPACE, ["\x7f", "\x08"]],
+            'up' => [self::UP, ["\x1b[A"]],
+            'down' => [self::DOWN, ["\x1b[B"]],
+            'right' => [self::RIGHT, ["\x1b[C"]],
+            'left' => [self::LEFT, ["\x1b[D"]],
+            'home' => [self::HOME, ["\x1b[H", "\x1b[1~"]],
+            'end' => [self::END, ["\x1b[F", "\x1b[4~"]],
+            'delete' => [self::DELETE, ["\x1b[3~"]],
+            'insert' => [self::INSERT, ["\x1b[2~"]],
+            'pageup' => [self::PAGE_UP, ["\x1b[5~"]],
+            'pagedown' => [self::PAGE_DOWN, ["\x1b[6~"]],
+        ];
+
+        if (!isset($named[$key])) {
+            return null;
+        }
+
+        [$codepoint, $plain] = $named[$key];
+
+        // The legacy forms with a modifier: Shift+Tab is its own sequence, Alt+<key> is ESC in
+        // front of the plain one, and `\e[1;<mod>X` is what `parse()` already reads.
+        $legacy = match (true) {
+            $modifier === 0 => $plain,
+            $modifier === self::SHIFT && $key === 'tab' => ["\x1b[Z"],
+            $modifier === self::ALT => array_map(static fn (string $raw): string => "\x1b" . $raw, $plain),
+            default => [],
+        };
+
+        return [$codepoint, $modifier, $legacy];
+    }
+
     private static function matches(string $data, int $codepoint, int $modifier): bool
     {
         $parsed = self::parse($data);

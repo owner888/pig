@@ -257,6 +257,12 @@ reasoning is drawn, whether pictures are drawn, whether messages you type mid-ru
 a time or together, auto-compact, auto-retry — with what each one is set to now. Enter changes
 the row you are on and the list stays open; escape closes it.
 
+The keys the application takes — escape, ctrl+c/d/z, shift+tab, ctrl+p, ctrl+l, ctrl+o, ctrl+t,
+ctrl+g — can be moved in `~/.pig/agent/keybindings.json`, under pi's action names and key spelling:
+`{"app.model.select": "ctrl+m", "app.tools.expand": ["ctrl+e", "shift+ctrl+o"]}`. A binding
+replaces the default, so moving ctrl+o frees it for tmux; `[]` unbinds; the help shows the keys that
+actually work; a key or action the file names wrong is a line on the shell at startup.
+
 A markdown file in `~/.pig/agent/commands/` or `.pig/commands/` becomes a slash command: `review.md`
 is `/review`, its body is the prompt, and `$1` and `$@` are filled from what follows. Those and
 the ones a hook registers work outside the terminal too — `pig -p "/review src/Foo.php"` sends the

@@ -213,6 +213,12 @@ pig 不认识的 provider 写在 `~/.pig/models.json` 里——自己的机器�
 就记住了。`/settings` 把会话里能改的都列出来——主题、思考档位、要不要画出思考过程、要不要画出图片、
 跑到一半打的话是一条一条递过去还是一起递、自动压缩、自动重试——每一项后面写着现在是什么。回车改光标那一行，列表不关；改完按 esc。
 
+应用占用的按键——esc、ctrl+c/d/z、shift+tab、ctrl+p、ctrl+l、ctrl+o、ctrl+t、ctrl+g——可以在
+`~/.pig/agent/keybindings.json` 里挪位置，用的是 pi 的动作名和按键写法：
+`{"app.model.select": "ctrl+m", "app.tools.expand": ["ctrl+e", "shift+ctrl+o"]}`。一条绑定**替换**
+默认值，所以把 ctrl+o 挪走就把它让给了 tmux；`[]` 解绑；帮助里显示的是真正生效的键；文件里写错的
+键或动作会在启动时在 shell 上报一行。
+
 `~/.pig/commands/` 或 `.pig/commands/` 下的一个 md 文件就是一条斜杠命令：`review.md` 就是
 `/review`，正文就是 prompt，`$1`、`$@` 由后面跟的参数填进去。这些和 hook 注册的那些在终端之外一样
 好用——`pig -p "/review src/Foo.php"` 发的是那段 prompt，`pig -p "/deploy staging"` 跑的是 hook 的命令。

@@ -185,6 +185,7 @@ final class InteractiveModeTest extends TestCase
         array $tools = ['read'],
         array $modelScope = [],
         bool $projectTrusted = true,
+        ?\Pig\CodingAgent\Keybindings $keybindings = null,
     ): void {
         $this->clipboard = new FakeClipboard();
         $this->settings = $settings ?? Settings::inMemory();
@@ -254,6 +255,7 @@ final class InteractiveModeTest extends TestCase
             $auth,
             $changelog,
             projectTrusted: $projectTrusted,
+            keybindings: $keybindings ?? new \Pig\CodingAgent\Keybindings(),
         );
 
         $this->mode->start();
@@ -2068,6 +2070,27 @@ final class InteractiveModeTest extends TestCase
         $this->type("\x0c");
 
         $this->assertStringContainsString('Pick a model', $this->screen());
+    }
+
+    public function testAMovedBindingMovesTheKeyTheHelpAndFreesTheOldOne(): void
+    {
+        $this->start(keybindings: new \Pig\CodingAgent\Keybindings(['app.model.select' => ['ctrl+e']]));
+
+        // The old key is the text field's again — ctrl+l does nothing to the picker...
+        $this->type("\x0c");
+        $this->assertStringNotContainsString('Pick a model', $this->screen());
+
+        // ...and the new one opens it.
+        $this->type("\x05");
+        $this->assertStringContainsString('Pick a model', $this->screen());
+        $this->type("\e");
+
+        // And the help names the key that works, not the one that used to.
+        $this->type('/help');
+        $this->type("\r");
+        $text = $this->screenText();
+        $this->assertMatchesRegularExpression('/ctrl\+e\s+choose a model from the list/', $text);
+        $this->assertDoesNotMatchRegularExpression('/ctrl\+l\s+choose a model/', $text);
     }
 
     public function testCtrlPStaysInsideTheScopeAndCarriesItsThinkingLevel(): void
