@@ -96,7 +96,16 @@ final class WebModeTest extends TestCase
             $this->assertSame(200, $respSessions->status);
             $this->assertSame('[]', trim($respSessions->body->all()));
 
-            // 6. POST /api/abort
+            // 6. GET /api/models
+            $respModels = $http->follow(new Request('GET', "http://127.0.0.1:{$port}/api/models"));
+            $this->assertSame(200, $respModels->status);
+            $modelsData = json_decode($respModels->body->all(), true);
+            $this->assertIsArray($modelsData);
+            $this->assertNotEmpty($modelsData);
+            $this->assertArrayHasKey('id', $modelsData[0]);
+            $this->assertArrayHasKey('thinkingLevels', $modelsData[0]);
+
+            // 7. POST /api/abort
             $respAbort = $http->follow(new Request('POST', "http://127.0.0.1:{$port}/api/abort"));
             $this->assertSame(200, $respAbort->status);
 

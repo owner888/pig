@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Web;
 
 use Pig\Async\Loop;
+use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\Tui\Process;
 use Pig\Tui\Style;
@@ -22,6 +23,7 @@ final class WebMode
         public readonly AgentSession $session,
         public readonly int $port = 8088,
         public readonly string $host = '127.0.0.1',
+        public readonly ?Auth $auth = null,
     ) {
     }
 
@@ -33,7 +35,7 @@ final class WebMode
         for ($attempt = 0; $attempt < 10; $attempt++) {
             $candidatePort = $port + $attempt;
             try {
-                $this->server = new HttpServer($this->session, $candidatePort, $this->host);
+                $this->server = new HttpServer($this->session, $candidatePort, $this->host, $this->auth);
                 $this->server->start();
                 $bound = true;
                 $port = $candidatePort;

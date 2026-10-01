@@ -11,17 +11,21 @@ use Pig\Agent\AgentStartEvent;
 use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\MessageUpdateEvent;
+use Pig\Agent\ThinkingLevel;
 use Pig\Agent\ToolExecutionEndEvent;
 use Pig\Agent\ToolExecutionStartEvent;
 use Pig\Agent\TurnEndEvent;
 use Pig\Agent\TurnStartEvent;
 use Pig\Ai\AssistantMessage;
+use Pig\Ai\ImageContent;
+use Pig\Ai\Models;
 use Pig\Ai\TextContent;
 use Pig\Ai\TextDeltaEvent;
 use Pig\Ai\ThinkingDeltaEvent;
 use Pig\Ai\UserMessage;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Web\Protocols\Websocket;
@@ -49,12 +53,15 @@ final class HttpServer
 
     private int $nextConnectionId = 0;
     private bool $isRunning = false;
+    private ?Auth $auth = null;
 
     public function __construct(
         private readonly AgentSession $session,
         public readonly int $port = 8088,
         public readonly string $host = '127.0.0.1',
+        ?Auth $auth = null,
     ) {
+        $this->auth = $auth ?? Auth::discover();
     }
 
     /**
@@ -228,18 +235,20 @@ final class HttpServer
             return;
         }
 
-        // 3. User message submission
+        // 3. User message submission (supports text & multimodal images)
         if ($path === '/api/prompt' && $req['method'] === 'POST') {
             $data = json_decode($req['body'], true);
             $message = is_array($data) ? ($data['message'] ?? '') : '';
+            $rawImages = is_array($data) ? ($data['images'] ?? []) : [];
+            $images = $this->parseImages(is_array($rawImages) ? $rawImages : []);
 
-            if (trim($message) !== '') {
-                Async::spawn(function () use ($message): void {
+            if (trim($message) !== '' || $images !== []) {
+                Async::spawn(function () use ($message, $images): void {
                     try {
                         if ($this->session->isStreaming()) {
                             $this->session->steer($message);
                         } else {
-                            $this->session->prompt($message);
+                            $this->session->prompt($message, $images);
                         }
                     } catch (Throwable) {}
                 });
@@ -287,7 +296,17 @@ final class HttpServer
             return;
         }
 
-        // 7. Folders / Workspaces list (matching pi-web /api/folders)
+        // 7. Available models list
+        if ($path === '/api/models') {
+            $conn->sendResponse(200, [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ], json_encode($this->getModelsPayload()));
+
+            return;
+        }
+
+        // 8. Folders / Workspaces list (matching pi-web /api/folders)
         if ($path === '/api/folders') {
             $currentCwd = $this->session->cwd();
             $workspaces = $this->listAllWorkspaces($currentCwd);
@@ -303,7 +322,7 @@ final class HttpServer
             return;
         }
 
-        // 8. Sessions list for a directory (matching pi-web /api/sessions?cwd=...)
+        // 9. Sessions list for a directory (matching pi-web /api/sessions?cwd=...)
         if ($path === '/api/sessions') {
             $targetCwd = $req['query']['cwd'] ?? $this->session->cwd();
             $sessions = \Pig\CodingAgent\Session\SessionManager::listFor($targetCwd);
@@ -323,7 +342,7 @@ final class HttpServer
             return;
         }
 
-        // 9. Switch session
+        // 10. Switch session
         if ($path === '/api/session/switch' && $req['method'] === 'POST') {
             $data = json_decode($req['body'], true);
             $targetPath = is_array($data) ? ($data['path'] ?? '') : '';
@@ -408,12 +427,15 @@ final class HttpServer
         match ($type) {
             'prompt' => Async::spawn(function () use ($conn, $id, $data): void {
                 $text = (string) ($data['message'] ?? '');
-                if (trim($text) !== '') {
+                $rawImages = is_array($data['images'] ?? null) ? $data['images'] : [];
+                $images = $this->parseImages($rawImages);
+
+                if (trim($text) !== '' || $images !== []) {
                     try {
                         if ($this->session->isStreaming()) {
                             $this->session->steer($text);
                         } else {
-                            $this->session->prompt($text);
+                            $this->session->prompt($text, $images);
                         }
                         $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
                     } catch (Throwable $e) {
@@ -472,8 +494,47 @@ final class HttpServer
                 'type' => 'messages',
                 'messages' => $this->getMessagesPayload(),
             ]),
+            'get_models' => $conn->send([
+                'id' => $id,
+                'type' => 'models',
+                'models' => $this->getModelsPayload(),
+            ]),
             default => null,
         };
+    }
+
+    /**
+     * @param list<mixed> $rawImages
+     * @return list<ImageContent>
+     */
+    private function parseImages(array $rawImages): array
+    {
+        $images = [];
+
+        foreach ($rawImages as $img) {
+            if (is_array($img) && isset($img['data'], $img['mimeType']) && is_string($img['data']) && is_string($img['mimeType'])) {
+                $images[] = new ImageContent($img['data'], $img['mimeType']);
+            }
+        }
+
+        return $images;
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function getModelsPayload(): array
+    {
+        $models = $this->auth?->availableModels() ?? Models::all();
+
+        return array_values(array_map(static fn ($m) => [
+            'id' => $m->id,
+            'name' => $m->name,
+            'provider' => $m->provider,
+            'reasoning' => $m->reasoning,
+            'supportsImages' => in_array('image', $m->input, true),
+            'thinkingLevels' => array_map(static fn ($l) => $l->value, ThinkingLevel::supportedBy($m)),
+            'contextWindow' => $m->contextWindow,
+            'maxTokens' => $m->maxTokens,
+        ], $models));
     }
 
     /** @return array<string, mixed> */
@@ -506,9 +567,17 @@ final class HttpServer
         $history = [];
         foreach ($this->session->messages() as $m) {
             if ($m instanceof UserMessage) {
+                $blocks = [];
+                foreach ($m->content as $c) {
+                    if ($c instanceof TextContent) {
+                        $blocks[] = ['type' => 'text', 'text' => $c->text];
+                    } elseif ($c instanceof ImageContent) {
+                        $blocks[] = ['type' => 'image', 'mimeType' => $c->mimeType, 'data' => $c->data];
+                    }
+                }
                 $history[] = [
                     'role' => 'user',
-                    'content' => array_map(static fn ($c) => ['type' => 'text', 'text' => $c->text], $m->content),
+                    'content' => $blocks,
                 ];
             } elseif ($m instanceof AssistantMessage) {
                 $blocks = [];

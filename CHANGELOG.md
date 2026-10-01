@@ -52,6 +52,9 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Added
 
+- Added dynamic model catalog and thinking level selector to Web UI, fetching authorized models via `/api/models` and dynamically constraining thinking levels (e.g. low/medium/high for Antigravity) with instant WebSocket switching.
+- Added multimodal image support to Web UI: clipboard paste (`Ctrl+V` / `Cmd+V`), drag-and-drop, attachment button (`📎`), thumbnail preview with deletion, and rendering of sent images.
+- Added rich tool execution rendering in Web UI: git-style unified diffs (`+` green, `-` red) for `edit` operations and simulated dark terminal consoles for `bash` commands.
 - Added two-level workspace browser and per-directory session navigation in Web UI matching `pi-web`, allowing users to explore all projects with session histories and switch sessions across workspaces.
 - Added pure PHP RFC 6455 WebSocket protocol (`Pig\CodingAgent\Web\Protocols\Websocket`) and HTTP/1.1 framing protocol (`Pig\CodingAgent\Web\Protocols\Http`).
 - Added adorable pig mascot icon (`Pig\CodingAgent\Interactive\PigLogo`) to startup banner, matching upstream pi's 4-cell half-block header icon with a custom pink piglet.
