@@ -80,6 +80,7 @@ final class ServerConnection
      * @param Closure(self): void|null                    $onTools    the tool list changed
      * @param Closure(self): void|null                    $onChange   the state changed
      * @param McpOauth|null                                $credentials where OAuth tokens live; null means no OAuth
+     * @param McpServerLog|null                            $log         where the server's `notifications/message` go
      */
     public function __construct(
         public ServerEntry $entry,
@@ -89,6 +90,7 @@ final class ServerConnection
         private readonly ?Closure $onTools = null,
         private readonly ?Closure $onChange = null,
         private readonly ?McpOauth $credentials = null,
+        private readonly ?McpServerLog $log = null,
     ) {
     }
 
@@ -172,6 +174,30 @@ final class ServerConnection
     public function readResource(string $uri, array $options = []): array
     {
         return $this->withClient(fn (McpClient $client): array => $client->readResource($uri, $options), readOnly: true);
+    }
+
+    /** @return array{resources: list<array<string, mixed>>, nextCursor?: string} */
+    public function resourcesPage(?string $cursor, array $options = []): array
+    {
+        return $this->withClient(fn (McpClient $client): array => $client->listResourcesPage($cursor, $options), readOnly: true);
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function allResources(array $options = []): array
+    {
+        return $this->withClient(fn (McpClient $client): array => $client->listResources($options), readOnly: true);
+    }
+
+    /** @return array{resourceTemplates: list<array<string, mixed>>, nextCursor?: string} */
+    public function resourceTemplatesPage(?string $cursor, array $options = []): array
+    {
+        return $this->withClient(fn (McpClient $client): array => $client->listResourceTemplatesPage($cursor, $options), readOnly: true);
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function allResourceTemplates(array $options = []): array
+    {
+        return $this->withClient(fn (McpClient $client): array => $client->listResourceTemplates($options), readOnly: true);
     }
 
     /**
@@ -285,6 +311,11 @@ final class ServerConnection
                 ? ($this->createTransport)($this->entry, $this->cwd)
                 : self::defaultTransport($this->entry, $this->cwd, $this->authProvider());
             $client->connect($transport);
+
+            if ($this->log !== null) {
+                $log = $this->log;
+                $client->onNotification('notifications/message', fn (mixed $params) => $log->write($this->entry->name, $params));
+            }
 
             $client->onNotification('notifications/tools/list_changed', function () use ($client): void {
                 Async::spawn(fn () => $this->refreshTools($client));

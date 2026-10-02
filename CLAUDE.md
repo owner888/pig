@@ -2792,6 +2792,26 @@ and the dialogs. Four things decided on the way:
   takes no dependency, and the cost of two pigs refreshing one rotating token at the same instant
   is the cost a lost lock has there: one of them signs in again.
 
+**The resource tools are one set with one exposure**, upstream's rule: the widest among the
+servers that have resources. With pig's deferred-is-not-registered arrangement that means
+they go into `$deferred` under a pseudo-source `mcp resources` when no resource server is
+direct, and `tool_search` lists that source beside the servers. The thing to keep straight is
+the **order inside `registerTools()`**: `syncResourceTools()` runs after the server's own tools
+and before `syncToolSearch()`, because the first decides whether `tool_search` has anything to
+offer and the second registers it — swap them and a deferred resource-only server has no
+`tool_search` until the next change.
+
+**Nothing of upstream's MCP extension is left out now**, codemode aside, and the live checks were
+`server-filesystem` (stdio, tools), GitHub (streamable HTTP, 46 tools with a header; OAuth
+discovery to the DCR refusal without one) and `server-everything` (resources, templates, the log).
+
+**And a copying mistake cost an hour of looking in the wrong place.** The live run after
+resources landed had the model say `list_mcp_resources` was not a tool it had, and every probe of
+the code said it was registered. The extension loaded in that run was the copy under
+`~/.pig/agent/extensions/pig-mcp/`, three files stale — `cp -r extensions/pig-mcp dest/` had been
+the sync and it does not replace a directory that exists. `rsync -a --delete` is the sync now.
+*When the code and the behaviour disagree, check which code ran before reading either again.*
+
 **GitHub's MCP server cannot be signed into with dynamic registration**, verified live:
 `github.com/login/oauth`'s metadata has no `registration_endpoint`, so `pig mcp login gh` says
 `Authorization server does not support dynamic client registration` — correctly — and the way in

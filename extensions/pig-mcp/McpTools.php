@@ -57,7 +57,7 @@ final class McpTools
      *
      * @param array<string, mixed> $tool as the server listed it
      */
-    public static function define(string $server, array $tool, string $name, ServerConnection $connection): CustomTool
+    public static function define(string $server, array $tool, string $name, ServerConnection $connection, ?Closure $readableResources = null): CustomTool
     {
         $toolName = (string) $tool['name'];
         $title = $tool['title'] ?? ($tool['annotations']['title'] ?? null);
@@ -68,7 +68,7 @@ final class McpTools
             label: "{$server}/{$toolName}",
             description: $description !== '' ? $description : (is_string($title) ? $title : "MCP tool {$toolName} from server {$server}"),
             parameters: self::parameters(is_array($tool['inputSchema'] ?? null) ? $tool['inputSchema'] : []),
-            execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($server, $toolName, $connection): AgentToolResult {
+            execute: static function (string $id, array $params, ?Closure $onUpdate, HookContext $ctx, ?AbortSignal $signal) use ($server, $toolName, $connection, $readableResources): AgentToolResult {
                 $result = $connection->callTool($toolName, $params, [
                     'signal' => $signal,
                     'timeout' => $connection->timeout(),
@@ -83,7 +83,7 @@ final class McpTools
                     },
                 ]);
 
-                return self::convert($server, $toolName, $result);
+                return self::convert($server, $toolName, $result, $readableResources !== null && $readableResources());
             },
         );
     }
@@ -114,10 +114,10 @@ final class McpTools
      *
      * @param array<string, mixed> $result
      */
-    public static function convert(string $server, string $tool, array $result): AgentToolResult
+    public static function convert(string $server, string $tool, array $result, bool $readableResources = false): AgentToolResult
     {
         $blocks = is_array($result['content'] ?? null) ? $result['content'] : [];
-        $converted = $blocks !== [] ? self::toModelContent($server, $blocks) : Content::toLlm($result);
+        $converted = $blocks !== [] ? self::toModelContent($server, $blocks, $readableResources) : Content::toLlm($result);
 
         if (($result['isError'] ?? false) === true && self::textOf($converted) === '') {
             $converted[] = new TextContent("MCP tool {$server}/{$tool} returned an error");
@@ -143,7 +143,7 @@ final class McpTools
      * @param list<array<string, mixed>> $blocks
      * @return list<TextContent|ImageContent>
      */
-    public static function toModelContent(string $server, array $blocks): array
+    public static function toModelContent(string $server, array $blocks, bool $readableResources = false): array
     {
         $out = [];
 
@@ -152,7 +152,7 @@ final class McpTools
                 continue;
             }
 
-            foreach (self::blockToContent($block) as $piece) {
+            foreach (self::blockToContent($block, $server, $readableResources) as $piece) {
                 $out[] = $piece;
             }
         }
@@ -164,7 +164,7 @@ final class McpTools
      * @param array<string, mixed> $block
      * @return list<TextContent|ImageContent>
      */
-    private static function blockToContent(array $block): array
+    private static function blockToContent(array $block, string $server = '', bool $readableResources = false): array
     {
         if (($block['type'] ?? null) === 'resource_link') {
             $details = array_values(array_filter([
@@ -173,13 +173,16 @@ final class McpTools
             ]));
             $description = isset($block['description']) ? ': ' . $block['description'] : '';
             $label = $block['title'] ?? $block['name'] ?? '';
+            // A link is only worth naming the reader for when the resource tools are on the model.
+            $read = $readableResources ? ". Read it with read_mcp_resource (server \"{$server}\")" : '';
 
             return [new TextContent(sprintf(
-                '[Resource %s "%s"%s%s]',
+                '[Resource %s "%s"%s%s%s]',
                 (string) ($block['uri'] ?? ''),
                 (string) $label,
                 $details !== [] ? ' (' . implode(', ', $details) . ')' : '',
                 $description,
+                $read,
             ))];
         }
 

@@ -493,7 +493,7 @@ final class McpCli
                     continue;
                 }
 
-                $connection = new ServerConnection($entry, $this->cwd, Version::current(), credentials: $this->credentials ?? new McpOauth(McpOauth::defaultPath($this->agentDir)));
+                $connection = new ServerConnection($entry, $this->cwd, Version::current(), credentials: $this->credentials ?? new McpOauth(McpOauth::defaultPath($this->agentDir)), log: new McpServerLog($this->agentDir . '/mcp.log'));
 
                 try {
                     $connection->client();
@@ -515,6 +515,16 @@ final class McpCli
 
                 if ($overrides !== []) {
                     $report['toolExposure'] = $overrides;
+                }
+
+                if ($connection->hasResources) {
+                    try {
+                        $report['resources'] = count($connection->allResources());
+                        $report['resourceTemplates'] = count($connection->allResourceTemplates());
+                    } catch (\Throwable) {
+                        $report['resources'] = 0;
+                        $report['resourceTemplates'] = 0;
+                    }
                 }
 
                 if ($connection->state !== 'connected' && $connection->error !== null) {
@@ -565,6 +575,10 @@ final class McpCli
                     $report['tools'],
                 );
                 ($this->out)('  tools: ' . implode(', ', $tools));
+            }
+
+            if (isset($report['resources'])) {
+                ($this->out)("  resources: {$report['resources']}, URI templates: {$report['resourceTemplates']}");
             }
 
             if (isset($report['error'])) {
@@ -682,7 +696,7 @@ final class McpCli
     /** What `bin/pig mcp` calls: load the extension's classes, run, print, and answer the exit code. */
     public static function main(array $args, string $cwd): int
     {
-        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpSignInCancelledError', 'McpOauth'] as $class) {
+        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpSignInCancelledError', 'McpOauth', 'McpServerLog'] as $class) {
             if (!class_exists("PigMcp\\{$class}", false)) {
                 require __DIR__ . "/{$class}.php";
             }

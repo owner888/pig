@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- **MCP resources** — upstream's `extensions/mcp/resources.js`: the three tools Codex and opencode use, `list_mcp_resources`, `list_mcp_resource_templates` and `read_mcp_resource`, registered once a connected server offers resources, with the widest exposure among those servers (declared when one is `direct`, behind `tool_search` otherwise, gone when none has any). Listings are Codex's JSON shape, one page with a `cursor` for one server or every page of every server; MCP App resources (`ui://`, `profile=mcp-app`) and icons are left out; a read resource reaches the model as text or an image, a binary one as a saved file, several contents labelled by URI. A resource link in a tool result names `read_mcp_resource` only while those tools are on the model. `pig mcp list` reports `resources: N, URI templates: M`. Verified live against `@modelcontextprotocol/server-everything`.
+- **The MCP server log** — upstream's `log.js`: what a server says with `notifications/message` is appended to `~/.pig/agent/mcp.log` (`<time> [server] <level> <logger>: <text>`, continuation lines indented), rotated to `mcp.log.1` past 5MB. Best effort: a log that cannot be written never fails a tool.
+
 ## [0.2.14] - 2026-10-02
 
 ### Added

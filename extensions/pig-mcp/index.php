@@ -15,6 +15,8 @@ use Pig\CodingAgent\Version;
 use PigMcp\McpConfig;
 use PigMcp\McpManagerView;
 use PigMcp\McpOauth;
+use PigMcp\McpResources;
+use PigMcp\McpServerLog;
 use PigMcp\McpSignInCancelledError;
 use PigMcp\McpTools;
 use PigMcp\ServerConnection;
@@ -23,7 +25,7 @@ use PigMcp\ToolSearch;
 
 // Class files beside the entry, guarded by class and not by `require_once`: the same class can
 // live at two paths (a global copy and the repository's), and `require_once` dedups by path.
-foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'ToolSearch', 'McpManagerView', 'McpSignInCancelledError', 'McpOauth'] as $class) {
+foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResources', 'ToolSearch', 'McpManagerView', 'McpSignInCancelledError', 'McpOauth', 'McpServerLog'] as $class) {
     if (!class_exists("PigMcp\\{$class}", false)) {
         require __DIR__ . "/{$class}.php";
     }
@@ -55,7 +57,12 @@ foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'ToolSearc
  * refreshed by the connection, and `/mcp login [server]` (or the manager's Sign in) runs the browser
  * flow when a server answers 401 with nothing to refresh. `/mcp logout [server]` forgets them.
  *
- * Not here yet, each its own step: resources, the server log.
+ * A server that offers resources brings the three resource tools Codex and opencode use —
+ * `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource` — registered with the
+ * widest exposure among the servers that have resources: declared when one of them is `direct`,
+ * behind `tool_search` otherwise, gone when none has any.
+ *
+ * What a server says with `notifications/message` goes to `~/.pig/agent/mcp.log`, rotated at 5MB.
  */
 return static function (ExtensionApi $pi): void {
     $startupWait = 10.0;
@@ -73,6 +80,7 @@ return static function (ExtensionApi $pi): void {
     $cwd = $pi->cwd();
     $saidAboutExposure = false;
     $credentials = new McpOauth(McpOauth::defaultPath(Config::home()));
+    $log = new McpServerLog(Config::home() . '/mcp.log');
     $openUrl = static function (string $url): void {
         if (PHP_OS_FAMILY === 'Darwin') {
             \Pig\Tui\Process::run(['open', $url]);
@@ -90,6 +98,10 @@ return static function (ExtensionApi $pi): void {
     /** @var array<string, array{server: string, connection: ServerConnection}> deferred tools `tool_search` has loaded, by pig name — they stay loaded across a reconnect */
     $loaded = [];
     $toolSearchRegistered = false;
+    /** @var 'direct'|'deferred'|'hidden'|null the exposure the resource tools were last registered with */
+    $resourceToolsExposure = null;
+    /** @var array<string, array{server: string, tool: array<string, mixed>, connection: ServerConnection}> resource tools waiting for tool_search, under their own names */
+    $deferredResourceTools = [];
 
     // Declared before it is defined: the closure below refers to itself by reference, and a
     // `use (&$x)` of a variable that does not exist yet captures null.
@@ -113,7 +125,7 @@ return static function (ExtensionApi $pi): void {
         $sources = [];
 
         foreach ([...$deferred, ...$loaded] as $one) {
-            $sources[$one['server']] ??= ['name' => $one['server'], 'description' => $one['connection']->instructions];
+            $sources[$one['server']] ??= ['name' => $one['server'], 'description' => $one['connection']?->instructions];
         }
 
         $toolSearchRegistered = true;
@@ -138,7 +150,7 @@ return static function (ExtensionApi $pi): void {
                 $documents = [];
 
                 foreach ($deferred as $name => $one) {
-                    $documents[] = ToolSearch::document($name, $one['tool'], $one['server'], $one['connection']->instructions);
+                    $documents[] = ToolSearch::document($name, $one['tool'], $one['server'], $one['connection']?->instructions);
                 }
 
                 $matches = ToolSearch::rank($query, $documents, (int) $max);
@@ -148,7 +160,7 @@ return static function (ExtensionApi $pi): void {
                     $one = $deferred[$match['name']];
                     unset($deferred[$match['name']]);
                     $loaded[$match['name']] = ['server' => $one['server'], 'connection' => $one['connection']];
-                    $defined = McpTools::define($one['server'], $one['tool'], $match['name'], $one['connection']);
+                    $defined = $one['define']();
                     $pi->registerTool($defined);
                     $lines[] = "- {$match['name']}: " . trim((string) strtok(trim($defined->description), "\r\n"));
                 }
@@ -176,14 +188,78 @@ return static function (ExtensionApi $pi): void {
         return match ($connection->state) {
             'needs-auth' => 'needs sign-in',
             'failed' => $withError ? 'failed: ' . strtok((string) ($connection->error ?? 'unknown error'), "\n") : 'failed',
-            'connected' => sprintf('connected · %d tool%s', count($connection->tools), count($connection->tools) === 1 ? '' : 's'),
+            'connected' => sprintf('connected · %d tool%s', count($connection->tools), count($connection->tools) === 1 ? '' : 's')
+                . ($connection->hasResources ? ' · resources' : ''),
             'connecting' => 'connecting…',
             default => $connection->state,
         };
     };
 
     /** Register a server's tools, replacing what it offered before; dropped tools go away. */
-    $registerTools = static function (ServerConnection $connection) use ($pi, &$toolOwners, &$serverTools, &$deferred, &$loaded, &$syncToolSearch): void {
+    /** Enabled, connected servers with resources whose exposure is not `hidden` — what the resource tools reach. */
+    $resourceServers = static function () use (&$entries, &$connections): array {
+        $out = [];
+
+        foreach ($entries as $entry) {
+            $connection = $connections[$entry->name] ?? null;
+
+            if ($connection !== null && $connection->state === 'connected' && $connection->hasResources && $entry->isEnabled() && McpConfig::here($entry->exposure()) !== 'hidden') {
+                $out[] = $connection;
+            }
+        }
+
+        return $out;
+    };
+
+    $syncResourceTools = null;
+
+    /**
+     * Register the resource tools with the widest exposure of the servers they reach: `direct` when
+     * one of them is direct, `deferred` otherwise; gone when no server has resources.
+     */
+    $syncResourceTools = static function () use ($pi, &$entries, &$connections, &$resourceToolsExposure, &$deferred, &$loaded, $resourceServers, &$syncToolSearch): void {
+        $exposures = [];
+
+        foreach ($resourceServers() as $connection) {
+            $exposures[McpConfig::here($connection->entry->exposure())] = true;
+        }
+
+        $next = isset($exposures['direct']) ? 'direct' : (isset($exposures['deferred']) ? 'deferred' : 'hidden');
+
+        if ($next === $resourceToolsExposure || ($resourceToolsExposure === null && $next === 'hidden')) {
+            return;
+        }
+
+        $resourceToolsExposure = $next;
+        $tools = McpResources::define($resourceServers);
+
+        // Whatever they were before comes off; what they are now goes on by the exposure's door.
+        $pi->removeTools(static fn ($tool): bool => in_array($tool->name, McpResources::NAMES, true));
+
+        foreach (McpResources::NAMES as $name) {
+            unset($deferred[$name], $loaded[$name]);
+        }
+
+        foreach ($tools as $tool) {
+            if ($next === 'direct') {
+                $pi->registerTool($tool);
+            } elseif ($next === 'deferred') {
+                $deferred[$tool->name] = [
+                    'server' => 'mcp resources',
+                    'tool' => ['name' => $tool->name, 'description' => $tool->description, 'inputSchema' => $tool->parameters],
+                    'connection' => null,
+                    'define' => static fn () => $tool,
+                ];
+            }
+        }
+    };
+
+    // Whether a resource link in a result should name `read_mcp_resource`: only while the resource tools are on the model.
+    $resourcesReadable = static function () use (&$resourceToolsExposure, &$loaded): bool {
+        return $resourceToolsExposure === 'direct' || isset($loaded[McpResources::READ]);
+    };
+
+    $registerTools = static function (ServerConnection $connection) use ($pi, &$toolOwners, &$serverTools, &$deferred, &$loaded, &$syncToolSearch, &$syncResourceTools, $resourcesReadable): void {
         $server = $connection->name();
         $current = [];
         /** @var list<string> the names actually declared this pass — a deferred one is owned and not declared */
@@ -215,13 +291,15 @@ return static function (ExtensionApi $pi): void {
 
             // A deferred tool waits for `tool_search` — unless it was loaded before this server
             // reconnected, in which case the model already knows it and it stays declared.
+            $define = static fn (): \Pig\CodingAgent\CustomTools\CustomTool => McpTools::define($server, $tool, $name, $connection, $resourcesReadable);
+
             if ($exposure === 'deferred' && !isset($loaded[$name])) {
-                $deferred[$name] = ['server' => $server, 'tool' => $tool, 'connection' => $connection];
+                $deferred[$name] = ['server' => $server, 'tool' => $tool, 'connection' => $connection, 'define' => $define];
                 continue;
             }
 
             $declared[] = $name;
-            $pi->registerTool(McpTools::define($server, $tool, $name, $connection));
+            $pi->registerTool($define());
         }
 
         // Tools the server dropped are taken away, and so is one that was declared last time and
@@ -237,10 +315,11 @@ return static function (ExtensionApi $pi): void {
         }
 
         $serverTools[$server] = $current;
+        $syncResourceTools();
         $syncToolSearch();
     };
 
-    $hideTools = static function (string $server) use ($pi, &$serverTools, &$deferred, &$loaded, &$syncToolSearch): void {
+    $hideTools = static function (string $server) use ($pi, &$serverTools, &$deferred, &$loaded, &$syncToolSearch, &$syncResourceTools): void {
         $names = $serverTools[$server] ?? [];
 
         if ($names !== []) {
@@ -252,6 +331,7 @@ return static function (ExtensionApi $pi): void {
         }
 
         $serverTools[$server] = [];
+        $syncResourceTools();
         $syncToolSearch();
     };
 
@@ -294,7 +374,7 @@ return static function (ExtensionApi $pi): void {
         };
     };
 
-    $createConnection = static function (ServerEntry $entry) use (&$connections, $cwd, $registerTools, $emitChange, $credentials): ServerConnection {
+    $createConnection = static function (ServerEntry $entry) use (&$connections, $cwd, $registerTools, $emitChange, $credentials, $log): ServerConnection {
         $connection = new ServerConnection(
             $entry,
             $cwd,
@@ -302,6 +382,7 @@ return static function (ExtensionApi $pi): void {
             onTools: $registerTools,
             onChange: static fn () => $emitChange(),
             credentials: $credentials,
+            log: $log,
         );
         $connections[$entry->name] = $connection;
 

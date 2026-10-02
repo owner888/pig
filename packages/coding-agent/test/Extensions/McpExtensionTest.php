@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Test\Extensions;
 
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\AgentError;
+use Pig\Agent\AgentToolResult;
 use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\Async\Async;
@@ -41,7 +42,7 @@ final class McpExtensionTest extends TestCase
 
         $repo = dirname(__DIR__, 4);
 
-        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'ToolSearch', 'McpSignInCancelledError', 'McpOauth'] as $class) {
+        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResources', 'ToolSearch', 'McpSignInCancelledError', 'McpOauth', 'McpServerLog'] as $class) {
             if (!class_exists("PigMcp\\{$class}", false)) {
                 require $repo . "/extensions/pig-mcp/{$class}.php";
             }
@@ -569,6 +570,173 @@ final class McpExtensionTest extends TestCase
         $terminal->type("\e");
         $this->turn();
         Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
+    // ---- resources ------------------------------------------------------------------------------
+
+    public function testAServerWithResourcesBringsTheThreeResourceToolsAndTheyWork(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'docs' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer(), '--resources'], 'exposure' => 'direct'],
+            'plain' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'direct'],
+        ]]));
+
+        [$set, $hooks] = $this->start();
+
+        $names = $set->names();
+        sort($names);
+        $this->assertSame(
+            ['list_mcp_resource_templates', 'list_mcp_resources', 'mcp__docs__echo', 'mcp__plain__echo', 'read_mcp_resource'],
+            $names,
+            'the resource tools once, not per server, and declared because a server with resources is direct',
+        );
+
+        $ctx = new \Pig\CodingAgent\Hooks\HookContext('.');
+        $call = static fn (string $tool, array $params) => Async::run(static fn () => ($set->find($tool)->execute)('1', $params, null, $ctx, null));
+        $json = static fn (AgentToolResult $result): array => json_decode($result->content[0]->text, true);
+
+        // Every page of every server with resources; icons, _meta and the MCP App resource left out.
+        $all = $json($call('list_mcp_resources', []));
+        $this->assertSame([
+            ['server' => 'docs', 'uri' => 'file:///readme.md', 'name' => 'readme', 'mimeType' => 'text/markdown'],
+            ['server' => 'docs', 'uri' => 'file:///notes.txt', 'name' => 'notes', 'mimeType' => 'text/plain', 'size' => 5],
+        ], $all['resources']);
+        $this->assertArrayNotHasKey('server', $all);
+        $this->assertArrayNotHasKey('errors', $all);
+
+        // One server: one page, and the cursor continues it.
+        $first = $json($call('list_mcp_resources', ['server' => 'docs']));
+        $this->assertSame('docs', $first['server']);
+        $this->assertCount(1, $first['resources']);
+        $this->assertSame('page2', $first['nextCursor']);
+        $second = $json($call('list_mcp_resources', ['server' => 'docs', 'cursor' => 'page2']));
+        $this->assertSame('notes', $second['resources'][0]['name']);
+        $this->assertArrayNotHasKey('nextCursor', $second);
+
+        $templates = $json($call('list_mcp_resource_templates', []));
+        $this->assertSame([['server' => 'docs', 'uriTemplate' => 'file:///{path}', 'name' => 'any file']], $templates['resourceTemplates']);
+
+        // Reading: text as text, several contents labelled, a binary one saved to a file, an empty one said so.
+        $this->assertSame('# Hello', $call('read_mcp_resource', ['server' => 'docs', 'uri' => 'file:///readme.md'])->content[0]->text);
+        $dir = $call('read_mcp_resource', ['server' => 'docs', 'uri' => 'file:///dir']);
+        $texts = array_map(static fn ($b) => $b instanceof TextContent ? $b->text : '[image]', $dir->content);
+        $this->assertSame(['file:///dir/a:', 'A', 'file:///dir/b.png:', '[image]'], $texts, 'a png resource reaches the model as an image');
+        $this->assertSame('Resource file:///empty is empty.', $call('read_mcp_resource', ['server' => 'docs', 'uri' => 'file:///empty'])->content[0]->text);
+        $this->assertSame(['server' => 'docs', 'tool' => 'read_mcp_resource'], $call('read_mcp_resource', ['server' => 'docs', 'uri' => 'file:///readme.md'])->details);
+
+        // The refusals name what was wrong.
+        foreach ([
+            [['server' => 'plain'], 'MCP server "plain" has no resources. Servers with resources: docs'],
+            [['cursor' => 'page2'], 'cursor can only be used when a server is specified'],
+            [['server' => 7], 'server must be a string'],
+        ] as [$params, $complaint]) {
+            try {
+                $call('list_mcp_resources', $params);
+                $this->fail('refused: ' . json_encode($params));
+            } catch (AgentError $error) {
+                $this->assertSame($complaint, $error->getMessage());
+            }
+        }
+
+        try {
+            $call('read_mcp_resource', ['server' => 'docs']);
+            $this->fail('uri required');
+        } catch (AgentError $error) {
+            $this->assertSame('uri must be provided', $error->getMessage());
+        }
+
+        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
+    public function testTheResourceToolsTakeTheWidestExposureAndGoWhenNoServerHasResources(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'docs' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer(), '--resources'], 'exposure' => 'deferred'],
+        ]]));
+
+        [$set, $hooks] = $this->start();
+
+        // A deferred server's resources: the tools wait behind tool_search, with the server's tool.
+        $this->assertSame(['tool_search'], $set->names());
+        $search = $set->find('tool_search');
+        $this->assertStringContainsString('- mcp resources', $search->description, 'listed as a source of their own');
+        $ctx = new \Pig\CodingAgent\Hooks\HookContext('.');
+        $found = Async::run(static fn () => ($search->execute)('1', ['query' => 'list resources'], null, $ctx, null));
+        $this->assertStringContainsString('list_mcp_resources', $found->content[0]->text);
+        $this->assertContains('list_mcp_resources', $set->names(), 'loaded like any deferred tool');
+
+        // Disabling the only server with resources takes them away, loaded or not.
+        $command = $this->extension->api->commands()['mcp'];
+        [$terminal, $tui, $ui] = $this->terminal();
+        Async::spawn(static fn () => ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true)));
+        $this->turn();
+        $terminal->type("\r");                               // docs
+        $this->turn();
+        $terminal->type("\e[B");                             // Tools → Reconnect
+        $terminal->type("\e[B");                             // → Exposure
+        $terminal->type("\e[B");                             // → Disable
+        $terminal->type("\r");
+        $this->until(fn (): bool => str_contains($this->screenOf($tui), 'State: disabled'));
+        $this->assertSame([], $set->names(), 'no server with resources, no resource tools, no tool_search');
+
+        $terminal->type("\e");
+        $terminal->type("\e");
+        $this->turn();
+        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
+    public function testAResourceLinkNamesTheReaderOnlyWhileTheResourceToolsAreOnTheModel(): void
+    {
+        $withTools = McpTools::convert('docs', 't', ['content' => [['type' => 'resource_link', 'uri' => 'file:///x', 'name' => 'x']]], readableResources: true);
+        $without = McpTools::convert('docs', 't', ['content' => [['type' => 'resource_link', 'uri' => 'file:///x', 'name' => 'x']]]);
+
+        $this->assertSame('[Resource file:///x "x". Read it with read_mcp_resource (server "docs")]', $withTools->content[0]->text);
+        $this->assertSame('[Resource file:///x "x"]', $without->content[0]->text);
+    }
+
+    // ---- the log --------------------------------------------------------------------------------
+
+    public function testWhatAServerLogsGoesToMcpLogWithContinuationLinesIndented(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer(), '--log-on-call'], 'exposure' => 'direct'],
+        ]]));
+
+        [$set, $hooks] = $this->start();
+        $tool = $set->find('mcp__fixture__echo');
+        Async::run(static fn () => ($tool->execute)('1', ['text' => 'hi'], null, new \Pig\CodingAgent\Hooks\HookContext('.'), null));
+        // The notification arrived before the reply, so the log is already written; a bare
+        // `tick()` here would block in `select` on the server's pipes with nothing to read.
+
+        $log = (string) file_get_contents($this->home . '/mcp.log');
+        $this->assertMatchesRegularExpression('/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z \[fixture\] warning echo: called with\n    \{"text":"hi"\}\n$/', $log);
+
+        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
+    public function testTheLogFormatsAnyShapeAndRotatesPastTheLimit(): void
+    {
+        $this->assertSame("1970-01-01T00:00:01.500Z [s] info plain\n", \PigMcp\McpServerLog::format('s', 'plain', 1.5));
+        $this->assertSame("1970-01-01T00:00:00.000Z [s] info {\"a\":1}\n", \PigMcp\McpServerLog::format('s', ['data' => ['a' => 1]], 0.0), 'structured data is JSON');
+        $this->assertSame("1970-01-01T00:00:00.000Z [s] info null\n", \PigMcp\McpServerLog::format('s', ['a' => 1], 0.0), "an object is the message record, as upstream reads it: no data is null");
+        $this->assertSame("1970-01-01T00:00:00.000Z [s] error db: boom\n", \PigMcp\McpServerLog::format('s', ['level' => 'error', 'logger' => 'db', 'data' => 'boom'], 0.0));
+
+        $path = $this->home . '/deep/mcp.log';
+        $log = new \PigMcp\McpServerLog($path);
+        $log->write('s', 'first');
+        $this->assertFileExists($path, 'the directory is made');
+
+        // Past the limit: the next write rotates first.
+        file_put_contents($path, str_repeat('x', \PigMcp\McpServerLog::MAX_LOG_BYTES + 1));
+        $log = new \PigMcp\McpServerLog($path);
+        $log->write('s', 'after');
+        $this->assertFileExists($path . '.1');
+        $this->assertSame(\PigMcp\McpServerLog::MAX_LOG_BYTES + 1, filesize($path . '.1'));
+        $this->assertStringEndsWith("[s] info after\n", (string) file_get_contents($path));
+
+        // An unwritable path is not a failure.
+        (new \PigMcp\McpServerLog('/dev/null/nope/mcp.log'))->write('s', 'lost');
+        $this->addToAssertionCount(1);
     }
 
     // ---- OAuth ----------------------------------------------------------------------------------

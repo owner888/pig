@@ -471,7 +471,9 @@ status elsewhere — and `pig mcp add|remove|list|login|logout` from the shell. 
 no `Authorization` header signs in with OAuth (discovery, dynamic client registration, PKCE, a
 loopback callback), tokens in `~/.pig/agent/mcp-auth.json` and refreshed by the connection; a
 server whose authorization server has no registration endpoint — GitHub's is one — takes a
-pre-registered client under `"oauth": { "clientId", "clientSecret", "callbackPort" }`. A server with `"exposure": "deferred"` has its tools held back until the
+pre-registered client under `"oauth": { "clientId", "clientSecret", "callbackPort" }`. A server
+that offers resources brings `list_mcp_resources`, `list_mcp_resource_templates` and
+`read_mcp_resource`, and what servers log goes to `~/.pig/agent/mcp.log`. A server with `"exposure": "deferred"` has its tools held back until the
 model asks `tool_search` for them (BM25 over names, descriptions and schemas), which is how a
 server with sixty tools costs the context eight. `codemode` is a JavaScript sandbox and is not here;
 a server asking for it is read as `deferred` and told so once.
