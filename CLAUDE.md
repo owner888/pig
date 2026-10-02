@@ -2921,6 +2921,38 @@ the session file, the output budget). Verified live with `server-filesystem` at 
 exposure: the model sees `read, bash, edit, write, codemode`, writes a `parallel()` over four
 `read_text_file` calls, and answers from the script's return value.
 
+### A notification on "the task is done" arrived three times during one task
+
+Reported as *"任务还没完成，但是总是偶发触发系统通知"* — the desktop notification extension firing
+mid-task, intermittently. Intermittent because it fired **once per failed attempt**: on a turn that
+hit a 429 and retried, every attempt ended a run, and `agent_settled` went out beside `agent_end`.
+
+`tellHooks()` emitted both on `AgentEndEvent`, with upstream's two names and pig's one moment.
+Upstream's are two moments: `agent_end` is the end of a *run* and comes from the agent loop;
+`agent_settled` comes from `_emitAgentSettled()`, after `_runAgentPrompt()`'s `while` loop over
+retries and continuations has nothing left to do, and the docs call it "final and notification-only;
+use it when an integration needs to know Pi will not continue automatically". pig's equivalent of
+that loop is `afterTheRun()` → `inTheBackground()` → `finishBackgroundWork()`, and the last of those
+is already the one place every ending of a prompt reaches — a clean run, the last retry, a retry
+escape stopped, a compaction that worked or did not — because `prompt()`'s `$settled` handle is
+released there. So that is where `agent_settled` goes out, before the handle is released so a `-p`
+exiting on `prompt()`'s return has let the hook run.
+
+Two things worth keeping:
+
+- **Two event names emitted from one line are one event.** The port had both names, which is what
+  the audit's name-by-name sweep checks, and the difference between them was the *when*, which it
+  does not. A hook listening on either got the same thing, so nothing could tell them apart until
+  something that cared about the difference — a notification — listened.
+- **The user's own extension was on `agent_end`**, which is the right event for "a run ended" and
+  the wrong one for "the task is done", and pi's own `system-notify.ts` is on `agent_settled`.
+  Both `system-notify.php` and `smart-session.php` are on `agent_settled` only now; the latter had
+  been on both and ran its title generation twice per prompt.
+
+Regression tests: `AgentSessionTest::testAgentSettledFiresOnceAPromptAndNotOncePerAttempt` — three
+runs, one settle, red on the old emit — and `testAgentSettledStillFiresWhenNothingWasRetried`, so the
+fix cannot become "only after a retry".
+
 ### What pi 1.0.0 changed about codemode and MCP OAuth, and the one thing left out
 
 The anchor is `d0a4c37`, and codemode and MCP were ported from upstream's HEAD at the time, so

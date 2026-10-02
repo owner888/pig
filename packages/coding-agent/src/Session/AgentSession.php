@@ -446,8 +446,16 @@ final class AgentSession
 
         if ($event instanceof AgentEndEvent) {
             $this->hooks->emit(new HookAgentEnd($event->messages));
-            $this->hooks->emit(new HookAgentSettled($event->messages));
         }
+
+        // `agent_settled` is **not** emitted here. `AgentEndEvent` is the end of a *run*, and a
+        // prompt can be several runs: each failed attempt before a retry ends one, and so does
+        // the run an auto-compaction summarises. Upstream emits `agent_settled` once, from
+        // `_emitAgentSettled()` after `_runAgentPrompt()`'s retry loop; emitted beside
+        // `agent_end` it fired once per attempt, and a hook that notifies on it — the system
+        // notification extension — said "task complete" three times during a turn that was
+        // still retrying a 429. It goes out from `finishBackgroundWork()`, which is pig's "nothing
+        // more is coming".
     }
 
     // ---- state -------------------------------------------------------------------
@@ -1748,12 +1756,23 @@ final class AgentSession
         $this->retrying ??= new AbortController();
     }
 
-    /** Nothing more is coming from `afterTheRun()`, so release whoever is waiting. */
+    /**
+     * Nothing more is coming from `afterTheRun()`: tell the hooks the agent has settled, and
+     * release whoever is waiting.
+     *
+     * The hooks first, as upstream's `_emitAgentSettled()` emits before the idle wait resolves,
+     * so a `-p` that exits when `prompt()` returns has already let the notification hook run.
+     * Reached exactly once per prompt, from whichever ending the prompt has — a clean run, the
+     * last retry, a retry escape stopped, a compaction that worked or did not — and that is the
+     * property `agent_settled` promises: final, and once.
+     */
     private function finishBackgroundWork(): void
     {
         $waiting = $this->settled;
         $this->settled = null;
         $this->retrying = null;
+
+        $this->hooks?->emit(new HookAgentSettled($this->messages()));
 
         if ($waiting !== null && !$waiting->isComplete()) {
             $waiting->complete(null);

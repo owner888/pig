@@ -40,7 +40,7 @@ final class CodemodeDescription
      */
     private const string INTRO = <<<'TEXT'
         Run PHP that calls other tools. The input is raw PHP source (no `<?php`, not JSON, no code fence), run as a function body in a sandboxed `php` process: top-level `return` works and `$tools` is in scope. No shell, file system, network or `include`.
-        - `$tools->name([...args])` answers a string, or an array if the tool's declaration says so, and throws on failure. Calls still running when the script ends are cancelled.
+        - `$tools->name([...args])` answers a string, or an array if the tool's declaration says so, and throws on failure. A result with pictures in it answers `['text' => ..., 'images' => [block, ...]]`; show one with `image($r['images'][0])`. Calls still running when the script ends are cancelled.
         - Optional first line: `// @options: {"max_output_tokens": 10000, "timeout_ms": 60000}`
         TEXT;
 

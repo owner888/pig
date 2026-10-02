@@ -1018,6 +1018,60 @@ final class AgentSessionTest extends TestCase
         $this->assertSame('here you go', self::textOf($session->messages()[1]));
     }
 
+    public function testAgentSettledFiresOnceAPromptAndNotOncePerAttempt(): void
+    {
+        // Upstream's `agent_settled` is "final and notification-only": emitted once, after the
+        // retry loop, when pig will not continue on its own. pig emitted it beside `agent_end`,
+        // which is the end of a *run* — so a turn that retried twice settled three times, and the
+        // system notification hook said "task complete" twice while the task was still going.
+        $settled = [];
+        $ended = 0;
+        $hooks = $this->hooks([
+            'agent_end' => static function () use (&$ended): void {
+                $ended++;
+            },
+            'agent_settled' => static function ($event) use (&$settled): void {
+                $settled[] = count($event->messages);
+            },
+        ]);
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([
+                ['error' => 'Anthropic returned 503: overloaded'],
+                ['error' => 'Anthropic returned 503: overloaded'],
+                'here you go',
+            ]),
+            settings: self::quickRetries(),
+            hooks: $hooks,
+        );
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+        self::settle();
+
+        $this->assertSame('here you go', self::textOf($session->messages()[1]));
+        $this->assertSame(3, $ended, 'three runs: two failed attempts and the one that worked');
+        $this->assertCount(1, $settled, 'but the agent settled once, at the end of the last one');
+        $this->assertSame(2, $settled[0], 'with the conversation as it stands: the prompt and the answer');
+    }
+
+    public function testAgentSettledStillFiresWhenNothingWasRetried(): void
+    {
+        $settled = 0;
+        $session = $this->session(['hello'], hooks: $this->hooks([
+            'agent_settled' => static function () use (&$settled): void {
+                $settled++;
+            },
+        ]));
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+
+        $this->assertSame(1, $settled);
+    }
+
     public function testAQuotaThatSaysWhenItResetsIsWaitedOutForThatLongAndNotTwoSeconds(): void
     {
         // Code Assist's free tier answers a 429 with the moment its quota comes back. The

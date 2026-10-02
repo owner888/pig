@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- **A tool result with pictures in it reaches a codemode script as image blocks.** `read` on a PNG or `generate_image` used to answer the script its text alone — `Saved image to …` — and the script had to `read` the file again to show it. It answers `['text' => …, 'images' => [['type' => 'image', 'data' => <base64>, 'mimeType' => …], …]]` now, MCP-shaped, so `image($r['images'][0])` shows it as it is. The same shape upstream's `models.generateImages()` hands back, reached through the tools pig already has rather than a `models` API over a provider pig does not carry.
+
+### Fixed
+
+- **`agent_settled` fired once per run and not once per prompt**, so a hook that notifies on it — the desktop notification extension — said "task complete" on every failed attempt a retry was about to repeat, and on the run an auto-compaction summarised, while the task was still going. It was emitted beside `agent_end`, which is the end of a *run*; upstream emits it once, after the retry loop, when pi will not continue on its own. pig emits it from the one place that means "nothing more is coming" now, whichever ending the prompt had. `system-notify.php` listens on `agent_settled` as pi's does; a notification hook on `agent_end` will keep firing per run, which is what that event means.
+
 ## [0.2.20] - 2026-10-02
 
 ### Changed

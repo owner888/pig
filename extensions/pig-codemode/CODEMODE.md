@@ -57,6 +57,10 @@ What a call answers depends on the tool:
 - Tools with an output schema answer a structured array. MCP tools answer their whole
   `CallToolResult`, including `isError` and `structuredContent`.
 - Other tools, such as `read`, `edit`, `write` and `bash`, answer their text output as a string.
+- A result that carries pictures — `read` on a PNG, `generate_image` — answers
+  `['text' => '...', 'images' => [['type' => 'image', 'data' => <base64>, 'mimeType' => 'image/png'], ...]]`.
+  Show one with `image($r['images'][0])`; do not `text()` or `return` the `data`, it is large and
+  the model cannot read it as text.
 
 A call that fails, is blocked, or gets invalid arguments throws an exception carrying the
 tool's error text. Use `parallel_settled()` to keep the results of the calls that succeed.

@@ -203,6 +203,35 @@ PHP);
         $this->stop($started);
     }
 
+    public function testAToolResultWithAPictureInItReachesTheScriptAsABlockImageCanShow(): void
+    {
+        // Upstream's `models.generateImages()` answers image blocks that `image()` shows as they
+        // are. pig's pictures come back from tools — `read` on a PNG, `generate_image` — and a
+        // script used to get the text half only: "Saved image to …", and then a second `read`
+        // to show what it had just made. The pictures ride beside the text now, MCP-shaped.
+        file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));
+        // A 1×1 PNG is a valid PNG and is all `read` needs; nothing here reaches a provider.
+        $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==');
+        file_put_contents($this->cwd . '/dot.png', $png);
+        $started = $this->start();
+        $codemode = $started->customTools->find('codemode');
+
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => <<<'PHP'
+            $r = $tools->read(['path' => 'dot.png']);
+            image($r['images'][0]);
+            return ['keys' => array_keys($r), 'mime' => $r['images'][0]['mimeType'], 'type' => $r['images'][0]['type']];
+            PHP], null, $started->hooks->context(), null));
+
+        $images = array_values(array_filter($result->content, static fn ($b): bool => $b instanceof \Pig\Ai\ImageContent));
+        $this->assertCount(1, $images, 'the picture the script showed is on the result');
+        $this->assertSame(base64_encode($png), $images[0]->data, 'byte for byte: no re-encoding on the way through the sandbox');
+        $value = json_decode($result->content[count($result->content) - 1]->text, true);
+        $this->assertSame(['text', 'images'], $value['keys']);
+        $this->assertSame('image/png', $value['mime']);
+        $this->assertSame('image', $value['type']);
+        $this->stop($started);
+    }
+
     public function testAFailedScriptIsAnErrorThatStillShowsItsCalls(): void
     {
         file_put_contents($this->home . '/settings.json', json_encode(['codemode' => ['enabled' => true]]));

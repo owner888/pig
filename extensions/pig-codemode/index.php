@@ -172,6 +172,13 @@ return static function (ExtensionApi $pi): void {
         // What a script receives for a call: a tool with an output schema (an MCP tool) gives
         // its structured content when there is one, otherwise its text — decoded when it is JSON,
         // because a PHP script wants an array and not a string it has to decode itself.
+        //
+        // A result that carries **images** — `read` on a PNG, `generate_image` — answers an array
+        // with the text under `text` and the pictures under `images`, each an MCP-shaped block
+        // (`type`, `data`, `mimeType`) so `image($r['images'][0])` shows it as it is. Upstream's
+        // `models.generateImages()` hands back the same block shape for the same reason; without
+        // this the script got the sentence "Saved image to …" and had to `read` the file again to
+        // show what it had just made.
         $scriptValue = static function (string $name, AgentToolResult $result, bool $isError) use ($textOf): mixed {
             if (isset($result->details['structuredContent'])) {
                 return $result->details['structuredContent'];
@@ -181,6 +188,18 @@ return static function (ExtensionApi $pi): void {
 
             if ($isError) {
                 throw new RuntimeException($text !== '' ? $text : "Tool \"{$name}\" failed");
+            }
+
+            $images = [];
+
+            foreach ($result->content as $block) {
+                if ($block instanceof ImageContent) {
+                    $images[] = ['type' => 'image', 'data' => $block->data, 'mimeType' => $block->mimeType];
+                }
+            }
+
+            if ($images !== []) {
+                return ['text' => $text, 'images' => $images];
             }
 
             $decoded = json_decode($text, true);
