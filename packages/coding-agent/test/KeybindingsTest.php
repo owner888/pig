@@ -42,6 +42,22 @@ final class KeybindingsTest extends TestCase
         $this->assertNull($keys->actionFor('a'), 'typing is typing');
         $this->assertSame('ctrl+l', $keys->label('app.model.select'));
         $this->assertSame('esc', $keys->label('app.interrupt'));
+        $this->assertSame('app.message.followUp', $keys->actionFor("\e\r"), 'alt+enter the legacy way');
+        $this->assertSame('app.message.followUp', $keys->actionFor(Keys::kitty(13, 2)), 'and as kitty reports it');
+        $this->assertSame('app.message.dequeue', $keys->actionFor("\e[1;3A"));
+    }
+
+    public function testAHintSaysTheKeyTheWayItIsPrintedOnIt(): void
+    {
+        // Upstream's `keyDisplayText()`: capitalised, and `alt` is `option` on a Mac — a hint
+        // reading `Alt+Up` on a keyboard that has no key called that sends somebody looking.
+        $keys = Keybindings::defaults();
+        $alt = PHP_OS_FAMILY === 'Darwin' ? 'Option' : 'Alt';
+
+        $this->assertSame("{$alt}+Up", $keys->display('app.message.dequeue'));
+        $this->assertSame("{$alt}+Enter", $keys->display('app.message.followUp'));
+        $this->assertSame('Ctrl+O', $keys->display('app.tools.expand'));
+        $this->assertSame('(unbound)', (new Keybindings(['app.tools.expand' => []]))->display('app.tools.expand'));
     }
 
     public function testABindingReplacesTheDefaultRatherThanAddingToIt(): void

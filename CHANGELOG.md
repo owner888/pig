@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- **Alt+Enter queues a follow-up and Alt+Up takes the queue back**, upstream's `app.message.followUp` and `app.message.dequeue`. Typing while the model works had one door: Enter, which steers — the message goes in after the tool that is running. Now there are upstream's two: Enter steers and Alt+Enter (Option+Enter on a Mac) waits for the turn to end, which is the key for "and after that, do this" as against "no, the other file". What is waiting is drawn above the prompt as `Steering:` or `Follow-up:` rather than one `Queued:` for both, with `↳ Option+Up to edit all queued messages` under it — the way back out, named, since a queued line that cannot be taken back is one nobody dares to queue. Alt+Up pulls everything queued into the editor in front of whatever is half typed and leaves the turn running; escape still does the same on its way to stopping it. From an idle prompt Alt+Enter is Enter, as upstream has it. Both keys move in `keybindings.json` like the rest, and `AgentSession::queuedByKind()` is what the screen reads. A file command typed mid-turn steers too, where it used to follow up — the one place the two queues were still swapped.
+
 ## [0.2.18] - 2026-10-02
 
 ### Fixed

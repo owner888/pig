@@ -143,6 +143,12 @@ Ctrl+G opens whatever is in the prompt in `$VISUAL` or `$EDITOR` and puts the re
 for the message that turned out to be three paragraphs. It works while the model is still
 answering: the editor gets the terminal, and the answer keeps arriving behind it.
 
+Typing while the model works is the point of the event loop, and there are two keys for it,
+upstream's: **Enter steers** — the message goes in after the tool that is running, for "no, the
+other file" — and **Alt+Enter (Option+Enter) queues a follow-up** for after the turn. Each waits
+above the prompt as `Steering:` or `Follow-up:`, and **Alt+Up** takes them all back into the
+editor without stopping anything; escape takes them back *and* stops the turn.
+
 The model gets four tools by default — read, bash, edit, write — which is upstream's set;
 `--tools read,grep,find,ls` names the set outright, and `--read-only` swaps in the read-only four.
 Fewer tools is deliberate: a model with seven spends part of every turn choosing between them, and
@@ -258,7 +264,7 @@ a time or together, auto-compact, auto-retry — with what each one is set to no
 the row you are on and the list stays open; escape closes it.
 
 The keys the application takes — escape, ctrl+c/d/z, shift+tab, ctrl+p, ctrl+l, ctrl+o, ctrl+t,
-ctrl+g — can be moved in `~/.pig/agent/keybindings.json`, under pi's action names and key spelling:
+ctrl+g, alt+enter, alt+up — can be moved in `~/.pig/agent/keybindings.json`, under pi's action names and key spelling:
 `{"app.model.select": "ctrl+m", "app.tools.expand": ["ctrl+e", "shift+ctrl+o"]}`. A binding
 replaces the default, so moving ctrl+o frees it for tmux; `[]` unbinds; the help shows the keys that
 actually work; a key or action the file names wrong is a line on the shell at startup.

@@ -125,6 +125,11 @@ bin/pig @screenshot.png "这里哪儿不对？"
 Ctrl+G 把 prompt 里现在的内容丢进 `$VISUAL` 或 `$EDITOR`，改完再塞回来——给那种写到一半发现要写
 三段的消息用。模型还在回答的时候也能用：编辑器拿着终端，回答在它背后继续到。
 
+模型干活的时候照样能打字，这是事件循环存在的意义，键位和上游一样有两个：**Enter 是 steer**——消息
+插在当前正在跑的工具后面，给「不对，是另一个文件」这种话用；**Alt+Enter（Option+Enter）排一条
+follow-up**，等这一轮整个结束再发。排着的会显示在 prompt 上方，标着 `Steering:` 或 `Follow-up:`；
+**Alt+Up** 把它们全部拿回编辑器里、什么都不打断；Escape 也拿回来，但顺便把这一轮停掉。
+
 模型默认拿到四个工具——read、bash、edit、write，和上游一致；`--tools read,grep,find,ls` 直接指定
 这一组，`--read-only` 换成只读的那四个。工具少是有意的：给模型七个，它每一轮都要花一部分精力在
 「用哪个」上，而用 `bash` 里的 `rg` 搜索本来就是 prompt 让它做的事。
@@ -213,7 +218,7 @@ pig 不认识的 provider 写在 `~/.pig/models.json` 里——自己的机器�
 就记住了。`/settings` 把会话里能改的都列出来——主题、思考档位、要不要画出思考过程、要不要画出图片、
 跑到一半打的话是一条一条递过去还是一起递、自动压缩、自动重试——每一项后面写着现在是什么。回车改光标那一行，列表不关；改完按 esc。
 
-应用占用的按键——esc、ctrl+c/d/z、shift+tab、ctrl+p、ctrl+l、ctrl+o、ctrl+t、ctrl+g——可以在
+应用占用的按键——esc、ctrl+c/d/z、shift+tab、ctrl+p、ctrl+l、ctrl+o、ctrl+t、ctrl+g、alt+enter、alt+up——可以在
 `~/.pig/agent/keybindings.json` 里挪位置，用的是 pi 的动作名和按键写法：
 `{"app.model.select": "ctrl+m", "app.tools.expand": ["ctrl+e", "shift+ctrl+o"]}`。一条绑定**替换**
 默认值，所以把 ctrl+o 挪走就把它让给了 tmux；`[]` 解绑；帮助里显示的是真正生效的键；文件里写错的

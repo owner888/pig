@@ -79,6 +79,8 @@ final class InteractiveModeTest extends TestCase
     private const string ESC = "\e";
 
     private const string ENTER = "\r";
+    private const string ALT_ENTER = "\e\r";
+    private const string ALT_UP = "\e[1;3A";
 
     private FakeTerminal $terminal;
 
@@ -396,6 +398,14 @@ final class InteractiveModeTest extends TestCase
     private function type(string $text): void
     {
         $this->terminal->type($text);
+    }
+
+    /** What is in the prompt right now. */
+    private function editorText(): string
+    {
+        $editor = (new \ReflectionProperty($this->mode, 'editor'))->getValue($this->mode);
+
+        return $editor->text();
     }
 
     /** Everything on screen right now, without the escape codes. */
@@ -2405,10 +2415,91 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
 
         $this->assertSame(['and another thing'], $this->session->queued());
-        $this->assertStringContainsString('Queued: and another thing', $this->screen());
+        // Enter mid-turn steers, and the line says so — upstream's `Steering:` — with the way
+        // back out named under it, since a queued line that cannot be taken back is one nobody
+        // dares to queue. `Option` on a Mac and `Alt` elsewhere, which is what the key says.
+        $this->assertStringContainsString('Steering: and another thing', $this->screen());
+        $this->assertMatchesRegularExpression('/↳ (Option|Alt)\+Up to edit all queued messages/', $this->screen());
 
         $held();
         $this->settle();
+    }
+
+    public function testAltEnterWhileTheAgentWorksIsAFollowUpAndNotASteer(): void
+    {
+        // Upstream's `app.message.followUp`: Enter cuts in after the tool that is running,
+        // Alt+Enter waits for the turn to end. The two queues are kept apart and the screen
+        // labels each by what it will do.
+        $this->start([...array_fill(0, 2, 'done')]);
+
+        $held = $this->holdTheAgent();
+
+        $this->type('first');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('do this next');
+        $this->type(self::ALT_ENTER);
+
+        $this->assertSame(['steering' => [], 'followUp' => ['do this next']], $this->session->queuedByKind());
+        $this->assertStringContainsString('Follow-up: do this next', $this->screen());
+        $this->assertSame('', $this->editorText(), 'the prompt was handed over');
+
+        $held();
+        $this->settle();
+    }
+
+    public function testAltEnterFromAnIdlePromptIsEnter(): void
+    {
+        // Nothing to wait behind, so upstream sends it as Enter would — it must not become a
+        // new line in the prompt, which is what the bare editor reads Alt+Enter as.
+        $this->start(['done']);
+
+        $this->type('hello');
+        $this->type(self::ALT_ENTER);
+        $this->settle();
+
+        $this->assertSame([], $this->session->queued());
+        $this->assertStringContainsString('done', $this->screen());
+        $this->assertSame('', $this->editorText());
+    }
+
+    public function testAltUpTakesTheQueueBackWithoutStoppingTheTurn(): void
+    {
+        // Upstream's `app.message.dequeue`: escape also hands the queue back, but on its way to
+        // stopping the turn. This is for changing your mind about what was queued while the
+        // agent carries on.
+        $this->start([...array_fill(0, 2, 'done')]);
+
+        $held = $this->holdTheAgent();
+
+        $this->type('first');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('steer this');
+        $this->type(self::ENTER);
+        $this->type('and follow with this');
+        $this->type(self::ALT_ENTER);
+        $this->type('half typed');
+        $this->type(self::ALT_UP);
+
+        $this->assertSame([], $this->session->queued());
+        $this->assertTrue($this->session->isStreaming(), 'the turn carried on');
+        $this->assertSame("steer this\n\nand follow with this\n\nhalf typed", $this->editorText());
+        $this->assertStringNotContainsString('Steering:', $this->screen());
+        $this->assertStringContainsString('Restored 2 queued messages to editor', $this->screen());
+
+        $held();
+        $this->settle();
+    }
+
+    public function testAltUpWithNothingQueuedSaysSo(): void
+    {
+        $this->start();
+        $this->type(self::ALT_UP);
+
+        $this->assertStringContainsString('No queued messages to restore', $this->screen());
     }
 
     public function testQuittingWhileTheAgentIsWorkingAbortsTheAgentAndStops(): void
@@ -2448,7 +2539,7 @@ final class InteractiveModeTest extends TestCase
         // is what escape hands back to the editor — a forty-line stored prompt in front of
         // somebody who typed `/review foo.php` is not putting their text back.
         $this->assertSame(['/review src/Foo.php'], $this->session->queued());
-        $this->assertStringContainsString('Queued: /review src/Foo.php', $this->screen());
+        $this->assertStringContainsString('Steering: /review src/Foo.php', $this->screen());
 
         $held();
         $this->settle();

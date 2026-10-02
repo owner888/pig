@@ -5853,6 +5853,51 @@ name can drop it, and anything that keeps the fixed name must keep it.
 Not covered by a test: reaching it needs a killed process and a real archive, and
 `extract()` is private — the seam would be a public method existing for the test alone.
 
+### Typing mid-turn had one door, and the second one upstream has is Alt+Enter
+
+Reported from a pi session the developer had open beside pig:
+
+```
+ Steering: 不错
+ ↳ Option+Up to edit all queued messages
+```
+
+pig had the steer — Enter during a turn went to `AgentSession::steer()` and drew `Queued: …` — and
+nothing else: no follow-up key, no way to take the queue back short of escape (which also stops
+the turn), and a label that did not say which of the two queues the line was in. The two mean
+different things to the person watching, and they are upstream's `app.message.followUp`
+(`alt+enter`, `ctrl+q` on Windows) and `app.message.dequeue` (`alt+up`, `alt+q` on Windows):
+
+| key | upstream | now |
+|---|---|---|
+| Enter mid-turn | `prompt(text, {streamingBehavior: "steer"})` | `steer()`, drawn `Steering:` |
+| Alt+Enter mid-turn | `prompt(text, {streamingBehavior: "followUp"})` | `followUp()`, drawn `Follow-up:` |
+| Alt+Enter idle | `editor.onSubmit(text)` | the Enter byte, through the same submit path |
+| Alt+Up | `restoreQueuedMessagesToEditor()`, no abort | `clearQueue()` into the editor, turn carries on |
+
+Four things decided on the way:
+
+- **The editor read Alt+Enter as a new line**, in `Editor::isNewLine()` — `"\e\r"` is one of the
+  spellings particular terminals send for Shift+Enter, and upstream's editor has the same line.
+  Nothing in `Editor` changed: `CustomEditor` claims the key through `Keybindings` before the text
+  field sees it, which is the arrangement every other application key already uses, so a
+  `keybindings.json` that unbinds `app.message.followUp` gives the new line back. `EDITING_KEYS`
+  stopped saying `shift+enter` means "a new line, and alt+enter".
+- **Idle Alt+Enter is handed to the editor as `"\r"`** rather than through a second submit door.
+  `Editor::submit()` is private and does two things Enter does — expands the paste markers and
+  honours `disableSubmit` — and a second route to "send this" is the first shape from the index.
+- **The hint says the key the way it is printed on it.** `Keybindings::display()` is upstream's
+  `keyDisplayText()`: capitalised, `alt` said as `option` on a Mac. `label()` stays the help
+  table's spelling; a sentence on screen wants the other.
+- **A file command typed mid-turn was a follow-up and is a steer**, which is upstream's
+  `handleSubmit` for every line of text: `/review foo.php` typed during a turn means "and look at
+  this now", not "after you finish". It was the one place the two queues were still swapped, and
+  `testAFileCommandQueuedMidTurn…` had been asserting `Queued:`, which could not tell them apart.
+
+Five mutations, five kills: each binding, `followUp()` steering instead, the hint line, and the
+idle-is-Enter branch. `AgentSession::queuedByKind()` is the one new accessor, because the screen
+has to know which list a line is in and `queued()` flattens them.
+
 ### Ctrl+L was the third key taken off the prompt and bound to nothing
 
 The last find of the audit, out of a 106-line component nobody expected anything from.

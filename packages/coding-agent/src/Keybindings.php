@@ -47,6 +47,8 @@ final class Keybindings
         'app.tools.expand' => ['ctrl+o'],
         'app.thinking.toggle' => ['ctrl+t'],
         'app.editor.external' => ['ctrl+g'],
+        'app.message.followUp' => ['alt+enter'],
+        'app.message.dequeue' => ['alt+up'],
     ];
 
     /** @var array<string, list<string>> action => keys */
@@ -156,6 +158,28 @@ final class Keybindings
         $keys = $this->keysFor($action);
 
         return $keys === [] ? '(unbound)' : str_replace('escape', 'esc', $keys[0]);
+    }
+
+    /**
+     * The first key of $action as a hint names it — upstream's `keyDisplayText()`: each part
+     * capitalised, and `alt` said as `option` on a Mac, because that is what is printed on the key.
+     * `label()` is the help table's spelling and this is the one for a sentence on screen.
+     */
+    public function display(string $action): string
+    {
+        $keys = $this->keysFor($action);
+
+        if ($keys === []) {
+            return '(unbound)';
+        }
+
+        $parts = explode('+', $keys[0]);
+
+        return implode('+', array_map(static function (string $part): string {
+            $part = PHP_OS_FAMILY === 'Darwin' && $part === 'alt' ? 'option' : $part;
+
+            return ucfirst($part);
+        }, $parts));
     }
 
     /** `Ctrl+Shift+O` and `shift+ctrl+o` are one key; this is how it is spelled here. */

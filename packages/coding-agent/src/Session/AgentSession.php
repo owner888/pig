@@ -919,6 +919,19 @@ final class AgentSession
     }
 
     /**
+     * The same, kept apart — upstream's `getSteeringMessages()` / `getFollowUpMessages()`.
+     *
+     * The screen labels the two differently (`Steering:` cuts in after the current tool,
+     * `Follow-up:` waits for the turn to end), so it needs to know which is which.
+     *
+     * @return array{steering: list<string>, followUp: list<string>}
+     */
+    public function queuedByKind(): array
+    {
+        return ['steering' => $this->steering, 'followUp' => $this->followUps];
+    }
+
+    /**
      * Throw the queue away and hand it back.
      *
      * Returned rather than dropped so the editor can put the text back in front of the

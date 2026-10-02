@@ -753,6 +753,8 @@ final class InteractiveMode
         'app.suspend' => 'suspend',
         'ctrl+v' => 'paste, including an image from the clipboard',
         'app.editor.external' => 'edit the prompt in $VISUAL or $EDITOR',
+        'app.message.followUp' => 'while the agent works: queue for after the turn (enter steers)',
+        'app.message.dequeue' => 'take the queued messages back into the prompt',
         'app.thinking.cycle' => 'cycle the thinking level',
         'shift+ctrl+d' => 'write a debug log: this frame, its line widths, the conversation',
         'app.model.cycleForward' => 'next model',
@@ -796,7 +798,7 @@ final class InteractiveMode
      */
     private const array EDITING_KEYS = [
         'enter' => 'send',
-        'shift+enter' => 'a new line, and alt+enter',
+        'shift+enter' => 'a new line',
         'up' => 'the previous thing you said, from an empty prompt',
         'tab' => 'complete a path, or take what is offered',
         'ctrl+a' => 'start of the line, and home',
@@ -839,6 +841,8 @@ final class InteractiveMode
         // habit to clear the screen did not even do that. Upstream's `onCtrlL` opens its model
         // selector, which is `/model` with nothing after it here.
         $this->editor->on('app.model.select', fn () => $this->showModels(''));
+        $this->editor->on('app.message.followUp', $this->followUp(...));
+        $this->editor->on('app.message.dequeue', $this->dequeue(...));
         $this->editor->on('app.editor.external', function (): void {
             // In a fiber of its own, the same reason `send()` is: this runs inside the
             // input callback, and it suspends — which would suspend the loop that called it.
@@ -1230,9 +1234,9 @@ final class InteractiveMode
                 return;
             }
 
-            // Typed while the agent is working: steer immediately into the active run,
-            // matching upstream pi where Enter during streaming steers the model
-            // instead of waiting until the entire task finishes.
+            // Typed while the agent is working: Enter **steers** — delivered after the tool that
+            // is running now, which is upstream's `streamingBehavior: "steer"` and what somebody
+            // means by typing "no, the other file" mid-run. Alt+Enter is the follow-up, below.
             if ($this->session->isStreaming()) {
                 $this->session->steer($text);
                 $this->editor->setText('');
@@ -1245,6 +1249,63 @@ final class InteractiveMode
             $this->editor->setText('');
             $this->send($text);
         });
+    }
+
+    /**
+     * Alt+Enter: queue what was typed for **after** the turn — upstream's `handleFollowUp()`.
+     *
+     * The other half of typing while the agent works. Enter steers, which cuts in after the
+     * current tool; this waits until the whole turn is over, for the thing that is not a
+     * correction but the next request. From an idle prompt it is Enter, as upstream has it,
+     * because there is nothing to wait behind.
+     */
+    private function followUp(): void
+    {
+        $text = trim($this->editor->text());
+
+        if ($text === '') {
+            return;
+        }
+
+        // Idle, or a `!` command or a built-in, which run now whichever key was pressed: the key
+        // is Enter. Handed to the editor as the Enter byte rather than through a second door,
+        // so the paste markers and the submit guard are the same ones Enter goes through.
+        if (!$this->session->isStreaming() || str_starts_with($text, '!') || $this->commandName($text) !== null) {
+            $this->editor->handleInput("\r");
+
+            return;
+        }
+
+        $this->editor->addToHistory($text);
+        $this->session->followUp($text);
+        $this->editor->setText('');
+        $this->showQueue();
+        $this->tui->requestRender();
+    }
+
+    /**
+     * Alt+Up: take everything queued back into the editor — upstream's `handleDequeue()`.
+     *
+     * Escape does the same on its way to stopping the turn; this is for changing your mind
+     * about what was queued without stopping anything. The turn carries on and the editor
+     * holds the queued text in front of whatever was already being typed.
+     */
+    private function dequeue(): void
+    {
+        $queued = $this->session->clearQueue();
+        $this->showQueue();
+
+        if ($queued === []) {
+            $this->say('No queued messages to restore');
+
+            return;
+        }
+
+        $text = implode("\n\n", array_filter([...$queued, $this->editor->text()], static fn (string $t): bool => trim($t) !== ''));
+        $this->editor->setText($text);
+
+        $count = count($queued);
+        $this->say("Restored {$count} queued message" . ($count > 1 ? 's' : '') . ' to editor');
     }
 
     /**
@@ -1580,8 +1641,8 @@ final class InteractiveMode
      * - **A hook's command is code and runs now**, whatever the agent is doing. Spawned,
      *   because a handler may open a dialog and the submit handler is inside the loop's own
      *   input callback.
-     * - **A file command is a stored prompt** and takes the ordinary path: queued while the
-     *   agent is working, sent otherwise.
+     * - **A file command is a stored prompt** and takes the ordinary path: steered while the
+     *   agent is working, as Enter steers any other text, sent otherwise.
      */
     private function runAddedCommand(string $text, string $name): void
     {
@@ -1595,7 +1656,7 @@ final class InteractiveMode
         }
 
         if ($this->session->isStreaming()) {
-            $this->session->followUp($text);
+            $this->session->steer($text);
             $this->showQueue();
             $this->tui->requestRender();
 
@@ -3836,21 +3897,35 @@ final class InteractiveMode
 
     // ---- the two lines that are not the conversation ------------------------------------------
 
-    /** What is waiting to be sent, above the editor. */
+    /**
+     * What is waiting to be sent, above the editor — upstream's `updatePendingMessagesDisplay()`.
+     *
+     * Each line says *which* queue it is in, because the two mean different things to the
+     * person watching: `Steering:` arrives after the tool that is running, `Follow-up:` after
+     * the turn. And the way back out is named under them, since a queued line that cannot be
+     * taken back is a line nobody dares to queue.
+     */
     private function showQueue(): void
     {
         $this->pending->clear();
-        $queued = $this->session->queued();
+        ['steering' => $steering, 'followUp' => $followUp] = $this->session->queuedByKind();
 
-        if ($queued === []) {
+        if ($steering === [] && $followUp === []) {
             return;
         }
 
         $this->pending->addChild(new Spacer(1));
 
-        foreach ($queued as $message) {
-            $this->pending->addChild(new TruncatedText($this->palette->fg('dim', "Queued: {$message}"), 1, 0));
+        foreach ($steering as $message) {
+            $this->pending->addChild(new TruncatedText($this->palette->fg('dim', "Steering: {$message}"), 1, 0));
         }
+
+        foreach ($followUp as $message) {
+            $this->pending->addChild(new TruncatedText($this->palette->fg('dim', "Follow-up: {$message}"), 1, 0));
+        }
+
+        $key = $this->keybindings->display('app.message.dequeue');
+        $this->pending->addChild(new TruncatedText($this->palette->fg('dim', "↳ {$key} to edit all queued messages"), 1, 0));
     }
 
     /** A note in the transcript — what a key did, or why something did not happen. */
