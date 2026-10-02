@@ -64,6 +64,11 @@ final readonly class CustomTool
      *        still arriving and may be half a JSON object
      * @param Closure(\Pig\Agent\AgentToolResult, RenderOptions, \Pig\CodingAgent\Theme\Palette): \Pig\Tui\Component|null $renderResult
      *        what came back, in place of its text
+     * @param string|null $promptSnippet one line for the system prompt's "Available tools" list —
+     *        upstream's `promptSnippet`. Without one the tool reaches the model as a definition only,
+     *        which is enough for most tools and not for one the model has to be told to prefer
+     * @param list<string> $promptGuidelines rules for the system prompt's "Guidelines" while the
+     *        tool is active — upstream's `promptGuidelines`
      * @throws InvalidArgumentException when the declaration could not work
      */
     public function __construct(
@@ -75,6 +80,8 @@ final readonly class CustomTool
         public ?Closure $onSession = null,
         public ?Closure $renderCall = null,
         public ?Closure $renderResult = null,
+        public ?string $promptSnippet = null,
+        public array $promptGuidelines = [],
     ) {
         // Checked here rather than left to the provider: a tool with no description is
         // one the model will never choose, and a tool with a name the API rejects fails

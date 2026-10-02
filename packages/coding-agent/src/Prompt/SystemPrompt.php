@@ -27,6 +27,8 @@ final class SystemPrompt
      * @param list<ContextFile>|null $contextFiles discovered from $cwd when not given
      * @param list<Skill>            $skills       passed in rather than discovered, so the
      *        banner and the prompt cannot disagree about what was picked up
+     * @param array<string, string>  $toolSnippets extension tools that asked for a line in the list
+     * @param list<string>           $toolGuidelines rules those tools add — see `CustomTool::$promptSnippet`
      */
     public static function build(
         string $cwd,
@@ -35,9 +37,11 @@ final class SystemPrompt
         ?string $append = null,
         ?array $contextFiles = null,
         array $skills = [],
+        array $toolSnippets = [],
+        array $toolGuidelines = [],
     ): string {
         $contextFiles ??= ContextFiles::load($cwd);
-        $prompt = $custom ?? self::instructions($tools);
+        $prompt = $custom ?? self::instructions($tools, $toolSnippets, $toolGuidelines);
 
         if ($append !== null && trim($append) !== '') {
             $prompt .= "\n\n" . $append;
@@ -79,17 +83,31 @@ final class SystemPrompt
         return $contents === false ? $input : $contents;
     }
 
-    /** @param list<string> $tools */
-    private static function instructions(array $tools): string
+    /**
+     * @param list<string> $tools the built-ins
+     * @param array<string, string> $toolSnippets extension tools with something to say in the list, name => line
+     * @param list<string> $toolGuidelines rules those tools add
+     */
+    private static function instructions(array $tools, array $toolSnippets = [], array $toolGuidelines = []): string
     {
-        $list = implode("\n", array_map(
-            static fn (string $name): string => "- {$name}: " . ToolSet::describe($name),
-            $tools,
-        ));
+        $lines = array_map(static fn (string $name): string => "- {$name}: " . ToolSet::describe($name), $tools);
+
+        foreach ($toolSnippets as $name => $snippet) {
+            $lines[] = "- {$name}: {$snippet}";
+        }
+
+        $list = implode("\n", $lines);
+
+        // A guideline said twice is noise; the built-ins' come first because they are read first.
+        $all = [];
+
+        foreach ([...self::guidelines($tools), ...$toolGuidelines] as $line) {
+            $all[trim($line)] = true;
+        }
 
         $guidelines = implode("\n", array_map(
             static fn (string $line): string => "- {$line}",
-            self::guidelines($tools),
+            array_keys($all),
         ));
 
         return self::ROLE . "\n\nAvailable tools:\n{$list}\n\nGuidelines:\n{$guidelines}";

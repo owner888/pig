@@ -403,7 +403,14 @@ bin/pig --tools read,bash,edit,write,grep,find,ls
 令牌存在 `~/.pig/agent/mcp-auth.json`，连接会自己续期；授权服务器不支持动态注册的（GitHub 就是），
 在 `"oauth": { "clientId", "clientSecret", "callbackPort" }` 里给一个预注册的客户端。`/mcp login|logout`
 与 `pig mcp login|logout` 是入口。提供 resources 的服务器会带来 `list_mcp_resources`、
-`list_mcp_resource_templates` 与 `read_mcp_resource` 三个工具；服务器的日志写到 `~/.pig/agent/mcp.log`。`"exposure": "deferred"` 的服务器，其工具先不声明给模型，等模型用 `tool_search`（按名字、描述、
+`list_mcp_resource_templates` 与 `read_mcp_resource` 三个工具；服务器的日志写到 `~/.pig/agent/mcp.log`。
+
+**codemode**，PHP 版（`extensions/pig-codemode/`）：服务器用默认曝光方式时，模型只看到一个
+`codemode` 工具，它的描述里带着服务器各工具的 PHP 签名；模型写一段脚本——
+`$tools->mcp__gh__search_code([...])` 调工具，`parallel([...])` 并发互不依赖的调用，用普通 PHP
+过滤结果，`return` 它想看的部分。三个慢工具只花一个的时间，六十个工具的服务器只占一份目录，大结果
+只占脚本留下的那部分。脚本跑在一个带 `disable_functions`、`open_basedir` 和 `memory_limit` 的
+子进程 `php -n` 里；嵌套调用走 pig 自己的工具和 hook，权限门在脚本里一样生效。`"exposure": "deferred"` 的服务器，其工具先不声明给模型，等模型用 `tool_search`（按名字、描述、
 schema 做 BM25 检索）找到再加载——六十个工具的服务器因此只占八个工具的上下文。`codemode` 是一个
 JavaScript 沙箱，这里没有；要求它的服务器按 `deferred` 处理，并提示一次。
 

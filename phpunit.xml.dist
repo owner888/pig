@@ -16,6 +16,7 @@
             <directory>packages/tui/test</directory>
             <directory>packages/coding-agent/test</directory>
             <directory>packages/mcp/test</directory>
+            <directory>packages/codemode/test</directory>
         </testsuite>
     </testsuites>
     <source>
@@ -24,6 +25,7 @@
             <directory>packages/ai/src</directory>
             <directory>packages/agent-core/src</directory>
             <directory>packages/tui/src</directory>
+            <directory>packages/codemode/src</directory>
             <directory>packages/coding-agent/src</directory>
             <directory>packages/mcp/src</directory>
         </include>

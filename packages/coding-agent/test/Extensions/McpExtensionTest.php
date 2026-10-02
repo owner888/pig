@@ -19,7 +19,7 @@ use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use PigMcp\McpConfig;
 use PigMcp\McpTools;
-use PigMcp\ToolSearch;
+use Pig\Codemode\ToolSearch;
 
 final class McpExtensionTest extends TestCase
 {
@@ -33,6 +33,7 @@ final class McpExtensionTest extends TestCase
     protected function setUp(): void
     {
         Loop::reset();
+        \Pig\Codemode\Registry::reset();
         $this->root = sys_get_temp_dir() . '/pig-mcp-ext-' . bin2hex(random_bytes(4));
         $this->home = $this->root . '/home';
         $this->cwd = $this->root . '/project';
@@ -42,7 +43,7 @@ final class McpExtensionTest extends TestCase
 
         $repo = dirname(__DIR__, 4);
 
-        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResources', 'ToolSearch', 'McpSignInCancelledError', 'McpOauth', 'McpServerLog'] as $class) {
+        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResources', 'McpSignInCancelledError', 'McpOauth', 'McpServerLog'] as $class) {
             if (!class_exists("PigMcp\\{$class}", false)) {
                 require $repo . "/extensions/pig-mcp/{$class}.php";
             }
@@ -144,11 +145,12 @@ final class McpExtensionTest extends TestCase
         $this->assertSame('deferred', McpConfig::toolExposure(['exposure' => 'deferred'], 'x'));
         $this->assertSame('codemode', McpConfig::toolExposure([], 'x'), "upstream's default, before pig's mapping");
 
-        // And what pig does with each of upstream's five.
-        $this->assertSame('deferred', McpConfig::here('codemode'));
-        $this->assertSame('deferred', McpConfig::here('codemode-deferred'));
-        $this->assertSame('direct', McpConfig::here('direct'));
-        $this->assertSame('hidden', McpConfig::here('hidden'));
+        // All five of upstream's are pig's own now that codemode is ported; a sixth lands on the default.
+        foreach (McpConfig::EXPOSURES as $exposure) {
+            $this->assertSame($exposure, McpConfig::here($exposure));
+        }
+
+        $this->assertSame('codemode', McpConfig::here('something-newer'));
     }
 
     public function testEditingTheFileKeepsEverythingElseAndItsIndentation(): void
@@ -335,8 +337,8 @@ final class McpExtensionTest extends TestCase
         });
         $status = end($ui->notices);
         $this->assertStringContainsString('fixture: connected, 1 tools (direct)', $status);
-        // `broken` names no exposure, so it has upstream's default, mapped to pig's.
-        $this->assertStringContainsString('broken: failed (deferred)', $status);
+        // `broken` names no exposure, so it has upstream's default, which is codemode.
+        $this->assertStringContainsString('broken: failed (codemode)', $status);
         $this->assertStringContainsString('MCP connection closed', $status);
 
         Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
@@ -344,19 +346,32 @@ final class McpExtensionTest extends TestCase
         $this->assertTrue(Loop::get()->isIdle(), 'nothing left running after shutdown');
     }
 
-    public function testACodemodeExposureIsMappedToDeferredAndSaidOnce(): void
+    public function testACodemodeExposedToolIsNotOnTheModelButInTheCodemodeRegistry(): void
     {
+        \Pig\Codemode\Registry::reset();
         file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
-            'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()]],   // upstream's default exposure
+            'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()]],   // upstream's default exposure: codemode
         ]]));
 
         [$set, $hooks, $ui] = $this->start();
 
-        $this->assertStringContainsString('asks for codemode exposure, which pig does not have', implode("\n", $ui->notices));
-        // Mapped to deferred rather than refused: the tool waits behind `tool_search`.
-        $this->assertSame(['tool_search'], $set->names());
+        // Nothing declared, nothing said: the tool is where codemode scripts find it.
+        $this->assertSame([], $set->names());
+        $this->assertStringNotContainsString('codemode', implode("\n", $ui->notices));
+        $registered = \Pig\Codemode\Registry::all();
+        $this->assertSame(['mcp__fixture__echo'], array_keys($registered));
+        $this->assertSame('codemode', $registered['mcp__fixture__echo']['exposure']);
+        $this->assertSame('fixture', $registered['mcp__fixture__echo']['namespace']['name']);
+
+        // And the registry entry calls through to the server, answering the whole CallToolResult.
+        $value = Async::run(static fn () => ($registered['mcp__fixture__echo']['execute'])(['text' => 'via script'], (new \Pig\Async\AbortController())->signal, new \Pig\CodingAgent\Hooks\HookContext('.')));
+        $this->assertSame([['type' => 'text', 'text' => 'echo: via script']], $value['content']);
+
+        // The status says so too.
+        $this->assertStringContainsString('fixture: connected, 1 tools (codemode)', $this->mcpStatus());
 
         Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        $this->assertSame([], \Pig\Codemode\Registry::all(), 'shutdown takes them out of the registry');
     }
 
     public function testADeferredToolIsDeclaredOnlyOnceToolSearchFindsIt(): void
@@ -441,7 +456,7 @@ final class McpExtensionTest extends TestCase
         // The list: the failed server first, because it needs the user, and every row says its state.
         $screen = $this->screenOf($tui);
         $this->assertStringContainsString('MCP servers', $screen);
-        $this->assertMatchesRegularExpression('/broken.*failed: MCP connection closed.*deferred.*global/', $screen);
+        $this->assertMatchesRegularExpression('/broken.*failed: MCP connection closed.*codemode.*global/', $screen);
         $this->assertMatchesRegularExpression('/fixture.*connected · 1 tool · direct · global/', $screen);
         $this->assertLessThan(strpos($screen, 'fixture'), strpos($screen, 'broken'), 'the one that needs attention first');
 

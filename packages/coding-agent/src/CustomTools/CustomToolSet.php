@@ -111,6 +111,30 @@ final class CustomToolSet
         $this->changed = $listener;
     }
 
+    /**
+     * What the tools in the set want the system prompt to say — `CustomTool::$promptSnippet` by
+     * name, and every `$promptGuidelines` line. Both empty for a set with nothing to add.
+     *
+     * @return array{0: array<string, string>, 1: list<string>}
+     */
+    public function promptContributions(): array
+    {
+        $snippets = [];
+        $guidelines = [];
+
+        foreach ($this->tools as $one) {
+            if ($one->tool->promptSnippet !== null) {
+                $snippets[$one->tool->name] = $one->tool->promptSnippet;
+            }
+
+            foreach ($one->tool->promptGuidelines as $line) {
+                $guidelines[] = $line;
+            }
+        }
+
+        return [$snippets, $guidelines];
+    }
+
     /** What each tool is called, in load order. @return list<string> */
     public function names(): array
     {

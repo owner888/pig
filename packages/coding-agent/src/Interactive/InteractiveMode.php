@@ -2389,6 +2389,8 @@ final class InteractiveMode
                 [...ToolSet::create($this->cwd, $this->builtInTools), ...$tools->agentTools()],
                 $hooks,
             ));
+            [$snippets, $guidelines] = $tools->promptContributions();
+            $this->session->agent->setSystemPrompt(SystemPrompt::build($this->cwd, $this->builtInTools, contextFiles: $this->contextFiles, skills: $this->skills, toolSnippets: $snippets, toolGuidelines: $guidelines));
         });
         $customTools->withContext(fn () => $hooks->context());
 
@@ -2398,11 +2400,14 @@ final class InteractiveMode
         $wrapped = HookedTool::wrap($allTools, $hooks);
         $this->session->agent->setTools($wrapped);
 
+        [$snippets, $guidelines] = $customTools->promptContributions();
         $systemPrompt = SystemPrompt::build(
             $this->cwd,
             $this->builtInTools,
             contextFiles: $this->contextFiles,
             skills: $this->skills,
+            toolSnippets: $snippets,
+            toolGuidelines: $guidelines,
         );
         $this->session->agent->setSystemPrompt($systemPrompt);
 

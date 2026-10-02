@@ -386,8 +386,9 @@ final class AgentLoop
                 );
             } catch (Throwable $error) {
                 // A failing tool is something the model can read and work around, not
-                // something that ends the run.
-                $result = new AgentToolResult([new TextContent($error->getMessage())]);
+                // something that ends the run. An `AgentError` may carry what the UI should
+                // still be shown of the failure.
+                $result = new AgentToolResult([new TextContent($error->getMessage())], $error instanceof AgentError ? $error->details : null);
                 $isError = true;
             }
 

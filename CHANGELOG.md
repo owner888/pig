@@ -43,6 +43,23 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### New Features
+
+- **codemode, in PHP** — upstream's `extensions/codemode` and `pi-codemode`, as `Pig\Codemode` (`packages/codemode/`) and `extensions/pig-codemode/`. The model writes a PHP script; the script calls nested tools as `$tools->name([...])`, fans independent calls out with `parallel([...])` / `parallel_settled([...])` (each arm a `Fiber`, every call on the pipe before any answer, so three slow tools cost one), chains dependent ones, filters what came back and returns only what it needs — the half of the MCP story `deferred` did not cover: the tool results go through the script, not the model. The sandbox is a child `php -n` with `disable_functions` naming every process, file, stream, network and host-reading function, `open_basedir` pointing at nothing, a 256MB `memory_limit`, no `php.ini` and an empty `PATH`, speaking one JSON line per message over the pipe; upstream's is QuickJS in wasm, and the difference is stated on `Sandbox`: a blacklist for a model's mistakes, not a whitelist for an adversary's. `text()`, `image()`, `exit_script()`, `store()`/`load()` (persisted as upstream's `codemode-store` entry in the session file), `ALL_TOOLS`, `search_tools()` (BM25), `describe_tool()`, `// @options: {"max_output_tokens", "timeout_ms"}`, the middle-cut output budget, the `Script completed / Wall time / Output:` header, and the renderer that shows the script, each nested call with ✓/✗/⊘ and its duration, and the output. Nested calls to the agent's own tools go through the hooked tool, so the permission gate reaches `bash` from a script exactly as from the model.
+- **MCP's `codemode` exposure is codemode now.** Upstream's default exposure: a server with no `exposure` has its tools **not** declared to the model but put in `Pig\Codemode\Registry`, where the codemode tool lists them (grouped by server, within a 3000-token catalog budget, OpenCode's round-robin selection) and scripts call them; registering one is what activates `codemode`, as upstream's `ensureDiscoveryActive()` does. `codemode-deferred` leaves them out of the catalog for `search_tools()` to find. `/mcp` describes all five exposures in upstream's words. `codemode.enabled: true` in the settings turns the tool on with no server; `codemode.inlineBudget` sizes the catalog.
+- **A tool can speak in the system prompt** — upstream's `promptSnippet` and `promptGuidelines`, on `CustomTool`, collected by `CustomToolSet::promptContributions()` and written into "Available tools" and "Guidelines" by `SystemPrompt::build()`, re-built when the tool set changes. codemode's line and its guideline ("Use codemode to batch or chain several tool calls…") are the first users; without the guideline a model knows the tool exists and does not reach for it.
+
+### Added
+
+- `AgentLoopConfig`-level: `AgentError` carries `$details`, so a tool that failed half way still shows the UI the half that ran (codemode's nested calls on a failed script).
+- `ToolSearch` moved from `extensions/pig-mcp` to `Pig\Codemode`, since `tool_search` and `search_tools()` share it.
+
+### Fixed
+
+- `HookRunner::setSession()` existed and nothing called it, so `$ctx->session` was null in every handler — a documented `HookContext` field wired at one end only. `AgentSession` attaches itself now, in its constructor and in `setHooks()`.
+
 ## [0.2.15] - 2026-10-02
 
 ### Added

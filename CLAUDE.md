@@ -2722,10 +2722,10 @@ agent minimalism.
 built-in `mcp` extension, both ported file for file; `docs/mcp.md` upstream is the specification
 for what the config file means. Two things are pig's own and both are consequences of the platform:
 
-- **`codemode` is not ported and cannot be.** Upstream's default exposure runs the model's
-  JavaScript in a sandbox against the server's tools; pig has no sandbox and will not grow one.
-  `McpConfig::here()` maps `codemode`/`codemode-deferred` to `deferred` and the extension says so
-  **once** per session, so a `mcp.json` written for pi loads and works.
+- **`codemode` is ported, in PHP.** This bullet used to say it could not be, because upstream's
+  is a QuickJS VM in wasm and PHP has no wasm runtime. That was true of the *sandbox* and not of
+  the *feature*, which is "the model writes code that calls tools and filters the results, and
+  only what it keeps reaches the model". See the section below.
 - **`deferred` has no loadout under it.** Upstream keeps an active set per tool and records a
   `tool_search` load in the transcript, so a loaded tool survives `/tree` and resume. pig has no
   such record: a deferred tool is simply **not registered** until `tool_search` names it, then
@@ -2844,6 +2844,82 @@ symlinked tool folder, and `glob('*.php')` does match a symlinked hook file — 
 skipped what that clause exists to catch. They do not. Left out on purpose: upstream's
 `isBunBinary` branch, which is a second loader for a packaging mode pig has no equivalent of, and
 `setUIContext`'s `hasUI` parameter for the reason above.
+
+### codemode: the model writes PHP, and a child `php` runs it
+
+`packages/codemode/` (`Pig\Codemode`) is upstream's `pi-codemode` and `extensions/pig-codemode/` is
+its `extensions/codemode`, with three substitutions that follow from the one fact that PHP has no
+wasm runtime and will not take one as a dependency:
+
+| upstream | pig | why |
+|---|---|---|
+| the script is JavaScript in a QuickJS VM in a `worker_thread` | the script is PHP in a child `php -n` | the only sandbox PHP can make without a dependency is a process |
+| `declare const tools: { read(input: {...}): Promise<string> }` (TypeScript) | `$tools->read(array{path: string} $input): string` (PHPStan shapes) | the notation PHP code already carries in its docblocks |
+| `await Promise.all([...])` | `parallel([...])`, each arm a `Fiber` in the child | no `await`; the arms suspend on their first tool call and the driver sends every call before reading any answer |
+
+**What the isolation is, in one paragraph, because it is the thing to be honest about.** `Sandbox`
+starts the child with `-n` (no `php.ini`), `disable_functions` naming every process, file, stream,
+socket, network and host-reading function in core and the usual extensions, `open_basedir` pointing
+at the child script alone, a 256MB `memory_limit`, `allow_url_fopen=0`, and an empty `PATH`.
+`eval` and `include` are constructs and cannot be disabled — the child uses `eval` to run the script,
+and `open_basedir` is what stops `include`. That is a **blacklist**, and upstream's wasm is a
+whitelist: a function the list forgot is a function the script can call. It is a sandbox for a
+model's mistakes and not for an adversary's, and `DISABLED_FUNCTIONS` is where the next row goes.
+Measured rather than argued: `file_get_contents`, `shell_exec`, `getenv`, `fsockopen`, a variable
+function name, `SplFileObject`, `include` and `ini_set` are all refused, by `undefined function` or
+`open_basedir restriction`; the ordinary language is all there.
+
+**The wire is one JSON line per message**, both ways: `boot`, then `call`/`global`/`output` from the
+child and `result` from the host, then `done`. The host answers each `call` in an `Async::spawn` of
+its own, which is what makes `parallel()` parallel on the host side; measured, three 0.2s tools in
+0.2s. The child's side of `parallel()` is `__CodemodeParallel`: an arm that calls a tool does
+`Fiber::suspend($id)` with the request already written, the driver starts every arm, then reads
+answers off the pipe and resumes whoever waits for each. An arm that calls two tools in sequence has
+its second call made after the first answer, like `await` inside a `Promise.all` arm. **Keys are
+kept** — `parallel(['a' => …, 'b' => …])` answers under `a` and `b` — which `Promise.all` has no
+case for and the first live script written against this used.
+
+**`exit_script()`, not `exit()`.** PHP's `exit` would end the sandbox with no `done` on the pipe,
+which the host reads as a crash. The rest of the helpers keep upstream's names: `text()`, `image()`,
+`store()`/`load()`, `ALL_TOOLS`, `search_tools()`, `describe_tool()`; `echo` is `console.log`.
+
+**Nested calls go through the hooked tool**, so the permission gate reaches `bash` from a script
+exactly as from the model — `testANestedCallGoesThroughTheToolCallHookLikeAnyOther` runs a `tool_call`
+guard against `$tools->bash()` inside `parallel_settled()` and reads the refusal out of the arm. A
+`codemode`-exposed MCP tool is the exception by design: it is **not on the agent at all** (the model
+must not see it), so the MCP extension puts it in `Pig\Codemode\Registry` and the codemode tool
+calls it from there. The registry is static for `Models::register()`'s reason — two extensions in
+either load order have to see one list — and registering into it is what activates codemode, which
+is upstream's `ensureDiscoveryActive()` with the active-set machinery pig does not have.
+
+**A tool with something to say in the system prompt can say it now.** Upstream's `promptSnippet`
+and `promptGuidelines` were not ported — the paragraph on custom tools above says "the system
+prompt's Available tools list stays the built-ins" — and codemode is the tool that needs them:
+without "Use codemode to batch or chain several tool calls…" in the Guidelines, a model knows the
+tool exists and issues one tool call at a time anyway. `CustomTool::$promptSnippet`/`$promptGuidelines`,
+`CustomToolSet::promptContributions()`, two parameters on `SystemPrompt::build()`, and the prompt is
+rebuilt in the same `onChange()` that rebuilds the tools.
+
+**Two things the first live runs taught.** The model reads `$res['content'][0]['text']` *and*
+`$res['structuredContent']['content']` and does not know which the server fills, so a script
+receives the whole `CallToolResult` (upstream's rule for a tool with an output schema) and the
+declaration says so. And the second script it wrote keyed its `parallel()` arms by path, which is
+the keys bullet above.
+
+**`AgentError` carries `$details`** so a failed script still shows the UI its nested calls — upstream
+returns `{ isError: true, details }` where pig throws, and the renderer needs the calls either way.
+
+**And `HookRunner::setSession()` had no caller.** `$ctx->session` was null in every handler in
+production, which is how long a documented `HookContext` field can stay wired at one end: until the
+first extension that needs it. `AgentSession` attaches itself now.
+
+Regression tests: `CodemodeTest` (24 — source, identifiers, declarations, the sandbox's isolation,
+`parallel()` timing and ordering, error kinds, store, images, globals) and `CodemodeExtensionTest`
+(7 — through `CodingAgent::session()` with both extensions: activation by server and by setting, the
+system prompt, a script against an MCP tool, the hook guard, a failed script's error, the store in
+the session file, the output budget). Verified live with `server-filesystem` at the default
+exposure: the model sees `read, bash, edit, write, codemode`, writes a `parallel()` over four
+`read_text_file` calls, and answers from the script's return value.
 
 ### A stranger's `.pig/` is not loaded until somebody says so
 

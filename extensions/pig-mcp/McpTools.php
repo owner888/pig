@@ -89,6 +89,50 @@ final class McpTools
     }
 
     /**
+     * What a codemode script receives for an MCP call — upstream's rule for a tool with an output
+     * schema: the whole `CallToolResult` (`content`, `structuredContent`, `isError`) rather than the
+     * flattened text, so a script can pick the part it wants and `image()` a block through.
+     *
+     * @param array<string, mixed> $result the `tools/call` result as the server sent it
+     * @return array<string, mixed>
+     */
+    public static function scriptValue(array $result): array
+    {
+        $out = ['content' => is_array($result['content'] ?? null) ? array_values($result['content']) : []];
+
+        if (array_key_exists('structuredContent', $result)) {
+            $out['structuredContent'] = $result['structuredContent'];
+        }
+
+        if (($result['isError'] ?? false) === true) {
+            $out['isError'] = true;
+        }
+
+        return $out;
+    }
+
+    /**
+     * The output schema a codemode declaration shows for an MCP tool: a `CallToolResult`, with the
+     * server's own `outputSchema` as its `structuredContent` when it declared one.
+     *
+     * @param array<string, mixed> $tool as listed
+     * @return array<string, mixed>
+     */
+    public static function callToolResultSchema(array $tool): array
+    {
+        return [
+            'type' => 'object',
+            'properties' => [
+                'content' => ['type' => 'array', 'items' => ['type' => 'object']],
+                'isError' => ['type' => 'boolean'],
+                '_meta' => ['type' => 'object'],
+                'structuredContent' => is_array($tool['outputSchema'] ?? null) ? $tool['outputSchema'] : true,
+            ],
+            'required' => ['content'],
+        ];
+    }
+
+    /**
      * Tool input schemas must be objects. MCP servers may omit `type`, and some providers reject
      * object schemas without `properties`.
      *

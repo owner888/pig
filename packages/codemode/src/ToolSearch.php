@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace PigMcp;
+namespace Pig\Codemode;
 
 /**
  * Tool discovery — upstream's `extensions/tool-search/tool.js`: a BM25 ranker over tool metadata,
- * and the `tool_search` tool that searches the tools not declared to the model and loads the
- * matches, so they are declared from the next call on.
+ * shared by the `tool_search` tool (the MCP extension) and `search_tools()` in codemode scripts,
+ * which is why it lives in this package and not in either extension.
  *
  * Upstream keeps a loadout with an active set per tool and records activation in the transcript,
  * so a loaded tool survives `/tree` and resume. pig has no loadout: a `deferred` MCP tool is simply

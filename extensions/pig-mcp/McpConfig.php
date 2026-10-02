@@ -35,16 +35,20 @@ final class McpConfig
     /** Upstream's five, accepted as written. */
     public const array EXPOSURES = ['codemode', 'codemode-deferred', 'deferred', 'direct', 'hidden'];
 
-    /** What pig can actually do, and what each of upstream's maps to here. */
+    /**
+     * Upstream's five exposures are pig's five now that codemode is ported. The table stays
+     * because `here()` is what every reader asks, and a sixth value from a newer pi lands on
+     * the default rather than on a crash.
+     */
     public const array EXPOSURE_HERE = [
-        'codemode' => 'deferred',
-        'codemode-deferred' => 'deferred',
+        'codemode' => 'codemode',
+        'codemode-deferred' => 'codemode-deferred',
         'deferred' => 'deferred',
         'direct' => 'direct',
         'hidden' => 'hidden',
     ];
 
-    public const string DEFAULT_EXPOSURE = 'deferred';
+    public const string DEFAULT_EXPOSURE = 'codemode';
 
     private const string SERVER_NAME = '/^[A-Za-z0-9_-]+$/';
 

@@ -32,6 +32,7 @@
             "Pig\\Ai\\": "packages/ai/src/",
             "Pig\\Async\\": "packages/async/src/",
             "Pig\\CodingAgent\\": "packages/coding-agent/src/",
+            "Pig\\Codemode\\": "packages/codemode/src/",
             "Pig\\Mcp\\": "packages/mcp/src/",
             "Pig\\Tui\\": "packages/tui/src/"
         }
@@ -42,6 +43,7 @@
             "Pig\\Ai\\Test\\": "packages/ai/test/",
             "Pig\\Async\\Test\\": "packages/async/test/",
             "Pig\\CodingAgent\\Test\\": "packages/coding-agent/test/",
+            "Pig\\Codemode\\Test\\": "packages/codemode/test/",
             "Pig\\Mcp\\Test\\": "packages/mcp/test/",
             "Pig\\Test\\": "test/",
             "Pig\\Tui\\Test\\": "packages/tui/test/"

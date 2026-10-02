@@ -107,6 +107,7 @@ final class CodingAgent
             $hooks ?? new HookRunner(),
         ));
         $agent->setThinkingLevel($thinking);
+        [$snippets, $guidelines] = $customTools?->promptContributions() ?? [[], []];
         $agent->setSystemPrompt(SystemPrompt::build(
             $cwd,
             $tools,
@@ -114,6 +115,8 @@ final class CodingAgent
             SystemPrompt::resolve($appendSystemPrompt),
             $contextFiles,
             $skills,
+            $snippets,
+            $guidelines,
         ));
 
         return $agent;
@@ -396,11 +399,16 @@ final class CodingAgent
 
         // A tool that arrives after startup — an MCP server connecting — reaches the model the
         // same way the ones at startup did: beside the built-ins, wrapped with the hooks.
-        $customTools->onChange(static function (CustomToolSet $tools) use ($agent, $cwd, $builtIn, $hooks): void {
+        $customTools->onChange(static function (CustomToolSet $tools) use ($agent, $cwd, $builtIn, $hooks, $contextFiles, $skills): void {
             $agent->setTools(HookedTool::wrap(
                 [...ToolSet::create($cwd, $builtIn), ...$tools->agentTools()],
                 $hooks,
             ));
+
+            // A tool with something to say in the system prompt — codemode's snippet and guideline —
+            // says it from the moment it is on the model, not from the next start.
+            [$snippets, $guidelines] = $tools->promptContributions();
+            $agent->setSystemPrompt(SystemPrompt::build($cwd, $builtIn, contextFiles: $contextFiles, skills: $skills, toolSnippets: $snippets, toolGuidelines: $guidelines));
         });
 
         $session = new AgentSession($agent, $cwd, $store, $settings, $hooks, $fileCommands, $scope, auth: $auth);

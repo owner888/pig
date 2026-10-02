@@ -177,6 +177,11 @@ final class AgentSession
         if ($settings !== null) {
             $this->agent->setQueueMode($settings->queueMode());
         }
+
+        // `HookRunner::setSession()` existed and nothing called it, so `$ctx->session` was null
+        // in every handler — a `HookContext` field documented and wired at one end only. The
+        // session is the thing that holds the runner, so it is the thing that tells the runner.
+        $this->hooks?->setSession($this);
     }
 
     /** The hooks this session fires at, if any. */
@@ -188,6 +193,7 @@ final class AgentSession
     public function setHooks(?HookRunner $hooks): void
     {
         $this->hooks = $hooks;
+        $hooks?->setSession($this);
     }
 
     /** @param list<FileCommand> $fileCommands */
@@ -212,6 +218,12 @@ final class AgentSession
     public function cwd(): string
     {
         return $this->cwd;
+    }
+
+    /** The settings this session reads, for an extension that has a key of its own in them — upstream's `pi.getSettings()`. */
+    public function settings(): ?Settings
+    {
+        return $this->settings;
     }
 
     /**

@@ -21,11 +21,11 @@ use PigMcp\McpSignInCancelledError;
 use PigMcp\McpTools;
 use PigMcp\ServerConnection;
 use PigMcp\ServerEntry;
-use PigMcp\ToolSearch;
+use Pig\Codemode\ToolSearch;
 
 // Class files beside the entry, guarded by class and not by `require_once`: the same class can
 // live at two paths (a global copy and the repository's), and `require_once` dedups by path.
-foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResources', 'ToolSearch', 'McpManagerView', 'McpSignInCancelledError', 'McpOauth', 'McpServerLog'] as $class) {
+foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResources', 'McpManagerView', 'McpSignInCancelledError', 'McpOauth', 'McpServerLog'] as $class) {
     if (!class_exists("PigMcp\\{$class}", false)) {
         require __DIR__ . "/{$class}.php";
     }
@@ -78,7 +78,6 @@ return static function (ExtensionApi $pi): void {
     $waitedForStartup = false;
     $generation = 0;
     $cwd = $pi->cwd();
-    $saidAboutExposure = false;
     $credentials = new McpOauth(McpOauth::defaultPath(Config::home()));
     $log = new McpServerLog(Config::home() . '/mcp.log');
     $openUrl = static function (string $url): void {
@@ -262,6 +261,8 @@ return static function (ExtensionApi $pi): void {
     $registerTools = static function (ServerConnection $connection) use ($pi, &$toolOwners, &$serverTools, &$deferred, &$loaded, &$syncToolSearch, &$syncResourceTools, $resourcesReadable): void {
         $server = $connection->name();
         $current = [];
+        /** @var array<string, true> the names that went to the codemode registry this pass */
+        $codemodeTools = [];
         /** @var list<string> the names actually declared this pass — a deferred one is owned and not declared */
         $declared = [];
 
@@ -293,6 +294,23 @@ return static function (ExtensionApi $pi): void {
             // reconnected, in which case the model already knows it and it stays declared.
             $define = static fn (): \Pig\CodingAgent\CustomTools\CustomTool => McpTools::define($server, $tool, $name, $connection, $resourcesReadable);
 
+            // A codemode tool is never on the model: scripts reach it through the registry the
+            // codemode extension reads, and registering it there is what activates codemode.
+            if ($exposure === 'codemode' || $exposure === 'codemode-deferred') {
+                $defined = $define();
+                \Pig\Codemode\Registry::register(
+                    $name,
+                    $defined->description,
+                    $defined->parameters,
+                    static fn (array $args, \Pig\Async\AbortSignal $signal, HookContext $ctx): mixed => McpTools::scriptValue($connection->callTool($toolName, $args, ['signal' => $signal, 'timeout' => $connection->timeout()])),
+                    ['name' => $server, 'description' => $connection->instructions],
+                    $exposure,
+                    McpTools::callToolResultSchema($tool),
+                );
+                $codemodeTools[$name] = true;
+                continue;
+            }
+
             if ($exposure === 'deferred' && !isset($loaded[$name])) {
                 $deferred[$name] = ['server' => $server, 'tool' => $tool, 'connection' => $connection, 'define' => $define];
                 continue;
@@ -314,6 +332,9 @@ return static function (ExtensionApi $pi): void {
             }
         }
 
+        // And the ones that left the codemode registry: not codemode any more, or dropped.
+        \Pig\Codemode\Registry::remove(static fn (string $n): bool => in_array($n, $serverTools[$server] ?? [], true) && !isset($codemodeTools[$n]));
+
         $serverTools[$server] = $current;
         $syncResourceTools();
         $syncToolSearch();
@@ -324,6 +345,7 @@ return static function (ExtensionApi $pi): void {
 
         if ($names !== []) {
             $pi->removeTools(static fn ($tool): bool => in_array($tool->name, $names, true));
+            \Pig\Codemode\Registry::remove(static fn (string $n): bool => in_array($n, $names, true));
         }
 
         foreach ($names as $name) {
@@ -501,7 +523,6 @@ return static function (ExtensionApi $pi): void {
         &$pending,
         &$waitedForStartup,
         &$generation,
-        &$saidAboutExposure,
         $cwd,
         $createConnection,
         $reportProblems,
@@ -514,20 +535,6 @@ return static function (ExtensionApi $pi): void {
         $current = ++$generation;
 
         $enabled = array_values(array_filter($entries, static fn (ServerEntry $e): bool => $e->isEnabled()));
-
-        if (!$saidAboutExposure) {
-            foreach ($enabled as $entry) {
-                if (str_starts_with($entry->exposure(), 'codemode')) {
-                    $saidAboutExposure = true;
-                    $ctx->ui->notify(
-                        "MCP: \"{$entry->name}\" asks for codemode exposure, which pig does not have (it is a JavaScript sandbox); "
-                        . 'its tools are declared to the model directly.',
-                        'info',
-                    );
-                    break;
-                }
-            }
-        }
 
         if ($enabled === []) {
             $reportProblems($ctx);
@@ -583,8 +590,14 @@ return static function (ExtensionApi $pi): void {
         return null;
     });
 
-    $pi->on('session_shutdown', static function (SessionShutdownEvent $event, HookContext $ctx) use (&$connections, &$entries, &$generation): void {
+    $pi->on('session_shutdown', static function (SessionShutdownEvent $event, HookContext $ctx) use (&$connections, &$entries, &$generation, &$serverTools, $hideTools): void {
         $generation++;
+
+        // Every server's tools come off the model and out of the codemode registry first.
+        foreach (array_keys($serverTools) as $server) {
+            $hideTools($server);
+        }
+
         $closing = $connections;
         $connections = [];
         $entries = [];
@@ -701,9 +714,9 @@ return static function (ExtensionApi $pi): void {
     // ---- the manager (`/mcp` in the terminal) ------------------------------------------------
 
     $exposureDescriptions = [
-        'codemode' => 'read as deferred — pig has no codemode sandbox',
-        'codemode-deferred' => 'read as deferred — pig has no codemode sandbox',
-        'deferred' => 'not declared until tool_search loads them, then called directly',
+        'codemode' => 'called from codemode scripts, listed in the codemode description',
+        'codemode-deferred' => 'called from codemode scripts, not listed; scripts find them with search_tools()',
+        'deferred' => 'not declared until tool_search loads them, then called directly; no codemode needed',
         'direct' => 'declared to the model like built-in tools',
     ];
 

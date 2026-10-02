@@ -36,7 +36,7 @@ final class McpCliTest extends TestCase
 
         $repo = dirname(__DIR__, 4);
 
-        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpSignInCancelledError', 'McpOauth', 'McpCli'] as $class) {
+        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpSignInCancelledError', 'McpOauth', 'McpServerLog', 'McpCli'] as $class) {
             if (!class_exists("PigMcp\\{$class}", false)) {
                 require $repo . "/extensions/pig-mcp/{$class}.php";
             }
