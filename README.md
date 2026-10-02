@@ -462,6 +462,20 @@ WebSocket client, waits for the page to load, and reads the text out of the live
 Puppeteer, no driver, nothing downloaded — about two hundred lines of PHP, and a machine without
 Chrome is told so rather than failed three layers down.
 
+**MCP servers** are read from `~/.pig/agent/mcp.json` and `<project>/.pig/mcp.json` — pi's file,
+pi's keys — by `extensions/pig-mcp/`, and each server's tools reach the model as
+`mcp__<server>__<tool>`, through the same hooks and permission gate as `bash`. Stdio and
+streamable HTTP, `${VAR}` and `!command` in `env` and `headers`, `/mcp` for status and
+`/mcp reconnect <server>`. `codemode` exposure is a JavaScript sandbox and is not here; a server
+asking for it is declared directly and told so once.
+
+```json
+{ "mcpServers": {
+  "fs": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
+  "github": { "url": "https://api.githubcopilot.com/mcp/", "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" } }
+} }
+```
+
 ## Requirements
 
 PHP >= 8.3 with `ext-json`, `ext-mbstring`, `ext-openssl`, and `ext-pcntl` for the terminal UI.

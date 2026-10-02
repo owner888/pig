@@ -234,6 +234,12 @@ class HookApi
      * @param Closure(): HookContext $context
      * @internal called by `HookRunner::initialize()`
      */
+    /** The working directory the hook was loaded for. */
+    public function cwd(): string
+    {
+        return $this->cwd;
+    }
+
     public function withContext(Closure $context): void
     {
         $this->context = $context;

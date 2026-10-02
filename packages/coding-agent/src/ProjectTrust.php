@@ -40,7 +40,7 @@ final class ProjectTrust
     public const string FILE = 'trust.json';
 
     /** What under `<cwd>/.pig/` turns a directory into a project with something to trust. */
-    public const array RESOURCES = ['settings.json', 'hooks', 'tools', 'extensions', 'skills', 'commands'];
+    public const array RESOURCES = ['settings.json', 'mcp.json', 'hooks', 'tools', 'extensions', 'skills', 'commands'];
 
     /**
      * Whether this directory has anything a trust decision would apply to.

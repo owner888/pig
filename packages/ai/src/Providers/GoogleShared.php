@@ -380,14 +380,50 @@ final class GoogleShared
 
     // ---- the parts of a request ----------------------------------------------------------
 
+    /**
+     * JSON Schema's meta-declarations, which Gemini's `parameters` (an OpenAPI 3.0 schema) refuses
+     * with `Unknown name "$schema"`. Upstream's `JSON_SCHEMA_META_DECLARATIONS`.
+     */
+    private const array SCHEMA_META = ['$schema', '$id', '$anchor', '$dynamicAnchor', '$vocabulary', '$comment', '$defs', 'definitions'];
+
     /** @return array<string, mixed> */
     private static function tool(Tool $tool): array
     {
         return [
             'name' => $tool->name,
             'description' => $tool->description,
-            'parameters' => $tool->parameters,
+            'parameters' => self::sanitizeForOpenApi($tool->parameters),
         ];
+    }
+
+    /**
+     * Strip the meta-declarations, at every depth — upstream's `sanitizeForOpenApi()`.
+     *
+     * No built-in tool carries one, which is how this stayed unported: every MCP server's schema
+     * does (`"$schema": "http://json-schema.org/draft-07/schema#"` is what the TypeScript SDK
+     * emits), and the first one connected made every Gemini request a 400.
+     */
+    public static function sanitizeForOpenApi(mixed $schema): mixed
+    {
+        if (!is_array($schema)) {
+            return $schema;
+        }
+
+        if ($schema !== [] && array_is_list($schema)) {
+            return array_map(self::sanitizeForOpenApi(...), $schema);
+        }
+
+        $result = [];
+
+        foreach ($schema as $key => $value) {
+            if (in_array($key, self::SCHEMA_META, true)) {
+                continue;
+            }
+
+            $result[$key] = self::sanitizeForOpenApi($value);
+        }
+
+        return $result;
     }
 
     /**

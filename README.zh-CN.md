@@ -394,6 +394,19 @@ bin/pig --tools read,bash,edit,write,grep,find,ls
 读出来。没有 Puppeteer、没有 driver、不下载任何东西——大约两百行 PHP；没装 Chrome 的机器会被明确告知，
 而不是在三层之下莫名失败。
 
+**MCP 服务器**由 `extensions/pig-mcp/` 从 `~/.pig/agent/mcp.json` 与 `<project>/.pig/mcp.json`
+读取——文件与键名都是 pi 的，给 pi 写的配置原样可用——每个服务器的工具以 `mcp__<server>__<tool>`
+的名字交给模型，走的是和 `bash` 一样的 hook 与权限门。支持 stdio 与 streamable HTTP，`env` 和
+`headers` 里的 `${VAR}` 与 `!command`，`/mcp` 看状态，`/mcp reconnect <server>` 重连。`codemode`
+曝光方式是一个 JavaScript 沙箱，这里没有；要求它的服务器会被直接声明给模型，并提示一次。
+
+```json
+{ "mcpServers": {
+  "fs": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
+  "github": { "url": "https://api.githubcopilot.com/mcp/", "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" } }
+} }
+```
+
 ## 环境要求
 
 PHP >= 8.3，需要 `ext-json`、`ext-mbstring`、`ext-openssl`，终端 UI 还需要 `ext-pcntl`。

@@ -2716,6 +2716,41 @@ All extensions in pig are pure PHP implementations without Node.js or npm depend
 headless browser or Puppeteer / CDP scraping extensions belong in this extension, preserving core
 agent minimalism.
 
+### MCP servers, and the tool that arrives after startup
+
+`packages/mcp/` is upstream's `pi-mcp` package (`Pig\Mcp`) and `extensions/pig-mcp/` is its
+built-in `mcp` extension, both ported file for file; `docs/mcp.md` upstream is the specification
+for what the config file means. Two things are pig's own and both are consequences of the platform:
+
+- **`codemode` is not ported and cannot be.** Upstream's default exposure runs the model's
+  JavaScript in a sandbox against the server's tools; pig has no sandbox and will not grow one.
+  `McpConfig::here()` maps `codemode`/`codemode-deferred` to `deferred` and the extension says so
+  **once** per session, so a `mcp.json` written for pi loads and works, with every tool declared.
+  Until `tool_search` lands, `deferred` behaves as `direct`.
+- **A tool that arrives after startup needed a door the loader did not have.** `ExtensionLoader`
+  copied `$api->tools()` once; an MCP server's tools exist only once it has connected, in a fiber,
+  later. So `ExtensionApi::registerTool()` notifies after load and `removeTools()` is beside it,
+  `CustomToolSet::adopt()` follows one extension's list, and `onChange()` is what re-sets the
+  agent's tools — in `CodingAgent::session()` and in `InteractiveMode::reload()`, the two places
+  that build the set, with the built-ins and `HookedTool::wrap()` exactly as at startup. That last
+  clause is what makes the permission gate reach an MCP tool, and it was watched doing so.
+
+**And the first real server found a provider bug of its own.** The TypeScript MCP SDK writes
+`"$schema": "http://json-schema.org/draft-07/schema#"` on every tool; Gemini's `parameters` is an
+OpenAPI 3.0 schema and answered `Unknown name "$schema"` for every request — a 400 for the whole
+session from the moment the server connected. Upstream has `sanitizeForOpenApi()` in
+`google-shared.ts` and it had never been ported, because no built-in tool carries a
+meta-declaration. The lesson is the one about fixtures that agree with the code: every tool schema
+in pig's tests was written by pig. Regression test:
+`GoogleTest::testJsonSchemaMetaDeclarationsAreStrippedFromAToolsParameters`.
+
+`McpExtensionTest` drives the whole thing through `ExtensionLoader::load()` with the stdio fixture
+server (`packages/mcp/test/fixtures/stdio-server.php`): session start, the ten-second wait, a
+server that fails, the startup report, a call through the connection, `/mcp`, and shutdown leaving
+the loop idle. Two of its first assertions were guesses that the code refuted — the middle cut's
+byte count and a server with no exposure named reporting `(deferred)` — which is the usual cost of
+asserting before measuring.
+
 Audited difference by difference against `wrapper.ts`, `types.ts` and `loader.ts`. `wrapper.ts` is
 `WrappedCustomTool` line for line, argument order included. What the rest found is one bug — the
 `-p` context, below — and a row of places where pig is stricter with a reason already written

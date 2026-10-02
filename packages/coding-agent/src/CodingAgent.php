@@ -375,6 +375,10 @@ final class CodingAgent
         Timings::mark('customTools');
         $customTools = new CustomToolSet($loadedTools, $toolApi);
 
+        foreach ($loadedExtensions as $ext) {
+            $customTools->adopt($ext);
+        }
+
         $agent = self::create(
             $chosen,
             $cwd,
@@ -389,6 +393,15 @@ final class CodingAgent
             customTools: $customTools,
         );
         Timings::mark('agent');
+
+        // A tool that arrives after startup — an MCP server connecting — reaches the model the
+        // same way the ones at startup did: beside the built-ins, wrapped with the hooks.
+        $customTools->onChange(static function (CustomToolSet $tools) use ($agent, $cwd, $builtIn, $hooks): void {
+            $agent->setTools(HookedTool::wrap(
+                [...ToolSet::create($cwd, $builtIn), ...$tools->agentTools()],
+                $hooks,
+            ));
+        });
 
         $session = new AgentSession($agent, $cwd, $store, $settings, $hooks, $fileCommands, $scope, auth: $auth);
 

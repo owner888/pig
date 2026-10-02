@@ -34,6 +34,9 @@ final class CustomToolSet
 
     private ?Closure $context = null;
 
+    /** Told after the set changed — what re-sets the agent's tools. */
+    private ?Closure $changed = null;
+
     /**
      * @param list<LoadedCustomTool> $tools
      * @param CustomToolApi|null     $api the one the factories were handed, so `withUi()`
@@ -74,6 +77,38 @@ final class CustomToolSet
     public function isEmpty(): bool
     {
         return $this->tools === [];
+    }
+
+    /**
+     * Follow an extension's tools as they change after load.
+     *
+     * The loader copied `$api->tools()` into this set once, at startup. An MCP server's tools
+     * only exist once it has connected, which is later and in a fiber, so the extension's API is
+     * told to call back here, and this set replaces whatever that extension had contributed with
+     * what it offers now — then tells whoever wired `onChange()`, which is the agent.
+     */
+    public function adopt(\Pig\CodingAgent\Extensions\LoadedExtension $extension): void
+    {
+        $extension->api->onToolsChanged(function (\Pig\CodingAgent\Extensions\ExtensionApi $api) use ($extension): void {
+            $this->tools = array_values(array_filter(
+                $this->tools,
+                static fn (LoadedCustomTool $one): bool => $one->resolvedPath !== $extension->resolved,
+            ));
+
+            foreach ($api->tools() as $tool) {
+                $this->tools[] = new LoadedCustomTool($extension->path, $extension->resolved, $tool);
+            }
+
+            if ($this->changed !== null) {
+                ($this->changed)($this);
+            }
+        });
+    }
+
+    /** @param Closure(self): void $listener */
+    public function onChange(Closure $listener): void
+    {
+        $this->changed = $listener;
     }
 
     /** What each tool is called, in load order. @return list<string> */

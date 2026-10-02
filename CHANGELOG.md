@@ -45,12 +45,18 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### New Features
+
+- **MCP servers** — upstream's built-in `mcp` extension, as `extensions/pig-mcp/`. Servers declared in `~/.pig/agent/mcp.json` or `<project>/.pig/mcp.json` (upstream's file and keys, so a `mcp.json` written for pi works unchanged; the project file is gated by `/trust` like every other `.pig/` resource) are connected when a session starts, in the background, and their tools reach the model as `mcp__<server>__<tool>` through the same pipeline as `bash` — so `tool_call` hooks and the permission gate apply to them too. Stdio and streamable HTTP, `${VAR}` and `!command` in `env`/`headers`, `toolExposure` patterns with `hidden`, lazy reconnect on a dropped connection, a 20KB middle truncation with the whole result saved to a file, `/mcp` for status and `/mcp reconnect <server>`. The first prompt waits up to ten seconds for the startup connections. Verified end to end against `@modelcontextprotocol/server-filesystem`. **`codemode` exposure is not ported** — it is a JavaScript sandbox — and a server asking for it is told so once and declared directly; `deferred`, `tool_search`, OAuth, resources and `pig mcp add/remove/list` are the steps after this one.
+
 ### Added
 
+- `ExtensionApi::registerTool()` works after load, and `removeTools()` beside it: the loader used to copy an extension's tools once at startup, which is right for a tool that exists at startup and wrong for one that arrives when a server connects. `CustomToolSet::adopt()` follows an extension's list, and the agent's tool set is rebuilt when it changes.
 - `Pig\Mcp` (`packages/mcp/`), the first half of MCP support — upstream's `pi-mcp` package ported file for file: JSON-RPC 2.0 shapes and error codes, `McpClient` (handshake, paginated `tools/list` / resources, `tools/call`, progress notifications that reset the request timeout, cancellation sent to the server, server-initiated `ping` and `roots/list`), and three transports — in-memory (for tests), stdio (a child on the loop, the spec's three-step shutdown with `Process::killTree()` where upstream uses a process group) and streamable HTTP (JSON or SSE replies, `Mcp-Session-Id`, a standing GET stream reconnected with backoff, `Last-Event-ID` resumption of a cut reply stream, a 401 handed to an `AuthProvider` once). Nothing uses it yet: the extension that reads `mcp.json` is the next step.
 
 ### Fixed
 
+- Gemini refused every request with `Unknown name "$schema"` the moment an MCP server was connected: its `parameters` is an OpenAPI 3.0 schema and the TypeScript MCP SDK puts `$schema` and `$defs` on every tool. Upstream's `sanitizeForOpenApi()` is ported into `GoogleShared` — no built-in tool carries a meta-declaration, which is how it went unported.
 - `Loop::runQueue()`: a throw out of one deferred callback dropped the callbacks queued behind it in the same tick. Found through `McpClient` — the root fiber failing on a timeout and the in-memory transport's deferred `notifications/cancelled` shared a snapshot, and the server never heard the cancellation.
 - `Process::killTree()` moved from `coding-agent`'s `Shell` to `pig/tui` beside the other subprocess primitives, taking the signal as an argument; `Shell::killTree()` delegates.
 

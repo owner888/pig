@@ -24,6 +24,9 @@ final class ExtensionApi extends HookApi
     /** @var list<CustomTool> */
     private array $tools = [];
 
+    /** Told when `tools()` changes after load — see `onToolsChanged()`. */
+    private ?Closure $toolsChanged = null;
+
     public function __construct(
         string $cwd,
         string $path,
@@ -41,7 +44,46 @@ final class ExtensionApi extends HookApi
      */
     public function registerTool(CustomTool $tool): void
     {
+        // A second registration under one name replaces the first, as upstream's does: an MCP
+        // server that reconnects lists its tools again, and the new list is the list.
+        $this->tools = array_values(array_filter($this->tools, static fn (CustomTool $t): bool => $t->name !== $tool->name));
         $this->tools[] = $tool;
+        $this->notifyToolsChanged();
+    }
+
+    /**
+     * Take tools away again — the ones `$which` says yes to. An MCP server that dropped a tool,
+     * or was disabled, has nothing to offer under that name any more.
+     *
+     * @param Closure(CustomTool): bool $which
+     */
+    public function removeTools(Closure $which): void
+    {
+        $before = count($this->tools);
+        $this->tools = array_values(array_filter($this->tools, static fn (CustomTool $t): bool => !$which($t)));
+
+        if (count($this->tools) !== $before) {
+            $this->notifyToolsChanged();
+        }
+    }
+
+    /**
+     * Who is told when the tool list changes after load. The loader reads `tools()` once at
+     * startup; a tool that arrives later — an MCP server connecting — has to reach the agent by
+     * another door, and this is it. `CustomToolSet::adopt()` is what sets it.
+     *
+     * @internal
+     */
+    public function onToolsChanged(Closure $listener): void
+    {
+        $this->toolsChanged = $listener;
+    }
+
+    private function notifyToolsChanged(): void
+    {
+        if ($this->toolsChanged !== null) {
+            ($this->toolsChanged)($this);
+        }
     }
 
     /**

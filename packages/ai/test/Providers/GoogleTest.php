@@ -390,6 +390,33 @@ final class GoogleTest extends TestCase
         $this->assertSame('model', $this->server->receivedJson()['contents'][1]['role']);
     }
 
+    public function testJsonSchemaMetaDeclarationsAreStrippedFromAToolsParameters(): void
+    {
+        // What the TypeScript MCP SDK emits for every tool: `$schema` at the top and `$defs`
+        // underneath. Gemini's `parameters` is an OpenAPI 3.0 schema and answers
+        // `Unknown name "$schema"` — a 400 for every request, from the moment one MCP server
+        // connected. No built-in tool carries one, which is how upstream's `sanitizeForOpenApi`
+        // stayed unported until then.
+        $context = new Context([new UserMessage('hi')], tools: [new Tool('read_text_file', 'Read a file', [
+            '$schema' => 'http://json-schema.org/draft-07/schema#',
+            'type' => 'object',
+            'properties' => ['path' => ['type' => 'string', '$comment' => 'absolute'], 'opts' => ['$ref' => '#/$defs/opts']],
+            '$defs' => ['opts' => ['type' => 'object']],
+            'required' => ['path'],
+            'additionalProperties' => false,
+        ])]);
+
+        $this->send($context);
+
+        $declared = $this->server->receivedJson()['tools'][0]['functionDeclarations'][0]['parameters'];
+
+        $this->assertArrayNotHasKey('$schema', $declared);
+        $this->assertArrayNotHasKey('$defs', $declared);
+        $this->assertArrayNotHasKey('$comment', $declared['properties']['path'], 'at every depth');
+        $this->assertSame(['path'], $declared['required'], 'everything else stays');
+        $this->assertFalse($declared['additionalProperties']);
+    }
+
     public function testConsecutiveToolResultsAreMergedIntoOneTurn(): void
     {
         $context = new Context([

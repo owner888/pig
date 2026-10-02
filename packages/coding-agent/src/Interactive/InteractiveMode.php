@@ -2379,6 +2379,17 @@ final class InteractiveMode
         $customTools = new CustomToolSet($allCustomTools, $toolApi);
         $this->customTools = $customTools;
         $customTools->withUi($this->ui);
+
+        foreach ($loadedExtensions as $ext) {
+            $customTools->adopt($ext);
+        }
+
+        $customTools->onChange(function (CustomToolSet $tools) use ($hooks): void {
+            $this->session->agent->setTools(HookedTool::wrap(
+                [...ToolSet::create($this->cwd, $this->builtInTools), ...$tools->agentTools()],
+                $hooks,
+            ));
+        });
         $customTools->withContext(fn () => $hooks->context());
 
         // 7. Update agent tools & system prompt
