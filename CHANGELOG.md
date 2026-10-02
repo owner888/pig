@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- **`/mcp` is a manager now, where there is a terminal** — upstream's `McpManagerView`: a list of servers that redraws by itself as they connect (the ones needing attention first), and per server its transport, state and error, the tools it offers with their exposure, Reconnect, Exposure (saved to the `mcp.json` it came from; switching to `deferred` moves the declared tools behind `tool_search` at once) and Enable/Disable (saved too, and the connection closed or opened). Without a terminal it prints the status as before.
+- **`pig mcp add | remove | list`** — upstream's `extensions/mcp/cli.js`: `add <server> [--env K=V] [--cwd dir] [--exposure mode] -- <command> [args]`, `add <server> --url <url> [--header K=V] [--bearer-token-env-var NAME]`, `-l` for the project file (which says so when the project is not yet trusted), `remove` naming the other scope when the server is defined there, and `list [--json]` that connects to every enabled server and exits 1 if one failed. Verified against GitHub's streamable-HTTP endpoint (46 tools) and `server-filesystem`.
+
+### Fixed
+
+- A server whose exposure changed from `direct` to `deferred` kept its already-declared tools declared: `registerTools()` compared the new list against the names it *owned* rather than the names it had *declared*, so nothing was taken away.
+
 ## [0.2.12] - 2026-10-02
 
 ### New Features

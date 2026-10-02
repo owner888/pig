@@ -328,9 +328,9 @@ final class McpExtensionTest extends TestCase
         // `/mcp` names both, with the failure's first line.
         $command = $ext->api->commands()['mcp'] ?? null;
         $this->assertNotNull($command);
-        Async::run(function () use ($command, &$said, $ui): void {
-            $ctx = new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true);
-            ($command->handler)('', $ctx);
+        // No terminal: `/mcp` prints the status rather than opening the manager.
+        Async::run(function () use ($command, $ui): void {
+            ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: false));
         });
         $status = end($ui->notices);
         $this->assertStringContainsString('fixture: connected, 1 tools (direct)', $status);
@@ -372,7 +372,7 @@ final class McpExtensionTest extends TestCase
 
         // `/mcp` says how many are waiting.
         $command = $this->extension->api->commands()['mcp'];
-        Async::run(fn () => ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true)));
+        Async::run(fn () => ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: false)));
         $this->assertStringContainsString('fixture: connected, 1 tools (1 waiting for tool_search) (deferred)', end($ui->notices));
 
         // A query that matches nothing loads nothing.
@@ -419,6 +419,158 @@ final class McpExtensionTest extends TestCase
         Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
     }
 
+    // ---- the manager ----------------------------------------------------------------------------
+
+    public function testTheManagerListsServersAndDisablingOneWritesTheFileAndTakesItsToolsAway(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'direct'],
+            'broken' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer(), '--exit-on', 'initialize']],
+        ]]));
+
+        [$set, $hooks] = $this->start();
+        [$terminal, $tui, $ui] = $this->terminal();
+        $this->assertSame(['mcp__fixture__echo'], $set->names());
+
+        $command = $this->extension->api->commands()['mcp'];
+        $ctx = new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true);
+        $open = Async::spawn(static fn () => ($command->handler)('', $ctx));
+        $this->turn();
+
+        // The list: the failed server first, because it needs the user, and every row says its state.
+        $screen = $this->screenOf($tui);
+        $this->assertStringContainsString('MCP servers', $screen);
+        $this->assertMatchesRegularExpression('/broken.*failed: MCP connection closed.*deferred.*global/', $screen);
+        $this->assertMatchesRegularExpression('/fixture.*connected · 1 tool · direct · global/', $screen);
+        $this->assertLessThan(strpos($screen, 'fixture'), strpos($screen, 'broken'), 'the one that needs attention first');
+
+        // Down to `fixture`, Enter: its menu — the transport, the state, and the actions.
+        $terminal->type("\e[B");
+        $terminal->type("\r");
+        $this->turn();
+        $screen = $this->screenOf($tui);
+        $this->assertStringContainsString('MCP server fixture', $screen);
+        $this->assertStringContainsString(self::fixtureServer(), $screen);
+        $this->assertStringContainsString('State: connected · 1 tool', $screen);
+        $this->assertMatchesRegularExpression('/Tools\s+1 offered/', $screen);
+        $this->assertMatchesRegularExpression('/Disable\s+saved to the global mcp.json/', $screen);
+
+        // Tools: the one tool, with its name.
+        $terminal->type("\r");
+        $this->turn();
+        $screen = $this->screenOf($tui);
+        $this->assertStringContainsString('Tools of fixture', $screen);
+        $this->assertStringContainsString('Exposure direct: declared to the model like built-in tools', $screen);
+        $this->assertStringContainsString('echo', $screen);
+        $terminal->type("\e");
+        $this->turn();
+
+        // Down to Disable (Tools, Reconnect, Exposure, Disable), Enter.
+        $terminal->type("\e[B");
+        $terminal->type("\e[B");
+        $terminal->type("\e[B");
+        $terminal->type("\r");
+        $this->until(fn (): bool => str_contains($this->screenOf($tui), 'State: disabled'));
+
+        $this->assertSame([], $set->names(), 'its tool is gone from the agent');
+        $this->assertFalse(json_decode((string) file_get_contents($this->home . '/mcp.json'), true)['mcpServers']['fixture']['enabled'], 'and the file says so');
+        $screen = $this->screenOf($tui);
+        $this->assertStringContainsString('State: disabled', $screen);
+        $this->assertMatchesRegularExpression('/Enable\s+saved to the global mcp.json/', $screen, 'the menu offers the way back');
+
+        // Enable again: the connection comes back and so does the tool.
+        $terminal->type("\r");
+        // The tool is back the moment the connection is, which is *before* the menu is redrawn —
+        // a key typed in that window lands on the status screen, which takes none. Wait for the menu.
+        $this->until(fn (): bool => str_contains($this->screenOf($tui), 'State: connected'));
+        $this->assertSame(['mcp__fixture__echo'], $set->names());
+        $this->assertArrayNotHasKey('enabled', json_decode((string) file_get_contents($this->home . '/mcp.json'), true)['mcpServers']['fixture'], 'the default is not written out');
+
+        // Esc back to the list, Esc closes the manager.
+        $terminal->type("\e");
+        $this->turn();
+        $this->assertStringContainsString('MCP servers', $this->screenOf($tui));
+        $terminal->type("\e");
+        $this->turn();
+        $this->assertTrue($open->isComplete(), 'the command returned');
+        $this->assertStringNotContainsString('MCP servers', $this->screenOf($tui), 'and the overlay is empty');
+
+        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
+    public function testChangingTheExposureInTheManagerIsSavedAndReRegistersTheTools(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'direct'],
+        ]]));
+
+        [$set, $hooks] = $this->start();
+        [$terminal, $tui, $ui] = $this->terminal();
+        $this->assertSame(['mcp__fixture__echo'], $set->names());
+
+        $command = $this->extension->api->commands()['mcp'];
+        Async::spawn(static fn () => ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true)));
+        $this->turn();
+        $terminal->type("\r");                 // fixture
+        $this->turn();
+        $terminal->type("\e[B");               // Tools → Reconnect
+        $terminal->type("\e[B");               // → Exposure
+        $terminal->type("\r");
+        $this->turn();
+
+        $screen = $this->screenOf($tui);
+        $this->assertStringContainsString('Exposure of fixture', $screen);
+        $this->assertStringContainsString('✓ direct', $screen);
+
+        // Up from `direct` is `deferred`.
+        $terminal->type("\e[A");
+        $terminal->type("\r");
+        $this->turn();
+
+        $this->assertSame('deferred', json_decode((string) file_get_contents($this->home . '/mcp.json'), true)['mcpServers']['fixture']['exposure']);
+        $this->assertSame(['tool_search'], $set->names(), 'the tool went behind tool_search; the one that was declared is gone');
+        $this->assertStringContainsString('Exposure', $this->screenOf($tui));
+
+        $terminal->type("\e");
+        $terminal->type("\e");
+        $this->turn();
+        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
+    public function testTheListRedrawsWhileAServerIsStillConnecting(): void
+    {
+        // A server that sleeps before reading anything: the manager is opened before it is connected
+        // and its row has to change from `connecting…` to `connected` without anybody pressing a key.
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'slow' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer(), '--slow-start'], 'exposure' => 'direct'],
+        ]]));
+
+        $repo = dirname(__DIR__, 4);
+        [$loaded] = ExtensionLoader::load($this->cwd, cliPaths: [$repo . '/extensions/pig-mcp/index.php'], home: $this->home);
+        $this->extension = $loaded[0];
+        $set = new CustomToolSet([]);
+        $set->adopt($this->extension);
+        $hooks = new HookRunner([new LoadedHook($this->extension->path, $this->extension->resolved, $this->extension->api)], $this->cwd);
+        [$terminal, $tui, $ui] = $this->terminal();
+        $hooks->initialize(static fn () => null, ui: $ui);
+
+        Async::spawn(fn () => $hooks->emit(new SessionStartEvent()));
+        $this->turn(3);
+
+        $command = $this->extension->api->commands()['mcp'];
+        Async::spawn(static fn () => ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true)));
+        $this->turn(3);
+        $this->assertMatchesRegularExpression('/slow.*(connecting…|starting)/', $this->screenOf($tui));
+
+        $this->until(fn (): bool => str_contains($this->screenOf($tui), 'connected'));
+
+        $this->assertMatchesRegularExpression('/slow.*connected · 1 tool/', $this->screenOf($tui), 'the row changed by itself');
+
+        $terminal->type("\e");
+        $this->turn();
+        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
     // ---- the ranker -----------------------------------------------------------------------------
 
     public function testTokenizingSplitsCamelCaseDropsStopWordsAndSingularises(): void
@@ -460,6 +612,68 @@ final class McpExtensionTest extends TestCase
     }
 
     // ---- harness --------------------------------------------------------------------------------
+
+    /**
+     * A terminal UI over a fake terminal, started, so what is typed reaches the overlay.
+     *
+     * @return array{\Pig\Tui\Test\FakeTerminal, \Pig\Tui\Tui, \Pig\CodingAgent\Interactive\TerminalUi}
+     */
+    private function terminal(): array
+    {
+        $palette = \Pig\CodingAgent\Theme\Palette::dark(true);
+        $terminal = new \Pig\Tui\Test\FakeTerminal(100, 30);
+        $tui = new \Pig\Tui\Tui($terminal);
+        $chat = new \Pig\Tui\Container();
+        $overlay = new \Pig\Tui\Container();
+        $editor = new \Pig\CodingAgent\Interactive\CustomEditor(new \Pig\Tui\Components\Editor($palette->editorTheme()));
+        $tui->addChild($chat);
+        $tui->addChild($overlay);
+        $tui->addChild($editor);
+        $tui->setFocus($editor);
+
+        $ui = new \Pig\CodingAgent\Interactive\TerminalUi(
+            $tui,
+            $chat,
+            $overlay,
+            $editor,
+            new \Pig\CodingAgent\Interactive\FooterComponent(
+                new \Pig\CodingAgent\Session\AgentSession(new \Pig\Agent\Agent(new \Pig\Agent\AgentOptions()), sys_get_temp_dir()),
+                $palette,
+                sys_get_temp_dir(),
+            ),
+            static fn (): \Pig\CodingAgent\Theme\Palette => $palette,
+        );
+        $tui->start();
+
+        return [$terminal, $tui, $ui];
+    }
+
+    private function screenOf(\Pig\Tui\Tui $tui): string
+    {
+        return implode("\n", array_map(\Pig\Tui\Ansi::strip(...), $tui->render(100)));
+    }
+
+    /** Turn the loop until `$done` says so, or five seconds — the subprocess steps take real time. */
+    private function until(\Closure $done): void
+    {
+        $deadline = microtime(true) + 5;
+
+        while (microtime(true) < $deadline && !$done()) {
+            Loop::get()->delay(0.02, static fn () => null);
+            Loop::get()->tick();
+        }
+
+        $this->assertTrue($done(), 'what was waited for did not happen within five seconds');
+    }
+
+    /** Turn the loop a few times so keys and spawned work land, without waiting for it to go idle. */
+    private function turn(int $ticks = 6): void
+    {
+        for ($tick = 0; $tick < $ticks; $tick++) {
+            Loop::get()->delay(0.0, static fn () => null);
+            Loop::get()->tick();
+        }
+    }
 
     private \Pig\CodingAgent\Extensions\LoadedExtension $extension;
 

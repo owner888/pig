@@ -13,6 +13,7 @@ use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\Version;
 use PigMcp\McpConfig;
+use PigMcp\McpManagerView;
 use PigMcp\McpTools;
 use PigMcp\ServerConnection;
 use PigMcp\ServerEntry;
@@ -20,7 +21,7 @@ use PigMcp\ToolSearch;
 
 // Class files beside the entry, guarded by class and not by `require_once`: the same class can
 // live at two paths (a global copy and the repository's), and `require_once` dedups by path.
-foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'ToolSearch'] as $class) {
+foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'ToolSearch', 'McpManagerView'] as $class) {
     if (!class_exists("PigMcp\\{$class}", false)) {
         require __DIR__ . "/{$class}.php";
     }
@@ -44,8 +45,11 @@ foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'ToolSearc
  * the model from the next call. `codemode` and `codemode-deferred` are read as `deferred`, since
  * pig has no sandbox; the mapping is said once.
  *
- * Not here yet, each its own step: OAuth sign-in (`/mcp login`), resources, the `/mcp` manager
- * screen, `pig mcp add/remove/list`, the server log.
+ * `/mcp` with a terminal opens the manager: a list of servers that redraws as they connect, and
+ * per server the tools, reconnect, exposure and enable/disable — the last two written back to the
+ * `mcp.json` the server came from. Without a terminal it prints the status.
+ *
+ * Not here yet, each its own step: OAuth sign-in (`/mcp login`), resources, the server log.
  */
 return static function (ExtensionApi $pi): void {
     $startupWait = 10.0;
@@ -167,6 +171,8 @@ return static function (ExtensionApi $pi): void {
     $registerTools = static function (ServerConnection $connection) use ($pi, &$toolOwners, &$serverTools, &$deferred, &$loaded, &$syncToolSearch): void {
         $server = $connection->name();
         $current = [];
+        /** @var list<string> the names actually declared this pass — a deferred one is owned and not declared */
+        $declared = [];
 
         // Whatever this server deferred last time is re-read from its new list below.
         foreach ($deferred as $name => $one) {
@@ -199,11 +205,13 @@ return static function (ExtensionApi $pi): void {
                 continue;
             }
 
+            $declared[] = $name;
             $pi->registerTool(McpTools::define($server, $tool, $name, $connection));
         }
 
-        // Tools the server dropped are taken away; when it offers them again they come back above.
-        $gone = array_diff($serverTools[$server] ?? [], $current);
+        // Tools the server dropped are taken away, and so is one that was declared last time and
+        // is deferred now (the exposure changed under it); when it is offered again it comes back above.
+        $gone = array_diff($serverTools[$server] ?? [], $declared);
 
         if ($gone !== []) {
             $pi->removeTools(static fn ($tool): bool => in_array($tool->name, $gone, true));
@@ -251,16 +259,101 @@ return static function (ExtensionApi $pi): void {
         $ctx->ui->notify("MCP servers need attention:\n" . implode("\n", array_map(static fn (string $l): string => "  {$l}", $lines)) . "\nRun /mcp to see.", 'warning');
     };
 
-    $createConnection = static function (ServerEntry $entry) use (&$connections, $cwd, $registerTools): ServerConnection {
+    /** @var array<int, \Closure(): void> who to tell when a server's state changes — the manager's menus */
+    $watchers = [];
+    $emitChange = static function () use (&$watchers): void {
+        foreach ($watchers as $watcher) {
+            $watcher();
+        }
+    };
+    /** @return \Closure(): void that stops the watching */
+    $subscribe = static function (\Closure $watcher) use (&$watchers): Closure {
+        static $next = 0;
+        $id = $next++;
+        $watchers[$id] = $watcher;
+
+        return static function () use (&$watchers, $id): void {
+            unset($watchers[$id]);
+        };
+    };
+
+    $createConnection = static function (ServerEntry $entry) use (&$connections, $cwd, $registerTools, $emitChange): ServerConnection {
         $connection = new ServerConnection(
             $entry,
             $cwd,
             Version::current(),
             onTools: $registerTools,
+            onChange: static fn () => $emitChange(),
         );
         $connections[$entry->name] = $connection;
 
         return $connection;
+    };
+
+    /** Write a change to the file the server came from, and to the entry in hand. */
+    $saveConfig = static function (ServerEntry $entry, array $patch): ?string {
+        try {
+            McpConfig::update($entry->source, $entry->name, $patch);
+        } catch (\Throwable $error) {
+            return "Could not update {$entry->source}: {$error->getMessage()}";
+        }
+
+        foreach ($patch as $key => $value) {
+            $entry->config[$key] = $value;
+        }
+
+        return null;
+    };
+
+    $setEnabled = static function (ServerEntry $entry, bool $enabled) use ($saveConfig, &$connections, $hideTools, $createConnection, $emitChange): ?string {
+        $failed = $saveConfig($entry, ['enabled' => $enabled]);
+
+        if ($failed !== null) {
+            return $failed;
+        }
+
+        if (!$enabled) {
+            $connection = $connections[$entry->name] ?? null;
+            unset($connections[$entry->name]);
+            $hideTools($entry->name);
+            $emitChange();
+
+            try {
+                $connection?->close();
+            } catch (\Throwable) {
+                // Disabled is disabled, however the connection went.
+            }
+
+            return null;
+        }
+
+        $connection = $createConnection($entry);
+
+        try {
+            $connection->client();
+        } catch (\Throwable) {
+            // The failure is the connection's state.
+        }
+
+        return null;
+    };
+
+    $setExposure = static function (ServerEntry $entry, string $exposure) use ($saveConfig, &$connections, $registerTools, $emitChange): ?string {
+        $failed = $saveConfig($entry, ['exposure' => $exposure]);
+
+        if ($failed !== null) {
+            return $failed;
+        }
+
+        $connection = $connections[$entry->name] ?? null;
+
+        if ($connection?->state === 'connected') {
+            $registerTools($connection);
+        }
+
+        $emitChange();
+
+        return null;
     };
 
     $formatStatus = static function () use (&$entries, &$connections, &$configErrors, &$deferred, $describeState): string {
@@ -400,15 +493,250 @@ return static function (ExtensionApi $pi): void {
         }
     });
 
+    // ---- the manager (`/mcp` in the terminal) ------------------------------------------------
+
+    $exposureDescriptions = [
+        'codemode' => 'read as deferred — pig has no codemode sandbox',
+        'codemode-deferred' => 'read as deferred — pig has no codemode sandbox',
+        'deferred' => 'not declared until tool_search loads them, then called directly',
+        'direct' => 'declared to the model like built-in tools',
+    ];
+
+    $findEntry = static function (string $name) use (&$entries): ?ServerEntry {
+        foreach ($entries as $entry) {
+            if ($entry->name === $name) {
+                return $entry;
+            }
+        }
+
+        return null;
+    };
+
+    /** Servers that need the user first. */
+    $attentionRank = static function (ServerEntry $entry, ?ServerConnection $connection): int {
+        if (!$entry->isEnabled()) {
+            return 5;
+        }
+
+        return match ($connection?->state) {
+            'needs-auth' => 0,
+            'failed' => 1,
+            'disconnected' => 2,
+            'connected' => 4,
+            default => 3,
+        };
+    };
+
+    /** @var array<string, string> a message about the last action on a server, shown in its menu */
+    $messages = [];
+
+    $serversMenu = static function () use (&$entries, &$connections, &$configErrors, $describeState, $attentionRank): array {
+        $sorted = $entries;
+        usort($sorted, static fn (ServerEntry $a, ServerEntry $b): int =>
+            $attentionRank($a, $connections[$a->name] ?? null) <=> $attentionRank($b, $connections[$b->name] ?? null)
+            ?: strcmp($a->name, $b->name));
+
+        $items = [];
+
+        foreach ($sorted as $entry) {
+            $items[] = new \Pig\Tui\Components\SelectItem(
+                $entry->name,
+                $entry->name,
+                $describeState($entry, $connections[$entry->name] ?? null) . ' · ' . McpConfig::here($entry->exposure()) . ' · ' . $entry->scope,
+            );
+        }
+
+        $notices = array_map(static fn (string $e): string => "config: {$e}", $configErrors);
+
+        return [
+            'title' => 'MCP servers',
+            'error' => $notices === [] ? null : implode("\n", $notices),
+            'items' => $items,
+            'empty' => 'No MCP servers configured. Add them to ' . Config::home() . '/mcp.json or .pig/mcp.json.',
+            'confirmLabel' => 'manage',
+            'cancelLabel' => 'close',
+        ];
+    };
+
+    $serverMenu = static function (string $name) use ($findEntry, &$connections, &$messages, $describeState): array {
+        $entry = $findEntry($name);
+
+        if ($entry === null) {
+            return ['title' => $name, 'items' => [], 'empty' => 'This server is no longer configured.', 'confirmLabel' => '', 'cancelLabel' => 'back'];
+        }
+
+        $connection = $connections[$name] ?? null;
+        $saved = "saved to the {$entry->scope} mcp.json";
+        $items = [];
+        $item = static fn (string $value, string $label, ?string $description = null) => new \Pig\Tui\Components\SelectItem($value, $label, $description);
+
+        if (!$entry->isEnabled()) {
+            $items[] = $item('enable', 'Enable', $saved);
+        } else {
+            $state = $connection?->state;
+
+            if ($state === 'connected' && $connection !== null) {
+                $items[] = $item('tools', 'Tools', count($connection->tools) . ' offered');
+            }
+
+            if (in_array($state, ['failed', 'disconnected', 'connected', 'needs-auth'], true)) {
+                $items[] = $item('reconnect', 'Reconnect');
+            }
+
+            $items[] = $item('exposure', 'Exposure', McpConfig::here($entry->exposure()));
+            $items[] = $item('disable', 'Disable', $saved);
+        }
+
+        $details = [$entry->describeTransport(), "{$entry->scope}: {$entry->source}", 'State: ' . $describeState($entry, $connection, false)];
+        $error = array_filter([$messages[$name] ?? null, $connection?->state === 'connected' ? null : $connection?->error], static fn (?string $l): bool => $l !== null);
+
+        return [
+            'title' => "MCP server {$name}",
+            'details' => implode("\n", $details),
+            'error' => $error === [] ? null : implode("\n", $error),
+            'items' => $items,
+            'selected' => $items[0]?->value,
+            'confirmLabel' => 'select',
+            'cancelLabel' => 'back',
+        ];
+    };
+
+    $showTools = static function (McpManagerView $ui, ServerEntry $entry) use (&$connections, $exposureDescriptions): void {
+        $exposure = McpConfig::here($entry->exposure());
+        $overridden = ($entry->config['toolExposure'] ?? []) !== [];
+        $ui->menu(static function () use ($entry, &$connections, $exposure, $overridden, $exposureDescriptions): array {
+            $items = [];
+
+            foreach ($connections[$entry->name]?->tools ?? [] as $tool) {
+                $toolExposure = McpConfig::here(McpConfig::toolExposure($entry->config, (string) $tool['name']));
+                $description = trim((string) strtok((string) ($tool['description'] ?? ''), "\n"));
+                $items[] = new \Pig\Tui\Components\SelectItem((string) $tool['name'], (string) $tool['name'], $toolExposure === $exposure ? ($description === '' ? null : $description) : "[{$toolExposure}] {$description}");
+            }
+
+            return [
+                'title' => "Tools of {$entry->name}",
+                'details' => "Exposure {$exposure}: " . ($exposure === 'hidden' ? 'unreachable' : $exposureDescriptions[$exposure]) . ($overridden ? "\nSome tools override it with toolExposure." : ''),
+                'items' => $items,
+                'empty' => 'The server offers no tools.',
+                'confirmLabel' => 'back',
+                'cancelLabel' => 'back',
+            ];
+        });
+    };
+
+    $chooseExposure = static function (McpManagerView $ui, ServerEntry $entry) use ($exposureDescriptions, $setExposure): ?string {
+        $current = $entry->exposure();
+        $choice = $ui->menu(static function () use ($entry, $current, $exposureDescriptions): array {
+            $items = [];
+
+            foreach ($exposureDescriptions as $exposure => $description) {
+                $items[] = new \Pig\Tui\Components\SelectItem($exposure, ($exposure === $current ? '✓ ' : '  ') . $exposure, $description);
+            }
+
+            return [
+                'title' => "Exposure of {$entry->name}",
+                'details' => "Saved to {$entry->source}.",
+                'items' => $items,
+                'selected' => $current,
+                'confirmLabel' => 'save',
+                'cancelLabel' => 'back',
+            ];
+        });
+
+        if ($choice === null || $choice === $current) {
+            return null;
+        }
+
+        return $setExposure($entry, $choice);
+    };
+
+    $runAction = static function (McpManagerView $ui, ServerEntry $entry, string $action) use (&$connections, &$messages, $showTools, $chooseExposure, $setEnabled, $emitChange): void {
+        $name = $entry->name;
+        $message = null;
+
+        switch ($action) {
+            case 'reconnect':
+                $ui->status("MCP server {$name}", 'Reconnecting…');
+
+                try {
+                    $connections[$name]?->reconnect();
+                } catch (\Throwable) {
+                    // A failure shows as the connection's state and error.
+                }
+
+                break;
+            case 'tools':
+                $showTools($ui, $entry);
+                break;
+            case 'exposure':
+                $message = $chooseExposure($ui, $entry);
+                break;
+            case 'enable':
+            case 'disable':
+                $ui->status("MCP server {$name}", $action === 'enable' ? 'Connecting…' : 'Disconnecting…');
+                $message = $setEnabled($entry, $action === 'enable');
+                break;
+        }
+
+        if ($message === null) {
+            unset($messages[$name]);
+        } else {
+            $messages[$name] = $message;
+        }
+
+        $emitChange();
+    };
+
+    $manage = static function (McpManagerView $ui) use ($serversMenu, $serverMenu, $findEntry, $runAction, $subscribe): void {
+        while (true) {
+            $name = $ui->menu($serversMenu, $subscribe);
+
+            if ($name === null) {
+                return;
+            }
+
+            while (true) {
+                $action = $ui->menu(static fn (): array => $serverMenu($name), $subscribe);
+                $entry = $findEntry($name);
+
+                if ($action === null || $entry === null) {
+                    break;
+                }
+
+                $runAction($ui, $entry, $action);
+            }
+        }
+    };
+
     $pi->registerCommand(
         'mcp',
-        static function (string $args, HookContext $ctx) use (&$entries, &$connections, $formatStatus, $describeState, $hideTools): void {
+        static function (string $args, HookContext $ctx) use (&$entries, &$connections, $formatStatus, $describeState, $manage): void {
             $parts = preg_split('/\s+/', trim($args), -1, PREG_SPLIT_NO_EMPTY) ?: [];
             $action = $parts[0] ?? null;
             $name = $parts[1] ?? null;
 
             if ($action === null) {
-                $ctx->ui->notify($formatStatus(), 'info');
+                if (!$ctx->hasUi) {
+                    $ctx->ui->notify($formatStatus(), 'info');
+
+                    return;
+                }
+
+                $ctx->ui->custom(static function (\Pig\Tui\Tui $tui, \Pig\CodingAgent\Theme\Palette $palette, \Closure $done) use ($manage, $ctx): McpManagerView {
+                    $view = new McpManagerView($tui, $palette);
+
+                    Async::spawn(static function () use ($manage, $view, $done, $ctx): void {
+                        try {
+                            $manage($view);
+                        } catch (\Throwable $error) {
+                            $ctx->ui->notify($error->getMessage(), 'error');
+                        }
+
+                        $done();
+                    });
+
+                    return $view;
+                });
 
                 return;
             }
@@ -450,6 +778,6 @@ return static function (ExtensionApi $pi): void {
                 $ctx->ui->notify($error->getMessage(), 'error');
             }
         },
-        'Show MCP servers, or reconnect one: /mcp, /mcp reconnect <server>',
+        'Manage MCP servers: tools, reconnect, enable or disable, exposure — /mcp, /mcp reconnect <server>',
     );
 };

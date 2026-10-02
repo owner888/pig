@@ -104,6 +104,13 @@ if (($argv[1] ?? '') === 'update') {
     exit($updater->run(array_slice($argv, 2)));
 }
 
+// `pig mcp …` is the MCP extension's own CLI, as upstream's is: the file lives beside the
+// extension rather than in a package, because what it reads and writes is the extension's.
+if (($argv[1] ?? '') === 'mcp') {
+    require __DIR__ . '/../extensions/pig-mcp/McpCli.php';
+    exit(\PigMcp\McpCli::main(array_slice($argv, 2), getcwd() ?: '.'));
+}
+
 $arguments = Arguments::parse(array_slice($argv, 1));
 $options = $arguments->options;
 Timings::mark('parseArgs');
@@ -120,6 +127,7 @@ if (isset($options['help'])) {
 
     Commands:
       update            update pig to the latest version
+      mcp               add, remove and check MCP servers (pig mcp --help)
 
     Options:
       --model <id>      which model to talk to (default: claude-sonnet-4-5).

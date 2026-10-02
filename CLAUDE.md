@@ -2761,6 +2761,22 @@ meta-declaration. The lesson is the one about fixtures that agree with the code:
 in pig's tests was written by pig. Regression test:
 `GoogleTest::testJsonSchemaMetaDeclarationsAreStrippedFromAToolsParameters`.
 
+**The manager is one component whose contents are swapped**, and its `menu()` parks the caller on
+a `Deferred` the way every hook dialog does — which is what lets `$manage` read as upstream's loop
+over menus (`for (;;) { name = await ui.menu(servers); for (;;) { action = await ui.menu(server) } }`)
+with no state machine. A menu rebuilds in place when a server's state changes: `ServerConnection`'s
+`onChange` fans out to whoever `subscribe()`d, and `menu()` keeps the selection where it was so a row
+changing under the cursor does not move it. Two things found by driving it through a `FakeTerminal`:
+the tool is back *before* the menu is redrawn when a server is re-enabled, so a key typed in that
+window lands on a status screen that takes none (the test waits for the menu, not the tool); and
+`registerTools()` diffed against the names it owned rather than the names it had declared, so
+switching a connected server to `deferred` left its tools on the model — the Fixed entry above.
+
+`pig mcp` is `McpCli`, beside the extension and required by `bin/pig` from there, because what it
+reads and writes is the extension's file and nothing in a package knows the shape. Its tests found
+the final-method trap again — `private function run()` in a test class, two entries below this
+one — which is worth the sentence: *the sweep in the shim refuses it now, and I wrote it anyway.*
+
 `McpExtensionTest` drives the whole thing through `ExtensionLoader::load()` with the stdio fixture
 server (`packages/mcp/test/fixtures/stdio-server.php`): session start, the ten-second wait, a
 server that fails, the startup report, a call through the connection, `/mcp`, a deferred tool
