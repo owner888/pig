@@ -143,78 +143,12 @@ final class Shell
     }
 
     /**
-     * Kill a command and everything it started.
-     *
-     * Killing the shell alone is not enough. `npm test` is the shell's child and the
-     * test runner is its grandchild; kill the shell and the runner keeps going, holding
-     * the port it bound and writing to a terminal that has moved on.
-     *
-     * The tree is walked from `ps` rather than by putting the command in its own process
-     * group — PHP cannot do that without forking by hand, and macOS has no `setsid`.
-     * Children are killed before their parents, so nothing gets a chance to start more.
+     * Kill a command and everything it started — `Process::killTree()`, which is where the
+     * primitive lives now that `Pig\Mcp` needs it for a stdio server's children too. Kept here
+     * so the two callers in this package read as they always did.
      */
     public static function killTree(int $pid): void
     {
-        foreach (array_reverse(self::descendants($pid)) as $child) {
-            self::kill($child);
-        }
-
-        self::kill($pid);
-    }
-
-    /**
-     * Every process below $pid, parents before children.
-     *
-     * @return list<int>
-     */
-    private static function descendants(int $pid): array
-    {
-        $children = self::childrenByParent();
-        $found = [];
-        $queue = [$pid];
-
-        while ($queue !== []) {
-            $current = array_shift($queue);
-
-            foreach ($children[$current] ?? [] as $child) {
-                $found[] = $child;
-                $queue[] = $child;
-            }
-        }
-
-        return $found;
-    }
-
-    /** @return array<int, list<int>> */
-    private static function childrenByParent(): array
-    {
-        // One `ps` for the whole tree: asking per process would be a fork per node, and
-        // this runs when someone has just pressed Escape and is waiting.
-        $output = Process::capture(['ps', '-eo', 'pid=,ppid='], 2.0);
-
-        if ($output === null) {
-            return [];
-        }
-
-        $children = [];
-
-        foreach (explode("\n", $output) as $line) {
-            if (preg_match('/^\s*(\d+)\s+(\d+)\s*$/', $line, $match) === 1) {
-                $children[(int) $match[2]][] = (int) $match[1];
-            }
-        }
-
-        return $children;
-    }
-
-    private static function kill(int $pid): void
-    {
-        if (function_exists('posix_kill')) {
-            posix_kill($pid, 9);
-
-            return;
-        }
-
-        Process::capture(['kill', '-9', (string) $pid], 2.0);
+        Process::killTree($pid);
     }
 }

@@ -34,6 +34,83 @@ final class Process
     private const int READ_CHUNK = 65536;
 
     /**
+     * Kill a command and everything it started.
+     *
+     * Killing the shell alone is not enough. `npm test` is the shell's child and the test runner
+     * is its grandchild; kill the shell and the runner keeps going, holding the port it bound and
+     * writing to a terminal that has moved on. Upstream's stdio MCP transport has the same problem
+     * with `npx` and `uvx` wrappers and solves it with a process group; PHP cannot make one
+     * through `proc_open`, and macOS has no `setsid`, so the tree is walked from `ps` instead.
+     *
+     * Children are killed before their parents, so nothing gets a chance to start more. `$signal`
+     * is 9 by default; a graceful shutdown passes 15 first and comes back with 9 later.
+     */
+    public static function killTree(int $pid, int $signal = 9): void
+    {
+        foreach (array_reverse(self::descendants($pid)) as $child) {
+            self::kill($child, $signal);
+        }
+
+        self::kill($pid, $signal);
+    }
+
+    /**
+     * Every process below $pid, parents before children.
+     *
+     * @return list<int>
+     */
+    private static function descendants(int $pid): array
+    {
+        $children = self::childrenByParent();
+        $found = [];
+        $queue = [$pid];
+
+        while ($queue !== []) {
+            $current = array_shift($queue);
+
+            foreach ($children[$current] ?? [] as $child) {
+                $found[] = $child;
+                $queue[] = $child;
+            }
+        }
+
+        return $found;
+    }
+
+    /** @return array<int, list<int>> */
+    private static function childrenByParent(): array
+    {
+        // One `ps` for the whole tree: asking per process would be a fork per node, and this
+        // runs when someone has just pressed Escape and is waiting.
+        $output = self::capture(['ps', '-eo', 'pid=,ppid='], 2.0);
+
+        if ($output === null) {
+            return [];
+        }
+
+        $children = [];
+
+        foreach (explode("\n", $output) as $line) {
+            if (preg_match('/^\s*(\d+)\s+(\d+)\s*$/', $line, $match) === 1) {
+                $children[(int) $match[2]][] = (int) $match[1];
+            }
+        }
+
+        return $children;
+    }
+
+    private static function kill(int $pid, int $signal): void
+    {
+        if (function_exists('posix_kill')) {
+            posix_kill($pid, $signal);
+
+            return;
+        }
+
+        self::capture(['kill', '-' . $signal, (string) $pid], 2.0);
+    }
+
+    /**
      * Wait for a process to be over, close it, and report what `$?` would have said.
      *
      * Two things about `proc_get_status()` decide the shape of this, and both were measured

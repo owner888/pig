@@ -1,0 +1,17 @@
+{
+    "name": "pig/mcp",
+    "description": "MCP client for pig: JSON-RPC, stdio and streamable HTTP transports. Structure documentation; the root composer.json is what Composer reads.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.3",
+        "pig/async": "@dev",
+        "pig/ai": "@dev",
+        "pig/tui": "@dev"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pig\\Mcp\\": "src/"
+        }
+    }
+}

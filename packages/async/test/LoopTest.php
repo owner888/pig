@@ -212,6 +212,28 @@ final class LoopTest extends TestCase
         $this->assertSame('boom', $problem->getMessage());
     }
 
+    public function testAThrowOutOfOneDeferredCallbackDoesNotLoseTheOnesQueuedBehindIt(): void
+    {
+        // `runQueue()` takes a snapshot and walks it; a throw out of the second of three used to
+        // drop the third on the floor. Found through `McpClient`: the root fiber failing on a
+        // timeout and the in-memory transport's deferred delivery of `notifications/cancelled`
+        // were in the same snapshot, and the server never heard that the request was cancelled.
+        $ran = [];
+        Loop::get()->defer(static function () use (&$ran): void {
+            $ran[] = 'first';
+        });
+        Loop::get()->defer(static fn () => throw new RuntimeException('boom'));
+        Loop::get()->defer(static function () use (&$ran): void {
+            $ran[] = 'third';
+        });
+
+        $this->assertThrows(RuntimeException::class, fn () => Loop::get()->tick());
+        $this->assertSame(['first'], $ran, 'the throw stops this tick');
+
+        Loop::get()->tick();
+        $this->assertSame(['first', 'third'], $ran, 'and the rest run on the next one');
+    }
+
     #[DataProvider('everyKindOfCallback')]
     public function testAHandlerTakesAThrowFromAnyCallbackAndTheLoopCarriesOn(string $kind): void
     {

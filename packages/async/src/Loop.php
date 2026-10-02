@@ -223,8 +223,19 @@ final class Loop
         $queue = $this->queue;
         $this->queue = [];
 
-        foreach ($queue as $callback) {
-            $this->safely($callback);
+        foreach ($queue as $at => $callback) {
+            try {
+                $this->safely($callback);
+            } catch (Throwable $error) {
+                // A throw out of one callback — the root coroutine failing, with no error
+                // handler installed — must not take the rest of the snapshot with it. What was
+                // queued behind it goes back to the front, so a message another callback had
+                // deferred for delivery still arrives on the next tick. A microtask that throws
+                // in JavaScript does not cancel the ones after it either.
+                $this->queue = [...array_slice($queue, $at + 1), ...$this->queue];
+
+                throw $error;
+            }
         }
     }
 
