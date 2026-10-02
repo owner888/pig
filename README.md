@@ -466,8 +466,12 @@ Chrome is told so rather than failed three layers down.
 pi's keys — by `extensions/pig-mcp/`, and each server's tools reach the model as
 `mcp__<server>__<tool>`, through the same hooks and permission gate as `bash`. Stdio and
 streamable HTTP, `${VAR}` and `!command` in `env` and `headers`, `/mcp` for status and
-`/mcp` — a manager in the terminal (tools, reconnect, exposure, enable/disable), the status
-elsewhere — and `pig mcp add|remove|list` from the shell. A server with `"exposure": "deferred"` has its tools held back until the
+`/mcp` — a manager in the terminal (tools, reconnect, exposure, enable/disable, sign in), the
+status elsewhere — and `pig mcp add|remove|list|login|logout` from the shell. An HTTP server with
+no `Authorization` header signs in with OAuth (discovery, dynamic client registration, PKCE, a
+loopback callback), tokens in `~/.pig/agent/mcp-auth.json` and refreshed by the connection; a
+server whose authorization server has no registration endpoint — GitHub's is one — takes a
+pre-registered client under `"oauth": { "clientId", "clientSecret", "callbackPort" }`. A server with `"exposure": "deferred"` has its tools held back until the
 model asks `tool_search` for them (BM25 over names, descriptions and schemas), which is how a
 server with sixty tools costs the context eight. `codemode` is a JavaScript sandbox and is not here;
 a server asking for it is read as `deferred` and told so once.

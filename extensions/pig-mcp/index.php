@@ -14,6 +14,8 @@ use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\Version;
 use PigMcp\McpConfig;
 use PigMcp\McpManagerView;
+use PigMcp\McpOauth;
+use PigMcp\McpSignInCancelledError;
 use PigMcp\McpTools;
 use PigMcp\ServerConnection;
 use PigMcp\ServerEntry;
@@ -21,7 +23,7 @@ use PigMcp\ToolSearch;
 
 // Class files beside the entry, guarded by class and not by `require_once`: the same class can
 // live at two paths (a global copy and the repository's), and `require_once` dedups by path.
-foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'ToolSearch', 'McpManagerView'] as $class) {
+foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'ToolSearch', 'McpManagerView', 'McpSignInCancelledError', 'McpOauth'] as $class) {
     if (!class_exists("PigMcp\\{$class}", false)) {
         require __DIR__ . "/{$class}.php";
     }
@@ -49,7 +51,11 @@ foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'ToolSearc
  * per server the tools, reconnect, exposure and enable/disable — the last two written back to the
  * `mcp.json` the server came from. Without a terminal it prints the status.
  *
- * Not here yet, each its own step: OAuth sign-in (`/mcp login`), resources, the server log.
+ * An HTTP server with no `Authorization` header uses OAuth: tokens in `~/.pig/agent/mcp-auth.json`,
+ * refreshed by the connection, and `/mcp login [server]` (or the manager's Sign in) runs the browser
+ * flow when a server answers 401 with nothing to refresh. `/mcp logout [server]` forgets them.
+ *
+ * Not here yet, each its own step: resources, the server log.
  */
 return static function (ExtensionApi $pi): void {
     $startupWait = 10.0;
@@ -66,6 +72,14 @@ return static function (ExtensionApi $pi): void {
     $generation = 0;
     $cwd = $pi->cwd();
     $saidAboutExposure = false;
+    $credentials = new McpOauth(McpOauth::defaultPath(Config::home()));
+    $openUrl = static function (string $url): void {
+        if (PHP_OS_FAMILY === 'Darwin') {
+            \Pig\Tui\Process::run(['open', $url]);
+        } elseif (PHP_OS_FAMILY === 'Linux') {
+            \Pig\Tui\Process::run(['xdg-open', $url]);
+        }
+    };
 
     /** @var array<string, string> pig tool name => `<server>\0<tool>` it was assigned to */
     $toolOwners = [];
@@ -160,6 +174,7 @@ return static function (ExtensionApi $pi): void {
         }
 
         return match ($connection->state) {
+            'needs-auth' => 'needs sign-in',
             'failed' => $withError ? 'failed: ' . strtok((string) ($connection->error ?? 'unknown error'), "\n") : 'failed',
             'connected' => sprintf('connected · %d tool%s', count($connection->tools), count($connection->tools) === 1 ? '' : 's'),
             'connecting' => 'connecting…',
@@ -249,6 +264,8 @@ return static function (ExtensionApi $pi): void {
 
             if ($connection !== null && $connection->state === 'failed') {
                 $lines[] = "{$entry->name}: " . $describeState($entry, $connection);
+            } elseif ($connection !== null && $connection->state === 'needs-auth') {
+                $lines[] = "{$entry->name}: needs sign-in, run /mcp login {$entry->name}";
             }
         }
 
@@ -277,13 +294,14 @@ return static function (ExtensionApi $pi): void {
         };
     };
 
-    $createConnection = static function (ServerEntry $entry) use (&$connections, $cwd, $registerTools, $emitChange): ServerConnection {
+    $createConnection = static function (ServerEntry $entry) use (&$connections, $cwd, $registerTools, $emitChange, $credentials): ServerConnection {
         $connection = new ServerConnection(
             $entry,
             $cwd,
             Version::current(),
             onTools: $registerTools,
             onChange: static fn () => $emitChange(),
+            credentials: $credentials,
         );
         $connections[$entry->name] = $connection;
 
@@ -366,6 +384,12 @@ return static function (ExtensionApi $pi): void {
         foreach ($entries as $entry) {
             $connection = $connections[$entry->name] ?? null;
             $exposure = McpConfig::here($entry->exposure());
+
+            if ($connection?->state === 'needs-auth') {
+                $lines[] = "{$entry->name}: needs sign-in, run /mcp login {$entry->name} ({$exposure})";
+                continue;
+            }
+
             $state = !$entry->isEnabled()
                 ? 'disabled'
                 : ($connection?->state === 'disconnected' ? 'disconnected, reconnects on next call' : ($connection?->state ?? 'starting'));
@@ -493,6 +517,106 @@ return static function (ExtensionApi $pi): void {
         }
     });
 
+    // ---- signing in -----------------------------------------------------------------------------
+
+    /**
+     * Sign in to a server and reconnect. Answers a message when it did not work (null when it did),
+     * so a menu can show it beside the server.
+     *
+     * @param array{showAuthorizationUrl: \Closure, promptForRedirectUrl: \Closure} $prompt
+     */
+    $signIn = static function (ServerEntry $entry, array $prompt) use (&$connections, $credentials, $emitChange): ?string {
+        $connection = $connections[$entry->name] ?? null;
+        $url = $connection?->oauthUrl();
+
+        if ($connection === null || $url === null) {
+            return "MCP server \"{$entry->name}\" does not use OAuth. Only HTTP servers without an Authorization header do.";
+        }
+
+        try {
+            $credentials->signIn($url, $connection->oauthSettings(), $connection->challenge, $prompt);
+        } catch (McpSignInCancelledError) {
+            return 'Sign-in cancelled.';
+        } catch (\Throwable $error) {
+            return "Sign-in to MCP server \"{$entry->name}\" failed: {$error->getMessage()}";
+        }
+
+        $connection->challenge = null;
+
+        try {
+            $connection->reconnect();
+        } catch (\Throwable $error) {
+            return "Signed in, but {$error->getMessage()}";
+        }
+
+        $emitChange();
+
+        return null;
+    };
+
+    $signOut = static function (ServerEntry $entry) use (&$connections, $credentials, $hideTools, $createConnection, $emitChange): ?string {
+        $connection = $connections[$entry->name] ?? null;
+        $url = $connection?->oauthUrl();
+
+        if ($connection === null || $url === null) {
+            return "MCP server \"{$entry->name}\" does not use OAuth.";
+        }
+
+        $removed = $credentials->remove($url);
+        // Without its tokens the server is where it was before anybody signed in: reconnecting
+        // shows `needs-auth` and takes its tools off the model.
+        $hideTools($entry->name);
+
+        try {
+            $connection->close();
+        } catch (\Throwable) {
+            // Gone is what was wanted.
+        }
+
+        $fresh = $createConnection($entry);
+
+        try {
+            $fresh->client();
+        } catch (\Throwable) {
+            // The state says what happened.
+        }
+
+        $emitChange();
+
+        return $removed ? null : "No stored credentials for MCP server \"{$entry->name}\".";
+    };
+
+    /** The sign-in with the plain dialogs — `/mcp login` outside the manager. */
+    $loginCommand = static function (ServerEntry $entry, HookContext $ctx) use ($signIn, $openUrl, &$connections): void {
+        $name = $entry->name;
+
+        if (!$ctx->hasUi) {
+            $ctx->ui->notify("Signing in to MCP server \"{$name}\" requires interactive mode. Run: pig mcp login {$name}", 'error');
+
+            return;
+        }
+
+        $failure = $signIn($entry, [
+            'showAuthorizationUrl' => static function (string $url) use ($ctx, $name, $openUrl): void {
+                $ctx->ui->notify("Sign in to MCP server \"{$name}\" in your browser:\n{$url}", 'info');
+                $openUrl($url);
+            },
+            'promptForRedirectUrl' => static fn (\Pig\Async\AbortSignal $signal): ?string => $ctx->ui->input(
+                "Waiting for sign-in to \"{$name}\". If the browser cannot reach this machine, paste the URL it was redirected to.",
+                'http://127.0.0.1:.../callback?code=...',
+                $signal,
+            ),
+        ]);
+
+        if ($failure !== null) {
+            $ctx->ui->notify($failure, $failure === 'Sign-in cancelled.' ? 'info' : 'error');
+
+            return;
+        }
+
+        $ctx->ui->notify("Signed in to MCP server \"{$name}\" (" . count($connections[$name]?->tools ?? []) . ' tools).', 'info');
+    };
+
     // ---- the manager (`/mcp` in the terminal) ------------------------------------------------
 
     $exposureDescriptions = [
@@ -575,12 +699,20 @@ return static function (ExtensionApi $pi): void {
         } else {
             $state = $connection?->state;
 
+            if ($state === 'needs-auth') {
+                $items[] = $item('signin', 'Sign in', 'opens the browser');
+            }
+
             if ($state === 'connected' && $connection !== null) {
                 $items[] = $item('tools', 'Tools', count($connection->tools) . ' offered');
             }
 
             if (in_array($state, ['failed', 'disconnected', 'connected', 'needs-auth'], true)) {
                 $items[] = $item('reconnect', 'Reconnect');
+            }
+
+            if ($state === 'connected' && $connection?->oauthUrl() !== null) {
+                $items[] = $item('signout', 'Sign out', 'deletes the stored credentials');
             }
 
             $items[] = $item('exposure', 'Exposure', McpConfig::here($entry->exposure()));
@@ -650,11 +782,31 @@ return static function (ExtensionApi $pi): void {
         return $setExposure($entry, $choice);
     };
 
-    $runAction = static function (McpManagerView $ui, ServerEntry $entry, string $action) use (&$connections, &$messages, $showTools, $chooseExposure, $setEnabled, $emitChange): void {
+    $runAction = static function (McpManagerView $ui, ServerEntry $entry, string $action) use (&$connections, &$messages, $showTools, $chooseExposure, $setEnabled, $emitChange, $signIn, $signOut, $openUrl): void {
         $name = $entry->name;
         $message = null;
 
         switch ($action) {
+            case 'signin':
+                $title = "Sign in to {$name}";
+                $authorizationUrl = '';
+                $ui->status($title, 'Contacting the authorization server…');
+                $message = $signIn($entry, [
+                    'showAuthorizationUrl' => static function (string $url) use (&$authorizationUrl, $openUrl): void {
+                        $authorizationUrl = $url;
+                        $openUrl($url);
+                    },
+                    'promptForRedirectUrl' => static function (\Pig\Async\AbortSignal $signal) use ($ui, $title, &$authorizationUrl): ?string {
+                        $value = $ui->redirectUrl($title, $authorizationUrl, $signal);
+                        $ui->status($title, 'Connecting…');
+
+                        return $value;
+                    },
+                ]);
+                break;
+            case 'signout':
+                $message = $signOut($entry);
+                break;
             case 'reconnect':
                 $ui->status("MCP server {$name}", 'Reconnecting…');
 
@@ -710,7 +862,7 @@ return static function (ExtensionApi $pi): void {
 
     $pi->registerCommand(
         'mcp',
-        static function (string $args, HookContext $ctx) use (&$entries, &$connections, $formatStatus, $describeState, $manage): void {
+        static function (string $args, HookContext $ctx) use (&$entries, &$connections, $formatStatus, $describeState, $manage, $loginCommand, $signOut): void {
             $parts = preg_split('/\s+/', trim($args), -1, PREG_SPLIT_NO_EMPTY) ?: [];
             $action = $parts[0] ?? null;
             $name = $parts[1] ?? null;
@@ -741,8 +893,57 @@ return static function (ExtensionApi $pi): void {
                 return;
             }
 
-            if ($action !== 'reconnect' || count($parts) > 2) {
-                $ctx->ui->notify('Usage: /mcp, /mcp reconnect <server>', 'warning');
+            if (!in_array($action, ['reconnect', 'login', 'logout'], true) || count($parts) > 2) {
+                $ctx->ui->notify('Usage: /mcp, /mcp login [server], /mcp logout [server], /mcp reconnect [server]', 'warning');
+
+                return;
+            }
+
+            $usesOauth = static fn (ServerEntry $e): bool => ($connections[$e->name] ?? null)?->oauthUrl() !== null;
+            $eligible = $action === 'reconnect'
+                ? static fn (ServerEntry $e): bool => isset($connections[$e->name])
+                : $usesOauth;
+
+            if ($action !== 'reconnect') {
+                $candidates = array_values(array_filter($entries, static fn (ServerEntry $e): bool => $eligible($e) && ($name === null || $e->name === $name)));
+
+                if ($name !== null && $candidates === []) {
+                    $known = in_array($name, array_map(static fn (ServerEntry $e): string => $e->name, $entries), true);
+                    $ctx->ui->notify($known
+                        ? 'No enabled MCP server uses OAuth. Only HTTP servers without an Authorization header do.'
+                        : "No MCP server named \"{$name}\".", 'error');
+
+                    return;
+                }
+
+                if ($candidates === []) {
+                    $ctx->ui->notify('No enabled MCP server uses OAuth. Only HTTP servers without an Authorization header do.', 'info');
+
+                    return;
+                }
+
+                if ($name === null && count($candidates) > 1) {
+                    // The one waiting for a sign-in is the one meant, when there is exactly one.
+                    $waiting = array_values(array_filter($candidates, static fn (ServerEntry $e): bool => ($connections[$e->name] ?? null)?->state === 'needs-auth'));
+
+                    if (count($waiting) === 1) {
+                        $candidates = $waiting;
+                    } else {
+                        $picked = $ctx->ui->select('MCP server', array_map(static fn (ServerEntry $e): string => $e->name, $candidates));
+                        $candidates = array_values(array_filter($candidates, static fn (ServerEntry $e): bool => $e->name === $picked));
+                    }
+                }
+
+                if ($candidates === []) {
+                    return;
+                }
+
+                if ($action === 'login') {
+                    $loginCommand($candidates[0], $ctx);
+                } else {
+                    $failure = $signOut($candidates[0]);
+                    $ctx->ui->notify($failure ?? "Signed out of MCP server \"{$candidates[0]->name}\".", $failure === null ? 'info' : 'warning');
+                }
 
                 return;
             }
@@ -778,6 +979,6 @@ return static function (ExtensionApi $pi): void {
                 $ctx->ui->notify($error->getMessage(), 'error');
             }
         },
-        'Manage MCP servers: tools, reconnect, enable or disable, exposure — /mcp, /mcp reconnect <server>',
+        'Manage MCP servers: sign in, reconnect, enable or disable, and change exposure — /mcp, /mcp login [server], /mcp logout [server], /mcp reconnect [server]',
     );
 };

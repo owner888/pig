@@ -399,7 +399,10 @@ bin/pig --tools read,bash,edit,write,grep,find,ls
 的名字交给模型，走的是和 `bash` 一样的 hook 与权限门。支持 stdio 与 streamable HTTP，`env` 和
 `headers` 里的 `${VAR}` 与 `!command`。`/mcp` 在终端里是一个管理界面（工具列表、重连、曝光方式、
 启用/停用，改动写回它来自的那个 `mcp.json`），没有终端时打印状态；shell 里有 `pig mcp add|remove|list`。
-`"exposure": "deferred"` 的服务器，其工具先不声明给模型，等模型用 `tool_search`（按名字、描述、
+没有 `Authorization` 头的 HTTP 服务器走 OAuth 登录（发现、动态客户端注册、PKCE、本机回调），
+令牌存在 `~/.pig/agent/mcp-auth.json`，连接会自己续期；授权服务器不支持动态注册的（GitHub 就是），
+在 `"oauth": { "clientId", "clientSecret", "callbackPort" }` 里给一个预注册的客户端。`/mcp login|logout`
+与 `pig mcp login|logout` 是入口。`"exposure": "deferred"` 的服务器，其工具先不声明给模型，等模型用 `tool_search`（按名字、描述、
 schema 做 BM25 检索）找到再加载——六十个工具的服务器因此只占八个工具的上下文。`codemode` 是一个
 JavaScript 沙箱，这里没有；要求它的服务器按 `deferred` 处理，并提示一次。
 

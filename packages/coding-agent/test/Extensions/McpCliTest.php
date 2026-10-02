@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test\Extensions;
 
 use PHPUnit\Framework\TestCase;
+use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\ProjectTrust;
 use PigMcp\McpCli;
@@ -35,12 +36,15 @@ final class McpCliTest extends TestCase
 
         $repo = dirname(__DIR__, 4);
 
-        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpCli'] as $class) {
+        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpSignInCancelledError', 'McpOauth', 'McpCli'] as $class) {
             if (!class_exists("PigMcp\\{$class}", false)) {
                 require $repo . "/extensions/pig-mcp/{$class}.php";
             }
         }
     }
+
+    /** @var list<string> URLs the CLI "opened" */
+    private array $opened = [];
 
     private function mcp(string ...$args): int
     {
@@ -52,6 +56,20 @@ final class McpCliTest extends TestCase
             },
             function (string $line): void {
                 $this->err[] = $line;
+            },
+            function (string $url): void {
+                $this->opened[] = $url;
+            },
+            // No terminal to paste into: the prompt waits until the callback settles it.
+            static function (\Pig\Async\AbortSignal $signal): ?string {
+                $released = new \Pig\Async\Deferred();
+                $signal->onAbort(static function () use ($released): void {
+                    if (!$released->isComplete()) {
+                        $released->complete(null);
+                    }
+                });
+
+                return $released->future->await();
             },
         );
 
@@ -199,6 +217,93 @@ final class McpCliTest extends TestCase
         $this->assertStringContainsString('broken: failed (codemode, global)', $text);
         $this->assertStringContainsString('  MCP connection closed', $text);
         $this->assertStringContainsString('config error: ', $text);
+    }
+
+    public function testLoginRunsTheBrowserFlowAndLogoutForgetsIt(): void
+    {
+        $server = new \Pig\Mcp\Test\FakeHttpMcpServer();
+        $server->oauth = true;
+        $server->requireToken = 'nothing-yet';
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => ['remote' => ['url' => $server->url()]]]));
+
+        try {
+            // The list says it needs a sign-in and how to get one.
+            $this->assertSame(1, $this->mcp('list'));
+            $text = implode("\n", $this->out);
+            $this->assertStringContainsString('remote: needs sign-in (codemode, global)', $text);
+            $this->assertStringContainsString('  sign in with: pig mcp login remote', $text);
+
+            // Login: the browser is played from a second fiber once the URL is shown.
+            $this->out = [];
+            $played = false;
+            $exit = Async::run(function () use ($server, &$played): int {
+                $browser = Async::spawn(function () use ($server, &$played): void {
+                    while ($this->opened === []) {
+                        Async::delay(0.02);
+                    }
+
+                    parse_str((string) parse_url($this->opened[0], PHP_URL_QUERY), $query);
+                    $code = $server->issueCode($query['code_challenge']);
+                    (new \Pig\Ai\Http\HttpClient(timeout: 5.0))->send(new \Pig\Ai\Http\Request('GET', $query['redirect_uri'] . '?code=' . urlencode($code) . '&state=' . urlencode($query['state'])))->body->close();
+                    $played = true;
+                });
+
+                $exit = $this->mcp('login', 'remote', '--timeout', '5');
+                $browser->await();
+
+                return $exit;
+            });
+
+            $this->assertTrue($played);
+            $this->assertSame(0, $exit);
+            $this->assertStringContainsString('Sign in to MCP server "remote" in your browser:', $this->out[0]);
+            $this->assertSame('Signed in to MCP server "remote" (1 tools).', end($this->out));
+            $this->assertSame($server->requireToken, json_decode((string) file_get_contents($this->home . '/mcp-auth.json'), true)[$server->url()]['tokens']['access_token']);
+
+            // Again: already signed in, nothing opened.
+            $this->out = [];
+            $this->opened = [];
+            $this->assertSame(0, $this->mcp('login', 'remote'));
+            $this->assertSame('Already signed in to MCP server "remote" (1 tools).', $this->out[0]);
+            $this->assertSame([], $this->opened);
+
+            $this->assertSame(0, $this->mcp('logout', 'remote'));
+            $this->assertSame('Signed out of MCP server "remote".', end($this->out));
+            $this->assertSame(0, $this->mcp('logout', 'remote'));
+            $this->assertSame('No stored credentials for MCP server "remote".', end($this->out));
+        } finally {
+            $server->stop();
+        }
+    }
+
+    public function testLoginRefusesWhatCannotBeSignedInto(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'stdio' => ['command' => 'x'],
+            'bearer' => ['url' => 'https://x/mcp', 'headers' => ['authorization' => 'Bearer t']],
+        ]]));
+
+        $this->assertSame(1, $this->mcp('login', 'nope'));
+        $this->assertStringContainsString('No MCP server named "nope". Configured: stdio, bearer.', end($this->err));
+        $this->assertSame(1, $this->mcp('login', 'stdio'));
+        $this->assertStringContainsString('does not use OAuth', end($this->err));
+        $this->assertSame(1, $this->mcp('logout', 'bearer'));
+        $this->assertStringContainsString('does not use OAuth', end($this->err));
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => ['remote' => ['url' => 'https://x/mcp']]]));
+        $this->assertSame(1, $this->mcp('login', 'remote', '--timeout', '0'));
+        $this->assertStringContainsString('--timeout must be a positive number', end($this->err));
+        $this->assertSame(1, $this->mcp('login'));
+        $this->assertStringContainsString('Usage: pig mcp login <server>', end($this->err));
+    }
+
+    public function testAddingAnHttpServerSaysItMayNeedASignInAndTakesTheOauthOptions(): void
+    {
+        $this->assertSame(0, $this->mcp('add', 'gh', '--url', 'https://x/mcp', '--oauth-client-id', 'cid', '--oauth-client-secret', '${GH_SECRET}', '--oauth-callback-port', '8765'));
+        $this->assertSame(['url' => 'https://x/mcp', 'oauth' => ['clientId' => 'cid', 'clientSecret' => '${GH_SECRET}', 'callbackPort' => 8765]], $this->config()['mcpServers']['gh']);
+        $this->assertSame('Check it with: pig mcp list. If it requires sign-in: pig mcp login gh', $this->out[1]);
+
+        $this->assertSame(1, $this->mcp('add', 'fs', '--oauth-client-id', 'x', '--', 'npx'));
+        $this->assertStringContainsString('--oauth-client-id only applies to HTTP servers', end($this->err));
     }
 
     public function testListAsJsonAndTheUntrustedNote(): void

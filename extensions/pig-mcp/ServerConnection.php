@@ -9,6 +9,7 @@ use Pig\Async\Async;
 use Pig\CodingAgent\ConfigValue;
 use Pig\CodingAgent\Tools\Paths;
 use Pig\Mcp\McpClient;
+use Pig\Mcp\Oauth\McpOauthAuthorizationRequiredError;
 use Pig\Mcp\Protocol\JsonRpc;
 use Pig\Mcp\Protocol\McpError;
 use Pig\Mcp\Transports\McpAuthRequiredError;
@@ -32,8 +33,10 @@ use Throwable;
  * What a stdio server wrote to stderr is kept and shown with a failure, because it is the only
  * thing a server that would not start has to say.
  *
- * OAuth (`needs-auth`, the auth provider, sign-in) is the next step; a 401 here is a failure
- * that says to add a header.
+ * **An HTTP server with no `Authorization` header of its own uses OAuth.** Its connection gets
+ * an auth provider from `McpOauth` that sends the stored token and refreshes it; when neither is
+ * possible the state is `needs-auth` and `/mcp login` is the way on. `oauthUrl()` is the URL the
+ * credentials are keyed by, null for a server that does not use OAuth.
  */
 final class ServerConnection
 {
@@ -42,8 +45,16 @@ final class ServerConnection
     /** Delays between attempts to connect to an HTTP server that failed with a transient error. */
     private const array CONNECT_RETRY_DELAYS = [0.25, 1.0];
 
-    /** @var 'connecting'|'connected'|'disconnected'|'failed'|'closed' */
+    /** @var 'connecting'|'connected'|'disconnected'|'failed'|'needs-auth'|'closed' */
     public string $state = 'connecting';
+
+    /**
+     * The server's last `WWW-Authenticate`, for the sign-in to use its resource metadata URL
+     * and scope.
+     *
+     * @var array{resourceMetadataUrl: ?string, scope: ?string, error: ?string, errorDescription: ?string}|null
+     */
+    public ?array $challenge = null;
 
     public ?string $error = null;
 
@@ -68,6 +79,7 @@ final class ServerConnection
      * @param Closure(ServerEntry, string): Transport|null $createTransport for tests
      * @param Closure(self): void|null                    $onTools    the tool list changed
      * @param Closure(self): void|null                    $onChange   the state changed
+     * @param McpOauth|null                                $credentials where OAuth tokens live; null means no OAuth
      */
     public function __construct(
         public ServerEntry $entry,
@@ -76,7 +88,41 @@ final class ServerConnection
         private readonly ?Closure $createTransport = null,
         private readonly ?Closure $onTools = null,
         private readonly ?Closure $onChange = null,
+        private readonly ?McpOauth $credentials = null,
     ) {
+    }
+
+    /** The URL OAuth credentials are keyed by — only an HTTP server without its own Authorization header. */
+    public function oauthUrl(): ?string
+    {
+        if (!$this->entry->isHttp()) {
+            return null;
+        }
+
+        foreach (array_keys($this->entry->config['headers'] ?? []) as $header) {
+            if (strtolower((string) $header) === 'authorization') {
+                return null;
+            }
+        }
+
+        return (string) $this->entry->config['url'];
+    }
+
+    /**
+     * The server's `oauth` block with `clientSecret` resolved — `${VAR}` or `!command` — which is
+     * why it is a method asked when needed rather than a value read at construction.
+     *
+     * @return array<string, mixed>
+     */
+    public function oauthSettings(): array
+    {
+        $settings = $this->entry->config['oauth'] ?? [];
+
+        if (isset($settings['clientSecret'])) {
+            $settings['clientSecret'] = ConfigValue::resolveOrThrow((string) $settings['clientSecret'], "MCP server \"{$this->entry->name}\" oauth.clientSecret");
+        }
+
+        return $settings;
     }
 
     public function name(): string
@@ -237,7 +283,7 @@ final class ServerConnection
         try {
             $transport = $this->createTransport !== null
                 ? ($this->createTransport)($this->entry, $this->cwd)
-                : self::defaultTransport($this->entry, $this->cwd);
+                : self::defaultTransport($this->entry, $this->cwd, $this->authProvider());
             $client->connect($transport);
 
             $client->onNotification('notifications/tools/list_changed', function () use ($client): void {
@@ -291,11 +337,15 @@ final class ServerConnection
 
     private function connectFailed(Throwable $error): RuntimeException
     {
-        $this->state = $this->closed ? 'closed' : 'failed';
-        $message = $error->getMessage();
+        $needsAuth = $error instanceof McpOauthAuthorizationRequiredError
+            || ($error instanceof McpAuthRequiredError && $this->oauthUrl() !== null);
+        $this->state = $this->closed ? 'closed' : ($needsAuth ? 'needs-auth' : 'failed');
+        $message = $needsAuth
+            ? "needs sign-in: run /mcp login {$this->entry->name}"
+            : $error->getMessage();
 
-        if ($error instanceof McpAuthRequiredError) {
-            $message .= ' — add an Authorization header to its mcp.json entry (OAuth sign-in is not ported yet)';
+        if ($error instanceof McpAuthRequiredError && !$needsAuth) {
+            $message .= ' — check the Authorization header in its mcp.json entry';
         }
 
         $this->error = $this->stderrTail !== null ? "{$message}\n{$this->stderrTail}" : $message;
@@ -369,8 +419,26 @@ final class ServerConnection
         return $error instanceof \Pig\Ai\Http\HttpError || $error instanceof \Pig\Async\SocketError;
     }
 
+    /** The auth provider this server's transport gets: OAuth over the stored credentials, or none. */
+    private function authProvider(): ?\Pig\Mcp\Transports\AuthProvider
+    {
+        $url = $this->oauthUrl();
+
+        if ($url === null || $this->credentials === null) {
+            return null;
+        }
+
+        return $this->credentials->authProvider(
+            $url,
+            fn (): array => $this->oauthSettings(),
+            function (array $challenge): void {
+                $this->challenge = $challenge;
+            },
+        );
+    }
+
     /** The transport an entry describes, with `${VAR}` and `!command` resolved and `~` expanded. */
-    public static function defaultTransport(ServerEntry $entry, string $cwd): Transport
+    public static function defaultTransport(ServerEntry $entry, string $cwd, ?\Pig\Mcp\Transports\AuthProvider $auth = null): Transport
     {
         $config = $entry->config;
         $name = $entry->name;
@@ -379,6 +447,7 @@ final class ServerConnection
             return new StreamableHttpTransport(
                 (string) $config['url'],
                 ConfigValue::resolveAll($config['headers'] ?? [], "MCP server \"{$name}\" header"),
+                $auth,
                 timeout: $entry->timeout(),
             );
         }

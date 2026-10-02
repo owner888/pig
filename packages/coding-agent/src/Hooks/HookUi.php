@@ -43,8 +43,14 @@ interface HookUi
      */
     public function confirm(string $title, string $message): bool;
 
-    /** Ask for a line of text. Null when cancelled, or when there is no UI. */
-    public function input(string $title, string $placeholder = ''): ?string;
+    /**
+     * Ask for a line of text. Null when cancelled, or when there is no UI.
+     *
+     * `$signal` closes the dialog from outside, answering null — upstream's `{ signal }`, for a
+     * prompt raced against something else that may answer first (the MCP sign-in's pasted redirect
+     * URL against the browser callback).
+     */
+    public function input(string $title, string $placeholder = '', ?\Pig\Async\AbortSignal $signal = null): ?string;
 
     /**
      * Ask for something longer, in a real editor.

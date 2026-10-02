@@ -33,6 +33,42 @@ final class FakeHttpMcpServer
     /** A bearer token the server insists on; null means no auth. */
     public ?string $requireToken = null;
 
+    /**
+     * Speak OAuth too: `.well-known` metadata naming this server as its own authorization server,
+     * dynamic registration, and a token endpoint that redeems any code `issueCode()` handed out and
+     * any refresh token it issued. With this on, `requireToken` is the token last issued.
+     */
+    public bool $oauth = false;
+
+    /** Codes `issueCode()` handed out, by code => the PKCE challenge they were issued against. */
+    public array $codes = [];
+
+    /** @var list<string> refresh tokens issued, each good once (rotation) */
+    public array $refreshTokens = [];
+
+    /** @var list<array<string, string>> every token request's form, for assertions */
+    public array $tokenRequests = [];
+
+    /** @var array<string, mixed>|null the last registration body */
+    public ?array $registration = null;
+
+    /** Seconds the issued access token is said to live; null for no `expires_in`. */
+    public ?int $expiresIn = 3600;
+
+    /** The `WWW-Authenticate` sent with a 401. */
+    public string $challenge = 'Bearer realm="mcp"';
+
+    private int $issued = 0;
+
+    /** Hand out an authorization code for the given PKCE challenge, as the browser flow would. */
+    public function issueCode(string $challenge): string
+    {
+        $code = 'code-' . ++$this->issued;
+        $this->codes[$code] = $challenge;
+
+        return $code;
+    }
+
     /** When set, the SSE reply to `tools/call` is cut off after this many events, before the answer. */
     public ?int $cutStreamAfter = null;
 
@@ -183,8 +219,12 @@ final class FakeHttpMcpServer
         $decoded = $body === '' ? null : json_decode($body, true);
         $this->requests[] = ['method' => $method, 'path' => $path, 'headers' => $headers, 'body' => is_array($decoded) ? $decoded : null];
 
+        if ($this->oauth && $this->oauthEndpoint($connection, $method, $path, $body)) {
+            return;
+        }
+
         if ($this->requireToken !== null && ($headers['authorization'] ?? '') !== "Bearer {$this->requireToken}") {
-            $this->respond($connection, 401, ['WWW-Authenticate' => 'Bearer realm="mcp"'], 'who are you');
+            $this->respond($connection, 401, ['WWW-Authenticate' => $this->challenge], 'who are you');
 
             return;
         }
@@ -251,6 +291,101 @@ final class FakeHttpMcpServer
 
     /** @var array<string, mixed>|null the reply a cut stream owes, delivered on the next GET */
     private ?array $pendingAnswer = null;
+
+    private function origin(): string
+    {
+        return 'http://' . stream_socket_get_name($this->socket, false);
+    }
+
+    /** The OAuth endpoints; true when `$path` was one of them. */
+    private function oauthEndpoint(mixed $connection, string $method, string $path, string $body): bool
+    {
+        $pathOnly = (string) parse_url($path, PHP_URL_PATH);
+        $json = static fn (array $data): string => (string) json_encode($data);
+
+        if ($pathOnly === '/.well-known/oauth-protected-resource/mcp' || $pathOnly === '/.well-known/oauth-protected-resource') {
+            $this->respond($connection, 200, ['Content-Type' => 'application/json'], $json([
+                'resource' => $this->url(),
+                'authorization_servers' => [$this->origin()],
+                'scopes_supported' => ['mcp:tools'],
+            ]));
+
+            return true;
+        }
+
+        if ($pathOnly === '/.well-known/oauth-authorization-server') {
+            $this->respond($connection, 200, ['Content-Type' => 'application/json'], $json([
+                'issuer' => $this->origin(),
+                'authorization_endpoint' => $this->origin() . '/authorize',
+                'token_endpoint' => $this->origin() . '/token',
+                'registration_endpoint' => $this->origin() . '/register',
+                'response_types_supported' => ['code'],
+                'code_challenge_methods_supported' => ['S256'],
+                'token_endpoint_auth_methods_supported' => ['none'],
+            ]));
+
+            return true;
+        }
+
+        if ($pathOnly === '/register' && $method === 'POST') {
+            $this->registration = json_decode($body, true);
+            $this->respond($connection, 201, ['Content-Type' => 'application/json'], $json([
+                'client_id' => 'client-' . ++$this->issued,
+                'redirect_uris' => $this->registration['redirect_uris'] ?? [],
+            ]));
+
+            return true;
+        }
+
+        if ($pathOnly === '/token' && $method === 'POST') {
+            parse_str($body, $form);
+            $this->tokenRequests[] = $form;
+            $grant = $form['grant_type'] ?? '';
+
+            if ($grant === 'authorization_code') {
+                $challenge = $this->codes[$form['code'] ?? ''] ?? null;
+                $expected = rtrim(strtr(base64_encode(hash('sha256', (string) ($form['code_verifier'] ?? ''), true)), '+/', '-_'), '=');
+
+                if ($challenge === null || $challenge !== $expected) {
+                    $this->respond($connection, 400, ['Content-Type' => 'application/json'], $json(['error' => 'invalid_grant', 'error_description' => 'bad code or verifier']));
+
+                    return true;
+                }
+
+                unset($this->codes[$form['code']]);
+            } elseif ($grant === 'refresh_token') {
+                $index = array_search($form['refresh_token'] ?? '', $this->refreshTokens, true);
+
+                if ($index === false) {
+                    $this->respond($connection, 400, ['Content-Type' => 'application/json'], $json(['error' => 'invalid_grant', 'error_description' => 'unknown refresh token']));
+
+                    return true;
+                }
+
+                unset($this->refreshTokens[$index]);
+            } else {
+                $this->respond($connection, 400, ['Content-Type' => 'application/json'], $json(['error' => 'unsupported_grant_type']));
+
+                return true;
+            }
+
+            $access = 'access-' . ++$this->issued;
+            $refresh = 'refresh-' . ++$this->issued;
+            $this->refreshTokens[] = $refresh;
+            $this->requireToken = $access;
+            $this->respond($connection, 200, ['Content-Type' => 'application/json'], $json(array_filter([
+                'access_token' => $access,
+                'token_type' => 'Bearer',
+                'refresh_token' => $refresh,
+                'expires_in' => $this->expiresIn,
+                'scope' => 'mcp:tools',
+            ], static fn ($v) => $v !== null)));
+
+            return true;
+        }
+
+        return false;
+    }
 
     /** @param array<string, mixed> $request */
     private function reply(array $request): array

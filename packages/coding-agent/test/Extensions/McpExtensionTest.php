@@ -41,7 +41,7 @@ final class McpExtensionTest extends TestCase
 
         $repo = dirname(__DIR__, 4);
 
-        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'ToolSearch'] as $class) {
+        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'ToolSearch', 'McpSignInCancelledError', 'McpOauth'] as $class) {
             if (!class_exists("PigMcp\\{$class}", false)) {
                 require $repo . "/extensions/pig-mcp/{$class}.php";
             }
@@ -569,6 +569,155 @@ final class McpExtensionTest extends TestCase
         $terminal->type("\e");
         $this->turn();
         Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
+    // ---- OAuth ----------------------------------------------------------------------------------
+
+    public function testAnHttpServerThatAnswers401IsNeedsAuthAndLoginSignsInThroughTheBrowser(): void
+    {
+        $server = new \Pig\Mcp\Test\FakeHttpMcpServer();
+        $server->oauth = true;
+        $server->requireToken = 'nothing-yet';
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'remote' => ['url' => $server->url(), 'exposure' => 'direct'],
+        ]]));
+
+        try {
+            [$set, $hooks, $ui] = $this->start();
+
+            // Not failed: waiting for a sign-in, and the report says how.
+            $this->assertSame([], $set->names());
+            $this->assertStringContainsString('remote: needs sign-in, run /mcp login remote', implode("\n", $ui->notices));
+            $this->assertStringContainsString('remote: needs sign-in, run /mcp login remote (direct)', $this->mcpStatus());
+
+            // `/mcp login`: the authorization URL is printed (and the browser opened, which a test
+            // cannot see); the browser is played by hitting the callback with a code the fake
+            // authorization server minted for the PKCE challenge in that URL.
+            $command = $this->extension->api->commands()['mcp'];
+            $ctx = new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true);
+            $before = count($ui->notices);
+
+            Async::run(function () use ($command, $ctx, $server, $ui, $before): void {
+                $login = Async::spawn(static fn () => ($command->handler)('login remote', $ctx));
+                $shown = null;
+
+                // Wait for the authorization URL to be shown, then play the browser.
+                while ($shown === null && !$login->isComplete()) {
+                    Async::delay(0.02);
+
+                    foreach (array_slice($ui->notices, $before) as $notice) {
+                        if (preg_match('#in your browser:\n(\S+)#', $notice, $m) === 1) {
+                            $shown = $m[1];
+                        }
+                    }
+                }
+
+                $this->assertNotNull($shown, 'the browser was sent somewhere');
+                parse_str((string) parse_url($shown, PHP_URL_QUERY), $query);
+                $code = $server->issueCode($query['code_challenge']);
+                $redirect = $query['redirect_uri'] . '?code=' . urlencode($code) . '&state=' . urlencode($query['state']);
+                $this->assertMatchesRegularExpression('#^http://127\.0\.0\.1:\d+/callback\?#', $redirect);
+                (new \Pig\Ai\Http\HttpClient(timeout: 5.0))->send(new \Pig\Ai\Http\Request('GET', $redirect))->body->close();
+
+                $login->await();
+            });
+
+            $this->assertStringContainsString('remote: connected, 1 tools (direct)', $this->mcpStatus());
+            $this->assertSame(['mcp__remote__echo'], $set->names(), 'signed in, connected, and the tool is on the model');
+            $this->assertStringContainsString('Signed in to MCP server "remote" (1 tools).', end($ui->notices));
+
+            // The credentials file holds the tokens, keyed by URL, and is private.
+            $auth = json_decode((string) file_get_contents($this->home . '/mcp-auth.json'), true);
+            $this->assertSame($server->requireToken, $auth[$server->url()]['tokens']['access_token']);
+            $this->assertSame('0600', substr(sprintf('%o', fileperms($this->home . '/mcp-auth.json')), -4));
+
+            // The pasted-URL prompt was asked and then abandoned when the callback won: the UI's
+            // `input()` answers null here, which must not be read as a cancellation after the fact.
+            $this->assertStringNotContainsString('cancelled', implode("\n", $ui->notices));
+
+            // `/mcp logout` forgets them and the server goes back to waiting.
+            Async::run(fn () => ($command->handler)('logout remote', $ctx));
+            $this->assertStringContainsString('Signed out of MCP server "remote".', end($ui->notices));
+            $this->assertArrayNotHasKey($server->url(), json_decode((string) file_get_contents($this->home . '/mcp-auth.json'), true));
+            $this->assertStringContainsString('remote: needs sign-in', $this->mcpStatus());
+            $this->assertSame([], $set->names(), 'and its tool is off the model');
+
+            Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        } finally {
+            $server->stop();
+        }
+    }
+
+    public function testAnExpiringTokenIsRefreshedBeforeItIsSentAndARejectedOneAfter(): void
+    {
+        $server = new \Pig\Mcp\Test\FakeHttpMcpServer();
+        $server->oauth = true;
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'remote' => ['url' => $server->url(), 'exposure' => 'direct'],
+        ]]));
+
+        // Stored tokens from an earlier sign-in, about to expire. The fake server knows the refresh token.
+        $server->refreshTokens[] = 'refresh-old';
+        $server->requireToken = 'access-old';
+        file_put_contents($this->home . '/mcp-auth.json', json_encode([$server->url() => [
+            'serverUrl' => $server->url(),
+            'clientInformation' => ['client_id' => 'client-1', 'redirect_uris' => ['http://127.0.0.1:1/callback']],
+            'tokens' => ['access_token' => 'access-old', 'token_type' => 'Bearer', 'refresh_token' => 'refresh-old'],
+            'tokensExpireAt' => (int) (microtime(true) * 1000) + 1_000,   // inside the 30s skew
+        ]]));
+
+        try {
+            [$set] = $this->start();
+
+            $this->assertSame(['mcp__remote__echo'], $set->names());
+            $this->assertSame('refresh_token', $server->tokenRequests[0]['grant_type'], 'refreshed before the first request');
+            $this->assertSame('refresh-old', $server->tokenRequests[0]['refresh_token']);
+            $auth = json_decode((string) file_get_contents($this->home . '/mcp-auth.json'), true);
+            $this->assertSame($server->requireToken, $auth[$server->url()]['tokens']['access_token'], 'the new token is stored');
+            $this->assertNotSame('refresh-old', $auth[$server->url()]['tokens']['refresh_token'], 'and the rotated refresh token with it');
+
+            // Now the server revokes the token out from under us: the next call gets a 401, the
+            // provider refreshes, and the call is retried — the model sees one answer.
+            $server->requireToken = 'revoked-elsewhere';
+            $tool = $set->find('mcp__remote__echo');
+            $result = Async::run(static fn () => ($tool->execute)('1', ['text' => 'still here'], null, new \Pig\CodingAgent\Hooks\HookContext('.'), null));
+            $this->assertSame('echo: still here', $result->content[0]->text);
+            $this->assertSame(2, count($server->tokenRequests), 'one more refresh');
+        } finally {
+            $server->stop();
+        }
+    }
+
+    public function testAServerWithItsOwnAuthorizationHeaderDoesNotUseOauth(): void
+    {
+        $server = new \Pig\Mcp\Test\FakeHttpMcpServer();
+        $server->requireToken = 'static';
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'bearer' => ['url' => $server->url(), 'headers' => ['Authorization' => 'Bearer wrong']],
+        ]]));
+
+        try {
+            [, , $ui] = $this->start();
+            $status = $this->mcpStatus();
+            $this->assertStringContainsString('bearer: failed', $status, 'a 401 with a header of its own is a wrong header, not a sign-in');
+            $this->assertStringContainsString('check the Authorization header', $status);
+
+            $command = $this->extension->api->commands()['mcp'];
+            Async::run(fn () => ($command->handler)('login bearer', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true)));
+            $this->assertStringContainsString('No enabled MCP server uses OAuth', end($ui->notices));
+        } finally {
+            $server->stop();
+        }
+    }
+
+    /** What `/mcp` prints with no terminal — the status, which is the extension's public face. */
+    private function mcpStatus(): string
+    {
+        $command = $this->extension->api->commands()['mcp'];
+        $ui = new NoticingUi();
+        Async::run(fn () => ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: false)));
+
+        return (string) end($ui->notices);
     }
 
     // ---- the ranker -----------------------------------------------------------------------------

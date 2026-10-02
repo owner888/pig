@@ -27,14 +27,18 @@ final class McpCli
           pig mcp add <server> [options] --url <url>
           pig mcp remove <server> [-l]
           pig mcp list [--json]
+          pig mcp login <server> [--timeout <seconds>]
+          pig mcp logout <server>
 
-        Configure and check MCP servers without starting a session.
+        Configure and check MCP servers and sign in to OAuth servers without starting a session.
         Reads ~/.pig/agent/mcp.json and, in trusted projects, .pig/mcp.json.
 
         Commands:
           add <server>            Add or replace a server in mcp.json
           remove <server>         Remove a server from mcp.json
           list                    Show state, tools, and errors (exits 1 on failure)
+          login <server>          Sign in through the browser
+          logout <server>         Delete the stored OAuth credentials
 
         Options for add and remove:
           -l, --local             Use .pig/mcp.json in the current project instead of the global file
@@ -46,11 +50,19 @@ final class McpCli
           --header <KEY=VALUE>    HTTP header (repeatable)
           --bearer-token-env-var <NAME>
                                   Send "Authorization: Bearer ${NAME}"
+          --oauth-client-id <id>  Pre-registered OAuth client id
+          --oauth-client-secret <secret>
+                                  OAuth client secret (may be ${NAME} or !command)
+          --oauth-callback-port <port>
+                                  Fixed OAuth callback port
           --exposure <mode>       direct, deferred, or hidden (codemode is read as deferred)
 
         Other options:
           --json                  Print the list as JSON
+          --timeout <seconds>     How long login waits for the browser (default: 300)
         TEXT;
+
+    private const int DEFAULT_LOGIN_TIMEOUT = 300;
 
     private const string HELP_HINT = 'Use "pig mcp --help" for usage.';
 
@@ -60,12 +72,17 @@ final class McpCli
     /**
      * @param Closure(string): void $out
      * @param Closure(string): void $err
+     * @param Closure(string): void|null $openUrl how the browser is opened; a test passes one that records
+     * @param Closure(\Pig\Async\AbortSignal): ?string|null $askRedirectUrl how the pasted redirect URL is read; null means standard input when it is a terminal
      */
     public function __construct(
         private readonly string $cwd,
         private readonly string $agentDir,
         private readonly Closure $out,
         private readonly Closure $err,
+        private readonly ?Closure $openUrl = null,
+        private readonly ?Closure $askRedirectUrl = null,
+        private readonly ?McpOauth $credentials = null,
     ) {
     }
 
@@ -107,9 +124,188 @@ final class McpCli
             return $this->list(isset($parsed['values']['json']), $projectConfig);
         }
 
+        if ($command === 'login' || $command === 'logout') {
+            $parsed = $this->parse($rest, $command === 'login' ? ['timeout' => 'value'] : []);
+
+            if ($parsed === null) {
+                return 1;
+            }
+
+            $name = $parsed['positional'][0] ?? null;
+
+            if ($name === null || count($parsed['positional']) > 1) {
+                ($this->err)("Usage: pig mcp {$command} <server>\n" . self::HELP_HINT);
+
+                return 1;
+            }
+
+            $trusted = ProjectTrust::decision($this->cwd, $this->agentDir) === true;
+            $loaded = McpConfig::load($this->agentDir, $this->cwd, $trusted);
+            $entry = null;
+
+            foreach ($loaded->servers as $candidate) {
+                if ($candidate->name === $name) {
+                    $entry = $candidate;
+                }
+            }
+
+            if ($entry === null) {
+                $note = !$trusted && file_exists($projectConfig) ? " {$projectConfig} is ignored because the project is not trusted. Start pig in the project to trust it." : '';
+                $configured = implode(', ', array_map(static fn (ServerEntry $e): string => $e->name, $loaded->servers)) ?: 'none';
+                ($this->err)("No MCP server named \"{$name}\".{$note} Configured: {$configured}.");
+
+                return 1;
+            }
+
+            $credentials = $this->credentials ?? new McpOauth(McpOauth::defaultPath($this->agentDir));
+            $connection = new ServerConnection($entry, $this->cwd, Version::current(), credentials: $credentials);
+            $url = $connection->oauthUrl();
+
+            if ($url === null) {
+                ($this->err)("MCP server \"{$name}\" does not use OAuth. Only HTTP servers without an Authorization header do.");
+
+                return 1;
+            }
+
+            if ($command === 'logout') {
+                $removed = $credentials->remove($url);
+                ($this->out)($removed ? "Signed out of MCP server \"{$name}\"." : "No stored credentials for MCP server \"{$name}\".");
+
+                return 0;
+            }
+
+            $timeout = (float) ($parsed['values']['timeout'] ?? self::DEFAULT_LOGIN_TIMEOUT);
+
+            if (!is_numeric($parsed['values']['timeout'] ?? self::DEFAULT_LOGIN_TIMEOUT) || $timeout <= 0) {
+                ($this->err)('--timeout must be a positive number of seconds.');
+
+                return 1;
+            }
+
+            return self::onTheLoop(function () use ($entry, $connection, $url, $timeout, $credentials): int {
+                try {
+                    return $this->login($entry, $connection, $url, $timeout, $credentials);
+                } finally {
+                    try {
+                        $connection->close();
+                    } catch (\Throwable) {
+                        // Done with it either way.
+                    }
+                }
+            });
+        }
+
         ($this->err)("Unknown mcp command \"{$command}\".\n" . self::HELP_HINT);
 
         return 1;
+    }
+
+    // ---- login ----------------------------------------------------------------------------------
+
+    private function login(ServerEntry $entry, ServerConnection $connection, string $url, float $timeout, McpOauth $credentials): int
+    {
+        $name = $entry->name;
+
+        // Connecting first answers whether a sign-in is needed and records the server's challenge.
+        try {
+            $connection->client();
+            ($this->out)("Already signed in to MCP server \"{$name}\" (" . count($connection->tools) . ' tools).');
+
+            return 0;
+        } catch (\Throwable) {
+            if ($connection->state !== 'needs-auth') {
+                ($this->err)("MCP server \"{$name}\" failed to connect: " . ($connection->error ?? 'unknown error'));
+
+                return 1;
+            }
+        }
+
+        $openUrl = $this->openUrl ?? static function (string $url): void {
+            if (PHP_OS_FAMILY === 'Darwin') {
+                \Pig\Tui\Process::run(['open', $url]);
+            } elseif (PHP_OS_FAMILY === 'Linux') {
+                \Pig\Tui\Process::run(['xdg-open', $url]);
+            }
+        };
+
+        try {
+            $credentials->signIn($url, $connection->oauthSettings(), $connection->challenge, [
+                'showAuthorizationUrl' => function (string $authorizationUrl) use ($name, $openUrl): void {
+                    ($this->out)("Sign in to MCP server \"{$name}\" in your browser:\n{$authorizationUrl}");
+                    $openUrl($authorizationUrl);
+                },
+                'promptForRedirectUrl' => fn (\Pig\Async\AbortSignal $signal): ?string => $this->waitForRedirectUrl($signal, $timeout),
+            ], timeout: $timeout);
+        } catch (McpSignInCancelledError) {
+            ($this->err)("Sign-in to MCP server \"{$name}\" was cancelled or not completed within " . (int) round($timeout) . ' seconds.');
+
+            return 1;
+        } catch (\Throwable $error) {
+            ($this->err)("Sign-in to MCP server \"{$name}\" failed: {$error->getMessage()}");
+
+            return 1;
+        }
+
+        $connection->challenge = null;
+
+        try {
+            $connection->reconnect();
+        } catch (\Throwable $error) {
+            ($this->err)("Signed in, but {$error->getMessage()}");
+
+            return 1;
+        }
+
+        ($this->out)("Signed in to MCP server \"{$name}\" (" . count($connection->tools) . ' tools).');
+
+        return 0;
+    }
+
+    /**
+     * The pasted redirect URL from a terminal; otherwise only the browser callback can finish the
+     * sign-in. Answers null — cancelling — when the time runs out or the callback arrived first.
+     */
+    private function waitForRedirectUrl(\Pig\Async\AbortSignal $signal, float $timeout): ?string
+    {
+        if ($this->askRedirectUrl !== null) {
+            return ($this->askRedirectUrl)($signal);
+        }
+
+        $answer = new \Pig\Async\Deferred();
+        $timer = \Pig\Async\Loop::get()->delay($timeout, static function () use ($answer): void {
+            if (!$answer->isComplete()) {
+                $answer->complete(null);
+            }
+        });
+        $listener = $signal->onAbort(static function () use ($answer): void {
+            if (!$answer->isComplete()) {
+                $answer->complete(null);
+            }
+        });
+        $watcher = null;
+
+        if (defined('STDIN') && function_exists('posix_isatty') && posix_isatty(STDIN)) {
+            fwrite(STDERR, "If the browser cannot reach this machine, paste the URL it was redirected to: ");
+            stream_set_blocking(STDIN, false);
+            $watcher = \Pig\Async\Loop::get()->onReadable(STDIN, static function () use ($answer): void {
+                $line = fgets(STDIN);
+
+                if ($line !== false && !$answer->isComplete()) {
+                    $answer->complete(trim($line));
+                }
+            });
+        }
+
+        try {
+            return $answer->future->await();
+        } finally {
+            \Pig\Async\Loop::get()->cancel($timer);
+            $signal->removeListener($listener);
+
+            if ($watcher !== null) {
+                \Pig\Async\Loop::get()->cancel($watcher);
+            }
+        }
     }
 
     // ---- add / remove ---------------------------------------------------------------------------
@@ -119,7 +315,8 @@ final class McpCli
         $usage = "Usage: pig mcp add <server> [options] (--url <url> | -- <command> [args...])\n" . self::HELP_HINT;
         $parsed = $this->parse($args, [
             'local' => 'flag', 'url' => 'value', 'env' => 'list', 'cwd' => 'value', 'header' => 'list',
-            'bearer-token-env-var' => 'value', 'exposure' => 'value',
+            'bearer-token-env-var' => 'value', 'oauth-client-id' => 'value', 'oauth-client-secret' => 'value',
+            'oauth-callback-port' => 'value', 'exposure' => 'value',
         ], 2);
 
         if ($parsed === null) {
@@ -137,7 +334,7 @@ final class McpCli
             return 1;
         }
 
-        $httpOnly = ['header', 'bearer-token-env-var'];
+        $httpOnly = ['header', 'bearer-token-env-var', 'oauth-client-id', 'oauth-client-secret', 'oauth-callback-port'];
         $stdioOnly = ['env', 'cwd'];
 
         foreach ($url === null ? $httpOnly : $stdioOnly as $option) {
@@ -159,7 +356,12 @@ final class McpCli
                 $headers['Authorization'] = 'Bearer ${' . $values['bearer-token-env-var'] . '}';
             }
 
-            $config = ['url' => $url, ...($headers !== [] ? ['headers' => $headers] : [])];
+            $oauth = [
+                ...(isset($values['oauth-client-id']) ? ['clientId' => $values['oauth-client-id']] : []),
+                ...(isset($values['oauth-client-secret']) ? ['clientSecret' => $values['oauth-client-secret']] : []),
+                ...(isset($values['oauth-callback-port']) ? ['callbackPort' => (int) $values['oauth-callback-port']] : []),
+            ];
+            $config = ['url' => $url, ...($headers !== [] ? ['headers' => $headers] : []), ...($oauth !== [] ? ['oauth' => $oauth] : [])];
         } else {
             $env = $this->pairs('env', $lists['env'] ?? null);
 
@@ -205,7 +407,10 @@ final class McpCli
             ($this->out)("The project is not trusted, so {$path} is ignored until you start pig in the project and trust it.");
         }
 
-        ($this->out)('Check it with: pig mcp list');
+        // HTTP servers without an Authorization header may use OAuth.
+        $mayNeedSignIn = isset($validated['url'])
+            && array_filter(array_keys($validated['headers'] ?? []), static fn (string $h): bool => strtolower($h) === 'authorization') === [];
+        ($this->out)('Check it with: pig mcp list' . ($mayNeedSignIn ? ". If it requires sign-in: pig mcp login {$name}" : ''));
 
         return 0;
     }
@@ -268,7 +473,7 @@ final class McpCli
             ? "{$projectConfig} is ignored because the project is not trusted. Start pig in the project to trust it."
             : null;
 
-        $reports = Async::run(function () use ($loaded): array {
+        $reports = self::onTheLoop(function () use ($loaded): array {
             $reports = [];
 
             foreach ($loaded->servers as $entry) {
@@ -288,7 +493,7 @@ final class McpCli
                     continue;
                 }
 
-                $connection = new ServerConnection($entry, $this->cwd, Version::current());
+                $connection = new ServerConnection($entry, $this->cwd, Version::current(), credentials: $this->credentials ?? new McpOauth(McpOauth::defaultPath($this->agentDir)));
 
                 try {
                     $connection->client();
@@ -350,6 +555,10 @@ final class McpCli
             ($this->out)("{$report['name']}: {$state} ({$report['exposure']}, {$report['scope']})");
             ($this->out)("  {$report['transport']}");
 
+            if ($report['state'] === 'needs-auth') {
+                ($this->out)("  sign in with: pig mcp login {$report['name']}");
+            }
+
             if ($report['tools'] !== []) {
                 $tools = array_map(
                     static fn (string $tool): string => isset($report['toolExposure'][$tool]) ? "{$tool} [{$report['toolExposure'][$tool]}]" : $tool,
@@ -372,6 +581,15 @@ final class McpCli
         }
 
         return $failed ? 1 : 0;
+    }
+
+    /**
+     * Run `$work` on the loop: in a run of its own from a plain script, or right here when the
+     * caller is already a coroutine (a test driving the CLI from inside `Async::run()`).
+     */
+    private static function onTheLoop(Closure $work): mixed
+    {
+        return \Fiber::getCurrent() === null ? Async::run($work) : $work();
     }
 
     // ---- arguments ------------------------------------------------------------------------------
@@ -464,7 +682,7 @@ final class McpCli
     /** What `bin/pig mcp` calls: load the extension's classes, run, print, and answer the exit code. */
     public static function main(array $args, string $cwd): int
     {
-        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools'] as $class) {
+        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpSignInCancelledError', 'McpOauth'] as $class) {
             if (!class_exists("PigMcp\\{$class}", false)) {
                 require __DIR__ . "/{$class}.php";
             }

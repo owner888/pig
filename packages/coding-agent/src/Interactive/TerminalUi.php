@@ -150,9 +150,9 @@ final class TerminalUi implements HookUi
     }
 
     #[\Override]
-    public function input(string $title, string $placeholder = ''): ?string
+    public function input(string $title, string $placeholder = '', ?\Pig\Async\AbortSignal $signal = null): ?string
     {
-        if (!$this->canAsk()) {
+        if (!$this->canAsk() || $signal?->aborted() === true) {
             return null;
         }
 
@@ -170,13 +170,27 @@ final class TerminalUi implements HookUi
             $answer->complete(null);
         });
 
+        // Something else answered first: the dialog goes the way escape would take it.
+        $listener = $signal?->onAbort(function () use ($answer): void {
+            if (!$answer->isComplete()) {
+                $this->close();
+                $answer->complete(null);
+            }
+        });
+
         $this->open(
             $title . ($placeholder === '' ? '' : " ({$placeholder})"),
             $field,
             'enter to submit, esc to cancel',
         );
 
-        $value = $answer->future->await();
+        try {
+            $value = $answer->future->await();
+        } finally {
+            if ($signal !== null && $listener !== null) {
+                $signal->removeListener($listener);
+            }
+        }
 
         return is_string($value) ? $value : null;
     }

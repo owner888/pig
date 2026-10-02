@@ -14,6 +14,15 @@ final class NoticingUi implements HookUi
     /** @var list<string> `[level] message` */
     public array $notices = [];
 
+    /**
+     * What `input()` answers. Null means "nobody typed": a real dialog stays open until a key or
+     * its owner closes it, so this one parks the caller until `$inputReleased` is completed —
+     * which is what the MCP sign-in's redirect-URL prompt relies on, racing the browser callback.
+     */
+    public ?string $inputAnswer = null;
+
+    public ?\Pig\Async\Deferred $inputReleased = null;
+
     #[\Override]
     public function select(string $title, array $options): ?string
     {
@@ -27,9 +36,22 @@ final class NoticingUi implements HookUi
     }
 
     #[\Override]
-    public function input(string $title, string $placeholder = ''): ?string
+    public function input(string $title, string $placeholder = '', ?\Pig\Async\AbortSignal $signal = null): ?string
     {
-        return null;
+        if ($this->inputAnswer !== null) {
+            return $this->inputAnswer;
+        }
+
+        // Nobody types: the prompt stays open until the signal closes it, as a real one would.
+        $this->inputReleased ??= new \Pig\Async\Deferred();
+        $released = $this->inputReleased;
+        $signal?->onAbort(static function () use ($released): void {
+            if (!$released->isComplete()) {
+                $released->complete(null);
+            }
+        });
+
+        return $released->future->await();
     }
 
     #[\Override]

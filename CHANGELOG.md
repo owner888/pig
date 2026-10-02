@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- **OAuth sign-in for remote MCP servers** — upstream's `pi-mcp/oauth` (as `Pig\Mcp\Oauth`) and `extensions/mcp/oauth.js` (as `McpOauth`): RFC 9728 / RFC 8414 discovery, dynamic client registration, the authorization code flow with PKCE against a loopback callback on a free port, token refresh before expiry and after a 401, `invalid_grant` → tokens dropped and the browser flow again, `insufficient_scope` → a new sign-in with the scope merged in. An HTTP server with no `Authorization` header of its own uses it: a 401 with nothing to refresh is the state `needs-auth` (not `failed`), the startup report says `run /mcp login <server>`, the manager offers **Sign in** (with a box for the pasted redirect URL when the browser runs on another machine) and **Sign out**, and `/mcp login [server]`, `/mcp logout [server]`, `pig mcp login <server> [--timeout s]`, `pig mcp logout <server>` do the same from the prompt and the shell. Credentials live in `~/.pig/agent/mcp-auth.json`, keyed by server URL, `0600`. `pig mcp add --url … [--oauth-client-id --oauth-client-secret --oauth-callback-port]` for a pre-registered client. Not ported: the cross-process refresh lock (`proper-lockfile`) — two pigs refreshing one rotating token in the same instant lose the grant, which is the cost a lost lock has upstream too.
+- `HookUi::input()` takes an optional `AbortSignal`, upstream's `{ signal }`: a prompt raced against something that may answer first is closed from outside with null. `TerminalUi` closes the dialog, `RpcUi` tells the host the question is withdrawn.
+
+### Fixed
+
+- `FakeHttpMcpServer` (test helper) speaks OAuth, so the flow is tested end to end against the same server the transport is.
+
 ## [0.2.13] - 2026-10-02
 
 ### Added

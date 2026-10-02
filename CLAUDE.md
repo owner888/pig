@@ -2772,10 +2772,38 @@ window lands on a status screen that takes none (the test waits for the menu, no
 `registerTools()` diffed against the names it owned rather than the names it had declared, so
 switching a connected server to `deferred` left its tools on the model — the Fixed entry above.
 
+**OAuth is `Pig\Mcp\Oauth` plus `McpOauth`**, split as upstream splits `pi-mcp/oauth` from
+`extensions/mcp/oauth.js`: the package knows the protocol (discovery, registration, the flow, the
+callback server, the provider's state record) and the extension knows the file, the connection
+and the dialogs. Four things decided on the way:
+
+- **`OauthCallbackServer` is not `Pig\Ai\Utils\Oauth\CallbackServer`.** That one's port is a
+  constant registered with Google; this one listens on whatever is free, because the redirect URI
+  is registered with each MCP server's authorization server at sign-in, and matches a callback to
+  the sign-in waiting for it by `state`. Two servers for two different facts.
+- **The pasted-URL prompt races the callback**, which is why `HookUi::input()` grew a `$signal`:
+  without one the dialog stays open after the browser already answered, and in the first live run
+  it did. `NoticingUi` parks on the signal for the same reason — a test UI whose `input()` answers
+  null at once would read as "the person cancelled" before the browser got a turn.
+- **A 401 is `needs-auth` only for a server that *uses* OAuth** — an HTTP server with no
+  `Authorization` header of its own. One *with* a header that answers 401 has a wrong header, and
+  saying "sign in" would send somebody to a browser for a typo.
+- **The cross-process refresh lock is not ported.** Upstream takes `proper-lockfile` for it; pig
+  takes no dependency, and the cost of two pigs refreshing one rotating token at the same instant
+  is the cost a lost lock has there: one of them signs in again.
+
+**GitHub's MCP server cannot be signed into with dynamic registration**, verified live:
+`github.com/login/oauth`'s metadata has no `registration_endpoint`, so `pig mcp login gh` says
+`Authorization server does not support dynamic client registration` — correctly — and the way in
+is a pre-registered client in the `oauth` block, or a token in the header. Upstream's docs say the
+same; worth knowing before reading the refusal as a bug.
+
 `pig mcp` is `McpCli`, beside the extension and required by `bin/pig` from there, because what it
 reads and writes is the extension's file and nothing in a package knows the shape. Its tests found
 the final-method trap again — `private function run()` in a test class, two entries below this
 one — which is worth the sentence: *the sweep in the shim refuses it now, and I wrote it anyway.*
+And then `status()` in the next test file. The names PHPUnit owns that read as natural test-helper
+names: `run`, `status`, `output`, `any`, `count`, `name`, `result`, `toString`.
 
 `McpExtensionTest` drives the whole thing through `ExtensionLoader::load()` with the stdio fixture
 server (`packages/mcp/test/fixtures/stdio-server.php`): session start, the ten-second wait, a

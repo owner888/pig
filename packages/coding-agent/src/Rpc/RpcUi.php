@@ -99,13 +99,13 @@ final class RpcUi implements HookUi
     }
 
     #[\Override]
-    public function input(string $title, string $placeholder = ''): ?string
+    public function input(string $title, string $placeholder = '', ?\Pig\Async\AbortSignal $signal = null): ?string
     {
         return self::text($this->ask([
             'method' => 'input',
             'title' => $title,
             'placeholder' => $placeholder,
-        ]));
+        ], $signal));
     }
 
     #[\Override]
@@ -170,15 +170,35 @@ final class RpcUi implements HookUi
      * @param array<string, mixed> $request
      * @return array<string, mixed> the reply, whatever shape the host sent
      */
-    private function ask(array $request): array
+    private function ask(array $request, ?\Pig\Async\AbortSignal $signal = null): array
     {
+        if ($signal?->aborted() === true) {
+            return ['cancelled' => true];
+        }
+
         $id = "ui-{$this->epoch}-" . (++$this->next);
         $answer = new Deferred();
         $this->pending[$id] = $answer;
 
+        // Aborted from this side: the host is told the question is withdrawn, so a stale answer
+        // to it is not read as the next question's.
+        $listener = $signal?->onAbort(function () use ($id, $answer): void {
+            if (!$answer->isComplete()) {
+                unset($this->pending[$id]);
+                $this->tell(['id' => $id, 'method' => 'cancel']);
+                $answer->complete(['cancelled' => true]);
+            }
+        });
+
         $this->tell(['id' => $id, ...$request]);
 
-        $reply = $answer->future->await();
+        try {
+            $reply = $answer->future->await();
+        } finally {
+            if ($signal !== null && $listener !== null) {
+                $signal->removeListener($listener);
+            }
+        }
 
         return is_array($reply) ? $reply : [];
     }

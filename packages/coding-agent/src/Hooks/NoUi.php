@@ -39,7 +39,7 @@ final readonly class NoUi implements HookUi
     }
 
     #[\Override]
-    public function input(string $title, string $placeholder = ''): ?string
+    public function input(string $title, string $placeholder = '', ?\Pig\Async\AbortSignal $signal = null): ?string
     {
         return null;
     }
