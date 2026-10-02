@@ -243,7 +243,10 @@ final class Editor implements Caret, Component, InputHandler
     public function render(int $width): array
     {
         $this->lastWidth = $width;
-        $rule = str_repeat(($this->theme->border)('─'), $width);
+        // The style goes round the whole rule, not round each dash: styled per character, a
+        // 140-column rule was 3,360 bytes and 280 escape sequences — 40% of a frame, on two
+        // lines, on every frame. Upstream styles `"─".repeat(width)` once.
+        $rule = ($this->theme->border)(str_repeat('─', $width));
         $lines = [$rule];
 
         foreach ($this->layout($width) as $layoutLine) {

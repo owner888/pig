@@ -21,6 +21,9 @@ final class ProcessTerminal implements Terminal
     /** How long to keep waiting for a full output buffer to drain, in seconds. */
     private const float DRAIN_TIMEOUT = 5.0;
 
+    /** How much is handed to one `fwrite()`; see the loop in `write()`. */
+    private const int WRITE_SLICE = 65536;
+
     /** Terminal settings as they were before we touched them, for `stty` to restore. */
     private ?string $savedState = null;
 
@@ -125,7 +128,11 @@ final class ProcessTerminal implements Terminal
         $waited = 0.0;
 
         while ($written < $length) {
-            $count = fwrite($this->output, substr($data, $written));
+            // A slice, not the whole remainder: a tty takes a frame about a kilobyte at a time,
+            // and `substr($data, $written)` copies everything still to go on each of those
+            // writes — 2,400 copies of a 2.5MB frame, 72ms of memcpy, measured. Nothing a
+            // terminal does wants more than this per call.
+            $count = fwrite($this->output, substr($data, $written, self::WRITE_SLICE));
 
             if ($count === false) {
                 throw new TuiError("Writing to the terminal failed after {$written} of {$length} bytes");

@@ -439,10 +439,13 @@ class Tui extends Container
     private function wholeFrame(array $lines, int $width, bool $clear): string
     {
         // \e[3J clears the scrollback as well, so a redraw does not leave the previous
-        // frame sitting above the new one for the user to scroll back into.
+        // frame sitting above the new one for the user to scroll back into. **Screen first,
+        // scrollback last**, which is upstream's order: a terminal paints what it is told in the
+        // order it is told, and clearing the visible rows before the new frame arrives is the
+        // part a person is waiting on — the scrollback can go afterwards.
         // \r because the caret may have left the cursor part-way along a line, and the
         // first line below is written from wherever it is.
-        $buffer = $clear ? "\x1b[3J\x1b[2J\x1b[H" : "\r";
+        $buffer = $clear ? "\x1b[2J\x1b[H\x1b[3J" : "\r";
 
         foreach ($lines as $index => $line) {
             // Checked here as well as in changedLines, and for the same reason. A too-wide

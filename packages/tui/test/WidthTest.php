@@ -65,6 +65,45 @@ final class WidthTest extends TestCase
         $this->assertSame("abc\n   ", $padded);
     }
 
+    public function testAStyledAsciiLineIsMeasuredWithoutSegmentingIt(): void
+    {
+        // Every line of a transcript carries a colour, so a styled line of printable ASCII is
+        // the common case, and it used to go through grapheme segmentation because the escape
+        // in it failed the plain-ASCII fast path. 12,800 such lines at a new width were 236ms
+        // of a resize frame — spent measuring lines whose every character is one column wide.
+        // The answer is the same; what this pins is that it is reached without the walk, which
+        // only a time can show. A ratio, because a number is a fact about the machine.
+        $styled = [];
+        $wide = [];
+
+        for ($index = 0; $index < 3000; $index++) {
+            $styled[] = "\e[38;2;1;2;3mline {$index} of plain text that is styled\e[39m";
+            $wide[] = "\e[38;2;1;2;3mline {$index} of text with a 你 in it\e[39m";
+        }
+
+        $plain = self::milliseconds(static function () use ($styled): void {
+            foreach ($styled as $line) {
+                Width::visible($line);
+            }
+        });
+        $segmented = self::milliseconds(static function () use ($wide): void {
+            foreach ($wide as $line) {
+                Width::visible($line);
+            }
+        });
+
+        $this->assertSame(35, Width::visible("\e[38;2;1;2;3mline 0 of plain text that is styled\e[39m"));
+        $this->assertLessThan($segmented / 3, $plain, 'a styled ASCII line was segmented');
+    }
+
+    private static function milliseconds(\Closure $work): float
+    {
+        $start = microtime(true);
+        $work();
+
+        return (microtime(true) - $start) * 1000;
+    }
+
     public function testTheCacheReturnsTheSameAnswerTwice(): void
     {
         $text = '中文 👍';

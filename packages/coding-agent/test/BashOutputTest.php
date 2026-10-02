@@ -9,6 +9,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Interactive\BashOutputComponent;
 use Pig\CodingAgent\Tools\Run;
+use Pig\Tui\Ansi;
 use Pig\Tui\Width;
 
 /**
@@ -111,6 +112,51 @@ final class BashOutputTest extends TestCase
 
         $this->assertCount(1, $component->render(40));
         $this->assertCount(3, $component->render(10));
+    }
+
+    public function testTheDroppedCountIsCountedInRowsWhetherOrNotTheHeadWasWrapped(): void
+    {
+        // The head is no longer wrapped — only the tail that will be shown is — so the note's
+        // count has to come from somewhere else, and it has to be the same number the old whole
+        // wrap gave: *rows*, not logical lines. Two 55-column lines at width 22 are six rows.
+        $component = new BashOutputComponent(2, static fn (int $dropped): string => "... ({$dropped} earlier lines)");
+        $component->setText(str_repeat('a', 55) . "\n" . str_repeat('b', 55) . "\nlast\nline");
+
+        $lines = $component->render(22);
+
+        $this->assertSame('... (6 earlier lines)', trim(Ansi::strip($lines[0])));
+        $this->assertStringContainsString('last', $lines[1]);
+        $this->assertStringContainsString('line', $lines[2]);
+    }
+
+    public function testATailThatWrapsPastTheRowsIsCutAndCountedToo(): void
+    {
+        // The last logical line alone wraps to three rows against a budget of two, so one row of
+        // it goes — and is counted with the dropped head, as the whole wrap counted it.
+        $component = new BashOutputComponent(2, static fn (int $dropped): string => "... ({$dropped} earlier lines)");
+        $component->setText("first\n" . str_repeat('x', 50));
+
+        $lines = $component->render(22);
+
+        $this->assertSame('... (2 earlier lines)', trim(Ansi::strip($lines[0])));
+        $this->assertSame([str_repeat('x', 22), str_repeat('x', 6)], array_map(static fn (string $line): string => trim(Ansi::strip($line)), [$lines[1], $lines[2]]));
+    }
+
+    public function testCollapsingALongOutputCostsTheTailAndNotTheWholeOfIt(): void
+    {
+        // A 50KB build log kept to five rows was wrapped whole at every new width: 280 of them
+        // in one resumed session made a resize frame take 560ms, and the right-hand side of a
+        // widened window stayed blank for that long. A ratio, for the reason the test above
+        // gives — the gap it stands in for is about 50×.
+        $short = new BashOutputComponent(5, null);
+        $short->setText(str_repeat(str_repeat('x', 200) . "\n", 5));
+        $long = new BashOutputComponent(5, null);
+        $long->setText(str_repeat(str_repeat('x', 200) . "\n", 2000));
+
+        $tail = self::milliseconds(static fn () => $short->render(120));
+        $whole = self::milliseconds(static fn () => $long->render(120));
+
+        $this->assertLessThan(max(1.0, $tail * 20), $whole, 'the whole output was wrapped to show its tail');
     }
 
     public function testNewOutputAndANewRowCountBothReachTheScreen(): void

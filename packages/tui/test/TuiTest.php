@@ -210,7 +210,7 @@ final class TuiTest extends TestCase
 
         // The old frame was laid out for a different width; leaving it in the scrollback
         // would leave the user scrolling back into a broken copy of what they just read.
-        $this->assertStringContainsString("\x1b[3J\x1b[2J\x1b[H", $output);
+        $this->assertStringContainsString("\x1b[2J\x1b[H\x1b[3J", $output, "screen, home, scrollback — upstream's order");
     }
 
     public function testAResizeToTheSameSizeDrawsNothing(): void
@@ -522,7 +522,7 @@ final class TuiTest extends TestCase
         $this->tui->requestRender(true);
         $this->frame();
 
-        $this->assertStringContainsString("\x1b[3J\x1b[2J\x1b[H", $this->terminal->output());
+        $this->assertStringContainsString("\x1b[2J\x1b[H\x1b[3J", $this->terminal->output());
     }
 
     public function testTheVeryFirstFrameDoesNotClearWhatTheShellPrinted(): void

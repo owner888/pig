@@ -151,6 +151,47 @@ final class TextWrapTest extends TestCase
         $this->assertFalse($tracker->hasActiveCodes());
     }
 
+    // ---- the two fast paths, held to the slow path ---------------------------------------
+
+    public function testRowsCountsWhatWrapWouldHaveMade(): void
+    {
+        // `rows()` counts a plain line by arithmetic and everything else by wrapping it; the one
+        // thing it must never do is disagree with `wrap()`. Random lines, both ways, so the
+        // arithmetic is held to the walk rather than to a few hand-picked shapes.
+        mt_srand(11);
+
+        for ($case = 0; $case < 2000; $case++) {
+            $line = '';
+
+            for ($length = mt_rand(1, 80); $length > 0; $length--) {
+                $line .= mt_rand(0, 10) < 3 ? ' ' : chr(mt_rand(0x21, 0x7e));
+            }
+
+            $width = mt_rand(1, 15);
+
+            $this->assertSame(count(TextWrap::wrap($line, $width)), TextWrap::rows($line, $width), json_encode($line) . " at {$width}");
+        }
+
+        // And the cases arithmetic alone cannot reach: styled, wide, and empty.
+        foreach (["\e[31m" . str_repeat('ab ', 20) . "\e[39m", str_repeat('你好 ', 12), '', "one\ntwo\n\nfour"] as $text) {
+            $this->assertSame(count(TextWrap::wrap($text, 7)), TextWrap::rows($text, 7), json_encode($text));
+        }
+    }
+
+    public function testAPlainWordIsCutToTheSameBytesWhicheverPathCutsIt(): void
+    {
+        // A word of printable ASCII is cut by bytes rather than by graphemes — 46KB of minified
+        // JavaScript took 10ms the slow way, at every width — and the two have to agree to the
+        // byte, codes included: the tokenizer hangs a line's opening style on its first word and
+        // its closing style on its last.
+        $this->assertSame(["\e[31mabcd", "\e[31mefgh", "\e[31mij\e[39m"], TextWrap::wrap("\e[31mabcdefghij\e[39m", 4));
+        $this->assertSame(["\e[4mabc\e[24m", "\e[4mdef\e[24m", "\e[4mghi\e[24m", "\e[4mj"], TextWrap::wrap("\e[4mabcdefghij", 3));
+        $this->assertSame(['abc' . "\e[31mde", "\e[31mfghij", "\e[31mklmno", "\e[31m\e[39m pqr"], TextWrap::wrap("abc\e[31mdefghijklmno\e[39m pqr", 5));
+
+        // A word with a code *inside* it takes the slow path and is cut the same way.
+        $this->assertSame(["\e[1mab\e[31mc", "\e[1;31mdef", "\e[1;31mgh\e[39mi", "\e[1mj\e[22m"], TextWrap::wrap("\e[1mab\e[31mcdefgh\e[39mij\e[22m", 3));
+    }
+
     public function testCjkTextWithEnglishWordWrapsEnglishWordCleanlyToNextLine(): void
     {
         // 12 columns: "请确认提交" (10 cols), "commit-id" (9 cols) wraps cleanly as a whole word to line 2

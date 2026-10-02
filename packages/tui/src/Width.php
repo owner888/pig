@@ -58,6 +58,16 @@ final class Width
         $clean = str_contains($text, "\t") ? str_replace("\t", '   ', $text) : $text;
         $clean = Ansi::strip($clean);
 
+        // A **styled** line of printable ASCII is the other common case — every line of a
+        // transcript carries a colour — and it takes this path with the codes gone, as upstream's
+        // `asciiVisibleWidth` does. Without it, every line the renderer checks before writing went
+        // through grapheme segmentation: on a 12,800-line frame that was 236ms of a 560ms resize,
+        // spent measuring lines whose every character is one column wide. The cache above cannot
+        // help, because a frame at a new width is 12,800 strings it has never seen.
+        if (preg_match('/^[\x20-\x7e]*\z/', $clean) === 1) {
+            return strlen($clean);
+        }
+
         $width = 0;
 
         foreach (Graphemes::split($clean) as $grapheme) {

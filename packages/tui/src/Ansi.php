@@ -15,7 +15,7 @@ namespace Pig\Tui;
 final class Ansi
 {
     /** Terminators that close the CSI sequences this file understands. */
-    private const string TERMINATORS = 'mGKHJ';
+    public const string TERMINATORS = 'mGKHJ';
 
     /**
      * The escape sequence starting at byte offset $pos, if one starts there.

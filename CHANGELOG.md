@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- **Widening the window left its right-hand side blank for most of a second** on a long session. Measured on a resumed 1,144-message conversation at 169 columns against pi on the same file: pi's redraw began 125ms after the signal, pig's 823ms. Four things, all in the frame and none in the terminal. `BashOutputComponent` wrapped the **whole** of a command's output to keep its last five rows — a 50KB build log collapsed to five rows cost a full wrap at every new width, 280 of them in that session, 460ms of the frame; it wraps from the end now and stops once the rows are in hand, with `TextWrap::rows()` counting what the dropped head would have made. `Width::visible()` sent every *styled* line of printable ASCII — which is every line of a transcript — through grapheme segmentation, because the escape in it failed the plain-ASCII fast path; 12,800 lines measured before writing were 236ms, and a styled ASCII line is one column a byte once the codes are gone, as upstream's `asciiVisibleWidth` has it. `TextWrap::breakWord()` cut a 46KB minified line grapheme by grapheme (10ms a line, at every width); a word of printable ASCII is cut by bytes now, held byte-identical to the grapheme walk over 3,000 random styled words. And `ProcessTerminal::write()` handed `fwrite()` the whole remainder of the frame each time the tty took a kilobyte of it — 2,400 copies of 2.5MB, 72ms of `memcpy`; it hands over 64KB slices. First byte of the redraw is 194ms after the signal now, against pi's 125, and the whole frame is on screen in 227ms against pi's 146 — what is left is 2.5MB against pi's 2.2MB going through the tty.
+- The editor's two horizontal rules were styled per character — 280 escape sequences and 3,360 bytes per 140-column rule, two rules a frame — and are one styled string now. The whole-frame clear is `\e[2J\e[H\e[3J`, screen first and scrollback last, which is upstream's order.
+
 ## [0.2.17] - 2026-10-02
 
 ### Changed

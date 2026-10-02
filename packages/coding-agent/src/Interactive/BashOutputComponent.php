@@ -128,20 +128,39 @@ final class BashOutputComponent implements Component
     /** @return list<string> */
     private function lines(int $width): array
     {
-        $visual = [];
+        // Wrapped from the **end**, and only as far as the rows that will be shown: this keeps
+        // the tail, so the head is wrapped only to be thrown away. A 50KB build log collapsed
+        // to five rows cost a full wrap of 50KB on every width change, and a transcript with
+        // 280 of them spent 460ms of a 560ms resize frame here — the right-hand side of a
+        // widened window stayed blank for half a second. How many rows the dropped head
+        // *would* have made is the one thing the note needs, and `TextWrap::rows()` counts
+        // without building them.
+        $width = max(1, $width);
+        $logical = explode("\n", $this->text);
+        $kept = [];
+        $dropped = 0;
 
-        foreach (explode("\n", $this->text) as $line) {
-            foreach (TextWrap::wrap($line, max(1, $width)) as $row) {
-                $visual[] = $row;
+        for ($index = count($logical) - 1; $index >= 0; $index--) {
+            if (count($kept) >= $this->rows) {
+                $dropped += TextWrap::rows($logical[$index], $width);
+
+                continue;
             }
+
+            $rows = TextWrap::wrap($logical[$index], $width);
+            $kept = [...$rows, ...$kept];
         }
 
-        if (count($visual) <= $this->rows) {
-            return self::padded($visual, $width);
+        if ($dropped === 0 && count($kept) <= $this->rows) {
+            return self::padded($kept, $width);
         }
 
-        $dropped = count($visual) - $this->rows;
-        $kept = array_slice($visual, $dropped);
+        $extra = count($kept) - $this->rows;
+
+        if ($extra > 0) {
+            $dropped += $extra;
+            $kept = array_slice($kept, $extra);
+        }
 
         if ($this->note !== null) {
             // Cut to the width, not wrapped: `... (35 earlier lines)` is 22 columns and every

@@ -5333,6 +5333,70 @@ delay, not as an empty tick.
 to drain 10KB in 1KB pieces, each `select()` wait ~2ms. pi pays the same (its median gap was
 106ms in the same harness); it is the terminal's read rate, not pig's.
 
+### Widening the window left the right-hand side blank, and the terminal was innocent
+
+Reported as "pi fills the new width at once, pig's right side stays blank for a while". The first
+measurements said both tools emit the same 24 frames at the same cadence on a short transcript, and
+the Terminal.app write cost is the same for both — so the drag entry above was true and this was a
+different bug. What separated them was the session: on a resumed 1,144-message conversation, one
+widen to 169 columns against pi on the **same file**:
+
+```
+pi:   first byte 125ms after the signal, frame complete at 146ms, 2170KB
+pig:  first byte 823ms after the signal, frame complete at 915ms, 2529KB
+```
+
+Nothing a terminal does explains 700ms before the first byte; that is the frame being *built*.
+Profiled component by component — 1,144 children, 560ms of render, 240ms of width checks, the rest
+in `write()` — and it was four things, each of which looked cheap in the place it was written:
+
+- **`BashOutputComponent` wrapped the whole output to show its tail.** Five rows kept out of a 50KB
+  build log meant a 50KB wrap at every new width, and this session has 280 of those: 460ms of the
+  560. The entry on `BashOutputComponent`'s missing cache three batches up fixed the *per keystroke*
+  cost and left the *per width* cost exactly as it was, because a cache keyed on width is empty at
+  every new width. It wraps from the end now and stops when it has the rows; `TextWrap::rows()`
+  counts what the dropped head would have made, by arithmetic for a plain line — held to the real
+  wrap over 20,000 random lines — and by wrapping for anything styled or wide.
+- **`Width::visible()` segmented every styled line.** The fast path is "printable ASCII → `strlen`",
+  and every line of a transcript carries a colour, so every one of them failed it and went through
+  `\X`. 12,800 lines, measured once each by `checkWidth()` before writing: 236ms. Upstream's
+  `asciiVisibleWidth` skips the escapes and counts the rest; pig does the same **after**
+  `Ansi::strip()`, where the cache above it cannot help because a frame at a new width is 12,800
+  strings it has never seen.
+- **`TextWrap::breakWord()` cut a minified line grapheme by grapheme**, 10ms for 46KB and again at
+  every width. A word of printable ASCII is one column a byte; it is `str_split` now, with the
+  opening codes on the first piece and the closing codes on the last, which is where the tokenizer
+  hangs them — and the two paths were diffed byte for byte over 3,000 random styled words before
+  the first draft, which put the opening codes on *every* piece, was replaced.
+- **`ProcessTerminal::write()` copied the rest of the frame on every short write.**
+  `substr($data, $written)` with a tty taking a kilobyte at a time is 2,400 copies of 2.5MB — 72ms
+  of `memcpy` for the one loop whose whole point is waiting on something slower than `memcpy`. A
+  64KB slice.
+
+```
+pig now:  first byte 194ms after the signal, frame complete at 227ms
+```
+
+**What is left is the bytes.** pig's frame is 2.5MB to pi's 2.2MB and the terminal drains both at
+the same rate, so the remaining gap is in what the components emit — and that is not something a
+profile of the render finds. Two things worth knowing before anybody chases it: the per-frame
+`write()` on a wide pane is tty drain and pi pays the same (measured, 89ms against 106 in the same
+harness); and pi's transcript for that session is 10,246 lines to pig's 12,805, so a line count is
+where to start.
+
+The method is the entry, more than the fixes: **a profile of one frame, by class and then by
+instance, against a real session** — not a synthetic transcript. The synthetic one three batches
+ago was built from `Text` components and reproduced none of this.
+
+Regression tests, one per fix, each red on its own mutation:
+`BashOutputTest::testCollapsingALongOutputCostsTheTailAndNotTheWholeOfIt`,
+`testTheDroppedCountIsCountedInRowsWhetherOrNotTheHeadWasWrapped`,
+`testATailThatWrapsPastTheRowsIsCutAndCountedToo`; `TextWrapTest::testRowsCountsWhatWrapWouldHaveMade`,
+`testAPlainWordIsCutToTheSameBytesWhicheverPathCutsIt`;
+`WidthTest::testAStyledAsciiLineIsMeasuredWithoutSegmentingIt`. The slice has no test of its own:
+`ProcessTerminalTest::testAWriteBiggerThanTheBufferStillArrivesWhole` already drives a megabyte
+through a pipe and holds the bytes whole, and the slice changes only how often that loop goes round.
+
 ### `fwrite()` to a terminal returns short, and STDOUT is non-blocking whether you asked or not
 
 `ProcessTerminal::write()` called `fwrite()` once and ignored what it returned. A frame is
