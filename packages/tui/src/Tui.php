@@ -281,14 +281,45 @@ class Tui extends Container
         }
 
         // The window shows the last $height lines of the frame, so it starts at
-        // count - height. A change above that is in scrollback, out of the cursor's reach,
-        // so the screen is redrawn instead.
+        // count - height. A change above that is in scrollback, out of the cursor's reach.
         //
-        // Counted from the frame and not from cursorRow, which is where the *cursor* is:
-        // with only the changed lines rewritten that is wherever the last change was, which
-        // may be anywhere, and the top of the window is not a fact about it.
-        if ($firstChanged < count($this->previousLines) - $height) {
-            $this->paint($this->wholeFrame($lines, $width, clear: true), $lines, $width);
+        // Counted from the frame and not from cursorRow, which is where the *cursor* is: with
+        // only the changed lines rewritten that is wherever the last change was, which may be
+        // anywhere, and the top of the window is not a fact about it.
+        $windowStart = max(0, count($this->previousLines) - $height);
+
+        if ($firstChanged < $windowStart) {
+            // Upstream redraws the whole screen here, and so did this — and the case that made
+            // it a fault is a dialog taller than the terminal has room for: the working spinner
+            // sits *above* the overlay, the overlay pushed it out of the window, and the spinner
+            // ticks twelve times a second. Twelve `\e[2J` a second, the screen flashing for as
+            // long as the question stood.
+            //
+            // A full redraw cannot show a line that is still above the window afterwards; all it
+            // does is make the scrollback right at the price of the flash. So: a change that the
+            // *new* frame would bring into the window is redrawn, as upstream does, because that
+            // is the only way to show it. One that stays above the window is **left undrawn and
+            // unrecorded** — the next frame finds it again and leaves it again — and only what is
+            // visible is rewritten. Unrecorded, not recorded as drawn: that is what makes the
+            // shrink case above find it and redraw.
+            // The second condition is a frame that shrank to above the old window: the rows
+            // left to draw are all in scrollback, which is upstream's "deleted lines moved the
+            // viewport up" case and a full redraw there too.
+            if ($firstChanged >= max(0, count($lines) - $height) || count($lines) <= $windowStart) {
+                $this->paint($this->wholeFrame($lines, $width, clear: true), $lines, $width);
+
+                return;
+            }
+
+            $visible = $this->firstDifference($lines, $windowStart);
+
+            if ($visible === null) {
+                return;
+            }
+
+            $frame = $this->changedLines($visible, $lines, $width);
+            $this->terminal->write("\x1b[?2026h" . $frame . $this->caretMove($width) . "\x1b[?2026l");
+            $this->commit([...array_slice($this->previousLines, 0, $windowStart), ...array_slice($lines, $windowStart)], $width);
 
             return;
         }
@@ -483,11 +514,11 @@ class Tui extends Container
      *
      * @param list<string> $lines
      */
-    private function firstDifference(array $lines): ?int
+    private function firstDifference(array $lines, int $from = 0): ?int
     {
         $count = max(count($lines), count($this->previousLines));
 
-        for ($index = 0; $index < $count; $index++) {
+        for ($index = $from; $index < $count; $index++) {
             if (($this->previousLines[$index] ?? '') !== ($lines[$index] ?? '')) {
                 return $index;
             }

@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- A `tool_call` hook can now **change** a call rather than only refuse it: `ToolCallEvent::$input` is writable and the tool runs with what the hooks left in it (upstream: "to modify arguments, mutate `event.input` in place"). The event was `readonly`, so the permission gate's `rm` → `trash` rewrite edited a copy and `rm` ran as typed.
+- A dialog taller than the terminal no longer makes the screen flash: a change in the scrollback above the window (the working spinner, pushed up by the overlay, ticking twelve times a second) is left alone instead of forcing a full redraw with the scrollback cleared on every tick. A change the new frame brings back into the window is still redrawn, as upstream does.
+
 ## [0.2.10] - 2026-10-01
 
 ### Fixed

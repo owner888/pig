@@ -687,6 +687,29 @@ final class HookRunnerTest extends TestCase
         $this->assertSame(0, $tool->calls);
     }
 
+    /**
+     * Upstream's rule for changing a call rather than refusing it: "To modify arguments, mutate
+     * `event.input` in place". Its permission gate turns `rm -rf build` into a move to the trash
+     * this way, without blocking. The event was `readonly` here, so a hook that rewrote the
+     * command rewrote a copy and `rm` ran as typed.
+     */
+    public function testAHookThatEditsTheInputChangesWhatTheToolRunsWith(): void
+    {
+        $tool = new RecordingTool();
+        $wrapped = new HookedTool($tool, new HookRunner([
+            $this->hook(['tool_call' => static function ($event) {
+                $event->input['path'] = 'trash/' . $event->input['path'];
+
+                return null;
+            }]),
+        ]));
+
+        $result = $wrapped->execute('1', ['path' => 'x']);
+
+        $this->assertSame(1, $tool->calls);
+        $this->assertSame('read trash/x', $result->content[0]->text, 'the tool ran with the edited arguments');
+    }
+
     public function testTheHookSeesTheToolNameAndArguments(): void
     {
         $seen = null;

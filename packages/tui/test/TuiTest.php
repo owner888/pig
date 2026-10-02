@@ -213,9 +213,15 @@ final class TuiTest extends TestCase
         $this->assertStringContainsString("\x1b[3J\x1b[2J\x1b[H", $output);
     }
 
-    public function testAChangeAboveTheWindowForcesAFullRedraw(): void
+    public function testAChangeAboveTheWindowIsNotDrawnWhileItStaysAbove(): void
     {
-        // Ten lines in a five-row window: line 0 has scrolled out of reach.
+        // Ten lines in a five-row window: line 0 has scrolled out of reach. Nothing can show a
+        // change to it — a full redraw with the scrollback cleared draws the same five visible
+        // lines and throws the transcript away — so nothing is written for it.
+        //
+        // This used to force a full redraw, and the case that made it a fault is a dialog taller
+        // than the window with the working spinner above it: twelve `\e[2J` a second, the screen
+        // flashing for as long as the question stood.
         $component = new TextComponent(implode("\n", array_map(static fn (int $n): string => "line {$n}", range(0, 9))));
         $this->tui->addChild($component);
         $this->tui->start();
@@ -225,18 +231,24 @@ final class TuiTest extends TestCase
         $this->tui->requestRender();
         $output = $this->frame();
 
-        $this->assertStringContainsString("\x1b[3J\x1b[2J\x1b[H", $output);
-        $this->assertStringContainsString('line X', $output);
+        $this->assertSame('', $output);
+
+        // A change in the window beside one above it draws only the one in the window.
+        $component->text = str_replace('line 1', 'line Y', str_replace('line 9', 'line Z', $component->text));
+        $this->tui->requestRender();
+        $output = $this->frame();
+
+        $this->assertStringContainsString('line Z', $output);
+        $this->assertStringNotContainsString('line Y', $output);
+        $this->assertStringNotContainsString("\x1b[2J", $output);
     }
 
-    public function testWhereTheWindowStartsIsAFactAboutTheFrameAndNotAboutTheCursor(): void
+    public function testAChangeAboveTheWindowIsDrawnOnceItIsBackInTheWindow(): void
     {
-        // It used to be read off cursorRow, which was the frame's last line because that is
-        // where writing one left the cursor. With only the changed lines rewritten the cursor
-        // is wherever the last change was, which can be anywhere — and a window computed from
-        // a cursor high in the frame is a window nearly the whole frame fits inside, so a
-        // change that has scrolled into the scrollback is answered by moving the cursor to a
-        // row the terminal no longer has.
+        // What makes the first rule safe: the line that changed up in the scrollback is left
+        // *unrecorded*, so when the frame shrinks and brings it back into the window the
+        // comparison finds it still differing and it is drawn then — a full redraw, since the
+        // scrollback copy is wrong by now and is what upstream clears here too.
         $terminal = new FakeTerminal(columns: 20, rows: 8);
         $tui = new Tui($terminal);
         $component = new TextComponent(implode("\n", array_map(static fn (int $n): string => "line {$n}", range(0, 9))));
@@ -244,18 +256,17 @@ final class TuiTest extends TestCase
         $tui->start();
         Loop::get()->tick();
 
-        // Ten lines in an eight-row window, so rows 2 to 9 are on screen. Changing row 2 is
-        // a differential draw, and it leaves the cursor up there.
-        $component->text = str_replace('line 2', 'line two', $component->text);
-        $tui->requestRender();
-        Loop::get()->tick();
-
-        $terminal->clearWrites();
         $component->text = str_replace('line 1', 'line one', $component->text);
         $tui->requestRender();
         Loop::get()->tick();
+        $terminal->clearWrites();
 
-        $this->assertStringContainsString("\x1b[3J\x1b[2J\x1b[H", $terminal->output());
+        // Drop the last three lines: rows 0 to 6 are the frame now and all of it is in view.
+        $component->text = implode("\n", array_slice(explode("\n", $component->text), 0, 7));
+        $tui->requestRender();
+        Loop::get()->tick();
+
+        $this->assertStringContainsString('line one', $terminal->output());
     }
 
     public function testSeveralRequestsInOneTurnCostOneFrame(): void

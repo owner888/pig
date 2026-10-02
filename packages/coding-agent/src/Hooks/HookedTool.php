@@ -74,7 +74,7 @@ final readonly class HookedTool implements AgentTool
     ): AgentToolResult {
         $name = $this->definition()->name;
 
-        $this->guard($name, $toolCallId, $arguments);
+        $arguments = $this->guard($name, $toolCallId, $arguments);
 
         try {
             $result = $this->tool->execute($toolCallId, $arguments, $signal, $onUpdate);
@@ -106,19 +106,26 @@ final readonly class HookedTool implements AgentTool
     }
 
     /**
-     * Ask the hooks whether this call may go ahead.
+     * Ask the hooks whether this call may go ahead, and with what arguments.
+     *
+     * The event's `input` comes back as the arguments to run with: a hook that edits it in place
+     * has changed the call, which is upstream's way of letting a gate soften a command rather
+     * than only refuse it.
      *
      * @param array<string, mixed> $arguments
+     * @return array<string, mixed> the arguments as the hooks left them
      * @throws AgentError when a hook blocks it, or when one fails while being asked
      */
-    private function guard(string $name, string $toolCallId, array $arguments): void
+    private function guard(string $name, string $toolCallId, array $arguments): array
     {
         if (!$this->hooks->hasHandlers('tool_call')) {
-            return;
+            return $arguments;
         }
 
+        $event = new ToolCallEvent($name, $toolCallId, $arguments);
+
         try {
-            $result = $this->hooks->emitToolCall(new ToolCallEvent($name, $toolCallId, $arguments));
+            $result = $this->hooks->emitToolCall($event);
         } catch (Throwable $error) {
             throw new AgentError(
                 "Blocked: a tool_call hook failed, and a hook that cannot answer is not consent. "
@@ -129,6 +136,8 @@ final readonly class HookedTool implements AgentTool
         if ($result !== null && $result->block) {
             throw new AgentError($result->message());
         }
+
+        return $event->input;
     }
 
     /**
