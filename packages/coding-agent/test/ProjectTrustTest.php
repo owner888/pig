@@ -150,8 +150,33 @@ final class ProjectTrustTest extends TestCase
         file_put_contents(ProjectTrust::path($this->home), '{"/x": "yes"}');
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('must be true or false');
+        $this->expectExceptionMessage('must be true, false or null');
 
         ProjectTrust::decision($this->project, $this->home);
+    }
+
+    public function testANullEntryIsOneThatWasTakenBackAndNotAnInvalidOne(): void
+    {
+        // Upstream's `readTrustFile()` accepts `null` — its "forget this path" writes one — so a
+        // `trust.json` pi wrote can carry it, and refusing it was a pig that could not start on a
+        // file pi was happy with. A null is walked past to the nearest real decision above it.
+        mkdir($this->project . '/.pig/hooks', 0o755, true);
+        $parent = ProjectTrust::canonical(dirname($this->project));
+        file_put_contents(ProjectTrust::path($this->home), json_encode([
+            ProjectTrust::canonical($this->project) => null,
+            $parent => false,
+        ]));
+
+        $this->assertFalse(ProjectTrust::decision($this->project, $this->home), 'the parent decides');
+        $this->assertSame($parent, ProjectTrust::entry($this->project, $this->home)['path']);
+
+        // And a null with nothing above it is no decision at all.
+        file_put_contents(ProjectTrust::path($this->home), json_encode([ProjectTrust::canonical($this->project) => null]));
+        $this->assertNull(ProjectTrust::decision($this->project, $this->home));
+
+        // Saving over it keeps the file pi-readable: the null is not what pig writes, but it is
+        // not refused on the way through either.
+        ProjectTrust::remember([$this->project => true], $this->home);
+        $this->assertTrue(ProjectTrust::decision($this->project, $this->home));
     }
 }

@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- **A `trust.json` with a `null` in it stopped pig from starting.** pi's trust store takes `true`, `false` or `null` — `null` is what its "forget this path" writes — and pig's reader refused anything but a boolean, so a file pi had written could crash pig before any screen existed. A null is walked past to the nearest real decision above it, as upstream's `findNearestTrustEntry()` walks past it. A value that is none of the three is still refused, and the message now says what to do about it.
+
 ## [0.2.21] - 2026-10-02
 
 ### Added

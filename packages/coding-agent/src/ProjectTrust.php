@@ -95,7 +95,9 @@ final class ProjectTrust
         $current = self::canonical($cwd);
 
         while (true) {
-            if (array_key_exists($current, $data)) {
+            // `is_bool`, not `array_key_exists`: a `null` is a decision that was taken back, which
+            // upstream's `findNearestTrustEntry()` walks past the same way.
+            if (is_bool($data[$current] ?? null)) {
                 return ['path' => $current, 'decision' => $data[$current]];
             }
 
@@ -241,7 +243,17 @@ final class ProjectTrust
         return Tools\Paths::resolve($path, getcwd() ?: '/');
     }
 
-    /** @return array<string, bool> */
+    /**
+     * The file as written, `null` entries included.
+     *
+     * Upstream's `readTrustFile()` takes `true`, `false` **or `null`** — a `null` is what its
+     * "forget this path" option writes, and a file pi wrote may carry one. Refusing it was a pig
+     * that could not start on a trust store pi was happy with. Anything else is still refused:
+     * a trust store that cannot be read must not be guessed at, and this is read before any
+     * screen exists, so the refusal is the crash message and `/bug`.
+     *
+     * @return array<string, bool|null>
+     */
     private static function read(string $path): array
     {
         if (!is_readable($path)) {
@@ -252,14 +264,14 @@ final class ProjectTrust
         $parsed = $raw === false ? null : json_decode($raw, true);
 
         if (!is_array($parsed)) {
-            throw new RuntimeException("Invalid trust store {$path}: expected a JSON object.");
+            throw new RuntimeException("Invalid trust store {$path}: expected a JSON object. Fix or delete the file; pig asks again for each project.");
         }
 
         $data = [];
 
         foreach ($parsed as $key => $value) {
-            if (!is_bool($value)) {
-                throw new RuntimeException("Invalid trust store {$path}: value for \"{$key}\" must be true or false.");
+            if ($value !== null && !is_bool($value)) {
+                throw new RuntimeException("Invalid trust store {$path}: value for \"{$key}\" must be true, false or null. Fix or delete the file; pig asks again for each project.");
             }
 
             $data[(string) $key] = $value;
