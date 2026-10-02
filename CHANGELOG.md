@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Changed
+
+- **A confirm dialog has Yes first**, as upstream's `showExtensionConfirm()` has it (`["Yes", "No"]`): Enter alone confirms, and Escape is still the no. pig had No first and called it the safe direction; the safe answer has not moved — it is one key further from the cursor.
+
+### Fixed
+
+- **Dragging the window stuttered**, three ways at once. The SIGWINCH handler ran `stty size` — a 4ms fork — on every signal, and a drag delivers one per pixel; it marks the size stale now and the next frame measures once. Every signal asked for a frame, and a signal that landed on the same cell size redrew the whole screen with the scrollback cleared for nothing; a resize-only request that changed neither dimension draws nothing. Frames are at most 16ms apart (upstream's `MIN_RENDER_INTERVAL_MS`), so a burst becomes one frame. And a SIGWINCH arriving while a frame was half written interrupted the `select()` in `ProcessTerminal::write()` with EINTR, which PHP reports as a **warning** — printed straight into the raw terminal mid-frame as `stream_select(): Unable to select [4]: Interrupted system call`. Measured on a 60Hz drag over 30 widths: 30 frames either way, but the first one 37ms after the first signal rather than 51, and no warnings in the output.
+- `HOME` unset by a test's `tearDown` blinded every later test that looks under `~` (`fd is not installed`, fourteen skips); it is restored now.
+
 ## [0.2.16] - 2026-10-02
 
 ### New Features

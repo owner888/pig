@@ -1560,7 +1560,8 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
         $this->settle();
 
-        // "Summarise the branch you are leaving?" — No is the default, so Enter is no.
+        // "Summarise the branch you are leaving?" — Yes is first, as upstream has it; No is one down.
+        $this->type("\e[B");
         $this->type(self::ENTER);
         $this->settle();
 
@@ -1584,7 +1585,8 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
         $this->settle();
 
-        // "Summarise the branch you are leaving?" — No is the default.
+        // "Summarise the branch you are leaving?" — Yes is first; No is one down.
+        $this->type("\e[B");
         $this->type(self::ENTER);
         $this->settle();
 

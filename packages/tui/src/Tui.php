@@ -41,6 +41,9 @@ class Tui extends Container
 
     private int $previousWidth = 0;
 
+    /** The height the last frame was drawn for; a height change alone redraws nothing here, but a resize that changed neither draws nothing at all. */
+    private int $previousHeight = 0;
+
     private ?Component $focused = null;
 
     /** Where the cursor is, counted from the first line this drew. */
@@ -60,6 +63,19 @@ class Tui extends Container
     private int $cursorColumn = 0;
 
     private bool $renderRequested = false;
+
+    /**
+     * Frames are at most this far apart — upstream's `MIN_RENDER_INTERVAL_MS`. A window being
+     * dragged asks for a frame per SIGWINCH, dozens a second; within the interval they become one.
+     */
+    public const float MIN_RENDER_INTERVAL = 0.016;
+
+    private float $lastRenderAt = 0.0;
+
+    private ?string $renderTimer = null;
+
+    /** Whether the pending render came from a resize alone, so a size that did not change draws nothing. */
+    private bool $onlyResizePending = false;
 
     /** The terminal was asked how big a cell is and has not answered yet. */
     private bool $awaitingCellSize = false;
@@ -107,7 +123,7 @@ class Tui extends Container
             function (): void {
                 // Not forced: force throws away what the screen holds, and then the
                 // renderer cannot tell a resize from a first frame and skips the clear.
-                $this->requestRender();
+                $this->requestRender(resize: true);
             },
         );
 
@@ -208,7 +224,7 @@ class Tui extends Container
      * full-screen editor restores what it found on the way out, so what is there is pig's own last
      * frame and the new one lands underneath it.
      */
-    public function requestRender(bool $force = false): void
+    public function requestRender(bool $force = false, bool $resize = false): void
     {
         if ($force) {
             $this->previousLines = [];
@@ -219,15 +235,49 @@ class Tui extends Container
         }
 
         if ($this->renderRequested) {
+            // A content change joining a pending resize-only request makes it a real one.
+            $this->onlyResizePending = $this->onlyResizePending && $resize;
+
             return;
         }
 
         $this->renderRequested = true;
+        $this->onlyResizePending = $resize;
 
-        Loop::get()->defer(function (): void {
-            $this->renderRequested = false;
-            $this->draw();
-        });
+        // Within the interval of the last frame, the next one waits for the rest of it; a
+        // burst of requests in that window becomes one frame. Otherwise it is the next turn.
+        $elapsed = microtime(true) - $this->lastRenderAt;
+
+        if ($elapsed < self::MIN_RENDER_INTERVAL) {
+            $this->renderTimer ??= Loop::get()->delay(self::MIN_RENDER_INTERVAL - $elapsed, function (): void {
+                $this->renderTimer = null;
+                $this->renderNow();
+            });
+
+            return;
+        }
+
+        Loop::get()->defer($this->renderNow(...));
+    }
+
+    private function renderNow(): void
+    {
+        if (!$this->renderRequested) {
+            return;
+        }
+
+        $this->renderRequested = false;
+        $onlyResize = $this->onlyResizePending;
+        $this->onlyResizePending = false;
+
+        // A resize that landed on the same cell size — most of the signals a drag delivers —
+        // changes nothing on screen: no render, no frame, no flash.
+        if ($onlyResize && $this->previousWidth === $this->terminal->columns() && $this->previousHeight === $this->terminal->rows()) {
+            return;
+        }
+
+        $this->lastRenderAt = microtime(true);
+        $this->draw();
     }
 
     private function handleInput(string $data): void
@@ -502,10 +552,17 @@ class Tui extends Container
      *
      * @param list<string> $lines
      */
+    /** The width the last frame was drawn for — for a test to ask which of a burst of sizes won. */
+    public function renderedWidth(): int
+    {
+        return $this->previousWidth;
+    }
+
     private function commit(array $lines, int $width): void
     {
         $this->previousLines = $lines;
         $this->previousWidth = $width;
+        $this->previousHeight = $this->terminal->rows();
         $this->screenIsLost = false;
     }
 

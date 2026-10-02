@@ -5305,6 +5305,34 @@ Regression tests: `InteractiveModeTest::testAThinkingModelGetsARowThatOpensTheLe
 what a test asserting only that it opened would have missed;
 `SettingsListTest::testASubmenuThatCannotTakeKeysIsDrawnRatherThanCrashedOn` holds the guard.
 
+### A window being dragged is a SIGWINCH per pixel, and three things each did too much per signal
+
+Reported as "resizing is slow, pi is smooth", and the measurement that settled it was a pty with a
+60Hz drag over 30 widths and a thread reading frames as they land. Both tools draw 30 frames for it
+— one per distinct width — so the cadence was never the problem. Three things were:
+
+- **`stty size` in the signal handler.** 4ms a fork, once per signal, serialised, with the frame
+  queued behind. Node's `process.stdout.columns` is an `ioctl` for nothing; PHP has no `ioctl`, so
+  the handler marks the size stale and `columns()`/`rows()` measure **once per frame** when first
+  asked, however many signals arrived since.
+- **A frame per signal, including the ones that changed nothing.** A resize-only render request
+  whose width and height match the last frame draws nothing — no `\e[3J\e[2J`, no flash.
+  `requestRender(resize: true)` is how the resize handler says so, and a content change arriving
+  while that request is pending turns it back into a real one.
+- **EINTR in `ProcessTerminal::write()`.** A SIGWINCH during the `select()` that waits for the tty
+  buffer to drain is a PHP *warning*, and a warning goes to the terminal — in raw mode, mid-frame.
+  `Loop::poll()` already had the handler for exactly this (the trap entry above); its sibling in
+  `write()` did not. First shape from the index, on a `select()`.
+
+`MIN_RENDER_INTERVAL` is upstream's 16ms: a request inside the interval waits for the rest of it,
+and a burst in that window is one frame. The test for it measures *time*, because `frame()` ticks
+once and a tick blocks in `select()` until the timer fires — the held-back frame is visible as a
+delay, not as an empty tick.
+
+**What did not change: the 89ms per frame on a wide pane**, which is `write()` waiting for the tty
+to drain 10KB in 1KB pieces, each `select()` wait ~2ms. pi pays the same (its median gap was
+106ms in the same harness); it is the terminal's read rate, not pig's.
+
 ### `fwrite()` to a terminal returns short, and STDOUT is non-blocking whether you asked or not
 
 `ProcessTerminal::write()` called `fwrite()` once and ignored what it returned. A frame is

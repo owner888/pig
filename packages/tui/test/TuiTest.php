@@ -213,6 +213,47 @@ final class TuiTest extends TestCase
         $this->assertStringContainsString("\x1b[3J\x1b[2J\x1b[H", $output);
     }
 
+    public function testAResizeToTheSameSizeDrawsNothing(): void
+    {
+        // A drag delivers a SIGWINCH per pixel, and most of them land on the same cell size: a
+        // frame for each is a whole-screen redraw with the scrollback cleared, for nothing.
+        $this->tui->addChild(new TextComponent('hello there'));
+        $this->tui->start();
+        $this->frame();
+
+        $this->terminal->resize(20, 5);
+        $output = $this->frame();
+
+        $this->assertSame('', $output, 'same size, no frame');
+    }
+
+    public function testABurstOfResizesWithinTheIntervalIsOneFrame(): void
+    {
+        $this->tui->addChild(new TextComponent('hello there'));
+        $this->tui->start();
+        $this->frame();
+
+        // Three sizes inside one interval: the first is deferred to the next turn as always; the
+        // rest arrive while a render is already requested and join it.
+        $this->terminal->resize(18, 5);
+        $this->terminal->resize(16, 5);
+        $this->terminal->resize(14, 5);
+        $output = $this->frame();
+
+        $this->assertSame(1, substr_count($output, "\x1b[3J"), 'one clear for three sizes');
+        $this->assertStringContainsString('hello there', $output);
+        $this->assertSame(14, $this->tui->renderedWidth(), 'and it is the latest size that was drawn');
+
+        // Inside the interval, a fourth waits for the rest of it rather than drawing at once: the
+        // tick that draws it blocks in `select()` until the timer, so the wait is visible as time.
+        $start = microtime(true);
+        $this->terminal->resize(12, 5);
+        $output = $this->frame();
+
+        $this->assertStringContainsString("\x1b[3J", $output, 'drawn once the interval is over');
+        $this->assertGreaterThan(Tui::MIN_RENDER_INTERVAL * 0.5, microtime(true) - $start, 'and not before');
+    }
+
     public function testAChangeAboveTheWindowIsNotDrawnWhileItStaysAbove(): void
     {
         // Ten lines in a five-row window: line 0 has scrolled out of reach. Nothing can show a

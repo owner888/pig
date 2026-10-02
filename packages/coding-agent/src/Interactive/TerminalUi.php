@@ -140,7 +140,10 @@ final class TerminalUi implements HookUi
             return false;
         }
 
-        $items = [new SelectItem('no', 'No'), new SelectItem('yes', 'Yes')];
+        // Yes first, as upstream's `showExtensionConfirm()` has it (`["Yes", "No"]`): a confirm is
+        // mostly answered yes, so Enter alone does that. Escape is still the no, so the safe
+        // direction has not moved — it is one key further from the cursor.
+        $items = [new SelectItem('yes', 'Yes'), new SelectItem('no', 'No')];
         $list = new SelectList($items, 2, $this->palette()->selectListTheme());
 
         return $this->ask(

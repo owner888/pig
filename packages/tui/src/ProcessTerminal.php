@@ -147,7 +147,19 @@ final class ProcessTerminal implements Terminal
 
             $read = $except = null;
             $write = [$this->output];
-            stream_select($read, $write, $except, 0, 50_000);
+
+            // SIGWINCH lands here too: a window being dragged interrupts this `select()` with
+            // EINTR, which PHP reports as a *warning* — and a warning printed into the raw
+            // terminal in the middle of a frame is corruption. The interruption is not a
+            // failure; the loop goes round and writes the rest.
+            set_error_handler(static fn (): bool => true);
+
+            try {
+                stream_select($read, $write, $except, 0, 50_000);
+            } finally {
+                restore_error_handler();
+            }
+
             $waited += 0.05;
         }
     }
@@ -155,13 +167,28 @@ final class ProcessTerminal implements Terminal
     #[\Override]
     public function columns(): int
     {
+        $this->remeasureIfStale();
+
         return $this->columns;
     }
 
     #[\Override]
     public function rows(): int
     {
+        $this->remeasureIfStale();
+
         return $this->rows;
+    }
+
+    /** Set by SIGWINCH; cleared by the first size read after it. */
+    private bool $sizeStale = false;
+
+    private function remeasureIfStale(): void
+    {
+        if ($this->sizeStale) {
+            $this->sizeStale = false;
+            $this->measure();
+        }
     }
 
     #[\Override]
@@ -239,8 +266,13 @@ final class ProcessTerminal implements Terminal
 
         pcntl_async_signals(true);
 
+        // The handler does nothing but mark the size stale and ask for a frame. `stty size` is a
+        // fork — 4ms here — and a window being dragged delivers a SIGWINCH per pixel: measuring
+        // in the handler ran that fork once per signal, serialised, with every frame queued
+        // behind it. Node reads the size from an ioctl for nothing; PHP has no ioctl, so the next
+        // best thing is to measure once per *frame*, however many signals arrived since.
         pcntl_signal(SIGWINCH, function (): void {
-            $this->measure();
+            $this->sizeStale = true;
             ($this->onResize ?? static fn () => null)();
         });
     }

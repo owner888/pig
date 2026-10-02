@@ -264,16 +264,14 @@ final class HookUiTest extends TestCase
         $this->assertStringContainsString('Run this?', $screen);
         $this->assertStringContainsString('rm -rf build', $screen);
 
-        // No is first, so saying yes takes a keystroke — which is the right way round for
-        // a question asked about something destructive.
-        $this->type("\x1b[B");
+        // Yes is first, as upstream has it: Enter alone confirms, and the safe answer is escape.
         $this->type("\r");
         $this->settle();
 
         $this->assertTrue($answer);
     }
 
-    public function testTheDefaultChoiceIsNo(): void
+    public function testTheDefaultChoiceIsYesAndNoIsOneKeyDown(): void
     {
         $answer = null;
 
@@ -282,6 +280,8 @@ final class HookUiTest extends TestCase
         });
 
         $this->settle();
+        $this->assertMatchesRegularExpression('/→ Yes\s+No/s', $this->screen(), "upstream's order, [\"Yes\", \"No\"]");
+        $this->type("\x1b[B");
         $this->type("\r");
         $this->settle();
 
@@ -642,10 +642,11 @@ final class HookUiTest extends TestCase
         });
 
         $this->settle();
+        $this->type("\x1b[B");
         $this->type("\r");
         $this->settle();
 
-        $this->assertFalse($answer);
+        $this->assertFalse($answer, 'the next question works, and was answered no');
     }
 
     // ---- one at a time -----------------------------------------------------------------
@@ -759,11 +760,13 @@ final class HookUiTest extends TestCase
         });
 
         $this->settle();
+        $this->type("\x1b[B");
         $this->type("\r");
         $this->settle();
 
         $this->assertStringContainsString('Second?', $this->screen());
 
+        $this->type("\x1b[B");
         $this->type("\r");
         $this->settle();
 
@@ -855,7 +858,6 @@ final class HookUiTest extends TestCase
         $this->assertSame(0, $tool->calls);
         $this->assertStringContainsString('Let read run?', $this->screen());
 
-        $this->type("\x1b[B");
         $this->type("\r");
         $this->settle();
 
@@ -878,6 +880,7 @@ final class HookUiTest extends TestCase
         });
 
         $this->settle();
+        $this->type("\x1b[B");
         $this->type("\r");
         $this->settle();
 
