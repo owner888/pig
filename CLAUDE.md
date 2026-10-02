@@ -2921,6 +2921,50 @@ the session file, the output budget). Verified live with `server-filesystem` at 
 exposure: the model sees `read, bash, edit, write, codemode`, writes a `parallel()` over four
 `read_text_file` calls, and answers from the script's return value.
 
+### What pi 1.0.0 changed about codemode and MCP OAuth, and the one thing left out
+
+The anchor is `d0a4c37`, and codemode and MCP were ported from upstream's HEAD at the time, so
+upstream's 1.0.0 release notes were read against the port for the three items that touch it. Taken,
+with the arguments:
+
+- **The lean description.** pig's `codemode` description spelled every helper out — ~830 tokens
+  before a single nested tool was listed — where upstream 1.0's is the intro, one line per global,
+  and a pointer to `docs/codemode.md` "which the model reads when it needs it". pig has no `docs/`
+  in an install, so the reference is `extensions/pig-codemode/CODEMODE.md` and the description
+  names its absolute path. ~300 tokens now; with two MCP tools listed 929 → 395. The guideline and
+  the snippet are upstream's shorter ones, and the model still wrote a keyed `parallel()` script on
+  the first live try. **A description is read on every request and a reference is read once**, which
+  is the whole of the argument.
+- **Recovery errors.** `__CodemodeTools::__call()` names the close matches the way upstream's
+  `guard()` proxy does — exact after case and punctuation are stripped, then containment, then the
+  whole list when it is short. The store's size errors say what the store is for. And writing the
+  test for the store found that **`RangeError` is not a PHP class**: both limits threw
+  `Class "RangeError" not found` on the day they fired, which no test had reached. `LengthException`.
+- **MCP OAuth.** Credentials keyed `mcp__<name>|<url>` with the URL-only legacy entry taken over by
+  the first server that loads it (`stateOf()` moves it under the new key, `tokens()` only peeks,
+  `remove()` takes either); the RFC 9207 `iss` check in `Flow::run()` before the code exchange, with
+  a metadata flag `authorization_response_iss_parameter_supported` making a *missing* `iss` a
+  refusal too; `Flow::stepUpScope()` so an `insufficient_scope` sign-in asks for granted plus
+  missing, and `withScope()` recording the requested scope on a token response that names none
+  (RFC 6749 §5.1), without which there is nothing to keep; `optionalString()` reading `''` as
+  absent; and `oauth.authServerMetadataUrl`, read every time and never cached.
+
+**Left out: `models.generateImages()`**, and the reason is scope rather than difficulty. Upstream's
+is a `models` namespace in the sandbox over a model catalogue with a `type: image` column, run with
+the session's credentials through OpenRouter — a provider pig deliberately does not carry — with the
+usage added to the tool result. pig has no `type` on a model, no OpenRouter and no image-generation
+protocol; what it has is `generate_image` in `pig-antigravity`, an ordinary tool a script already
+reaches as `$tools->generate_image([...])`. So the feature as a *capability* is there by another
+door, and the feature as an *API* is a new provider plus a registry column plus a sandbox namespace.
+The developer's call was to take the three above and decide this one on its own — this entry is
+where to start if it is ever wanted, and the first question is whether pig carries OpenRouter.
+
+Regression tests: `OauthTest` (seven new — the `iss` triple, scope recorded and empty, `stepUpScope`,
+the metadata URL), `McpExtensionTest::testAStepUpSignInAsksForTheGrantedScopeAsWellAsTheMissingOne`
+(red on the old merge), `CodemodeTest::testAToolThatDoesNotExistNamesTheCloseMatches` and
+`testAnOversizedStoreValueSaysWhatTheStoreIsFor`, and the description-length assertion in
+`CodemodeExtensionTest`.
+
 ### A stranger's `.pig/` is not loaded until somebody says so
 
 `ProjectTrust` is upstream's `trust-manager.ts` + `project-trust.ts`, and the reason it exists is a

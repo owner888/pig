@@ -25,45 +25,34 @@ final class CodemodeDescription
 
     private const int CHARS_PER_TOKEN = 4;
 
-    public const string PROMPT_SNIPPET = 'Run PHP that calls other tools (chains, loops, parallel(), filtering large results)';
+    public const string PROMPT_SNIPPET = 'Run PHP that calls other tools';
 
-    public const string PROMPT_GUIDELINE = 'Use codemode to batch or chain several tool calls, or to filter large tool output down to what you need, instead of issuing many individual tool calls. Batch independent calls in one codemode call using parallel_settled([...]).';
+    public const string PROMPT_GUIDELINE = 'Use codemode to batch independent tool calls (parallel_settled), chain them, or filter large output, instead of many separate calls.';
 
+    /** The reference for scripts, beside this file: globals, tool results, `store()`, and limits. */
+    public const string DOCS_PATH = __DIR__ . '/CODEMODE.md';
+
+    /**
+     * What the model reads on every request, so it is short — upstream's 1.0 `DESCRIPTION_INTRO`
+     * plus one line per global. The details are in `CODEMODE.md`, which the model reads when it
+     * needs them; the first version of this spelled every helper out here and cost ~830 tokens
+     * of every request against ~300 now.
+     */
     private const string INTRO = <<<'TEXT'
-        Run PHP code to orchestrate/compose tool calls
-        - Evaluates the provided PHP code in a fresh sandboxed `php` process as the body of a function: top-level `return` works, and `$tools` is in scope.
-        - All nested tools are methods on `$tools`, for example `$tools->read(['path' => 'composer.json'])`. Tool names are exposed as normalized PHP identifiers, for example `$tools->mcp__ologs__get_profile([...])`.
-        - Nested tool methods take one associative array as their input argument.
-        - Nested tools return either an array (decoded JSON) or a string, based on the description.
-        - A nested tool call that fails, is blocked, or gets invalid arguments throws an exception carrying the tool's error text.
-        - Runs plain PHP -- no shell, no file system, no network, no `include`; `disable_functions` and `open_basedir` enforce it. String, array, math, JSON, regex and date functions all work.
-        - Accepts raw PHP source text (no `<?php` needed), not JSON, quoted strings, or markdown code fences.
-        - You may optionally start the tool input with a first line like `// @options: {"max_output_tokens": 1000, "timeout_ms": 60000}`.
-        - `max_output_tokens` sets the token budget for the script's output. Defaults to 10000 tokens.
-        - `timeout_ms` sets a hard deadline for the whole script. By default there is none.
-        - When the script returns, nested calls still running are cancelled.
-        - Tool calls are real and have side effects. If the script fails partway, earlier calls are not undone.
-        - Scripts have a 256 MB memory limit; exceeding it fails the script. Filter or aggregate large data instead of accumulating it.
-
-        - Global helpers:
-        - `parallel(array $closures): array`: runs the closures' tool calls at the same time and returns their results in order; one that throws makes `parallel()` throw. Use it for independent calls: `[$a, $b] = parallel([fn () => $tools->x([...]), fn () => $tools->y([...])]);`
-        - `parallel_settled(array $closures): array`: like `parallel()`, but each result is `['ok' => true, 'value' => ...]` or `['ok' => false, 'error' => '...']`, so one failure does not stop the rest.
-        - `exit_script()`: Immediately ends the current script successfully (like an early return from the top level).
-        - `text(mixed $value)`: Appends a text item. Non-string values are JSON-encoded.
-        - `image(mixed $imageUrlOrItem)`: Appends an image item. Pass a base64 `data:` URL, `['image_url' => ...]`, or an MCP `ImageContent` block, for example `image($result['content'][0])`.
-        - `store(string $key, mixed $value)`: stores a JSON-serializable value under a string key for later `codemode` calls in the same session. Storing `null` deletes the key. Writes are kept only if the script succeeds.
-        - `load(string $key)`: returns the stored value for a string key, or `null` if it is missing.
-        - `ALL_TOOLS`: metadata for the enabled nested tools as `['name' => ..., 'description' => ...]` entries.
-        - `search_tools(string $query, array $options = [])`: returns the nested tools that best match the query (BM25, default `limit` 8, optional `namespace`), as `['name' => ..., 'description' => ...]` entries like `ALL_TOOLS`.
-        - `describe_tool(string $name)`: returns the description and declaration of a nested tool, or `null`.
-        - `echo` and `print` append a text item like `text()`.
-        - `return $value` at the top level appends the value like `text()`.
+        Run PHP that calls other tools. The input is raw PHP source (no `<?php`, not JSON, no code fence), run as a function body in a sandboxed `php` process: top-level `return` works and `$tools` is in scope. No shell, file system, network or `include`.
+        - `$tools->name([...args])` answers a string, or an array if the tool's declaration says so, and throws on failure. Calls still running when the script ends are cancelled.
+        - Optional first line: `// @options: {"max_output_tokens": 10000, "timeout_ms": 60000}`
         TEXT;
 
-    private const string DEFERRED_GUIDANCE = <<<'TEXT'
-        Some deferred nested tools may be omitted from this description. They are still available on `$tools` and listed in `ALL_TOOLS`.
-        To find one, call `search_tools($query)`, or filter `ALL_TOOLS` by `name` and `description`.
+    private const string GLOBALS = <<<'TEXT'
+        Globals:
+        - `text($value)`, `image($dataUrlOrImageBlock)`, `echo`, and top-level `return` add output; `exit_script()` ends the script (not `exit`).
+        - `parallel([fn () => ..., ...])` runs independent calls at once, keys kept; `parallel_settled([...])` answers `['ok' => bool, 'value' | 'error']` per arm so one failure does not stop the rest.
+        - `store($key, $value)` and `load($key)` keep small JSON values across codemode calls.
+        - `ALL_TOOLS`, `search_tools($query, ['limit' => 8, 'namespace' => ...])`, `describe_tool($name)`: find unlisted tools, such as MCP tools.
         TEXT;
+
+    private const string DEFERRED_GUIDANCE = 'Some nested tools are not listed here. They are still on `$tools` and in `ALL_TOOLS`; `search_tools($query)` finds them.';
 
     /**
      * @param list<array{name: string, description: string, inputSchema: mixed, outputSchema?: mixed}> $tools the nested tools
@@ -103,7 +92,7 @@ final class CodemodeDescription
 
         $shown = self::selectCatalog($ordered, $inlineBudget);
         $complete = count($shown) === count($tools);
-        $sections = [self::INTRO];
+        $sections = [self::INTRO, self::GLOBALS . "\n- The full reference is " . self::DOCS_PATH . '; read it when a detail above is not enough.'];
 
         if (!$complete) {
             $sections[] = self::DEFERRED_GUIDANCE;
@@ -113,20 +102,16 @@ final class CodemodeDescription
             return implode("\n\n", $sections);
         }
 
-        $count = count($tools);
-        $toolSections = [$complete
-            ? "Nested tools: COMPLETE list ({$count} tool" . ($count === 1 ? '' : 's') . ').'
-            : 'Nested tools: PARTIAL - ' . count($shown) . " of {$count} shown."];
+        $toolSections = ['Nested tools:'];
 
         foreach ($ordered as $group) {
             $visible = array_values(array_filter($group['entries'], static fn (array $e): bool => isset($shown[$e['name']])));
 
             if ($group['namespace'] !== null) {
-                $total = count($group['entries']);
-                $label = "{$total} tool" . ($total === 1 ? '' : 's');
-                $suffix = count($visible) === $total ? '' : (count($visible) === 0 ? ', none shown' : ', ' . count($visible) . ' shown');
+                // Only tools that did not fit the budget are counted as not listed here.
+                $listing = count($visible) === count($group['entries']) ? '' : (count($visible) === 0 ? ' (tools not listed)' : ' (some tools not listed)');
                 $description = trim((string) ($group['namespace']['description'] ?? ''));
-                $toolSections[] = "## {$group['namespace']['name']} ({$label}{$suffix})" . ($description !== '' ? "\n{$description}" : '');
+                $toolSections[] = "## {$group['namespace']['name']}{$listing}" . ($description !== '' ? "\n{$description}" : '');
             }
 
             foreach ($visible as $entry) {

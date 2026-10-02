@@ -406,7 +406,10 @@ bin/pig --tools read,bash,edit,write,grep,find,ls
 启用/停用，改动写回它来自的那个 `mcp.json`），没有终端时打印状态；shell 里有 `pig mcp add|remove|list`。
 没有 `Authorization` 头的 HTTP 服务器走 OAuth 登录（发现、动态客户端注册、PKCE、本机回调），
 令牌存在 `~/.pig/agent/mcp-auth.json`，连接会自己续期；授权服务器不支持动态注册的（GitHub 就是），
-在 `"oauth": { "clientId", "clientSecret", "callbackPort" }` 里给一个预注册的客户端。`/mcp login|logout`
+在 `"oauth": { "clientId", "clientSecret", "callbackPort" }` 里给一个预注册的客户端；授权服务器
+公布错了或根本没公布的，用 `"authServerMetadataUrl"` 直接指定元数据文档。凭据按服务器名加 URL 存，
+同一个 URL 的两个服务器可以是两个账号；`iss` 指向别的授权服务器的 code 在交换之前就被拒（RFC 9207）；
+服务器要求更多 scope 时，新令牌保留已经拿到的 scope。`/mcp login|logout`
 与 `pig mcp login|logout` 是入口。提供 resources 的服务器会带来 `list_mcp_resources`、
 `list_mcp_resource_templates` 与 `read_mcp_resource` 三个工具；服务器的日志写到 `~/.pig/agent/mcp.log`。
 
@@ -416,8 +419,9 @@ bin/pig --tools read,bash,edit,write,grep,find,ls
 过滤结果，`return` 它想看的部分。三个慢工具只花一个的时间，六十个工具的服务器只占一份目录，大结果
 只占脚本留下的那部分。脚本跑在一个带 `disable_functions`、`open_basedir` 和 `memory_limit` 的
 子进程 `php -n` 里；嵌套调用走 pig 自己的工具和 hook，权限门在脚本里一样生效。`"exposure": "deferred"` 的服务器，其工具先不声明给模型，等模型用 `tool_search`（按名字、描述、
-schema 做 BM25 检索）找到再加载——六十个工具的服务器因此只占八个工具的上下文。`codemode` 是一个
-JavaScript 沙箱，这里没有；要求它的服务器按 `deferred` 处理，并提示一次。
+schema 做 BM25 检索）找到再加载——六十个工具的服务器因此只占八个工具的上下文。工具描述很短——
+开头几句、每个全局函数一行、再加 `extensions/pig-codemode/CODEMODE.md` 的路径，模型需要细节时自己去读；
+脚本调了一个不存在的工具，错误里会列出最接近的几个名字。
 
 ```json
 { "mcpServers": {

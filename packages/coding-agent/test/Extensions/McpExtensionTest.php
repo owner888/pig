@@ -811,7 +811,7 @@ final class McpExtensionTest extends TestCase
 
             // The credentials file holds the tokens, keyed by URL, and is private.
             $auth = json_decode((string) file_get_contents($this->home . '/mcp-auth.json'), true);
-            $this->assertSame($server->requireToken, $auth[$server->url()]['tokens']['access_token']);
+            $this->assertSame($server->requireToken, $auth['mcp__remote|' . $server->url()]['tokens']['access_token'], 'stored under the server\'s own key, name and URL');
             $this->assertSame('0600', substr(sprintf('%o', fileperms($this->home . '/mcp-auth.json')), -4));
 
             // The pasted-URL prompt was asked and then abandoned when the callback won: the UI's
@@ -856,8 +856,11 @@ final class McpExtensionTest extends TestCase
             $this->assertSame('refresh_token', $server->tokenRequests[0]['grant_type'], 'refreshed before the first request');
             $this->assertSame('refresh-old', $server->tokenRequests[0]['refresh_token']);
             $auth = json_decode((string) file_get_contents($this->home . '/mcp-auth.json'), true);
-            $this->assertSame($server->requireToken, $auth[$server->url()]['tokens']['access_token'], 'the new token is stored');
-            $this->assertNotSame('refresh-old', $auth[$server->url()]['tokens']['refresh_token'], 'and the rotated refresh token with it');
+            // The seed above is the legacy shape, keyed by URL alone; the first server to load it
+            // takes it over under its own key, so a second server at the same URL signs in by itself.
+            $this->assertArrayNotHasKey($server->url(), $auth, 'the legacy entry was moved, not copied');
+            $this->assertSame($server->requireToken, $auth['mcp__remote|' . $server->url()]['tokens']['access_token'], 'the new token is stored');
+            $this->assertNotSame('refresh-old', $auth['mcp__remote|' . $server->url()]['tokens']['refresh_token'], 'and the rotated refresh token with it');
 
             // Now the server revokes the token out from under us: the next call gets a 401, the
             // provider refreshes, and the call is retried — the model sees one answer.
@@ -866,6 +869,54 @@ final class McpExtensionTest extends TestCase
             $result = Async::run(static fn () => ($tool->execute)('1', ['text' => 'still here'], null, new \Pig\CodingAgent\Hooks\HookContext('.'), null));
             $this->assertSame('echo: still here', $result->content[0]->text);
             $this->assertSame(2, count($server->tokenRequests), 'one more refresh');
+        } finally {
+            $server->stop();
+        }
+    }
+
+    public function testAStepUpSignInAsksForTheGrantedScopeAsWellAsTheMissingOne(): void
+    {
+        // A server answering `insufficient_scope` may name only what it is missing. Asking for
+        // just that gets a token that has lost what the old one had, the server asks again, and
+        // the sign-ins never end. The new request carries both — and takes the browser route,
+        // because a refresh keeps the granted scope and cannot widen it.
+        $server = new \Pig\Mcp\Test\FakeHttpMcpServer();
+        $server->oauth = true;
+        $server->requireToken = 'access-old';
+        $credentials = new \PigMcp\McpOauth($this->home . '/mcp-auth.json');
+        file_put_contents($this->home . '/mcp-auth.json', json_encode(['mcp__remote|' . $server->url() => [
+            'serverUrl' => $server->url(),
+            'clientInformation' => ['client_id' => 'client-1', 'redirect_uris' => ['http://127.0.0.1:1/callback']],
+            'tokens' => ['access_token' => 'access-old', 'token_type' => 'Bearer', 'refresh_token' => 'refresh-old', 'scope' => 'mcp:tools'],
+        ]]));
+        $server->refreshTokens[] = 'refresh-old';
+
+        try {
+            $asked = null;
+
+            Async::run(function () use ($server, $credentials, &$asked): void {
+                $credentials->signIn('remote', $server->url(), [], [
+                    'resourceMetadataUrl' => null, 'scope' => 'mcp:files', 'error' => 'insufficient_scope', 'errorDescription' => null,
+                ], [
+                    'showAuthorizationUrl' => function (string $url) use ($server, &$asked): void {
+                        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+                        $asked = $query['scope'];
+                        $redirect = $query['redirect_uri'] . '?code=' . urlencode($server->issueCode($query['code_challenge'])) . '&state=' . urlencode($query['state']);
+                        Async::spawn(static fn () => (new \Pig\Ai\Http\HttpClient(timeout: 5.0))->send(new \Pig\Ai\Http\Request('GET', $redirect))->body->close());
+                    },
+                    'promptForRedirectUrl' => static function (\Pig\Async\AbortSignal $signal): ?string {
+                        $parked = new \Pig\Async\Deferred();
+                        $signal->onAbort(static fn () => $parked->isComplete() || $parked->complete(null));
+
+                        return $parked->future->await();
+                    },
+                ], timeout: 5.0);
+            });
+
+            $this->assertSame('mcp:tools mcp:files', $asked, 'granted plus missing');
+            $this->assertSame(['authorization_code'], array_column($server->tokenRequests, 'grant_type'), 'no refresh was tried: it cannot widen the scope');
+            $auth = json_decode((string) file_get_contents($this->home . '/mcp-auth.json'), true);
+            $this->assertSame($server->requireToken, $auth['mcp__remote|' . $server->url()]['tokens']['access_token']);
         } finally {
             $server->stop();
         }

@@ -245,7 +245,7 @@ final class __CodemodeTools
         $raw = $this->names[$name] ?? null;
 
         if ($raw === null) {
-            throw new Error("Unknown tool \"{$name}\". Use ALL_TOOLS or search_tools() to find one.");
+            throw new Error($this->noSuchTool($name));
         }
 
         $input = $arguments[0] ?? [];
@@ -260,6 +260,32 @@ final class __CodemodeTools
     public function has(string $name): bool
     {
         return isset($this->names[$name]);
+    }
+
+    /**
+     * An error that says how to recover — upstream's `guard()` proxy, which turns `tools.Bash` into
+     * "Did you mean tools.bash?" instead of a later "not a function". Names are compared with case
+     * and punctuation removed, so `$tools->readTextFile()` finds `read_text_file`; failing an exact
+     * match, a name that contains or is contained by what was typed; failing that, the whole list
+     * when it is short enough to read.
+     */
+    private function noSuchTool(string $name): string
+    {
+        $comparable = static fn (string $n): string => preg_replace('/[^a-z0-9]/', '', strtolower($n)) ?? '';
+        $wanted = $comparable($name);
+        $names = array_values(array_unique(array_values($this->names)));
+        $exact = array_values(array_filter($names, static fn (string $n): bool => $comparable($n) === $wanted));
+        $close = $exact !== [] ? $exact : array_values(array_filter($names, static fn (string $n): bool => $wanted !== '' && (str_contains($comparable($n), $wanted) || str_contains($wanted, $comparable($n)))));
+
+        $message = "\$tools->{$name}() does not exist.";
+
+        if ($close !== []) {
+            $message .= ' Did you mean ' . implode(', ', array_map(static fn (string $n): string => '$tools->' . $n . '()', array_slice($close, 0, 5))) . '?';
+        } elseif (count($names) <= 20) {
+            $message .= ' Available: ' . implode(', ', $names) . '.';
+        }
+
+        return $message . ' ALL_TOOLS lists every tool; search_tools($query) finds tools by topic. Check with $tools->has(\'name\').';
     }
 }
 
@@ -331,8 +357,12 @@ function store(string $key, mixed $value): void
         throw new TypeError("store(): the value for \"{$key}\" is not JSON-serializable: " . json_last_error_msg());
     }
 
+    // What the store is for, said when the limit is hit — a model that stored an image or a
+    // whole file sees why rather than a number.
+    $hint = 'store() is for small state such as IDs or summaries. Show images with image(), keep large data in variables, or write it to a file with a tool.';
+
     if (strlen($json) > __CodemodeBridge::MAX_STORE_VALUE_CHARS) {
-        throw new RangeError("store(): the value for \"{$key}\" is larger than " . __CodemodeBridge::MAX_STORE_VALUE_CHARS . ' characters as JSON');
+        throw new LengthException("store(\"{$key}\") value has " . strlen($json) . ' characters of JSON, more than the limit of ' . __CodemodeBridge::MAX_STORE_VALUE_CHARS . '. ' . $hint);
     }
 
     $total = strlen($json);
@@ -344,7 +374,7 @@ function store(string $key, mixed $value): void
     }
 
     if ($total > __CodemodeBridge::MAX_STORE_TOTAL_CHARS) {
-        throw new RangeError('store(): the store would exceed ' . __CodemodeBridge::MAX_STORE_TOTAL_CHARS . ' characters as JSON');
+        throw new LengthException('store is full: stored values would exceed ' . __CodemodeBridge::MAX_STORE_TOTAL_CHARS . ' characters of JSON. Delete keys with store($key, null). ' . $hint);
     }
 
     $decoded = json_decode($json, true);

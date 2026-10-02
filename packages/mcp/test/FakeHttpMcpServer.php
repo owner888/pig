@@ -58,6 +58,12 @@ final class FakeHttpMcpServer
     /** The `WWW-Authenticate` sent with a 401. */
     public string $challenge = 'Bearer realm="mcp"';
 
+    /** The `scope` the token endpoint puts on a response; null leaves it out, `''` sends it empty. */
+    public ?string $tokenScope = 'mcp:tools';
+
+    /** Whether the server metadata promises an `iss` on every authorization response (RFC 9207). */
+    public bool $issSupported = false;
+
     private int $issued = 0;
 
     /** Hand out an authorization code for the given PKCE challenge, as the browser flow would. */
@@ -322,6 +328,7 @@ final class FakeHttpMcpServer
                 'response_types_supported' => ['code'],
                 'code_challenge_methods_supported' => ['S256'],
                 'token_endpoint_auth_methods_supported' => ['none'],
+                ...($this->issSupported ? ['authorization_response_iss_parameter_supported' => true] : []),
             ]));
 
             return true;
@@ -378,7 +385,7 @@ final class FakeHttpMcpServer
                 'token_type' => 'Bearer',
                 'refresh_token' => $refresh,
                 'expires_in' => $this->expiresIn,
-                'scope' => 'mcp:tools',
+                'scope' => $this->tokenScope,
             ], static fn ($v) => $v !== null)));
 
             return true;

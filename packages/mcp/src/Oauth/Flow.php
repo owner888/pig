@@ -27,7 +27,7 @@ final class Flow
     public const string REDIRECT = 'REDIRECT';
 
     /**
-     * @param array{serverUrl: string, resourceMetadataUrl?: ?string, scope?: ?string, authorizationCode?: ?string, skipRefresh?: bool, skipIssuerValidation?: bool} $options
+     * @param array{serverUrl: string, resourceMetadataUrl?: ?string, authorizationServerMetadataUrl?: ?string, scope?: ?string, authorizationCode?: ?string, iss?: ?string, skipRefresh?: bool, skipIssuerValidation?: bool} $options
      * @param Closure(Request): Response|null $fetch
      */
     public static function authorize(McpOauthProvider $provider, array $options, ?Closure $fetch = null): string
@@ -59,8 +59,11 @@ final class Flow
         $serverUrl = (string) $options['serverUrl'];
         $resourceMetadataUrl = $options['resourceMetadataUrl'] ?? null;
         $skipIssuerValidation = (bool) ($options['skipIssuerValidation'] ?? false);
+        $metadataUrl = isset($options['authorizationServerMetadataUrl']) ? self::secureEndpoint((string) $options['authorizationServerMetadataUrl']) : null;
 
-        $cached = $provider->discoveryState();
+        // With a configured metadata URL, discovery is neither read from the cache nor written to
+        // it, so changing the URL applies at once.
+        $cached = $metadataUrl === null ? $provider->discoveryState() : [];
 
         if (is_string($cached['authorizationServerUrl'] ?? null)) {
             $discovered = [
@@ -70,16 +73,20 @@ final class Flow
                 'resourceMetadata' => $cached['resourceMetadata'] ?? null,
             ];
         } else {
-            $discovered = Discovery::serverInfo($serverUrl, $resourceMetadataUrl, $fetch, $skipIssuerValidation);
+            $discovered = Discovery::serverInfo($serverUrl, $resourceMetadataUrl, $fetch, $skipIssuerValidation, $metadataUrl);
         }
 
-        $provider->saveDiscoveryState([...$discovered, ...($resourceMetadataUrl !== null ? ['resourceMetadataUrl' => $resourceMetadataUrl] : [])]);
+        if ($metadataUrl === null) {
+            $provider->saveDiscoveryState([...$discovered, ...($resourceMetadataUrl !== null ? ['resourceMetadataUrl' => $resourceMetadataUrl] : [])]);
+        }
 
         $metadata = $discovered['authorizationServerMetadata'];
         $resource = Discovery::selectResource($serverUrl, $discovered['resourceMetadata']);
-        $scope = $options['scope']
-            ?? (isset($discovered['resourceMetadata']['scopes_supported']) ? implode(' ', $discovered['resourceMetadata']['scopes_supported']) : null)
-            ?? ($provider->clientMetadata['scope'] ?? null);
+        // `?:`, not `??`: an empty scope (`scopes_supported: []`) falls through to the next source.
+        $scope = ($options['scope'] ?? null)
+            ?: (isset($discovered['resourceMetadata']['scopes_supported']) ? implode(' ', $discovered['resourceMetadata']['scopes_supported']) : null)
+            ?: ($provider->clientMetadata['scope'] ?? null)
+            ?: null;
 
         $client = $provider->clientInformation();
 
@@ -95,13 +102,27 @@ final class Flow
         $tokenOptions = ['metadata' => $metadata, 'clientInformation' => $client, 'resource' => $resource];
 
         if (isset($options['authorizationCode'])) {
+            // RFC 9207: never send a code from another authorization server to this one. A
+            // response carrying `iss` has to name this server; a server that promised to send
+            // `iss` and did not is not this server either.
+            $iss = $options['iss'] ?? null;
+
+            if ($metadata !== null && ($iss !== null || ($metadata['authorization_response_iss_parameter_supported'] ?? false) === true)) {
+                if ($iss !== $metadata['issuer']) {
+                    throw new OauthIssuerMismatchError((string) $metadata['issuer'], $iss);
+                }
+            }
+
             $tokens = self::tokenRequest($discovered['authorizationServerUrl'], $tokenOptions, [
                 'grant_type' => 'authorization_code',
                 'code' => (string) $options['authorizationCode'],
                 'code_verifier' => $provider->codeVerifier(),
                 'redirect_uri' => $provider->redirectUrl,
             ], $fetch);
-            $provider->saveTokens($tokens);
+            // A response without `scope` grants the requested scope (RFC 6749 §5.1). Recorded so a
+            // step-up can keep it: `$scope` is what the authorization request asked for, because
+            // the caller passes the same options to both halves of the flow.
+            $provider->saveTokens(self::withScope($tokens, $scope));
 
             return self::AUTHORIZED;
         }
@@ -134,6 +155,37 @@ final class Flow
         $provider->redirectToAuthorization($authorizationUrl);
 
         return self::REDIRECT;
+    }
+
+    /** @param array<string, mixed> $tokens */
+    private static function withScope(array $tokens, ?string $scope): array
+    {
+        return !isset($tokens['scope']) && $scope !== null ? [...$tokens, 'scope' => $scope] : $tokens;
+    }
+
+    /**
+     * Scopes for a step-up authorization: the challenged scopes plus the ones granted so far.
+     *
+     * A server asking for more scope (`insufficient_scope`) may list only the scopes it is
+     * missing, and a new token with just those would lose the access the old one had — so the
+     * server would ask again on the next request, for ever (upstream's SEP-2350). Without
+     * challenged scopes, null lets the flow pick its default.
+     */
+    public static function stepUpScope(?string $granted, ?string $challenged): ?string
+    {
+        if ($challenged === null || trim($challenged) === '') {
+            return null;
+        }
+
+        $scopes = [];
+
+        foreach ([$granted, $challenged] as $scope) {
+            foreach (preg_split('/\s+/', (string) $scope, -1, PREG_SPLIT_NO_EMPTY) ?: [] as $one) {
+                $scopes[$one] = true;
+            }
+        }
+
+        return implode(' ', array_keys($scopes));
     }
 
     /**

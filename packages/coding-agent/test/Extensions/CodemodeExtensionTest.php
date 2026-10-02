@@ -10,6 +10,7 @@ use Pig\Ai\TextContent;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Codemode\Registry;
+use PigCodemode\CodemodeDescription;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
@@ -135,10 +136,10 @@ final class CodemodeExtensionTest extends TestCase
 
         $prompt = $started->session->agent->state->systemPrompt;
         $this->assertStringContainsString('- codemode: Run PHP that calls other tools', $prompt, "upstream's promptSnippet, in the Available tools list");
-        $this->assertStringContainsString('- Use codemode to batch or chain several tool calls', $prompt, "and its guideline");
+        $this->assertStringContainsString('- Use codemode to batch independent tool calls (parallel_settled), chain them, or filter large output', $prompt, "and its guideline");
 
         $codemode = $started->customTools->find('codemode');
-        $this->assertStringContainsString('## fixture (1 tool)', $codemode->description, 'the server is a namespace in the catalog');
+        $this->assertStringContainsString('## fixture', $codemode->description, 'the server is a namespace in the catalog');
         $this->assertStringContainsString('$tools->mcp__fixture__echo(array{text?: string} $input): array{', $codemode->description);
 
         // A script calls it and the result is the whole CallToolResult, which the script filters.
@@ -161,6 +162,13 @@ final class CodemodeExtensionTest extends TestCase
         $this->assertContains('codemode', self::toolNames($started));
         $codemode = $started->customTools->find('codemode');
         $this->assertStringNotContainsString('Nested tools:', $codemode->description, 'nothing codemode-only to list; the agent\'s tools the model has already');
+
+        // Upstream 1.0's lean description: the intro, one line per global, and the path of the
+        // reference the model reads when it needs a detail — not the whole reference, every turn.
+        $this->assertLessThan(1500, strlen($codemode->description), 'the description is read on every request');
+        $this->assertStringContainsString(CodemodeDescription::DOCS_PATH, $codemode->description);
+        $this->assertFileExists(CodemodeDescription::DOCS_PATH);
+        $this->assertStringContainsString('## Store values', (string) file_get_contents(CodemodeDescription::DOCS_PATH));
 
         // The agent's own tools are callable from a script even though they are not listed.
         file_put_contents($this->cwd . '/note.txt', "hello from a file\n");

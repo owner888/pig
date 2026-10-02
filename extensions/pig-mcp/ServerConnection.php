@@ -460,6 +460,7 @@ final class ServerConnection
         }
 
         return $this->credentials->authProvider(
+            $this->entry->name,
             $url,
             fn (): array => $this->oauthSettings(),
             function (array $challenge): void {

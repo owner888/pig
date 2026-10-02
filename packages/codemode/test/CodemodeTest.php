@@ -242,8 +242,43 @@ final class CodemodeTest extends TestCase
         $this->assertStringContainsString('in script line 3', $result['error']['stack']);
 
         $result = $this->script('return $tools->nope([]);');
-        $this->assertStringContainsString('Unknown tool "nope"', $result['error']['message']);
+        $this->assertStringContainsString('$tools->nope() does not exist', $result['error']['message']);
         $this->assertStringContainsString('in script line 1', $result['error']['stack'], 'an error the prelude raised on the script\'s behalf still points at the script');
+    }
+
+    public function testAToolThatDoesNotExistNamesTheCloseMatches(): void
+    {
+        // Upstream's `guard()`: an error that says how to recover, instead of a bare "unknown
+        // tool" that sends the model back to the catalogue. Compared with case and punctuation
+        // removed, so the camelCased guess finds the snake_cased tool.
+        $tools = [
+            ['name' => 'read_text_file', 'execute' => static fn (): string => ''],
+            ['name' => 'write_file', 'execute' => static fn (): string => ''],
+            ['name' => 'bash', 'execute' => static fn (): string => ''],
+        ];
+
+        $result = $this->script('return $tools->readTextFile([]);', $tools);
+        $this->assertStringContainsString('$tools->readTextFile() does not exist. Did you mean $tools->read_text_file()?', $result['error']['message']);
+
+        $result = $this->script('return $tools->Bash([]);', $tools);
+        $this->assertStringContainsString('Did you mean $tools->bash()?', $result['error']['message']);
+
+        $result = $this->script('return $tools->file([]);', $tools);
+        $this->assertStringContainsString('Did you mean $tools->read_text_file(), $tools->write_file()?', $result['error']['message'], 'a name inside two tools names both');
+
+        $result = $this->script('return $tools->zzz([]);', $tools);
+        $this->assertStringContainsString('Available: read_text_file, write_file, bash.', $result['error']['message'], 'nothing close and a short list: the list');
+        $this->assertStringContainsString('search_tools($query) finds tools by topic', $result['error']['message']);
+    }
+
+    public function testAnOversizedStoreValueSaysWhatTheStoreIsFor(): void
+    {
+        $result = $this->script('store("blob", str_repeat("x", 300 * 1024));');
+
+        $this->assertFalse($result['ok']);
+        $this->assertStringContainsString('store("blob") value has 307202 characters of JSON, more than the limit of 262144', $result['error']['message']);
+        $this->assertStringContainsString('store() is for small state such as IDs or summaries', $result['error']['message']);
+        $this->assertStringContainsString('Show images with image()', $result['error']['message']);
     }
 
     public function testTimeoutMemoryAndAbortAreEachNamed(): void

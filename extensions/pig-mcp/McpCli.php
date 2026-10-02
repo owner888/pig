@@ -55,6 +55,9 @@ final class McpCli
                                   OAuth client secret (may be ${NAME} or !command)
           --oauth-callback-port <port>
                                   Fixed OAuth callback port
+          --oauth-auth-server-metadata-url <url>
+                                  Authorization server metadata document, for a server
+                                  that advertises the wrong one or none
           --exposure <mode>       direct, deferred, or hidden (codemode is read as deferred)
 
         Other options:
@@ -168,7 +171,7 @@ final class McpCli
             }
 
             if ($command === 'logout') {
-                $removed = $credentials->remove($url);
+                $removed = $credentials->remove($name, $url);
                 ($this->out)($removed ? "Signed out of MCP server \"{$name}\"." : "No stored credentials for MCP server \"{$name}\".");
 
                 return 0;
@@ -229,7 +232,7 @@ final class McpCli
         };
 
         try {
-            $credentials->signIn($url, $connection->oauthSettings(), $connection->challenge, [
+            $credentials->signIn($name, $url, $connection->oauthSettings(), $connection->challenge, [
                 'showAuthorizationUrl' => function (string $authorizationUrl) use ($name, $openUrl): void {
                     ($this->out)("Sign in to MCP server \"{$name}\" in your browser:\n{$authorizationUrl}");
                     $openUrl($authorizationUrl);
@@ -316,7 +319,7 @@ final class McpCli
         $parsed = $this->parse($args, [
             'local' => 'flag', 'url' => 'value', 'env' => 'list', 'cwd' => 'value', 'header' => 'list',
             'bearer-token-env-var' => 'value', 'oauth-client-id' => 'value', 'oauth-client-secret' => 'value',
-            'oauth-callback-port' => 'value', 'exposure' => 'value',
+            'oauth-callback-port' => 'value', 'oauth-auth-server-metadata-url' => 'value', 'exposure' => 'value',
         ], 2);
 
         if ($parsed === null) {
@@ -334,7 +337,7 @@ final class McpCli
             return 1;
         }
 
-        $httpOnly = ['header', 'bearer-token-env-var', 'oauth-client-id', 'oauth-client-secret', 'oauth-callback-port'];
+        $httpOnly = ['header', 'bearer-token-env-var', 'oauth-client-id', 'oauth-client-secret', 'oauth-callback-port', 'oauth-auth-server-metadata-url'];
         $stdioOnly = ['env', 'cwd'];
 
         foreach ($url === null ? $httpOnly : $stdioOnly as $option) {
@@ -360,6 +363,7 @@ final class McpCli
                 ...(isset($values['oauth-client-id']) ? ['clientId' => $values['oauth-client-id']] : []),
                 ...(isset($values['oauth-client-secret']) ? ['clientSecret' => $values['oauth-client-secret']] : []),
                 ...(isset($values['oauth-callback-port']) ? ['callbackPort' => (int) $values['oauth-callback-port']] : []),
+                ...(isset($values['oauth-auth-server-metadata-url']) ? ['authServerMetadataUrl' => $values['oauth-auth-server-metadata-url']] : []),
             ];
             $config = ['url' => $url, ...($headers !== [] ? ['headers' => $headers] : []), ...($oauth !== [] ? ['oauth' => $oauth] : [])];
         } else {

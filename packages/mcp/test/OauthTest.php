@@ -18,9 +18,12 @@ use Pig\Mcp\Oauth\OauthCallbackServer;
 use Pig\Mcp\Oauth\OauthError;
 use Pig\Mcp\Oauth\OauthInsecureEndpointError;
 use Pig\Mcp\Oauth\OauthIssuerMismatchError;
+use Pig\Test\AssertsThrows;
 
 final class OauthTest extends TestCase
 {
+    use AssertsThrows;
+
     #[\Override]
     protected function setUp(): void
     {
@@ -203,6 +206,186 @@ final class OauthTest extends TestCase
         } finally {
             $server->stop();
         }
+    }
+
+    // ---- RFC 9207: the code has to come from this server ----------------------------------------
+
+    public function testACodeWhoseIssNamesAnotherServerIsRefusedBeforeItIsExchanged(): void
+    {
+        $server = new FakeHttpMcpServer();
+        $server->oauth = true;
+        $server->requireToken = 'nothing-yet';
+
+        try {
+            Async::run(function () use ($server): void {
+                $provider = $this->redirected($server, $query);
+                $code = $server->issueCode($query['code_challenge']);
+
+                // An `iss` that is not this server's issuer: a code from somewhere else, and
+                // sending it to this token endpoint is exactly what RFC 9207 exists to stop.
+                $error = $this->assertThrows(OauthIssuerMismatchError::class, static fn () => Flow::authorize($provider, [
+                    'serverUrl' => $server->url(), 'authorizationCode' => $code, 'iss' => 'https://evil.example',
+                ]));
+                $this->assertSame('https://evil.example', $error->received);
+                $this->assertSame([], $server->tokenRequests, 'refused before the exchange, not after');
+
+                // The right `iss` goes through.
+                $this->assertSame(Flow::AUTHORIZED, Flow::authorize($provider, [
+                    'serverUrl' => $server->url(), 'authorizationCode' => $code, 'iss' => rtrim($server->url(), '/mcp'),
+                ]));
+            });
+        } finally {
+            $server->stop();
+        }
+    }
+
+    public function testAServerThatPromisedIssIsNotBelievedWithoutIt(): void
+    {
+        $server = new FakeHttpMcpServer();
+        $server->oauth = true;
+        $server->issSupported = true;
+        $server->requireToken = 'nothing-yet';
+
+        try {
+            Async::run(function () use ($server): void {
+                $provider = $this->redirected($server, $query);
+                $code = $server->issueCode($query['code_challenge']);
+
+                $error = $this->assertThrows(OauthIssuerMismatchError::class, static fn () => Flow::authorize($provider, [
+                    'serverUrl' => $server->url(), 'authorizationCode' => $code,
+                ]));
+                $this->assertNull($error->received);
+                $this->assertStringContainsString('no iss parameter', $error->getMessage());
+            });
+        } finally {
+            $server->stop();
+        }
+    }
+
+    public function testAServerThatNeverPromisedIssIsNotHeldToIt(): void
+    {
+        // Most servers do not send `iss`; a response without one from a server that did not
+        // promise one is ordinary, which is what every earlier test in this file already relies on.
+        $server = new FakeHttpMcpServer();
+        $server->oauth = true;
+        $server->requireToken = 'nothing-yet';
+
+        try {
+            Async::run(function () use ($server): void {
+                $provider = $this->redirected($server, $query);
+                $this->assertSame(Flow::AUTHORIZED, Flow::authorize($provider, [
+                    'serverUrl' => $server->url(), 'authorizationCode' => $server->issueCode($query['code_challenge']),
+                ]));
+            });
+        } finally {
+            $server->stop();
+        }
+    }
+
+    // ---- scope: what was granted is remembered, and empty is not invalid --------------------------
+
+    public function testATokenResponseWithoutAScopeIsRecordedAsHavingBeenGrantedTheRequestedOne(): void
+    {
+        // RFC 6749 §5.1: no `scope` on the response means "what you asked for". Recorded, so a
+        // later step-up can keep it — a token that did not know its own scope could not.
+        $server = new FakeHttpMcpServer();
+        $server->oauth = true;
+        $server->tokenScope = null;
+        $server->requireToken = 'nothing-yet';
+
+        try {
+            Async::run(function () use ($server): void {
+                $provider = $this->redirected($server, $query, ['scope' => 'mcp:tools mcp:files']);
+                Flow::authorize($provider, ['serverUrl' => $server->url(), 'scope' => 'mcp:tools mcp:files', 'authorizationCode' => $server->issueCode($query['code_challenge'])]);
+
+                $this->assertSame('mcp:tools mcp:files', $provider->tokens()['scope']);
+            });
+        } finally {
+            $server->stop();
+        }
+    }
+
+    public function testAnEmptyScopeOnTheTokenResponseIsNotAnInvalidOne(): void
+    {
+        // `"scope": ""` is what some token endpoints send (upstream's #10266), and it used to be
+        // refused as `Invalid scope` — a sign-in that had worked, thrown away on the last byte.
+        $server = new FakeHttpMcpServer();
+        $server->oauth = true;
+        $server->tokenScope = '';
+        $server->requireToken = 'nothing-yet';
+
+        try {
+            Async::run(function () use ($server): void {
+                $provider = $this->redirected($server, $query);
+                $this->assertSame(Flow::AUTHORIZED, Flow::authorize($provider, ['serverUrl' => $server->url(), 'authorizationCode' => $server->issueCode($query['code_challenge'])]));
+                $this->assertSame('mcp:tools', $provider->tokens()['scope'], 'empty is absent, so the requested scope is recorded');
+            });
+        } finally {
+            $server->stop();
+        }
+    }
+
+    public function testAStepUpKeepsTheScopeAlreadyGranted(): void
+    {
+        // A server asking for more scope may name only what is missing. A new token with just
+        // that loses what the old one had, the server asks again, and the sign-ins never end.
+        $this->assertSame('mcp:tools mcp:files', Flow::stepUpScope('mcp:tools', 'mcp:files'));
+        $this->assertSame('mcp:tools mcp:files', Flow::stepUpScope('mcp:tools mcp:files', 'mcp:files'), 'each once');
+        $this->assertSame('mcp:files', Flow::stepUpScope(null, 'mcp:files'), 'nothing granted yet');
+        $this->assertNull(Flow::stepUpScope('mcp:tools', null), 'no challenged scope: let the flow pick its default');
+        $this->assertNull(Flow::stepUpScope('mcp:tools', '  '));
+    }
+
+    // ---- a configured metadata document --------------------------------------------------------
+
+    public function testAConfiguredMetadataUrlReplacesDiscoveryAndIsNotCached(): void
+    {
+        // For a server that advertises the wrong authorization server, or none (upstream's
+        // #10172): the document decides, and it is read every time so a changed URL applies at once.
+        $server = new FakeHttpMcpServer();
+        $server->oauth = true;
+        $server->requireToken = 'nothing-yet';
+
+        try {
+            Async::run(function () use ($server): void {
+                $store = new MemoryOauthStateStore();
+                $provider = new McpOauthProvider($server->url(), 'http://127.0.0.1:1/callback', ['client_name' => 'pig'], static fn () => null, store: $store);
+                $metadataUrl = rtrim($server->url(), '/mcp') . '/.well-known/oauth-authorization-server';
+
+                $this->assertSame(Flow::REDIRECT, Flow::authorize($provider, ['serverUrl' => $server->url(), 'authorizationServerMetadataUrl' => $metadataUrl]));
+
+                $paths = array_column($server->requests, 'path');
+                $this->assertContains('/.well-known/oauth-authorization-server', $paths, 'the document was read');
+                $this->assertNotContains('/.well-known/oauth-authorization-server/mcp', $paths, 'and nothing else was tried');
+                $this->assertNull($store->load()['authorizationServerUrl'] ?? null, 'and nothing was cached, so a changed URL applies at once');
+
+                // Not https and not loopback is refused before anything is fetched.
+                $this->assertThrows(OauthInsecureEndpointError::class, static fn () => Flow::authorize($provider, [
+                    'serverUrl' => $server->url(), 'authorizationServerMetadataUrl' => 'http://as.example/.well-known/oauth-authorization-server',
+                ]));
+            });
+        } finally {
+            $server->stop();
+        }
+    }
+
+    /**
+     * Run the flow to the redirect and hand back the provider and the authorization URL's query.
+     *
+     * @param array<string, mixed> $options
+     * @param-out array<string, string> $query
+     */
+    private function redirected(FakeHttpMcpServer $server, ?array &$query, array $options = []): McpOauthProvider
+    {
+        $redirectedTo = null;
+        $provider = new McpOauthProvider($server->url(), 'http://127.0.0.1:1/callback', ['client_name' => 'pig'], static function (string $url) use (&$redirectedTo): void {
+            $redirectedTo = $url;
+        }, store: new MemoryOauthStateStore());
+
+        $this->assertSame(Flow::REDIRECT, Flow::authorize($provider, ['serverUrl' => $server->url(), ...$options]));
+        parse_str((string) parse_url((string) $redirectedTo, PHP_URL_QUERY), $query);
+
+        return $provider;
     }
 
     public function testARefreshTheServerRefusesFallsBackToTheBrowser(): void

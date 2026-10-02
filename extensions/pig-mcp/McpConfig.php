@@ -250,6 +250,17 @@ final class McpConfig
             return 'oauth.scope must be a string';
         }
 
+        // The authorization server's metadata document, for a server that advertises the wrong
+        // one or none. https only, as the flow would refuse it anyway: a document fetched in the
+        // clear is a token endpoint somebody else chose.
+        if (array_key_exists('authServerMetadataUrl', $value)) {
+            $url = $value['authServerMetadataUrl'];
+
+            if (!is_string($url) || !str_starts_with($url, 'https://') || parse_url($url, PHP_URL_HOST) === null) {
+                return 'oauth.authServerMetadataUrl must be an https URL';
+            }
+        }
+
         return null;
     }
 

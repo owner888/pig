@@ -52,6 +52,9 @@ final class Metadata
             'token_endpoint_auth_methods_supported' => self::optionalStrings($input['token_endpoint_auth_methods_supported'] ?? null, 'token_endpoint_auth_methods_supported'),
             'code_challenge_methods_supported' => self::optionalStrings($input['code_challenge_methods_supported'] ?? null, 'code_challenge_methods_supported'),
             'client_id_metadata_document_supported' => is_bool($input['client_id_metadata_document_supported'] ?? null) ? $input['client_id_metadata_document_supported'] : null,
+            // RFC 9207: a server that says so puts `iss` on every authorization response, and a
+            // response without one is then not from it.
+            'authorization_response_iss_parameter_supported' => is_bool($input['authorization_response_iss_parameter_supported'] ?? null) ? $input['authorization_response_iss_parameter_supported'] : null,
         ]);
     }
 
@@ -164,15 +167,28 @@ final class Metadata
         return $value;
     }
 
+    /**
+     * An optional field may be absent, null **or empty** — `"scope": ""` is what some token
+     * endpoints send for "what you asked for", and refusing it as `Invalid scope` refused a
+     * sign-in that had worked (upstream's #10266). Only a value of the wrong type is a complaint.
+     */
     private static function optionalString(mixed $value, string $name): ?string
     {
-        return $value === null ? null : self::requiredString($value, $name);
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (!is_string($value)) {
+            throw new RuntimeException("Invalid {$name}");
+        }
+
+        return $value;
     }
 
     /** @return list<string>|null */
     private static function optionalStrings(mixed $value, string $name): ?array
     {
-        if ($value === null) {
+        if ($value === null || $value === []) {
             return null;
         }
 

@@ -129,7 +129,7 @@ final class Discovery
      *
      * @return array{authorizationServerUrl: string, authorizationServerMetadata: ?array<string, mixed>, resourceMetadata: ?array<string, mixed>}
      */
-    public static function serverInfo(string $serverUrl, ?string $resourceMetadataUrl, Closure $fetch, bool $skipIssuerValidation = false): array
+    public static function serverInfo(string $serverUrl, ?string $resourceMetadataUrl, Closure $fetch, bool $skipIssuerValidation = false, ?string $authorizationServerMetadataUrl = null): array
     {
         $resourceMetadata = null;
 
@@ -140,6 +140,27 @@ final class Discovery
             throw $error;
         } catch (\Throwable) {
             // No resource metadata: the server's own origin is the authorization server.
+        }
+
+        // A configured metadata document, for a server that advertises the wrong authorization
+        // server or none at all (upstream's `oauth.authServerMetadataUrl`, #10172): the document
+        // decides, its `issuer` is the authorization server, and nothing is discovered.
+        if ($authorizationServerMetadataUrl !== null) {
+            $response = self::fetchMetadata($authorizationServerMetadataUrl, $fetch);
+
+            if (!$response->isSuccessful()) {
+                $response->body->close();
+
+                throw new RuntimeException("HTTP {$response->status} loading authorization server metadata from {$authorizationServerMetadataUrl}");
+            }
+
+            $metadata = Metadata::authorizationServer(json_decode($response->body->all(), true));
+
+            return [
+                'authorizationServerUrl' => (string) $metadata['issuer'],
+                'authorizationServerMetadata' => $metadata,
+                'resourceMetadata' => $resourceMetadata,
+            ];
         }
 
         $authorizationServerUrl = $resourceMetadata['authorization_servers'][0] ?? self::origin($serverUrl) . '/';

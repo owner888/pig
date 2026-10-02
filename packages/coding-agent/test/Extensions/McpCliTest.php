@@ -258,7 +258,7 @@ final class McpCliTest extends TestCase
             $this->assertSame(0, $exit);
             $this->assertStringContainsString('Sign in to MCP server "remote" in your browser:', $this->out[0]);
             $this->assertSame('Signed in to MCP server "remote" (1 tools).', end($this->out));
-            $this->assertSame($server->requireToken, json_decode((string) file_get_contents($this->home . '/mcp-auth.json'), true)[$server->url()]['tokens']['access_token']);
+            $this->assertSame($server->requireToken, json_decode((string) file_get_contents($this->home . '/mcp-auth.json'), true)['mcp__remote|' . $server->url()]['tokens']['access_token']);
 
             // Again: already signed in, nothing opened.
             $this->out = [];

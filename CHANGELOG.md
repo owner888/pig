@@ -43,6 +43,25 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Changed
+
+- **codemode costs ~60% fewer prompt tokens.** The tool's description was a full reference — every helper spelled out, ~830 tokens on every request before a single nested tool was listed. It is upstream 1.0's shape now: the intro, one line per global, and the path of `extensions/pig-codemode/CODEMODE.md`, the reference the model reads when it needs a detail (~300 tokens; with two MCP tools listed 929 → 395). The system prompt's snippet and guideline are upstream's shorter ones, and a namespace heading says `(some tools not listed)` rather than counting.
+- **codemode errors say how to recover**, upstream 1.0's `guard()`: `$tools->readTextFile()` is answered with `does not exist. Did you mean $tools->read_text_file()?` — names compared with case and punctuation removed, then by containment, then the whole list when it is short — instead of `Unknown tool`. An oversized `store()` value says what the store is for and where large data goes instead.
+- **MCP OAuth credentials are stored per server name and URL**, so two servers at one URL can be two accounts (upstream's #10252). An entry stored by URL alone is taken over by the first server that loads it.
+
+### Added
+
+- `oauth.authServerMetadataUrl` for an MCP server that advertises the wrong authorization server or none (upstream's #10172): the document decides, and it is read every time so a changed URL applies at once. `pig mcp add --oauth-auth-server-metadata-url`.
+
+### Fixed
+
+- **An MCP OAuth code whose `iss` names another authorization server was exchanged anyway.** The callback read `iss` and nothing checked it. Refused before the exchange now (RFC 9207), and a server whose metadata promises `iss` on every response is not believed without one.
+- **A server asking for more scope asked for ever.** `insufficient_scope` may name only the missing scopes, and the new sign-in requested only those, so the new token lost what the old one had and the server asked again. The step-up asks for the granted scope plus the missing one; a token response without `scope` is recorded as having granted what was requested (RFC 6749 §5.1) so there is something to keep.
+- An MCP token response with `"scope": ""` — or any empty optional field — was refused as invalid, throwing away a sign-in that had worked (upstream's #10266).
+- `store()` past its size limit threw `Class "RangeError" not found`: PHP has no such class, so the limit had never been reachable. `LengthException`.
+
 ## [0.2.19] - 2026-10-02
 
 ### Added

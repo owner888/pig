@@ -628,7 +628,7 @@ return static function (ExtensionApi $pi): void {
         }
 
         try {
-            $credentials->signIn($url, $connection->oauthSettings(), $connection->challenge, $prompt);
+            $credentials->signIn($entry->name, $url, $connection->oauthSettings(), $connection->challenge, $prompt);
         } catch (McpSignInCancelledError) {
             return 'Sign-in cancelled.';
         } catch (\Throwable $error) {
@@ -656,7 +656,7 @@ return static function (ExtensionApi $pi): void {
             return "MCP server \"{$entry->name}\" does not use OAuth.";
         }
 
-        $removed = $credentials->remove($url);
+        $removed = $credentials->remove($entry->name, $url);
         // Without its tokens the server is where it was before anybody signed in: reconnecting
         // shows `needs-auth` and takes its tools off the model.
         $hideTools($entry->name);

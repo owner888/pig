@@ -56,9 +56,15 @@ final class McpOauth
 
     // ---- the store ------------------------------------------------------------------------------
 
-    private static function key(string $serverUrl): string
+    /**
+     * The keys of a server's state: by **name and URL**, so two servers at one URL keep separate
+     * accounts (upstream's #10252), and the legacy key by URL alone that older versions wrote.
+     *
+     * @return array{key: string, legacy: string}
+     */
+    private static function keys(string $name, string $serverUrl): array
     {
-        return $serverUrl;
+        return ['key' => "mcp__{$name}|{$serverUrl}", 'legacy' => $serverUrl];
     }
 
     /** @return array<string, array<string, mixed>> */
@@ -93,20 +99,26 @@ final class McpOauth
         rename($temporary, $this->path);
     }
 
-    /** The state store for one server. */
-    public function forServer(string $serverUrl): OauthStateStore
+    /**
+     * The state store for one server.
+     *
+     * The first server to load state stored under the legacy URL-only key takes it over: the
+     * entry is moved under the server's own key, so a second server at the same URL finds nothing
+     * and signs in on its own.
+     */
+    public function forServer(string $name, string $serverUrl): OauthStateStore
     {
-        $key = self::key($serverUrl);
+        ['key' => $key, 'legacy' => $legacy] = self::keys($name, $serverUrl);
 
-        return new class ($this, $key) implements OauthStateStore {
-            public function __construct(private readonly McpOauth $owner, private readonly string $key)
+        return new class ($this, $key, $legacy) implements OauthStateStore {
+            public function __construct(private readonly McpOauth $owner, private readonly string $key, private readonly string $legacy)
             {
             }
 
             #[\Override]
             public function load(): ?array
             {
-                return $this->owner->stateOf($this->key);
+                return $this->owner->stateOf($this->key, $this->legacy);
             }
 
             #[\Override]
@@ -121,9 +133,27 @@ final class McpOauth
      * @internal for the store `forServer()` answers
      * @return array<string, mixed>|null
      */
-    public function stateOf(string $key): ?array
+    public function stateOf(string $key, string $legacy): ?array
     {
-        return $this->read()[$key] ?? null;
+        $states = $this->read();
+
+        if (isset($states[$key]) || !isset($states[$legacy])) {
+            return $states[$key] ?? null;
+        }
+
+        $taken = null;
+        $this->write(static function (array $states) use ($key, $legacy, &$taken): array {
+            if (!isset($states[$key]) && isset($states[$legacy])) {
+                $states[$key] = $states[$legacy];
+                unset($states[$legacy]);
+            }
+
+            $taken = $states[$key] ?? null;
+
+            return $states;
+        });
+
+        return $taken;
     }
 
     /**
@@ -144,22 +174,28 @@ final class McpOauth
      *
      * @return array<string, mixed>|null
      */
-    public function tokens(string $serverUrl): ?array
+    public function tokens(string $name, string $serverUrl): ?array
     {
-        return $this->read()[self::key($serverUrl)]['tokens'] ?? null;
+        ['key' => $key, 'legacy' => $legacy] = self::keys($name, $serverUrl);
+        $states = $this->read();
+
+        // Does not take legacy state over: noticing is not owning.
+        return ($states[$key] ?? $states[$legacy] ?? null)['tokens'] ?? null;
     }
 
-    /** Whether credentials were stored for the server. */
-    public function remove(string $serverUrl): bool
+    /** Whether credentials were stored for the server. Removes legacy state the server would take over. */
+    public function remove(string $name, string $serverUrl): bool
     {
-        $key = self::key($serverUrl);
+        ['key' => $key, 'legacy' => $legacy] = self::keys($name, $serverUrl);
+        $states = $this->read();
+        $stored = array_key_exists($key, $states) ? $key : (array_key_exists($legacy, $states) ? $legacy : null);
 
-        if (!array_key_exists($key, $this->read())) {
+        if ($stored === null) {
             return false;
         }
 
-        $this->write(static function (array $states) use ($key): array {
-            unset($states[$key]);
+        $this->write(static function (array $states) use ($stored): array {
+            unset($states[$stored]);
 
             return $states;
         });
@@ -182,9 +218,9 @@ final class McpOauth
      * @param Closure(array{resourceMetadataUrl: ?string, scope: ?string, error: ?string, errorDescription: ?string}): void $onChallenge
      * @param Closure(Request): Response|null $fetch
      */
-    public function authProvider(string $serverUrl, Closure $settings, Closure $onChallenge, ?Closure $fetch = null): AuthProvider
+    public function authProvider(string $name, string $serverUrl, Closure $settings, Closure $onChallenge, ?Closure $fetch = null): AuthProvider
     {
-        $store = $this->forServer($serverUrl);
+        $store = $this->forServer($name, $serverUrl);
         $fetch = Discovery::fetcher($fetch);
 
         return new class ($serverUrl, $store, $settings, $onChallenge, $fetch) implements AuthProvider {
@@ -364,10 +400,11 @@ final class McpOauth
      *
      * @throws McpSignInCancelledError when nobody finished the sign-in
      */
-    public function signIn(string $serverUrl, array $settings, ?array $challenge, array $prompt, ?Closure $fetch = null, float $timeout = 300.0): void
+    public function signIn(string $name, string $serverUrl, array $settings, ?array $challenge, array $prompt, ?Closure $fetch = null, float $timeout = 300.0): void
     {
-        $store = $this->forServer($serverUrl);
+        $store = $this->forServer($name, $serverUrl);
         $stored = $store->load();
+        $stepUp = ($challenge['error'] ?? null) === 'insufficient_scope';
         $callbackOptions = self::callbackSettings($settings);
 
         // Reuse the port of the registered redirect URI so the registered client stays valid.
@@ -400,12 +437,18 @@ final class McpOauth
             $flow = [
                 'serverUrl' => $serverUrl,
                 'resourceMetadataUrl' => $challenge['resourceMetadataUrl'] ?? null,
-                // A server asking for more scope gets it on top of the configured scope.
-                'scope' => self::mergeScopes($settings['scope'] ?? null, $challenge['scope'] ?? null),
+                'authorizationServerMetadataUrl' => isset($settings['authServerMetadataUrl']) ? (string) $settings['authServerMetadataUrl'] : null,
+                // A server asking for more scope gets it on top of the configured scope and — since
+                // the challenge may list only the missing scopes — on top of the scope granted so
+                // far, or the new token loses access the old one had and the server asks again.
+                'scope' => self::mergeScopes(
+                    $settings['scope'] ?? null,
+                    $stepUp ? Flow::stepUpScope($stored['tokens']['scope'] ?? null, $challenge['scope'] ?? null) : ($challenge['scope'] ?? null),
+                ),
             ];
 
             // A refresh keeps the granted scope; a server asking for more needs the browser flow.
-            if (Flow::authorize($provider, [...$flow, 'skipRefresh' => ($challenge['error'] ?? null) === 'insufficient_scope'], $fetch) === Flow::AUTHORIZED) {
+            if (Flow::authorize($provider, [...$flow, 'skipRefresh' => $stepUp], $fetch) === Flow::AUTHORIZED) {
                 return;
             }
 
@@ -415,8 +458,8 @@ final class McpOauth
 
             $state = $provider->state();
             ($prompt['showAuthorizationUrl'])($authorizationUrl);
-            $code = self::waitForAuthorizationCode($callback, $state, $prompt['promptForRedirectUrl']);
-            Flow::authorize($provider, [...$flow, 'authorizationCode' => $code], $fetch);
+            ['code' => $code, 'iss' => $iss] = self::waitForAuthorizationResponse($callback, $state, $prompt['promptForRedirectUrl']);
+            Flow::authorize($provider, [...$flow, 'authorizationCode' => $code, 'iss' => $iss], $fetch);
         } finally {
             $callback->close();
         }
@@ -441,7 +484,10 @@ final class McpOauth
      *
      * @param Closure(AbortSignal): ?string $promptForRedirectUrl
      */
-    private static function waitForAuthorizationCode(OauthCallbackServer $callback, string $state, Closure $promptForRedirectUrl): string
+    /**
+     * @return array{code: string, iss: ?string} the code, and the `iss` the response carried (RFC 9207)
+     */
+    private static function waitForAuthorizationResponse(OauthCallbackServer $callback, string $state, Closure $promptForRedirectUrl): array
     {
         $controller = new AbortController();
         $answer = new Deferred();
@@ -462,15 +508,19 @@ final class McpOauth
             }
         };
 
-        Async::spawn(static fn () => $settle(static fn (): string => $callback->waitForCallback($state)['code']));
-        Async::spawn(static fn () => $settle(static function () use ($promptForRedirectUrl, $controller, $state): string {
+        Async::spawn(static fn () => $settle(static function () use ($callback, $state): array {
+            $response = $callback->waitForCallback($state);
+
+            return ['code' => $response['code'], 'iss' => $response['iss'] ?? null];
+        }));
+        Async::spawn(static fn () => $settle(static function () use ($promptForRedirectUrl, $controller, $state): array {
             $input = $promptForRedirectUrl($controller->signal);
 
             if ($input === null || trim($input) === '') {
                 throw new McpSignInCancelledError();
             }
 
-            return self::codeFromRedirectUrl($input, $state);
+            return self::responseFromRedirectUrl($input, $state);
         }));
 
         try {
@@ -481,7 +531,8 @@ final class McpOauth
         }
     }
 
-    private static function codeFromRedirectUrl(string $input, string $state): string
+    /** @return array{code: string, iss: ?string} */
+    private static function responseFromRedirectUrl(string $input, string $state): array
     {
         $parts = parse_url(trim($input));
 
@@ -503,7 +554,7 @@ final class McpOauth
             throw new RuntimeException('The redirect URL does not contain an authorization code');
         }
 
-        return $query['code'];
+        return ['code' => $query['code'], 'iss' => is_string($query['iss'] ?? null) && $query['iss'] !== '' ? $query['iss'] : null];
     }
 
     /** Scopes of both lists, each once. */
