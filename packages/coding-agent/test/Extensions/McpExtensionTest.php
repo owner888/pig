@@ -18,6 +18,7 @@ use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use PigMcp\McpConfig;
 use PigMcp\McpTools;
+use PigMcp\ToolSearch;
 
 final class McpExtensionTest extends TestCase
 {
@@ -40,7 +41,7 @@ final class McpExtensionTest extends TestCase
 
         $repo = dirname(__DIR__, 4);
 
-        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools'] as $class) {
+        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'ToolSearch'] as $class) {
             if (!class_exists("PigMcp\\{$class}", false)) {
                 require $repo . "/extensions/pig-mcp/{$class}.php";
             }
@@ -342,18 +343,140 @@ final class McpExtensionTest extends TestCase
         $this->assertTrue(Loop::get()->isIdle(), 'nothing left running after shutdown');
     }
 
-    public function testACodemodeExposureIsMappedAndSaidOnce(): void
+    public function testACodemodeExposureIsMappedToDeferredAndSaidOnce(): void
     {
         file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
             'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()]],   // upstream's default exposure
         ]]));
 
+        [$set, $hooks, $ui] = $this->start();
+
+        $this->assertStringContainsString('asks for codemode exposure, which pig does not have', implode("\n", $ui->notices));
+        // Mapped to deferred rather than refused: the tool waits behind `tool_search`.
+        $this->assertSame(['tool_search'], $set->names());
+
+        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
+    public function testADeferredToolIsDeclaredOnlyOnceToolSearchFindsIt(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'deferred'],
+        ]]));
+
+        [$set, $hooks, $ui] = $this->start();
+
+        $this->assertSame(['tool_search'], $set->names(), 'the deferred tool is not declared yet');
+        $search = $set->find('tool_search');
+        $this->assertStringContainsString("You have access to tools from the following sources:\n- fixture", $search->description);
+
+        // `/mcp` says how many are waiting.
+        $command = $this->extension->api->commands()['mcp'];
+        Async::run(fn () => ($command->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true)));
+        $this->assertStringContainsString('fixture: connected, 1 tools (1 waiting for tool_search) (deferred)', end($ui->notices));
+
+        // A query that matches nothing loads nothing.
+        $ctx = new \Pig\CodingAgent\Hooks\HookContext('.');
+        $none = Async::run(static fn () => ($search->execute)('1', ['query' => 'weather forecast'], null, $ctx, null));
+        $this->assertSame('No matching tools found.', $none->content[0]->text);
+        $this->assertSame(['tool_search'], $set->names());
+
+        // One that matches declares it, and says so for the next call.
+        $found = Async::run(static fn () => ($search->execute)('2', ['query' => 'echo some text'], null, $ctx, null));
+        $this->assertStringStartsWith("Loaded 1 tool. They are available from your next call:\n- mcp__fixture__echo:", $found->content[0]->text);
+        $this->assertSame(['loaded' => ['mcp__fixture__echo']], $found->details);
+        $this->assertSame(['mcp__fixture__echo', 'tool_search'], $set->names());
+
+        // `tool_search` stays, as upstream's stays active, and still names the server its tools came from.
+        $this->assertStringContainsString('- fixture', $set->find('tool_search')->description);
+
+        // And the loaded tool works.
+        $tool = $set->find('mcp__fixture__echo');
+        $result = Async::run(static fn () => ($tool->execute)('3', ['text' => 'hi'], null, $ctx, null));
+        $this->assertSame('echo: hi', $result->content[0]->text);
+
+        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
+    public function testToolSearchRefusesAnEmptyQueryAndABadLimit(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'deferred'],
+        ]]));
+        [$set, $hooks] = $this->start();
+        $search = $set->find('tool_search');
+        $ctx = new \Pig\CodingAgent\Hooks\HookContext('.');
+
+        foreach ([['query' => '  '], ['query' => 'x', 'limit' => 0], ['query' => 'x', 'limit' => 1.5]] as $params) {
+            try {
+                Async::run(static fn () => ($search->execute)('1', $params, null, $ctx, null));
+                $this->fail('refused: ' . json_encode($params));
+            } catch (AgentError $error) {
+                $this->assertMatchesRegularExpression('/query must not be empty|limit must be a positive integer/', $error->getMessage());
+            }
+        }
+
+        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
+    // ---- the ranker -----------------------------------------------------------------------------
+
+    public function testTokenizingSplitsCamelCaseDropsStopWordsAndSingularises(): void
+    {
+        // `GitHub` is two words to this tokenizer, as it is to upstream's: the split is at every
+        // lower-to-upper boundary. A query saying `github` finds the `gh` server by its name instead.
+        $this->assertSame(['list', 'git', 'hub', 'issue'], ToolSearch::tokenize('listGitHubIssues'));
+        $this->assertSame(['search', 'code', 'repository'], ToolSearch::tokenize('Search the code in a repository'));
+        $this->assertSame(['box', 'glass', 'query', 'ss'], ToolSearch::tokenize('boxes glasses queries ss'));
+    }
+
+    public function testBm25RanksTheDocumentThatSaysItMostAndKeepsOrderOnTies(): void
+    {
+        $documents = [
+            ['name' => 'a', 'text' => 'read a file from disk'],
+            ['name' => 'b', 'text' => 'list github issues and pull requests'],
+            ['name' => 'c', 'text' => 'create a github issue'],
+            ['name' => 'd', 'text' => 'nothing relevant here'],
+        ];
+
+        $ranked = ToolSearch::rank('github issue', $documents, 8);
+        $this->assertSame(['c', 'b'], array_column($ranked, 'name'), 'the shorter document saying both terms wins');
+        $this->assertSame(['c'], array_column(ToolSearch::rank('github issue', $documents, 1), 'name'));
+
+        $this->assertSame([], ToolSearch::rank('the and of', $documents, 8), 'a query of stop words is no query');
+        $this->assertSame(['a', 'b'], array_column(ToolSearch::rank('github', [['name' => 'a', 'text' => 'github'], ['name' => 'b', 'text' => 'github']], 8), 'name'));
+    }
+
+    public function testASearchDocumentCarriesTheSchemaAndTheServer(): void
+    {
+        $document = ToolSearch::document('mcp__gh__get_issue', [
+            'name' => 'get_issue',
+            'description' => 'Fetch one issue',
+            'inputSchema' => ['type' => 'object', 'properties' => ['owner' => ['type' => 'string', 'description' => 'Repository owner'], 'number' => ['type' => 'integer']]],
+        ], 'gh', 'GitHub tools');
+
+        $this->assertSame('mcp__gh__get_issue', $document['name']);
+        $this->assertSame('mcp__gh__get_issue mcp  gh  get issue Fetch one issue owner Repository owner number gh GitHub tools', $document['text']);
+    }
+
+    // ---- harness --------------------------------------------------------------------------------
+
+    private \Pig\CodingAgent\Extensions\LoadedExtension $extension;
+
+    /**
+     * Load the extension from the repository, start a session on it and wait as the first prompt would.
+     *
+     * @return array{CustomToolSet, HookRunner, NoticingUi}
+     */
+    private function start(): array
+    {
         $repo = dirname(__DIR__, 4);
-        [$loaded] = ExtensionLoader::load($this->cwd, cliPaths: [$repo . '/extensions/pig-mcp/index.php'], home: $this->home);
-        $ext = $loaded[0];
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, cliPaths: [$repo . '/extensions/pig-mcp/index.php'], home: $this->home);
+        $this->assertSame([], $errors);
+        $this->extension = $loaded[0];
         $set = new CustomToolSet([]);
-        $set->adopt($ext);
-        $hooks = new HookRunner([new LoadedHook($ext->path, $ext->resolved, $ext->api)], $this->cwd);
+        $set->adopt($this->extension);
+        $hooks = new HookRunner([new LoadedHook($this->extension->path, $this->extension->resolved, $this->extension->api)], $this->cwd);
         $ui = new NoticingUi();
         $hooks->initialize(static fn () => null, ui: $ui);
 
@@ -362,10 +485,6 @@ final class McpExtensionTest extends TestCase
             $hooks->emitBeforeAgentStart('hi');
         });
 
-        $this->assertStringContainsString('asks for codemode exposure, which pig does not have', implode("\n", $ui->notices));
-        // Mapped to what pig can do rather than refused: the tool is there.
-        $this->assertSame(['mcp__fixture__echo'], $set->names());
-
-        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+        return [$set, $hooks, $ui];
     }
 }

@@ -360,6 +360,7 @@ final class Agent
             getFollowUpMessages: fn (): array => $this->take($this->followUpQueue, $this->followUpMode),
             getApiKey: $this->options->getApiKey,
             apiKey: $this->options->apiKey,
+            getTools: fn (): array => $this->state->tools,
         );
     }
 

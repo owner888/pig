@@ -175,6 +175,10 @@ final class AgentLoop
 
                 $pending = [];
 
+                if ($config->getTools !== null) {
+                    $context->tools = ($config->getTools)();
+                }
+
                 $message = self::streamAssistantResponse($context, $config, $signal, $stream, $streamFn);
                 $newMessages[] = $message;
 

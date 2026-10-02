@@ -219,6 +219,45 @@ final class AgentTest extends TestCase
         $this->assertSame([], $agent->state->messages);
     }
 
+    public function testAToolRegisteredDuringARunReachesTheNextRequestOfThatRun(): void
+    {
+        // What `tool_search` does: registers a tool from inside a tool call, and the model is meant
+        // to see it on its very next call — not on the next prompt. The loop took a snapshot of the
+        // tools when it started, so without `getTools` the second request still had the old list.
+        $tool = new class implements \Pig\Agent\AgentTool {
+            public function definition(): \Pig\Ai\Tool
+            {
+                return new \Pig\Ai\Tool('found_later', 'arrived mid-run', ['type' => 'object', 'properties' => []]);
+            }
+
+            public function label(): string
+            {
+                return 'Found later';
+            }
+
+            public function execute(string $toolCallId, array $arguments, ?\Pig\Async\AbortSignal $signal = null, ?Closure $onUpdate = null): \Pig\Agent\AgentToolResult
+            {
+                return new \Pig\Agent\AgentToolResult([new TextContent('')]);
+            }
+        };
+
+        // The provider's hook runs before each request; on the first it registers the tool and
+        // queues a follow-up so there is a second request in the same run.
+        $calls = 0;
+        $agent = $this->agent(['first', 'second'], static function (Agent $agent) use (&$calls, $tool): void {
+            if ($calls++ === 0) {
+                $agent->setTools([$tool]);
+                $agent->followUp(new UserMessage('again'));
+            }
+        });
+
+        Async::run(fn () => $agent->prompt('hi'));
+
+        $this->assertCount(2, $this->contexts);
+        $this->assertSame([], $this->contexts[0]->tools, 'nothing declared on the first request');
+        $this->assertSame(['found_later'], array_map(static fn ($t) => $t->name, $this->contexts[1]->tools), 'and declared on the second, in the same run');
+    }
+
     public function testReplacingMessagesTakesACopyAndReindexesIt(): void
     {
         // Upstream asserts the copy because a JS array would otherwise be shared with the caller;

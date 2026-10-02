@@ -31,6 +31,11 @@ final readonly class AgentLoopConfig
      *        Checked when the agent would otherwise stop. Anything returned keeps it going.
      * @param Closure(string): ?string|null $getApiKey
      *        Resolved per call, for tokens that expire during a long run.
+     * @param Closure(): list<AgentTool>|null $getTools
+     *        Asked before every model call. The loop takes a snapshot of the tools when it
+     *        starts; a tool that is registered *during* a run — `tool_search` loading an MCP
+     *        tool is the case — has to reach the next request of the same run, and this is how.
+     *        Upstream refreshes `context.tools` from `agent.state.tools` in `prepareRequest`.
      */
     public function __construct(
         public Model $model,
@@ -43,6 +48,7 @@ final readonly class AgentLoopConfig
         public ?string $apiKey = null,
         public ?float $temperature = null,
         public ?int $maxTokens = null,
+        public ?Closure $getTools = null,
     ) {
     }
 }

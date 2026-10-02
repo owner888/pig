@@ -397,8 +397,10 @@ bin/pig --tools read,bash,edit,write,grep,find,ls
 **MCP 服务器**由 `extensions/pig-mcp/` 从 `~/.pig/agent/mcp.json` 与 `<project>/.pig/mcp.json`
 读取——文件与键名都是 pi 的，给 pi 写的配置原样可用——每个服务器的工具以 `mcp__<server>__<tool>`
 的名字交给模型，走的是和 `bash` 一样的 hook 与权限门。支持 stdio 与 streamable HTTP，`env` 和
-`headers` 里的 `${VAR}` 与 `!command`，`/mcp` 看状态，`/mcp reconnect <server>` 重连。`codemode`
-曝光方式是一个 JavaScript 沙箱，这里没有；要求它的服务器会被直接声明给模型，并提示一次。
+`headers` 里的 `${VAR}` 与 `!command`，`/mcp` 看状态，`/mcp reconnect <server>` 重连。
+`"exposure": "deferred"` 的服务器，其工具先不声明给模型，等模型用 `tool_search`（按名字、描述、
+schema 做 BM25 检索）找到再加载——六十个工具的服务器因此只占八个工具的上下文。`codemode` 是一个
+JavaScript 沙箱，这里没有；要求它的服务器按 `deferred` 处理，并提示一次。
 
 ```json
 { "mcpServers": {

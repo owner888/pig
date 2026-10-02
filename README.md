@@ -466,8 +466,10 @@ Chrome is told so rather than failed three layers down.
 pi's keys — by `extensions/pig-mcp/`, and each server's tools reach the model as
 `mcp__<server>__<tool>`, through the same hooks and permission gate as `bash`. Stdio and
 streamable HTTP, `${VAR}` and `!command` in `env` and `headers`, `/mcp` for status and
-`/mcp reconnect <server>`. `codemode` exposure is a JavaScript sandbox and is not here; a server
-asking for it is declared directly and told so once.
+`/mcp reconnect <server>`. A server with `"exposure": "deferred"` has its tools held back until the
+model asks `tool_search` for them (BM25 over names, descriptions and schemas), which is how a
+server with sixty tools costs the context eight. `codemode` is a JavaScript sandbox and is not here;
+a server asking for it is read as `deferred` and told so once.
 
 ```json
 { "mcpServers": {

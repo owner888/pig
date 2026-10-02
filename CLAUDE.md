@@ -2725,8 +2725,25 @@ for what the config file means. Two things are pig's own and both are consequenc
 - **`codemode` is not ported and cannot be.** Upstream's default exposure runs the model's
   JavaScript in a sandbox against the server's tools; pig has no sandbox and will not grow one.
   `McpConfig::here()` maps `codemode`/`codemode-deferred` to `deferred` and the extension says so
-  **once** per session, so a `mcp.json` written for pi loads and works, with every tool declared.
-  Until `tool_search` lands, `deferred` behaves as `direct`.
+  **once** per session, so a `mcp.json` written for pi loads and works.
+- **`deferred` has no loadout under it.** Upstream keeps an active set per tool and records a
+  `tool_search` load in the transcript, so a loaded tool survives `/tree` and resume. pig has no
+  such record: a deferred tool is simply **not registered** until `tool_search` names it, then
+  registered like any other, through the same `adopt()`/`onChange()` door a connecting server uses.
+  The cost is that a resumed session starts with the deferred tools unloaded and the model searches
+  again; the gain is no second copy of what the agent's tools are. `ToolSearch` is upstream's
+  `tool-search/tool.js` arithmetic for arithmetic — tokenizer, stemmer, Okapi BM25 — and the one
+  thing worth knowing about it is that **`GitHub` tokenizes to `git hub`** there too (every
+  lower-to-upper boundary splits), so a server named `github` is found by its name and not by the
+  word inside a camelCased tool.
+- **A tool loaded mid-run has to reach the *next request of that run*.** The first live try had the
+  model call `tool_search`, be told `Loaded 8 tools. They are available from your next call`, call
+  one, and get `Tool mcp__fs__read_text_file not found` — five times, then give up and read pig's
+  source with `bash` to find out why. `AgentLoop` took a snapshot of the tools when the run started;
+  `Agent::setTools()` changed the state and not the snapshot. `AgentLoopConfig::$getTools` is asked
+  before every model call now, which is where upstream refreshes `context.tools` from
+  `agent.state.tools` in `prepareRequest`. `AgentTest::testAToolRegisteredDuringARunReachesTheNextRequestOfThatRun`
+  is the mutation's one kill.
 - **A tool that arrives after startup needed a door the loader did not have.** `ExtensionLoader`
   copied `$api->tools()` once; an MCP server's tools exist only once it has connected, in a fiber,
   later. So `ExtensionApi::registerTool()` notifies after load and `removeTools()` is beside it,
@@ -2746,8 +2763,8 @@ in pig's tests was written by pig. Regression test:
 
 `McpExtensionTest` drives the whole thing through `ExtensionLoader::load()` with the stdio fixture
 server (`packages/mcp/test/fixtures/stdio-server.php`): session start, the ten-second wait, a
-server that fails, the startup report, a call through the connection, `/mcp`, and shutdown leaving
-the loop idle. Two of its first assertions were guesses that the code refuted — the middle cut's
+server that fails, the startup report, a call through the connection, `/mcp`, a deferred tool
+appearing only after `tool_search` finds it, and shutdown leaving the loop idle. Two of its first assertions were guesses that the code refuted — the middle cut's
 byte count and a server with no exposure named reporting `(deferred)` — which is the usual cost of
 asserting before measuring.
 
