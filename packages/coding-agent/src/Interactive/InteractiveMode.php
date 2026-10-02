@@ -1800,7 +1800,7 @@ final class InteractiveMode
     private function reportBug(string $hint): void
     {
         Async::spawn(function () use ($hint): void {
-            $includeTranscript = $this->terminalUi->confirm(
+            $includeTranscript = $this->ui->confirm(
                 'Include the session transcript?',
                 'It holds your messages, the model\'s output, and every file and command result read this session.',
             );
@@ -2875,7 +2875,7 @@ final class InteractiveMode
                 return;
             }
 
-            $confirmed = $this->terminalUi->confirm('Commit with message?', $generated);
+            $confirmed = $this->ui->confirm('Commit with message?', $generated);
             if ($confirmed) {
                 $this->executeGitCommit($cwd, $generated);
             } else {

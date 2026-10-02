@@ -2921,7 +2921,28 @@ the session file, the output budget). Verified live with `server-filesystem` at 
 exposure: the model sees `read, bash, edit, write, codemode`, writes a `parallel()` over four
 `read_text_file` calls, and answers from the script's return value.
 
-### A notification on "the task is done" arrived three times during one task
+### `/bug` read a property the class never had, and nothing could have said so
+
+Reported with the screen: `PHP Warning: Undefined property: InteractiveMode::$terminalUi` the moment
+`/bug` was typed. The field is `$ui`; `reportBug()` and `handleCommitCommand()` both read
+`$this->terminalUi`, and the confirm they call on it was then a method on null inside a spawned
+fiber, where the only thing on screen is PHP's warning. **The one command that exists for reporting
+a fault was the one command no test typed** — `BugReportTest` drives `BugReport::build()` and
+`write()` directly, which is the "two ends tested, wire untested" shape this file keeps naming.
+
+Two fixes. The test, `InteractiveModeTest::testSlashBugAsksBeforeItWritesAnything`, types the command
+and asserts the question is on screen and PHP's warning is not. And **`test/lint.php` now sweeps for
+the class of mistake**, because `php -l` parses and does not resolve properties, exactly as it does
+not resolve function names — the lint already carries a list of 8.4-only functions for that reason,
+and this is the same gap one token over. `undefinedPropertyReads()` walks PHP's own tokens (the first
+version was a regex and lost the rest of `SignIn.php` at a `'` inside a docblock): every
+`$this->name` not followed by `(`, against every visibility-keyword-then-variable declaration,
+promoted constructor parameters included; classes that `extend` anything or define `__get` are
+skipped, because an inherited or magic property cannot be seen from one file. Over 564 files it
+found this one site and nothing else, costs nothing measurable beside the per-file `php -l`, and
+putting the typo back turns it red.
+
+
 
 Reported as *"任务还没完成，但是总是偶发触发系统通知"* — the desktop notification extension firing
 mid-task, intermittently. Intermittent because it fired **once per failed attempt**: on a turn that

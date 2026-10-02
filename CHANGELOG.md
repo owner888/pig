@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- **`/bug` failed the moment it was typed** with `Undefined property: InteractiveMode::$terminalUi` — the field is `$ui`, and the one command that exists for reporting a fault was the one command nothing drove through the screen. `/commit`'s confirm read the same name. Both read `$ui` now, `/bug` has a test that types it, and `test/lint.php` sweeps every class for a `$this->name` with no property called `name` — which is how a misspelled field gets past `php -l`, and which found exactly this one.
+
 ## [0.2.22] - 2026-10-02
 
 ### Fixed

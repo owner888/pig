@@ -265,6 +265,27 @@ final class InteractiveModeTest extends TestCase
 
     // ---- crashes --------------------------------------------------------------------------------
 
+    public function testSlashBugAsksBeforeItWritesAnything(): void
+    {
+        // `/bug` read `$this->terminalUi`, a property this class has never had — the field is
+        // `$ui` — so the one command that exists for reporting a fault failed with
+        // `Undefined property` the moment it was typed, inside the spawned fiber where the only
+        // thing on screen was PHP's warning. Nothing drove the command through the screen.
+        $this->start();
+        $this->type('/bug something odd');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->assertStringContainsString('Include the session transcript?', $this->screenText(), 'the question is asked');
+        $this->assertStringNotContainsString('Undefined property', $this->screenText());
+
+        // Escape is the no, and here it is also "not now": nothing is written and nothing opens.
+        $this->type(self::ESC);
+        $this->settle();
+
+        $this->assertStringNotContainsString('Include the session transcript?', $this->screenText());
+    }
+
     public function testTheLastCrashIsAnnouncedOnceAtStartup(): void
     {
         \Pig\CodingAgent\CrashLog::record('fatal_error', new RuntimeException('it fell over'), null, $this->cwd);
