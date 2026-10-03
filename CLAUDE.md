@@ -10742,6 +10742,18 @@ refuses a second copy of a class, which is the fatal error with a politer messag
 3. 在 `HttpServer::listAllWorkspaces()` 读取首行 `cwd` 时，改用 `fgets($fh)` 只读取单个首行，避免调用 `file()` 吞进整个大文件。
 4. 在 CLI 入口 `bin/pig` 和 `bin/pig-ai` 中显式设置 `ini_set('memory_limit', '512M');`，提供双重运行保障。
 
+### PHP 8.5 `curl_close()` 弃用警报与 `CurlHandle` 资源生命周期
+
+**现象**：
+在 PHP 8.5 运行时下执行 cURL 网络请求（如 `pig-computer` 或其它扩展模块发起 HTTP 调用）时，终端或日志抛出：
+`PHP Deprecated: Function curl_close() is deprecated since 8.5, as it has no effect since PHP 8.0`。
+
+**原因**：
+自 PHP 8.0 起，`curl_init()` 返回值已由传统的底层 resource 升级为 `\CurlHandle` 类实例对象，对象在超出作用域或析构时会自动释放底层 cURL 连接句柄；在 PHP 8.5 中，调用 `curl_close()` 已正式标记为 Deprecated。
+
+**对策**：
+在整个仓库及扩展中全面弃用 `curl_close($ch)`，改用 `unset($ch)` 显式注销或令其在作用域结束自然析构。
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;
