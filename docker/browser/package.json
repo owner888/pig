@@ -1,0 +1,16 @@
+{
+  "name": "pig-browser-service",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Pig Browser Service with Anti-Bot, Real Human Simulation, and Computer Use APIs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "fastify": "^5.2.0",
+    "fingerprint-generator": "^2.1.86",
+    "fingerprint-injector": "^2.1.86",
+    "puppeteer-real-browser": "^1.4.2"
+  }
+}

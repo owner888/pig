@@ -1,0 +1,19 @@
+services:
+  browser:
+    build: .
+    image: pigagent/browser:latest
+    container_name: pig-browser
+    restart: unless-stopped
+    ports:
+      - "9523:9523"
+    environment:
+      - PORT=9523
+      - HOST=0.0.0.0
+      - HEADLESS=false
+      - DATA_DIR=/data
+    volumes:
+      # 挂载宿主机的 ~/.pig/agent 目录到容器的 /data：
+      # - /data/cookies.json -> ~/.pig/agent/cookies.json (自动导入京东、淘宝等电商 Cookie)
+      # - /data/browser_profile -> ~/.pig/agent/browser_profile (持久化登录态与缓存)
+      - ${HOME}/.pig/agent:/data
+    shm_size: 2gb

@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.28] - 2026-10-03
+
+### New Features
+
+- **Computer Use & Anti-Detection Browser Automation Suite.** Added `docker/browser/` and `extensions/pig-computer/` for true OS-level / browser-level automation. 
+  - Docker container based on `puppeteer-real-browser` + `Xvfb` (1920x1080 virtual display) with anti-detection fingerprint injection to bypass Cloudflare Turnstile, Baidu, and Google anti-bot challenges.
+  - Automatically loads and mounts `~/.pig/agent/cookies.json` and persistent browser profile, enabling automated authenticated actions on e-commerce sites (e.g. JD.com, Taobao) without re-login.
+  - Registers the native `computer` tool for multimodal agents (Claude 3.7 / Gemini 3.8 / GPT-4o) supporting actions: `navigate`, `screenshot` (base64 ImageContent), `click` (human-like smooth Bezier curve movement), `mouse_move`, `type`, `key`, `scroll`, and `text`.
+  - Added `/computer status` and `/computer screenshot` slash commands.
+
 ## [0.2.27] - 2026-10-03
 
 ### Added
