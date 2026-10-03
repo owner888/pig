@@ -224,6 +224,9 @@ final class McpCli
         }
 
         $openUrl = $this->openUrl ?? static function (string $url): void {
+            if (getenv('PIG_TESTING') !== false || getenv('PHPUNIT') !== false) {
+                return;
+            }
             if (PHP_OS_FAMILY === 'Darwin') {
                 \Pig\Tui\Process::run(['open', $url]);
             } elseif (PHP_OS_FAMILY === 'Linux') {

@@ -30,4 +30,7 @@
             <directory>packages/mcp/src</directory>
         </include>
     </source>
+    <php>
+        <env name="PIG_TESTING" value="1"/>
+    </php>
 </phpunit>
