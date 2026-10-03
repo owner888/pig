@@ -189,6 +189,17 @@ final class TerminalImage
      */
     public static function fallback(string $mimeType, ?ImageSize $size = null, ?string $filename = null): string
     {
+        // Guard against accidental huge strings (e.g. raw base64 passed as mimeType or filename)
+        if (strlen($mimeType) > 64) {
+            $mimeType = str_starts_with($mimeType, 'data:') ? substr($mimeType, 5, 32) : 'image';
+        }
+        if ($filename !== null && strlen($filename) > 256) {
+            $filename = basename($filename);
+            if (strlen($filename) > 64) {
+                $filename = substr($filename, 0, 60) . '...';
+            }
+        }
+
         $parts = $filename === null || $filename === '' ? [] : [$filename];
         $parts[] = "[{$mimeType}]";
 

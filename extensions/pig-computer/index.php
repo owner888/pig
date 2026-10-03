@@ -168,7 +168,7 @@ return static function (ExtensionApi $pi): void {
                         new TextContent("Current Page: \"{$title}\" ({$url})"),
                     ];
                     if ($base64 !== '') {
-                        $contents[] = new ImageContent('image/png', $base64);
+                        $contents[] = new ImageContent($base64, 'image/png');
                     }
 
                     return new AgentToolResult($contents);

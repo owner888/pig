@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.30] - 2026-10-03
+
+### Fixed
+
+- **Crash when rendering fallback label for `ImageContent` with inverted parameters.** In `pig-computer`, `new ImageContent('image/png', $base64)` passed arguments in the inverted order (`$data, $mimeType`). On terminals with image drawing disabled or falling back, `TerminalImage::fallback()` received the 900KB raw base64 string as the `$mimeType`, generating a single line over 919,383 columns wide that crashed `Tui::checkWidth()`. Corrected parameter order to `new ImageContent($base64, 'image/png')` and added defensive length bounding in `TerminalImage::fallback()`.
+
 ## [0.2.29] - 2026-10-03
 
 ### Fixed
