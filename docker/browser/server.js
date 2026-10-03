@@ -32,6 +32,19 @@ async function launchRealBrowser() {
     fs.mkdirSync(profileDir, { recursive: true });
   }
 
+  // 清除残留的进程锁 Singleton*，避免容器重启后报 Profile locked 错误
+  try {
+    const lockFiles = ["SingletonLock", "SingletonCookie", "SingletonSocket"];
+    for (const lf of lockFiles) {
+      const p = path.join(profileDir, lf);
+      try {
+        fs.unlinkSync(p);
+      } catch {}
+    }
+  } catch (e) {
+    console.warn("[Browser] 清理锁文件失败:", e.message);
+  }
+
   const args = [
     "--start-maximized",
     "--no-sandbox",
