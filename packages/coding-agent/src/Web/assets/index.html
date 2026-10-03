@@ -2309,7 +2309,7 @@
                   box.className = "thinking-box";
                   box.innerHTML = `<summary>Thinking...</summary><div class="thinking-content">${escapeHtml(c.text)}</div>`;
                   chatScroll.appendChild(box);
-                } else if (c.type === "tool_call") {
+                } else if (c.type === "tool_call" || c.type === "toolCall") {
                   const card = createToolCard({
                     toolCallId: c.id,
                     toolName: c.name,
@@ -2327,7 +2327,7 @@
             if (m.stopReason === "error" && m.errorMessage) {
               appendErrorMessage(m.errorMessage);
             }
-          } else if (m.role === "tool_result") {
+          } else if (m.role === "tool_result" || m.role === "toolResult") {
             let card = document.getElementById(`tool-${m.toolCallId}`);
             if (!card) {
               card = createToolCard({

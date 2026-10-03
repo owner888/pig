@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.39] - 2026-10-03
+
+### Fixed
+
+- **Web UI tool calls not rendering on history replay (camelCase vs snake_case mismatch).** In Web UI `loadMessages()`, history entries from `.jsonl` session files store `type: "toolCall"` and `role: "toolResult"`. The frontend only checked snake_case `c.type === "tool_call"` and `m.role === "tool_result"`, which caused all tool call cards and execution diffs to be completely skipped when loading or refreshing conversations. Added support for both `toolCall` / `tool_call` and `toolResult` / `tool_result`.
+
 ## [0.2.38] - 2026-10-03
 
 ### Added
