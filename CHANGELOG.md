@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.36] - 2026-10-03
+
+### Changed
+
+- **Web UI dark theme contrast and typography readability enhancements.** In `packages/coding-agent/src/Web/assets/index.html`:
+  - Upgraded `--text-muted` from `#94a3b8` to `#cbd5e1` and `--text-dim` from `#64748b` to `#94a3b8` to dramatically improve legibility on deep dark backgrounds.
+  - Brightened tool execution headers, terminal outputs (`#f1f5f9`), thinking block summaries, and code block language tags.
+  - Adjusted assistant message background (`#1e293b`) and border contrast (`#233144`), resolving eye strain and low-contrast grey text in dark mode.
+
 ## [0.2.35] - 2026-10-03
 
 ### Fixed
