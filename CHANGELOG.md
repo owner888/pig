@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.31] - 2026-10-03
+
+### Added
+
+- **Pre-flight authentication & Cookie validation in `pig-computer` for e-commerce platforms.** When navigating to domains requiring login sessions (such as `jd.com`, `taobao.com`, `tmall.com`, `douyin.com`, `amazon.com`), `pig-computer` now pre-checks `~/.pig/agent/cookies.json` before sending requests. If the file is missing, invalid, lacks domain cookies, or has expired key session cookies (e.g. `pt_key`, `_m_h5_tk`, `sessionid`), it terminates the turn immediately with detailed guidance on how to export and save cookies, avoiding blind loops or dead-end redirect cycles.
+- Added `/computer cookies` slash command to inspect loaded domains and cookie counts from `~/.pig/agent/cookies.json`.
+
 ## [0.2.30] - 2026-10-03
 
 ### Fixed

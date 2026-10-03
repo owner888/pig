@@ -7,6 +7,7 @@ namespace Pig\Extensions\Computer;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
+use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\CustomTools\CustomTool;
 
@@ -15,14 +16,116 @@ use Pig\CodingAgent\CustomTools\CustomTool;
  *
  * Connects pig to the anti-bot browser service (docker/browser) or local desktop screen,
  * supporting screenshot inspection, mouse clicks, keyboard typing, keypress, and scrolling.
+ * Includes automated Cookie inspection and domain authentication gating for e-commerce platforms.
  */
 return static function (ExtensionApi $pi): void {
     $browserEndpoint = rtrim(getenv('PIG_BROWSER_ENDPOINT') ?: 'http://127.0.0.1:9523', '/');
 
+    // Sites requiring authentication/cookies to avoid infinite redirection or failed carts
+    $authRequiredDomains = [
+        'jd.com' => ['name' => '京东 (JD.com)', 'auth_cookies' => ['pt_key', 'pt_pin', 'thor', 'pin', 'pwdt_id']],
+        'taobao.com' => ['name' => '淘宝 (Taobao)', 'auth_cookies' => ['_m_h5_tk', 'cookie2', '_tb_token_', 'sgcookie', 'unb']],
+        'tmall.com' => ['name' => '天猫 (Tmall)', 'auth_cookies' => ['_m_h5_tk', 'cookie2', '_tb_token_', 'sgcookie', 'unb']],
+        'douyin.com' => ['name' => '抖音电商 (Douyin)', 'auth_cookies' => ['sessionid', 'passport_csrf_token', 'sid_guard']],
+        'amazon.com' => ['name' => '亚马逊 (Amazon)', 'auth_cookies' => ['session-id', 'ubid-main', 'at-main', 'x-main']],
+    ];
+
+    /**
+     * Inspect ~/.pig/agent/cookies.json for a given target domain
+     *
+     * @return array{ok: bool, error: ?string}
+     */
+    $checkCookieStatus = static function (string $url) use ($authRequiredDomains): array {
+        $parsed = parse_url($url);
+        $host = strtolower($parsed['host'] ?? '');
+        if ($host === '') {
+            return ['ok' => true, 'error' => null];
+        }
+
+        $matchedRule = null;
+        $matchedDomain = null;
+        foreach ($authRequiredDomains as $domain => $rule) {
+            if ($host === $domain || str_ends_with($host, '.' . $domain)) {
+                $matchedRule = $rule;
+                $matchedDomain = $domain;
+                break;
+            }
+        }
+
+        if ($matchedRule === null) {
+            return ['ok' => true, 'error' => null];
+        }
+
+        $cookieFile = Config::home() . '/cookies.json';
+        if (!file_exists($cookieFile) || !is_readable($cookieFile)) {
+            $msg = "【登录凭据缺失 - 操作已终止】\n"
+                 . "检测到您正在访问需要登录态的站点：{$matchedRule['name']} ({$matchedDomain})。\n"
+                 . "当前尚未在 ~/.pig/agent/cookies.json 检测到任何 Cookie 文件。\n\n"
+                 . "如何解决：\n"
+                 . "1. 在您电脑的 Chrome 浏览器中打开并登录 {$matchedRule['name']}。\n"
+                 . "2. 安装浏览器扩展（推荐 EditThisCookie 或 Cookie-Editor），点击「导出 (Export)」复制为 JSON。\n"
+                 . "3. 将导出的 JSON 保存到本地：\n"
+                 . "   mkdir -p ~/.pig/agent\n"
+                 . "   vim ~/.pig/agent/cookies.json (粘贴保存)\n"
+                 . "4. 保存完成后，请重新吩咐我继续执行操作！";
+            return ['ok' => false, 'error' => $msg];
+        }
+
+        $raw = file_get_contents($cookieFile);
+        $json = json_decode((string) $raw, true);
+        if (!is_array($json) || empty($json)) {
+            $msg = "【Cookie 格式错误 - 操作已终止】\n"
+                 . "文件 ~/.pig/agent/cookies.json 内容为空或不是合法的 JSON 数组。\n"
+                 . "请使用 Cookie-Editor 重新导出 {$matchedRule['name']} 的 Cookie 覆盖保存。";
+            return ['ok' => false, 'error' => $msg];
+        }
+
+        // Check if there are cookies for this domain
+        $domainCookies = [];
+        $hasKeyCookie = false;
+        $now = time();
+        $expiredCount = 0;
+
+        foreach ($json as $c) {
+            if (!is_array($c) || empty($c['name'])) {
+                continue;
+            }
+            $cDomain = strtolower((string) ($c['domain'] ?? ''));
+            if ($cDomain === $matchedDomain || str_ends_with($cDomain, '.' . $matchedDomain) || str_ends_with($matchedDomain, $cDomain)) {
+                $domainCookies[] = $c;
+                if (in_array($c['name'], $matchedRule['auth_cookies'], true)) {
+                    $hasKeyCookie = true;
+                    // Check expiration if present
+                    if (!empty($c['expirationDate']) && is_numeric($c['expirationDate'])) {
+                        if ($c['expirationDate'] < $now) {
+                            $expiredCount++;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (empty($domainCookies)) {
+            $msg = "【未找到该站点的登录 Cookie - 操作已终止】\n"
+                 . "文件 ~/.pig/agent/cookies.json 中包含 Cookie，但未找到与 {$matchedDomain} 相关的登录信息。\n"
+                 . "请打开您的浏览器，进入并登录 {$matchedRule['name']}，使用 Cookie 插件重新导出并追加/覆盖到 ~/.pig/agent/cookies.json。";
+            return ['ok' => false, 'error' => $msg];
+        }
+
+        if (!$hasKeyCookie || $expiredCount > 0) {
+            $msg = "【登录凭据可能已过期或不完整 - 操作已终止】\n"
+                 . "检测到 ~/.pig/agent/cookies.json 中的 {$matchedRule['name']} 核心认证 Cookie 已过期或缺失核心登录字段（如 " . implode(', ', $matchedRule['auth_cookies']) . "）。\n"
+                 . "为避免在未登录状态下出现死循环跳转或购物车失败，请在浏览器中重新刷新登录 {$matchedRule['name']}，重新导出覆盖 ~/.pig/agent/cookies.json。";
+            return ['ok' => false, 'error' => $msg];
+        }
+
+        return ['ok' => true, 'error' => null];
+    };
+
     // Register /computer slash command
     $pi->registerCommand(
         name: 'computer',
-        description: 'Check browser automation service status or run actions: /computer status | screenshot',
+        description: 'Check browser automation service status or run actions: /computer status | screenshot | cookies',
         handler: static function (string $args, $ctx) use ($browserEndpoint, $pi): void {
             $cmd = trim($args);
             if ($cmd === 'status' || $cmd === '') {
@@ -32,6 +135,30 @@ return static function (ExtensionApi $pi): void {
                     return;
                 }
                 $pi->sendMessage("✅ Browser service is healthy: {$status}");
+                return;
+            }
+
+            if ($cmd === 'cookies') {
+                $cookieFile = Config::home() . '/cookies.json';
+                if (!file_exists($cookieFile)) {
+                    $pi->sendMessage("⚠️ No cookies.json found at {$cookieFile}. Create it to store browser login state.");
+                    return;
+                }
+                $raw = (string) file_get_contents($cookieFile);
+                $json = json_decode($raw, true);
+                if (!is_array($json)) {
+                    $pi->sendMessage("❌ Invalid JSON in {$cookieFile}");
+                    return;
+                }
+
+                $domains = [];
+                foreach ($json as $c) {
+                    if (!empty($c['domain'])) {
+                        $domains[ltrim((string) $c['domain'], '.')] = true;
+                    }
+                }
+                $dList = implode(', ', array_keys($domains));
+                $pi->sendMessage("🍪 Loaded " . count($json) . " cookies from {$cookieFile}\nDomains: " . ($dList ?: 'none'));
                 return;
             }
 
@@ -66,7 +193,7 @@ return static function (ExtensionApi $pi): void {
                 return;
             }
 
-            $pi->sendMessage("Unknown /computer subcommand. Use: /computer status | screenshot");
+            $pi->sendMessage("Unknown /computer subcommand. Use: /computer status | screenshot | cookies");
         }
     );
 
@@ -111,7 +238,7 @@ return static function (ExtensionApi $pi): void {
             ],
             'required' => ['action'],
         ],
-        execute: static function ($id, $params, $onUpdate, $ctx) use ($browserEndpoint): AgentToolResult {
+        execute: static function ($id, $params, $onUpdate, $ctx) use ($browserEndpoint, $checkCookieStatus): AgentToolResult {
             $action = (string) ($params['action'] ?? 'screenshot');
 
             $callApi = static function (string $path, array $data = [], string $method = 'POST') use ($browserEndpoint): array {
@@ -152,8 +279,27 @@ return static function (ExtensionApi $pi): void {
                     if ($url === '') {
                         return new AgentToolResult([new TextContent('Error: "url" parameter is required for navigate action.')]);
                     }
+
+                    // 1. Check cookies status for login-required domains (e.g. JD.com, Taobao.com)
+                    $authCheck = $checkCookieStatus($url);
+                    if (!$authCheck['ok']) {
+                        // Immediately stop and instruct user without making useless blind requests
+                        return new AgentToolResult([
+                            new TextContent($authCheck['error']),
+                        ]);
+                    }
+
+                    // 2. Perform navigation
                     $res = $callApi('/navigate', ['url' => $url]);
-                    // Auto return current view text and confirmation
+
+                    // 3. Inspect if redirected to passport/login page
+                    $currentUrl = strtolower($res['url'] ?? '');
+                    if (str_contains($currentUrl, 'passport.') || str_contains($currentUrl, 'login.') || str_contains($currentUrl, '/login')) {
+                        $warn = "⚠️ 提示：页面已被重定向至登录页面 ({$res['url']})，说明 Cookie 可能已失效。\n"
+                              . "请在电脑浏览器重新登录对应网站，导出最新 Cookie 覆盖到 ~/.pig/agent/cookies.json。";
+                        return new AgentToolResult([new TextContent($warn)]);
+                    }
+
                     return new AgentToolResult([
                         new TextContent("Navigated to {$res['url']} (Title: \"{$res['title']}\")."),
                     ]);
