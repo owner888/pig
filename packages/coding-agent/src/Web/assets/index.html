@@ -853,8 +853,15 @@
       }
     }
 
+    let isComposing = false;
+    promptInput.addEventListener("compositionstart", () => { isComposing = true; });
+    promptInput.addEventListener("compositionend", () => { isComposing = false; });
+
     promptInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
+        if (e.isComposing || isComposing || e.keyCode === 229) {
+          return;
+        }
         e.preventDefault();
         submitMessage();
       } else if (e.key === "Escape" && isRunning) {
@@ -1624,6 +1631,7 @@
         el.querySelector("[data-ok]").addEventListener("click", () => answered({ value: field.value }));
         el.querySelector("[data-cancel]").addEventListener("click", () => answered({ cancelled: true }));
         field.onkeydown = (e) => {
+          if (e.isComposing || e.keyCode === 229) return;
           if (e.key === "Enter" && (req.method === "input" || e.ctrlKey || e.metaKey)) { e.preventDefault(); answered({ value: field.value }); }
         };
       }

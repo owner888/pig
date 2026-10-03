@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.35] - 2026-10-03
+
+### Fixed
+
+- **Web UI input composition handling (IME Chinese typing).** In Web UI (`packages/coding-agent/src/Web/assets/index.html`), pressing Enter to confirm Chinese pinyin candidates in the prompt input or hook dialogs previously triggered immediate message submission. Added `compositionstart` / `compositionend` event listeners and `e.isComposing` / `keyCode 229` guards so Enter only confirms candidate selection while composing text.
+
 ## [0.2.34] - 2026-10-03
 
 ### Fixed
