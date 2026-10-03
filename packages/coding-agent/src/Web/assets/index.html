@@ -990,6 +990,21 @@
         p.className = "msg-user-text";
         p.innerText = text;
         block.appendChild(p);
+
+        // Also check if text contains an image file path (like clipboard paste /path/to/pig-clipboard-xxx.png)
+        const match = text.match(/^\s*(\/[^\s\n]+\.(?:png|jpg|jpeg|gif|webp))/i);
+        if (match && images.length === 0) {
+          const imgPath = match[1];
+          const grid = document.createElement("div");
+          grid.className = "msg-images-grid";
+          const imgEl = document.createElement("img");
+          imgEl.src = `/api/file?path=${encodeURIComponent(imgPath)}`;
+          imgEl.className = "msg-image-thumb";
+          imgEl.title = "Local clipboard image: " + imgPath;
+          imgEl.addEventListener("click", () => window.open(imgEl.src, "_blank"));
+          grid.appendChild(imgEl);
+          block.appendChild(grid);
+        }
       }
 
       if (images.length > 0) {
@@ -1092,7 +1107,10 @@
     }
 
     function onEvent(evt) {
-      if (evt.type === "agent_start" || evt.type === "turn_start") {
+      if (evt.type === "message_start") {
+        currentAssistantBlock = null;
+        currentAssistantText = "";
+      } else if (evt.type === "agent_start" || evt.type === "turn_start") {
         setRunningState(true);
       } else if (evt.type === "agent_end" || evt.type === "turn_end") {
         setRunningState(false);
@@ -2207,6 +2225,15 @@
               appendErrorMessage(m.errorMessage);
             }
           } else if (m.role === "tool_result") {
+            let card = document.getElementById(`tool-${m.toolCallId}`);
+            if (!card) {
+              card = createToolCard({
+                toolCallId: m.toolCallId,
+                toolName: m.toolName || "tool",
+                arguments: {},
+              });
+              chatScroll.appendChild(card);
+            }
             updateToolCard({
               toolCallId: m.toolCallId,
               result: m.result || m.details,

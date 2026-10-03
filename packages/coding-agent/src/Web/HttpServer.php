@@ -21,6 +21,7 @@ use Pig\Agent\TurnStartEvent;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Models;
+use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\TextDeltaEvent;
 use Pig\Ai\ThinkingContent;
@@ -513,6 +514,33 @@ final class HttpServer
                 'diff' => $diffText,
                 'cwd' => $cwd,
             ]));
+
+            return;
+        }
+
+        // 10.2b Serve local file/image for preview
+        if ($path === '/api/file') {
+            $filePath = $req['query']['path'] ?? '';
+            $realPath = realpath($filePath);
+            if ($realPath && is_file($realPath)) {
+                $ext = strtolower(pathinfo($realPath, PATHINFO_EXTENSION));
+                $mime = match ($ext) {
+                    'png' => 'image/png',
+                    'jpg', 'jpeg' => 'image/jpeg',
+                    'gif' => 'image/gif',
+                    'webp' => 'image/webp',
+                    default => 'application/octet-stream',
+                };
+                $conn->sendResponse(200, [
+                    'Content-Type' => $mime,
+                    'Access-Control-Allow-Origin' => '*',
+                    'Cache-Control' => 'max-age=86400',
+                ], file_get_contents($realPath));
+
+                return;
+            }
+
+            $conn->sendResponse(404, ['Content-Type' => 'text/plain'], 'File not found');
 
             return;
         }
@@ -1027,7 +1055,16 @@ final class HttpServer
         $stats = $this->session->stats();
         $model = $this->session->model();
         $window = $model?->contextWindow ?? 0;
-        $percent = $window > 0 ? (int) ($stats->input / $window * 100) : 0;
+        $contextTokens = $this->session->contextTokens();
+        if ($contextTokens === 0) {
+            foreach (array_reverse($this->session->messages()) as $message) {
+                if ($message instanceof AssistantMessage && $message->stopReason !== StopReason::Aborted) {
+                    $contextTokens = $message->usage->input + $message->usage->output + $message->usage->cacheRead + $message->usage->cacheWrite;
+                    break;
+                }
+            }
+        }
+        $percent = $window > 0 ? (float) ($contextTokens / $window * 100) : 0.0;
 
         return [
             'cwd' => basename($this->session->cwd()),

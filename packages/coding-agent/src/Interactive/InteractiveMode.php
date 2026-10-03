@@ -2809,7 +2809,13 @@ final class InteractiveMode
         for ($attempt = 0; $attempt < 10; $attempt++) {
             $candidatePort = $port + $attempt;
             try {
-                $this->webServer = new \Pig\CodingAgent\Web\HttpServer($this->session, $candidatePort);
+                $this->webServer = new \Pig\CodingAgent\Web\HttpServer(
+                    $this->session,
+                    $candidatePort,
+                    auth: $this->auth,
+                    hooks: $this->hooks,
+                    customTools: $this->customTools,
+                );
                 $this->webServer->start();
                 $bound = true;
                 $port = $candidatePort;
