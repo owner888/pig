@@ -625,7 +625,8 @@ final class InteractiveMode
 
         $lines = [
             "{$topLogo} {$versionStr}",
-            "{$bottomLogo} {$summaryStr}",
+            "{$bottomLogo}",
+            $summaryStr,
         ];
 
         $onboarding = $this->palette->fg('dim', 'Pig can explain its own features and look up its docs. Ask it how to use or extend Pig.');

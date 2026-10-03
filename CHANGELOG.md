@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.26] - 2026-10-03
+
+### Fixed
+
+- **Pig mascot logo split vertically on narrow terminals.** Previously, the 2-line pig logo placed the 84-column summary text (`escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more`) directly to the right of the bottom logo line (`$bottomLogo $summaryStr`). In standard terminals narrower than 85 columns (such as 80-column splits), the summary text wrapped onto a new line, inserting an extra row between the logo's top half and bottom half and breaking the mascot. Now, the 4-cell mascot logo sits compactly beside the version label, with the summary text rendered cleanly on its own dedicated line below.
+
 ## [0.2.25] - 2026-10-03
 
 ### Added
