@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.29] - 2026-10-03
+
+### Fixed
+
+- **PHP 8.5 `curl_close()` deprecation warning in `pig-computer` extension.** In PHP 8.0+, `curl_init()` returns a `CurlHandle` object that is automatically closed on destruction; in PHP 8.5, calling `curl_close()` is deprecated and emitted a runtime deprecation warning mid-stream during tool execution. Replaced with `unset($ch)` across `pig-computer`.
+
 ## [0.2.28] - 2026-10-03
 
 ### New Features
