@@ -1817,7 +1817,7 @@ final class InteractiveMode
                 return;
             }
 
-            SystemClipboard::default()->write($report);
+            $this->clipboard->write($report);
 
             $serverUrl = BugReport::upload($hint, $report);
             $url = BugReport::issueUrl($hint, $report);
@@ -1919,7 +1919,7 @@ final class InteractiveMode
             $prMarkdown = MarkdownExport::generatePrDescription($this->session);
 
             // Copy to clipboard automatically for convenient pasting into GitHub PR
-            SystemClipboard::default()->write($prMarkdown);
+            $this->clipboard->write($prMarkdown);
 
             $savePath = $customPath !== ''
                 ? $customPath

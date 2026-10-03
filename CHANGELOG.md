@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.34] - 2026-10-03
+
+### Fixed
+
+- **Crash on undefined method `SystemClipboard::default()`.** When executing `/bug` or exporting PR descriptions, `InteractiveMode` called `SystemClipboard::default()->write(...)` which threw `Call to undefined method Pig\Tui\Clipboard\SystemClipboard::default()`. Fixed by using injected `$this->clipboard->write(...)` in `InteractiveMode` and adding `SystemClipboard::default()` convenience factory method.
+
 ## [0.2.33] - 2026-10-03
 
 ### Changed

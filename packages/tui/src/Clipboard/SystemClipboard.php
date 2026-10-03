@@ -36,6 +36,11 @@ final class SystemClipboard implements Clipboard
     {
     }
 
+    public static function default(): self
+    {
+        return new self();
+    }
+
     #[\Override]
     public function text(): ?string
     {
