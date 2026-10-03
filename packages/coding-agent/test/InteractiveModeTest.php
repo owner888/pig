@@ -635,6 +635,18 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('claude-sonnet-4-5', $narrowed);
     }
 
+    public function testTypingAfterSlashThemeOffersAvailableThemes(): void
+    {
+        $this->start();
+        $this->type('/theme');
+        $this->type(' ');
+        $this->type('d');
+        $this->settle();
+
+        $screen = $this->screen();
+        $this->assertStringContainsString('dark', $screen);
+    }
+
     public function testSwitchingThemeDoesNotWriteTheWholeFrameUnderItself(): void
     {
         // `requestRender(true)` empties what the screen is believed to hold, and the renderer

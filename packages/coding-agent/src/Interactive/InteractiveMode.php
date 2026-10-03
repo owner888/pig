@@ -1167,6 +1167,7 @@ final class InteractiveMode
                         match ($command[0]) {
                             'model' => $this->modelCompletions(...),
                             'thinking' => $this->thinkingCompletions(...),
+                            'theme' => $this->themeCompletions(...),
                             default => null,
                         },
                     ),
@@ -1191,6 +1192,7 @@ final class InteractiveMode
             // Only if it is already here. Reaching for the network to draw a completion
             // list is not something a keystroke should do.
             ExternalTool::has('fd') ? ExternalTool::fd() : null,
+            $this->modifiedGitFiles(...),
         ));
 
         // The border turns green the moment the line becomes a command, so there is no
@@ -2270,6 +2272,65 @@ final class InteractiveMode
         }
 
         return $items;
+    }
+
+    /**
+     * Argument completions for `/theme`: available built-in themes.
+     *
+     * @return list<AutocompleteItem>
+     */
+    private function themeCompletions(string $typed): array
+    {
+        $wanted = mb_strtolower(trim($typed));
+        $items = [];
+
+        foreach (Palette::names() as $name) {
+            if ($wanted !== '' && !str_starts_with($name, $wanted)) {
+                continue;
+            }
+
+            $desc = match ($name) {
+                'dark' => 'Default dark theme with ANSI 256/TrueColor support',
+                'light' => 'Clean light terminal theme',
+                default => null,
+            };
+
+            $items[] = new AutocompleteItem($name, $name, $desc);
+        }
+
+        return $items;
+    }
+
+    /**
+     * Uncommitted or modified files in current git repository to prioritize in `@` autocomplete.
+     *
+     * @return list<string> project-relative modified file paths
+     */
+    private function modifiedGitFiles(): array
+    {
+        [$exit, $out] = Process::run(['git', 'status', '--porcelain', '-u'], timeout: 0.5, cwd: $this->cwd);
+
+        if ($exit !== 0 || trim($out) === '') {
+            return [];
+        }
+
+        $files = [];
+
+        foreach (explode("\n", trim($out)) as $line) {
+            if (strlen($line) > 3) {
+                $statusPath = trim(substr($line, 3));
+                // Handle renamed files: `R  old -> new`
+                if (str_contains($statusPath, ' -> ')) {
+                    [, $statusPath] = explode(' -> ', $statusPath, 2);
+                }
+                $cleanPath = trim($statusPath, '"');
+                if ($cleanPath !== '') {
+                    $files[] = $cleanPath;
+                }
+            }
+        }
+
+        return $files;
     }
 
     private function handleThinkingCommand(string $arg): void

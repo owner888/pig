@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.27] - 2026-10-03
+
+### Added
+
+- **Git-modified files priority ranking in `@` file picker.** When typing `@` in the prompt, files modified or untracked according to `git status --porcelain -u` are automatically scored higher and prioritized at the top of the autocomplete list with a `modified · ` indicator badge, greatly accelerating navigation during iterative bug fixing and code reviews.
+- **Argument completions for `/theme`.** Typing `/theme <tab>` now automatically autocompletes available built-in themes (`dark`, `light`) with descriptions instead of falling through to the filesystem picker.
+
 ## [0.2.26] - 2026-10-03
 
 ### Fixed

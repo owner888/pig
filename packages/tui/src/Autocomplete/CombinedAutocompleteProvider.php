@@ -34,11 +34,13 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
      * @param list<SlashCommand|AutocompleteItem> $commands
      * @param string                              $basePath the directory bare paths are relative to
      * @param string|null                         $fdPath   path to `fd`, for the `@` search
+     * @param (Closure(): list<string>)|null      $modifiedFilesProvider returns project-relative modified files to prioritize
      */
     public function __construct(
         array $commands = [],
         private readonly string $basePath = '.',
         private readonly ?string $fdPath = null,
+        private readonly ?Closure $modifiedFilesProvider = null,
     ) {
         $this->commands = array_values($commands);
     }
@@ -462,13 +464,18 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
         }
 
         $found = $this->runFd($query);
+        $modified = $this->modifiedFilesProvider !== null ? ($this->modifiedFilesProvider)() : [];
+        $modifiedSet = array_flip($modified);
         $scored = [];
 
         foreach ($found as [$path, $isDirectory]) {
-            $score = $query === '' ? 1 : self::score($path, $query, $isDirectory);
+            $baseScore = $query === '' ? 1 : self::score($path, $query, $isDirectory);
 
-            if ($score > 0) {
-                $scored[] = [$score, $path, $isDirectory];
+            if ($baseScore > 0) {
+                // Modified git files get prioritized to the top
+                $isModified = isset($modifiedSet[$path]) || isset($modifiedSet[rtrim($path, '/')]);
+                $finalScore = $isModified ? $baseScore + 200 : $baseScore;
+                $scored[] = [$finalScore, $path, $isDirectory, $isModified];
             }
         }
 
@@ -476,13 +483,14 @@ final class CombinedAutocompleteProvider implements AutocompleteProvider
 
         $items = [];
 
-        foreach (array_slice($scored, 0, self::FUZZY_MAX_ITEMS) as [, $path, $isDirectory]) {
+        foreach (array_slice($scored, 0, self::FUZZY_MAX_ITEMS) as [, $path, $isDirectory, $isModified]) {
             $bare = $isDirectory ? rtrim($path, '/') : $path;
+            $desc = $isModified ? 'modified · ' . $bare : $bare;
 
             $items[] = new AutocompleteItem(
                 '@' . $path,
                 basename($bare) . ($isDirectory ? '/' : ''),
-                $bare,
+                $desc,
             );
         }
 

@@ -351,7 +351,7 @@ final class AutocompleteTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
-        foreach (['src/models/claude.php', 'src/Agent.php', 'README.md', 'noisy-fd'] as $file) {
+        foreach (['src/models/claude.php', 'src/Agent.php', 'README.md', 'noisy-fd', 'mock-fd'] as $file) {
             if (is_file("{$this->root}/{$file}")) {
                 unlink("{$this->root}/{$file}");
             }
@@ -415,5 +415,35 @@ final class AutocompleteTest extends TestCase
         $this->assertNotNull($suggestions);
         // The directory scores higher than the file inside it, so it comes first.
         $this->assertSame('@src/', $suggestions->items[0]->value);
+    }
+
+    public function testModifiedGitFilesArePrioritizedToTheTop(): void
+    {
+        $fd = "{$this->root}/mock-fd";
+        file_put_contents($fd, <<<'SH'
+#!/bin/sh
+echo "src/Normal.php"
+echo "src/Modified.php"
+echo "src/Another.php"
+SH
+        );
+        chmod($fd, 0o755);
+
+        // Without provider: normal alphabetical/score order
+        $providerWithout = new CombinedAutocompleteProvider([], $this->root, $fd);
+        $resWithout = $this->suggest($providerWithout, '@');
+        $this->assertSame('@src/Normal.php', $resWithout->items[0]->value);
+
+        // With provider returning modified file: modified file is prioritized first with badge
+        $providerWith = new CombinedAutocompleteProvider(
+            [],
+            $this->root,
+            $fd,
+            static fn (): array => ['src/Modified.php']
+        );
+        $resWith = $this->suggest($providerWith, '@');
+        $this->assertNotNull($resWith);
+        $this->assertSame('@src/Modified.php', $resWith->items[0]->value);
+        $this->assertStringContainsString('modified', $resWith->items[0]->description);
     }
 }
