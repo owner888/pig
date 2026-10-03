@@ -331,7 +331,7 @@ final class FooterComponent implements Component
     {
         $model = $this->session->model();
         $window = $model?->contextWindow ?? 0;
-        $used = $this->lastTurnTokens();
+        $used = $this->session->contextTokens();
         $percent = $window > 0 ? $used / $window * 100 : 0.0;
 
         // What reaching the top *means*: a pause and a summary, or a request that gets refused.
@@ -344,30 +344,6 @@ final class FooterComponent implements Component
             $percent > self::WARN_AT => $this->palette->fg('warning', $display),
             default => $display,
         };
-    }
-
-    /**
-     * What the last turn actually sent.
-     *
-     * The context is what the *next* request will carry, which is the last complete turn
-     * — not the sum over the session, which counts every turn that has already gone.
-     * An aborted turn is skipped: it was cut off, so its count is not what the next one
-     * will look like.
-     */
-    private function lastTurnTokens(): int
-    {
-        foreach (array_reverse($this->session->messages()) as $message) {
-            if (!$message instanceof AssistantMessage || $message->stopReason === StopReason::Aborted) {
-                continue;
-            }
-
-            return $message->usage->input
-                + $message->usage->output
-                + $message->usage->cacheRead
-                + $message->usage->cacheWrite;
-        }
-
-        return 0;
     }
 
     /**

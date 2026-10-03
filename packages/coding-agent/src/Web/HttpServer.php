@@ -1056,14 +1056,6 @@ final class HttpServer
         $model = $this->session->model();
         $window = $model?->contextWindow ?? 0;
         $contextTokens = $this->session->contextTokens();
-        if ($contextTokens === 0) {
-            foreach (array_reverse($this->session->messages()) as $message) {
-                if ($message instanceof AssistantMessage && $message->stopReason !== StopReason::Aborted) {
-                    $contextTokens = $message->usage->input + $message->usage->output + $message->usage->cacheRead + $message->usage->cacheWrite;
-                    break;
-                }
-            }
-        }
         $percent = $window > 0 ? (float) ($contextTokens / $window * 100) : 0.0;
 
         return [
