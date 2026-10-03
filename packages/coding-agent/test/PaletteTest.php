@@ -96,8 +96,8 @@ final class PaletteTest extends TestCase
 
     public function testAVariableIsFollowedToItsHex(): void
     {
-        // dark's `border` is `blue`, which is #5f87ff.
-        $this->assertStringStartsWith("\e[38;2;95;135;255m", Palette::dark(true)->fg('border', 'x'));
+        // dark's `border` is #5fa8cc (95, 168, 204).
+        $this->assertStringStartsWith("\e[38;2;95;168;204m", Palette::dark(true)->fg('border', 'x'));
     }
 
     public function testAnUnknownColourIsAnErrorRatherThanNothing(): void
@@ -136,8 +136,8 @@ final class PaletteTest extends TestCase
         $markdown = Palette::dark(true)->markdownTheme();
         $lines = ($markdown->highlightCode)("return 1;", 'php');
 
-        // #569CD6 is dark's syntaxKeyword.
-        $this->assertStringContainsString("\e[38;2;86;156;214mreturn", $lines[0]);
+        // #69add0 (105, 173, 208) is dark's syntaxKeyword.
+        $this->assertStringContainsString("\e[38;2;105;173;208mreturn", $lines[0]);
     }
 
     public function testEveryThinkingLevelHasABorderColour(): void

@@ -41,10 +41,10 @@ final class DiffViewTest extends TestCase
         $plain = array_map(Ansi::strip(...), $lines);
 
         $this->assertSame([' 1 keep', '-2 old', '+2 new', ' 3 '], $plain);
-        // dark's toolDiffRemoved is red, toolDiffAdded green, context grey.
-        $this->assertStringContainsString("\e[38;2;204;102;102m", $lines[1]);
-        $this->assertStringContainsString("\e[38;2;181;189;104m", $lines[2]);
-        $this->assertStringContainsString("\e[38;2;128;128;128m", $lines[0]);
+        // dark's toolDiffRemoved is red (#ea7f81 = 234, 127, 129), toolDiffAdded green (#68b78d = 104, 183, 141), context muted (#9da5a9 = 157, 165, 169).
+        $this->assertStringContainsString("\e[38;2;234;127;129m", $lines[1]);
+        $this->assertStringContainsString("\e[38;2;104;183;141m", $lines[2]);
+        $this->assertStringContainsString("\e[38;2;157;165;169m", $lines[0]);
     }
 
     public function testOneLineForOneLineMarksTheWordsThatChanged(): void

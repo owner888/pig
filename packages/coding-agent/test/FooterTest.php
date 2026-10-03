@@ -301,15 +301,17 @@ final class FooterTest extends TestCase
     {
         $quiet = $this->session();
         $this->spent($quiet, new Usage(20_000, 0, 0, 0));
-        $this->assertStringNotContainsString("\e[38;2;204;102;102m", $this->raw($quiet));
+        $this->assertStringNotContainsString("\e[38;2;234;127;129m", $this->raw($quiet));
 
         $warm = $this->session();
         $this->spent($warm, new Usage(150_000, 0, 0, 0));
-        $this->assertStringContainsString("\e[38;2;255;255;0m", $this->raw($warm));
+        // dark warning is #cd9a22 (205, 154, 34)
+        $this->assertStringContainsString("\e[38;2;205;154;34m", $this->raw($warm));
 
         $full = $this->session();
         $this->spent($full, new Usage(195_000, 0, 0, 0));
-        $this->assertStringContainsString("\e[38;2;204;102;102m", $this->raw($full));
+        // dark error is #ea7f81 (234, 127, 129)
+        $this->assertStringContainsString("\e[38;2;234;127;129m", $this->raw($full));
     }
 
     public function testTheCostIsShownToATenthOfACent(): void
