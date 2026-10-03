@@ -1197,6 +1197,10 @@
       const card = document.createElement("div");
       card.id = `tool-${evt.toolCallId}`;
       card.className = "tool-card";
+      card.dataset.tool = evt.toolName || "";
+      if (evt.arguments) {
+        card.dataset.args = JSON.stringify(evt.arguments);
+      }
 
       let title = evt.toolName;
       let bodyHtml = "";
@@ -1209,7 +1213,14 @@
       } else if (evt.toolName === "read") {
         const path = evt.arguments?.path || "";
         const offset = evt.arguments?.offset;
-        title = `read ${path}` + (offset ? `:${offset}` : "");
+        const limit = evt.arguments?.limit;
+        let range = "";
+        if (offset !== undefined || limit !== undefined) {
+          const start = offset || 1;
+          const end = limit !== undefined ? `-${Number(start) + Number(limit) - 1}` : "";
+          range = `:${start}${end}`;
+        }
+        title = `read ${path}${range}`;
         bodyHtml = `<div class="tool-terminal">Reading file...</div>`;
       } else if (evt.toolName === "edit") {
         const path = evt.arguments?.path || "";
@@ -1219,12 +1230,30 @@
         bodyHtml = renderDiff(oldText, newText);
       } else if (evt.toolName === "write") {
         const path = evt.arguments?.path || "";
+        const content = evt.arguments?.content || "";
         title = `write ${path}`;
-        bodyHtml = `<div class="tool-terminal">Writing to file...</div>`;
+        if (content) {
+          const lines = content.split("\n");
+          const preview = lines.slice(0, 10).join("\n");
+          const more = lines.length > 10 ? `\n... (+${lines.length - 10} more lines)` : "";
+          bodyHtml = `<div class="tool-terminal">${escapeHtml(preview + more)}</div>`;
+        } else {
+          bodyHtml = `<div class="tool-terminal">Writing to file...</div>`;
+        }
       } else if (evt.toolName === "grep") {
         const pattern = evt.arguments?.pattern || "";
-        title = `grep /${pattern}/`;
+        const path = evt.arguments?.path ? ` in ${evt.arguments.path}` : "";
+        title = `grep /${pattern}/${path}`;
         bodyHtml = `<div class="tool-terminal">Searching...</div>`;
+      } else if (evt.toolName === "find") {
+        const pattern = evt.arguments?.pattern || "";
+        const path = evt.arguments?.path ? ` in ${evt.arguments.path}` : "";
+        title = `find "${pattern}"${path}`;
+        bodyHtml = `<div class="tool-terminal">Finding files...</div>`;
+      } else if (evt.toolName === "ls") {
+        const path = evt.arguments?.path || ".";
+        title = `ls ${path}`;
+        bodyHtml = `<div class="tool-terminal">Listing directory...</div>`;
       } else if (evt.toolName === "web_search") {
         const query = evt.arguments?.query || "";
         title = `web_search 🔍 "${query}"`;
@@ -1233,6 +1262,14 @@
         const url = evt.arguments?.url || "";
         title = `fetch_web_page 🌐 ${url}`;
         bodyHtml = `<div class="tool-terminal">Fetching web page...</div>`;
+      } else if (evt.toolName === "browse_web_page") {
+        const url = evt.arguments?.url || "";
+        title = `browse_web_page 🖥️ ${url}`;
+        bodyHtml = `<div class="tool-terminal">Rendering live DOM in browser...</div>`;
+      } else if (evt.toolName === "computer") {
+        const act = evt.arguments?.action || "action";
+        title = `computer 🖱️ ${act}`;
+        bodyHtml = `<div class="tool-terminal">Executing browser action...</div>`;
       } else {
         bodyHtml = `<pre><code>${escapeHtml(JSON.stringify(evt.arguments || {}, null, 2))}</code></pre>`;
       }
@@ -1253,9 +1290,75 @@
       return card;
     }
 
+    function formatToolResultBody(toolName, result, args) {
+      if (result === undefined || result === null) {
+        return "";
+      }
+
+      // 1. If result carries unified diff (edit tool)
+      if (result.diff) {
+        return renderDiffFromUnified(result.diff);
+      }
+
+      // 2. Extract text and images if structured AgentToolResult
+      let textOutput = "";
+      const images = [];
+
+      if (typeof result === "string") {
+        textOutput = result;
+      } else if (Array.isArray(result)) {
+        for (const item of result) {
+          if (item?.type === "text" && item.text) textOutput += item.text;
+          if (item?.type === "image" && item.data) images.push(item);
+        }
+      } else if (result.content && Array.isArray(result.content)) {
+        for (const item of result.content) {
+          if (item?.type === "text" && item.text) textOutput += item.text;
+          if (item?.type === "image" && item.data) images.push(item);
+        }
+      } else if (result.output) {
+        textOutput = typeof result.output === "string" ? result.output : JSON.stringify(result.output, null, 2);
+      } else if (result.text) {
+        textOutput = result.text;
+      } else {
+        textOutput = JSON.stringify(result, null, 2);
+      }
+
+      // Check details for truncation / status
+      let detailsFooter = "";
+      if (result.details && typeof result.details === "object") {
+        const det = result.details;
+        const notes = [];
+        if (det.cancelled) notes.push("(cancelled)");
+        if (det.exitCode !== undefined && det.exitCode !== 0) notes.push(`(exit ${det.exitCode})`);
+        if (det.fullOutputPath) notes.push(`Output truncated. Full output: ${det.fullOutputPath}`);
+        if (det.notice) notes.push(det.notice);
+        if (notes.length > 0) {
+          detailsFooter = `<div style="margin-top:8px; padding-top:6px; border-top:1px dashed rgba(255,255,255,0.1); color:var(--text-dim); font-size:11px;">${escapeHtml(notes.join("\n"))}</div>`;
+        }
+      }
+
+      let imagesHtml = "";
+      if (images.length > 0) {
+        imagesHtml = `<div class="msg-images-grid" style="margin-top:8px;">${images.map(img => `<img src="data:${img.mimeType || 'image/png'};base64,${img.data}" class="msg-image-thumb" onclick="window.open(this.src)" title="Click to view full image">`).join("")}</div>`;
+      }
+
+      if (toolName === "edit" && args?.oldText && args?.newText && !result.diff) {
+        return renderDiff(args.oldText, args.newText) + detailsFooter + imagesHtml;
+      }
+
+      return `<div class="tool-terminal">${escapeHtml(textOutput)}</div>${detailsFooter}${imagesHtml}`;
+    }
+
     function updateToolCard(evt) {
       const card = document.getElementById(`tool-${evt.toolCallId}`);
       if (!card) return;
+
+      const toolName = card.dataset.tool || "";
+      let args = {};
+      try {
+        if (card.dataset.args) args = JSON.parse(card.dataset.args);
+      } catch (e) {}
 
       const statusEl = card.querySelector(".tool-header-status");
       statusEl.innerText = evt.isError ? "Failed" : "Done";
@@ -1263,15 +1366,7 @@
 
       const body = card.querySelector(".tool-body");
       if (evt.result !== undefined && evt.result !== null) {
-        if (typeof evt.result === "string") {
-          body.innerHTML = `<div class="tool-terminal">${escapeHtml(evt.result)}</div>`;
-        } else if (evt.result.diff) {
-          body.innerHTML = renderDiffFromUnified(evt.result.diff);
-        } else if (evt.result.output) {
-          body.innerHTML = `<div class="tool-terminal">${escapeHtml(evt.result.output)}</div>`;
-        } else {
-          body.innerHTML = `<div class="tool-terminal">${escapeHtml(JSON.stringify(evt.result, null, 2))}</div>`;
-        }
+        body.innerHTML = formatToolResultBody(toolName, evt.result, args);
       }
     }
 
@@ -2244,7 +2339,7 @@
             }
             updateToolCard({
               toolCallId: m.toolCallId,
-              result: m.result || m.details,
+              result: m.content || m.result || m.details,
               isError: m.isError,
             });
           }

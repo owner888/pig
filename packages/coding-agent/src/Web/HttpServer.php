@@ -728,7 +728,10 @@ final class HttpServer
             $event instanceof ToolExecutionEndEvent => [
                 'type' => 'tool_execution_end',
                 'toolCallId' => $event->toolCallId,
-                'result' => $event->result,
+                'result' => $event->result instanceof AgentToolResult ? [
+                    'content' => array_map(static fn ($c) => $c instanceof TextContent ? ['type' => 'text', 'text' => $c->text] : ($c instanceof ImageContent ? ['type' => 'image', 'data' => $c->data, 'mimeType' => $c->mimeType] : []), $event->result->content),
+                    'details' => $event->result->details,
+                ] : $event->result,
                 'isError' => $event->isError,
             ],
             $event instanceof RetryStartEvent => [

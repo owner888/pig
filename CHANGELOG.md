@@ -43,6 +43,18 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.38] - 2026-10-03
+
+### Added
+
+- **Complete tool execution UI coverage for Web UI.** Aligned `createToolCard` and `updateToolCard` across all core and extension tools (`write`, `edit`, `read`, `bash`, `find`, `grep`, `ls`, `web_search`, `fetch_web_page`, `browse_web_page`, `computer`):
+  - `write`: Renders formatted file write preview cards (first 10 lines + line count indicator) matching terminal TUI behavior.
+  - `read`: Displays accurate line offset/limit ranges (`read <path>:start-end`) and outputs formatted file contents.
+  - `edit`: Auto-renders unified or inline diffs with color-coded additions/deletions even when inspecting raw argument payloads.
+  - `bash`: Full status metadata formatting (cancelled indicator, exit codes, output truncation warnings).
+  - Multi-modal support: Automatically parses and embeds tool result inline images (`ImageContent` / screenshots) directly inside execution cards with click-to-zoom.
+  - History replay: Fixed `loadMessages()` to correctly extract and render structured `content` blocks for past tool executions from `.jsonl` session files.
+
 ## [0.2.37] - 2026-10-03
 
 ### Changed
