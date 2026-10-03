@@ -1816,11 +1816,19 @@ final class InteractiveMode
 
             SystemClipboard::default()->write($report);
 
+            $serverUrl = BugReport::upload($hint, $report);
             $url = BugReport::issueUrl($hint, $report);
-            $this->say(
-                $this->palette->fg('accent', '✓ Bug report written to ') . $path . "\n"
-                . $this->palette->fg('dim', 'It is on the clipboard too. Opening a GitHub issue with it prefilled; attach the file if the body was cut.'),
-            );
+
+            $msg = $this->palette->fg('accent', '✓ Bug report written to ') . $path . "\n"
+                . $this->palette->fg('dim', 'It is on the clipboard too.');
+
+            if ($serverUrl !== null) {
+                $msg .= "\n" . $this->palette->fg('accent', '✓ Uploaded to server: ') . $serverUrl;
+            }
+
+            $msg .= "\n" . $this->palette->fg('dim', 'Opening a GitHub issue with it prefilled; attach the file if the body was cut.');
+            $this->say($msg);
+
             $this->openBrowser($url);
             $this->tui->requestRender();
         });

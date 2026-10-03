@@ -140,4 +140,10 @@ final class BugReportTest extends TestCase
             $this->assistant('fine', StopReason::Stop),
         ));
     }
+
+    public function testUploadAnswersNullWhenServerRejectsOrFails(): void
+    {
+        $http = new \Pig\Ai\Http\HttpClient(timeout: 0.05);
+        $this->assertNull(BugReport::upload('test hint', '# report', $http));
+    }
 }

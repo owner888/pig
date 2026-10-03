@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.25] - 2026-10-03
+
+### Added
+
+- **/bug server upload integration.** `/bug` in interactive mode now automatically uploads the diagnostic report to `https://pigagent.dev/api/bug-reports`, prints the permanent online report URL (e.g. `https://pigagent.dev/bug-report/{id}`), and continues to copy the report to the clipboard and open the GitHub prefilled issue URL.
+- Added `BugReport::upload()` to submit diagnostic bundles via non-blocking `HttpClient`.
+
 ## [0.2.24] - 2026-10-03
 
 ### Changed

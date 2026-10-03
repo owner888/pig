@@ -8,6 +8,8 @@ use Pig\Ai\AssistantMessage;
 use Pig\Ai\StopReason;
 use Pig\CodingAgent\Doctor\Doctor;
 use Pig\CodingAgent\Export\MarkdownExport;
+use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\Request;
 use Pig\CodingAgent\Session\AgentSession;
 
 /**
@@ -26,6 +28,7 @@ use Pig\CodingAgent\Session\AgentSession;
 final class BugReport
 {
     public const string ISSUES_URL = 'https://github.com/owner888/pig/issues/new';
+    public const string SERVER_ENDPOINT = 'https://pigagent.dev/api/bug-reports';
 
     /** GitHub refuses a URL much past this, so the prefilled body is cut to fit. */
     private const int MAX_URL_BODY = 6000;
@@ -113,6 +116,50 @@ final class BugReport
         CrashLog::clear();
 
         return $path;
+    }
+
+    /**
+     * Upload the bug report to pigagent.dev server.
+     *
+     * Returns the web report URL (e.g. `https://pigagent.dev/bug-report/xxxx`) if successful,
+     * or null if the server was unreachable or rejected the submission.
+     */
+    public static function upload(string $hint, string $report, ?HttpClient $http = null): ?string
+    {
+        try {
+            $client = $http ?? new HttpClient(timeout: 10.0);
+            $payload = json_encode([
+                'title' => $hint !== '' ? mb_substr($hint, 0, 100) : 'Bug Report',
+                'report' => $report,
+                'version' => Version::current(),
+            ], JSON_UNESCAPED_SLASHES);
+
+            $req = new Request(
+                'POST',
+                self::SERVER_ENDPOINT,
+                [
+                    'content-type' => 'application/json',
+                    'content-length' => (string) strlen($payload),
+                    'user-agent' => 'pig/' . Version::current(),
+                ],
+                $payload,
+            );
+
+            $resp = $client->send($req);
+            if ($resp->status !== 200) {
+                return null;
+            }
+
+            $chunks = [];
+            foreach ($resp->body as $chunk) {
+                $chunks[] = $chunk;
+            }
+            $data = json_decode(implode('', $chunks), true);
+
+            return is_array($data) && !empty($data['url']) ? (string) $data['url'] : null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /** A GitHub "new issue" link with the title and the start of the report prefilled. */
