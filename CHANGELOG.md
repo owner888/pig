@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.37] - 2026-10-03
+
+### Changed
+
+- **Standardized Web UI English UI copy to professional title case.** Corrected lowercase buttons and labels in `packages/coding-agent/src/Web/assets/index.html`:
+  - `accounts` button → `Accounts` (Title: `Accounts & Quota`)
+  - `directories` subheader → `Directories`
+  - Input placeholder `send a message or paste images...` → `Send a message or paste images...`
+  - Account dialog headers and action buttons: `Antigravity accounts` → `Antigravity Accounts`, `Quota — active account` → `Quota — Active Account`, `rotate` → `Rotate`, `refresh` → `Refresh`, `use` → `Use`, `remove` → `Remove`.
+
 ## [0.2.36] - 2026-10-03
 
 ### Changed
