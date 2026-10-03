@@ -20,7 +20,13 @@ async function acquirePage() {
   }
   pageBusy = true;
   const { page, browser } = await getBrowserAndPage();
-  return { page, browser, release: () => { pageBusy = false; } };
+  try {
+    const pages = await browser.pages();
+    const activePage = (pages && pages.length > 0) ? pages[pages.length - 1] : page;
+    return { page: activePage, browser, release: () => { pageBusy = false; } };
+  } catch {
+    return { page, browser, release: () => { pageBusy = false; } };
+  }
 }
 
 /**
@@ -156,10 +162,14 @@ async function injectCookies(page, cookies) {
   const formatted = [];
   for (const c of cookies) {
     if (!c.name || !c.value) continue;
+    let dom = c.domain ? String(c.domain) : undefined;
+    if (dom && !dom.startsWith(".") && dom.includes(".") && !c.hostOnly) {
+      dom = "." + dom;
+    }
     const cookie = {
       name: String(c.name),
       value: String(c.value),
-      domain: c.domain ? String(c.domain).replace(/^\./, "") : undefined,
+      domain: dom,
       path: c.path || "/",
       httpOnly: Boolean(c.httpOnly),
       secure: Boolean(c.secure),
@@ -413,6 +423,41 @@ app.get("/text", async (req, reply) => {
     const text = await extractCleanText(page);
     const url = page.url();
     return { title, url, text };
+  } catch (err) {
+    return reply.status(500).send({ error: err.message });
+  } finally {
+    release();
+  }
+});
+
+/**
+ * 页面 JavaScript 执行与查询
+ */
+app.post("/eval", async (req, reply) => {
+  const { script } = req.body || {};
+  if (!script) {
+    return reply.status(400).send({ error: "script is required" });
+  }
+  const { page, release } = await acquirePage();
+  try {
+    const result = await page.evaluate(script);
+    return { result };
+  } catch (err) {
+    return reply.status(500).send({ error: err.message });
+  } finally {
+    release();
+  }
+});
+
+/**
+ * 导出当前页面 Cookies (使用 CDP Network.getAllCookies 获取完整解密 Cookie)
+ */
+app.get("/cookies", async (req, reply) => {
+  const { page, release } = await acquirePage();
+  try {
+    const client = await page.target().createCDPSession();
+    const { cookies } = await client.send("Network.getAllCookies");
+    return { cookies };
   } catch (err) {
     return reply.status(500).send({ error: err.message });
   } finally {
