@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.32] - 2026-10-03
+
+### Added
+
+- **Domain-specific Cookie files support (`~/.pig/agent/<domain>.cookies.json`).** `pig-computer` and the browser Docker container now support isolating cookies per domain (e.g. `jd.com.cookies.json`, `taobao.com.cookies.json`) in addition to the unified `cookies.json`. 
+  - Each site's cookies can be cleanly exported, saved, and updated independently without risking accidental cross-site overwrites.
+  - Priority fallback: `~/.pig/agent/<domain>.cookies.json` is checked first, falling back to `~/.pig/agent/cookies.json`.
+  - Updated `/computer cookies` to list and report all discovered domain cookie files and expiration status.
+
 ## [0.2.31] - 2026-10-03
 
 ### Added

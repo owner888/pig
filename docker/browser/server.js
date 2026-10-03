@@ -65,8 +65,8 @@ async function launchRealBrowser() {
     pageBusy = false;
   });
 
-  // 启动时自动尝试导入 ~/.pig/agent/cookies.json
-  await loadDefaultCookies(page);
+  // 启动时自动扫描并导入 DATA_DIR 下的所有 Cookie 文件
+  await loadAllCookies(page);
 
   return { browser, page };
 }
@@ -79,24 +79,61 @@ async function getBrowserAndPage() {
 }
 
 /**
- * 载入本地持久化 cookies.json
+ * 扫描并载入所有 Cookie 文件（支持 cookies.json 以及 *.cookies.json）
  */
-async function loadDefaultCookies(page) {
-  const cookieFile = path.join(DATA_DIR, "cookies.json");
-  if (!fs.existsSync(cookieFile)) {
-    return;
-  }
+async function loadAllCookies(page) {
+  if (!fs.existsSync(DATA_DIR)) return;
 
   try {
-    const raw = fs.readFileSync(cookieFile, "utf-8");
-    const cookies = JSON.parse(raw);
-    if (Array.isArray(cookies) && cookies.length > 0) {
-      console.log(`[Cookies] 检测到挂载的 cookies.json，自动导入 ${cookies.length} 条 Cookie...`);
-      await injectCookies(page, cookies);
+    const files = fs.readdirSync(DATA_DIR);
+    for (const f of files) {
+      if (f === "cookies.json" || f.endsWith(".cookies.json")) {
+        const fullPath = path.join(DATA_DIR, f);
+        try {
+          const raw = fs.readFileSync(fullPath, "utf-8");
+          const cookies = JSON.parse(raw);
+          if (Array.isArray(cookies) && cookies.length > 0) {
+            console.log(`[Cookies] 自动导入 ${f} (${cookies.length} 条)...`);
+            await injectCookies(page, cookies);
+          }
+        } catch (err) {
+          console.warn(`[Cookies] 解析 ${f} 失败:`, err.message);
+        }
+      }
     }
   } catch (err) {
-    console.warn(`[Cookies] 导入 cookies.json 失败:`, err.message);
+    console.warn(`[Cookies] 扫描目录失败:`, err.message);
   }
+}
+
+/**
+ * 为指定访问 URL 按需动态补全注入对应域名的 Cookie
+ */
+async function ensureCookiesForUrl(page, targetUrl) {
+  if (!fs.existsSync(DATA_DIR) || !targetUrl) return;
+
+  try {
+    const urlObj = new URL(targetUrl);
+    const host = urlObj.hostname.toLowerCase();
+
+    // 寻找匹配的独立文件，如 jd.com.cookies.json
+    const files = fs.readdirSync(DATA_DIR);
+    for (const f of files) {
+      if (f.endsWith(".cookies.json")) {
+        const prefixDomain = f.slice(0, -".cookies.json".length).toLowerCase();
+        if (host === prefixDomain || host.endsWith("." + prefixDomain)) {
+          const fullPath = path.join(DATA_DIR, f);
+          try {
+            const raw = fs.readFileSync(fullPath, "utf-8");
+            const cookies = JSON.parse(raw);
+            if (Array.isArray(cookies) && cookies.length > 0) {
+              await injectCookies(page, cookies);
+            }
+          } catch {}
+        }
+      }
+    }
+  } catch {}
 }
 
 /**
@@ -180,6 +217,9 @@ app.post("/navigate", async (req, reply) => {
   const { page, release } = await acquirePage();
   try {
     await page.bringToFront();
+    // 导航前按需热注入该域名的最新 Cookie
+    await ensureCookiesForUrl(page, url);
+
     await page.goto(url, { waitUntil, timeout });
     await sleep(1500);
 
