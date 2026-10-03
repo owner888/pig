@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.33] - 2026-10-03
+
+### Changed
+
+- **Theme palette aligned with upstream pi OKHSL color tokens.** Updated `DARK` and `LIGHT` palettes in `Palette.php` to match upstream's perceptual OKHSL design space. Calibrated `dim` (`#7e888e`), `muted` (`#9da5a9`), `accent` (`#a798d7`), `border` (`#5fa8cc`), and `thinking*` gradients, ensuring identical contrast, status output, and code block highlight colors between pig and pi.
+
+### Fixed
+
+- **Context token double counting in Footer and Web UI.** In Google / Gemini / Antigravity usage accounting where `input` already subsumes prompt cache hits, `FooterComponent` and `HttpServer` previously added `cacheRead` back onto `input`, erroneously reporting context percentages exceeding 100% (e.g. 145.6% vs pi's 72.6%). Unified calculation to use `$session->contextTokens()`, which prioritizes provider `totalTokens` and matches compaction triggers.
+- **Suppress browser launching during PHPUnit test runs.** In `McpExtensionTest`, OAuth authorization URL generation previously invoked system `open` / `xdg-open` subprocesses, causing unwanted browser tabs to pop up during test suites. Added `PIG_TESTING` guard in `extensions/pig-mcp/index.php` and `McpCli.php` to keep tests completely headless.
+
 ## [0.2.32] - 2026-10-03
 
 ### Added
