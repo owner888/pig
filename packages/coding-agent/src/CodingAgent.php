@@ -218,13 +218,14 @@ final class CodingAgent
             $envModel = self::fromEnvironment($environment, 'PIG_MODEL') ?? self::fromEnvironment($environment, 'PI_MODEL');
             $envProvider = self::fromEnvironment($environment, 'PIG_PROVIDER') ?? self::fromEnvironment($environment, 'PI_PROVIDER');
             $typed = $model ?? $envModel;
-            $wanted = $typed ?? $settings->defaultModel() ?? 'claude-sonnet-4-5';
+            $wanted = $typed ?? $settings->defaultModel() ?? 'gemini-3.8-flash';
 
             // Provider precedence:
             // 1) Explicit in the model name (e.g. `antigravity/gemini-3.8-flash`)
             // 2) From environment (PIG_PROVIDER / PI_PROVIDER)
             // 3) Stored defaultProvider in settings (when using stored defaultModel)
-            $provider = $envProvider ?? ($typed === null ? $settings->defaultProvider() : null);
+            // 4) Built-in default: antigravity when using the built-in defaultModel
+            $provider = $envProvider ?? ($typed === null ? ($settings->defaultProvider() ?? ($settings->defaultModel() === null ? 'antigravity' : null)) : null);
 
             if ($provider !== null && !str_contains($wanted, '/')) {
                 $choice = ModelResolver::parse($provider . '/' . $wanted) ?? ModelResolver::parse($wanted);
@@ -260,7 +261,7 @@ final class CodingAgent
         $level = $thinkingArg !== null
             ? ThinkingLevel::tryFrom($thinkingArg) ?? ThinkingLevel::Off
             : ($choice->thinking === ThinkingLevel::Off
-                ? ($settings->defaultThinkingLevel() ?? ThinkingLevel::Off)
+                ? ($settings->defaultThinkingLevel() ?? ($chosen->provider === 'antigravity' ? ThinkingLevel::Medium : ThinkingLevel::Off))
                 : $choice->thinking);
 
         // Clamped rather than refused: a model that cannot reason and a request that asks it to is

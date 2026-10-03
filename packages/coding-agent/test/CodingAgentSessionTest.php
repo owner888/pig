@@ -245,10 +245,10 @@ final class CodingAgentSessionTest extends TestCase
         // A bare id somebody typed means what it says. Applying the stored provider to it would
         // be a worse bug than the one above: `--model gemini-3.8-flash` would quietly become
         // Antigravity's because of something the last session saved.
-        $this->writeSettings(['defaultModel' => 'gemini-3.8-flash', 'defaultProvider' => 'antigravity']);
+        $this->writeSettings(['defaultModel' => 'zzp-alpha', 'defaultProvider' => 'anthropic']);
 
-        $this->assertSame('google', $this->start([], ['model' => 'gemini-3.8-flash'])->model->provider);
-        $this->assertSame('google', $this->start(['PIG_MODEL' => 'gemini-3.8-flash'])->model->provider);
+        $this->assertSame('anthropic', $this->start([], ['model' => 'zzp-alpha'])->model->provider);
+        $this->assertSame('anthropic', $this->start(['PIG_MODEL' => 'zzp-alpha'])->model->provider);
     }
 
     public function testPiModelAndPiProviderAreSupportedAsEnvironmentFallbacks(): void
@@ -269,7 +269,10 @@ final class CodingAgentSessionTest extends TestCase
 
     public function testAndFinallyTheBuiltInDefault(): void
     {
-        $this->assertSame('claude-sonnet-4-5', $this->start()->model->id);
+        $default = $this->start();
+        $this->assertSame('gemini-3.8-flash', $default->model->id);
+        $this->assertSame('antigravity', $default->model->provider);
+        $this->assertSame(ThinkingLevel::Medium, $default->thinking);
     }
 
     public function testAnEmptyEnvironmentVariableIsOffRatherThanAModelCalledNothing(): void
@@ -331,14 +334,16 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertSame(ThinkingLevel::Medium, $this->start()->thinking);
     }
 
-    public function testNothingAnywhereIsOff(): void
+    public function testNothingAnywhereIsMediumForDefaultAntigravityModel(): void
     {
-        $this->assertSame(ThinkingLevel::Off, $this->start()->thinking);
+        // gemini-3.8-flash under antigravity defaults to medium, and off is clamped up to low/medium.
+        $this->assertSame(ThinkingLevel::Medium, $this->start()->thinking);
     }
 
-    public function testAThinkingLevelThatIsNotOneIsOffRatherThanFatal(): void
+    public function testAThinkingLevelThatIsNotOneClampsToSupportedLevel(): void
     {
-        $this->assertSame(ThinkingLevel::Off, $this->start([], ['thinking' => 'very hard'])->thinking);
+        // A model that refuses `off` clamps an invalid level to a supported one.
+        $this->assertSame(ThinkingLevel::Low, $this->start([], ['thinking' => 'very hard'])->thinking);
     }
 
     public function testAModelThatCannotReasonIsClampedRatherThanRefused(): void
@@ -363,6 +368,7 @@ final class CodingAgentSessionTest extends TestCase
             // Upstream's rule: below `--model`, above the environment and the settings. So
             // `pig --models haiku,opus` opens on haiku, and ctrl+p reaches opus and nothing else.
             $this->assertSame('zzp-plain', $started->model->id);
+            $this->assertSame('anthropic', $started->model->provider);
             $this->assertSame(['zzp-plain', 'zzp-alpha'], array_map(
                 static fn (object $choice): string => $choice->model->id,
                 $started->session->modelScope(),
@@ -399,7 +405,7 @@ final class CodingAgentSessionTest extends TestCase
 
             // And with nothing in the scope the ordinary order decides, rather than a session that
             // refuses to start over one typo in a flag that is a preference.
-            $this->assertSame('claude-sonnet-4-5', $started->model->id);
+            $this->assertSame('gemini-3.8-flash', $started->model->id);
             $this->assertSame([], $started->session->modelScope());
         } finally {
             putenv('ANTHROPIC_API_KEY');
@@ -467,7 +473,7 @@ final class CodingAgentSessionTest extends TestCase
         // A key, because coming back to the model a conversation was on now needs one: without it
         // the file would be describing a model whose every turn fails, and `restoreSettings()`
         // falls back instead. The test below is that fallback.
-        $again = $this->start([], ['continue' => true, 'apiKey' => 'not-called-here']);
+        $again = $this->start([], ['continue' => true, 'model' => 'anthropic/zzp-alpha', 'apiKey' => 'not-called-here']);
 
         $this->assertSame('zzp-alpha', $again->session->agent->state->model?->id);
         $this->assertSame(ThinkingLevel::High, $again->session->agent->state->thinkingLevel);
@@ -477,7 +483,7 @@ final class CodingAgentSessionTest extends TestCase
     {
         // A key for the run that had the conversation, and none for the run that reopens it: an
         // afternoon on somebody's borrowed `--api-key`, picked up the next morning.
-        $first = $this->start([], ['model' => 'zzp-alpha', 'apiKey' => 'not-called-here']);
+        $first = $this->start([], ['model' => 'anthropic/zzp-alpha', 'apiKey' => 'not-called-here']);
         self::converse($first, 'earlier');
 
         $again = $this->start([], ['continue' => true]);
@@ -485,7 +491,8 @@ final class CodingAgentSessionTest extends TestCase
         // Upstream's `restoreModelFromSession()` checks the key as well as the model and falls
         // back on either. Restoring it would mean a conversation that reopens onto a model whose
         // every turn fails — from inside the turn, where it looks like the provider's fault.
-        $this->assertSame('claude-sonnet-4-5', $again->session->agent->state->model?->id);
+        $this->assertSame('gemini-3.8-flash', $again->session->agent->state->model?->id);
+        $this->assertSame('antigravity', $again->session->agent->state->model?->provider);
         $this->assertCount(2, $again->session->messages(), 'and the conversation itself still came back');
     }
 

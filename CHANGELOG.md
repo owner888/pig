@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Changed
+
+- **Default model is now `(antigravity) gemini-3.8-flash • medium`.** When no model is typed, set in the environment, remembered from last time or chosen in the settings, pig opens on Antigravity's Gemini 3.8 Flash at `medium` reasoning instead of Anthropic's Claude Sonnet 4.5 at `off`. Explicit `--model`, `PIG_MODEL`, settings and resumed sessions are untouched.
+
 ## [0.2.23] - 2026-10-02
 
 ### Fixed
