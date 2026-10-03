@@ -660,7 +660,9 @@
       border-radius: 8px;
       display: flex;
       flex-direction: column;
-      padding: 4px 12px;
+      padding: 0 12px;
+      min-height: 42px;
+      box-sizing: border-box;
       transition: border-color 0.15s;
     }
     .input-wrapper:focus-within { border-color: #38bdf8; }
@@ -671,12 +673,15 @@
       color: var(--text);
       font-family: var(--font-sans);
       font-size: 14px;
-      line-height: 1.5;
-      padding: 8px 0;
+      line-height: 22px;
+      padding: 9px 0;
       resize: none;
-      min-height: 38px;
+      min-height: 40px;
+      height: 40px;
       max-height: 160px;
       outline: none;
+      box-sizing: border-box;
+      display: block;
     }
     .action-btn {
       width: 42px;
@@ -691,6 +696,7 @@
       font-size: 15px;
       transition: all 0.15s;
       flex-shrink: 0;
+      box-sizing: border-box;
     }
     .btn-attach {
       background: #182232;
@@ -819,8 +825,8 @@
 
     // Auto-grow textarea
     promptInput.addEventListener("input", () => {
-      promptInput.style.height = "auto";
-      promptInput.style.height = Math.min(promptInput.scrollHeight, 160) + "px";
+      promptInput.style.height = "40px";
+      promptInput.style.height = Math.max(40, Math.min(promptInput.scrollHeight, 160)) + "px";
     });
 
     // Smart scroll pinning & return to bottom
