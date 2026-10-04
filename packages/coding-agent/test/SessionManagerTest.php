@@ -1158,8 +1158,9 @@ final class SessionManagerTest extends TestCase
         $sessionB = SessionManager::create($cwdB);
         $this->converse($sessionB, 'hello in project B');
 
-        // 1. Direct path
+        // 1. Direct path and bare filename inside session directory
         $this->assertSame($sessionA->path, SessionManager::find($cwdA, $sessionA->path));
+        $this->assertSame($sessionA->path, SessionManager::find($cwdA, basename($sessionA->path)), 'bare filename inside sessions dir matches');
 
         // 2. Exact ID local match
         $this->assertSame($sessionA->path, SessionManager::find($cwdA, $sessionA->id));

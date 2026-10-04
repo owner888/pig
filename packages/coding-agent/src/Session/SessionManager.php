@@ -1260,7 +1260,8 @@ final class SessionManager
             return null;
         }
 
-        if (str_contains($sessionArg, '/') || str_contains($sessionArg, '\\') || str_ends_with($sessionArg, '.jsonl')) {
+        // Direct path with directory separators: resolve relative to cwd or as absolute path
+        if (str_contains($sessionArg, '/') || str_contains($sessionArg, '\\')) {
             if (is_file($sessionArg)) {
                 return $sessionArg;
             }
@@ -1274,6 +1275,19 @@ final class SessionManager
             return null;
         }
 
+        // Bare filename ending in .jsonl: check cwd first
+        if (str_ends_with($sessionArg, '.jsonl')) {
+            if (is_file($sessionArg)) {
+                return $sessionArg;
+            }
+
+            $local = $cwd . '/' . $sessionArg;
+
+            if (is_file($local)) {
+                return $local;
+            }
+        }
+
         // Local project session directory (pig and pi)
         $localDirs = [
             self::directory($cwd),
@@ -1283,6 +1297,11 @@ final class SessionManager
         foreach ($localDirs as $dir) {
             if (!is_dir($dir)) {
                 continue;
+            }
+
+            // 0. Direct filename match inside project session directory (e.g. "2026-10-04...jsonl")
+            if (str_ends_with($sessionArg, '.jsonl') && is_file($dir . '/' . $sessionArg)) {
+                return $dir . '/' . $sessionArg;
             }
 
             // 1. Exact ID match (files are named {timestamp}_{id}.jsonl)

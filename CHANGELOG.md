@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.5] - 2026-10-04
+
+### Fixed
+
+- **Session resolution for bare `.jsonl` filenames (`SessionManager::find()`)**: Fixed an issue where passing a bare session filename (ending in `.jsonl` without path separators, e.g. `2026-10-04...jsonl`) caused `find()` to check only `./filename.jsonl` and immediately return null without checking the project's session storage directory (`~/.pig/agent/sessions/...` or `~/.pi/agent/sessions/...`). This caused Web UI tabs to fail with `No session found matching '...'` upon reload or resume.
+- **Session path pre-resolution in `HttpServer`**: Canonicalized `$sessionFile` to its full absolute path via `SessionManager::find($cwd, $sessionFile)` prior to spawning `RpcClient` subprocesses, ensuring reliable resumption under all environment conditions.
+
 ## [0.3.4] - 2026-10-04
 
 ### Fixed

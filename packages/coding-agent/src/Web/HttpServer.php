@@ -11,6 +11,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Rpc\RpcClient;
+use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Web\Protocols\Websocket;
 use Throwable;
 
@@ -106,10 +107,14 @@ final class HttpServer
     ) {
         $this->auth = $auth ?? Auth::discover();
         $this->pool = new SessionPool(
-            spawn: $spawn ?? static fn (string $cwd, ?string $sessionFile): RpcClient => new RpcClient(
-                cwd: $cwd,
-                arguments: $sessionFile !== null ? ['--session', $sessionFile] : [],
-            ),
+            spawn: $spawn ?? static function (string $cwd, ?string $sessionFile): RpcClient {
+                $sessionArg = $sessionFile !== null ? (SessionManager::find($cwd, $sessionFile) ?? $sessionFile) : null;
+
+                return new RpcClient(
+                    cwd: $cwd,
+                    arguments: $sessionArg !== null ? ['--session', $sessionArg] : [],
+                );
+            },
             onEvent: $this->onSessionEvent(...),
             idleTtl: $idleTtl,
         );
