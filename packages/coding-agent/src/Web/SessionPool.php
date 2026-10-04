@@ -50,8 +50,8 @@ final class SessionPool
     /** @var array<string, ManagedSession> by key; a session with two keys appears twice */
     private array $byKey = [];
 
-    /** @var array<int, ManagedSession> by the connection id bound to it */
-    private array $byConnection = [];
+    /** @var array<string, ManagedSession> by "$connectionId:$tabId" subscription key */
+    private array $bySubscription = [];
 
     /**
      * @param Closure(string $cwd, ?string $sessionPath): RpcClient $spawn how a child is made —
@@ -83,16 +83,24 @@ final class SessionPool
     }
 
     /**
-     * Bind a connection to the session for `$cwd`/`$sessionFile`, starting a child if there is
-     * none. Rebinding to the same session is a no-op; binding elsewhere detaches first.
+     * Bind a connection and tab to the session for `$cwd`/`$sessionFile`, starting a child if
+     * there is none. Rebinding to the same session is a no-op; binding elsewhere detaches first.
      *
      * @throws \Throwable whatever `RpcClient::start()` throws when the child cannot be started —
      *         the caller turns that into an `error` line for the browser
      */
-    public function bind(int $connectionId, string $cwd, ?string $sessionFile, string $clientId): ManagedSession
-    {
+    public function bind(
+        int $connectionId,
+        string $cwd,
+        ?string $sessionFile,
+        string $clientId,
+        ?string $tabId = null,
+    ): ManagedSession {
+        $tabId ??= 'default';
+        $subKey = "{$connectionId}:{$tabId}";
         $key = self::key($cwd, $sessionFile, $clientId);
-        $current = $this->byConnection[$connectionId] ?? null;
+
+        $current = $this->bySubscription[$subKey] ?? null;
 
         if ($current !== null && isset($current->keys[$key]) && !$current->closing) {
             $this->clearIdleTimer($current);
@@ -100,7 +108,7 @@ final class SessionPool
             return $current;
         }
 
-        $this->detach($connectionId);
+        $this->detach($connectionId, $tabId);
 
         $managed = $this->byKey[$key] ?? null;
 
@@ -108,32 +116,67 @@ final class SessionPool
             $managed = $this->spawnSession($cwd, $sessionFile, $key);
         }
 
-        $managed->clients[$connectionId] = true;
-        $this->byConnection[$connectionId] = $managed;
+        $managed->clients[$connectionId][$tabId] = true;
+        $this->bySubscription[$subKey] = $managed;
         $this->clearIdleTimer($managed);
 
         return $managed;
     }
 
-    /** The session a connection is bound to, or null. */
-    public function boundTo(int $connectionId): ?ManagedSession
+    /** The session a connection and tab is bound to, or null. */
+    public function boundTo(int $connectionId, ?string $tabId = null): ?ManagedSession
     {
-        $managed = $this->byConnection[$connectionId] ?? null;
+        if ($tabId !== null && $tabId !== '') {
+            $managed = $this->bySubscription["{$connectionId}:{$tabId}"] ?? null;
 
-        return $managed !== null && !$managed->closing ? $managed : null;
+            return $managed !== null && !$managed->closing ? $managed : null;
+        }
+
+        // Fallback for callers that name no tab: any live subscription on this connection
+        foreach ($this->bySubscription as $subKey => $managed) {
+            if (str_starts_with($subKey, "{$connectionId}:") && !$managed->closing) {
+                return $managed;
+            }
+        }
+
+        return null;
     }
 
-    /** Unbind a connection; the session it leaves may start its idle countdown. */
-    public function detach(int $connectionId): void
+    /** Unbind a connection's tab (or all its tabs if $tabId is null); the session may start idle countdown. */
+    public function detach(int $connectionId, ?string $tabId = null): void
     {
-        $managed = $this->byConnection[$connectionId] ?? null;
+        if ($tabId !== null && $tabId !== '') {
+            $subKey = "{$connectionId}:{$tabId}";
+            $managed = $this->bySubscription[$subKey] ?? null;
 
-        if ($managed === null) {
+            if ($managed === null) {
+                return;
+            }
+
+            unset($managed->clients[$connectionId][$tabId], $this->bySubscription[$subKey]);
+
+            if (($managed->clients[$connectionId] ?? null) === []) {
+                unset($managed->clients[$connectionId]);
+            }
+
+            $this->reapIfIdle($managed);
+
             return;
         }
 
-        unset($managed->clients[$connectionId], $this->byConnection[$connectionId]);
-        $this->reapIfIdle($managed);
+        // Detach every tab subscription on this connection (e.g. browser disconnected)
+        foreach ($this->bySubscription as $subKey => $managed) {
+            if (str_starts_with($subKey, "{$connectionId}:")) {
+                $tId = substr($subKey, strlen((string) $connectionId) + 1);
+                unset($managed->clients[$connectionId][$tId], $this->bySubscription[$subKey]);
+
+                if (($managed->clients[$connectionId] ?? null) === []) {
+                    unset($managed->clients[$connectionId]);
+                }
+
+                $this->reapIfIdle($managed);
+            }
+        }
     }
 
     /** The session that holds `$cwd`/`$sessionFile`, if a child is running it. */
@@ -166,7 +209,7 @@ final class SessionPool
         }
 
         $this->byKey = [];
-        $this->byConnection = [];
+        $this->bySubscription = [];
     }
 
     // ---- internals -------------------------------------------------------------------------
@@ -277,9 +320,9 @@ final class SessionPool
             }
         }
 
-        foreach (array_keys($managed->clients) as $connectionId) {
-            if (($this->byConnection[$connectionId] ?? null) === $managed) {
-                unset($this->byConnection[$connectionId]);
+        foreach ($this->bySubscription as $subKey => $session) {
+            if ($session === $managed) {
+                unset($this->bySubscription[$subKey]);
             }
         }
 

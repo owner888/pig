@@ -84,7 +84,7 @@ final class SessionPoolTest extends TestCase
 
             $this->assertSame($a, $b, 'same file, same child');
             $this->assertSame(1, $this->spawned);
-            $this->assertSame([1 => true, 2 => true], $a->clients);
+            $this->assertTrue(isset($a->clients[1], $a->clients[2]));
 
             $a->client->prompt('hi');
             $a->client->waitForIdle(2.0);
@@ -145,8 +145,35 @@ final class SessionPoolTest extends TestCase
             $b = $pool->bind(1, '/tmp', 'b.jsonl', 'c1');
             $this->assertNotSame($a, $b);
             $this->assertSame([], $a->clients, 'connection 1 left a');
-            $this->assertSame([1 => true], $b->clients, 'and is on b');
+            $this->assertTrue(isset($b->clients[1]));
             $this->assertSame($b, $pool->boundTo(1));
+
+            $pool->shutdown();
+        });
+    }
+
+    public function testSingleConnectionMultiplexesMultipleTabsConcurrently(): void
+    {
+        $pool = $this->pool();
+
+        Async::run(function () use ($pool): void {
+            // One browser connection (id 1) opens two tabs (tab-A and tab-B) on different files
+            $tabA = $pool->bind(1, '/tmp', 'fileA.jsonl', 'client-1', 'tab-A');
+            $tabB = $pool->bind(1, '/tmp', 'fileB.jsonl', 'client-1', 'tab-B');
+
+            $this->assertNotSame($tabA, $tabB, 'two tabs are two separate sessions');
+            $this->assertSame(2, $this->spawned);
+            $this->assertSame($tabA, $pool->boundTo(1, 'tab-A'));
+            $this->assertSame($tabB, $pool->boundTo(1, 'tab-B'));
+            $this->assertTrue(isset($tabA->clients[1]['tab-A']));
+            $this->assertTrue(isset($tabB->clients[1]['tab-B']));
+
+            // Detaching tab-A does not touch tab-B
+            $pool->detach(1, 'tab-A');
+            $this->assertNull($pool->boundTo(1, 'tab-A'));
+            $this->assertSame($tabB, $pool->boundTo(1, 'tab-B'));
+            $this->assertArrayNotHasKey(1, $tabA->clients);
+            $this->assertTrue(isset($tabB->clients[1]['tab-B']));
 
             $pool->shutdown();
         });

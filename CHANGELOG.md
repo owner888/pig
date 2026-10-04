@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.2] - 2026-10-04
+
+### Changed
+
+- **Single-connection WebSocket multiplexing for Web UI**: Replaced per-tab physical WebSocket connections with a single shared WebSocket connection for the entire browser window. All conversation tabs multiplex their traffic over this single wire using `tabId` tagging:
+  - `SessionPool`: Upgraded subscription mapping from 1:1 connection binding to multi-tab subscription keys (`"$connectionId:$tabId"`), tracking client tab subscriptions per managed session and resolving `boundTo($connectionId, $tabId)` on command relay.
+  - `HttpServer`: Encoded outgoing RPC events, responses, and termination notices with `tabId`, routing messages strictly to the relevant tab.
+  - Frontend Web UI: Introduced `SharedNetwork` singleton with global heartbeat, window-level reconnect with jitter, and automatic bulk resubscription of all active tabs upon connection establishment.
+  - Resource optimization: Physical TCP connections remain constant at 1 regardless of tab count (1, 10, or 50 tabs), eliminating connection storms, browser socket limits, and reverse-proxy long-poll quotas while fully preserving full-time background stream rendering across tabs.
+
 ## [0.3.1] - 2026-10-04
 
 ### Fixed

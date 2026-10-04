@@ -1063,37 +1063,118 @@
     let currentView = "workspaces"; // "workspaces" | "sessions"
     let selectedWorkspace = null;
 
-    // ---- a tab is a conversation: its own socket, its own scroller, its own stream state --
+    // ---- single shared physical WebSocket connection ---------------------------------------
     //
-    // pi-web's shape, and step ③ of the process model in CLAUDE.md. Behind every tab is a
-    // `pig --mode rpc` child on the server; this object is the browser's end of it. Everything
-    // that used to be a page-wide `let` — the block being streamed into, whether a turn is
-    // running, whether you scrolled up — lives here, one per tab, so a turn in a background
-    // tab keeps drawing into its own hidden scroller and is all there when you switch back.
+    // One physical WebSocket for the whole browser window, matching Slack/Telegram/HTTP2's
+    // multiplexing model. Every tab shares this one socket and tags its requests with its own
+    // `tabId`; the server tags events back, so opening twenty tabs costs twenty processes on
+    // the server and exactly one connection on the wire.
     //
-    // The rendering code below still says `chatScroll`, `isRunning`, `currentAssistantBlock`
-    // and so on: those names are now getters/setters on whichever tab is *active*, so the
-    // event handlers write to `tab.*` and the DOM helpers read from the active one. The one
-    // rule that keeps that honest is that an event from a socket is applied to **that tab**,
-    // never to the active one — see `Tab.onRpcEvent`, which swaps `renderingTab` for the
-    // length of the call.
+    // When the network drops, one connection reconnects and resubscribes all open tabs at once.
+    class SharedNetwork {
+      constructor() {
+        this.ws = null;
+        this.reconnectTimer = null;
+        this.reconnectDelay = 1000;
+        this.closed = false;
+
+        window.addEventListener("online", () => this.reconnectNow());
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "visible") this.reconnectNow();
+        });
+      }
+
+      connect() {
+        if (this.closed) return;
+        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
+        if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+        if (this.ws) {
+          try { this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null; this.ws.close(); } catch (e) {}
+        }
+        showStatusBanner("Connecting to server...");
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const ws = new WebSocket(`${protocol}//${location.host}/ws`);
+        this.ws = ws;
+
+        ws.onopen = () => {
+          hideStatusBanner();
+          pigReachable();
+          this.reconnectDelay = 1000;
+          // Resubscribe every tab currently open in the browser window over this shared connection
+          for (const t of tabs) {
+            t.subscribe();
+          }
+        };
+
+        ws.onmessage = (e) => {
+          let m; try { m = JSON.parse(e.data); } catch (err) { return; }
+          if (m.type === "pong") return;
+          if (m.tabId) {
+            const target = tabs.find((t) => t.id === m.tabId);
+            if (target) {
+              target.onServerMessage(m);
+              return;
+            }
+          }
+          // Global error or message without tabId: deliver to active tab
+          if (active) active.onServerMessage(m);
+        };
+
+        ws.onclose = () => {
+          for (const t of tabs) t.onConnectionLost();
+          this.scheduleReconnect();
+        };
+
+        ws.onerror = () => {
+          for (const t of tabs) t.onConnectionLost();
+        };
+      }
+
+      reconnectNow() {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+          this.reconnectDelay = 1000;
+          this.connect();
+        }
+      }
+
+      scheduleReconnect() {
+        if (this.reconnectTimer || this.closed) return;
+        showStatusBanner("Connecting to server...");
+        const delay = this.reconnectDelay + Math.floor(Math.random() * 500);
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = null;
+          this.connect();
+        }, delay);
+        this.reconnectDelay = Math.min(this.reconnectDelay * 1.5, 10000);
+      }
+
+      send(obj) {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify(obj));
+        }
+      }
+    }
+
+    const network = new SharedNetwork();
+
+    let tabSeq = 0;
     class Tab {
       constructor(cwd, sessionFile) {
+        this.id = "tab-" + (++tabSeq);
         this.cwd = cwd;
         this.sessionFile = sessionFile || null;   // null until the child names its file
         this.sessionPath = null;
         this.name = null;
         this.opening = null;
-        this.ws = null;
         this.bound = false;
-        this.reconnectTimer = null;
-        this.reconnectDelay = 1000;
         this.pending = new Map();                 // rpc id -> {resolve, reject, timer}
         this.nextId = 0;
         this.state = null;                        // last get_state answer
+        this.stats = null;
         this.ended = false;                       // the child is gone; next bind restarts it
 
-        // Stream state, formerly page-wide.
+        // Stream state, per tab.
         this.isRunning = false;
         this.currentAssistantBlock = null;
         this.currentAssistantText = "";
@@ -1112,39 +1193,27 @@
         chatArea.appendChild(this.scroller);
       }
 
-      get key() { return (this.cwd || "") + "::" + (this.sessionFile || ("__new__::" + clientId)); }
+      get key() { return (this.cwd || "") + "::" + (this.sessionFile || ("__new__::" + clientId + ":" + this.id)); }
 
-      // ---- the socket ------------------------------------------------------------------
-      connect() {
-        if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-        if (this.ws) {
-          try { this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null; this.ws.close(); } catch (e) {}
-        }
+      subscribe() {
         this.bound = false;
-        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-        this.ws = new WebSocket(`${protocol}//${location.host}/ws`);
-        this.ws.onopen = () => {
-          this.reconnectDelay = 1000;
-          this.send({ type: "start_session", cwd: this.cwd, sessionFile: this.sessionFile });
-        };
-        this.ws.onmessage = (e) => {
-          let m; try { m = JSON.parse(e.data); } catch (err) { return; }
-          this.onServerMessage(m);
-        };
-        this.ws.onclose = () => { this.bound = false; this.failPending("connection closed"); this.scheduleReconnect(); };
-        this.ws.onerror = () => { this.bound = false; };
+        network.send({
+          type: "start_session",
+          tabId: this.id,
+          cwd: this.cwd,
+          sessionFile: this.sessionFile || undefined,
+        });
       }
 
-      scheduleReconnect() {
-        if (this.reconnectTimer || this.closed) return;
-        if (this === active) showStatusBanner("Connecting to server...");
-        const delay = this.reconnectDelay + Math.floor(Math.random() * 500);
-        this.reconnectTimer = setTimeout(() => { this.reconnectTimer = null; this.connect(); }, delay);
-        this.reconnectDelay = Math.min(this.reconnectDelay * 1.5, 10000);
+      close() {
+        network.send({ type: "detach_session", tabId: this.id });
+        this.failPending("tab closed");
+        this.scroller.remove();
       }
 
-      send(obj) {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj));
+      onConnectionLost() {
+        this.bound = false;
+        this.failPending("connection closed");
       }
 
       /** Send an rpc command and resolve with its response's `data` (or reject on failure). */
@@ -1152,9 +1221,16 @@
         return new Promise((resolve, reject) => {
           if (!this.bound) { reject(new Error("no active session")); return; }
           const id = "ui-" + (++this.nextId);
-          const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${command.type}: no answer in ${timeoutMs / 1000}s`)); }, timeoutMs);
+          const timer = setTimeout(() => {
+            this.pending.delete(id);
+            reject(new Error(`${command.type}: no answer in ${timeoutMs / 1000}s`));
+          }, timeoutMs);
           this.pending.set(id, { resolve, reject, timer });
-          this.send({ type: "rpc_command", command: { ...command, id } });
+          network.send({
+            type: "rpc_command",
+            tabId: this.id,
+            command: { ...command, id },
+          });
         });
       }
 
@@ -1162,7 +1238,6 @@
         for (const [id, p] of this.pending) { clearTimeout(p.timer); p.reject(new Error(why)); }
         this.pending.clear();
       }
-
       // ---- what the server says ----------------------------------------------------------
       onServerMessage(m) {
         if (m.type === "pong") return;
@@ -2199,9 +2274,9 @@
       }
 
       // A tab whose child exited restarts it on the next message: re-bind, wait for the child,
-      // then send. `connect()` with the same file reaches the same key, and the pool spawns anew.
+      // then send. `subscribe()` with the same file reaches the same key, and the pool spawns anew.
       if (tab.ended || !tab.bound) {
-        tab.connect();
+        tab.subscribe();
         const until = Date.now() + 10000;
         while (!tab.bound && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
         if (!tab.bound) {
@@ -2543,13 +2618,13 @@
       return t.name || t.opening || "new session";
     }
 
-    /** Make `tab` the one on screen, opening its socket if it has none. */
+    /** Make `tab` the one on screen. */
     function openTab(tab) {
       if (!tabs.includes(tab)) tabs.push(tab);
       if (active && active !== tab) active.scroller.hidden = true;
       active = tab;
       tab.scroller.hidden = false;
-      if (!tab.ws) tab.connect();
+      if (!tab.bound) tab.subscribe();
       applyActiveTabToChrome();
       saveTabs();
       renderTabs();
@@ -2988,6 +3063,7 @@
     // cold start.
     async function boot() {
       loadModels();
+      network.connect();
       let saved = null;
       try { saved = JSON.parse(localStorage.getItem(TABS_KEY) || "null"); } catch (e) {}
       try {
@@ -3002,7 +3078,6 @@
         tab.name = t.name || null;
         tab.opening = t.opening || null;
         tabs.push(tab);
-        tab.connect();
       }
       const wanted = saved?.active ? tabs.find((t) => t.key === saved.active) : null;
       if (tabs.length === 0) {

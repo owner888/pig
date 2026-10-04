@@ -431,47 +431,65 @@ final class HttpServer
         if ($type === 'start_session') {
             $cwd = is_string($data['cwd'] ?? null) && trim($data['cwd']) !== '' ? $data['cwd'] : $this->cwd;
             $file = is_string($data['sessionFile'] ?? null) && $data['sessionFile'] !== '' ? $data['sessionFile'] : null;
+            $tabId = is_string($data['tabId'] ?? null) && $data['tabId'] !== '' ? $data['tabId'] : 'default';
 
             // The child is started inside `bind()`, and starting is a `proc_open` plus two
             // watchers — synchronous, no fiber needed. What *is* needed is a catch: a child that
             // cannot start (no `bin/pig`, a bad `--session` path) is an `error` line for this
             // tab and nothing else, not a server that falls over.
             try {
-                $managed = $this->pool->bind($connectionId, $cwd, $file, $this->clientIds[$connectionId] ?? (string) $connectionId);
+                $clientTag = ($this->clientIds[$connectionId] ?? (string) $connectionId) . ($tabId !== 'default' ? ":{$tabId}" : '');
+                $managed = $this->pool->bind($connectionId, $cwd, $file, $clientTag, $tabId);
             } catch (Throwable $e) {
-                $conn->send(['type' => 'error', 'message' => 'Could not start the session: ' . $e->getMessage()]);
+                $conn->send(array_filter([
+                    'type' => 'error',
+                    'tabId' => $tabId !== 'default' ? $tabId : null,
+                    'message' => 'Could not start the session: ' . $e->getMessage(),
+                ], static fn (mixed $v): bool => $v !== null));
 
                 return;
             }
 
-            $conn->send([
+            $conn->send(array_filter([
                 'type' => 'session_bound',
+                'tabId' => $tabId !== 'default' ? $tabId : null,
                 'cwd' => $managed->cwd,
                 'sessionFile' => $managed->sessionFile,
                 'shared' => count($managed->clients) > 1,
-            ]);
+            ], static fn (mixed $v): bool => $v !== null));
 
             return;
         }
 
         if ($type === 'detach_session') {
-            $this->pool->detach($connectionId);
+            $tabId = is_string($data['tabId'] ?? null) && $data['tabId'] !== '' ? $data['tabId'] : null;
+            $this->pool->detach($connectionId, $tabId);
 
             return;
         }
 
         if ($type === 'rpc_command') {
-            $managed = $this->pool->boundTo($connectionId);
+            $tabId = is_string($data['tabId'] ?? null) && $data['tabId'] !== '' ? $data['tabId'] : null;
+            $managed = $this->pool->boundTo($connectionId, $tabId);
             $command = $data['command'] ?? null;
 
             if ($managed === null) {
-                $conn->send(['type' => 'error', 'message' => 'no active session', 'id' => is_array($command) ? ($command['id'] ?? null) : null]);
+                $conn->send(array_filter([
+                    'type' => 'error',
+                    'tabId' => $tabId,
+                    'message' => 'no active session',
+                    'id' => is_array($command) ? ($command['id'] ?? null) : null,
+                ], static fn (mixed $v): bool => $v !== null));
 
                 return;
             }
 
             if (!is_array($command) || !is_string($command['type'] ?? null)) {
-                $conn->send(['type' => 'error', 'message' => 'rpc_command wants a command object with a type']);
+                $conn->send(array_filter([
+                    'type' => 'error',
+                    'tabId' => $tabId,
+                    'message' => 'rpc_command wants a command object with a type',
+                ], static fn (mixed $v): bool => $v !== null));
 
                 return;
             }
@@ -479,7 +497,12 @@ final class HttpServer
             try {
                 $managed->client->relay($command);
             } catch (Throwable $e) {
-                $conn->send(['type' => 'error', 'message' => $e->getMessage(), 'id' => $command['id'] ?? null]);
+                $conn->send(array_filter([
+                    'type' => 'error',
+                    'tabId' => $tabId,
+                    'message' => $e->getMessage(),
+                    'id' => $command['id'] ?? null,
+                ], static fn (mixed $v): bool => $v !== null));
             }
 
             return;
@@ -494,16 +517,24 @@ final class HttpServer
      * `rpc_event`, which is pi-web's envelope and lets the page tell "the child said" from
      * "the server said".
      *
+     * In single-connection multiplexed mode, events are tagged with each subscribed tab's ID,
+     * so one physical WebSocket routes events to multiple concurrent browser tabs seamlessly.
+     *
      * @param array<string, mixed> $event
      */
     private function onSessionEvent(ManagedSession $managed, array $event): void
     {
-        $line = ($event['type'] ?? null) === 'session_ended' ? $event : ['type' => 'rpc_event', 'event' => $event];
+        $base = ($event['type'] ?? null) === 'session_ended' ? $event : ['type' => 'rpc_event', 'event' => $event];
 
-        foreach (array_keys($managed->clients) as $connectionId) {
+        foreach ($managed->clients as $connectionId => $tabIds) {
             $client = $this->wsClients[$connectionId] ?? null;
 
-            if ($client !== null && !$client->isClosed()) {
+            if ($client === null || $client->isClosed()) {
+                continue;
+            }
+
+            foreach (array_keys($tabIds) as $tabId) {
+                $line = $tabId === 'default' ? $base : [...$base, 'tabId' => $tabId];
                 $client->send($line);
             }
         }

@@ -438,4 +438,43 @@ final class WebModeTest extends TestCase
         $this->assertSame($this->cwd, $mode->cwd);
         $this->assertFalse(property_exists($mode, 'session'), 'the conversations are in the children');
     }
+
+    public function testSingleWebSocketMultiplexesMultipleTabsWithTabIdTagging(): void
+    {
+        $port = 28099;
+        $server = $this->server($port);
+
+        Async::run(function () use ($server, $port) {
+            $server->start();
+            // A single physical WebSocket connection for the browser
+            $ws = $this->wsConnect($port);
+
+            // Subscribe tab-1
+            $this->wsSend($ws, ['type' => 'start_session', 'tabId' => 'tab-1', 'cwd' => $this->cwd, 'sessionFile' => 'tab1.jsonl']);
+            $bound1 = $this->wsCollect($ws, static fn (array $m) => ($m['type'] ?? '') === 'session_bound' && ($m['tabId'] ?? '') === 'tab-1');
+            $this->assertSame('tab-1', $bound1[0]['tabId']);
+
+            // Subscribe tab-2 over the same connection
+            $this->wsSend($ws, ['type' => 'start_session', 'tabId' => 'tab-2', 'cwd' => $this->cwd, 'sessionFile' => 'tab2.jsonl']);
+            $bound2 = $this->wsCollect($ws, static fn (array $m) => ($m['type'] ?? '') === 'session_bound' && ($m['tabId'] ?? '') === 'tab-2');
+            $this->assertSame('tab-2', $bound2[0]['tabId']);
+
+            $this->assertCount(2, $server->pool()->all(), 'two tabs on one socket are two independent rpc children');
+
+            // Send prompt to tab-1
+            $this->wsSend($ws, ['type' => 'rpc_command', 'tabId' => 'tab-1', 'command' => ['type' => 'prompt', 'message' => 'hi tab1', 'id' => 'p1']]);
+            $events = $this->wsCollect($ws, static fn (array $m) => ($m['tabId'] ?? '') === 'tab-1' && ($m['event']['type'] ?? '') === 'agent_end');
+
+            $types = array_map(static fn (array $m) => $m['event']['type'], array_filter($events, static fn ($m) => isset($m['event']['type'])));
+            $this->assertContains('agent_start', $types);
+            $this->assertContains('agent_end', $types);
+
+            foreach ($events as $msg) {
+                $this->assertSame('tab-1', $msg['tabId'], 'every event over the shared socket carried tab-1');
+            }
+
+            fclose($ws);
+            $server->stop();
+        });
+    }
 }

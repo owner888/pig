@@ -18,7 +18,7 @@ final class ManagedSession
     /** @var array<string, true> the pool keys this session answers to */
     public array $keys = [];
 
-    /** @var array<int, true> the connection ids bound to this session */
+    /** @var array<int, array<string, true>> connectionId => [tabId => true] subscribers */
     public array $clients = [];
 
     /** True between `agent_start` and `agent_end`: a turn in flight keeps an idle child alive. */

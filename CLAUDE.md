@@ -3219,8 +3219,8 @@ bottleneck ever wants Workerman's multi-worker model, that is the time to argue 
 **Landed 2026-10-04 in three steps**: **① `pig web start|stop|status|restart [-d]`** — the
 subcommand and the daemon (`WebDaemon.php`); **② the session pool** (`SessionPool.php`) and the
 `HttpServer` rewrite to route connections to isolated `pig --mode rpc` child processes with 60s
-idle reaping; **③ the multi-session tab bar in `index.html`** with dedicated WebSockets per tab,
-per-tab chat scroll areas, background streaming indicators, and state recovery on reload.
+idle reaping; **③ the multi-session tab bar in `index.html`** multiplexed over **a single physical WebSocket**
+connection with `tabId` tagging, per-tab chat scroll areas, background streaming indicators, and state recovery on reload.
 
 `PrintMode` is the smallest of the three because `RpcMode` did the work: `RpcEvents` already
 encodes the events, and wiring hooks and custom tools with no UI is already something that
