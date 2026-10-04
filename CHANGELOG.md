@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.20] - 2026-10-04
+
+### Changed
+
+- **Web UI keybinding refinement**:
+  - Rebound message submission in Web UI to `Command+Enter` (macOS) / `Ctrl+Enter` (Windows/Linux) to prevent accidental sends while drafting complex prompts or code.
+  - Restored `Shift+Enter` and plain `Enter` to natural newline insertion inside the textarea with auto-resizing height.
+  - Updated send button title and placeholder hints.
+
 ## [0.3.19] - 2026-10-04
 
 ### Added

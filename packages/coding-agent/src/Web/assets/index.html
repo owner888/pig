@@ -1169,11 +1169,11 @@
       <div class="input-box-row">
         <div class="input-wrapper">
           <div id="pending-images" class="pending-images-bar" style="display:none;"></div>
-          <textarea id="prompt-input" rows="1" placeholder="Send a message or paste images..."></textarea>
+          <textarea id="prompt-input" rows="1" placeholder="Ask pig a question or paste images... (⌘+Enter to send, Shift+Enter for new line)"></textarea>
         </div>
         <input type="file" id="file-input" accept="image/*" multiple style="display:none;">
         <button id="attach-btn" class="action-btn btn-attach" title="Attach image (or paste clipboard)">📎</button>
-        <button id="send-btn" class="action-btn btn-send" title="Send message">➔</button>
+        <button id="send-btn" class="action-btn btn-send" title="Send message (Cmd+Enter / Ctrl+Enter)">➔</button>
         <button id="stop-btn" class="action-btn btn-stop" title="Stop (Escape)">■</button>
       </div>
     </div>
@@ -1702,7 +1702,10 @@
     promptInput.addEventListener("compositionend", () => { isComposing = false; });
 
     promptInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      // Submit message on Command+Enter (Mac) or Ctrl+Enter (Windows/Linux)
+      const isSubmitKey = e.key === "Enter" && (e.metaKey || e.ctrlKey);
+
+      if (isSubmitKey) {
         if (e.isComposing || isComposing || e.keyCode === 229) {
           return;
         }
@@ -1712,6 +1715,7 @@
         e.preventDefault();
         abortTurn();
       }
+      // Note: Normal Enter and Shift+Enter naturally insert a newline into the textarea!
     });
 
     sendBtn.addEventListener("click", submitMessage);
