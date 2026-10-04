@@ -10861,6 +10861,21 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 **对策**：
 将 `SessionManager::open()` 重构为逐行流式读取（`fopen` + `fgets`），读一行解析一行放入会话树并立即释放行字符串，内存占用从 150MB+ 骤降至不足 10MB（在标准 128MB 限制下仅需 1.7 秒即可无压力打开 65MB 超大历史会话）。
 
+### `Socket::write()` 与 `read()` 遇对端关闭触发 Broken pipe Warning 导致终端刷屏与重试失效
+
+**现象**：
+在长连接通信或流式请求期间，如果服务端因超时、限流、断网或重置连接而提前关闭了 TCP/SSL 连接，客户端在调用 `Socket::write()` 写数据时，终端会被 PHP 抛出的多条原生 OpenSSL Warning 严重刷屏：
+`Warning: fwrite(): SSL operation failed with code 5. OpenSSL Error messages: error:80000020:system library::Broken pipe in Socket.php on line 92`。
+并且，`Socket::write()` 此前仅抛出硬编码的 `SocketError('Write failed')`，不仅丢失了底层的真实失败原因，还导致 `Retry::worthRetrying()`（匹配 `broken pipe` 词典）无法命中该网络故障，会话直接报错中断而未能自动重试。
+
+**原因**：
+`Socket.php` 中虽然定义了用于捕获 Warning 的 `capturingWarnings()` 闭包工具，但在 `Socket::write()` 和 `Socket::read()` 调用底层 PHP 内置函数 `fwrite()` 和 `fread()` 时，未包裹在 `set_error_handler` 中。当连接对端关闭导致 EPIPE/Broken pipe 时，PHP 底层直接将 OpenSSL Warning 打印到了标准错误输出，既破坏了 TUI 和 CLI 的渲染状态，又丢弃了 warning 文本，使得上层捕获到的异常信息不包含 `broken pipe` 关键字。
+
+**对策**：
+1. 在 `Socket::write()` 和 `Socket::read()` 中全面通过 `self::capturingWarnings()` 执行 `fwrite` 和 `fread`，杜绝任何 PHP Warning 泄露到终端。
+2. 当写入或读取返回 `false` 时，主动调用 `$this->close()` 释放已失效连接，并将 `$warning` 详细原因追加至异常信息中（形如 `Write failed: ... Broken pipe`）。
+3. 异常信息包含 `Broken pipe` 后，上层会话重试模块 `Retry::worthRetrying()` 能瞬间识别网络抖动与对端重置，从而自动触发无缝透明重试。
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;

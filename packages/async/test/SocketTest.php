@@ -72,6 +72,28 @@ final class SocketTest extends TestCase
         $this->assertSame(strlen($payload), $received);
     }
 
+    public function testWritingToClosedPeerThrowsCleanlyWithoutLeakingPhpWarnings(): void
+    {
+        [$host, $port] = $this->server(static function ($conn): void {
+            fclose($conn);
+        });
+
+        Async::run(function () use ($host, $port): void {
+            $socket = Socket::connect($host, $port);
+            Loop::get()->delay(0.05, static fn () => null);
+
+            // Writing to a peer that closed its end should raise SocketError with reason and not leak PHP warnings
+            $error = $this->assertThrows(SocketError::class, static function () use ($socket): void {
+                for ($i = 0; $i < 100; $i++) {
+                    $socket->write(str_repeat("test data payload\n", 1024));
+                }
+            });
+
+            $this->assertStringContainsString('Write failed', $error->getMessage());
+            $this->assertTrue($socket->isClosed());
+        });
+    }
+
     public function testReadReturnsNullWhenThePeerHangsUp(): void
     {
         [$host, $port] = $this->server(static function ($connection): void {

@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.7] - 2026-10-04
+
+### Fixed
+
+- **Broken pipe Warning capture in `Socket::write()` and `read()`**: Wrapped `fwrite()` and `fread()` in `Socket::capturingWarnings()` to prevent PHP's native OpenSSL warnings (`error:80000020:system library::Broken pipe`) from leaking into stdout/stderr and corrupting TUI/CLI renders when the remote peer disconnects or times out.
+- **Accurate socket failure reason and auto-retry triggering**: Included the underlying warning message in `SocketError` (e.g. `Write failed: ... Broken pipe`) and closed the failed stream, allowing `Retry::worthRetrying()` to recognize the `broken pipe` failure and automatically trigger seamless session retries.
+
 ## [0.3.6] - 2026-10-04
 
 ### Changed

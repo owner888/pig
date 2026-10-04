@@ -89,10 +89,15 @@ final class Socket
 
         while ($offset < $length) {
             $signal?->throwIfAborted();
-            $written = fwrite($this->stream, substr($data, $offset));
+            [$written, $warning] = self::capturingWarnings(
+                fn () => fwrite($this->stream, substr($data, $offset))
+            );
 
             if ($written === false) {
-                throw new SocketError('Write failed');
+                $this->close();
+                $reason = $warning !== '' ? ": {$warning}" : '';
+
+                throw new SocketError("Write failed{$reason}");
             }
 
             if ($written === 0) {
@@ -120,10 +125,15 @@ final class Socket
             // Read before selecting. OpenSSL decrypts a whole record at a time and holds
             // the remainder in its own buffer, where select() cannot see it — wait first
             // and a response already sitting in that buffer hangs until the peer sends more.
-            $data = fread($this->stream, $length);
+            [$data, $warning] = self::capturingWarnings(
+                fn () => fread($this->stream, $length)
+            );
 
             if ($data === false) {
-                throw new SocketError('Read failed');
+                $this->close();
+                $reason = $warning !== '' ? ": {$warning}" : '';
+
+                throw new SocketError("Read failed{$reason}");
             }
 
             if ($data !== '') {
