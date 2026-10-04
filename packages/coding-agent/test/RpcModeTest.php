@@ -687,6 +687,51 @@ final class RpcModeTest extends TestCase
         ])['provider']);
     }
 
+    /**
+     * `zzp-shared` is sold by `openai` and resold by `github-copilot`. The provider used to be
+     * built into a `"provider/id"` string and handed to `Models::get()`, which compares bare ids
+     * — so it matched nothing, the `?? Models::get($id)` fallback answered the *direct* provider
+     * by `RESOLD`, and a host that named the reseller got the other one with `success: true`.
+     * The web UI goes through this command now, and its model picker names the provider every
+     * time, which is how it was found.
+     */
+    public function testSetModelHonoursTheProviderWhenTheIdIsResold(): void
+    {
+        $this->start();
+
+        $this->assertSame('github-copilot', $this->data([
+            'type' => 'set_model',
+            'modelId' => 'zzp-shared',
+            'provider' => 'github-copilot',
+        ])['provider'], 'the reseller was named, so the reseller is what answers');
+
+        $this->assertSame('openai', $this->data([
+            'type' => 'set_model',
+            'modelId' => 'zzp-shared',
+            'provider' => 'openai',
+        ])['provider']);
+
+        $this->assertSame('openai', $this->data([
+            'type' => 'set_model',
+            'modelId' => 'zzp-shared',
+        ])['provider'], 'bare id still means the direct provider');
+
+        $this->assertSame('github-copilot', $this->data([
+            'type' => 'set_model',
+            'modelId' => 'github-copilot/zzp-shared',
+        ])['provider'], 'the combined spelling is the same request');
+    }
+
+    public function testSetModelWithAProviderThatDoesNotSellItIsRefusedRatherThanRedirected(): void
+    {
+        $this->start();
+
+        $response = $this->response(['type' => 'set_model', 'modelId' => 'zzp-only', 'provider' => 'anthropic']);
+
+        $this->assertFalse($response['success']);
+        $this->assertStringContainsString('anthropic/zzp-only', $response['error']);
+    }
+
     public function testAModelAHostChoosesIsRememberedForNextTime(): void
     {
         $settings = Settings::inMemory();

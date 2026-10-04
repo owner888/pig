@@ -344,6 +344,20 @@ foreach ($catalogue->problems as $problem) {
 
 Timings::mark('customModels');
 
+// The web shell starts no session of its own: each tab in the page is a `pig --mode rpc` child,
+// and the child does everything from here down — model, hooks, extensions, the lot — in its own
+// process. What the shell needs is what it serves without a conversation: the page, the
+// credentials (`/api/models`, `/api/accounts`) and the declared providers, all of which are
+// loaded above. So it leaves here, before `CodingAgent::session()` would have built a session
+// that nothing in the browser could reach.
+if ($mode === 'web') {
+    $webPort = isset($options['web-port']) && ctype_digit((string) $options['web-port']) ? (int) $options['web-port'] : WebDaemon::DEFAULT_PORT;
+    $webHost = isset($options['web-host']) && $options['web-host'] !== '' ? (string) $options['web-host'] : WebDaemon::DEFAULT_HOST;
+    $running = new WebMode($cwd, $webPort, $webHost, auth: $auth, openBrowser: !isset($options['no-browser']));
+
+    exit((int) Async::run(static fn (): int => $running->run()));
+}
+
 // After the declared providers, not before: a listing that cannot show the model somebody
 // just added to `models.json` is a listing they will not trust about the rest either. It
 // costs a settings read and a file read to get here, which nobody notices on a command that
@@ -574,11 +588,6 @@ if ($mode === 'rpc') {
     // One fiber around the whole program: the prompt suspends on a socket, the terminal
     // wakes on a keystroke, and both need the same loop underneath them.
     Async::run(static fn () => $running->run());
-} elseif ($mode === 'web') {
-    $webPort = isset($options['web-port']) && ctype_digit((string) $options['web-port']) ? (int) $options['web-port'] : WebDaemon::DEFAULT_PORT;
-    $webHost = isset($options['web-host']) && $options['web-host'] !== '' ? (string) $options['web-host'] : WebDaemon::DEFAULT_HOST;
-    $running = new WebMode($session, $webPort, $webHost, auth: $auth, hooks: $hooks, customTools: $customTools);
-    $exit = (int) Async::run(static fn (): int => $running->run());
 } elseif (!$interactive) {
     $printing = new PrintMode($session, $mode ?? 'text', $hooks, $customTools);
     $exit = (int) Async::run(static fn (): int => $printing->run($messages, $files->images));

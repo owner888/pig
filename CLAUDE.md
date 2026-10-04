@@ -3216,10 +3216,11 @@ files redundant and break the first rule of this document. The shell is I/O-boun
 one process is enough; the work happens in N children, which is multi-core for free. If a concrete
 bottleneck ever wants Workerman's multi-worker model, that is the time to argue it with a number.
 
-Landing in three steps, each shippable alone: **① `pig web start|stop|status|restart [-d]`** — the
-subcommand and the daemon, over the `HttpServer` as it stands; **② the session pool** and the
-`HttpServer` rewrite from `$this->session->…` to `$this->sessionFor($conn)->…`; **③ the tab bar
-bound to real sessions**, one WebSocket per tab or one with a `sessionKey`, as pi-web does.
+**Landed 2026-10-04 in three steps**: **① `pig web start|stop|status|restart [-d]`** — the
+subcommand and the daemon (`WebDaemon.php`); **② the session pool** (`SessionPool.php`) and the
+`HttpServer` rewrite to route connections to isolated `pig --mode rpc` child processes with 60s
+idle reaping; **③ the multi-session tab bar in `index.html`** with dedicated WebSockets per tab,
+per-tab chat scroll areas, background streaming indicators, and state recovery on reload.
 
 `PrintMode` is the smallest of the three because `RpcMode` did the work: `RpcEvents` already
 encodes the events, and wiring hooks and custom tools with no UI is already something that
@@ -10805,6 +10806,17 @@ refuses a second copy of a class, which is the fatal error with a politer messag
 
 **对策**：
 在整个仓库及扩展中全面弃用 `curl_close($ch)`，改用 `unset($ch)` 显式注销或令其在作用域结束自然析构。
+
+### 命令后台化（`&`）导致子进程继承管道、`Run::wait()` 永久卡死
+
+**现象**：
+当模型或用户在 `bash` 工具中执行后台任务（如 `nohup ... &`、`(cmd) &`、或启动后台守护进程/服务）时，前台父进程已立即退出并输出结果，但 `Run::wait()` 陷入无限阻塞、会话彻底卡死，直到外部强行终止进程。
+
+**原因**：
+Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程打开的所有未标记 `O_CLOEXEC` 的文件描述符（包括 stdout/stderr 管道的写端）。即使父 shell 执行完 `echo ...` 正常退出，后台孙进程仍持有管道写端。`Run.php` 此前仅依赖 `feof($pipe)` 检测完成，而操作系统只有在所有写端均关闭时才会使 `feof()` 为真；同时 `Run::wait()` 未设置默认超时，导致 Fiber 永久等待管道 EOF。
+
+**对策**：
+在 `Run::wait()` 中增加基于 `Loop::delay(0.1)` 的进程状态轮询：一旦检测到主命令进程 `proc_get_status()['running'] !== true`（说明主 shell 已经退出生命周期），给予 50ms 宽限期让事件循环读取并 drain 尽缓冲区中的残留数据，随后立即结束 `$this->finished` 等待，关闭管道并安全退出，杜绝后台孙进程阻断会话。
 
 ## Version floor: PHP >= 8.3
 

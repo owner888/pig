@@ -24,7 +24,9 @@ final class WebDaemonTest extends TestCase
         foreach (glob($this->home . '/*') ?: [] as $f) {
             unlink($f);
         }
-        @rmdir($this->home);
+        if (is_dir($this->home)) {
+            rmdir($this->home);
+        }
     }
 
     /**

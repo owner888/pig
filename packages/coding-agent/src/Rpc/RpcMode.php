@@ -320,6 +320,14 @@ final class RpcMode
             'switch_session' => $this->switchSession($command),
             'export' => $this->export($command),
 
+            // Four the web shell used to answer over HTTP from its one session and cannot now,
+            // because it has none: they are the child's. Each is the terminal's slash command
+            // made into a command, and `/diff --staged` is `{type: "diff", args: "--staged"}`.
+            'doctor' => $this->doctor(),
+            'diff' => $this->diff($command),
+            'bug' => $this->bug($command),
+            'export_markdown' => $this->exportMarkdown($command),
+
             default => throw new \RuntimeException("Unknown command: {$type}"),
         };
     }
@@ -408,7 +416,30 @@ final class RpcMode
             'autoCompactionEnabled' => $this->settings?->compactionEnabled() ?? true,
             'autoRetryEnabled' => $this->settings?->retryEnabled() ?? true,
             'isRetrying' => $this->session->isRetrying(),
+            // Three fields upstream's state has no need of and the web shell's tab bar does: a
+            // tab is labelled by the session's name or its opening line, and grouped by
+            // directory. Reading them off the file on the shell side would mean the shell
+            // knowing the session format; the child already does.
+            'cwd' => $this->session->cwd(),
+            'sessionName' => $this->session->getSessionName(),
+            'opening' => $this->opening(),
         ];
+    }
+
+    /** The first thing the person said, for a label — `SessionManager::describe()`'s rule. */
+    private function opening(): string
+    {
+        foreach ($this->session->messages() as $message) {
+            if ($message instanceof \Pig\Ai\UserMessage) {
+                foreach ($message->content as $block) {
+                    if ($block instanceof \Pig\Ai\TextContent && trim($block->text) !== '') {
+                        return mb_substr((string) preg_replace('/\s+/u', ' ', trim($block->text)), 0, 60);
+                    }
+                }
+            }
+        }
+
+        return '';
     }
 
     /** @return array<string, mixed> */
@@ -437,14 +468,27 @@ final class RpcMode
     private function setModel(array $command): array
     {
         $id = self::text($command, 'modelId');
-        $provider = isset($command['provider']) ? (string) $command['provider'] : null;
-        $model = Models::get($provider === null ? $id : "{$provider}/{$id}") ?? Models::get($id);
+        $provider = isset($command['provider']) && $command['provider'] !== '' ? (string) $command['provider'] : null;
+
+        // A combined `provider/id` with no separate provider is the other spelling of the same
+        // request, and a host sending it got "No such model" for a model that exists.
+        if ($provider === null && str_contains($id, '/')) {
+            [$provider, $id] = explode('/', $id, 2);
+        }
+
+        // **The provider used to be ignored here** — the same bug `HttpServer::resolveModel()`
+        // records: `Models::get()` compares *bare* ids, so `"provider/id"` matched nothing and the
+        // `?? Models::get($id)` fallback resolved the bare id to the direct provider by
+        // `Models::RESOLD`. A host naming `antigravity` got Google's public model of the same
+        // name, with `success: true`. Found when the web UI started going through this path.
+        $model = $provider === null ? Models::get($id) : Models::find($provider, $id);
 
         if ($model === null) {
             throw new \RuntimeException('No such model: ' . ($provider === null ? $id : "{$provider}/{$id}"));
         }
 
-        $this->session->setModel($model);
+        $level = isset($command['thinkingLevel']) ? ThinkingLevel::tryFrom((string) $command['thinkingLevel']) : null;
+        $this->session->setModel($model, $level);
 
         return self::model($model);
     }
@@ -680,6 +724,72 @@ final class RpcMode
     }
 
     /** @param array<string, mixed> $command */
+    /** @return array<string, mixed> */
+    private function doctor(): array
+    {
+        $report = \Pig\CodingAgent\Doctor\Doctor::inspect($this->session, $this->auth);
+
+        return [
+            'plain' => \Pig\CodingAgent\Doctor\Doctor::renderPlain($report),
+            'report' => [
+                'php' => $report->php,
+                'binaries' => $report->binaries,
+                'auth' => $report->auth,
+                'proxy' => $report->proxy,
+                'session' => $report->session,
+            ],
+        ];
+    }
+
+    /** @param array<string, mixed> $command  @return array<string, mixed> */
+    private function diff(array $command): array
+    {
+        $args = isset($command['args']) ? trim((string) $command['args']) : '';
+        $cmd = ['git', 'diff', ...($args === '' ? [] : (preg_split('/\s+/', $args, -1, PREG_SPLIT_NO_EMPTY) ?: []))];
+        [$code, $stdout, $stderr] = \Pig\Tui\Process::run($cmd, cwd: $this->session->cwd());
+
+        if ($code !== 0) {
+            throw new \RuntimeException('git diff failed: ' . ($stderr !== '' ? trim($stderr) : 'not a git repository'));
+        }
+
+        return ['diff' => trim($stdout)];
+    }
+
+    /** @param array<string, mixed> $command  @return array<string, mixed> */
+    private function bug(array $command): array
+    {
+        $hint = isset($command['hint']) ? trim((string) $command['hint']) : '';
+        $includeTranscript = ($command['includeTranscript'] ?? false) === true;
+        $report = \Pig\CodingAgent\BugReport::build($this->session, $this->auth, $hint, $includeTranscript);
+
+        return [
+            'path' => \Pig\CodingAgent\BugReport::write($report),
+            'issueUrl' => \Pig\CodingAgent\BugReport::issueUrl($hint, $report),
+            'report' => $report,
+        ];
+    }
+
+    /**
+     * The session as Markdown, or as a PR description when `format` is `pr` — the latter asks the
+     * model, so it costs a turn's worth of tokens and is a `bash`-shaped command in that it can
+     * take a while.
+     *
+     * @param array<string, mixed> $command  @return array<string, mixed>
+     */
+    private function exportMarkdown(array $command): array
+    {
+        $format = (string) ($command['format'] ?? 'md');
+
+        if ($format === 'pr') {
+            return ['format' => 'pr', 'markdown' => \Pig\CodingAgent\Export\MarkdownExport::generatePrDescription($this->session)];
+        }
+
+        $store = $this->session->store()
+            ?? throw new \RuntimeException('This session is not being saved, so there is nothing to export.');
+
+        return ['format' => 'md', 'markdown' => \Pig\CodingAgent\Export\MarkdownExport::render($store->messages(), $this->session->cwd())];
+    }
+
     private function export(array $command): array
     {
         $store = $this->session->store()

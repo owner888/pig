@@ -43,6 +43,25 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.50] - 2026-10-04
+
+### New Features
+
+- **Multi-session Web UI tabs via `pig --mode rpc` process pool**: Rebuilt web mode on upstream `pi-web`'s architecture. The browser shell (`HttpServer`) now coordinates a managed child process pool (`SessionPool`) where each conversation tab is backed by an isolated `pig --mode rpc` process. Multiple tasks run concurrently in parallel tabs without interfering with each other's stream, tool execution, or thinking state.
+- **Background daemon management (`pig web start|stop|status|restart [-d]`)**: Native double-fork and `posix_setsid()` process daemonisation with pidfile and log output management under `$PIG_HOME/web.pid` and `web.log`.
+
+### Added
+
+- **Per-tab WebSocket connection & independent state machine**: Each frontend tab maintains its own WebSocket connection, chat scroll area, and RPC request dispatch. Reconnecting or reloading recovers all opened tabs and re-attaches to existing child sessions without restarting turns.
+- **RPC slash command parity**: Added `/doctor`, `/diff`, `/bug`, and `export_markdown` commands to `RpcMode`, giving Web and RPC clients full parity with terminal slash command diagnostics.
+- **FD leak mitigation in `RpcClient`**: Added `withoutInheritedFds()` to close leaked file descriptors (fds 3-255) prior to spawning child processes, avoiding deadlocks where children inadvertently held server sockets open.
+
+### Fixed
+
+- **Infinite hang in `Run::wait()` when commands spawn background grandchildren**: Fixed a critical hang where running background jobs (such as `(cmd) &` or background daemons) caused `Run::wait()` to block indefinitely waiting for pipe EOF because child processes inherited stdout/stderr descriptors. `Run` now periodically polls `proc_get_status()` and promptly completes after the primary shell exits.
+- **Model resolution in `RpcMode::setModel()`**: Fixed a bug where `RpcMode::setModel()` stripped the `provider` parameter and fell back to direct providers via `Models::RESOLD`, causing resold models (such as `antigravity/*` or `github-copilot/*`) to switch to incorrect providers.
+- **SessionPool path canonicalization**: Canonicalized directory paths via `realpath()` to resolve differences between symlinked paths (such as `/tmp` vs `/private/tmp` on macOS), preventing duplicate child process spawns on reload.
+
 ## [0.2.49] - 2026-10-04
 
 ### Added

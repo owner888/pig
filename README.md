@@ -430,11 +430,11 @@ behind it: `pcntl_fork()` twice, `posix_setsid()`, a pid file — so `ext-posix`
 `-d` and `stop`, and nothing else changes.
 
 Every conversation you open in the browser gets a **tab** above the chat — labelled by its name
-or its first line, the live one marked, `×` to close, `+` for a new one — kept in the browser, so
-switching between the three things you are working on is one click rather than two levels of
-drawer. The process runs one session at a time (the terminal and the page share it), so a tab is
-a way back to a conversation rather than a second agent; when the terminal moves to another
-session the page follows.
+or its first line, working dot indicators while an agent streams, `×` to close, `+` for a new one —
+persisted in the browser across reloads. The web shell follows `pi-web`'s process model: each
+conversation is backed by its own isolated `pig --mode rpc` child process in a managed pool (`SessionPool`),
+so tabs run true parallel tasks concurrently without interfering with each other's stream or tools.
+When launched via `/web` from inside the terminal, the terminal's own session stays entirely separate.
 
 A hook that **asks** — a `tool_call` guard's `confirm()`, a `select`, an `input`, an `editor` —
 asks in the page when pig was started with `--mode web`: the question goes out over the WebSocket

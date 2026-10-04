@@ -64,6 +64,11 @@ final class RpcClient
     /** @var array<int, Closure(array<string, mixed>): void> */
     private array $listeners = [];
 
+    /** @var list<Closure(string): void> told once, with the reason, when the child is gone */
+    private array $closeListeners = [];
+
+    private bool $closed = false;
+
     private int $nextId = 0;
 
     private int $nextListener = 0;
@@ -82,6 +87,47 @@ final class RpcClient
         private readonly array $environment = [],
         private readonly float $timeout = 30.0,
     ) {
+    }
+
+    /**
+     * Wrap a command so the child starts with only its three standard streams.
+     *
+     * **PHP's `proc_open()` leaks every open descriptor into the child**, and PHP has no way to
+     * say otherwise: no `FD_CLOEXEC`, no `SOCK_CLOEXEC`, no `closefrom()`. For a tool that runs
+     * and exits that is a nuisance. For a child that lives as long as a conversation it is a bug
+     * with a shape: the child holds a *duplicate* of every socket the parent had open at the
+     * moment of the spawn — including the browser connection that asked for it. A TCP socket is
+     * closed when its last descriptor is, so when that browser goes away the parent's `fread()`
+     * never returns `''`: to the kernel the peer is still open, in the child.
+     *
+     * Measured, with `lsof` on a child: the listening socket, the accepted browser socket and
+     * the test's own client end, all inherited. A tab closed and the server's connection count
+     * stayed at 1 for as long as the child lived — so the idle reap never ran, and the child
+     * never died either. The leak kept itself alive.
+     *
+     * The wrapper is `sh -c` closing 3..255 before `exec`. A shell is one more process for a
+     * moment and then it *is* the child; the alternative is a native extension. `Tools\Run`
+     * and `Process` do not do this and do not need to: their children exit, and a leaked
+     * descriptor dies with them.
+     *
+     * **No `2>/dev/null` on the `exec`**, and the first draft had one, which cost three
+     * `RpcClientTest` cases. macOS's `/bin/sh` is bash 3.2, and bash implements a redirect on
+     * a builtin by saving the real fd on 10+ for the duration — so `exec 10>&- 2>/dev/null`
+     * closes bash's own saved stderr, and the child's standard error was gone before it was
+     * exec'd. Closing a descriptor that is not open is silent in bash anyway, so the redirect
+     * was protecting against nothing.
+     *
+     * @param list<string> $command
+     * @return list<string>
+     */
+    private static function withoutInheritedFds(array $command): array
+    {
+        return [
+            '/bin/sh',
+            '-c',
+            'for fd in $(seq 3 255); do eval "exec $fd>&-"; done; exec "$0" "$@"',
+            ...$command,
+        ];
     }
 
     /** Where `bin/pig` is, four directories up from this file. */
@@ -110,7 +156,7 @@ final class RpcClient
             throw new RpcError('start', "No pig at {$binary}");
         }
 
-        $command = [PHP_BINARY, $binary, '--mode', 'rpc', ...$this->arguments];
+        $command = self::withoutInheritedFds([PHP_BINARY, $binary, '--mode', 'rpc', ...$this->arguments]);
         $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $process = proc_open(
             $command,
@@ -211,6 +257,44 @@ final class RpcClient
         return function () use ($id): void {
             unset($this->listeners[$id]);
         };
+    }
+
+    /**
+     * Hear that the child is gone — its output closed, or `stop()` was called. Once, with the
+     * reason. A host that forwards events to a browser needs this as much as the events: a tab
+     * whose agent died should say so rather than spin.
+     *
+     * @param Closure(string): void $listener
+     */
+    public function onClose(Closure $listener): void
+    {
+        $this->closeListeners[] = $listener;
+    }
+
+    /**
+     * Send a command and do **not** wait for its answer: the response arrives as an event with
+     * the id the caller put on it, exactly as it would reach a host that sent the line itself.
+     *
+     * This is what a relay needs. `HttpServer` forwards a browser's `rpc_command` whole — id and
+     * all — and the browser matches the response; suspending here would serialise every tab's
+     * commands through one fiber. The twenty-odd typed methods above are for a PHP host that
+     * wants to read like a program; this is for a host that is a wire.
+     *
+     * @param array<string, mixed> $command as the browser sent it, id included
+     */
+    public function relay(array $command): void
+    {
+        if ($this->process === null) {
+            throw new RpcError((string) ($command['type'] ?? '?'), 'The client is not started');
+        }
+
+        $line = json_encode($command, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        if ($line === false) {
+            throw new RpcError((string) ($command['type'] ?? '?'), 'The command could not be encoded');
+        }
+
+        $this->write($line . "\n");
     }
 
     /** Everything the agent wrote to standard error: warnings at startup, and why it died. */
@@ -654,6 +738,14 @@ final class RpcClient
     {
         $pending = $this->pending;
         $this->pending = [];
+
+        if (!$this->closed) {
+            $this->closed = true;
+
+            foreach ($this->closeListeners as $listener) {
+                $listener($because);
+            }
+        }
 
         foreach ($pending as $deferred) {
             if (!$deferred->isComplete()) {

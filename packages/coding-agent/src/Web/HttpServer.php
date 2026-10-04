@@ -5,73 +5,71 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Web;
 
 use Closure;
-use Pig\Agent\AgentEndEvent;
-use Pig\Agent\AgentEvent;
-use Pig\Agent\AgentStartEvent;
-use Pig\Agent\AgentToolResult;
-use Pig\Agent\MessageEndEvent;
-use Pig\Agent\MessageStartEvent;
-use Pig\Agent\MessageUpdateEvent;
 use Pig\Agent\ThinkingLevel;
-use Pig\Agent\ToolExecutionEndEvent;
-use Pig\Agent\ToolExecutionStartEvent;
-use Pig\Agent\ToolExecutionUpdateEvent;
-use Pig\Agent\TurnEndEvent;
-use Pig\Agent\TurnStartEvent;
-use Pig\Ai\AssistantMessage;
-use Pig\Ai\ImageContent;
 use Pig\Ai\Models;
-use Pig\Ai\StopReason;
-use Pig\Ai\TextContent;
-use Pig\Ai\TextDeltaEvent;
-use Pig\Ai\ThinkingContent;
-use Pig\Ai\ThinkingDeltaEvent;
-use Pig\Ai\ToolCall;
-use Pig\Ai\ToolResultMessage;
-use Pig\Ai\UserMessage;
-use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
-use Pig\CodingAgent\CustomTools\CustomToolSet;
-use Pig\CodingAgent\Doctor\Doctor;
-use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
-use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\HookError;
-use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Rpc\RpcUi;
-use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Session\HookMessage;
-use Pig\CodingAgent\Theme\Palette;
-use Pig\CodingAgent\Session\AutoCompactionEndEvent;
-use Pig\CodingAgent\Session\AutoCompactionStartEvent;
-use Pig\CodingAgent\Session\RetryEndEvent;
-use Pig\CodingAgent\Session\RetryStartEvent;
+use Pig\CodingAgent\Rpc\RpcClient;
 use Pig\CodingAgent\Web\Protocols\Websocket;
-use Pig\Tui\Process;
 use Throwable;
 
 /**
- * Micro HTTP, SSE & WebSocket server for Web UI, operating purely on Loop's stream_select.
+ * The web shell: HTTP for the page and the lists, a WebSocket per browser tab, and one
+ * `pig --mode rpc` child per conversation behind it, in a `SessionPool`.
  *
- * Implements Workerman-style non-blocking connections and protocol decoupling with zero external dependencies.
+ * pi-web's `server.js`, as `HttpServer` was always meant to become. Until step ② of the process
+ * model (CLAUDE.md, "Three ways in") this class held **one** `AgentSession` and every tab in the
+ * page was a `switchTo()` on it — so the TUI sharing that session moved with the browser, a turn
+ * in flight on tab A was aborted by opening tab B, and two browsers on two conversations pulled
+ * one process back and forth. Now a tab is a child process, and the server relays.
+ *
+ * **What the server knows and what it does not.** It knows the children it started, which
+ * connection is bound to which, and how to list what is on disk (`/api/folders`,
+ * `/api/sessions`). It does not know what any conversation *says*: that is in the child, and
+ * the browser asks the child through the relay. So `/api/state`, `/api/messages`, `/api/model`
+ * and the rest of the per-session HTTP endpoints are gone — the page sends `get_state`,
+ * `get_messages`, `set_model` as `rpc_command` lines over its socket, which is pi-web's shape and
+ * also means every command a host can send, a browser can.
+ *
+ * **The socket protocol**, pi-web's, four lines in and four out:
+ *
+ * | in | out |
+ * |---|---|
+ * | `start_session {cwd, sessionFile?}` — bind this socket to a conversation, starting its child if there is none | `rpc_event {event}` — a line from the bound child, verbatim |
+ * | `detach_session` | `session_ended {reason}` — the bound child is gone |
+ * | `rpc_command {command}` — forwarded whole, id and all, to the bound child | `error {message}` |
+ * | `ping` | `pong` |
+ *
+ * `hook_ui_request` and `hook_ui_response` are not special here any more: the child's `RpcMode`
+ * sends the request as an event and reads the response as a command, and both go through the
+ * relay like anything else. What used to be `HttpServer::$ui` and `wireHooks()` is now
+ * `RpcMode::start()`'s, in the child — which is where it was for `--mode rpc` all along.
+ *
+ * **One id for both halves.** A browser's command carries its own id and the child's response
+ * carries it back, so the server never has to match them; it forwards both verbatim. The relay
+ * is `RpcClient::relay()`, which writes and does not wait — `send()` would park a fiber per
+ * command and serialise every tab through one.
+ *
+ * `--mode web`'s own `cwd` is the directory a *new* conversation opens in when the page does not
+ * say otherwise, and the one `/api/folders` marks as current. Nothing else about the server is
+ * per-directory.
  */
 final class HttpServer
 {
     private mixed $serverSocket = null;
     private ?string $serverWatcher = null;
-    private ?Closure $unsubscribeSession = null;
 
     /** @var array<int, Connection> */
     private array $connections = [];
 
-    /** @var array<int, Connection> */
-    private array $sseClients = [];
-
-    /** @var array<int, Connection> */
+    /** @var array<int, Connection> the connections that have upgraded to WebSocket */
     private array $wsClients = [];
 
+    /** @var array<int, string> a stable id per socket, for the key a new conversation gets */
+    private array $clientIds = [];
+
     private ?string $heartbeatTimer = null;
-    private const PING_INTERVAL = 25.0;
+    private const float PING_INTERVAL = 25.0;
 
     public const FAVICON_SVG = '<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">'
         . '<circle cx="50" cy="50" r="44" fill="#F472B6"/>'
@@ -89,77 +87,37 @@ final class HttpServer
     private int $nextConnectionId = 0;
     private bool $isRunning = false;
     private readonly Auth $auth;
+    private readonly SessionPool $pool;
 
     /**
-     * The hooks' and custom tools' UI, when this server is the mode — `RpcUi` over the browser.
-     *
-     * Null when the server was started from inside the terminal with `/web`: there the TUI is the
-     * mode, it wired the hooks to its own dialogs, and a second UI would be two places asking one
-     * question. Standalone `--mode web` had **no** UI at all until this — a `tool_call` guard got
-     * `NoUi`, every `confirm()` was false, and every tool call was refused without a word.
+     * @param string $cwd where a new conversation opens when the page names no directory
+     * @param (Closure(string, ?string): RpcClient)|null $spawn how a child is made; the default
+     *        starts `bin/pig --mode rpc` in the conversation's directory, with `--session <file>`
+     *        when it has one. Injectable so a test can hand back a client over a fixture.
      */
-    private ?RpcUi $ui = null;
-
     public function __construct(
-        private readonly AgentSession $session,
+        private readonly string $cwd,
         public readonly int $port = 8088,
         public readonly string $host = '127.0.0.1',
         ?Auth $auth = null,
-        private readonly ?HookRunner $hooks = null,
-        private readonly ?CustomToolSet $customTools = null,
+        ?Closure $spawn = null,
+        float $idleTtl = SessionPool::IDLE_TTL,
     ) {
         $this->auth = $auth ?? Auth::discover();
+        $this->pool = new SessionPool(
+            spawn: $spawn ?? static fn (string $cwd, ?string $sessionFile): RpcClient => new RpcClient(
+                cwd: $cwd,
+                arguments: $sessionFile !== null ? ['--session', $sessionFile] : [],
+            ),
+            onEvent: $this->onSessionEvent(...),
+            idleTtl: $idleTtl,
+        );
     }
 
-    /**
-     * Wire the hooks and custom tools to the browser — what `RpcMode::start()` does for its
-     * host, with the same `RpcUi` and the same `hook_ui_request` / `hook_ui_response` lines, so
-     * a hook's `confirm()` is a dialog in the page and the answer resumes the parked tool call.
-     * Called by `WebMode` and not by `/web`, for the reason on `$ui`.
-     */
-    public function wireHooks(): void
+    /** @internal for tests and `WebMode::stop()` */
+    public function pool(): SessionPool
     {
-        $this->ui = new RpcUi(fn (array $payload) => $this->broadcast($payload), Palette::named('dark'));
-
-        $this->hooks?->initialize(
-            getModel: fn () => $this->session->model(),
-            isIdle: fn (): bool => !$this->session->isStreaming(),
-            abort: function (): void {
-                $this->session->abort();
-            },
-            hasQueuedMessages: fn (): bool => $this->session->queued() !== [],
-            signal: fn () => $this->session->signal(),
-            ui: $this->ui,
-            send: function (HookMessage $message, bool $triggerTurn): void {
-                $this->session->sendHookMessage($message, $triggerTurn);
-            },
-            note: function (string $customType, mixed $data): void {
-                $this->session->appendHookEntry($customType, $data);
-            },
-            getApiKey: fn ($m) => $this->session->keyFor($m),
-            setSessionName: fn (string $name) => $this->session->setSessionName($name),
-            getSessionName: fn () => $this->session->getSessionName(),
-        );
-
-        $this->hooks?->onError(function (HookError $error): void {
-            $this->broadcast([
-                'type' => 'hook_error',
-                'hookPath' => $error->hookPath,
-                'event' => $error->event,
-                'error' => $error->error,
-            ]);
-        });
-
-        $this->customTools?->withUi($this->ui);
-        $this->customTools?->withContext(
-            fn () => $this->hooks?->context() ?? new HookContext($this->session->cwd(), ui: $this->ui, hasUi: true),
-        );
-
-        $this->hooks?->emit(new SessionStartEvent());
-
-        foreach ($this->customTools?->notify('start') ?? [] as $problem) {
-            $this->broadcast(['type' => 'tool_error', 'error' => $problem->toText()]);
-        }
+        return $this->pool;
     }
 
     /**
@@ -216,7 +174,7 @@ final class HttpServer
                     if (is_array($data)) {
                         $this->handleRequest($c, $data, $id);
                     } elseif (is_string($data)) {
-                        $this->handleWsMessage($c, $data);
+                        $this->handleWsMessage($c, $id, $data);
                     }
                 },
                 onClose: fn (Connection $c) => $this->handleClose($id),
@@ -225,21 +183,6 @@ final class HttpServer
             $this->connections[$id] = $conn;
             $watcher = Loop::get()->onReadable($client, static fn () => $conn->onReadable());
             $conn->setReadableWatcher($watcher);
-        });
-
-        // Subscribe to agent session events to broadcast over SSE
-        $this->unsubscribeSession = $this->session->subscribe(function (AgentEvent $event): void {
-            $this->broadcastEvent($event);
-        });
-
-        // Two things that are not agent events and change what the page shows: a rename, and the
-        // terminal moving to another conversation. Without the second the tab bar is a claim
-        // about a session the process is no longer in.
-        $this->session->onSessionNameChanged(function (string $name): void {
-            $this->broadcast(['type' => 'session_info_changed', 'name' => $name]);
-        });
-        $this->session->onSessionSwitched(function (string $reason, ?string $previous): void {
-            $this->broadcast(['type' => 'session_switch', 'reason' => $reason, 'previous' => $previous]);
         });
 
         $this->isRunning = true;
@@ -251,6 +194,11 @@ final class HttpServer
         return $this->isRunning;
     }
 
+    /**
+     * Stop: close every connection, then every child — cleanly, through `RpcClient::stop()`, so
+     * each child's `session_shutdown` hook fires. This is what `pig web stop`'s SIGTERM reaches.
+     * Suspends while the children wind down, so it wants a fiber.
+     */
     public function stop(): void
     {
         if (!$this->isRunning) {
@@ -258,11 +206,6 @@ final class HttpServer
         }
 
         $this->isRunning = false;
-
-        if ($this->unsubscribeSession !== null) {
-            ($this->unsubscribeSession)();
-            $this->unsubscribeSession = null;
-        }
 
         if ($this->heartbeatTimer !== null) {
             Loop::get()->cancel($this->heartbeatTimer);
@@ -283,13 +226,16 @@ final class HttpServer
             $conn->close();
         }
         $this->connections = [];
-        $this->sseClients = [];
         $this->wsClients = [];
+        $this->clientIds = [];
+
+        $this->pool->shutdown();
     }
 
     private function handleClose(int $connectionId): void
     {
-        unset($this->connections[$connectionId], $this->sseClients[$connectionId], $this->wsClients[$connectionId]);
+        $this->pool->detach($connectionId);
+        unset($this->connections[$connectionId], $this->wsClients[$connectionId], $this->clientIds[$connectionId]);
     }
 
     private function armHeartbeat(): void
@@ -303,19 +249,9 @@ final class HttpServer
                 return;
             }
 
-            // Standard RFC 6455 Ping keep-alive frames across active WebSocket clients
             foreach ($this->wsClients as $wsClient) {
                 if (!$wsClient->isClosed()) {
                     Websocket::ping($wsClient);
-                }
-            }
-
-            // SSE comment keep-alive line across active SSE clients
-            if ($this->sseClients !== []) {
-                foreach ($this->sseClients as $sseClient) {
-                    if (!$sseClient->isClosed()) {
-                        $sseClient->sendRaw(": keep-alive\n\n");
-                    }
                 }
             }
 
@@ -323,20 +259,21 @@ final class HttpServer
         });
     }
 
+    // ---- HTTP: the page and the lists ------------------------------------------------------
+
     /**
      * @param array{method: string, uri: string, path: string, query: array<string, string>, headers: array<string, string>, body: string} $req
      */
-    private function handleRequest(Connection $conn, array $req, ?int $connectionId = null): void
+    private function handleRequest(Connection $conn, array $req, int $connectionId): void
     {
         $path = $req['path'];
+        $json = ['Content-Type' => 'application/json', 'Access-Control-Allow-Origin' => '*'];
 
         // 0. WebSocket upgrade handling (RFC 6455)
         if ($path === '/ws' || ($req['headers']['upgrade'] ?? '') === 'websocket') {
             if (Websocket::handshake($req, $conn)) {
-                $id = $connectionId ?? array_search($conn, $this->connections, true);
-                if ($id !== false) {
-                    $this->wsClients[$id] = $conn;
-                }
+                $this->wsClients[$connectionId] = $conn;
+                $this->clientIds[$connectionId] = bin2hex(random_bytes(8));
 
                 return;
             }
@@ -374,110 +311,34 @@ final class HttpServer
             return;
         }
 
-        // 2. Server-Sent Events stream
-        if ($path === '/api/events') {
-            $conn->send("HTTP/1.1 200 OK\r\n"
-                . "Content-Type: text/event-stream\r\n"
-                . "Cache-Control: no-cache\r\n"
-                . "Connection: keep-alive\r\n"
-                . "Access-Control-Allow-Origin: *\r\n\r\n");
-
-            // Register as SSE subscriber
-            $id = array_search($conn, $this->connections, true);
-            if ($id !== false) {
-                $this->sseClients[$id] = $conn;
-            }
-
-            return;
-        }
-
-        // 3. User message submission (supports text & multimodal images)
-        if ($path === '/api/prompt' && $req['method'] === 'POST') {
-            $data = json_decode($req['body'], true);
-            $message = is_array($data) ? ($data['message'] ?? '') : '';
-            $rawImages = is_array($data) ? ($data['images'] ?? []) : [];
-            $images = $this->parseImages(is_array($rawImages) ? $rawImages : []);
-
-            if (trim($message) !== '' || $images !== []) {
-                Async::spawn(function () use ($message, $images): void {
-                    try {
-                        if ($this->session->isStreaming()) {
-                            $this->session->steer($message);
-                        } else {
-                            $this->session->prompt($message, $images);
-                        }
-                    } catch (Throwable) {}
-                });
-            }
-
-            $conn->sendResponse(200, [
-                'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
-            ], json_encode(['ok' => true]));
-
-            return;
-        }
-
-        // 4. Abort turn
-        // The SSE fallback's way to answer a hook's question; over WebSocket it is a message.
-        if ($path === '/api/hook_ui_response' && $req['method'] === 'POST') {
-            $data = json_decode($req['body'], true);
-
-            if (is_array($data)) {
-                $this->ui?->answer($data);
-            }
-
-            $conn->sendResponse(200, ['Content-Type' => 'application/json', 'Access-Control-Allow-Origin' => '*'], json_encode(['ok' => true]));
-
-            return;
-        }
-
-        if ($path === '/api/abort' && $req['method'] === 'POST') {
-            Async::spawn(function (): void {
-                $this->session->abort();
-            });
-
-            $conn->sendResponse(200, [
-                'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
-            ], json_encode(['ok' => true]));
-
-            return;
-        }
-
-        // 5. Session state telemetry
-        if ($path === '/api/state') {
-            $conn->sendResponse(200, [
-                'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
-            ], json_encode($this->getStatePayload()));
-
-            return;
-        }
-
-        // 6. Messages history
-        if ($path === '/api/messages') {
-            $conn->sendResponse(200, [
-                'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
-            ], json_encode($this->getMessagesPayload()));
-
-            return;
-        }
-
-        // 7. Available models list
+        // 2. Available models list — a fact about this machine's keys, not about any session.
         if ($path === '/api/models') {
-            $conn->sendResponse(200, [
-                'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
-            ], json_encode($this->getModelsPayload()));
+            $conn->sendResponse(200, $json, json_encode($this->getModelsPayload()));
+
+            return;
+        }
+
+        // 3. Which children are running, for a page reconnecting after a reload: it can tell a
+        // tab whose agent is still working from one whose process has gone.
+        if ($path === '/api/running') {
+            $running = [];
+            foreach ($this->pool->all() as $managed) {
+                $running[] = [
+                    'cwd' => $managed->cwd,
+                    'sessionFile' => $managed->sessionFile,
+                    'keys' => array_keys($managed->keys),
+                    'clients' => count($managed->clients),
+                    'running' => $managed->running,
+                ];
+            }
+            $conn->sendResponse(200, $json, json_encode(['cwd' => $this->cwd, 'sessions' => $running]));
 
             return;
         }
 
         // 8. Folders / Workspaces list (matching pi-web /api/folders)
         if ($path === '/api/folders') {
-            $currentCwd = $this->session->cwd();
+            $currentCwd = $this->cwd;
             $workspaces = $this->listAllWorkspaces($currentCwd);
 
             $conn->sendResponse(200, [
@@ -493,7 +354,7 @@ final class HttpServer
 
         // 9. Sessions list for a directory (matching pi-web /api/sessions?cwd=...)
         if ($path === '/api/sessions') {
-            $targetCwd = $req['query']['cwd'] ?? $this->session->cwd();
+            $targetCwd = $req['query']['cwd'] ?? $this->cwd;
             $sessions = \Pig\CodingAgent\Session\SessionManager::listFor($targetCwd);
             $items = array_map(static fn ($s) => [
                 'id' => $s->id,
@@ -507,77 +368,6 @@ final class HttpServer
                 'Content-Type' => 'application/json',
                 'Access-Control-Allow-Origin' => '*',
             ], json_encode($items));
-
-            return;
-        }
-
-        // 10. Switch session
-        if ($path === '/api/session/switch' && $req['method'] === 'POST') {
-            $data = json_decode($req['body'], true);
-            $targetPath = is_array($data) ? (string) ($data['path'] ?? '') : '';
-            $headers = ['Content-Type' => 'application/json', 'Access-Control-Allow-Origin' => '*'];
-
-            if (!is_file($targetPath)) {
-                $conn->sendResponse(404, $headers, json_encode(['ok' => false, 'error' => 'No session file at that path.']));
-
-                return;
-            }
-
-            // Answered from inside the fiber, *after* the switch: `switchTo()` may wait for a turn
-            // in flight to stop, and a page that reloads its messages on the response must find
-            // the new conversation there rather than the old one still being left.
-            Async::spawn(function () use ($conn, $targetPath, $headers): void {
-                try {
-                    $result = $this->session->switchTo($targetPath);
-                    $conn->sendResponse(
-                        $result->switched ? 200 : 409,
-                        $headers,
-                        json_encode(['ok' => $result->switched, 'error' => $result->switched ? null : 'A hook declined to leave this session.']),
-                    );
-                } catch (Throwable $e) {
-                    $conn->sendResponse(500, $headers, json_encode(['ok' => false, 'error' => $e->getMessage()]));
-                }
-            });
-
-            return;
-        }
-
-        // 10.1 New session
-        if ($path === '/api/session/new' && $req['method'] === 'POST') {
-            $headers = ['Content-Type' => 'application/json', 'Access-Control-Allow-Origin' => '*'];
-
-            // After the switch, for the reason the switch endpoint gives — and because the state
-            // this used to answer with was read *before* `startNew()` had run: the old session's.
-            Async::spawn(function () use ($conn, $headers): void {
-                try {
-                    $result = $this->session->startNew();
-                    $conn->sendResponse($result->switched ? 200 : 409, $headers, json_encode([
-                        'ok' => $result->switched,
-                        'sessionFile' => basename($this->session->store()?->path ?? ''),
-                        'state' => $this->getStatePayload(),
-                    ]));
-                } catch (Throwable $e) {
-                    $conn->sendResponse(500, $headers, json_encode(['ok' => false, 'error' => $e->getMessage()]));
-                }
-            });
-
-            return;
-        }
-
-        // 10.2 Git diff of current working directory
-        if ($path === '/api/diff') {
-            $cwd = $this->session->cwd();
-            $res = Process::run(['git', 'diff'], cwd: $cwd);
-            $diffText = $res->exitCode === 0 ? $res->stdout : '';
-
-            $conn->sendResponse(200, [
-                'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
-            ], json_encode([
-                'ok' => $res->exitCode === 0,
-                'diff' => $diffText,
-                'cwd' => $cwd,
-            ]));
 
             return;
         }
@@ -609,7 +399,6 @@ final class HttpServer
             return;
         }
 
-        // 10.3 System health doctor inspection
         // 10.3c Antigravity accounts: the several Google sign-ins the extension keeps, which one is
         // live, and the active one's quota. Every write goes through `Auth`, so the store and
         // `auth.json` move together — the same methods `/antigravity.accounts` uses.
@@ -619,367 +408,108 @@ final class HttpServer
             return;
         }
 
-        if ($path === '/api/doctor') {
-            $report = Doctor::inspect($this->session, $this->auth);
-
-            $conn->sendResponse(200, [
-                'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
-            ], json_encode([
-                'ok' => true,
-                'plain' => Doctor::renderPlain($report),
-                'report' => [
-                    'php' => $report->php,
-                    'binaries' => $report->binaries,
-                    'auth' => $report->auth,
-                    'proxy' => $report->proxy,
-                    'session' => $report->session,
-                ],
-            ]));
-
-            return;
-        }
-
-        // 10.3b Bug report: write it, answer the path and a prefilled GitHub issue URL
-        if ($path === '/api/bug' && $req['method'] === 'POST') {
-            $data = json_decode($req['body'], true);
-            $hint = is_array($data) ? trim((string) ($data['hint'] ?? '')) : '';
-            $includeTranscript = is_array($data) && ($data['includeTranscript'] ?? false) === true;
-
-            try {
-                $report = \Pig\CodingAgent\BugReport::build($this->session, $this->auth, $hint, $includeTranscript);
-                $written = \Pig\CodingAgent\BugReport::write($report);
-                $conn->sendResponse(200, [
-                    'Content-Type' => 'application/json',
-                    'Access-Control-Allow-Origin' => '*',
-                ], json_encode([
-                    'ok' => true,
-                    'path' => $written,
-                    'issueUrl' => \Pig\CodingAgent\BugReport::issueUrl($hint, $report),
-                    'report' => $report,
-                ]));
-            } catch (Throwable $e) {
-                $conn->sendResponse(500, [
-                    'Content-Type' => 'application/json',
-                    'Access-Control-Allow-Origin' => '*',
-                ], json_encode(['ok' => false, 'error' => $e->getMessage()]));
-            }
-
-            return;
-        }
-
-        // 10.4 Export session as HTML, Markdown, or PR Description
-        if ($path === '/api/export') {
-            $format = $req['query']['format'] ?? 'html';
-            $store = $this->session->store();
-
-            if ($format === 'pr') {
-                try {
-                    $pr = \Pig\CodingAgent\Export\MarkdownExport::generatePrDescription($this->session);
-                    $conn->sendResponse(200, [
-                        'Content-Type' => 'application/json',
-                        'Access-Control-Allow-Origin' => '*',
-                    ], json_encode(['ok' => true, 'markdown' => $pr, 'format' => 'pr']));
-                } catch (Throwable $e) {
-                    $conn->sendResponse(500, [
-                        'Content-Type' => 'application/json',
-                        'Access-Control-Allow-Origin' => '*',
-                    ], json_encode(['ok' => false, 'error' => $e->getMessage()]));
-                }
-
-                return;
-            }
-
-            if ($format === 'md' || $format === 'markdown') {
-                $md = $store !== null ? \Pig\CodingAgent\Export\MarkdownExport::render($store->messages(), $this->session->cwd()) : '';
-                $conn->sendResponse(200, [
-                    'Content-Type' => 'text/markdown; charset=utf-8',
-                    'Access-Control-Allow-Origin' => '*',
-                    'Content-Disposition' => 'attachment; filename="session.md"',
-                ], $md);
-
-                return;
-            }
-
-            // Default HTML export
-            $html = $store !== null ? \Pig\CodingAgent\Export\HtmlExport::render($store->messages(), $this->session->cwd()) : '';
-            $conn->sendResponse(200, [
-                'Content-Type' => 'text/html; charset=utf-8',
-                'Access-Control-Allow-Origin' => '*',
-                'Content-Disposition' => 'attachment; filename="session.html"',
-            ], $html);
-
-            return;
-        }
-
-        // 11. Switch model via HTTP POST
-        if ($path === '/api/model' && $req['method'] === 'POST') {
-            $data = json_decode($req['body'], true);
-            $modelId = is_array($data) ? (string) ($data['modelId'] ?? $data['model'] ?? '') : '';
-            $provider = is_array($data) && isset($data['provider']) ? (string) $data['provider'] : null;
-            $thinkingStr = is_array($data) && isset($data['thinkingLevel']) ? (string) $data['thinkingLevel'] : null;
-            $thinking = $thinkingStr !== null ? ThinkingLevel::tryFrom($thinkingStr) : null;
-
-            // A switch that did not happen must say so: the page re-reads `state` from this
-            // answer, and `ok: true` with the old model in it is a dropdown that looks like it
-            // worked. Both failures — no such model, and a model this machine has no key for —
-            // used to be swallowed here.
-            $problem = null;
-            if ($modelId !== '') {
-                try {
-                    $this->session->setModel(self::resolveModel($provider, $modelId), $thinking, persistAsDefault: false);
-                } catch (Throwable $e) {
-                    $problem = $e->getMessage();
-                }
-            }
-
-            $conn->sendResponse($problem === null ? 200 : 400, [
-                'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
-            ], json_encode(['ok' => $problem === null, 'error' => $problem, 'state' => $this->getStatePayload()]));
-
-            return;
-        }
-
-        // 12. Switch thinking level via HTTP POST
-        if ($path === '/api/thinking' && $req['method'] === 'POST') {
-            $data = json_decode($req['body'], true);
-            $levelStr = is_array($data) ? (string) ($data['level'] ?? '') : '';
-            $level = ThinkingLevel::tryFrom($levelStr);
-
-            if ($level !== null) {
-                try {
-                    $this->session->setThinkingLevel($level, persistAsDefault: false);
-                } catch (Throwable) {}
-            }
-
-            $conn->sendResponse(200, [
-                'Content-Type' => 'application/json',
-                'Access-Control-Allow-Origin' => '*',
-            ], json_encode(['ok' => true, 'state' => $this->getStatePayload()]));
-
-            return;
-        }
-
         $conn->sendResponse(404, ['Content-Type' => 'text/plain'], "Not Found: {$path}");
     }
 
-    private function broadcastEvent(AgentEvent $event): void
-    {
-        if ($this->sseClients === [] && $this->wsClients === []) {
-            return;
-        }
+    // ---- WebSocket: binding and the relay --------------------------------------------------
 
-        $payload = match (true) {
-            $event instanceof AgentStartEvent => ['type' => 'agent_start'],
-            $event instanceof TurnStartEvent => ['type' => 'turn_start'],
-            $event instanceof TurnEndEvent => ['type' => 'turn_end'],
-            $event instanceof AgentEndEvent => [
-                'type' => 'agent_end',
-                'error' => $this->session->agent->state->error,
-            ],
-            $event instanceof MessageStartEvent => ['type' => 'message_start'],
-            $event instanceof MessageEndEvent => ['type' => 'message_end'],
-            $event instanceof MessageUpdateEvent => $this->serializeMessageUpdate($event),
-            $event instanceof ToolExecutionStartEvent => [
-                'type' => 'tool_execution_start',
-                'toolCallId' => $event->toolCallId,
-                'toolName' => $event->toolName,
-                'arguments' => $event->arguments,
-            ],
-            $event instanceof ToolExecutionUpdateEvent => [
-                'type' => 'tool_execution_update',
-                'toolCallId' => $event->toolCallId,
-                'toolName' => $event->toolName,
-                'output' => $this->extractToolOutput($event->partialResult),
-            ],
-            $event instanceof ToolExecutionEndEvent => [
-                'type' => 'tool_execution_end',
-                'toolCallId' => $event->toolCallId,
-                'result' => $event->result instanceof AgentToolResult ? [
-                    'content' => array_map(static fn ($c) => $c instanceof TextContent ? ['type' => 'text', 'text' => $c->text] : ($c instanceof ImageContent ? ['type' => 'image', 'data' => $c->data, 'mimeType' => $c->mimeType] : []), $event->result->content),
-                    'details' => $event->result->details,
-                ] : $event->result,
-                'isError' => $event->isError,
-            ],
-            $event instanceof RetryStartEvent => [
-                'type' => 'retry_start',
-                'attempt' => $event->attempt,
-                'maxAttempts' => $event->maxAttempts,
-                'delaySeconds' => $event->delaySeconds,
-                'error' => $event->error,
-            ],
-            $event instanceof RetryEndEvent => [
-                'type' => 'retry_end',
-                'succeeded' => $event->succeeded,
-                'attempts' => $event->attempts,
-                'error' => $event->error,
-            ],
-            $event instanceof AutoCompactionStartEvent => [
-                'type' => 'auto_compaction_start',
-                'error' => $event->error,
-            ],
-            $event instanceof AutoCompactionEndEvent => [
-                'type' => 'auto_compaction_end',
-                'succeeded' => $event->succeeded,
-                'willRetry' => $event->willRetry,
-                'error' => $event->error,
-            ],
-            default => null,
-        };
-
-        if ($payload === null) {
-            return;
-        }
-
-        $this->broadcast($payload);
-    }
-
-    /** @param array<string, mixed> $payload */
-    private function broadcast(array $payload): void
-    {
-        if ($this->sseClients !== []) {
-            $line = 'data: ' . json_encode($payload) . "\n\n";
-            foreach ($this->sseClients as $client) {
-                $client->sendRaw($line);
-            }
-        }
-
-        foreach ($this->wsClients as $wsClient) {
-            $wsClient->send($payload);
-        }
-    }
-
-    private function handleWsMessage(Connection $conn, string $message): void
+    private function handleWsMessage(Connection $conn, int $connectionId, string $message): void
     {
         $data = json_decode($message, true);
         if (!is_array($data)) {
             return;
         }
 
-        $id = $data['id'] ?? null;
         $type = (string) ($data['type'] ?? '');
 
-        // A hook's question being answered: not a command, and it must not be spawned — the
-        // fiber it resumes is the one parked inside the tool call.
-        if ($type === 'hook_ui_response') {
-            $this->ui?->answer($data);
+        if ($type === 'ping') {
+            $conn->send(['type' => 'pong']);
 
             return;
         }
 
-        match ($type) {
-            'prompt' => Async::spawn(function () use ($conn, $id, $data): void {
-                $text = (string) ($data['message'] ?? '');
-                $rawImages = is_array($data['images'] ?? null) ? $data['images'] : [];
-                $images = $this->parseImages($rawImages);
+        if ($type === 'start_session') {
+            $cwd = is_string($data['cwd'] ?? null) && trim($data['cwd']) !== '' ? $data['cwd'] : $this->cwd;
+            $file = is_string($data['sessionFile'] ?? null) && $data['sessionFile'] !== '' ? $data['sessionFile'] : null;
 
-                if (trim($text) !== '' || $images !== []) {
-                    try {
-                        if ($this->session->isStreaming()) {
-                            $this->session->steer($text);
-                        } else {
-                            $this->session->prompt($text, $images);
-                        }
-                        $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
-                    } catch (Throwable $e) {
-                        $conn->send(['id' => $id, 'type' => 'response', 'success' => false, 'error' => $e->getMessage()]);
-                    }
-                }
-            }),
-            'steer' => Async::spawn(function () use ($conn, $id, $data): void {
-                $text = (string) ($data['message'] ?? '');
-                if (trim($text) !== '') {
-                    $this->session->steer($text);
-                    $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
-                }
-            }),
-            'abort' => Async::spawn(function () use ($conn, $id): void {
-                $this->session->abort();
-                $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
-            }),
-            'set_model' => Async::spawn(function () use ($conn, $id, $data): void {
-                $modelId = (string) ($data['modelId'] ?? '');
-                $provider = isset($data['provider']) ? (string) $data['provider'] : null;
-                $thinkingStr = isset($data['thinkingLevel']) ? (string) $data['thinkingLevel'] : null;
-                $thinking = $thinkingStr !== null ? ThinkingLevel::tryFrom($thinkingStr) : null;
+            // The child is started inside `bind()`, and starting is a `proc_open` plus two
+            // watchers — synchronous, no fiber needed. What *is* needed is a catch: a child that
+            // cannot start (no `bin/pig`, a bad `--session` path) is an `error` line for this
+            // tab and nothing else, not a server that falls over.
+            try {
+                $managed = $this->pool->bind($connectionId, $cwd, $file, $this->clientIds[$connectionId] ?? (string) $connectionId);
+            } catch (Throwable $e) {
+                $conn->send(['type' => 'error', 'message' => 'Could not start the session: ' . $e->getMessage()]);
 
-                if ($modelId !== '') {
-                    try {
-                        $this->session->setModel(self::resolveModel($provider, $modelId), $thinking, persistAsDefault: false);
-                        $conn->send(['id' => $id, 'type' => 'response', 'success' => true, 'state' => $this->getStatePayload()]);
-                    } catch (Throwable $e) {
-                        $conn->send(['id' => $id, 'type' => 'response', 'success' => false, 'error' => $e->getMessage()]);
-                    }
-                }
-            }),
-            'set_thinking_level' => Async::spawn(function () use ($conn, $id, $data): void {
-                $level = \Pig\Agent\ThinkingLevel::tryFrom((string) ($data['level'] ?? ''));
-                if ($level !== null) {
-                    $this->session->setThinkingLevel($level, persistAsDefault: false);
-                    $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
-                }
-            }),
-            'switch_session' => Async::spawn(function () use ($conn, $id, $data): void {
-                $path = (string) ($data['path'] ?? '');
-                if (is_file($path)) {
-                    try {
-                        $this->session->switchTo($path);
-                        $conn->send(['id' => $id, 'type' => 'response', 'success' => true]);
-                    } catch (Throwable $e) {
-                        $conn->send(['id' => $id, 'type' => 'response', 'success' => false, 'error' => $e->getMessage()]);
-                    }
-                }
-            }),
-            'new_session' => Async::spawn(function () use ($conn, $id): void {
-                try {
-                    $this->session->startNew();
-                    $conn->send([
-                        'id' => $id,
-                        'type' => 'response',
-                        'success' => true,
-                        'sessionFile' => basename($this->session->store()?->path ?? ''),
-                        'state' => $this->getStatePayload(),
-                    ]);
-                } catch (Throwable $e) {
-                    $conn->send(['id' => $id, 'type' => 'response', 'success' => false, 'error' => $e->getMessage()]);
-                }
-            }),
-            'get_state' => $conn->send([
-                'id' => $id,
-                'type' => 'state',
-                'state' => $this->getStatePayload(),
-            ]),
-            'get_messages' => $conn->send([
-                'id' => $id,
-                'type' => 'messages',
-                'messages' => $this->getMessagesPayload(),
-            ]),
-            'get_models' => $conn->send([
-                'id' => $id,
-                'type' => 'models',
-                'models' => $this->getModelsPayload(),
-            ]),
-            default => null,
-        };
+                return;
+            }
+
+            $conn->send([
+                'type' => 'session_bound',
+                'cwd' => $managed->cwd,
+                'sessionFile' => $managed->sessionFile,
+                'shared' => count($managed->clients) > 1,
+            ]);
+
+            return;
+        }
+
+        if ($type === 'detach_session') {
+            $this->pool->detach($connectionId);
+
+            return;
+        }
+
+        if ($type === 'rpc_command') {
+            $managed = $this->pool->boundTo($connectionId);
+            $command = $data['command'] ?? null;
+
+            if ($managed === null) {
+                $conn->send(['type' => 'error', 'message' => 'no active session', 'id' => is_array($command) ? ($command['id'] ?? null) : null]);
+
+                return;
+            }
+
+            if (!is_array($command) || !is_string($command['type'] ?? null)) {
+                $conn->send(['type' => 'error', 'message' => 'rpc_command wants a command object with a type']);
+
+                return;
+            }
+
+            try {
+                $managed->client->relay($command);
+            } catch (Throwable $e) {
+                $conn->send(['type' => 'error', 'message' => $e->getMessage(), 'id' => $command['id'] ?? null]);
+            }
+
+            return;
+        }
+
+        $conn->send(['type' => 'error', 'message' => "unknown message type '{$type}'"]);
     }
 
     /**
-     * @param list<mixed> $rawImages
-     * @return list<ImageContent>
+     * A line from a child, to every socket bound to it. `session_ended` is the pool's own and
+     * goes out as itself; everything else — events and responses alike — is wrapped as
+     * `rpc_event`, which is pi-web's envelope and lets the page tell "the child said" from
+     * "the server said".
+     *
+     * @param array<string, mixed> $event
      */
-    private function parseImages(array $rawImages): array
+    private function onSessionEvent(ManagedSession $managed, array $event): void
     {
-        $images = [];
+        $line = ($event['type'] ?? null) === 'session_ended' ? $event : ['type' => 'rpc_event', 'event' => $event];
 
-        foreach ($rawImages as $img) {
-            if (is_array($img) && isset($img['data'], $img['mimeType']) && is_string($img['data']) && is_string($img['mimeType'])) {
-                $images[] = new ImageContent($img['data'], $img['mimeType']);
+        foreach (array_keys($managed->clients) as $connectionId) {
+            $client = $this->wsClients[$connectionId] ?? null;
+
+            if ($client !== null && !$client->isClosed()) {
+                $client->send($line);
             }
         }
-
-        return $images;
     }
+
+    // ---- payloads --------------------------------------------------------------------------
 
     /** @return list<array<string, mixed>> */
     private function getModelsPayload(): array
@@ -1101,207 +631,6 @@ final class HttpServer
     }
 
     /** The first thing said in this conversation, as a tab label when nobody named it. */
-    private function opening(): string
-    {
-        foreach ($this->session->messages() as $message) {
-            if ($message instanceof \Pig\Ai\UserMessage) {
-                foreach ($message->content as $block) {
-                    if ($block instanceof \Pig\Ai\TextContent && trim($block->text) !== '') {
-                        return mb_substr(preg_replace('/\s+/u', ' ', trim($block->text)) ?? '', 0, 60);
-                    }
-                }
-            }
-        }
-
-        return '';
-    }
-
-    /**
-     * The model a `set_model` names, by the two shapes a client sends: `provider` + bare
-     * `modelId`, or a single `provider/id` string in `modelId` with no `provider` at all.
-     *
-     * **The provider used to be ignored.** `Models::get()` takes a bare id and compares it with
-     * `$model->id`, so the `"provider/id"` string the old code built there matched nothing, and
-     * the `?? Models::get($modelId)` fallback then resolved the bare id — to the *direct*
-     * provider, by `Models::RESOLD`. The page sends `provider: "antigravity"` with
-     * `modelId: "gemini-3.8-flash"`; what the session was switched to was Google's public model
-     * of that name, on a different bill and a different quota, with `ok: true` and nothing on
-     * screen to say so. Found by a test that restored a model and got the wrong one back.
-     *
-     * `Models::find()` is the keyed lookup, so a named provider is honoured exactly; a bare id
-     * with no provider is still the direct provider's, which is what somebody typing
-     * `gemini-3.8-flash` means. A miss throws rather than returning null, because the caller is
-     * about to answer a request and `ok: true` for a switch that did not happen is the bug.
-     */
-    private static function resolveModel(?string $provider, string $modelId): \Pig\Ai\Model
-    {
-        if ($provider === null && str_contains($modelId, '/')) {
-            [$provider, $modelId] = explode('/', $modelId, 2);
-        }
-
-        $model = $provider === null ? Models::get($modelId) : Models::find($provider, $modelId);
-
-        if ($model === null) {
-            $named = $provider === null ? $modelId : "{$provider}/{$modelId}";
-
-            throw new \RuntimeException("No such model: {$named}");
-        }
-
-        return $model;
-    }
-
-    /** @return array<string, mixed> */
-    private function getStatePayload(): array
-    {
-        $stats = $this->session->stats();
-        $model = $this->session->model();
-        $window = $model?->contextWindow ?? 0;
-        $contextTokens = $this->session->contextTokens();
-        $percent = $window > 0 ? (float) ($contextTokens / $window * 100) : 0.0;
-
-        return [
-            'cwd' => basename($this->session->cwd()),
-            'branch' => 'main',
-            'sessionFile' => basename($this->session->store()?->path ?? ''),
-            'sessionPath' => $this->session->store()?->path,
-            'sessionName' => $this->session->getSessionName(),
-            'opening' => $this->opening(),
-            'cwdPath' => $this->session->cwd(),
-            'model' => $model?->id ?? 'no-model',
-            'provider' => $model?->provider ?? 'unknown',
-            'thinkingLevel' => $this->session->thinkingLevel()?->value ?? 'off',
-            'tokensIn' => $stats->input,
-            'tokensOut' => $stats->output,
-            'cost' => number_format($stats->cost, 3),
-            'contextWindow' => $window < 1000000 ? round($window / 1000) . 'k' : sprintf('%.1fM', $window / 1000000),
-            'contextPercent' => sprintf('%.1f', $percent),
-        ];
-    }
-
-    /** @return list<array{role: string, content: mixed}> */
-    private function getMessagesPayload(): array
-    {
-        $history = [];
-        foreach ($this->session->messages() as $m) {
-            if ($m instanceof UserMessage) {
-                $blocks = [];
-                foreach ($m->content as $c) {
-                    if ($c instanceof TextContent) {
-                        $blocks[] = ['type' => 'text', 'text' => $c->text];
-                    } elseif ($c instanceof ImageContent) {
-                        $blocks[] = ['type' => 'image', 'mimeType' => $c->mimeType, 'data' => $c->data];
-                    }
-                }
-                $history[] = [
-                    'role' => 'user',
-                    'content' => $blocks,
-                ];
-            } elseif ($m instanceof AssistantMessage) {
-                $blocks = [];
-                foreach ($m->content as $c) {
-                    if ($c instanceof TextContent) {
-                        $blocks[] = ['type' => 'text', 'text' => $c->text];
-                    } elseif ($c instanceof ThinkingContent) {
-                        $blocks[] = ['type' => 'thinking', 'text' => $c->thinking];
-                    } elseif ($c instanceof ToolCall) {
-                        $blocks[] = [
-                            'type' => 'tool_call',
-                            'id' => $c->id,
-                            'name' => $c->name,
-                            'arguments' => $c->arguments,
-                        ];
-                    }
-                }
-                $history[] = [
-                    'role' => 'assistant',
-                    'content' => $blocks,
-                    'stopReason' => $m->stopReason->value,
-                    'errorMessage' => $m->errorMessage,
-                ];
-            } elseif ($m instanceof ToolResultMessage) {
-                $textResult = '';
-                foreach ($m->content as $c) {
-                    if ($c instanceof TextContent) {
-                        $textResult .= $c->text;
-                    }
-                }
-                $history[] = [
-                    'role' => 'tool_result',
-                    'toolCallId' => $m->toolCallId,
-                    'toolName' => $m->toolName,
-                    'result' => $textResult,
-                    'isError' => $m->isError,
-                    'details' => $m->details,
-                ];
-            } elseif ($m instanceof \Pig\CodingAgent\Session\CompactionSummary) {
-                $history[] = [
-                    'role' => 'compaction',
-                    'summary' => $m->summary,
-                    'replaced' => $m->replaced,
-                    'readFiles' => $m->readFiles,
-                    'modifiedFiles' => $m->modifiedFiles,
-                ];
-            } elseif ($m instanceof \Pig\CodingAgent\Session\BranchSummary) {
-                $history[] = [
-                    'role' => 'branch_summary',
-                    'summary' => $m->summary,
-                    'fromHook' => $m->fromHook,
-                    'readFiles' => $m->readFiles,
-                    'modifiedFiles' => $m->modifiedFiles,
-                ];
-            } elseif ($m instanceof \Pig\CodingAgent\Session\HookMessage) {
-                $history[] = [
-                    'role' => 'hook_message',
-                    'customType' => $m->customType,
-                    'content' => $m->toText(),
-                    'display' => $m->display,
-                ];
-            }
-        }
-
-        return $history;
-    }
-
-    /** @return array<string, mixed>|null */
-    private function serializeMessageUpdate(MessageUpdateEvent $event): ?array
-    {
-        $raw = $event->assistantMessageEvent;
-
-        if ($raw instanceof TextDeltaEvent) {
-            return ['type' => 'text_delta', 'delta' => $raw->delta];
-        }
-
-        if ($raw instanceof ThinkingDeltaEvent) {
-            return ['type' => 'thinking_delta', 'delta' => $raw->delta];
-        }
-
-        return null;
-    }
-
-    private function extractToolOutput(mixed $result): string
-    {
-        if ($result instanceof AgentToolResult) {
-            if (is_array($result->details) && isset($result->details['output']) && is_string($result->details['output'])) {
-                return $result->details['output'];
-            }
-            $out = '';
-            foreach ($result->content as $c) {
-                if ($c instanceof TextContent) {
-                    $out .= $c->text;
-                }
-            }
-
-            return $out;
-        }
-
-        if (is_string($result)) {
-            return $result;
-        }
-
-        return '';
-    }
-
-    /** @return list<array{path: string, name: string, sessionCount: int, isCurrent: bool}> */
     private function listAllWorkspaces(string $currentCwd): array
     {
         $roots = [

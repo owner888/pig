@@ -522,8 +522,13 @@ final class InteractiveMode
         }
 
         $this->running = false;
-        $this->webServer?->stop();
-        $this->webServer = null;
+        // Stopping the web server winds its children down and suspends while it does, and this
+        // runs from a key handler — inside the loop's callback — so it goes in a fiber of its own.
+        if ($this->webServer !== null) {
+            $server = $this->webServer;
+            $this->webServer = null;
+            Async::spawn(static fn () => $server->stop());
+        }
         $this->working?->stop();
         // A frame timer outliving the screen it drew on keeps the loop from ever going idle.
         $this->armin?->dispose();
@@ -2788,8 +2793,9 @@ final class InteractiveMode
                 return;
             }
 
-            $this->webServer->stop();
+            $server = $this->webServer;
             $this->webServer = null;
+            Async::spawn(static fn () => $server->stop());
             $this->say('Web UI server stopped.');
 
             return;
@@ -2806,15 +2812,17 @@ final class InteractiveMode
         $port = is_numeric($args) ? (int) $args : 8088;
         $bound = false;
 
+        // The shell and nothing else: `HttpServer` holds no session now, each tab in the page
+        // is a `pig --mode rpc` child of its own, and this terminal keeps the conversation it
+        // is in. `/web` used to hand the browser *this* session, so a tab click moved the
+        // terminal too — the thing the new process model exists to stop.
         for ($attempt = 0; $attempt < 10; $attempt++) {
             $candidatePort = $port + $attempt;
             try {
                 $this->webServer = new \Pig\CodingAgent\Web\HttpServer(
-                    $this->session,
+                    $this->session->cwd(),
                     $candidatePort,
                     auth: $this->auth,
-                    hooks: $this->hooks,
-                    customTools: $this->customTools,
                 );
                 $this->webServer->start();
                 $bound = true;

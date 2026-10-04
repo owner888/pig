@@ -112,6 +112,39 @@ final class Run
             })
             : null;
 
+        // A background grandchild (`(cmd) &`) inherits the pipes unless explicitly closed.
+        // If the main shell has already exited, waiting for pipe EOF hangs indefinitely.
+        // Periodically check if the primary process has finished; once it exits, drain
+        // remaining output and resolve without waiting for orphaned background grandchildren.
+        $pollTimer = null;
+        $pollProcess = function () use (&$pollProcess, &$pollTimer): void {
+            $pollTimer = Loop::get()->delay(0.1, function () use (&$pollProcess): void {
+                if (!is_resource($this->process)) {
+                    return;
+                }
+
+                $status = proc_get_status($this->process);
+
+                if ($status['running'] !== true) {
+                    Loop::get()->delay(0.05, function (): void {
+                        if ($this->finished !== null && !$this->finished->future->isComplete()) {
+                            foreach ([1, 2] as $fd) {
+                                if (isset($this->pipes[$fd]) && is_resource($this->pipes[$fd])) {
+                                    $this->read($fd);
+                                }
+                            }
+                            $this->finished->complete(null);
+                        }
+                    });
+
+                    return;
+                }
+
+                $pollProcess();
+            });
+        };
+        $pollProcess();
+
         try {
             $this->finished?->future->await();
             // The pipes closing is not the command exiting, and the code is a fact about the
@@ -123,6 +156,10 @@ final class Run
         } finally {
             if ($timer !== null) {
                 Loop::get()->cancel($timer);
+            }
+
+            if ($pollTimer !== null) {
+                Loop::get()->cancel($pollTimer);
             }
 
             if ($listener !== null) {

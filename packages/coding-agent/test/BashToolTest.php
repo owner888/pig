@@ -521,6 +521,22 @@ final class BashToolTest extends ToolTestCase
         unlink((string) $path);
     }
 
+    /**
+     * A background grandchild (`(sleep 5) &`) inherits the pipes unless explicitly closed.
+     * When the main shell finishes, `feof($pipe)` stays false for as long as the background
+     * child runs. Without polling the parent process's status, `Run::wait()` hangs indefinitely
+     * waiting for pipe EOF.
+     */
+    public function testACommandThatSpawnsABackgroundGrandchildDoesNotHangWaitingForPipes(): void
+    {
+        $start = microtime(true);
+        $output = $this->textOf($this->bash(['command' => 'sh -c "(sleep 5) & echo parent_done"']));
+        $elapsed = microtime(true) - $start;
+
+        $this->assertStringContainsString('parent_done', $output);
+        $this->assertLessThan(2.0, $elapsed, 'command finishes when the parent shell exits, not after 5 seconds');
+    }
+
     /** Where `Run` put the whole output of a command that printed $bytes bytes, if anywhere. */
     private function spillOf(int $bytes): ?string
     {

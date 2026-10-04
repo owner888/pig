@@ -84,21 +84,24 @@ if ($saved === null) {
     HttpClient::useProxy($proxy);
 }
 
-$key = $saved !== null ? null : Auth::discover(settings: $settings)->apiKey(Models::ANTIGRAVITY);
-$credentials = $key === null ? null : json_decode($key, true);
-$token = is_array($credentials) ? ($credentials['token'] ?? null) : null;
-$project = is_array($credentials) ? ($credentials['projectId'] ?? null) : null;
+// `apiKey()` renews an expired token over the network, so it has to run inside the coroutine
+// too — outside one it works for exactly as long as the stored token is fresh, which is how
+// this script passed every run until the day it did not.
+$body = $saved !== null ? [200, $raw] : Async::run(static function () use ($endpoint, $settings): array {
+    $key = Auth::discover(settings: $settings)->apiKey(Models::ANTIGRAVITY);
+    $credentials = $key === null ? null : json_decode($key, true);
+    $token = is_array($credentials) ? ($credentials['token'] ?? null) : null;
+    $project = is_array($credentials) ? ($credentials['projectId'] ?? null) : null;
 
-if ($saved === null && (!is_string($token) || $token === '' || !is_string($project) || $project === '')) {
-    fwrite(STDERR, Style::red(
-        "No Antigravity token and project. `bin/pig-ai login` stores both; an ordinary Gemini\n"
-        . "API key is not enough for this endpoint.\n",
-    ));
+    if (!is_string($token) || $token === '' || !is_string($project) || $project === '') {
+        fwrite(STDERR, Style::red(
+            "No Antigravity token and project. `bin/pig-ai login` stores both; an ordinary Gemini\n"
+            . "API key is not enough for this endpoint.\n",
+        ));
 
-    exit(1);
-}
+        exit(1);
+    }
 
-$body = $saved !== null ? [200, $raw] : Async::run(static function () use ($endpoint, $token, $project): array {
     $response = (new HttpClient())->send(new Request(
         'POST',
         $endpoint . '/v1internal:fetchAvailableModels',

@@ -304,6 +304,8 @@
       animation: tab-pulse 1.2s ease-in-out infinite;
     }
     @keyframes tab-pulse { 0%,100% { opacity: .3 } 50% { opacity: 1 } }
+    /* A tab whose child has exited: dimmed, and the next message restarts it. */
+    .session-tab.ended .session-tab-label { opacity: .5; text-decoration: line-through; text-decoration-color: rgba(248,113,113,.6); }
     .session-tab-label { overflow: hidden; text-overflow: ellipsis; }
     .session-tab-close {
       opacity: 0;
@@ -340,7 +342,16 @@
     }
 
     /* Messages container */
-    #chat-scroll {
+    /* One scroller per tab, stacked in #chat-area; only the active tab's is displayed. A
+       background tab keeps receiving its child's events into its own hidden scroller, so
+       switching back shows what happened while you were away, scroll position included. */
+    #chat-area {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+      display: flex;
+    }
+    .chat-scroll {
       flex: 1;
       overflow-y: auto;
       padding: 10px 20px 24px;
@@ -349,6 +360,7 @@
       gap: 12px;
       scroll-behavior: smooth;
     }
+    .chat-scroll[hidden] { display: none; }
 
     .msg-block {
       width: 100%;
@@ -998,7 +1010,7 @@
     <div id="session-tabs" class="session-tabs"></div>
     <div id="status-banner" class="status-banner" style="display:none;"></div>
 
-    <div id="chat-scroll"></div>
+    <div id="chat-area"></div>
     <button id="scroll-bottom-btn" class="scroll-bottom-pill" style="display:none;" title="Scroll to bottom">↓ New messages</button>
 
     <div class="bottom-panel">
@@ -1027,7 +1039,7 @@
   </main>
 
   <script>
-    const chatScroll = document.getElementById("chat-scroll");
+    const chatArea = document.getElementById("chat-area");
     const promptInput = document.getElementById("prompt-input");
     const sendBtn = document.getElementById("send-btn");
     const stopBtn = document.getElementById("stop-btn");
@@ -1048,15 +1060,224 @@
     const newSessionBtn = document.getElementById("new-session-btn");
     const sidebarBackdrop = document.getElementById("sidebar-backdrop");
 
-    let isRunning = false;
-    let currentAssistantBlock = null;
-    let currentAssistantText = "";
-    let currentThinkingText = "";
-    let currentThinkingBox = null;
-
-    let userScrolledUp = false;
     let currentView = "workspaces"; // "workspaces" | "sessions"
     let selectedWorkspace = null;
+
+    // ---- a tab is a conversation: its own socket, its own scroller, its own stream state --
+    //
+    // pi-web's shape, and step ③ of the process model in CLAUDE.md. Behind every tab is a
+    // `pig --mode rpc` child on the server; this object is the browser's end of it. Everything
+    // that used to be a page-wide `let` — the block being streamed into, whether a turn is
+    // running, whether you scrolled up — lives here, one per tab, so a turn in a background
+    // tab keeps drawing into its own hidden scroller and is all there when you switch back.
+    //
+    // The rendering code below still says `chatScroll`, `isRunning`, `currentAssistantBlock`
+    // and so on: those names are now getters/setters on whichever tab is *active*, so the
+    // event handlers write to `tab.*` and the DOM helpers read from the active one. The one
+    // rule that keeps that honest is that an event from a socket is applied to **that tab**,
+    // never to the active one — see `Tab.onRpcEvent`, which swaps `renderingTab` for the
+    // length of the call.
+    class Tab {
+      constructor(cwd, sessionFile) {
+        this.cwd = cwd;
+        this.sessionFile = sessionFile || null;   // null until the child names its file
+        this.sessionPath = null;
+        this.name = null;
+        this.opening = null;
+        this.ws = null;
+        this.bound = false;
+        this.reconnectTimer = null;
+        this.reconnectDelay = 1000;
+        this.pending = new Map();                 // rpc id -> {resolve, reject, timer}
+        this.nextId = 0;
+        this.state = null;                        // last get_state answer
+        this.ended = false;                       // the child is gone; next bind restarts it
+
+        // Stream state, formerly page-wide.
+        this.isRunning = false;
+        this.currentAssistantBlock = null;
+        this.currentAssistantText = "";
+        this.currentThinkingText = "";
+        this.currentThinkingBox = null;
+        this.userScrolledUp = false;
+
+        this.scroller = document.createElement("div");
+        this.scroller.className = "chat-scroll";
+        this.scroller.hidden = true;
+        this.scroller.addEventListener("scroll", () => {
+          const d = this.scroller.scrollHeight - this.scroller.scrollTop - this.scroller.clientHeight;
+          this.userScrolledUp = d > 80;
+          if (this === active) scrollBottomBtn.style.display = this.userScrolledUp ? "flex" : "none";
+        });
+        chatArea.appendChild(this.scroller);
+      }
+
+      get key() { return (this.cwd || "") + "::" + (this.sessionFile || ("__new__::" + clientId)); }
+
+      // ---- the socket ------------------------------------------------------------------
+      connect() {
+        if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+        if (this.ws) {
+          try { this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null; this.ws.close(); } catch (e) {}
+        }
+        this.bound = false;
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        this.ws = new WebSocket(`${protocol}//${location.host}/ws`);
+        this.ws.onopen = () => {
+          this.reconnectDelay = 1000;
+          this.send({ type: "start_session", cwd: this.cwd, sessionFile: this.sessionFile });
+        };
+        this.ws.onmessage = (e) => {
+          let m; try { m = JSON.parse(e.data); } catch (err) { return; }
+          this.onServerMessage(m);
+        };
+        this.ws.onclose = () => { this.bound = false; this.failPending("connection closed"); this.scheduleReconnect(); };
+        this.ws.onerror = () => { this.bound = false; };
+      }
+
+      scheduleReconnect() {
+        if (this.reconnectTimer || this.closed) return;
+        if (this === active) showStatusBanner("Connecting to server...");
+        const delay = this.reconnectDelay + Math.floor(Math.random() * 500);
+        this.reconnectTimer = setTimeout(() => { this.reconnectTimer = null; this.connect(); }, delay);
+        this.reconnectDelay = Math.min(this.reconnectDelay * 1.5, 10000);
+      }
+
+      send(obj) {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj));
+      }
+
+      /** Send an rpc command and resolve with its response's `data` (or reject on failure). */
+      rpc(command, timeoutMs = 30000) {
+        return new Promise((resolve, reject) => {
+          if (!this.bound) { reject(new Error("no active session")); return; }
+          const id = "ui-" + (++this.nextId);
+          const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${command.type}: no answer in ${timeoutMs / 1000}s`)); }, timeoutMs);
+          this.pending.set(id, { resolve, reject, timer });
+          this.send({ type: "rpc_command", command: { ...command, id } });
+        });
+      }
+
+      failPending(why) {
+        for (const [id, p] of this.pending) { clearTimeout(p.timer); p.reject(new Error(why)); }
+        this.pending.clear();
+      }
+
+      // ---- what the server says ----------------------------------------------------------
+      onServerMessage(m) {
+        if (m.type === "pong") return;
+        if (m.type === "session_bound") {
+          this.bound = true;
+          this.ended = false;
+          if (m.sessionFile) this.sessionFile = m.sessionFile;
+          if (this === active) { pigReachable(); hideStatusBanner(); }
+          this.onBound();
+          return;
+        }
+        if (m.type === "session_ended") {
+          this.bound = false;
+          this.ended = true;
+          this.failPending("the agent exited");
+          this.render(() => { setRunningState(false); appendErrorMessage("The agent for this conversation exited" + (m.reason ? ": " + m.reason : ".") + " Send a message to start it again."); });
+          agentWorkingChanged();
+          return;
+        }
+        if (m.type === "error") {
+          const p = m.id ? this.pending.get(m.id) : null;
+          if (p) { this.pending.delete(m.id); clearTimeout(p.timer); p.reject(new Error(m.message)); return; }
+          this.render(() => appendErrorMessage(m.message));
+          return;
+        }
+        if (m.type === "rpc_event") this.onRpcEvent(m.event);
+      }
+
+      onRpcEvent(evt) {
+        if (evt.type === "response") {
+          const p = this.pending.get(evt.id);
+          if (p) {
+            this.pending.delete(evt.id); clearTimeout(p.timer);
+            if (evt.success) p.resolve(evt.data ?? null); else p.reject(new Error(evt.error || `${evt.command} refused`));
+          }
+          return;
+        }
+        if (evt.type === "hook_ui_request") { this.render(() => onHookUiRequest(evt)); return; }
+        if (evt.type === "hook_error" || evt.type === "tool_error") {
+          this.render(() => appendErrorMessage((evt.hookPath ? evt.hookPath + ": " : "") + evt.error));
+          return;
+        }
+        this.render(() => onEvent(evt));
+      }
+
+      /** Run `fn` with this tab as the one the DOM helpers draw into. */
+      render(fn) {
+        const before = renderingTab;
+        renderingTab = this;
+        try { fn(); } finally { renderingTab = before; }
+      }
+
+      async onBound() {
+        // A fresh child, or a reconnect to one: load what it has, then ask what it is.
+        await this.loadMessages();
+        await this.refreshState();
+        if (this === active) applyActiveTabToChrome();
+      }
+
+      async refreshState() {
+        try {
+          const [s, stats] = await Promise.all([this.rpc({ type: "get_state" }), this.rpc({ type: "get_session_stats" })]);
+          this.state = s;
+          this.stats = stats;
+          if (s.sessionFile) {
+            this.sessionPath = s.sessionFile;
+            this.sessionFile = s.sessionFile.split("/").pop();
+          }
+          if (s.cwd) this.cwd = s.cwd;
+          this.name = s.sessionName || null;
+          if (s.opening) this.opening = s.opening;
+          this.isRunning = !!s.isStreaming;
+          this.render(() => setRunningState(this.isRunning));
+          saveTabs(); renderTabs();
+          if (this === active) applyActiveTabToChrome();
+        } catch (err) { if (this === active) pigUnreachable("the session state", err); }
+      }
+
+      async loadMessages() {
+        try {
+          const d = await this.rpc({ type: "get_messages" });
+          this.render(() => renderMessages(d.messages || []));
+        } catch (err) { if (this === active) pigUnreachable("the conversation", err); }
+      }
+
+      close() {
+        this.closed = true;
+        if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+        if (this.ws) { try { this.ws.onclose = null; this.ws.close(); } catch (e) {} }
+        this.failPending("tab closed");
+        this.scroller.remove();
+      }
+    }
+
+    // A per-page id, so two browsers each asking for "a new session in this directory" get two
+    // children and not one. pi-web's `getSocketClientId`.
+    const clientId = (() => { try { let v = sessionStorage.getItem("pig-client-id"); if (!v) { v = Math.random().toString(36).slice(2) + Date.now().toString(36); sessionStorage.setItem("pig-client-id", v); } return v; } catch (e) { return Math.random().toString(36).slice(2); } })();
+
+    let tabs = [];
+    let active = null;        // the tab the person is looking at
+    let renderingTab = null;  // the tab an event is being drawn into right now (see Tab.render)
+
+    // The old page-wide names, resolved against the tab being rendered into (an event) or the
+    // active one (a keystroke). Reads and writes both go to the same tab, so the helpers below
+    // are unchanged.
+    const T = () => renderingTab || active;
+    Object.defineProperties(window, {
+      chatScroll:            { get: () => T()?.scroller || chatArea },
+      isRunning:             { get: () => !!T()?.isRunning,            set: (v) => { if (T()) T().isRunning = v; } },
+      currentAssistantBlock: { get: () => T()?.currentAssistantBlock ?? null, set: (v) => { if (T()) T().currentAssistantBlock = v; } },
+      currentAssistantText:  { get: () => T()?.currentAssistantText ?? "",    set: (v) => { if (T()) T().currentAssistantText = v; } },
+      currentThinkingText:   { get: () => T()?.currentThinkingText ?? "",     set: (v) => { if (T()) T().currentThinkingText = v; } },
+      currentThinkingBox:    { get: () => T()?.currentThinkingBox ?? null,    set: (v) => { if (T()) T().currentThinkingBox = v; } },
+      userScrolledUp:        { get: () => !!T()?.userScrolledUp,       set: (v) => { if (T()) T().userScrolledUp = v; } },
+    });
 
     // 3-Level Cascading Selectors: Provider -> Model -> Thinking Level
     let currentProvider = "";
@@ -1241,6 +1462,11 @@
       }
     }
 
+    /** The tab bar shows a working dot per tab, so any tab's running state changing redraws it. */
+    function agentWorkingChanged() {
+      renderTabs();
+    }
+
     let isComposing = false;
     promptInput.addEventListener("compositionstart", () => { isComposing = true; });
     promptInput.addEventListener("compositionend", () => { isComposing = false; });
@@ -1337,13 +1563,13 @@
 
     function setRunningState(running) {
       isRunning = running;
-      if (running) {
-        sendBtn.style.display = "none";
-        stopBtn.style.display = "flex";
-      } else {
-        sendBtn.style.display = "flex";
-        stopBtn.style.display = "none";
+      // The buttons are the page's, so only the tab being looked at drives them; a background
+      // tab finishing its turn must not flip the stop button under a foreground one still running.
+      if (T() === active) {
+        sendBtn.style.display = running ? "none" : "flex";
+        stopBtn.style.display = running ? "flex" : "none";
       }
+      agentWorkingChanged();
     }
 
     function renderMarkdown(md) {
@@ -1438,124 +1664,13 @@
       return currentAssistantBlock;
     }
 
-    // Network: WebSocket (Full-duplex RPC) with Telegram-style reconnect & SSE fallback
-    let ws = null;
-    let wsConnected = false;
-    let wsReconnectTimer = null;
-    let wsReconnectDelay = 1000;
-    const WS_MAX_RECONNECT_DELAY = 10000;
-
-    function initNetwork() {
-      if (wsReconnectTimer) {
-        clearTimeout(wsReconnectTimer);
-        wsReconnectTimer = null;
-      }
-
-      // Close and cleanly discard any existing WebSocket connection instance before creating a new one
-      if (ws) {
-        try {
-          ws.onopen = null;
-          ws.onmessage = null;
-          ws.onclose = null;
-          ws.onerror = null;
-          if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-            ws.close();
-          }
-        } catch (e) {}
-        ws = null;
-      }
-
-      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${location.host}/ws`;
-
-      try {
-        ws = new WebSocket(wsUrl);
-        ws.onopen = () => {
-          wsConnected = true;
-          wsReconnectDelay = 1000; // Reset backoff on successful connection
-          pigReachable();
-
-          // One channel. An SSE stream started while the socket was still failing would
-          // otherwise stay open beside it and deliver every event twice — a hook's question
-          // included, and the second copy of a question cancels the first.
-          if (sse) { sse.close(); sse = null; sseStarted = false; }
-          loadModels();
-          refreshState();
-        };
-        ws.onmessage = (e) => {
-          try {
-            const data = JSON.parse(e.data);
-            if (data.type === "models") {
-              populateProviders(data.models);
-            } else if (data.type === "hook_ui_request") {
-              onHookUiRequest(data);
-            } else if (data.type === "hook_error" || data.type === "tool_error") {
-              appendErrorMessage((data.hookPath ? data.hookPath + ": " : "") + data.error);
-            } else {
-              onEvent(data);
-            }
-          } catch (err) {}
-        };
-        ws.onclose = (e) => {
-          wsConnected = false;
-          scheduleReconnect();
-        };
-        ws.onerror = (e) => {
-          wsConnected = false;
-          initSseFallback();
-          scheduleReconnect();
-        };
-      } catch (err) {
-        initSseFallback();
-        scheduleReconnect();
-      }
-    }
-
-    function scheduleReconnect() {
-      if (wsReconnectTimer) return;
-      showStatusBanner("Connecting to server...");
-      const delay = wsReconnectDelay + Math.floor(Math.random() * 500);
-      wsReconnectTimer = setTimeout(() => {
-        wsReconnectTimer = null;
-        initNetwork();
-      }, delay);
-      wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, WS_MAX_RECONNECT_DELAY);
-    }
-
-    // Immediate reconnection on browser online / visibility regain (Telegram-style instant reconnect)
-    window.addEventListener("online", () => {
-      if (!wsConnected) {
-        wsReconnectDelay = 1000;
-        initNetwork();
-      }
-    });
-
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && !wsConnected) {
-        wsReconnectDelay = 1000;
-        initNetwork();
-      }
-    });
-
-    let sseStarted = false;
-    let sse = null;
-    function initSseFallback() {
-      if (sseStarted || wsConnected) return;
-      sseStarted = true;
-      const es = new EventSource("/api/events");
-      sse = es;
-      es.onmessage = (e) => {
-        try {
-          const evt = JSON.parse(e.data);
-          if (evt.type === "hook_ui_request") onHookUiRequest(evt);
-          else if (evt.type === "hook_error" || evt.type === "tool_error") appendErrorMessage((evt.hookPath ? evt.hookPath + ": " : "") + evt.error);
-          else onEvent(evt);
-        } catch (err) {}
-      };
-      es.onerror = () => { es.close(); if (sse === es) sse = null; setTimeout(() => { sseStarted = false; initSseFallback(); }, 3000); };
-    }
-
+    // ---- events from a tab's child -----------------------------------------------------------
+    //
+    // Always called inside `Tab.render()`, so `chatScroll`, `currentAssistantBlock` and the rest
+    // resolve to the tab the event belongs to — a turn in a background tab draws into that
+    // tab's hidden scroller. `refreshState()` with no argument is the rendering tab's.
     function onEvent(evt) {
+      const tab = T();
       if (evt.type === "message_start") {
         currentAssistantBlock = null;
         currentAssistantText = "";
@@ -1567,72 +1682,68 @@
         currentAssistantText = "";
         currentThinkingText = "";
         currentThinkingBox = null;
-        refreshState();
+        if (evt.type === "agent_end") tab?.refreshState();
         if (evt.error) {
           appendErrorMessage(evt.error);
         }
-      } else if (evt.type === "thinking_delta") {
-        currentThinkingText += evt.delta || "";
-        const box = ensureAssistantBlock();
-        if (!currentThinkingBox) {
-          currentThinkingBox = document.createElement("details");
-          currentThinkingBox.className = "thinking-box";
-          currentThinkingBox.open = true;
-          currentThinkingBox.innerHTML = "<summary>Thinking...</summary><div class=\"thinking-content\"></div>";
-          box.insertBefore(currentThinkingBox, box.firstChild);
+      } else if (evt.type === "message_update") {
+        // `RpcMode` sends the whole message so far plus the delta that changed it; the delta
+        // is what streams, so it is what is drawn.
+        const d = evt.delta || {};
+        if (d.type === "thinking_delta") {
+          currentThinkingText += d.delta || "";
+          const box = ensureAssistantBlock();
+          if (!currentThinkingBox) {
+            currentThinkingBox = document.createElement("details");
+            currentThinkingBox.className = "thinking-box";
+            currentThinkingBox.open = true;
+            currentThinkingBox.innerHTML = "<summary>Thinking...</summary><div class=\"thinking-content\"></div>";
+            box.insertBefore(currentThinkingBox, box.firstChild);
+          }
+          currentThinkingBox.querySelector(".thinking-content").innerText = currentThinkingText;
+          scrollToBottomIfNeeded();
+        } else if (d.type === "text_delta") {
+          currentAssistantText += d.delta || "";
+          const box = ensureAssistantBlock();
+          let prose = box.querySelector(".assistant-prose");
+          if (!prose) {
+            prose = document.createElement("div");
+            prose.className = "assistant-prose";
+            box.appendChild(prose);
+          }
+          prose.innerHTML = renderMarkdown(currentAssistantText);
+          scrollToBottomIfNeeded();
         }
-        currentThinkingBox.querySelector(".thinking-content").innerText = currentThinkingText;
-        scrollToBottomIfNeeded();
-      } else if (evt.type === "text_delta") {
-        currentAssistantText += evt.delta || "";
-        const box = ensureAssistantBlock();
-        let prose = box.querySelector(".assistant-prose");
-        if (!prose) {
-          prose = document.createElement("div");
-          prose.className = "assistant-prose";
-          box.appendChild(prose);
-        }
-        prose.innerHTML = renderMarkdown(currentAssistantText);
-        scrollToBottomIfNeeded();
       } else if (evt.type === "tool_execution_start") {
         currentAssistantBlock = null;
         currentAssistantText = "";
-
-        const card = createToolCard(evt);
-        chatScroll.appendChild(card);
+        chatScroll.appendChild(createToolCard(evt));
         scrollToBottomIfNeeded();
       } else if (evt.type === "tool_execution_update") {
-        updateToolCardProgress(evt);
+        updateToolCardProgress({ toolCallId: evt.toolCallId, output: textOf(evt.partial?.content) });
       } else if (evt.type === "tool_execution_end") {
-        updateToolCard(evt);
+        updateToolCard({ toolCallId: evt.toolCallId, result: evt.result, isError: evt.isError });
         currentAssistantBlock = null;
         currentAssistantText = "";
       } else if (evt.type === "retry_start") {
-        showStatusBanner(`⟳ Retrying in ${Math.round(evt.delaySeconds)}s (attempt ${evt.attempt}/${evt.maxAttempts}): ${evt.error}`);
+        if (tab === active) showStatusBanner(`⟳ Retrying in ${Math.round(evt.delaySeconds)}s (attempt ${evt.attempt}/${evt.maxAttempts}): ${evt.error}`);
       } else if (evt.type === "retry_end") {
-        hideStatusBanner();
-        refreshState();
+        if (tab === active) hideStatusBanner();
+        tab?.refreshState();
       } else if (evt.type === "auto_compaction_start") {
-        showStatusBanner(`Context is full — compacting conversation summary...`);
+        if (tab === active) showStatusBanner(`Context is full — compacting conversation summary...`);
       } else if (evt.type === "auto_compaction_end") {
-        hideStatusBanner();
-        refreshState();
+        if (tab === active) hideStatusBanner();
+        tab?.refreshState();
       } else if (evt.type === "session_info_changed") {
-        refreshState();
-      } else if (evt.type === "session_switch") {
-        // The terminal (or another browser) moved to another conversation: this page follows,
-        // because the process is in that one now whatever the tab bar was claiming. A switch
-        // this page asked for has already redrawn itself.
-        if (switchAskedHere) {
-          switchAskedHere = false;
-        } else {
-          chatScroll.innerHTML = "";
-          loadMessages();
-          refreshState();
-        }
+        tab?.refreshState();
       }
-      if (evt.type === "agent_start") { agentWorking = true; renderTabs(); }
-      if (evt.type === "agent_end") { agentWorking = false; renderTabs(); }
+    }
+
+    /** The text blocks of an rpc content list, joined — what a tool's partial output reads as. */
+    function textOf(content) {
+      if (!Array.isArray(content)) return "";
+      return content.filter((c) => c && c.type === "text").map((c) => c.text || "").join("");
     }
 
     function createToolCard(evt) {
@@ -1749,6 +1860,15 @@
       return card;
     }
 
+    /**
+     * The card for a tool call — in the tab being rendered into, not the document. Two children
+     * can mint the same `call_N` id, and `getElementById` would find whichever tab drew first.
+     */
+    function toolCardFor(toolCallId) {
+      const root = chatScroll;
+      return root ? root.querySelector(`#${CSS.escape("tool-" + toolCallId)}`) : null;
+    }
+
     function formatToolResultBody(toolName, result, args) {
       if (result === undefined || result === null) {
         return "";
@@ -1810,7 +1930,7 @@
     }
 
     function updateToolCard(evt) {
-      const card = document.getElementById(`tool-${evt.toolCallId}`);
+      const card = toolCardFor(evt.toolCallId);
       if (!card) return;
 
       const toolName = card.dataset.tool || "";
@@ -1839,7 +1959,7 @@
     }
 
     function updateToolCardProgress(evt) {
-      const card = document.getElementById(`tool-${evt.toolCallId}`);
+      const card = toolCardFor(evt.toolCallId);
       if (!card) return;
 
       const body = card.querySelector(".tool-body");
@@ -1921,19 +2041,11 @@
       return html;
     }
 
-    async function startNewSession() {
-      switchAskedHere = true;
-      chatScroll.innerHTML = "";
+    /** A new conversation is a new tab — and a new child — in the current directory. */
+    async function startNewSession(cwd = null) {
       pendingImages = [];
       renderPendingImages();
-
-      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "new_session" }));
-      } else {
-        await fetch("/api/session/new", { method: "POST" });
-      }
-
-      await refreshState();
+      openTab(new Tab(cwd || active?.cwd || serverCwd, null));
       if (currentView === "sessions" && selectedWorkspace) {
         enterWorkspace(selectedWorkspace);
       } else {
@@ -1952,112 +2064,94 @@
       pendingImages = [];
       renderPendingImages();
 
-      // Intercept /doctor command directly in Web UI
+      if (!active) return;
+      const tab = active;
+
+      // ---- the slash commands the page answers itself -------------------------------------
+      // Each is an rpc command to the active tab's child (`RpcMode`'s `doctor`, `bug`, `diff`,
+      // `export_markdown`): the child owns the session, so the child answers about it.
       if (text === "/doctor") {
         appendUserMessage(text);
         try {
-          const res = await fetch("/api/doctor");
-          const data = await res.json();
-          if (data && data.plain) {
-            const card = document.createElement("div");
-            card.className = "tool-card";
-            card.innerHTML = `
-              <div class="tool-header">
-                <span class="tool-header-title">pig doctor</span>
-                <span class="tool-header-status">diagnostics</span>
-              </div>
-              <div class="tool-body"><pre><code>${escapeHtml(data.plain)}</code></pre></div>
-            `;
-            chatScroll.appendChild(card);
-          }
-          scrollToBottomIfNeeded();
-        } catch (err) {}
+          const data = await active.rpc({ type: "doctor" });
+          const card = document.createElement("div");
+          card.className = "tool-card";
+          card.innerHTML = `
+            <div class="tool-header">
+              <span class="tool-header-title">pig doctor</span>
+              <span class="tool-header-status">diagnostics</span>
+            </div>
+            <div class="tool-body"><pre><code>${escapeHtml(data.plain || "")}</code></pre></div>
+          `;
+          chatScroll.appendChild(card);
+        } catch (err) { appendErrorMessage(err.message); }
+        scrollToBottomIfNeeded();
         return;
       }
 
       // The accounts panel is this page's answer to /antigravity.accounts
       if (text === "/accounts" || text === "/antigravity.accounts") {
-        promptInput.value = "";
-        promptInput.style.height = "38px";
         openAccounts();
         return;
       }
 
-      // Intercept /bug command in Web UI
       if (text === "/bug" || text.startsWith("/bug ")) {
         appendUserMessage(text);
         const hint = text.slice(4).trim();
         const includeTranscript = confirm("Include the session transcript in the bug report?\n\nIt holds your messages, the model's output, and every file and command result read this session.");
         try {
-          const res = await fetch("/api/bug", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ hint, includeTranscript }),
-          });
-          const data = await res.json();
-          if (data && data.ok) {
-            const block = document.createElement("div");
-            block.className = "msg-block msg-assistant prose";
-            block.innerHTML = `<p>\u2713 Bug report written to <code>${escapeHtml(data.path)}</code>.</p><p><a href="${escapeHtml(data.issueUrl)}" target="_blank" rel="noopener" style="color:#38bdf8;">Open a GitHub issue with it prefilled \u2197</a></p>`;
-            chatScroll.appendChild(block);
-            if (navigator.clipboard) navigator.clipboard.writeText(data.report).catch(() => {});
-          } else {
-            appendErrorMessage(data.error || "Failed to write bug report.");
-          }
-        } catch (err) {
-          appendErrorMessage("Failed to write bug report.");
-        }
+          const data = await active.rpc({ type: "bug", hint, includeTranscript });
+          const block = document.createElement("div");
+          block.className = "msg-block msg-assistant prose";
+          block.innerHTML = `<p>\u2713 Bug report written to <code>${escapeHtml(data.path)}</code>.</p><p><a href="${escapeHtml(data.issueUrl)}" target="_blank" rel="noopener" style="color:#38bdf8;">Open a GitHub issue with it prefilled \u2197</a></p>`;
+          chatScroll.appendChild(block);
+          if (navigator.clipboard) navigator.clipboard.writeText(data.report).catch(() => {});
+        } catch (err) { appendErrorMessage(err.message); }
         scrollToBottomIfNeeded();
         return;
       }
 
-      // Intercept /export command in Web UI
       if (text === "/export" || text.startsWith("/export ")) {
         appendUserMessage(text);
         const sub = text.slice(7).trim();
-        if (sub === "pr" || sub.startsWith("pr ")) {
-          const loadingBlock = document.createElement("div");
-          loadingBlock.className = "msg-block msg-assistant";
-          loadingBlock.innerText = "Generating Pull Request description from session…";
-          chatScroll.appendChild(loadingBlock);
-          scrollToBottomIfNeeded();
-
-          try {
-            const res = await fetch("/api/export?format=pr");
-            const data = await res.json();
-            chatScroll.removeChild(loadingBlock);
-            if (data && data.markdown) {
+        const asPr = sub === "pr" || sub.startsWith("pr ");
+        const asMd = asPr || sub === "md" || sub === "markdown";
+        const loading = document.createElement("div");
+        loading.className = "msg-block msg-assistant";
+        loading.innerText = asPr ? "Generating Pull Request description from session…" : "Exporting…";
+        chatScroll.appendChild(loading);
+        scrollToBottomIfNeeded();
+        try {
+          if (asMd) {
+            const data = await active.rpc({ type: "export_markdown", format: asPr ? "pr" : "md" }, 180000);
+            loading.remove();
+            if (asPr) {
               const card = document.createElement("div");
               card.className = "msg-block msg-assistant prose";
-              card.innerHTML = renderMarkdown(data.markdown);
+              card.innerHTML = renderMarkdown(data.markdown || "");
               chatScroll.appendChild(card);
             } else {
-              appendErrorMessage(data.error || "Failed to generate PR description.");
+              const blob = new Blob([data.markdown || ""], { type: "text/markdown" });
+              window.open(URL.createObjectURL(blob), "_blank");
             }
-          } catch (err) {
-            chatScroll.removeChild(loadingBlock);
-            appendErrorMessage("Failed to generate PR description.");
+          } else {
+            const data = await active.rpc({ type: "export" });
+            loading.remove();
+            const block = document.createElement("div");
+            block.className = "msg-block msg-assistant prose";
+            block.innerHTML = `<p>\u2713 Exported to <code>${escapeHtml(data.path || "")}</code></p>`;
+            chatScroll.appendChild(block);
           }
-          scrollToBottomIfNeeded();
-          return;
-        }
-
-        if (sub === "md" || sub === "markdown") {
-          window.open("/api/export?format=md", "_blank");
-          return;
-        }
-
-        window.open("/api/export?format=html", "_blank");
+        } catch (err) { loading.remove(); appendErrorMessage(err.message); }
+        scrollToBottomIfNeeded();
         return;
       }
 
-      // Intercept /diff command directly in Web UI
       if (text === "/diff" || text.startsWith("/diff ")) {
         appendUserMessage(text);
         try {
-          const res = await fetch("/api/diff");
-          const data = await res.json();
-          if (data && data.diff) {
+          const data = await active.rpc({ type: "diff", args: text.slice(5).trim() });
+          if (data.diff) {
             const card = document.createElement("div");
             card.className = "tool-card";
             card.innerHTML = `
@@ -2069,48 +2163,50 @@
             `;
             chatScroll.appendChild(card);
           } else {
-            const emptyBlock = document.createElement("div");
-            emptyBlock.className = "msg-block msg-assistant";
-            emptyBlock.innerText = "No git changes in working tree.";
-            chatScroll.appendChild(emptyBlock);
+            const empty = document.createElement("div");
+            empty.className = "msg-block msg-assistant";
+            empty.innerText = "No git changes in working tree.";
+            chatScroll.appendChild(empty);
           }
-          scrollToBottomIfNeeded();
-        } catch (err) {}
+        } catch (err) { appendErrorMessage(err.message); }
+        scrollToBottomIfNeeded();
         return;
+      }
+
+      // A tab whose child exited restarts it on the next message: re-bind, wait for the child,
+      // then send. `connect()` with the same file reaches the same key, and the pool spawns anew.
+      if (tab.ended || !tab.bound) {
+        tab.connect();
+        const until = Date.now() + 10000;
+        while (!tab.bound && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+        if (!tab.bound) { appendErrorMessage("Could not reach the agent for this conversation."); return; }
       }
 
       appendUserMessage(text, imgsToSend);
       setRunningState(true);
 
-      const payload = {
-        type: "prompt",
-        message: text,
-        images: imgsToSend.map(img => ({ type: "image", mimeType: img.mimeType, data: img.data })),
-      };
-
-      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(payload));
-      } else {
-        await fetch("/api/prompt", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
+      // `steer` while a turn runs, `prompt` otherwise — what the single-session server used to
+      // decide; now the page knows, because it holds the running flag per tab.
+      const images = imgsToSend.map(img => ({ type: "image", mimeType: img.mimeType, data: img.data }));
+      try {
+        if (tab.state?.isStreaming) {
+          await tab.rpc({ type: "steer", message: text });
+        } else {
+          await tab.rpc({ type: "prompt", message: text, images });
+        }
+      } catch (err) {
+        setRunningState(false);
+        appendErrorMessage(err.message);
       }
     }
 
     async function abortTurn() {
-      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "abort" }));
-      } else {
-        await fetch("/api/abort", { method: "POST" });
-      }
+      try { await active?.rpc({ type: "abort" }); } catch (err) {}
     }
 
+    /** The active tab's state, refreshed — what the old page-wide `refreshState()` meant. */
     async function refreshState() {
-      try {
-        applyState(await fetchJson("/api/state", "the session state"));
-      } catch (err) { pigUnreachable("the session state", err); }
+      await active?.refreshState();
     }
 
     // ---- a hook asks ----------------------------------------------------------------------
@@ -2121,13 +2217,11 @@
     // "nothing chosen" for the rest, which is the only safe reading of a question nobody answered.
     let hookDialog = null;
 
+    // The answer goes to the child that asked, which is the tab the dialog was opened for —
+    // `openHookDialog` records it, because the person may have switched tabs since.
     function hookReply(reply) {
-      const payload = { type: "hook_ui_response", ...reply };
-      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(payload));
-      } else {
-        fetch("/api/hook_ui_response", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(() => {});
-      }
+      const tab = hookDialog?.tab || active;
+      tab?.send({ type: "rpc_command", command: { type: "hook_ui_response", ...reply } });
     }
 
     function closeHookDialog() {
@@ -2168,7 +2262,7 @@
 
       el.innerHTML = `<div class="modal"><div class="modal-header"><span>${escapeHtml(req.title || "A hook asks")}</span><span class="modal-close">×</span></div><div class="modal-body">${body}</div></div>`;
       document.body.appendChild(el);
-      hookDialog = { id: req.id, el };
+      hookDialog = { id: req.id, el, tab: T() };
       el.querySelector(".modal-close").addEventListener("click", () => answered({ cancelled: true }));
 
       if (req.method === "confirm") {
@@ -2391,22 +2485,23 @@
 
     // ---- session tabs -------------------------------------------------------------------
     //
-    // The conversations opened in this browser, one tab each, kept in localStorage per server.
-    // The process runs one session at a time (the TUI and this page share it), so a tab is a
-    // way back to a conversation rather than a second agent: clicking one is a session switch,
-    // and the live one — whatever `/api/state` says — is always a tab, added if it was not.
+    // ---- the tab bar -----------------------------------------------------------------------
+    //
+    // A tab is a `Tab` above: a conversation with a child process of its own. `localStorage`
+    // keeps which ones were open (directory + file), so a reload reopens them; the children
+    // are the server's and survive the reload for `IDLE_TTL`, which is why a reopened tab is
+    // usually the same process and not a cold start.
     const sessionTabs = document.getElementById("session-tabs");
     const TABS_KEY = "pig-session-tabs:" + location.host;
-    let tabs = [];
-    let activeTabPath = null;
-    let agentWorking = false;
-    let switchAskedHere = false;
-
-    try { tabs = JSON.parse(localStorage.getItem(TABS_KEY) || "[]"); } catch (e) { tabs = []; }
-    if (!Array.isArray(tabs)) tabs = [];
+    let serverCwd = null;
 
     function saveTabs() {
-      try { localStorage.setItem(TABS_KEY, JSON.stringify(tabs)); } catch (e) {}
+      try {
+        localStorage.setItem(TABS_KEY, JSON.stringify({
+          active: active ? active.key : null,
+          tabs: tabs.map((t) => ({ cwd: t.cwd, sessionFile: t.sessionFile, name: t.name, opening: t.opening })),
+        }));
+      } catch (e) {}
     }
 
     function tabLabel(t) {
@@ -2414,29 +2509,36 @@
       return t.name || t.opening || "new session";
     }
 
-    function upsertTab(d) {
-      if (!d.sessionPath) return;
-      let t = tabs.find((x) => x.path === d.sessionPath);
-      if (!t) {
-        t = { path: d.sessionPath };
-        tabs.push(t);
-      }
-      t.filename = d.sessionFile || t.filename;
-      t.cwd = d.cwdPath || t.cwd;
-      // A name somebody gave it beats the opening line; a cleared name falls back to it.
-      t.name = d.sessionName || null;
-      if (d.opening) t.opening = d.opening;
-      activeTabPath = d.sessionPath;
+    /** Make `tab` the one on screen, opening its socket if it has none. */
+    function openTab(tab) {
+      if (!tabs.includes(tab)) tabs.push(tab);
+      if (active && active !== tab) active.scroller.hidden = true;
+      active = tab;
+      tab.scroller.hidden = false;
+      if (!tab.ws) tab.connect();
+      applyActiveTabToChrome();
       saveTabs();
+      renderTabs();
+      // The scroller was hidden, so its scroll position is whatever it was; a tab you come back
+      // to that was following its turn should still be at the bottom.
+      if (!tab.userScrolledUp) tab.scroller.scrollTop = tab.scroller.scrollHeight;
+      scrollBottomBtn.style.display = tab.userScrolledUp ? "flex" : "none";
+      promptInput.focus();
+    }
+
+    /** Find the tab on `cwd`/`sessionFile`, or open one. */
+    function openOrFocus(cwd, sessionFile) {
+      const found = tabs.find((t) => t.cwd === cwd && t.sessionFile && t.sessionFile === sessionFile);
+      openTab(found || new Tab(cwd, sessionFile));
     }
 
     function renderTabs() {
       sessionTabs.innerHTML = "";
       for (const t of tabs) {
         const el = document.createElement("div");
-        const active = t.path === activeTabPath;
-        el.className = "session-tab" + (active ? " active" : "") + (active && agentWorking ? " working" : "");
-        el.title = (t.cwd ? t.cwd + "\n" : "") + (t.filename || "");
+        const isActive = t === active;
+        el.className = "session-tab" + (isActive ? " active" : "") + (t.isRunning ? " working" : "") + (t.ended ? " ended" : "");
+        el.title = (t.cwd ? t.cwd + "\n" : "") + (t.sessionFile || "") + (t.ended ? "\n(agent exited)" : "");
         const label = document.createElement("span");
         label.className = "session-tab-label";
         label.textContent = tabLabel(t);
@@ -2444,56 +2546,75 @@
         close.className = "session-tab-close";
         close.textContent = "×";
         close.title = "Close tab";
-        close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(t.path); });
+        close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(t); });
         el.appendChild(label);
         el.appendChild(close);
-        el.addEventListener("click", () => { if (!active) switchSession(t.path, t.filename || "", t.cwd || ""); });
+        el.addEventListener("click", () => { if (!isActive) openTab(t); });
         sessionTabs.appendChild(el);
       }
       const plus = document.createElement("div");
       plus.className = "session-tab-new";
       plus.textContent = "+";
       plus.title = "New session";
-      plus.addEventListener("click", startNewSession);
+      plus.addEventListener("click", () => startNewSession());
       sessionTabs.appendChild(plus);
     }
 
-    async function closeTab(path) {
-      const at = tabs.findIndex((t) => t.path === path);
+    /**
+     * Closing a tab detaches this browser from its child; the server reaps the child after
+     * `IDLE_TTL` if nobody else is on it and no turn is running — so closing a tab mid-turn does
+     * not kill the turn, and reopening the file within the minute finds the same process.
+     */
+    async function closeTab(tab) {
+      const at = tabs.indexOf(tab);
       if (at === -1) return;
-      const wasActive = path === activeTabPath;
+      const wasActive = tab === active;
       tabs.splice(at, 1);
-      saveTabs();
-      if (!wasActive) { renderTabs(); return; }
-      // Closing the live one: move to the neighbour, or start fresh if it was the last.
+      tab.close();
+      if (!wasActive) { saveTabs(); renderTabs(); return; }
+      active = null;
       const next = tabs[Math.min(at, tabs.length - 1)];
-      if (next) {
-        await switchSession(next.path, next.filename || "", next.cwd || "");
-      } else {
-        await startNewSession();
-      }
+      if (next) openTab(next); else await startNewSession();
     }
 
-    function applyState(d) {
-      if (!d) return;
-      cwdDisplay.innerText = d.cwd || "~";
-      filenameDisplay.innerText = d.sessionName || d.sessionFile || "Active Session";
-      upsertTab(d);
-      renderTabs();
-      telemetryStats.innerText = (telemetryStats.dataset.hook ? telemetryStats.dataset.hook + "  " : "") + `↑${formatK(d.tokensIn)} ↓${formatK(d.tokensOut)} $${d.cost} ${d.contextPercent}%/${d.contextWindow}`;
+    /** The header, the dropdowns and the telemetry line all describe the active tab. */
+    function applyActiveTabToChrome() {
+      const t = active;
+      if (!t) return;
+      cwdDisplay.innerText = t.cwd ? (t.cwd.split("/").filter(Boolean).pop() || t.cwd) : "~";
+      filenameDisplay.innerText = t.name || t.sessionFile || (t.state ? "new session" : "Connecting…");
+      sendBtn.style.display = t.isRunning ? "none" : "flex";
+      stopBtn.style.display = t.isRunning ? "flex" : "none";
+      const s = t.state;
+      if (!s) { telemetryStats.innerText = ""; return; }
+      applyState(s);
+    }
+
+    /** `get_state`'s answer, drawn into the chrome. Shape is `RpcMode::state()`'s. */
+    function applyState(s) {
+      if (!s || !active) return;
+      const t = active;
+      const model = s.model || {};
+      const window_ = model.contextWindow || 0;
+      const tokens = s.contextTokens || 0;
+      const pct = window_ > 0 ? (tokens / window_ * 100).toFixed(1) : "0.0";
+      const windowLabel = window_ >= 1000000 ? (window_ / 1000000).toFixed(1) + "M" : Math.round(window_ / 1000) + "k";
+      const stats = t.stats || {};
+      telemetryStats.innerText = (telemetryStats.dataset.hook ? telemetryStats.dataset.hook + "  " : "")
+        + `↑${formatK(stats.input || 0)} ↓${formatK(stats.output || 0)} $${Number(stats.cost || 0).toFixed(3)} ${pct}%/${windowLabel}`;
 
       if (userIsInteracting) return;
-
-      if (d.provider && availableModels.length > 0 && providerSelect.value !== d.provider) {
-        currentProvider = d.provider;
-        providerSelect.value = d.provider;
-        updateModelsForProvider(d.provider, d.model);
-      } else if (d.model && availableModels.length > 0 && modelSelect.value !== d.model) {
-        currentModelId = d.model;
-        modelSelect.value = d.model;
-        updateThinkingLevels(d.model, d.thinkingLevel);
-      } else if (d.thinkingLevel && thinkingSelect.value !== d.thinkingLevel) {
-        thinkingSelect.value = d.thinkingLevel;
+      const provider = model.provider, modelId = model.id, level = s.thinkingLevel;
+      if (provider && availableModels.length > 0 && providerSelect.value !== provider) {
+        currentProvider = provider;
+        providerSelect.value = provider;
+        updateModelsForProvider(provider, modelId);
+      } else if (modelId && availableModels.length > 0 && modelSelect.value !== modelId) {
+        currentModelId = modelId;
+        modelSelect.value = modelId;
+        updateThinkingLevels(modelId, level);
+      } else if (level && thinkingSelect.value !== level) {
+        thinkingSelect.value = level;
       }
     }
 
@@ -2609,57 +2730,28 @@
 
     thinkingSelect.addEventListener("change", async () => {
       const level = thinkingSelect.value;
-      if (level !== "off") {
-        preferredThinkingLevel = level;
-      }
-      const msg = {
-        type: "set_thinking_level",
-        level: level,
-      };
-
-      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(msg));
-      }
-
+      if (level !== "off") preferredThinkingLevel = level;
       try {
-        const res = await fetch("/api/thinking", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ level }),
-        });
-        const d = await res.json();
-        if (d && d.state) {
-          applyState(d.state);
-        }
-      } catch (err) {}
+        await active?.rpc({ type: "set_thinking_level", level });
+        await active?.refreshState();
+      } catch (err) { appendErrorMessage(err.message); }
     });
 
-    // One request per change. This used to send the switch over the socket *and* then POST it,
-    // so every pick ran setModel() twice and wrote two model_change lines into the session file.
-    // HTTP is the one channel here because its answer carries the state the dropdowns are
-    // redrawn from — and now also the reason when the switch did not happen.
+    // One `set_model` to the active tab's child; its `get_state` afterwards is what the dropdowns
+    // redraw from — and the refusal, when there is one, is the response's error.
     async function sendModelChange() {
+      if (!active) return;
       userIsInteracting = true;
       const modelId = modelSelect.value;
       const provider = providerSelect.value;
       const thinkingLevel = thinkingSelect.value;
-
       try {
-        const res = await fetch("/api/model", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ modelId, provider, thinkingLevel }),
-        });
-        const d = await res.json();
-        if (d && d.error) {
-          appendErrorMessage(d.error);
-        }
-        if (d && d.state) {
-          userIsInteracting = false;
-          applyState(d.state);
-        }
+        await active.rpc({ type: "set_model", modelId, provider, thinkingLevel });
+        userIsInteracting = false;
+        await active.refreshState();
       } catch (err) {
-        appendErrorMessage("Could not switch model: " + (err && err.message ? err.message : String(err)));
+        appendErrorMessage(err.message);
+        await active.refreshState();
       } finally {
         setTimeout(() => { userIsInteracting = false; }, 300);
       }
@@ -2730,33 +2822,23 @@
       }
     }
 
+    /** Picking a conversation in the sidebar opens it as a tab (or focuses the one it is in). */
     async function switchSession(path, filename, cwd) {
       if (window.innerWidth <= 768 && !sidebar.classList.contains("collapsed")) {
         sidebar.classList.add("collapsed");
         toggleSidebar.innerText = "›";
       }
-      switchAskedHere = true;
-      filenameDisplay.innerText = filename;
-      chatScroll.innerHTML = "";
-      const res = await fetch("/api/session/switch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
-      if (!res.ok) {
-        // A tab whose file has gone (deleted, moved) is a tab with nothing behind it.
-        switchAskedHere = false;
-        tabs = tabs.filter((t) => t.path !== path);
-        saveTabs();
-        appendErrorMessage("That session could not be opened; its tab was removed.");
-      }
-      await loadMessages();
-      await refreshState();
+      openOrFocus(cwd, filename);
     }
 
-    async function loadMessages() {
-      try {
-        const msgs = await fetchJson("/api/messages", "the conversation");
+    /**
+     * Draw a conversation from `get_messages`' answer. Called inside `Tab.render()`, so
+     * `chatScroll` is that tab's. The shapes are `SessionCodec::encode()`'s — pi's file
+     * format, which is why `toolCall` / `toolResult` are the names here and `thinking` carries
+     * its text under `thinking`.
+     */
+    function renderMessages(msgs) {
+      {
         chatScroll.innerHTML = "";
         for (const m of msgs) {
           if (m.role === "user") {
@@ -2774,10 +2856,10 @@
           } else if (m.role === "assistant") {
             if (Array.isArray(m.content)) {
               for (const c of m.content) {
-                if (c.type === "thinking" && c.text) {
+                if (c.type === "thinking" && (c.thinking || c.text)) {
                   const box = document.createElement("details");
                   box.className = "thinking-box";
-                  box.innerHTML = `<summary>Thinking...</summary><div class="thinking-content">${escapeHtml(c.text)}</div>`;
+                  box.innerHTML = `<summary>Thinking...</summary><div class="thinking-content">${escapeHtml(c.thinking || c.text)}</div>`;
                   chatScroll.appendChild(box);
                 } else if (c.type === "tool_call" || c.type === "toolCall") {
                   const card = createToolCard({
@@ -2798,7 +2880,7 @@
               appendErrorMessage(m.errorMessage);
             }
           } else if (m.role === "tool_result" || m.role === "toolResult") {
-            let card = document.getElementById(`tool-${m.toolCallId}`);
+            let card = toolCardFor(m.toolCallId);
             if (!card) {
               card = createToolCard({
                 toolCallId: m.toolCallId,
@@ -2812,7 +2894,7 @@
               result: m.content || m.result || m.details,
               isError: m.isError,
             });
-          } else if (m.role === "compaction") {
+          } else if (m.role === "compaction" || m.role === "compactionSummary") {
             const compBox = document.createElement("div");
             compBox.className = "compaction-box";
             const fileCount = (m.readFiles?.length || 0) + (m.modifiedFiles?.length || 0);
@@ -2832,7 +2914,7 @@
               chevron.classList.toggle("expanded", !isExp);
             });
             chatScroll.appendChild(compBox);
-          } else if (m.role === "branch_summary") {
+          } else if (m.role === "branch_summary" || m.role === "branchSummary") {
             const branchBox = document.createElement("div");
             branchBox.className = "compaction-box";
             const fileCount = (m.readFiles?.length || 0) + (m.modifiedFiles?.length || 0);
@@ -2860,13 +2942,44 @@
           }
         }
         chatScroll.scrollTop = chatScroll.scrollHeight;
-      } catch (err) { pigUnreachable("the conversation", err); }
+      }
     }
 
-    initNetwork();
-    loadModels();
-    refreshState();
-    loadMessages();
+    // ---- boot ------------------------------------------------------------------------------
+    //
+    // The tabs this browser had open come back from localStorage; the one that was active
+    // comes back active. With none saved, one new conversation in the server's directory —
+    // `/api/running` says which that is, and also names children still alive from before a
+    // reload, which is how a tab reopened within the minute finds its process rather than a
+    // cold start.
+    async function boot() {
+      loadModels();
+      let saved = null;
+      try { saved = JSON.parse(localStorage.getItem(TABS_KEY) || "null"); } catch (e) {}
+      try {
+        const r = await fetchJson("/api/running", "the server");
+        serverCwd = r.cwd;
+      } catch (err) { serverCwd = null; }
+
+      const list = Array.isArray(saved?.tabs) ? saved.tabs : (Array.isArray(saved) ? [] : []);
+      for (const t of list) {
+        if (!t || !t.cwd) continue;
+        const tab = new Tab(t.cwd, t.sessionFile || null);
+        tab.name = t.name || null;
+        tab.opening = t.opening || null;
+        tabs.push(tab);
+        tab.connect();
+      }
+      const wanted = saved?.active ? tabs.find((t) => t.key === saved.active) : null;
+      if (tabs.length === 0) {
+        openTab(new Tab(serverCwd || "", null));
+      } else {
+        openTab(wanted || tabs[0]);
+      }
+      renderTabs();
+    }
+
+    boot();
   </script>
 </body>
 </html>
