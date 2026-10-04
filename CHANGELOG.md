@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.45] - 2026-10-04
+
+### Changed
+
+- **Custom SVG dropdown chevron for model & provider selectors (`.select-pill`).** Replaced clumsy native browser dropdown arrows (which rendered with inconsistent offsets, uneven line thickness, and oversized glyphs across WebKit and Blink) with a clean, centered vector chevron (`stroke-width: 1.5`, `#94a3b8`) via `appearance: none` and SVG background. Added balanced right padding (`padding-right: 24px` on desktop, `20px` on mobile) so text never collides with the arrow.
+
 ## [0.2.44] - 2026-10-04
 
 ### Added

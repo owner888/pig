@@ -693,18 +693,27 @@
       align-items: center;
     }
     .select-pill {
-      background: #121824;
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background-color: #121824;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2394a3b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      background-size: 9px 5px;
       border: 1px solid var(--border);
       color: var(--text);
-      padding: 4px 10px;
+      padding: 4px 24px 4px 10px;
       border-radius: 6px;
       font-size: 12px;
       font-family: var(--font-mono);
       outline: none;
       cursor: pointer;
       max-width: 220px;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
-    .select-pill:focus { border-color: #38bdf8; }
+    .select-pill:hover { border-color: #475569; }
+    .select-pill:focus { border-color: #38bdf8; box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.2); }
     .status-telemetry {
       color: var(--text-dim);
     }
@@ -852,7 +861,9 @@
         flex: 1;
         min-width: 0;
         max-width: none;
-        padding: 6px 4px;
+        padding: 6px 20px 6px 6px;
+        background-position: right 6px center;
+        background-size: 8px 5px;
         font-size: 11px;
         text-overflow: ellipsis;
       }
