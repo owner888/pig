@@ -43,7 +43,9 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## [0.2.50] - 2026-10-04
+## [0.3.0] - 2026-10-04
+
+> **Milestone Release**: Rebuilt the web architecture on upstream `pi-web`'s multi-session process model, introduced native `pig web` daemon management, and eliminated long-standing background pipe inheritance deadlocks.
 
 ### New Features
 
