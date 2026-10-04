@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.41] - 2026-10-04
+
+### Fixed
+
+- **Web UI tool cards squished into 2px hairline strips by flexbox (`flex-shrink: 0`).** In `index.html`, `#chat-scroll` uses `display: flex; flex-direction: column`. Because default flexbox items have `flex-shrink: 1`, when a conversation accumulates dozens or hundreds of tool calls, Chrome and WebKit aggressively shrink all non-text children down to their borders (`offsetHeight: 2px`). Added `flex-shrink: 0` to `.tool-card`, `.msg-block`, `.thinking-box`, and `.compaction-box`, allowing all tool cards to retain their full height, headers, and click-to-expand capabilities inside the scroll container.
+
 ## [0.2.40] - 2026-10-04
 
 ### Added
