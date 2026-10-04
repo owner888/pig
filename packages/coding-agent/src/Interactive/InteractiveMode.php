@@ -2841,6 +2841,7 @@ final class InteractiveMode
 
         $url = "http://127.0.0.1:{$port}";
         $this->say('Web UI started at ' . $this->palette->fg('accent', $url));
+        $this->say($this->palette->fg('dim', 'Runs while this session is open. To keep it running in background: pig web start -d'));
         $this->openBrowser($url);
     }
 

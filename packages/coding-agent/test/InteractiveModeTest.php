@@ -3754,4 +3754,20 @@ final class InteractiveModeTest extends TestCase
 
         $this->assertSame(1, substr_count($this->screen(), 'the same thing twice'));
     }
+
+    public function testSlashWebShowsUrlAndDaemonHint(): void
+    {
+        $this->start();
+        $this->type('/web 28210');
+        $this->type(self::ENTER);
+        self::turnTheLoop(2);
+
+        $this->assertStringContainsString('Web UI started at', $this->screen());
+        $this->assertStringContainsString('To keep it running in background', $this->screenText());
+
+        $this->type('/web stop');
+        $this->type(self::ENTER);
+        self::turnTheLoop(2);
+        $this->assertStringContainsString('Web UI server stopped.', $this->screen());
+    }
 }

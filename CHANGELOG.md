@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.6] - 2026-10-04
+
+### Changed
+
+- **Lifecycle guidance on interactive `/web` startup**: Added a clear startup guidance note to `/web` output explaining that the temporary browser server runs for the current terminal session, pointing users to `pig web start -d` when permanent background daemon operation is desired.
+
+### Added
+
+- **Interactive `/web` test coverage**: Added `testSlashWebShowsUrlAndDaemonHint` verifying `/web` startup output, port binding, and clean shutdown via `/web stop`.
+
 ## [0.3.5] - 2026-10-04
 
 ### Fixed
