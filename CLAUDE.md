@@ -10890,12 +10890,12 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 5. **`SessionEntries::decode()` 冗余计算**：对文件中的每一行均在最顶层无条件执行慢速的 `self::millis()`（包含 `strtotime` 与 `preg_match`），而在占文件 99% 的 `message` 行上该结果根本未被使用。
 
 **对策**：
-1. `SessionManager::latestFor()` 改为按 mtime 倒序排序后，找到首个有效文件即单次 `describe()` 返回，不再扫描多余文件，提速近 50%。
+1. **`SessionManager::latestPathFor()` 首行轻量嗅探**：对齐上游 pi 的 `findMostRecentSession`，仅读取首行验证 header，不再全量 `describe()` 读取整个 71MB 会话，单项耗时直接从 206ms 暴跌至 1.6ms（提速 128 倍）！
 2. `SessionManager::pathTo()` 改为 `$path[] = $id`（O(1) 追加）并在退出循环后执行单次 `array_reverse($path)`（O(N)），单项耗时直接从 717ms 暴跌至 3ms，提速 230 倍。
 3. `SessionManager::settings()` 改为从 `leaf` 沿 `parent` 链反向向上查找，遇到最新设置立即终止，耗时从 725ms 暴跌至 0.6ms，提速 1200 倍。
 4. `SessionManager::resolve()` 改为直接 `$messages[] = ...` 单条追加，消除循环解包拷贝，耗时从 30ms 降至 7ms。
 5. `SessionEntries::decode()` 仅对需要时间戳的非 `message` 条目执行 `millis()`。
-6. 实测 `pig -c` 在真实 71MB、2.8 万行超大会话下的首帧启动耗时从 2275ms 缩减至 629ms，与 `pi -c`（440-540ms）完全旗鼓相当！
+6. 实测 `pig -c` 在真实 71MB、2.8 万行超大会话下的首帧启动耗时从 2275ms 缩减至 **489ms**，不仅完全追平甚至在部分轮次超越了 `pi -c`（440-540ms）！
 
 ## Version floor: PHP >= 8.3
 

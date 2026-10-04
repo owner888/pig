@@ -1267,7 +1267,11 @@ final class SessionManager
         return $sessions;
     }
 
-    public static function latestFor(string $cwd): ?SessionInfo
+    /**
+     * Find the path to the newest session file for $cwd by mtime without parsing full file bodies.
+     * Matches upstream pi's findMostRecentSession().
+     */
+    public static function latestPathFor(string $cwd): ?string
     {
         $paths = [
             ...(glob(self::directory($cwd) . '/*.jsonl') ?: []),
@@ -1290,16 +1294,34 @@ final class SessionManager
                 => [$times[$b], basename($b)] <=> [$times[$a], basename($a)],
         );
 
-        // Describe only the newest valid session file rather than parsing up to 30 files from disk.
         foreach ($paths as $path) {
-            $info = self::describe($path);
+            $fh = fopen($path, 'r');
+            if ($fh === false) {
+                continue;
+            }
 
-            if ($info !== null) {
-                return $info;
+            $firstLine = fgets($fh);
+            fclose($fh);
+
+            if ($firstLine === false) {
+                continue;
+            }
+
+            $header = json_decode(trim($firstLine), true);
+
+            if (is_array($header) && ($header['type'] ?? null) === 'session') {
+                return $path;
             }
         }
 
         return null;
+    }
+
+    public static function latestFor(string $cwd): ?SessionInfo
+    {
+        $path = self::latestPathFor($cwd);
+
+        return $path !== null ? self::describe($path) : null;
     }
 
     /**

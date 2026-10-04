@@ -465,13 +465,13 @@ final class CodingAgent
     private static function store(string $cwd, ?string $resume, bool $continue): SessionManager
     {
         if ($resume === null && $continue) {
-            $latest = SessionManager::latestFor($cwd);
+            $latestPath = SessionManager::latestPathFor($cwd);
 
-            if ($latest === null) {
+            if ($latestPath === null) {
                 throw new CodingAgentError("No earlier session in {$cwd}.");
             }
 
-            $resume = $latest->path;
+            $resume = $latestPath;
         }
 
         if ($resume !== null) {

@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.12] - 2026-10-04
+
+### Changed
+
+- **Sub-500ms startup for `pig -c` via `SessionManager::latestPathFor()`**: Added `latestPathFor()` matching upstream pi's `findMostRecentSession()` to discover the newest session file path by mtime and single-line header verification. Eliminates redundant full-file `describe()` passes prior to `SessionManager::open()`, cutting discovery latency from 206ms down to 1.6ms (128x speedup) and reducing overall `pig -c` time-to-first-frame from 630ms to 489ms.
+
 ## [0.3.11] - 2026-10-04
 
 ### Added
