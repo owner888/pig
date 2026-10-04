@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.42] - 2026-10-04
+
+### Fixed
+
+- **Suppressed `fwrite()` Broken pipe / Connection reset warnings in `TcpConnection`.** In `TcpConnection::sendRaw()` and the writable loop callback, writing to a client socket that abruptly closed or refreshed caused PHP to emit notices (`fwrite(): Send failed with errno=32 Broken pipe` / `errno=54 Connection reset by peer`). Wrapped both `fwrite` invocations in scoped `set_error_handler` / `restore_error_handler` blocks following project conventions (zero `@` error suppression), ensuring client disconnects close cleanly without spewing warnings.
+
 ## [0.2.41] - 2026-10-04
 
 ### Fixed

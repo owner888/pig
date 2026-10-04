@@ -124,7 +124,12 @@ class TcpConnection
             return;
         }
 
-        $written = fwrite($this->socket, $data);
+        set_error_handler(static fn (): bool => true);
+        try {
+            $written = fwrite($this->socket, $data);
+        } finally {
+            restore_error_handler();
+        }
 
         if ($written === false) {
             $this->close();
@@ -167,7 +172,12 @@ class TcpConnection
                 return;
             }
 
-            $written = fwrite($this->socket, $this->sendBuffer);
+            set_error_handler(static fn (): bool => true);
+            try {
+                $written = fwrite($this->socket, $this->sendBuffer);
+            } finally {
+                restore_error_handler();
+            }
 
             if ($written === false) {
                 $this->close();
