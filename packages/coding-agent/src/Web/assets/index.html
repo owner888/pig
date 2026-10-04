@@ -778,6 +778,120 @@
       display: none;
     }
     .btn-stop:hover { background: #334155; }
+
+    /* Sidebar backdrop for mobile view */
+    .sidebar-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(2px);
+      z-index: 45;
+      animation: fadeIn 0.15s ease-out;
+    }
+
+    /* ==========================================================================
+       Mobile Viewport & Touch Optimization (< 768px)
+       ========================================================================== */
+    @media (max-width: 768px) {
+      body {
+        height: 100dvh;
+      }
+
+      /* Sidebar becomes a drawer covering up to 85% of mobile screen width */
+      #sidebar {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 85vw;
+        max-width: 320px;
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+      }
+      #sidebar:not(.collapsed) ~ .sidebar-backdrop {
+        display: block;
+      }
+
+      .top-header {
+        padding: 8px 12px;
+      }
+      .path-cwd {
+        font-size: 12px;
+      }
+      .path-file {
+        font-size: 11px;
+        max-width: 180px;
+      }
+
+      #chat-scroll {
+        padding: 8px 12px 16px;
+        gap: 10px;
+      }
+      .msg-block {
+        padding: 10px 12px;
+        font-size: 14px;
+      }
+
+      .bottom-panel {
+        padding: 6px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+        gap: 8px;
+      }
+
+      /* Stack and wrap selectors & telemetry cleanly on small screens */
+      .controls-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+      }
+      .selectors-group {
+        display: flex;
+        width: 100%;
+        gap: 4px;
+      }
+      .select-pill {
+        flex: 1;
+        min-width: 0;
+        max-width: none;
+        padding: 6px 4px;
+        font-size: 11px;
+        text-overflow: ellipsis;
+      }
+      .status-telemetry {
+        font-size: 11px;
+        text-align: right;
+      }
+
+      /* Touch targets & input height */
+      .input-box-row {
+        gap: 6px;
+      }
+      .input-wrapper {
+        min-height: 44px;
+        padding: 0 10px;
+      }
+      #prompt-input {
+        font-size: 16px; /* Prevents auto-zoom on iOS Safari when tapping input */
+        padding: 10px 0;
+        line-height: 22px;
+      }
+      .action-btn {
+        width: 44px;
+        height: 44px;
+        font-size: 16px;
+      }
+
+      /* Accounts dialog on mobile */
+      .account-dialog {
+        width: 95vw;
+        max-height: 90vh;
+        margin: 12px auto;
+        padding: 14px;
+      }
+      .quota-row {
+        grid-template-columns: 1fr 100px 48px;
+        gap: 6px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -793,6 +907,7 @@
     </div>
     <div id="sidebar-list" class="sidebar-scroll"></div>
   </aside>
+  <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
 
   <!-- Main View -->
   <main id="main-view">
@@ -857,6 +972,7 @@
     const thinkingSelect = document.getElementById("thinking-select");
     const scrollBottomBtn = document.getElementById("scroll-bottom-btn");
     const newSessionBtn = document.getElementById("new-session-btn");
+    const sidebarBackdrop = document.getElementById("sidebar-backdrop");
 
     let isRunning = false;
     let currentAssistantBlock = null;
@@ -884,6 +1000,13 @@
         loadWorkspaces();
       }
     });
+
+    if (sidebarBackdrop) {
+      sidebarBackdrop.addEventListener("click", () => {
+        sidebar.classList.add("collapsed");
+        toggleSidebar.innerText = "›";
+      });
+    }
 
     // Auto-grow textarea
     promptInput.addEventListener("input", () => {
@@ -2407,6 +2530,10 @@
     }
 
     async function switchSession(path, filename, cwd) {
+      if (window.innerWidth <= 768 && !sidebar.classList.contains("collapsed")) {
+        sidebar.classList.add("collapsed");
+        toggleSidebar.innerText = "›";
+      }
       switchAskedHere = true;
       filenameDisplay.innerText = filename;
       chatScroll.innerHTML = "";

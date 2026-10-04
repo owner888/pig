@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.44] - 2026-10-04
+
+### Added
+
+- **Mobile responsive layout & touch UX adaptation (< 768px).** Comprehensive optimization for iOS Safari and mobile browsers:
+  - **Dynamic Viewport Height (`100dvh`) & Safe Areas**: Switched main layout height to `100dvh` and added `env(safe-area-inset-bottom)` padding to prevent mobile bottom bars and home indicators from obscuring input controls.
+  - **Slide-out Drawer with Blur Backdrop**: Converted sidebar into an overlay drawer covering up to 85vw on mobile, complete with backdrop blur tap-to-close (`.sidebar-backdrop`) and auto-closing on session selection.
+  - **iOS Safari Auto-Zoom Prevention**: Set prompt input font size to `16px` on mobile viewports so tapping the textarea does not trigger iOS Safari's default page zoom.
+  - **Touch Target Sizing**: Enlarged action buttons (`#send-btn`, `#attach-btn`, `#stop-btn`) to minimum `44px` touch targets conforming to Apple HIG.
+  - **Adaptive Selectors & Header**: Wrapped model/provider/thinking selectors and status telemetry into flexible responsive rows, ensuring no layout breaks or text clipping on narrow screens.
+
 ## [0.2.43] - 2026-10-04
 
 ### Added
