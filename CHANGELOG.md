@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.49] - 2026-10-04
+
+### Added
+
+- **`pig web start|stop|status|restart [-d] [--port N] [--host H]` — the browser UI as a daemon.** `start -d` double-forks, `setsid()`s, redirects the standard streams to `~/.pig/agent/web.log` and execs `pig --mode web`, so a daemonised server runs byte-identical code to a foreground one. The pid file lives under `$PIG_HOME`; `status` trusts it only after `kill -0` and clears a stale one; `stop` is SIGTERM, a bounded wait, then SIGKILL; a second `start` while one runs is refused rather than binding the next port up. `--web-host` and `--web-port` are new `--mode web` options underneath. No framework: this is `pcntl` plus two `posix` calls, and the two files that would have been redundant under Workerman (`HttpServer`, `Protocols\*`) stay as they are. Step ① of three toward pi-web's process model — the decision and the other two steps are written up in CLAUDE.md under "Three ways in".
+
+### Fixed
+
+- **The daemon's exec named the binary relative to a directory it had just left.** `$argv[0]` is `bin/pig` from a checkout and the grandchild `chdir('/')`s before exec, so the first live `start -d` printed ✔, failed on `/bin/pig`, and `status` said "not running" two seconds later. The binary is `realpath()`ed at construction; and the parent now waits 300ms and asks the kernel whether the daemon survived its exec before claiming success, reporting the log's last line when it did not.
+- **The daemon's session belonged to `/`.** Same `chdir('/')`; `--cwd` is now pinned to where `pig web start` was typed.
+
 ## [0.2.48] - 2026-10-04
 
 ### Added

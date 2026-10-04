@@ -3169,6 +3169,58 @@ said, and nothing has to ask for it.
 | `--mode rpc` | JSON lines out, commands in | `modes/rpc/` |
 | `--mode web` / `/web` | a browser chat UI | `Web\WebMode` (Workerman-inspired HTTP/SSE) |
 
+### The web mode's process model: pi-web's shell over `pig --mode rpc`, not a mirror of the TUI
+
+**Decided 2026-10-04, after the developer pointed at the seam.** The web UI showed a tab bar of
+sessions and `HttpServer` held **one** `AgentSession`: a tab was a bookmark in `localStorage`, and
+clicking one called `switchTo()` on the single session — so the TUI sharing it under `/web` moved
+with the browser, a turn in flight on tab A was aborted by opening tab B, and the "working" dot
+could only ever be lit on one tab. Not a bug in the switch; a UI claiming a capability the process
+model did not have.
+
+Upstream never had this problem because pi-web is a different shape: a **web shell process that
+spawns one `pi --mode rpc` child per `cwd::sessionFile`** and talks JSON-lines to each
+(`server.js`'s `createManagedSession()`, `rpcSessions = new Map()`). It does that for three reasons
+worth knowing, because only one of them applies here: pi-web does not import pi at all
+(`AGENT_CMD = npx -y @earendil-works/pi-coding-agent@latest` — a black-box command, so the boundary
+is a process boundary by construction); pi carries process-level state that two sessions in one
+process would fight over (`process.on('SIGINT')`, a module-level theme, jiti's module cache); and a
+crashed extension takes down one tab rather than seven. **pig has the third reason and not the
+first two** — `HttpServer` constructs `AgentSession` directly, theme is `Palette::named()` on
+demand, extensions are `require`d closures — so same-process multi-agent over the shared `Loop` is
+*possible* here in a way it is not there. It is still not what was chosen, and the reason is the
+seam: the pieces for pi-web's shape already exist and the pieces for same-process do not.
+
+| pi-web needs | pig has |
+|---|---|
+| a `--mode rpc` child | `RpcMode`, 24 commands, pi's wire format |
+| a client that spawns it and matches responses by id | **`Rpc\RpcClient`** — it is `rpc-client.ts`, and `RpcClientTest` already starts `bin/pig` |
+| HTTP + WebSocket | `HttpServer`, `TcpConnection`, `Protocols\Websocket` |
+| a pool keyed `cwd::sessionFile` with idle reaping | **the one new piece** |
+
+So the web mode becomes the shell: `HttpServer` holds `array<string, RpcClient>` rather than an
+`AgentSession`, each WebSocket connection is bound to one key (pi-web's `socketBindings`), events are
+forwarded from a child's stdout to its connections, and `hook_ui_request` is routed per session.
+Three consequences that are the point rather than side effects: the TUI and every web session are
+separate processes, which is the "TUI handles one session" the developer named; two tabs can run
+two turns at once; and because pig's rpc protocol *is* pi's, this shell drives `pi --mode rpc` and
+pi-web drives `pig --mode rpc` — both directions were free.
+
+**Workerman is not introduced**, though it was asked about. The lint of the question is right —
+`pig web start -d` wants a daemon with `status`/`stop`/`restart` and a child that is restarted
+when it dies — and none of it needs a framework: `pcntl_fork()` twice and `posix_setsid()` is the
+daemon, a pid file is `status` and `stop`, and the child-exit handler pi-web already has is the
+restart. `HttpServer` and `Protocols\*` were written *in Workerman's shape* (their docblocks say
+so) precisely so the framework itself would not be needed; bringing it in now would make those
+files redundant and break the first rule of this document. The shell is I/O-bound forwarding, so
+one process is enough; the work happens in N children, which is multi-core for free. If a concrete
+bottleneck ever wants Workerman's multi-worker model, that is the time to argue it with a number.
+
+Landing in three steps, each shippable alone: **① `pig web start|stop|status|restart [-d]`** — the
+subcommand and the daemon, over the `HttpServer` as it stands; **② the session pool** and the
+`HttpServer` rewrite from `$this->session->…` to `$this->sessionFor($conn)->…`; **③ the tab bar
+bound to real sessions**, one WebSocket per tab or one with a `sessionKey`, as pi-web does.
+
 `PrintMode` is the smallest of the three because `RpcMode` did the work: `RpcEvents` already
 encodes the events, and wiring hooks and custom tools with no UI is already something that
 happens. What is left is deciding what to print — and it prints **only the text blocks of the

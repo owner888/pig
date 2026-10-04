@@ -33,6 +33,7 @@ use Pig\CodingAgent\Cli\UpdateCheck;
 use Pig\CodingAgent\Cli\FileArguments;
 use Pig\CodingAgent\Cli\ModelList;
 use Pig\CodingAgent\Cli\SelfUpdate;
+use Pig\CodingAgent\Cli\WebDaemon;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\Cli\SessionPicker;
@@ -104,6 +105,12 @@ if (($argv[1] ?? '') === 'update') {
     exit($updater->run(array_slice($argv, 2)));
 }
 
+// `pig web start|stop|status|restart` — the browser UI as a daemon. `start` without `-d` becomes
+// `pig --mode web` by exec, so there is one web server and not two.
+if (($argv[1] ?? '') === 'web') {
+    exit((new WebDaemon($argv[0]))->run(array_slice($argv, 2)));
+}
+
 // `pig mcp …` is the MCP extension's own CLI, as upstream's is: the file lives beside the
 // extension rather than in a package, because what it reads and writes is the extension's.
 if (($argv[1] ?? '') === 'mcp') {
@@ -128,6 +135,7 @@ if (isset($options['help'])) {
     Commands:
       update            update pig to the latest version
       mcp               add, remove and check MCP servers (pig mcp --help)
+      web               the browser UI as a server: start [-d], stop, status, restart (pig web --help)
 
     Options:
       --model <id>      which model to talk to (default: claude-sonnet-4-5).
@@ -567,7 +575,9 @@ if ($mode === 'rpc') {
     // wakes on a keystroke, and both need the same loop underneath them.
     Async::run(static fn () => $running->run());
 } elseif ($mode === 'web') {
-    $running = new WebMode($session, auth: $auth, hooks: $hooks, customTools: $customTools);
+    $webPort = isset($options['web-port']) && ctype_digit((string) $options['web-port']) ? (int) $options['web-port'] : WebDaemon::DEFAULT_PORT;
+    $webHost = isset($options['web-host']) && $options['web-host'] !== '' ? (string) $options['web-host'] : WebDaemon::DEFAULT_HOST;
+    $running = new WebMode($session, $webPort, $webHost, auth: $auth, hooks: $hooks, customTools: $customTools);
     $exit = (int) Async::run(static fn (): int => $running->run());
 } elseif (!$interactive) {
     $printing = new PrintMode($session, $mode ?? 'text', $hooks, $customTools);

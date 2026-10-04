@@ -416,6 +416,19 @@ bin/pig --mode web
 
 You can also type `/web` from inside any interactive terminal session to launch the web interface on the fly.
 
+To keep it running after you close the terminal, run it as a daemon:
+
+```bash
+pig web start -d              # fork into the background; pid and log under ~/.pig/agent
+pig web status                # exit 0 if running, 3 if not
+pig web stop                  # SIGTERM, then SIGKILL after 3s
+pig web restart --port 9000   # stop + start -d; --host and --port are both accepted
+```
+
+`pig web start` without `-d` is the same as `--mode web` in the foreground. No framework
+behind it: `pcntl_fork()` twice, `posix_setsid()`, a pid file — so `ext-posix` is needed for
+`-d` and `stop`, and nothing else changes.
+
 Every conversation you open in the browser gets a **tab** above the chat — labelled by its name
 or its first line, the live one marked, `×` to close, `+` for a new one — kept in the browser, so
 switching between the three things you are working on is one click rather than two levels of

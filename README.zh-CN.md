@@ -355,6 +355,18 @@ bin/pig --mode web
 
 在终端交互模式下，你也可以随时敲 `/web` 在浏览器中直接唤起图形界面。
 
+想关掉终端后它还在跑，就以守护进程方式启动：
+
+```bash
+pig web start -d              # fork 到后台；pid 和日志写在 ~/.pig/agent 下
+pig web status                # 在跑退出码 0，没在跑退出码 3
+pig web stop                  # 先 SIGTERM，3 秒后仍在就 SIGKILL
+pig web restart --port 9000   # stop + start -d；--host 和 --port 都认
+```
+
+`pig web start` 不带 `-d` 就等同于前台的 `--mode web`。背后没有引框架：两次 `pcntl_fork()`、
+`posix_setsid()`、一个 pid 文件——所以 `-d` 和 `stop` 需要 `ext-posix`，除此之外什么都没变。
+
 浏览器里打开过的每个会话在聊天区上方都有一个**标签页**——用会话名或第一句话做标题，正在用的高亮，
 `×` 关掉，`+` 新建——存在浏览器里，所以在手头三件事之间切换只要一下，不用再钻两层抽屉。进程同一
 时刻只跑一个会话（终端和网页共用），所以标签页是回到某段对话的入口而不是第二个 agent；终端切到别
