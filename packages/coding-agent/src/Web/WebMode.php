@@ -29,7 +29,7 @@ final class WebMode
         public readonly int $port = 8088,
         public readonly string $host = '127.0.0.1',
         public readonly ?Auth $auth = null,
-        public readonly bool $openBrowser = true,
+        public readonly bool $openBrowser = false,
     ) {
     }
 

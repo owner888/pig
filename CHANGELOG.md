@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.23] - 2026-10-04
+
+### Changed
+
+- **Eliminated unwanted automatic browser popups**:
+  - Removed automatic `open $url` invocations from `/bug` command in `InteractiveMode`; bug reports are saved locally, copied to clipboard, and display a clickable prefilled GitHub issue URL in terminal without unexpectedly popping up the OS browser.
+  - Removed automatic browser launching from `/web` command and disabled `openBrowser` default in `WebMode`, preventing `phpunit` test runs and CLI executions from intrusively opening browser tabs.
+
 ## [0.3.22] - 2026-10-04
 
 ### New Features

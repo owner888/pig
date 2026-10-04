@@ -1856,10 +1856,9 @@ final class InteractiveMode
                 $msg .= "\n" . $this->palette->fg('accent', '✓ Uploaded to server: ') . $serverUrl;
             }
 
-            $msg .= "\n" . $this->palette->fg('dim', 'Opening a GitHub issue with it prefilled; attach the file if the body was cut.');
+            $msg .= "\n" . $this->palette->fg('dim', 'GitHub issue URL (prefilled): ') . $this->palette->fg('accent', $url);
             $this->say($msg);
 
-            $this->openBrowser($url);
             $this->tui->requestRender();
         });
     }
@@ -2826,7 +2825,6 @@ final class InteractiveMode
         if ($this->webServer !== null && $this->webServer->isRunning()) {
             $url = "http://{$this->webServer->host}:{$this->webServer->port}";
             $this->say("Web UI is already running at {$url}");
-            $this->openBrowser($url);
 
             return;
         }
@@ -2864,16 +2862,6 @@ final class InteractiveMode
         $url = "http://127.0.0.1:{$port}";
         $this->say('Web UI started at ' . $this->palette->fg('accent', $url));
         $this->say($this->palette->fg('dim', 'Runs while this session is open. To keep it running in background: pig web start -d'));
-        $this->openBrowser($url);
-    }
-
-    private function openBrowser(string $url): void
-    {
-        if (PHP_OS_FAMILY === 'Darwin') {
-            Process::run(['open', $url]);
-        } elseif (PHP_OS_FAMILY === 'Linux') {
-            Process::run(['xdg-open', $url]);
-        }
     }
 
     private function handleDiffCommand(string $args): void
