@@ -149,11 +149,78 @@
     .path-info {
       display: flex;
       flex-direction: column;
-      gap: 3px;
+      gap: 4px;
       color: var(--text-dim);
       overflow: hidden;
+      min-width: 0;
     }
-    .path-cwd { color: var(--text-muted); }
+    .path-header-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .path-cwd {
+      color: var(--text-muted);
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .path-title {
+      color: var(--text);
+      font-size: 13px;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .session-file-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      background: rgba(30, 41, 59, 0.45);
+      border: 1px solid rgba(51, 65, 85, 0.4);
+      border-radius: 4px;
+      padding: 1px 7px;
+      width: fit-content;
+      max-width: 320px;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .session-file-badge:hover {
+      background: rgba(51, 65, 85, 0.65);
+      border-color: rgba(100, 116, 139, 0.6);
+      color: var(--text-muted);
+    }
+    .session-file-badge.copied {
+      border-color: rgba(52, 211, 153, 0.7);
+      color: #34d399;
+      background: rgba(16, 185, 129, 0.15);
+    }
+    .session-file-badge .file-badge-icon {
+      font-size: 10px;
+      opacity: 0.75;
+      flex-shrink: 0;
+    }
+    .session-file-badge .session-file-text {
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .session-file-badge .copy-icon {
+      font-size: 10px;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      flex-shrink: 0;
+    }
+    .session-file-badge:hover .copy-icon {
+      opacity: 0.8;
+    }
     .path-file {
       color: var(--text-dim);
       font-size: 12px;
@@ -901,6 +968,15 @@
       .path-cwd {
         font-size: 12px;
       }
+      .path-title {
+        font-size: 12px;
+        max-width: calc(100vw - 140px);
+      }
+      .session-file-badge {
+        font-size: 10px;
+        padding: 1px 5px;
+        max-width: calc(100vw - 120px);
+      }
       .path-file {
         font-size: 11px;
         max-width: 180px;
@@ -999,8 +1075,15 @@
   <main id="main-view">
     <div class="top-header">
       <div class="path-info">
-        <span id="cwd-display" class="path-cwd">~</span>
-        <span id="filename-display" class="path-file">Loading session...</span>
+        <div class="path-header-row">
+          <span id="cwd-display" class="path-cwd">~</span>
+          <span id="session-title-display" class="path-title"></span>
+        </div>
+        <div id="session-file-badge" class="session-file-badge" title="Click to copy session file path">
+          <span class="file-badge-icon">📄</span>
+          <span id="session-file-text" class="session-file-text">Loading session...</span>
+          <span class="copy-icon" title="Copy">📋</span>
+        </div>
       </div>
       <div style="display:flex; gap:8px;">
         <button id="accounts-btn" class="toggle-sidebar-btn" title="Accounts &amp; Quota" style="width:auto; padding:0 10px; font-size:12px;">Accounts</button>
@@ -1051,7 +1134,10 @@
     const sidebarHeader = document.getElementById("sidebar-header");
     const sidebarList = document.getElementById("sidebar-list");
     const cwdDisplay = document.getElementById("cwd-display");
-    const filenameDisplay = document.getElementById("filename-display");
+    const sessionTitleDisplay = document.getElementById("session-title-display");
+    const sessionFileBadge = document.getElementById("session-file-badge");
+    const sessionFileText = document.getElementById("session-file-text");
+    const filenameDisplay = sessionFileText;
     const telemetryStats = document.getElementById("telemetry-stats");
     const providerSelect = document.getElementById("provider-select");
     const modelSelect = document.getElementById("model-select");
@@ -2686,12 +2772,88 @@
       if (next) openTab(next); else await startNewSession();
     }
 
+    /**
+     * Format a long session filename like `2026-10-04T11-03-16-968Z_68860c54-886c-4889-9f34-7a0dc8110b0e.jsonl`
+     * into a clean, legible snippet `2026-10-04T11-03…0b0e.jsonl`.
+     */
+    function formatSessionFilename(name) {
+      if (!name) return "(in-memory)";
+      const raw = name.split("/").pop();
+      if (raw.length <= 26) return raw;
+      const dot = raw.lastIndexOf(".");
+      const ext = dot !== -1 ? raw.slice(dot) : "";
+      const base = dot !== -1 ? raw.slice(0, dot) : raw;
+      const head = base.slice(0, 16);
+      const tail = base.slice(-4);
+      return `${head}…${tail}${ext}`;
+    }
+
+    function updateSessionFileBadge(t) {
+      if (!sessionFileBadge || !sessionFileText) return;
+      if (!t) {
+        sessionFileText.innerText = "No active session";
+        sessionFileBadge.title = "";
+        return;
+      }
+      const rawName = t.sessionFile;
+      const fullPath = t.sessionPath || (rawName && t.cwd ? `${t.cwd}/${rawName}` : rawName);
+      if (!rawName) {
+        sessionFileText.innerText = "(in-memory)";
+        sessionFileText.style.fontStyle = "italic";
+        sessionFileText.style.opacity = "0.75";
+        sessionFileBadge.title = "Session not yet saved to disk (will save on first turn)";
+      } else {
+        sessionFileText.innerText = formatSessionFilename(rawName);
+        sessionFileText.style.fontStyle = "normal";
+        sessionFileText.style.opacity = "1";
+        sessionFileBadge.title = (fullPath ? `${fullPath}\n` : `${rawName}\n`) + "Click to copy session file path";
+      }
+    }
+
+    if (sessionFileBadge) {
+      sessionFileBadge.addEventListener("click", () => {
+        const t = active;
+        if (!t) return;
+        const targetText = t.sessionPath || t.sessionFile;
+        if (!targetText) return;
+        const copyFn = (navigator.clipboard && navigator.clipboard.writeText)
+          ? navigator.clipboard.writeText(targetText)
+          : Promise.reject(new Error("No clipboard API"));
+        copyFn.then(() => {
+          sessionFileBadge.classList.add("copied");
+          sessionFileText.innerText = "Copied!";
+          setTimeout(() => {
+            sessionFileBadge.classList.remove("copied");
+            if (active === t) updateSessionFileBadge(t);
+          }, 1200);
+        }).catch(() => {
+          const temp = document.createElement("textarea");
+          temp.value = targetText;
+          document.body.appendChild(temp);
+          temp.select();
+          try {
+            document.execCommand("copy");
+            sessionFileBadge.classList.add("copied");
+            sessionFileText.innerText = "Copied!";
+            setTimeout(() => {
+              sessionFileBadge.classList.remove("copied");
+              if (active === t) updateSessionFileBadge(t);
+            }, 1200);
+          } catch (e) {}
+          document.body.removeChild(temp);
+        });
+      });
+    }
+
     /** The header, the dropdowns and the telemetry line all describe the active tab. */
     function applyActiveTabToChrome() {
       const t = active;
       if (!t) return;
       cwdDisplay.innerText = t.cwd ? (t.cwd.split("/").filter(Boolean).pop() || t.cwd) : "~";
-      filenameDisplay.innerText = t.name || t.sessionFile || (t.state ? "new session" : "Connecting…");
+      if (sessionTitleDisplay) {
+        sessionTitleDisplay.innerText = t.name ? ` • ${t.name}` : (t.opening ? ` • ${t.opening}` : "");
+      }
+      updateSessionFileBadge(t);
       sendBtn.style.display = t.isRunning ? "none" : "flex";
       stopBtn.style.display = t.isRunning ? "flex" : "none";
       const s = t.state;

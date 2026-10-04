@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.8] - 2026-10-04
+
+### Added
+
+- **Active session file badge with smart truncation in Web UI**: Added an interactive session file indicator in the top header displaying the active tab's underlying `.jsonl` session file upon switching tabs.
+- **Smart filename truncation**: Long 60+ character session filenames are cleanly truncated to date-time prefix plus UUID tail (`2026-10-04T11-03…0b0e.jsonl`), preserving full timestamp and file identification without breaking UI layouts.
+- **Click-to-copy & responsive mobile styling**: Clicking the badge copies the full absolute session path to the clipboard with an instant feedback animation (`Copied!`). Styled with responsive constraints (`max-width: calc(100vw - 120px)`) ensuring zero overflow or wrapping on 375px mobile screens.
+
 ## [0.3.7] - 2026-10-04
 
 ### Fixed
