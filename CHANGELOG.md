@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.10] - 2026-10-04
+
+### Fixed
+
+- **New session workspace resolution in Web UI**: Fixed an issue where clicking `+ New Session` inside a selected workspace drawer (e.g. `GCamAGC`) created the session in the previously active tab's project (`pig`) instead of the selected workspace. `startNewSession()` now prioritizes `selectedWorkspace.path`, safely handles `MouseEvent` listener bindings, and automatically closes the mobile drawer upon session creation.
+
 ## [0.3.9] - 2026-10-04
 
 ### Changed

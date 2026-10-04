@@ -1659,7 +1659,7 @@
     sendBtn.addEventListener("click", submitMessage);
     stopBtn.addEventListener("click", abortTurn);
     attachBtn.addEventListener("click", () => fileInput.click());
-    newSessionBtn.addEventListener("click", startNewSession);
+    newSessionBtn.addEventListener("click", () => startNewSession());
 
     // File input attachment
     fileInput.addEventListener("change", (e) => {
@@ -2227,11 +2227,25 @@
       return html;
     }
 
-    /** A new conversation is a new tab — and a new child — in the current directory. */
+    /** A new conversation is a new tab — and a new child. */
     async function startNewSession(cwd = null) {
       pendingImages = [];
       renderPendingImages();
-      openTab(new Tab(cwd || active?.cwd || serverCwd, null));
+
+      // If a valid cwd string is passed (e.g. from tab bar '+' button), use it.
+      // If user is currently browsing a specific workspace in the sidebar, use that workspace's directory!
+      // Otherwise fallback to the active tab's cwd or the server default cwd.
+      const targetCwd = (typeof cwd === "string" && cwd.trim() !== "")
+        ? cwd.trim()
+        : ((currentView === "sessions" && selectedWorkspace?.path) || active?.cwd || serverCwd);
+
+      openTab(new Tab(targetCwd, null));
+
+      if (window.innerWidth <= 768 && !sidebar.classList.contains("collapsed")) {
+        sidebar.classList.add("collapsed");
+        toggleSidebar.innerText = "›";
+      }
+
       if (currentView === "sessions" && selectedWorkspace) {
         enterWorkspace(selectedWorkspace);
       } else {
@@ -2751,7 +2765,7 @@
       plus.className = "session-tab-new";
       plus.textContent = "+";
       plus.title = "New session";
-      plus.addEventListener("click", () => startNewSession());
+      plus.addEventListener("click", () => startNewSession(active?.cwd));
       sessionTabs.appendChild(plus);
     }
 
