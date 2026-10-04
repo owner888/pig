@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.19] - 2026-10-04
+
+### Added
+
+- **Startup asynchronous extension update check and notifications matching upstream pi**:
+  - Implemented `PackageUpdateCheck::checkForUpdates()` to asynchronously scan user extensions against core package releases and git updates.
+  - Implemented `InteractiveMode::sayPackageUpdates()` rendering the official `Package Updates Available` banner with instructions to run `pig update --extensions`.
+  - Wired into `bin/pig` startup flow, alerting users seamlessly without delaying the initial frame.
+
 ## [0.3.18] - 2026-10-04
 
 ### Added

@@ -38,6 +38,7 @@ use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Changelog;
 use Pig\CodingAgent\Cli\SessionPicker;
 use Pig\CodingAgent\Cli\TrustPrompt;
+use Pig\CodingAgent\Cli\PackageUpdateCheck;
 use Pig\CodingAgent\ProjectTrust;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\CodingAgentError;
@@ -669,6 +670,14 @@ if ($mode === 'rpc') {
 
                 if ($newer !== null) {
                     $running->sayNewVersion($newer);
+                }
+            });
+
+            Async::spawn(static function () use ($running, $cwd): void {
+                $updates = (new PackageUpdateCheck())->checkForUpdates($cwd);
+
+                if ($updates !== []) {
+                    $running->sayPackageUpdates($updates);
                 }
             });
         }
