@@ -206,6 +206,11 @@ class TcpConnection
         $this->readableWatcher = $watcher;
     }
 
+    public function isClosed(): bool
+    {
+        return $this->isClosed;
+    }
+
     public function close(): void
     {
         if ($this->isClosed) {

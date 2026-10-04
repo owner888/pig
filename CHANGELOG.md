@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.47] - 2026-10-04
+
+### Fixed
+
+- **Added missing `TcpConnection::isClosed()` getter.** In `HttpServer::armHeartbeat()`, WebSocket ping heartbeat check invoked `$wsClient->isClosed()`. `TcpConnection` had `protected bool $isClosed` but lacked the public `isClosed(): bool` getter method, causing a fatal error (`Call to undefined method Pig\CodingAgent\Web\Connection::isClosed()`) when the 25-second heartbeat timer fired. Added public getter to `TcpConnection`.
+
 ## [0.2.46] - 2026-10-04
 
 ### Added
