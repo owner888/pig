@@ -64,12 +64,12 @@ final class WebModeTest extends TestCase
     }
 
     /** A server whose children are the fake agent, and whose idle reaping is quick. */
-    private function server(int $port): HttpServer
+    private function server(int $port, ?Auth $auth = null): HttpServer
     {
         return new HttpServer(
             $this->cwd,
             $port,
-            auth: Auth::inMemory(),
+            auth: $auth ?? Auth::inMemory(),
             spawn: static fn (string $cwd, ?string $file): RpcClient => new RpcClient(
                 cwd: $cwd,
                 binary: self::FAKE,
@@ -474,6 +474,39 @@ final class WebModeTest extends TestCase
             }
 
             fclose($ws);
+            $server->stop();
+        });
+    }
+
+    public function testAccountsUsageEndpointDoesNotCrashOnMissingAsyncImport(): void
+    {
+        $port = 28100;
+        $auth = Auth::inMemory();
+        $server = $this->server($port, $auth);
+
+        Async::run(function () use ($server, $port, $auth) {
+            $server->start();
+            $http = new HttpClient();
+
+            // When no antigravity credential is saved, returns 404 cleanly without throwing
+            $res = $http->send(new Request('GET', "http://127.0.0.1:{$port}/api/accounts/usage"));
+            $this->assertSame(404, $res->status);
+            $body = json_decode($res->body->all(), true);
+            $this->assertFalse($body['ok']);
+            $this->assertStringContainsString('No Antigravity account', $body['error']);
+
+            // With credentials present, hits the `Async::spawn` branch. Must not crash with
+            // `Class "Pig\CodingAgent\Web\Async" not found`.
+            $auth->setCredentials(
+                \Pig\Ai\Utils\Oauth\Provider::Antigravity,
+                new \Pig\Ai\Utils\Oauth\Credentials(refresh: 'r', access: 'a', expires: (time() + 3600) * 1000, projectId: 'proj-1'),
+            );
+            // QuotaClient safely runs through Async::spawn, returning 200 with usage and error diagnostics
+            $res2 = $http->send(new Request('GET', "http://127.0.0.1:{$port}/api/accounts/usage"));
+            $this->assertSame(200, $res2->status);
+            $body2 = json_decode($res2->body->all(), true);
+            $this->assertTrue($body2['ok']);
+
             $server->stop();
         });
     }

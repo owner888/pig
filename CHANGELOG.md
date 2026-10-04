@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.4] - 2026-10-04
+
+### Fixed
+
+- **Missing `Async` import in `HttpServer`**: Added `use Pig\Async\Async;` to `HttpServer.php`. Previously, requesting `/api/accounts/usage` (such as opening the Antigravity Accounts panel in Web UI) threw `Error: Class "Pig\CodingAgent\Web\Async" not found` when attempting to spawn the asynchronous quota check.
+- **Accounts endpoint test coverage**: Added unit tests in `WebModeTest` verifying that `/api/accounts/usage` executes `Async::spawn()` cleanly without fatal un-imported class errors.
+
 ## [0.3.3] - 2026-10-04
 
 ### Fixed

@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Web;
 use Closure;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Models;
+use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Rpc\RpcClient;
