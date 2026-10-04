@@ -1,4 +1,4 @@
-# pig — Native PHP AI Coding Agent
+# pig — PHP AI Agent
 
 **English** · [简体中文](README.zh-CN.md) · **Website & Docs:** [pigagent.dev](https://pigagent.dev)
 

@@ -1,4 +1,4 @@
-# pig — 原生 PHP AI 智能编程助手
+# pig — PHP AI Agent (智能体)
 
 [English](README.md) · **简体中文** · **官方网站与文档：** [pigagent.dev](https://pigagent.dev)
 

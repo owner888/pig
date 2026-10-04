@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.17] - 2026-10-04
+
+### Changed
+
+- **Brand title refined to `pig — PHP AI Agent`**: Aligned the title with the core acronym behind pig (**P**HP **A**I a**G**ent) across English and Chinese README documentation.
+
 ## [0.3.16] - 2026-10-04
 
 ### Changed
