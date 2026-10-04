@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.1] - 2026-10-04
+
+### Fixed
+
+- **Silent prompt failure in Web UI without error messages**: Fixed a critical issue where failed turn generations (e.g. invalid API keys, 401/403/500 provider errors, rate limit exhaustion, or unselected models) completed with no visible error in the browser:
+  - `RpcEvents`: Encoded `error` directly onto `agent_end` events by extracting `lastError` from failing `AssistantMessage` instances, and included `$event->error->errorMessage` in `ErrorEvent` deltas.
+  - `RpcMode`: Preserved `$id` on asynchronous prompt failure responses so error rejections correlate properly.
+  - Frontend Web UI: Displayed errors upon `retry_end` failure (`succeeded === false`), rendered unmatched or asynchronous failure responses via `appendErrorMessage()`, extracted fallback errors from `agent_end.messages`, and restored input text on connection or prompt dispatch failure instead of losing user typing.
+
 ## [0.3.0] - 2026-10-04
 
 > **Milestone Release**: Rebuilt the web architecture on upstream `pi-web`'s multi-session process model, introduced native `pig web` daemon management, and eliminated long-standing background pipe inheritance deadlocks.

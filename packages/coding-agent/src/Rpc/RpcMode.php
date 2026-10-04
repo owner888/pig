@@ -342,6 +342,7 @@ final class RpcMode
         // second, id-less failure *after* the success this method had already returned, so a
         // host would be told both that the prompt was accepted and that it was not.
         $message = self::text($command, 'message');
+        $id = isset($command['id']) ? (string) $command['id'] : null;
         $images = [];
 
         foreach ((array) ($command['images'] ?? []) as $image) {
@@ -353,16 +354,17 @@ final class RpcMode
         // The response goes out before the turn finishes — the events are the turn. A host
         // that waited for the response to mean "done" would be waiting for the wrong thing,
         // which is why `agent_end` exists.
-        Async::spawn(function () use ($message, $images): void {
+        Async::spawn(function () use ($message, $images, $id): void {
             try {
                 $this->session->prompt($message, $images);
             } catch (Throwable $error) {
-                $this->send([
+                $this->send(array_filter([
+                    'id' => $id,
                     'type' => 'response',
                     'command' => 'prompt',
                     'success' => false,
                     'error' => $error->getMessage(),
-                ]);
+                ], static fn (mixed $v): bool => $v !== null));
             }
         });
 

@@ -16,6 +16,7 @@ use Pig\Agent\ToolExecutionStartEvent;
 use Pig\Agent\ToolExecutionUpdateEvent;
 use Pig\Agent\TurnEndEvent;
 use Pig\Agent\TurnStartEvent;
+use Pig\Ai\AssistantMessage;
 use Pig\Ai\AssistantMessageEvent;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
@@ -63,10 +64,11 @@ final class RpcEvents
             $event instanceof AgentStartEvent => ['type' => 'agent_start'],
             $event instanceof TurnStartEvent => ['type' => 'turn_start'],
 
-            $event instanceof AgentEndEvent => [
+            $event instanceof AgentEndEvent => array_filter([
                 'type' => 'agent_end',
                 'messages' => self::messages($event->messages),
-            ],
+                'error' => self::lastError($event->messages),
+            ], static fn (mixed $v): bool => $v !== null),
 
             $event instanceof TurnEndEvent => [
                 'type' => 'turn_end',
@@ -183,9 +185,15 @@ final class RpcEvents
                 ],
             ],
 
-            $event instanceof DoneEvent, $event instanceof ErrorEvent => [
+            $event instanceof DoneEvent => [
                 ...$encoded,
                 'stopReason' => $event->reason->value,
+            ],
+
+            $event instanceof ErrorEvent => [
+                ...$encoded,
+                'stopReason' => $event->reason->value,
+                'error' => $event->error->errorMessage,
             ],
 
             // The ones that carry nothing of their own: text_start, thinking_start,
@@ -228,6 +236,30 @@ final class RpcEvents
         }
 
         return $encoded;
+    }
+
+    /**
+     * The error message from the failing turn's assistant message, if this run ended in an
+     * error.
+     *
+     * Placed on `agent_end`'s top level so hosts and web UI clients don't have to walk the
+     * messages array to learn why a turn produced no answer.
+     *
+     * @param list<mixed> $messages
+     */
+    private static function lastError(array $messages): ?string
+    {
+        if ($messages === []) {
+            return null;
+        }
+
+        $last = $messages[array_key_last($messages)];
+
+        if ($last instanceof AssistantMessage && $last->stopReason === \Pig\Ai\StopReason::Error) {
+            return $last->errorMessage ?? 'Agent turn failed with an error.';
+        }
+
+        return null;
     }
 
     /** `TextDeltaEvent` becomes `text_delta`; the `Event` suffix carries no information. */

@@ -1184,19 +1184,30 @@
         }
         if (m.type === "error") {
           const p = m.id ? this.pending.get(m.id) : null;
-          if (p) { this.pending.delete(m.id); clearTimeout(p.timer); p.reject(new Error(m.message)); return; }
-          this.render(() => appendErrorMessage(m.message));
+          if (p) { this.pending.delete(m.id); clearTimeout(p.timer); p.reject(new Error(m.message)); }
+          this.render(() => {
+            setRunningState(false);
+            appendErrorMessage(m.message);
+          });
           return;
         }
         if (m.type === "rpc_event") this.onRpcEvent(m.event);
       }
 
       onRpcEvent(evt) {
+        if (!evt) return;
         if (evt.type === "response") {
           const p = this.pending.get(evt.id);
           if (p) {
             this.pending.delete(evt.id); clearTimeout(p.timer);
             if (evt.success) p.resolve(evt.data ?? null); else p.reject(new Error(evt.error || `${evt.command} refused`));
+          } else if (!evt.success) {
+            // An asynchronous failure (e.g. prompt threw in child process) or mismatched ID:
+            // render the error banner so failures never disappear in silence.
+            this.render(() => {
+              setRunningState(false);
+              appendErrorMessage(evt.error || `${evt.command || "command"} failed`);
+            });
           }
           return;
         }
@@ -1683,8 +1694,9 @@
         currentThinkingText = "";
         currentThinkingBox = null;
         if (evt.type === "agent_end") tab?.refreshState();
-        if (evt.error) {
-          appendErrorMessage(evt.error);
+        const err = evt.error || lastErrorMessage(evt.messages);
+        if (err) {
+          appendErrorMessage(err);
         }
       } else if (evt.type === "message_update") {
         // `RpcMode` sends the whole message so far plus the delta that changed it; the delta
@@ -1730,6 +1742,9 @@
       } else if (evt.type === "retry_end") {
         if (tab === active) hideStatusBanner();
         tab?.refreshState();
+        if (!evt.succeeded && evt.error) {
+          appendErrorMessage(evt.error);
+        }
       } else if (evt.type === "auto_compaction_start") {
         if (tab === active) showStatusBanner(`Context is full — compacting conversation summary...`);
       } else if (evt.type === "auto_compaction_end") {
@@ -1738,6 +1753,16 @@
       } else if (evt.type === "session_info_changed") {
         tab?.refreshState();
       }
+    }
+
+    /** Extract any fatal error recorded on the last assistant message of a turn. */
+    function lastErrorMessage(messages) {
+      if (!Array.isArray(messages) || messages.length === 0) return null;
+      const last = messages[messages.length - 1];
+      if (!last) return null;
+      if (last.errorMessage) return last.errorMessage;
+      if (last.stopReason === "error") return "An error occurred during generation.";
+      return null;
     }
 
     /** The text blocks of an rpc content list, joined — what a tool's partial output reads as. */
@@ -2179,7 +2204,13 @@
         tab.connect();
         const until = Date.now() + 10000;
         while (!tab.bound && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
-        if (!tab.bound) { appendErrorMessage("Could not reach the agent for this conversation."); return; }
+        if (!tab.bound) {
+          promptInput.value = text;
+          pendingImages = imgsToSend;
+          renderPendingImages();
+          appendErrorMessage("Could not reach the agent for this conversation.");
+          return;
+        }
       }
 
       appendUserMessage(text, imgsToSend);
@@ -2196,7 +2227,10 @@
         }
       } catch (err) {
         setRunningState(false);
-        appendErrorMessage(err.message);
+        promptInput.value = text;
+        pendingImages = imgsToSend;
+        renderPendingImages();
+        appendErrorMessage(err.message || "Failed to send message.");
       }
     }
 

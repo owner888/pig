@@ -10818,6 +10818,25 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 **对策**：
 在 `Run::wait()` 中增加基于 `Loop::delay(0.1)` 的进程状态轮询：一旦检测到主命令进程 `proc_get_status()['running'] !== true`（说明主 shell 已经退出生命周期），给予 50ms 宽限期让事件循环读取并 drain 尽缓冲区中的残留数据，随后立即结束 `$this->finished` 等待，关闭管道并安全退出，杜绝后台孙进程阻断会话。
 
+### Web 模式下 LLM 发送失败无任何错误提示（静默吞错）
+
+**现象**：
+在 Web 界面向模型提问后，偶尔没有生成任何回复，转圈停止，界面恢复为空白且没有弹出任何红色错误提示；输入框中的内容被清空，用户误以为请求丢失或卡住。
+
+**原因**：
+1. `RpcEvents.php` 的 `agent_end` 事件此前未抽取失败消息的 `errorMessage`，输出事件为 `{"type":"agent_end","messages":[...]}`（缺少 `error` 顶层字段），而前端 `onEvent(evt)` 仅检查 `evt.error`，导致 turn 失败时错误直接穿透遗漏。
+2. 流式错误事件 `ErrorEvent` 在 `RpcEvents::delta()` 中仅序列化了 `stopReason`，遗漏了 `$event->error->errorMessage`。
+3. `retry_end` 重试全部耗尽失败后，前端仅隐藏横幅并刷新状态，未在聊天区渲染 `evt.error`。
+4. `RpcMode::prompt()` 内部异步抛出异常时发送的错误响应缺少 `$id`，前端 `onRpcEvent()` 因无对应 pending promise 直接忽略，既未通知发送操作也未渲染到界面。
+5. 前端在连接等待或发送报错时提前清空了 `promptInput.value`，导致用户输入内容在错误时被彻底销毁。
+
+**对策**：
+1. 在 `RpcEvents::encode(AgentEndEvent)` 中增加 `lastError` 提取器，将失败消息的 `errorMessage` 显式序列化至 `agent_end.error`；并在 `ErrorEvent` 的 delta 中包含 `error`。
+2. 前端 `onEvent(evt)` 增加后备错误提取 `evt.error || lastErrorMessage(evt.messages)`，双重确保 `agent_end` 出错必定在聊天区输出红色 `msg-error`。
+3. 前端 `retry_end` 失败时（`!evt.succeeded`）在界面输出具体重试失败错误。
+4. 前端 `onRpcEvent` 增加对无 ID 或未匹配失败响应的通用捕获，终止 running 状态并调用 `appendErrorMessage`。
+5. `submitMessage` 增加故障回填保护：发送或连接失败时将 `text` 和 `pendingImages` 完整还原回输入框。
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;
