@@ -84,9 +84,12 @@ pig
   - `pig --model sonnet:high`（同时设置模型与思考强度）
   - 按 `Ctrl+L` 呼出模型选择菜单；按 `Ctrl+P` / `Shift+Ctrl+P` 快捷切换上一/下一模型。
   - `pig --list-models [query]`：查看当前已配置密钥的所有可用模型、上下文上限与定价。
-- **生成期间实时交互**：
-  - 模型生成期间直接按 **回车（Enter）**：**抢占转向（Steer）**（当前工具执行完立刻优先处理你的新指令）。
-  - 按 **Alt+Enter**（或 **Option+Enter**）：**排队追问（Follow-up）**（等本轮完全结束后再自动处理）。
+- **生成期间实时交互与输入快捷键**：
+  - **长按 `⌘`（Command）键 ~0.5s**：如同 **Blink Shell / iPadOS** 般在屏幕中央弹出快捷键速查面板（HUD），松开即自动消失，支持 TUI 终端与 Web 界面。
+  - 按 **Shift+Enter**：输入框内**换行**（多行自由编写 Prompt 或粘贴代码块，绝不误发）。
+  - 空闲时按 **回车（Enter）** 或 **Command+Enter**（`⌘+Enter` / `Ctrl+Enter`）：发送消息（Submit）。
+  - 模型生成期间按 **Command+Enter**（或 **Alt+Enter**）：**排队追问（Follow-up）**（加入后续队列，等本轮完全结束后再自动处理）。
+  - 模型生成期间按 **回车（Enter）**：**抢占转向（Steer）**（当前工具执行完立刻优先处理你的新指令）。
   - 按 **Alt+Up**：将已排队的待发送内容全部撤回编辑输入框。
   - 按 **Escape**：立即终止当前生成轮次或取消重试等待。
   - 按 **Ctrl+G**：将输入框内容调起外部编辑器（`$VISUAL` 或 `$EDITOR`）进行长文本编辑，保存即自动带回。

@@ -84,12 +84,15 @@ pig
   - `pig --model sonnet:high` (sets model and thinking level simultaneously)
   - Press `Ctrl+L` to open the in-session model picker; press `Ctrl+P` / `Shift+Ctrl+P` to cycle models on the fly.
   - `pig --list-models [query]`: View available models with context limits and pricing.
-- **Mid-Turn Interaction**:
-  - Press `Enter` while the model is answering to **steer** (runs right after current tool).
-  - Press `Alt+Enter` (or `Option+Enter`) to **queue a follow-up** for the next turn.
-  - Press `Alt+Up` to restore queued messages back to the editor.
-  - Press `Escape` to interrupt the active turn or cancel retries.
-  - Press `Ctrl+G` to edit complex prompts in your external editor (`$VISUAL` or `$EDITOR`).
+- **Interactive Shortcuts & Mid-Turn Controls**:
+  - **Hold `⌘` (Command) for ~0.5s**: Pops up an interactive **Blink Shell / iPadOS style** shortcuts cheat sheet (HUD) in the center of the screen, automatically dismissing when released (supported in both TUI and Web UI).
+  - Press **Shift+Enter**: Insert a **newline** in the editor (draft multiline prompts or paste code safely without accidental sending).
+  - Press **Enter** or **Command+Enter** (`⌘+Enter` / `Ctrl+Enter`) when idle: Submit message.
+  - Press **Command+Enter** (or **Alt+Enter**) while the model is answering: **Queue a follow-up** for after the turn ends.
+  - Press **Enter** while the model is answering: **Steer** (interrupts right after current tool).
+  - Press **Alt+Up**: Restore all queued messages back to the editor.
+  - Press **Escape**: Interrupt the active turn or cancel retries.
+  - Press **Ctrl+G**: Edit complex prompts in your external editor (`$VISUAL` or `$EDITOR`).
 - **Context & Session Commands**:
   - `/name <new-name>`: View or change the active session title (reflected in footer and Web UI).
   - `/label <name>`: Bookmark the current point in the session tree.
