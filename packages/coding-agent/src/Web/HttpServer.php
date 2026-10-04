@@ -1135,6 +1135,29 @@ final class HttpServer
                     'isError' => $m->isError,
                     'details' => $m->details,
                 ];
+            } elseif ($m instanceof \Pig\CodingAgent\Session\CompactionSummary) {
+                $history[] = [
+                    'role' => 'compaction',
+                    'summary' => $m->summary,
+                    'replaced' => $m->replaced,
+                    'readFiles' => $m->readFiles,
+                    'modifiedFiles' => $m->modifiedFiles,
+                ];
+            } elseif ($m instanceof \Pig\CodingAgent\Session\BranchSummary) {
+                $history[] = [
+                    'role' => 'branch_summary',
+                    'summary' => $m->summary,
+                    'fromHook' => $m->fromHook,
+                    'readFiles' => $m->readFiles,
+                    'modifiedFiles' => $m->modifiedFiles,
+                ];
+            } elseif ($m instanceof \Pig\CodingAgent\Session\HookMessage) {
+                $history[] = [
+                    'role' => 'hook_message',
+                    'customType' => $m->customType,
+                    'content' => $m->toText(),
+                    'display' => $m->display,
+                ];
             }
         }
 

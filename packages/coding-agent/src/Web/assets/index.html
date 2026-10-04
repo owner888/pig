@@ -426,7 +426,7 @@
       background: #111827;
       border: 1px solid var(--border);
       border-radius: 8px;
-      margin: 4px 0;
+      margin: 6px 0;
       font-family: var(--font-mono);
       font-size: 13px;
       overflow: hidden;
@@ -434,7 +434,7 @@
     }
     .tool-header {
       padding: 10px 14px;
-      background: rgba(30, 41, 59, 0.4);
+      background: rgba(30, 41, 59, 0.5);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -442,20 +442,78 @@
       cursor: pointer;
       user-select: none;
       font-size: 13px;
+      border-left: 3px solid #64748b;
+      transition: background 0.15s ease;
     }
-    .tool-header:hover { background: rgba(51, 65, 85, 0.4); }
-    .tool-header-title { font-weight: 500; color: var(--text); }
-    .tool-header-status { font-size: 11px; color: var(--text-dim); }
+    .tool-header:hover { background: rgba(51, 65, 85, 0.6); }
+    .tool-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tool-header-chevron {
+      font-size: 10px;
+      color: var(--text-dim);
+      display: inline-block;
+      transition: transform 0.15s ease;
+      width: 12px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .tool-header-chevron.expanded { transform: rotate(90deg); }
+    .tool-header-title { font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tool-header-status { font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
     .tool-body {
       padding: 12px 14px;
       background: #090d16;
       color: #f1f5f9;
       white-space: pre-wrap;
-      max-height: 380px;
+      max-height: 420px;
       overflow-y: auto;
       font-size: 13px;
       line-height: 1.5;
       border-top: 1px solid rgba(30, 41, 59, 0.6);
+      display: none;
+    }
+    .tool-body.expanded {
+      display: block;
+    }
+
+    /* Compaction and Branch Summaries in Web UI */
+    .compaction-box {
+      width: 100%;
+      background: rgba(167, 152, 215, 0.08);
+      border: 1px dashed rgba(167, 152, 215, 0.35);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin: 8px 0;
+      font-size: 13px;
+    }
+    .compaction-header {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--text);
+      font-weight: 500;
+      user-select: none;
+    }
+    .compaction-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #c4b5fd;
+    }
+    .compaction-summary-text {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed rgba(167, 152, 215, 0.2);
+      color: var(--text-muted);
+      font-size: 13px;
+      line-height: 1.6;
     }
     .tool-terminal {
       font-family: var(--font-mono);
@@ -1204,13 +1262,16 @@
 
       let title = evt.toolName;
       let bodyHtml = "";
+      let borderCol = "#64748b";
 
       if (evt.toolName === "bash") {
+        borderCol = "#38bdf8"; // sky blue
         const cmd = evt.arguments?.command || "";
         const timeout = evt.arguments?.timeout;
         title = `$ ${cmd}` + (timeout ? ` (timeout ${timeout}s)` : "");
         bodyHtml = `<div class="tool-terminal">... executing command</div>`;
       } else if (evt.toolName === "read") {
+        borderCol = "#34d399"; // emerald green
         const path = evt.arguments?.path || "";
         const offset = evt.arguments?.offset;
         const limit = evt.arguments?.limit;
@@ -1223,12 +1284,14 @@
         title = `read ${path}${range}`;
         bodyHtml = `<div class="tool-terminal">Reading file...</div>`;
       } else if (evt.toolName === "edit") {
+        borderCol = "#c084fc"; // purple
         const path = evt.arguments?.path || "";
         const oldText = evt.arguments?.oldText || "";
         const newText = evt.arguments?.newText || "";
         title = `edit ${path}`;
         bodyHtml = renderDiff(oldText, newText);
       } else if (evt.toolName === "write") {
+        borderCol = "#fb923c"; // orange
         const path = evt.arguments?.path || "";
         const content = evt.arguments?.content || "";
         title = `write ${path}`;
@@ -1241,32 +1304,39 @@
           bodyHtml = `<div class="tool-terminal">Writing to file...</div>`;
         }
       } else if (evt.toolName === "grep") {
+        borderCol = "#facc15"; // yellow
         const pattern = evt.arguments?.pattern || "";
         const path = evt.arguments?.path ? ` in ${evt.arguments.path}` : "";
         title = `grep /${pattern}/${path}`;
         bodyHtml = `<div class="tool-terminal">Searching...</div>`;
       } else if (evt.toolName === "find") {
+        borderCol = "#facc15";
         const pattern = evt.arguments?.pattern || "";
         const path = evt.arguments?.path ? ` in ${evt.arguments.path}` : "";
         title = `find "${pattern}"${path}`;
         bodyHtml = `<div class="tool-terminal">Finding files...</div>`;
       } else if (evt.toolName === "ls") {
+        borderCol = "#94a3b8";
         const path = evt.arguments?.path || ".";
         title = `ls ${path}`;
         bodyHtml = `<div class="tool-terminal">Listing directory...</div>`;
       } else if (evt.toolName === "web_search") {
+        borderCol = "#60a5fa";
         const query = evt.arguments?.query || "";
         title = `web_search 🔍 "${query}"`;
         bodyHtml = `<div class="tool-terminal">Searching web...</div>`;
       } else if (evt.toolName === "fetch_web_page") {
+        borderCol = "#60a5fa";
         const url = evt.arguments?.url || "";
         title = `fetch_web_page 🌐 ${url}`;
         bodyHtml = `<div class="tool-terminal">Fetching web page...</div>`;
       } else if (evt.toolName === "browse_web_page") {
+        borderCol = "#60a5fa";
         const url = evt.arguments?.url || "";
         title = `browse_web_page 🖥️ ${url}`;
         bodyHtml = `<div class="tool-terminal">Rendering live DOM in browser...</div>`;
       } else if (evt.toolName === "computer") {
+        borderCol = "#f43f5e";
         const act = evt.arguments?.action || "action";
         title = `computer 🖱️ ${act}`;
         bodyHtml = `<div class="tool-terminal">Executing browser action...</div>`;
@@ -1275,16 +1345,21 @@
       }
 
       card.innerHTML = `
-        <div class="tool-header">
-          <span class="tool-header-title">${escapeHtml(title)}</span>
-          <span class="tool-header-status">Running...</span>
+        <div class="tool-header" style="border-left-color: ${borderCol};">
+          <div class="tool-header-left">
+            <span class="tool-header-chevron">▶</span>
+            <span class="tool-header-title">${escapeHtml(title)}</span>
+          </div>
+          <span class="tool-header-status">⏳ Running...</span>
         </div>
         <div class="tool-body">${bodyHtml}</div>
       `;
 
       card.querySelector(".tool-header").addEventListener("click", () => {
         const body = card.querySelector(".tool-body");
-        body.style.display = body.style.display === "none" ? "block" : "none";
+        const chevron = card.querySelector(".tool-header-chevron");
+        const isExp = body.classList.toggle("expanded");
+        chevron.classList.toggle("expanded", isExp);
       });
 
       return card;
@@ -1361,12 +1436,21 @@
       } catch (e) {}
 
       const statusEl = card.querySelector(".tool-header-status");
-      statusEl.innerText = evt.isError ? "Failed" : "Done";
-      statusEl.style.color = evt.isError ? "#ef4444" : "#94a3b8";
+      if (statusEl) {
+        statusEl.innerText = evt.isError ? "✖ Failed" : "✔ Done";
+        statusEl.style.color = evt.isError ? "#ef4444" : "#34d399";
+      }
 
       const body = card.querySelector(".tool-body");
       if (evt.result !== undefined && evt.result !== null) {
         body.innerHTML = formatToolResultBody(toolName, evt.result, args);
+      }
+
+      // If the tool failed, expand it automatically so the user sees the error
+      if (evt.isError) {
+        body.classList.add("expanded");
+        const chevron = card.querySelector(".tool-header-chevron");
+        if (chevron) chevron.classList.add("expanded");
       }
     }
 
@@ -2342,6 +2426,51 @@
               result: m.content || m.result || m.details,
               isError: m.isError,
             });
+          } else if (m.role === "compaction") {
+            const compBox = document.createElement("div");
+            compBox.className = "compaction-box";
+            const fileCount = (m.readFiles?.length || 0) + (m.modifiedFiles?.length || 0);
+            const fileNote = fileCount > 0 ? ` · ${fileCount} files remembered` : "";
+            compBox.innerHTML = `
+              <div class="compaction-header">
+                <span class="compaction-title">⊙ Compacted · ${Number(m.replaced || 0).toLocaleString()} earlier messages summarised${fileNote}</span>
+                <span class="tool-header-chevron">▶</span>
+              </div>
+              <div class="compaction-summary-text prose" style="display:none;">${renderMarkdown(m.summary || "")}</div>
+            `;
+            compBox.querySelector(".compaction-header").addEventListener("click", () => {
+              const body = compBox.querySelector(".compaction-summary-text");
+              const chevron = compBox.querySelector(".tool-header-chevron");
+              const isExp = body.style.display !== "none";
+              body.style.display = isExp ? "none" : "block";
+              chevron.classList.toggle("expanded", !isExp);
+            });
+            chatScroll.appendChild(compBox);
+          } else if (m.role === "branch_summary") {
+            const branchBox = document.createElement("div");
+            branchBox.className = "compaction-box";
+            const fileCount = (m.readFiles?.length || 0) + (m.modifiedFiles?.length || 0);
+            const fileNote = fileCount > 0 ? ` · ${fileCount} files remembered` : "";
+            branchBox.innerHTML = `
+              <div class="compaction-header">
+                <span class="compaction-title">⑂ Branch summarised${m.fromHook ? " by a hook" : ""}${fileNote}</span>
+                <span class="tool-header-chevron">▶</span>
+              </div>
+              <div class="compaction-summary-text prose" style="display:none;">${renderMarkdown(m.summary || "")}</div>
+            `;
+            branchBox.querySelector(".compaction-header").addEventListener("click", () => {
+              const body = branchBox.querySelector(".compaction-summary-text");
+              const chevron = branchBox.querySelector(".tool-header-chevron");
+              const isExp = body.style.display !== "none";
+              body.style.display = isExp ? "none" : "block";
+              chevron.classList.toggle("expanded", !isExp);
+            });
+            chatScroll.appendChild(branchBox);
+          } else if (m.role === "hook_message" && m.display !== false) {
+            const hookBox = document.createElement("div");
+            hookBox.className = "msg-block msg-assistant";
+            hookBox.innerHTML = `<div style="font-size:11px; color:#c084fc; font-weight:600; margin-bottom:4px;">[Hook: ${escapeHtml(m.customType || "custom")}]</div><div class="prose">${renderMarkdown(m.content || "")}</div>`;
+            chatScroll.appendChild(hookBox);
           }
         }
         chatScroll.scrollTop = chatScroll.scrollHeight;

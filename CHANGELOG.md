@@ -43,6 +43,23 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.40] - 2026-10-04
+
+### Added
+
+- **Web UI compaction and branch summary support.** `HttpServer::getMessagesPayload()` now exports `CompactionSummary` (`role: "compaction"`), `BranchSummary` (`role: "branch_summary"`), and `HookMessage` (`role: "hook_message"`). Web UI renders clean collapsible summary cards (`⊙ Compacted · N earlier messages summarised` and `⑂ Branch summarised`), enabling inspection of conversation summaries without breaking turn layout.
+
+### Changed
+
+- **Upgraded Web UI tool cards with type-colored borders, icons, and status indicators.** Aligned `.tool-card` styling with terminal TUI standards:
+  - Color-coded left accents: sky blue for `bash`, emerald green for `read`, purple for `edit`, orange for `write`, yellow for `grep`/`find`, blue for web tools, rose for `computer`.
+  - Added explicit interactive expand/collapse chevrons (`▶ / ▼`) and status icons (`⏳ Running...`, `✔ Done`, `✖ Failed`).
+  - Auto-expands failed tool calls for instant debugging visibility.
+
+### Fixed
+
+- **Web UI tool cards appearing as blank/flattened strips.** Resolved CSS layout issue where tool card headers and empty pre-execution bodies compressed into indistinguishable borders during high-frequency sequential tool invocations.
+
 ## [0.2.39] - 2026-10-03
 
 ### Fixed
