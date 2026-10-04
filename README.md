@@ -120,6 +120,7 @@ pig web stop                  # Stop daemon gracefully
 
 Open `http://localhost:8080` in your browser or mobile phone:
 - **Multiplexed Multi-Tab Execution**: Switch between workspaces and tabs without interrupting active runs.
+- **Native Bilingual Multi-Language Support (中 / EN)**: Click the header `[中 / EN]` button for instant zero-refresh language toggling, auto-adapting to browser language.
 - **Sidebar Session Actions**: Hover (or tap on mobile) to rename (`✏️`) or delete (`🗑️`) sessions safely.
 - **Touchscreen & Mobile Parity**: Responsive layout optimized for smartphones and tablets.
 - **Antigravity Account Drawer**: Manage Google accounts, token expiration, and view quota meters.

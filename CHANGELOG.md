@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.26] - 2026-10-04
+
+### New Features
+
+- **Web UI full bilingual multi-language architecture**:
+  - Implemented client-side `I18N` dictionary framework inspired by smart-book's `Lang` architecture with fallback resolution and `{param}` interpolation.
+  - Added seamless Chinese (`zh-CN`) and English (`en`) support with automatic locale detection via `navigator.language` and persistence in `localStorage`.
+  - Added header language toggle button (`[中 / EN]`) enabling instant zero-refresh UI language switching.
+  - Fully localized all static elements and dynamic dialogs: sidebar workspaces, session drawers, rename/delete modals, accounts & quota popup, shortcut HUD, tool execution status cards, and live telemetry badges.
+
 ## [0.3.25] - 2026-10-04
 
 ### Fixed
