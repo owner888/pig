@@ -142,6 +142,11 @@ final class Websocket implements ProtocolInterface
             return null;
         }
 
+        // Pong frame response to server-initiated ping (keep-alive acknowledged)
+        if ($opcode === self::OPCODE_PONG) {
+            return null;
+        }
+
         // Client requested connection close
         if ($opcode === self::OPCODE_CLOSE) {
             $connection->sendRaw(self::createFrame('', self::OPCODE_CLOSE));
@@ -151,6 +156,14 @@ final class Websocket implements ProtocolInterface
         }
 
         return $payload;
+    }
+
+    /**
+     * Send an RFC 6455 Ping control frame to client.
+     */
+    public static function ping(TcpConnection $connection, string $payload = ''): void
+    {
+        $connection->sendRaw(self::createFrame($payload, self::OPCODE_PING));
     }
 
     /**

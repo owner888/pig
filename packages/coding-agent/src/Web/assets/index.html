@@ -1112,11 +1112,33 @@
       return currentAssistantBlock;
     }
 
-    // Network: WebSocket (Full-duplex RPC) with SSE fallback
+    // Network: WebSocket (Full-duplex RPC) with Telegram-style reconnect & SSE fallback
     let ws = null;
     let wsConnected = false;
+    let wsReconnectTimer = null;
+    let wsReconnectDelay = 1000;
+    const WS_MAX_RECONNECT_DELAY = 10000;
 
     function initNetwork() {
+      if (wsReconnectTimer) {
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = null;
+      }
+
+      // Close and cleanly discard any existing WebSocket connection instance before creating a new one
+      if (ws) {
+        try {
+          ws.onopen = null;
+          ws.onmessage = null;
+          ws.onclose = null;
+          ws.onerror = null;
+          if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+            ws.close();
+          }
+        } catch (e) {}
+        ws = null;
+      }
+
       const protocol = location.protocol === "https:" ? "wss:" : "ws:";
       const wsUrl = `${protocol}//${location.host}/ws`;
 
@@ -1124,11 +1146,15 @@
         ws = new WebSocket(wsUrl);
         ws.onopen = () => {
           wsConnected = true;
+          wsReconnectDelay = 1000; // Reset backoff on successful connection
+          pigReachable();
+
           // One channel. An SSE stream started while the socket was still failing would
           // otherwise stay open beside it and deliver every event twice — a hook's question
           // included, and the second copy of a question cancels the first.
           if (sse) { sse.close(); sse = null; sseStarted = false; }
           loadModels();
+          refreshState();
         };
         ws.onmessage = (e) => {
           try {
@@ -1144,18 +1170,46 @@
             }
           } catch (err) {}
         };
-        ws.onclose = () => {
+        ws.onclose = (e) => {
           wsConnected = false;
-          setTimeout(initNetwork, 2000);
+          scheduleReconnect();
         };
-        ws.onerror = () => {
+        ws.onerror = (e) => {
           wsConnected = false;
           initSseFallback();
+          scheduleReconnect();
         };
       } catch (err) {
         initSseFallback();
+        scheduleReconnect();
       }
     }
+
+    function scheduleReconnect() {
+      if (wsReconnectTimer) return;
+      showStatusBanner("Connecting to server...");
+      const delay = wsReconnectDelay + Math.floor(Math.random() * 500);
+      wsReconnectTimer = setTimeout(() => {
+        wsReconnectTimer = null;
+        initNetwork();
+      }, delay);
+      wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, WS_MAX_RECONNECT_DELAY);
+    }
+
+    // Immediate reconnection on browser online / visibility regain (Telegram-style instant reconnect)
+    window.addEventListener("online", () => {
+      if (!wsConnected) {
+        wsReconnectDelay = 1000;
+        initNetwork();
+      }
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && !wsConnected) {
+        wsReconnectDelay = 1000;
+        initNetwork();
+      }
+    });
 
     let sseStarted = false;
     let sse = null;

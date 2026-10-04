@@ -43,6 +43,20 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.43] - 2026-10-04
+
+### Added
+
+- **RFC 6455 Ping/Pong standard protocol keep-alive.** Implemented `Websocket::ping()` and added periodic server-initiated Ping heartbeats (every 25 seconds) in `HttpServer` across all active WebSocket clients. Handled client Pong responses quietly in `Websocket::decode()`, ensuring standard protocol keep-alive without payload overhead.
+
+### Changed
+
+- **Telegram-style WebSocket auto-reconnect with exponential backoff & fresh connection isolation.** Web UI frontend (`index.html`) now implements robust reconnection:
+  - Completely closes, detaches listeners, and discards previous dead connection instances before spawning a fresh `new WebSocket(wsUrl)` connection, matching Telegram's clean connection handover.
+  - Implements exponential backoff with jitter (1s base up to 10s maximum) on network drops.
+  - Displays non-intrusive status banner ("Connecting to server...") while disconnected, automatically dismissed on reconnection.
+  - Listens to `window.online` and `document.visibilitychange` to trigger immediate reconnect without waiting for retry timers when the user switches tabs or regains network connectivity.
+
 ## [0.2.42] - 2026-10-04
 
 ### Fixed

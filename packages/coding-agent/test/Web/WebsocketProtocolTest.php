@@ -122,4 +122,42 @@ final class WebsocketProtocolTest extends TestCase
         $conn->close();
         fclose($clientSock);
     }
+
+    public function testPingGeneratesValidRfc6455PingFrame(): void
+    {
+        [$clientSock, $serverSock] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+        $conn = new TcpConnection($serverSock, static fn () => null, static fn () => null);
+
+        Websocket::ping($conn, 'heartbeat');
+
+        $pingBytes = fread($clientSock, 1024);
+        $this->assertIsString($pingBytes);
+        $this->assertSame(0x89, ord($pingBytes[0])); // FIN + Ping opcode 0x9
+        $this->assertSame(9, ord($pingBytes[1]));    // Payload len = 9 ("heartbeat")
+        $this->assertSame('heartbeat', substr($pingBytes, 2));
+
+        $conn->close();
+        fclose($clientSock);
+    }
+
+    public function testDecodeHandlesPongFrameQuietly(): void
+    {
+        [$clientSock, $serverSock] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+        $conn = new TcpConnection($serverSock, static fn () => null, static fn () => null);
+
+        // Masked Pong frame from client: opcode 0xA
+        $mask = "\x55\x66\x77\x88";
+        $pongPayload = "heartbeat";
+        $masked = '';
+        for ($i = 0; $i < strlen($pongPayload); $i++) {
+            $masked .= $pongPayload[$i] ^ $mask[$i % 4];
+        }
+        $pongFrame = "\x8A\x89" . $mask . $masked;
+
+        $decoded = Websocket::decode($pongFrame, $conn);
+        $this->assertNull($decoded, 'Pong frame should be consumed quietly without triggering onMessage');
+
+        $conn->close();
+        fclose($clientSock);
+    }
 }

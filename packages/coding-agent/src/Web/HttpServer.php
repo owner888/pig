@@ -70,6 +70,9 @@ final class HttpServer
     /** @var array<int, Connection> */
     private array $wsClients = [];
 
+    private ?string $heartbeatTimer = null;
+    private const PING_INTERVAL = 25.0;
+
     private int $nextConnectionId = 0;
     private bool $isRunning = false;
     private readonly Auth $auth;
@@ -227,6 +230,7 @@ final class HttpServer
         });
 
         $this->isRunning = true;
+        $this->armHeartbeat();
     }
 
     public function isRunning(): bool
@@ -245,6 +249,11 @@ final class HttpServer
         if ($this->unsubscribeSession !== null) {
             ($this->unsubscribeSession)();
             $this->unsubscribeSession = null;
+        }
+
+        if ($this->heartbeatTimer !== null) {
+            Loop::get()->cancel($this->heartbeatTimer);
+            $this->heartbeatTimer = null;
         }
 
         if ($this->serverWatcher !== null) {
@@ -268,6 +277,37 @@ final class HttpServer
     private function handleClose(int $connectionId): void
     {
         unset($this->connections[$connectionId], $this->sseClients[$connectionId], $this->wsClients[$connectionId]);
+    }
+
+    private function armHeartbeat(): void
+    {
+        if (!$this->isRunning) {
+            return;
+        }
+
+        $this->heartbeatTimer = Loop::get()->delay(self::PING_INTERVAL, function (): void {
+            if (!$this->isRunning) {
+                return;
+            }
+
+            // Standard RFC 6455 Ping keep-alive frames across active WebSocket clients
+            foreach ($this->wsClients as $wsClient) {
+                if (!$wsClient->isClosed()) {
+                    Websocket::ping($wsClient);
+                }
+            }
+
+            // SSE comment keep-alive line across active SSE clients
+            if ($this->sseClients !== []) {
+                foreach ($this->sseClients as $sseClient) {
+                    if (!$sseClient->isClosed()) {
+                        $sseClient->sendRaw(": keep-alive\n\n");
+                    }
+                }
+            }
+
+            $this->armHeartbeat();
+        });
     }
 
     /**
