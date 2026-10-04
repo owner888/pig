@@ -227,6 +227,12 @@ final class InteractiveMode
     /** Set while the summariser is running, so escape can call it off. */
     private ?AbortController $compaction = null;
 
+    private ?string $commandHudTimer = null;
+
+    private int $commandPressedMs = 0;
+
+    private bool $commandHudOpen = false;
+
     /** Injected so a test can see what a copy would have put there. */
     private Clipboard $clipboard;
 
@@ -360,6 +366,7 @@ final class InteractiveMode
         $this->bindKeys();
         $this->bindEditor();
         $this->reportLoopFailures();
+        $this->watchCommandKey();
         $this->session->onSessionNameChanged(function (): void {
             $this->tui->requestRender();
         });
@@ -535,6 +542,11 @@ final class InteractiveMode
             Async::spawn(static fn () => $server->stop());
         }
         $this->working?->stop();
+        if ($this->commandHudTimer !== null) {
+            Loop::get()->cancel($this->commandHudTimer);
+            $this->commandHudTimer = null;
+        }
+        $this->closeCommandHud();
         // A frame timer outliving the screen it drew on keeps the loop from ever going idle.
         $this->armin?->dispose();
 
@@ -1220,6 +1232,8 @@ final class InteractiveMode
         });
 
         $this->editor->setSubmitHandler(function (string $text): void {
+            $this->closeCommandHud();
+            $this->commandPressedMs = 0;
             $text = trim($text);
 
             if ($text === '') {
@@ -1275,6 +1289,8 @@ final class InteractiveMode
      */
     private function followUp(): void
     {
+        $this->closeCommandHud();
+        $this->commandPressedMs = 0;
         $text = trim($this->editor->text());
 
         if ($text === '') {
@@ -3325,6 +3341,96 @@ final class InteractiveMode
      */
     private function closePicker(): void
     {
+        $this->overlay->clear();
+        $this->tui->setFocus($this->editor);
+        $this->tui->requestRender();
+    }
+
+    /**
+     * Periodically check whether the Command key is held down on local macOS to display the shortcut HUD,
+     * matching the interaction in Blink Shell / iPadOS.
+     */
+    private function watchCommandKey(): void
+    {
+        if (PHP_OS_FAMILY !== 'Darwin' || !class_exists('FFI')) {
+            return;
+        }
+
+        // Only watch for physical terminals, never for unit tests running on FakeTerminal
+        if (!$this->tui->terminal instanceof \Pig\Tui\ProcessTerminal) {
+            return;
+        }
+
+        if (getenv('SSH_CONNECTION') !== false || getenv('SSH_CLIENT') !== false || getenv('SSH_TTY') !== false) {
+            return;
+        }
+
+        static $ffi = null;
+        static $available = true;
+
+        if ($available && $ffi === null) {
+            try {
+                $ffi = \FFI::cdef("
+                    typedef uint32_t CGEventSourceStateID;
+                    typedef uint64_t CGEventFlags;
+                    CGEventFlags CGEventSourceFlagsState(CGEventSourceStateID stateID);
+                ", "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics");
+            } catch (\Throwable) {
+                $available = false;
+            }
+        }
+
+        if ($ffi === null) {
+            return;
+        }
+
+        $tick = function () use (&$tick, $ffi): void {
+            if ($this->commandHudTimer === null) {
+                return;
+            }
+
+            try {
+                $flags = $ffi->CGEventSourceFlagsState(1); // kCGEventSourceStateCombinedSessionState
+                $commandPressed = ($flags & 0x00100000) !== 0; // kCGEventFlagMaskCommand
+
+                if ($commandPressed) {
+                    $this->commandPressedMs += 80;
+                    if ($this->commandPressedMs >= 480 && !$this->commandHudOpen && $this->overlay->children() === []) {
+                        $this->showCommandHud();
+                    }
+                } else {
+                    $this->commandPressedMs = 0;
+                    if ($this->commandHudOpen) {
+                        $this->closeCommandHud();
+                    }
+                }
+            } catch (\Throwable) {
+            }
+
+            $this->commandHudTimer = Loop::get()->delay(0.08, $tick);
+        };
+
+        $this->commandHudTimer = Loop::get()->delay(0.08, $tick);
+    }
+
+    private function showCommandHud(): void
+    {
+        if ($this->commandHudOpen || $this->overlay->children() !== []) {
+            return;
+        }
+
+        $this->commandHudOpen = true;
+        $this->overlay->addChild(new CommandHudComponent($this->palette));
+        $this->tui->requestRender();
+    }
+
+    private function closeCommandHud(): void
+    {
+        if (!$this->commandHudOpen) {
+            return;
+        }
+
+        $this->commandHudOpen = false;
         $this->overlay->clear();
         $this->tui->setFocus($this->editor);
         $this->tui->requestRender();

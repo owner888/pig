@@ -327,6 +327,57 @@
     .hook-editor { min-height: 160px; font-family: var(--font-mono); font-size: 12px; resize: vertical; }
     .hook-hint { color: var(--text-dim); font-size: 11px; }
 
+    /* Command Shortcut HUD (Blink Shell / iPadOS style) */
+    .hud-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      animation: hudFadeIn 0.15s ease-out;
+    }
+    @keyframes hudFadeIn {
+      from { opacity: 0; transform: scale(0.96); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .hud-card {
+      background: rgba(24, 24, 27, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 14px;
+      padding: 16px 20px;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.65);
+      width: min(460px, 92vw);
+      color: var(--text);
+    }
+    .hud-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .hud-title { font-weight: 600; font-size: 14px; color: #a78bfa; }
+    .hud-hint { font-size: 11px; color: var(--text-muted); }
+    .hud-grid { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+    .hud-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .hud-key {
+      font-family: var(--font-mono, monospace);
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 7px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      font-size: 11px;
+      font-weight: 600;
+      color: #38bdf8;
+      white-space: nowrap;
+    }
+    .hud-desc { color: var(--text-muted); text-align: right; }
+
     /* Accounts panel: the Antigravity sign-ins, which one is live, and its quota */
     .modal-backdrop {
       position: fixed; inset: 0;
@@ -1179,6 +1230,25 @@
     </div>
   </main>
 
+  <!-- Command Shortcut HUD (Blink Shell / iPadOS style) -->
+  <div id="command-hud-modal" class="hud-backdrop" style="display:none;">
+    <div class="hud-card">
+      <div class="hud-header">
+        <span class="hud-title">⌘ Shortcuts</span>
+        <span class="hud-hint">Release ⌘ to close</span>
+      </div>
+      <div class="hud-grid">
+        <div class="hud-row"><span class="hud-key">⌘ + Enter</span><span class="hud-desc">Send message / Follow-up queue</span></div>
+        <div class="hud-row"><span class="hud-key">Shift + Enter</span><span class="hud-desc">Insert newline</span></div>
+        <div class="hud-row"><span class="hud-key">Enter</span><span class="hud-desc">Insert newline / Steer interrupt</span></div>
+        <div class="hud-row"><span class="hud-key">Escape</span><span class="hud-desc">Stop turn / Close dialog</span></div>
+        <div class="hud-row"><span class="hud-key">Ctrl + C</span><span class="hud-desc">Clear prompt / Interrupt</span></div>
+        <div class="hud-row"><span class="hud-key">Ctrl + O</span><span class="hud-desc">Expand / collapse tools</span></div>
+        <div class="hud-row"><span class="hud-key">Ctrl + L</span><span class="hud-desc">Model selector</span></div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const chatArea = document.getElementById("chat-area");
     const promptInput = document.getElementById("prompt-input");
@@ -1710,12 +1780,58 @@
           return;
         }
         e.preventDefault();
+        hideCommandHud();
         submitMessage();
       } else if (e.key === "Escape" && isRunning) {
         e.preventDefault();
         abortTurn();
       }
       // Note: Normal Enter and Shift+Enter naturally insert a newline into the textarea!
+    });
+
+    // Command key long-press HUD (Blink Shell / iPadOS style)
+    let commandHudTimer = null;
+    let isCommandHudOpen = false;
+    const commandHudModal = document.getElementById("command-hud-modal");
+
+    function showCommandHud() {
+      if (isCommandHudOpen) return;
+      isCommandHudOpen = true;
+      commandHudModal.style.display = "flex";
+    }
+
+    function hideCommandHud() {
+      if (commandHudTimer) {
+        clearTimeout(commandHudTimer);
+        commandHudTimer = null;
+      }
+      if (isCommandHudOpen) {
+        isCommandHudOpen = false;
+        commandHudModal.style.display = "none";
+      }
+    }
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Meta") {
+        if (!commandHudTimer && !isCommandHudOpen) {
+          commandHudTimer = setTimeout(() => {
+            showCommandHud();
+          }, 450);
+        }
+      } else {
+        // Any other key press immediately hides the HUD
+        hideCommandHud();
+      }
+    });
+
+    window.addEventListener("keyup", (e) => {
+      if (e.key === "Meta") {
+        hideCommandHud();
+      }
+    });
+
+    window.addEventListener("blur", () => {
+      hideCommandHud();
     });
 
     sendBtn.addEventListener("click", submitMessage);

@@ -49,6 +49,13 @@ final class ProcessTerminalTest extends TestCase
         $this->assertSame('hello', $this->throughATerminal('hello'));
     }
 
+    public function testNormalizeNativeInputPreservesNonReturnData(): void
+    {
+        $ref = new \ReflectionMethod(ProcessTerminal::class, 'normalizeNativeInput');
+        $this->assertSame('abc', $ref->invoke(null, 'abc'));
+        $this->assertSame("\n", $ref->invoke(null, "\n"));
+    }
+
     /**
      * Write $data through a ProcessTerminal into a draining reader, and read it back.
      *

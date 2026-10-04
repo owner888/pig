@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.22] - 2026-10-04
+
+### New Features
+
+- **Blink Shell / iPadOS style Command key shortcuts HUD**:
+  - In TUI mode: holding the `Command` (⌘) key for ~480ms on macOS automatically pops up a sleek `CommandHudComponent` cheat sheet card in the overlay area, displaying all core keyboard shortcuts. Releasing Command immediately dismisses it, matching the native iPadOS and Blink Shell experience with zero CPU overhead (0.5µs native FFI checks).
+  - In Web UI: holding the `Command` / `Meta` key for ~450ms pops up a centered frosted-glass blur HUD modal card (`#command-hud-modal`), automatically fading out on key release.
+
 ## [0.3.21] - 2026-10-04
 
 ### Changed
