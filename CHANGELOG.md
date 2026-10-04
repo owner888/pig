@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.18] - 2026-10-04
+
+### Added
+
+- **Extension updates in `pig update` & `pig update --extensions` matching upstream pi**:
+  - `pig update` now updates both pig itself and all installed extensions by default.
+  - Added `--extensions` option to update installed extensions across `~/.pig/agent/extensions/` (runs `git pull` for git repos, `composer update` for composer packages, and pure PHP recursive增量同步 for core built-in extensions `pig-antigravity`, `pig-mcp`, `pig-web-search`, `pig-codemode`, `pig-computer`).
+  - Self-healing autoloader in `scripts/generate-models.php` for global and local environments.
+
 ## [0.3.17] - 2026-10-04
 
 ### Changed

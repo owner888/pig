@@ -55,8 +55,10 @@ composer install
 ### Self Update
 
 ```bash
-pig update            # Self-update via Composer global update or git pull
-pig update --models   # Refresh model catalogs
+pig update               # Self-update pig and all installed extensions (default: --self + --extensions)
+pig update --extensions  # Update installed extensions only (git pull, composer, and core built-ins sync)
+pig update --models      # Refresh and update model catalogs
+pig update --self        # Update pig core program only
 ```
 
 ---

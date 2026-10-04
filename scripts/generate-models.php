@@ -55,7 +55,16 @@ declare(strict_types=1);
  * a file on disk to compare against.
  */
 
-require __DIR__ . '/../vendor/autoload.php';
+$autoload = is_file(__DIR__ . '/../vendor/autoload.php')
+    ? __DIR__ . '/../vendor/autoload.php'
+    : __DIR__ . '/../../../autoload.php';
+
+if (!is_file($autoload)) {
+    fwrite(STDERR, "Error: Could not locate Composer autoloader.\n");
+    exit(1);
+}
+
+require $autoload;
 
 use Pig\Ai\Api;
 use Pig\Ai\Http\HttpClient;

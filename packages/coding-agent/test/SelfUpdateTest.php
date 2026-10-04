@@ -20,6 +20,7 @@ final class SelfUpdateTest extends TestCase
         $this->assertSame(0, $code);
         $this->assertStringContainsString('Usage: pig update', $output);
         $this->assertStringContainsString('--self', $output);
+        $this->assertStringContainsString('--extensions', $output);
         $this->assertStringContainsString('--models', $output);
         $this->assertStringContainsString(SelfUpdate::CHANGELOG_URL, $output);
     }
@@ -34,6 +35,36 @@ final class SelfUpdateTest extends TestCase
 
         $this->assertSame(0, $code);
         $this->assertStringContainsString('Usage: pig update', $output);
+    }
+
+    public function testSyncDirectoryRecursivelySyncsFiles(): void
+    {
+        $src = sys_get_temp_dir() . '/pig-sync-src-' . bin2hex(random_bytes(4));
+        $dst = sys_get_temp_dir() . '/pig-sync-dst-' . bin2hex(random_bytes(4));
+
+        mkdir($src . '/sub', 0755, true);
+        file_put_contents($src . '/file1.txt', 'hello');
+        file_put_contents($src . '/sub/file2.txt', 'world');
+
+        $changes = SelfUpdate::syncDirectory($src, $dst);
+        $this->assertSame(2, $changes);
+        $this->assertFileExists($dst . '/file1.txt');
+        $this->assertFileExists($dst . '/sub/file2.txt');
+        $this->assertSame('hello', file_get_contents($dst . '/file1.txt'));
+
+        // Second sync should have 0 changes
+        $this->assertSame(0, SelfUpdate::syncDirectory($src, $dst));
+
+        // Clean up
+        unlink($src . '/sub/file2.txt');
+        unlink($src . '/file1.txt');
+        rmdir($src . '/sub');
+        rmdir($src);
+
+        unlink($dst . '/sub/file2.txt');
+        unlink($dst . '/file1.txt');
+        rmdir($dst . '/sub');
+        rmdir($dst);
     }
 
     public function testUpdatePigExecutesExpectedCommands(): void

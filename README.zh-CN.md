@@ -55,8 +55,10 @@ composer install
 ### 一键升级更新
 
 ```bash
-pig update            # 自动拉取更新（根据安装环境智能执行 composer update 或 git pull）
-pig update --models   # 刷新并重新对齐模型目录
+pig update               # 自动拉取更新 pig 核心及所有已安装扩展（默认包含 --self 与 --extensions）
+pig update --extensions  # 单独只更新扩展（支持 git pull、composer 依赖升级及内置扩展增量同步）
+pig update --models      # 刷新并重新对齐模型目录
+pig update --self        # 单独只更新 pig 主程序核心
 ```
 
 ---
