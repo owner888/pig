@@ -47,7 +47,7 @@ final class Keybindings
         'app.tools.expand' => ['ctrl+o'],
         'app.thinking.toggle' => ['ctrl+t'],
         'app.editor.external' => ['ctrl+g'],
-        'app.message.followUp' => ['alt+enter'],
+        'app.message.followUp' => ['command+enter', 'alt+enter'],
         'app.message.dequeue' => ['alt+up'],
     ];
 
@@ -188,9 +188,9 @@ final class Keybindings
         $parts = array_map('strtolower', array_map('trim', explode('+', $key)));
         $last = array_pop($parts);
         sort($parts);
-        $order = ['shift' => 0, 'ctrl' => 1, 'control' => 1, 'alt' => 2, 'option' => 2, 'meta' => 2];
+        $order = ['shift' => 0, 'ctrl' => 1, 'control' => 1, 'alt' => 2, 'option' => 2, 'meta' => 3, 'super' => 3, 'cmd' => 3, 'command' => 3];
         usort($parts, static fn (string $a, string $b): int => ($order[$a] ?? 9) <=> ($order[$b] ?? 9));
-        $parts = array_map(static fn (string $p): string => match ($p) { 'control' => 'ctrl', 'option', 'meta' => 'alt', default => $p }, $parts);
+        $parts = array_map(static fn (string $p): string => match ($p) { 'control' => 'ctrl', 'option' => 'alt', 'cmd', 'super' => 'command', default => $p }, $parts);
 
         return implode('+', [...$parts, $last === 'esc' ? 'escape' : $last]);
     }

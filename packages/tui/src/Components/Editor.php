@@ -465,6 +465,7 @@ final class Editor implements Caret, Component, InputHandler
             Keys::isCtrlA($data), Keys::isHome($data) => $this->cursorCol = 0,
             Keys::isCtrlE($data), Keys::isEnd($data) => $this->cursorCol = strlen($this->lines[$this->cursorLine]),
             self::isNewLine($data) => $this->breakLine(),
+            Keys::isCmdEnter($data) => $this->submit(),
             Keys::isEnter($data) => $this->submit(),
             Keys::isBackspace($data) => $this->backspace(),
             Keys::isDelete($data) => $this->forwardDelete(),

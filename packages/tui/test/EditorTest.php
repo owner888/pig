@@ -75,6 +75,21 @@ final class EditorTest extends TestCase
         $this->assertSame('', $this->editor->text());
     }
 
+    public function testCommandEnterSubmitsAndClearsTheEditor(): void
+    {
+        $submitted = null;
+        $this->editor->setSubmitHandler(static function (string $text) use (&$submitted): void {
+            $submitted = $text;
+        });
+
+        $this->typeText('  command enter message  ');
+        // Kitty protocol Command+Enter is \x1b[13;9u (modifier 8 + 1 = 9)
+        $this->type("\x1b[13;9u");
+
+        $this->assertSame('command enter message', $submitted);
+        $this->assertSame('', $this->editor->text());
+    }
+
     public function testSubmitCanBeTurnedOffWhileTheAgentIsBusy(): void
     {
         $submitted = 0;

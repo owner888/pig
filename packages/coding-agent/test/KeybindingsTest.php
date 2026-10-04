@@ -45,6 +45,10 @@ final class KeybindingsTest extends TestCase
         $this->assertSame('app.message.followUp', $keys->actionFor("\e\r"), 'alt+enter the legacy way');
         $this->assertSame('app.message.followUp', $keys->actionFor(Keys::kitty(13, 2)), 'and as kitty reports it');
         $this->assertSame('app.message.dequeue', $keys->actionFor("\e[1;3A"));
+
+        $custom = new Keybindings(['app.message.followUp' => ['command+enter']]);
+        // Kitty protocol Super+Enter is \x1b[13;9u (modifier 8 + 1 = 9)
+        $this->assertSame('app.message.followUp', $custom->actionFor("\x1b[13;9u"));
     }
 
     public function testAHintSaysTheKeyTheWayItIsPrintedOnIt(): void
@@ -55,7 +59,7 @@ final class KeybindingsTest extends TestCase
         $alt = PHP_OS_FAMILY === 'Darwin' ? 'Option' : 'Alt';
 
         $this->assertSame("{$alt}+Up", $keys->display('app.message.dequeue'));
-        $this->assertSame("{$alt}+Enter", $keys->display('app.message.followUp'));
+        $this->assertSame("Command+Enter", $keys->display('app.message.followUp'));
         $this->assertSame('Ctrl+O', $keys->display('app.tools.expand'));
         $this->assertSame('(unbound)', (new Keybindings(['app.tools.expand' => []]))->display('app.tools.expand'));
     }

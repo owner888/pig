@@ -24,6 +24,7 @@ final class Keys
     private const int SHIFT = 1;
     private const int ALT = 2;
     private const int CTRL = 4;
+    private const int SUPER = 8;
 
     /**
      * Caps Lock and Num Lock, which some terminals report as modifiers.
@@ -191,6 +192,11 @@ final class Keys
         return self::matches($data, self::ENTER, self::SHIFT);
     }
 
+    public static function isCmdEnter(string $data): bool
+    {
+        return self::matches($data, self::ENTER, self::SUPER);
+    }
+
     public static function isAltEnter(string $data): bool
     {
         return $data === "\x1b\r" || self::matches($data, self::ENTER, self::ALT);
@@ -327,7 +333,8 @@ final class Keys
             $bit = match ($part) {
                 'ctrl', 'control' => self::CTRL,
                 'shift' => self::SHIFT,
-                'alt', 'option', 'meta' => self::ALT,
+                'alt', 'option' => self::ALT,
+                'super', 'cmd', 'command', 'meta' => self::SUPER,
                 default => null,
             };
 

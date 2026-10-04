@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.21] - 2026-10-04
+
+### Changed
+
+- **TUI keybinding & modifier architecture alignment**:
+  - Restored `Shift+Enter` strictly to newline insertion in TUI editor across all states (both idle and during streaming), eliminating accidental message submission or queueing.
+  - Added macOS native modifier fallback in `ProcessTerminal` via `CGEventSourceFlagsState` FFI (0.5µs zero-latency), accurately resolving bare `\r` sent by `Apple_Terminal` (Terminal.app) to `Shift+Enter` (`\x1b[13;2u`) or `Command+Enter` (`\x1b[13;9u`).
+  - Added `SUPER = 8` modifier support to `Keys.php` and `Keybindings.php`, recognizing `command+enter`, `cmd+enter`, and `super+enter`.
+  - Rebound queueing messages into the processing queue (`app.message.followUp`) to `command+enter` (with `alt+enter` as fallback).
+  - Supported `Command+Enter` to submit messages directly when idle.
+
 ## [0.3.20] - 2026-10-04
 
 ### Changed

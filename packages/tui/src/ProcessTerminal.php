@@ -81,8 +81,63 @@ final class ProcessTerminal implements Terminal
                 return;
             }
 
-            $onInput($data);
+            $onInput(self::normalizeNativeInput($data));
         });
+    }
+
+    /**
+     * If the terminal (such as macOS Terminal.app) does not report extended keys and sends a bare
+     * "\r" when Shift or Command is held, inspect the local macOS modifier state via CoreGraphics.
+     * Matches upstream's `normalizeNativeShiftEnterInput` in `ProcessTerminal.ts`.
+     */
+    private static function normalizeNativeInput(string $data): string
+    {
+        if ($data !== "\r" || PHP_OS_FAMILY !== 'Darwin') {
+            return $data;
+        }
+
+        if (getenv('SSH_CONNECTION') !== false || getenv('SSH_CLIENT') !== false || getenv('SSH_TTY') !== false) {
+            return $data;
+        }
+
+        static $ffi = null;
+        static $available = true;
+
+        if ($available && $ffi === null && class_exists('FFI')) {
+            try {
+                $ffi = \FFI::cdef("
+                    typedef uint32_t CGEventSourceStateID;
+                    typedef uint64_t CGEventFlags;
+                    CGEventFlags CGEventSourceFlagsState(CGEventSourceStateID stateID);
+                ", "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics");
+            } catch (\Throwable) {
+                $available = false;
+            }
+        }
+
+        if ($ffi === null) {
+            return $data;
+        }
+
+        try {
+            $flags = $ffi->CGEventSourceFlagsState(1); // kCGEventSourceStateCombinedSessionState
+
+            if (($flags & 0x00020000) !== 0) { // kCGEventFlagMaskShift
+                return "\x1b[13;2u"; // Shift+Enter
+            }
+
+            if (($flags & 0x00100000) !== 0) { // kCGEventFlagMaskCommand
+                return "\x1b[13;9u"; // Command+Enter
+            }
+
+            if (($flags & 0x00080000) !== 0) { // kCGEventFlagMaskAlternate (Option)
+                return "\x1b[13;3u"; // Alt+Enter
+            }
+        } catch (\Throwable) {
+            // Ignore any runtime glitches and keep raw data
+        }
+
+        return $data;
     }
 
     #[\Override]

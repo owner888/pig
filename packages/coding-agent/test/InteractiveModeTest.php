@@ -80,6 +80,8 @@ final class InteractiveModeTest extends TestCase
 
     private const string ENTER = "\r";
     private const string ALT_ENTER = "\e\r";
+    private const string CMD_ENTER = "\x1b[13;9u";
+    private const string SHIFT_ENTER = "\x1b[13;2u";
     private const string ALT_UP = "\e[1;3A";
 
     private FakeTerminal $terminal;
@@ -2495,6 +2497,61 @@ final class InteractiveModeTest extends TestCase
         $this->assertSame([], $this->session->queued());
         $this->assertStringContainsString('done', $this->screen());
         $this->assertSame('', $this->editorText());
+    }
+
+    public function testCommandEnterWhileTheAgentWorksIsAFollowUp(): void
+    {
+        $this->start([...array_fill(0, 2, 'done')]);
+
+        $held = $this->holdTheAgent();
+
+        $this->type('first');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('queued via cmd enter');
+        $this->type(self::CMD_ENTER);
+
+        $this->assertSame(['steering' => [], 'followUp' => ['queued via cmd enter']], $this->session->queuedByKind());
+        $this->assertStringContainsString('Follow-up: queued via cmd enter', $this->screen());
+        $this->assertSame('', $this->editorText());
+
+        $held();
+        $this->settle();
+    }
+
+    public function testCommandEnterFromAnIdlePromptSends(): void
+    {
+        $this->start(['done']);
+
+        $this->type('hello via command enter');
+        $this->type(self::CMD_ENTER);
+        $this->settle();
+
+        $this->assertSame([], $this->session->queued());
+        $this->assertStringContainsString('done', $this->screen());
+        $this->assertSame('', $this->editorText());
+    }
+
+    public function testShiftEnterWhileTheAgentWorksBreaksTheLineAndNeverQueues(): void
+    {
+        $this->start(['done']);
+
+        $held = $this->holdTheAgent();
+
+        $this->type('first');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $this->type('line 1');
+        $this->type(self::SHIFT_ENTER);
+        $this->type('line 2');
+
+        $this->assertSame(['steering' => [], 'followUp' => []], $this->session->queuedByKind());
+        $this->assertSame("line 1\nline 2", $this->editorText());
+
+        $held();
+        $this->settle();
     }
 
     public function testAltUpTakesTheQueueBackWithoutStoppingTheTurn(): void
