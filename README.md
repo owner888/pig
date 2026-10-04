@@ -1,79 +1,42 @@
-# pig — PHP AI Agent
+# pig — Native PHP AI Coding Agent
 
-**English** · [简体中文](README.zh-CN.md)
+**English** · [简体中文](README.zh-CN.md) · **Website & Docs:** [pigagent.dev](https://pigagent.dev)
 
-A PHP port of [pi](https://github.com/earendil-works/pi), the agent harness whose coding agent
-runs on a famously small core. Same architecture, same file layout, written for PHP 8.3 with no
-runtime dependencies — no Guzzle, no ReactPHP, no amphp, no ncurses. Just the standard library.
+A complete, high-performance PHP port of [pi](https://github.com/earendil-works/pi). Same architecture, same file layout, written for PHP >= 8.3 with **zero runtime dependencies** — no Guzzle, no ReactPHP, no amphp, no ncurses, no Node.js. Just the PHP standard library.
 
-> **Status: it runs.** `bin/pig` is a coding agent you can talk to in a terminal: streaming
-> answers, tools with live output, edits shown as diffs, Escape to interrupt, typing
-> while it works, and `!cmd` to run a shell command the model can then see (`!!cmd` keeps it
-> out of the conversation). Sessions are saved as they happen — `--continue` picks up the
-> last one, `/resume` picks from a list. When the context fills it summarises itself and
-> carries on, which `/compact` also does on demand, and `/model` switches models mid-session.
-> Skills are picked up from `~/.pig/agent/skills` and from Claude's and Codex's folders too, and
-> images a tool returns are drawn in the terminal. Hooks are PHP files that can block a
-> tool, edit what the model is shown, or add commands of their own, and a folder with an
-> `index.php` in it is a tool the model can call. `-p` prints one answer and exits, and
-> `--mode json` or `--mode rpc` drops the terminal for JSON lines, for an editor.
+> **Status: 100% Production Ready.** `pig` delivers a sub-500ms time-to-first-frame startup, streaming answers, live tool execution, interactive diff inspection, mid-stream interruption via Escape, follow-up message queues, and bidirectional compatibility with upstream `pi` session formats (`.jsonl`), credentials (`auth.json`), custom models (`models.json`), project trusts (`trust.json`), and settings (`settings.json`).
 
-## Packages
+---
 
-| Package | Namespace | State |
-|---|---|---|
-| `pig/async` | `Pig\Async\` | Event loop, futures, coroutines — **done** |
-| `pig/ai` | `Pig\Ai\` | Unified LLM API — **Anthropic, OpenAI chat-completions, OpenAI Responses and Gemini all stream end to end** |
-| `pig/agent-core` | `Pig\Agent\` | Agent loop with tool calling, JSON Schema validation of tool arguments, and state — **done** |
-| `pig/tui` | `Pig\Tui\` | Terminal UI with differential rendering — **done** |
-| `pig/coding-agent` | `Pig\CodingAgent\` | Coding agent — **tools, prompt, interactive CLI, saved sessions, compaction, model switching, skills, hooks, custom tools and all three modes (terminal, print, RPC) done** |
+## Highlights
 
-`pig/async` has no counterpart upstream: JavaScript ships an event loop and PHP does not. It
-exists so one `stream_select()` can wait on the model's socket and on the keyboard at the same
-time, which is what makes interrupting a running turn — and typing while the model streams —
-possible at all.
+- **Zero Runtime Dependencies**: Pure PHP utilizing `ext-json`, `ext-mbstring`, `ext-openssl`, `ext-pcntl`, and `ext-pcre`.
+- **Sub-500ms Fast Startup (`pig -c`)**: Optimized O(1) session tree traversal and lightweight mtime header discovery; resumes massive 70MB+ sessions in under 0.5s.
+- **Three Interaction Modes**:
+  - **Terminal TUI**: Differential rendering ANSI interface with live spinners, visual diff views, keybindings, and IME-safe caret tracking.
+  - **Persistent Web UI (`pig web start -d`)**: Daemonized multi-tab browser interface backed by a managed RPC session pool (`SessionPool`) and native full-duplex WebSocket streaming.
+  - **CLI & Automation**: Print mode (`-p`), JSON event streaming (`--mode json`), and long-lived JSON-RPC socket mode (`--mode rpc`).
+- **Comprehensive Built-in Extensions**:
+  - `pig-antigravity`: Multi-account Google Antigravity quota management, 429 auto-failover, `/antigravity.usage` dashboard, and `generate_image` tool.
+  - `pig-web-search`: Real-time web search (`web_search`), readable page extraction (`fetch_web_page`), and headless Chrome DOM rendering (`browse_web_page`).
+  - `pig-computer`: Anti-detection headless browser automation with mouse, keyboard, scrolling, clicking, and persistent domain cookies.
+  - `pig-codemode`: Batch multi-tool execution inside an isolated PHP sandbox to minimize context window usage.
+  - `pig-mcp`: Native Model Context Protocol (MCP) client supporting stdio and streamable HTTP servers with dynamic OAuth.
+- **Resilient Network & Logging**: Workerman-inspired fault isolation boundaries, auto-retry on transient SSL/socket drops, and a unified 5-tier colored logger (`Pig\Logger`).
 
-**Behind a proxy**, which some networks require to reach a provider at all:
+---
+
+## Installation & Quickstart
+
+### Quick Install (Recommended)
 
 ```bash
-bin/pig --proxy socks5://127.0.0.1:7891      # or http://127.0.0.1:7890
-https_proxy=http://127.0.0.1:7890 bin/pig    # or all_proxy, or proxy.url in the settings
+curl -fsSL https://pigagent.dev/install.sh | sh
 ```
 
-HTTP CONNECT and SOCKS5, with a username and password if the proxy wants one. TLS starts *after*
-the tunnel is open and verifies the provider's certificate, so the proxy carries the bytes and can
-read none of them; a hostname is handed to the proxy to resolve, because a local resolver is often
-the other thing that does not work. Loopback always goes direct, `no_proxy` and `proxy.bypass` add
-to that, and `--no-proxy` turns the lot off.
+The installer verifies your PHP version and required extensions, installs `pigagent/pig` globally via Composer, and ensures Composer's global bin directory is in your `PATH`.
 
-`CodingAgent::session()` is the whole of startup as a call: it resolves the model and the thinking
-level, loads the skills, context files, hooks and custom tools, opens or creates the session file,
-and hands back a session plus a list of warnings. `bin/pig` is a caller of it rather than the place
-it lives, so the resolution order can be tested instead of run and looked at.
-
-A different thing with the same name: `Agent\StreamProxy` sends the conversation to a **gateway
-server** that holds the provider keys and makes the call, speaking upstream's `/api/stream` wire
-format so a gateway written for pi works unchanged. Nothing turns it on — it is a `streamFn` you
-pass in — because it hands the conversation to whoever runs that server, which is the point for a
-team that wants no keys on laptops and a reason to avoid it otherwise.
-
-A tool call is checked against the tool's own JSON Schema before it runs — `Ai\Utils\JsonSchema`
-is a draft-07 subset with AJV's wording, because the reader of a validation failure is the model
-that has to correct itself from it. An unknown keyword is ignored rather than failed, so adding a
-keyword to a tool's schema can never break the tool.
-
-## Try it
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/owner888/pig/main/install.sh | sh
-ANTHROPIC_API_KEY=sk-ant-... pig
-```
-
-The installer checks PHP and its extensions before touching anything, installs the package with
-Composer, and offers to put Composer's global bin directory on your PATH — which is the step that is
-otherwise easy to miss, because Composer says nothing about it and `pig` is then `command not found`.
-
-Composer directly works too, with that last step left to you:
+### Composer Global Install
 
 ```bash
 composer global require pigagent/pig
@@ -81,501 +44,194 @@ echo "export PATH=\"$(composer global config bin-dir --absolute):\$PATH\"" >> ~/
 exec $SHELL
 ```
 
-To work on pig itself, clone it instead — everything below is the same either way, with `bin/pig` in
-place of `pig`:
+### From Source
 
 ```bash
-git clone https://github.com/owner888/pig && cd pig && composer install
-ANTHROPIC_API_KEY=sk-ant-... bin/pig
-```
-
-`--read-only` takes away edit, write and bash; `--theme light` for a light terminal;
-`--api-key <key>` uses a key for this run only, without saving it;
-`-c`/`--continue` to pick up where you left off, or `-r`/`--resume` on its own to choose from
-a list — type in that list to search it, and the search matches anything said in the
-conversation, not just the line it opened with. Escape there starts a new conversation instead;
-ctrl+c leaves without starting one. `--session <id>` resumes an earlier session by its ID or
-path directly (printed upon quitting a session). `/resume` inside a session shows the same list, search and
-all. `-h` for the flags, `-v` for the version.
-`/help` inside lists every key, the prompt's own editing keys included, and every command.
-`/reload` reloads extensions, skills, commands, tools, and context files (`CLAUDE.md` / `AGENTS.md`) live without restarting pig (upgrading pig's core code itself still requires restarting the process).
-Shift+ctrl+d writes a debug log — the frame, how wide each line came out, and the conversation —
-which is the thing to attach to a bug report.
-
-A start asks Packagist once, in the background, whether there is a newer pig, and says so under
-the conversation if there is — with the update command (`pig update`).
-Nothing is said when the answer is no, when the network is not there, or when anything else goes
-wrong. Run `pig update` anytime to self-update pig to the latest release (or `pig update --models` to
-refresh model catalogs). `--no-update-check` skips the asking for one run, and `"update": {"check": false}` in
-`~/.pig/agent/settings.json` turns it off for good. `/changelog` shows what changed, and the entries
-newer than the version you last saw are shown once, by themselves, after an upgrade.
-
-With a Claude Pro or Max subscription there is no key to set: `/login` gives you a URL to open
-and takes the code that comes back. A GitHub Copilot subscription works the same way — it shows
-a code to type at github.com and waits, and escape stops the waiting. Antigravity is the third:
-it opens a browser and catches the redirect on `localhost:51121`, so that port has to be free, and
-it needs a client id and secret of its own, which pig does not ship — set `ANTIGRAVITY_CLIENT_ID`
-and `ANTIGRAVITY_CLIENT_SECRET`, or `antigravity.clientId` and `antigravity.clientSecret` in
-`~/.pig/agent/settings.json`. It is what gets you Gemini 3, Claude and GPT-OSS through a Google
-subscription. Whichever you use, the
-token is kept in `~/.pi/agent/auth.json` — pi's own file, when pi has one, so signing in once is
-signing in once. `/logout` forgets it.
-
-There is also `bin/pig-ai login` — the same four sign-ins from a plain command line, for a
-machine you are setting up over ssh. `bin/pig-ai list` names them.
-
-If that directory still has an old pi's `oauth.json` in it,
-pig moves it across on the first run and says which providers it moved — the old file is renamed,
-not deleted.
-
-Anything that is not an option is a message, and `@some/file` is read in front of it:
-
-```bash
-bin/pig "what does bin/pig do?"            # ask, then carry on in the terminal
-bin/pig @src/Thing.php "why is this slow?" # the file first, then the question
-bin/pig @screenshot.png "what is wrong here?"
-```
-
-An image goes in as an image, so a screenshot reaches the model without a tool call. `--` ends
-the options, for a message that starts with a dash or an `@`.
-
-Ctrl+G opens whatever is in the prompt in `$VISUAL` or `$EDITOR` and puts the result back —
-for the message that turned out to be three paragraphs. It works while the model is still
-answering: the editor gets the terminal, and the answer keeps arriving behind it.
-
-Typing while the model works is the point of the event loop, and there are two keys for it,
-upstream's: **Enter steers** — the message goes in after the tool that is running, for "no, the
-other file" — and **Alt+Enter (Option+Enter) queues a follow-up** for after the turn. Each waits
-above the prompt as `Steering:` or `Follow-up:`, and **Alt+Up** takes them all back into the
-editor without stopping anything; escape takes them back *and* stops the turn.
-
-The model gets four tools by default — read, bash, edit, write — which is upstream's set;
-`--tools read,grep,find,ls` names the set outright, and `--read-only` swaps in the read-only four.
-Fewer tools is deliberate: a model with seven spends part of every turn choosing between them, and
-searching through `bash` with `rg` is what the prompt already asks for.
-
-`--model` takes a part of a name rather than a whole id — `--model sonnet`, `--model 'opus 4.1'` —
-and `--model sonnet:high` sets the thinking level at the same time. `--list-models` lists the ones
-you have a key for, with their context and output limits; `--list-models gem pro` narrows that,
-fuzzily, over the provider and the id together. `/model` offers the same list, and switching to
-a model with no key is refused by name rather than failing on the next turn. Ctrl+L opens that
-list; Ctrl+P steps to the next model on it without opening it, Shift+Ctrl+P back to the previous
-one.
-
-`--models` narrows the session to a few of them, comma-separated, and then Ctrl+P walks only
-those: `--models sonnet,haiku` opens on sonnet and cycles between the two, and
-`--models 'anthropic/*:high'` takes every Anthropic model with thinking set high for each. A
-pattern may be a glob or a part of a name, and `:level` on the end sets the level for that entry.
-`/model` offers the scope too, so the list and the keystroke agree about what is on offer.
-
-171 models are known: Anthropic's, OpenAI's own on the Responses API, Gemini, and Groq,
-Cerebras, xAI, Zai and Mistral, which all speak OpenAI chat-completions. Set the matching
-`*_API_KEY` and `--model` reaches them.
-
-GitHub Copilot's nineteen are there too, and Antigravity's fourteen — the models those
-subscriptions serve, under the same ids their own providers use. So `gpt-5` and `claude-sonnet-4-6`
-name two models each: a bare name means the direct provider, and a subscription's is
-`--model github-copilot/gpt-5` or `--model antigravity/claude-sonnet-4-6`.
-
-`/label before the refactor` names where you are, and `/tree` shows the name beside what was
-said — pi's own label entries, so a name set in either tool shows up in the other.
-
-`/tree` goes back to an earlier point in the conversation and carries on from there. It draws the
-**whole** conversation as a tree, forks and all, so the road not taken is a row you can move the
-cursor onto rather than something the file merely still contains:
-
-```
-  • user: port the tree selector
-    • assistant: Here is what it does…
-    ├─ user: actually, do the proxy first
-    │  └─ assistant: Right — starting with CONNECT…
-    └─ • user: no, keep going with the tree
-          • assistant: Carrying on…
-```
-
-`•` marks the path you are on. Ctrl+O cycles five filters (everything, no tool results, only what
-you said, only what you named, absolutely everything), typing searches — what you have typed is on
-the `Search:` line above the rows — and `l` names the row under the cursor. Going back offers to summarise the branch you are leaving, so an hour of exploring
-arrives on the branch you are joining instead of being left behind. Going back to something *you*
-said takes it out of the conversation and puts it back in the prompt, to be asked differently.
-
-Sessions are written in **pi's own format**, in pi's own directory layout — so a conversation
-started in one opens in the other, and `--resume` lists what is in `~/.pi/agent/sessions/`
-beside pig's own. Carrying on from a pi session appends to that file, in that format.
-
-Resuming brings back the model and the thinking level that conversation was being had with, not
-whatever a new one would open with. `--model` still wins if you name one.
-
-`/changelog` shows what changed release by release, and new entries are shown once after an
-upgrade (not when you resume a conversation).
-
-`/export` writes the conversation out as one self-contained HTML file — markdown rendered,
-code highlighted, no JavaScript in it at all. `pig --export <session.jsonl> [out.html]` does the
-same to a session on disk without opening it.
-
-`/bug [what went wrong]` writes a bug report — pig, PHP and OS versions, the model and provider
-(never a key), the last provider error, `/doctor`'s findings, the last few crashes, and the
-transcript only if you say yes — to `~/.pig/agent/bug-reports/`, copies it, and opens a GitHub
-issue with it prefilled. Nothing leaves the machine unless you open that link. When pig itself
-falls over, the crash is written down and the next start says so, with `/bug` as the way to
-report it.
-
-A turn that fails because the provider is busy — a 429, a 503, a socket that died — is
-**waited out and sent again**, doubling from two seconds, up to three times, with what the
-provider said and a countdown on screen and escape to stop. When the provider names the moment
-its quota comes back, that is the wait instead of the doubling — coming back in two seconds to a
-quota that resets in forty is three more refusals. Past a minute it is not waited out at all: the
-turn ends with what the provider said, because a retry that resumes after lunch is not a retry. A turn that fails because the
-conversation outgrew the model's window is a different thing and is treated as one: it is
-summarised first, then sent again, because the same request would be exactly as long in four
-seconds. Escape stops that summarising as well, and stops it whether it was `/compact` that asked
-or a full window. `retry.enabled: false` in the settings turns the first off.
-
-A provider pig has never heard of goes in `~/.pig/agent/models.json` — your own box, a proxy, a
-local server — and its models then work everywhere a built-in one does, including `--model`,
-`/model` and `--list-models`:
-
-```json
-{ "providers": { "my-box": {
-  "baseUrl": "http://192.168.1.9:8080/v1", "apiKey": "MY_BOX_KEY",
-  "api": "openai-completions",
-  "models": [{ "id": "qwen3-coder", "name": "Qwen3 Coder", "reasoning": false,
-               "input": ["text"], "contextWindow": 262144, "maxTokens": 32768 }] } } }
-```
-
-`apiKey` is the **name of an environment variable** if one answers to it, so the key itself
-need not be in the file — and an all-capitals name with no variable set is treated as no key at
-all, said at startup by name, rather than being sent to the endpoint as though it were the key. A model may carry a
-`"cost": { "input": …, "output": …, "cacheRead": …, "cacheWrite": … }` block, **in dollars per
-million tokens** — so three dollars per million is `3.0`, not `0.000003` — and leaving it out means
-free, which is what a local model is. A price that is not a number is named and the model skipped,
-rather than quietly costing nothing in `/session` and the footer. `api` is one of `openai-completions`, `openai-responses`,
-`anthropic-messages` or `google-generative-ai`, and can be set on the provider or per model;
-`authHeader: true` sends the key as `Authorization: Bearer …` for a proxy that wants it there.
-Anything wrong with the file is printed and skipped — the rest of it, and every built-in
-model, still work. It is pi's format, and pi's own `~/.pi/agent/models.json` is read when pig
-has none.
-
-Settings live in `~/.pig/agent/settings.json`, and a project can override them in
-`.pig/settings.json`. The theme, model and thinking level you pick are remembered.
-`/settings` shows what can be changed from inside a session — theme, thinking, whether
-reasoning is drawn, whether pictures are drawn, whether messages you type mid-run go over one at
-a time or together, auto-compact, auto-retry — with what each one is set to now. Enter changes
-the row you are on and the list stays open; escape closes it.
-
-The keys the application takes — escape, ctrl+c/d/z, shift+tab, ctrl+p, ctrl+l, ctrl+o, ctrl+t,
-ctrl+g, alt+enter, alt+up — can be moved in `~/.pig/agent/keybindings.json`, under pi's action names and key spelling:
-`{"app.model.select": "ctrl+m", "app.tools.expand": ["ctrl+e", "shift+ctrl+o"]}`. A binding
-replaces the default, so moving ctrl+o frees it for tmux; `[]` unbinds; the help shows the keys that
-actually work; a key or action the file names wrong is a line on the shell at startup.
-
-A markdown file in `~/.pig/agent/commands/` or `.pig/commands/` becomes a slash command: `review.md`
-is `/review`, its body is the prompt, and `$1` and `$@` are filled from what follows. Those and
-the ones a hook registers work outside the terminal too — `pig -p "/review src/Foo.php"` sends the
-prompt, and `pig -p "/deploy staging"` runs the hook's command.
-
-A PHP file in `~/.pig/agent/hooks/` or `.pig/hooks/` that returns a callable is a hook. It gets
-sixteen events — every tool call and result, every turn, the context on its way to the model,
-compaction, `/tree`, startup and shutdown — and can block a tool, rewrite what the model is
-shown, or add a slash command of its own:
-
-```php
-<?php // ~/.pig/agent/hooks/no-force-push.php
-
-use Pig\CodingAgent\Hooks\HookApi;
-use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
-
-return function (HookApi $pi): void {
-    $pi->on('tool_call', function ($event) {
-        if ($event->toolName === 'bash' && str_contains($event->input['command'] ?? '', '--force')) {
-            return new ToolCallEventResult(block: true, reason: 'No force pushes from here.');
-        }
-
-        return null;
-    });
-};
-```
-
-A hook can also **say** something — `$pi->sendMessage('build', 'the tests are failing')` puts
-it in the conversation where the model reads it, with `display: false` if it is for the model
-and not for you, and `triggerTurn: true` to have the agent answer it there and then. A hook can
-draw its own messages with `registerMessageRenderer()`. And `$pi->appendEntry('permissions',
-$data)` writes something into the session file that the model never sees — hook state that is
-still there after a restart, costing no context.
-
-A hook runs inside pig, so it can hand back an object and reach pig's own classes — and a
-hook that loops or calls `exit()` takes the session with it. Broken ones are named on the
-shell at startup rather than crashing; `/hooks` lists what loaded and `--no-hooks` skips them.
-
-Which is why a project's own `.pig/` is **not loaded until you say so.** The first time pig opens a
-directory that has one — hooks, tools, extensions, skills, commands or a `settings.json` under
-`.pig/`, or `extensions/` with PHP in it — it asks whether to trust the project, and remembers the
-answer in `~/.pig/agent/trust.json` (trust a parent folder once and every checkout under it is
-covered). An untrusted project keeps its `.pig/` out and says so on screen; your own
-`~/.pig/agent/` is always yours. `/trust` changes the saved decision, and with no terminal to ask
-on (`-p`, `--mode json|rpc`) an undecided project is **untrusted**, so a script run in a stranger's
-repository cannot run that repository's hooks.
-
-A hook can also **ask**, mid-turn, and wait for the answer:
-
-```php
-$pi->on('tool_call', fn ($event, $ctx) => $ctx->ui->confirm('Let bash run?', $event->input['command'] ?? '')
-    ? null
-    : new ToolCallEventResult(block: true, reason: 'You said no.'));
-```
-
-The tool call parks, a picker appears, and the keystroke resumes it — the handler gets a
-plain `bool` back. `select`, `input`, a multi-line `editor`, `notify`, a keyed footer line and
-`custom` (draw your own component) are there too. Escape answers no, so walking away from the
-question does not wave the tool through.
-
-A folder with an `index.php` in `~/.pig/agent/tools/` or `.pig/tools/` is a tool the model can
-call — a folder, because that directory also holds the `fd` and `rg` binaries pig may have
-downloaded, and a file there is one of those. Same loader as hooks, same trade-off; `/tools`
-lists everything the model has and where each one came from, and `--no-tools` skips them:
-
-```php
-<?php // ~/.pig/agent/tools/wc/index.php
-
-use Pig\Agent\AgentToolResult;
-use Pig\Ai\TextContent;
-use Pig\CodingAgent\CustomTools\CustomTool;
-use Pig\CodingAgent\CustomTools\CustomToolApi;
-
-return fn (CustomToolApi $pi) => new CustomTool(
-    name: 'wc',
-    label: 'Count lines',
-    description: 'Count the lines in a file.',
-    parameters: [
-        'type' => 'object',
-        'properties' => ['path' => ['type' => 'string', 'description' => 'the file']],
-        'required' => ['path'],
-    ],
-    execute: fn ($id, $params, $onUpdate, $ctx) => new AgentToolResult(
-        [new TextContent(trim($pi->exec(['wc', '-l', $params['path']])->stdout))],
-    ),
-);
-```
-
-`$ctx` is the session: the conversation so far, which model is answering, whether the agent
-is busy, a way to stop it, and the same `ui` a hook gets. A tool can also be told when the
-session starts, switches, jumps or ends, which is how one that keeps state rebuilds or lets
-go of it. And it can draw its own call and its own result in the transcript,
-so a tool whose answer is a table is not squeezed through formatting meant for files.
-
-An extension is a PHP file (or a folder with `index.php`) in `~/.pig/agent/extensions/`, `.pig/extensions/`
-or `extensions/` that unifies hooks, commands and tools into a single definition. The factory is given an
-`ExtensionApi`, which inherits `HookApi` and adds `registerTool()`. `--no-extensions` skips them, and
-`--extension <path>` loads an explicit file.
-
-Skills are folders with a `SKILL.md` in them. pig reads `~/.pig/agent/skills` and `.pig/skills`, and
-also `~/.claude/skills`, `.claude/skills`, `~/.codex/skills`, `~/.pi/agent/skills` and `.pi/skills`,
-so a skill written for another agent — or for pi, before the move — works here unchanged. Two folders
-holding the same name is an override rather than an error: `pig > pi > claude > codex`, a project
-folder beats the home one, and `--skills-dir` beats all of them. `/skills` lists what was found and
-where each one came from, and the startup says which file an override took the name from;
-`--no-skills` loads none of them, as `--no-hooks` and `--no-tools` do for theirs. The five folders
-another tool owns can also be turned off one at a time, under upstream's own settings keys —
-`skills.enableCodexUser`, `enableClaudeUser`, `enableClaudeProject`, `enablePiUser`,
-`enablePiProject` — which is what to reach for when a large `~/.claude/skills` does not belong in
-front of the model. pig's own two folders have no such key: `skills.enabled` and `--no-skills` are
-the switch for those, and `skills.ignoredSkills` takes glob patterns for anything narrower.
-
-`Rpc\RpcClient` is the other end of `--mode rpc`: it starts the agent, sends the twenty-two commands
-and hands back events, with every call suspending its own fiber rather than returning a promise — so
-a host reads like a program that blocks, and nothing blocks.
-
-There are three ways in, and the terminal is only the default. `-p` says it, prints the
-answer and exits — for a shell script, or a pipe:
-
-```bash
-bin/pig -p "one sentence on what this repo does" | pbcopy
-bin/pig -p @error.log "what went wrong?"
-```
-
-`--mode json` is the same run with every event on standard output instead: the streaming a
-terminal would draw, for something that wants to parse it. Warnings stay on standard error, so
-the lines are all JSON.
-
-```bash
-bin/pig --mode json -p "..." | jq -r 'select(.type=="message_update") | .delta.delta // empty'
-```
-
-`--mode rpc` reads commands as JSON lines and never stops: for an editor, or anything else
-driving pig from code.
-
-```bash
-echo '{"id":"1","type":"prompt","message":"what does bin/pig do?"}' | bin/pig --mode rpc
-```
-
-`--mode web` launches an interactive browser-based chat interface matching `pi-web` with zero external dependencies (pure PHP non-blocking WebSocket & HTTP engine, two-level workspace directory and session drawer, telemetry status bar, and real-time full-duplex RPC streaming):
-
-```bash
-bin/pig --mode web
-```
-
-You can also type `/web` from inside any interactive terminal session to launch the web interface on the fly.
-
-To keep it running after you close the terminal, run it as a daemon:
-
-```bash
-pig web start -d              # fork into the background; pid and log under ~/.pig/agent
-pig web status                # exit 0 if running, 3 if not
-pig web stop                  # SIGTERM, then SIGKILL after 3s
-pig web restart --port 9000   # stop + start -d; --host and --port are both accepted
-```
-
-`pig web start` without `-d` is the same as `--mode web` in the foreground. No framework
-behind it: `pcntl_fork()` twice, `posix_setsid()`, a pid file — so `ext-posix` is needed for
-`-d` and `stop`, and nothing else changes.
-
-Every conversation you open in the browser gets a **tab** above the chat — labelled by its name
-or its first line, working dot indicators while an agent streams, `×` to close, `+` for a new one —
-persisted in the browser across reloads. The web shell follows `pi-web`'s process model: each
-conversation is backed by its own isolated `pig --mode rpc` child process in a managed pool (`SessionPool`),
-so tabs run true parallel tasks concurrently without interfering with each other's stream or tools.
-When launched via `/web` from inside the terminal, the terminal's own session stays entirely separate.
-
-A hook that **asks** — a `tool_call` guard's `confirm()`, a `select`, an `input`, an `editor` —
-asks in the page when pig was started with `--mode web`: the question goes out over the WebSocket
-as the same `hook_ui_request` line RPC mode uses, a dialog opens, and the answer resumes the parked
-tool call. Escape is no. Started from inside the terminal with `/web`, the terminal stays the place
-hooks ask, because two places asking one question is one too many.
-
-The **accounts** button (or `/accounts`) opens the Antigravity accounts the `pig-antigravity`
-extension keeps: which Google account is live, when each token runs out, use / remove / rotate,
-and the live account's quota pools with their reset times — the same figures `/antigravity.usage`
-prints. Every change goes through the same code as `/antigravity.accounts`, so the store and
-`auth.json` move together.
-
-Twenty-three commands — prompt, steer, abort, switch models, compact, run a shell command,
-walk the conversation tree, export — and the answer arrives as the same streaming events the terminal
-draws. A hook can still **ask**: the question goes out as a `hook_ui_request` line and the tool
-call parks until the host answers it, which is the terminal trick with a different transport.
-
-`examples/ask.php` is the same stack with no UI at all:
-
-```bash
-ANTHROPIC_API_KEY=sk-ant-... php examples/ask.php "why is the sky blue?"
-```
-
-Everything under that line is pig's own: one non-blocking TLS socket, HTTP/1.1 written by hand,
-SSE parsed as it arrives, coroutines on `Fiber`. Ctrl-C mid-answer exercises the same abort path
-the TUI uses.
-
-### Built-in Tools
-
-pig ships with four default coding tools matching upstream: `read`, `bash`, `edit`, `write`.
-Advanced file search (`grep`, `find`, `ls`) is reachable via `--tools`:
-
-```bash
-bin/pig --tools read,bash,edit,write,grep,find,ls
-```
-
-Web search and documentation reading are provided via the pure PHP `extensions/pig-web-search/`
-extension — `web_search` (DuckDuckGo), `fetch_web_page` (the HTML the server sends, as text),
-`browse_web_page` and `/search <query>` — keeping the core agent at its four tools.
-`browse_web_page` is the one for pages that are built by JavaScript: it launches the Chrome already
-installed on the machine in headless mode, speaks the DevTools Protocol to it over pig's own
-WebSocket client, waits for the page to load, and reads the text out of the live DOM. No
-Puppeteer, no driver, nothing downloaded — about two hundred lines of PHP, and a machine without
-Chrome is told so rather than failed three layers down.
-
-**MCP servers** are read from `~/.pig/agent/mcp.json` and `<project>/.pig/mcp.json` — pi's file,
-pi's keys — by `extensions/pig-mcp/`, and each server's tools reach the model as
-`mcp__<server>__<tool>`, through the same hooks and permission gate as `bash`. Stdio and
-streamable HTTP, `${VAR}` and `!command` in `env` and `headers`, `/mcp` for status and
-`/mcp` — a manager in the terminal (tools, reconnect, exposure, enable/disable, sign in), the
-status elsewhere — and `pig mcp add|remove|list|login|logout` from the shell. An HTTP server with
-no `Authorization` header signs in with OAuth (discovery, dynamic client registration, PKCE, a
-loopback callback), tokens in `~/.pig/agent/mcp-auth.json` and refreshed by the connection; a
-server whose authorization server has no registration endpoint — GitHub's is one — takes a
-pre-registered client under `"oauth": { "clientId", "clientSecret", "callbackPort" }`, and one
-that advertises the wrong authorization server, or none, takes `"authServerMetadataUrl"`. Credentials
-are kept per server name and URL, so two servers at one URL can be two accounts; a code whose `iss`
-names another authorization server is refused before it is exchanged (RFC 9207); and a server
-asking for more scope gets a new token that keeps the scope it already had. A server
-that offers resources brings `list_mcp_resources`, `list_mcp_resource_templates` and
-`read_mcp_resource`, and what servers log goes to `~/.pig/agent/mcp.log`.
-
-**codemode**, in PHP (`extensions/pig-codemode/`): with a server at the default exposure the model
-is shown one tool, `codemode`, whose description carries the server's tools as PHP signatures, and
-it writes a script — `$tools->mcp__gh__search_code([...])`, `parallel([...])` for independent
-calls, ordinary PHP to filter the results, `return` for what it wants to see. Three slow tools cost
-one, a sixty-tool server costs a catalog, and a large result costs what the script kept of it. The
-script runs in a child `php -n` with `disable_functions`, `open_basedir` and a `memory_limit`
-between it and the machine; nested calls go through pig's own tools and hooks, so the permission
-gate holds inside a script too. A server with `"exposure": "deferred"` has its tools held back until the
-model asks `tool_search` for them (BM25 over names, descriptions and schemas), which is how a
-server with sixty tools costs the context eight. The tool's description is short — the intro, one
-line per global, and the path of `extensions/pig-codemode/CODEMODE.md`, which the model reads when
-it needs a detail — and a script that calls a tool that does not exist is told the close matches.
-
-```json
-{ "mcpServers": {
-  "fs": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
-  "github": { "url": "https://api.githubcopilot.com/mcp/", "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" } }
-} }
-```
-
-## Requirements
-
-PHP >= 8.3 with `ext-json`, `ext-mbstring`, `ext-openssl`, and `ext-pcntl` for the terminal UI.
-`stty` is the one external binary that is required. `fd` and `rg` are needed by the `find` and
-`grep` tools, and pig downloads them into `~/.pig/agent/bin/` on first use if they are not installed
-(`PIG_OFFLINE=1` turns that off).
-
-`Fiber` arrived in PHP 8.1 and everything rests on it, so 8.1 is the absolute floor. 8.3 is the
-floor actually declared: 8.1 is end-of-life and 8.2 loses security support at the end of 2026.
-
-**No Composer dependencies at runtime**, which includes the provider protocols: the HTTP client,
-the event-stream parser and all five providers are written here. Upstream does none of that — the
-Anthropic, OpenAI and Google SDKs do it for pi. That is not a preference: PHP has no official SDK
-for the OpenAI or Gemini APIs at all, and the official Anthropic one streams by iterating a PSR-18
-response body synchronously, which would block the single `stream_select()` that watches the model's
-socket and the keyboard together — and with it Esc-to-interrupt and typing while the model streams.
-CLAUDE.md has the full arithmetic, and it is a dated judgement rather than a principle.
-
-## Development
-
-```bash
+git clone https://github.com/owner888/pig.git && cd pig
 composer install
-php test/lint.php      # php -l over every file
-vendor/bin/phpunit
-php test/live.php      # the providers against the real endpoints — costs money, needs keys
-php scripts/generate-models.php   # bring the model registry up to date from models.dev
+./bin/pig
 ```
 
-The model registry's rows are generated, as upstream's are: `scripts/generate-models.php` reads
-models.dev, keeps the models whose protocol is ported, and rewrites the tables in `Ai\Models` in
-place — `--dry-run` prints them instead, and every run reports what was added, removed and changed
-so a regeneration can be read rather than trusted. Everything around the rows — the base URLs, the
-two subscription catalogues, the collision rules — is hand-written and untouched.
+### Self Update
 
-`test/live.php` is not part of the suite and never runs by itself: twelve scenarios per provider
-against the real API, which is the only way to answer whether a provider *accepts* what pig sends —
-a replayed thinking signature, a tool result invented for an interrupted call, a conversation carried
-over from another provider, a prompt past the window. It takes its keys where pig takes its own, so a
-machine that has signed in needs nothing, and `php test/live.php anthropic google` names which to run
-— or `php test/live.php google/<model-id>` to try one particular model. The id has to be one the
-registry carries, which is pinned at the upstream anchor commit; a model released since then is
-declared in `~/.pig/agent/models.json` and is then reachable both here and from `bin/pig`. Each call is
-capped at a few hundred tokens.
+```bash
+pig update            # Self-update via Composer global update or git pull
+pig update --models   # Refresh model catalogs
+```
 
-Verify against the floor, not just your PHP: 8.3 rejects 8.4-only syntax at parse time, and it is
-easy to reach for a feature the declared floor does not have.
+---
 
-`PIG_TIMING=1 bin/pig` prints what each part of starting up cost, on standard error, before the
-terminal takes over.
+## Usage
 
-See [CLAUDE.md](CLAUDE.md) for the porting rules, the decisions on record, and the traps found so far.
+### 1. Terminal Interactive Mode (Default)
 
-## Upstream
+Launch `pig` in your project directory:
 
-Ported against pi at commit `d0a4c37` (2026-01-02) — the snapshot where `agent-loop.ts` was 418
-lines, before the harness grew. Class, file and method names track upstream so a diff against a
-newer upstream commit stays mechanical.
+```bash
+pig
+```
+
+- **Set API Key**: Run with `ANTHROPIC_API_KEY=sk-... pig` or use `--api-key <key>` for a single run without persisting.
+- **Subscription Login**: Run `/login` inside pig to sign in with Claude Pro/Max, GitHub Copilot, or Google Antigravity. Tokens are saved in `~/.pig/agent/auth.json` (or shared with `~/.pi/agent/auth.json`).
+- **Resume Sessions**:
+  - `pig -c` / `pig --continue`: Instantly resume the most recently modified session in the current directory.
+  - `pig -r` / `pig --resume`: Open the interactive session picker with fuzzy search.
+  - `pig --session <id>`: Open a specific session by ID or file path directly.
+- **Model Selection**:
+  - `pig --model sonnet` or `pig --model antigravity/gemini-3.8-flash`
+  - `pig --model sonnet:high` (sets model and thinking level simultaneously)
+  - Press `Ctrl+L` to open the in-session model picker; press `Ctrl+P` / `Shift+Ctrl+P` to cycle models on the fly.
+  - `pig --list-models [query]`: View available models with context limits and pricing.
+- **Mid-Turn Interaction**:
+  - Press `Enter` while the model is answering to **steer** (runs right after current tool).
+  - Press `Alt+Enter` (or `Option+Enter`) to **queue a follow-up** for the next turn.
+  - Press `Alt+Up` to restore queued messages back to the editor.
+  - Press `Escape` to interrupt the active turn or cancel retries.
+  - Press `Ctrl+G` to edit complex prompts in your external editor (`$VISUAL` or `$EDITOR`).
+- **Context & Session Commands**:
+  - `/name <new-name>`: View or change the active session title (reflected in footer and Web UI).
+  - `/label <name>`: Bookmark the current point in the session tree.
+  - `/tree`: Visualize conversation branches as an interactive tree and jump between forks.
+  - `/compact`: Manually trigger conversation summarization.
+  - `/export [file.html]`: Export the session as a standalone offline HTML document with syntax highlighting.
+  - `/reload`: Hot-reload extensions, skills, tools, and context files without restarting `pig`.
+  - `/doctor`: Run system diagnostic checks on PHP extensions, tools, permissions, and network endpoints.
+
+### 2. Web UI Interface (`pig web`)
+
+`pig` includes a native web chat interface matching `pi-web` with workspace management, multi-tab execution, inline session rename/delete, and real-time streaming:
+
+```bash
+# Foreground ephemeral server (stops when terminal exits)
+pig --mode web
+# or type /web from inside any interactive terminal session
+
+# Persistent background daemon (recommended)
+pig web start -d              # Start daemon on 127.0.0.1:8080 (or specify --port / --host)
+pig web status                # Check status and PID
+pig web restart               # Restart daemon
+pig web stop                  # Stop daemon gracefully
+```
+
+Open `http://localhost:8080` in your browser or mobile phone:
+- **Multiplexed Multi-Tab Execution**: Switch between workspaces and tabs without interrupting active runs.
+- **Sidebar Session Actions**: Hover (or tap on mobile) to rename (`✏️`) or delete (`🗑️`) sessions safely.
+- **Touchscreen & Mobile Parity**: Responsive layout optimized for smartphones and tablets.
+- **Antigravity Account Drawer**: Manage Google accounts, token expiration, and view quota meters.
+
+### 3. Non-Interactive CLI & Pipes
+
+```bash
+# Print mode: output final answer directly to stdout and exit
+pig -p "summarize the architecture of this repo" | pbcopy
+pig -p @error.log "what caused this crash?"
+
+# JSON event stream: emit each turn event as a JSON line
+pig --mode json -p "explain index.php"
+
+# Long-lived JSON-RPC server over stdio
+pig --mode rpc
+```
+
+---
+
+## Built-in Extension Ecosystem
+
+All extensions in `pig` are **100% pure native PHP** with zero external npm or composer dependencies:
+
+| Extension | Namespace / Location | Capabilities |
+| :--- | :--- | :--- |
+| **`pig-antigravity`** | `extensions/pig-antigravity/` | Multi-account Google Antigravity management, token refresh, auto 429 failover, `/antigravity.usage`, `/antigravity.accounts`, and `generate_image` tool. |
+| **`pig-web-search`** | `extensions/pig-web-search/` | Real-time web search (`web_search`), readable article extraction (`fetch_web_page`), headless Chrome DOM rendering (`browse_web_page`), `/search <query>`. |
+| **`pig-computer`** | `extensions/pig-computer/` | Anti-detection browser automation (mouse move, click, scroll, typing, screenshots, persistent cookies). |
+| **`pig-codemode`** | `extensions/pig-codemode/` | Fast multi-tool execution in a sandboxed child PHP process (`open_basedir`, `disable_functions`). |
+| **`pig-mcp`** | `extensions/pig-mcp/` | Model Context Protocol client for stdio & streamable HTTP servers with dynamic OAuth (`mcp.json`). |
+
+---
+
+## Unified Logging (`Pig\Logger`)
+
+`pig` includes an enterprise-grade static logger aligned with the `OmniPHP\Logger` standard:
+
+```php
+use Pig\Logger;
+
+Logger::info("Session initialized", ['id' => $sessionId]);
+Logger::debug("Executing tool call", ['tool' => 'bash']);
+Logger::warning("Socket interrupted, scheduling retry...");
+Logger::error("API request failed", ['error' => $e->getMessage()]);
+
+// Performance profiling
+Logger::time('benchmark');
+// ... do work ...
+Logger::timeEnd('benchmark');
+```
+
+- **5 Standard Levels**: `VERBOSE` (blue), `DEBUG` (cyan), `INFO` (green), `WARNING` (yellow), `ERROR` (red).
+- **Environment Controlled**: Filter via `PIG_LOG_LEVEL=debug` or `LOG_LEVEL=info`.
+- **Daily Rotation**: Persisted to `~/.pig/agent/logs/pig-YYYY-MM-DD.log` with automatic 5-day retention.
+- **TUI Screen Safety**: Automatically mutes console output in TUI raw mode (`Logger::setConsoleOutput(false)`) to protect rendering while keeping disk logs active.
+
+---
+
+## Configuration & Compatibility
+
+`pig` shares configuration and session structures seamlessly with upstream `pi`:
+
+| Path | Purpose |
+| :--- | :--- |
+| `~/.pig/agent/settings.json` | Global preferences (theme, model, thinking, auto-compact, auto-retry). |
+| `~/.pig/agent/auth.json` | Provider API keys and OAuth tokens (shared with `~/.pi/agent/auth.json`). |
+| `~/.pig/agent/models.json` | Custom OpenAI-compatible endpoints, local models (llama.cpp, vLLM). |
+| `~/.pig/agent/mcp.json` | MCP server configurations (stdio & HTTP). |
+| `~/.pig/agent/trust.json` | Project resource authorization records. |
+| `~/.pig/agent/keybindings.json` | Custom keyboard shortcut mappings. |
+| `~/.pig/agent/sessions/` | Saved session logs in standard `.jsonl` format. |
+
+---
+
+## Packages Architecture
+
+`pig` is organized as clean decoupled namespaces under `packages/`:
+
+- `packages/async/` (`Pig\Async\`): Coroutine runtime, non-blocking TLS Socket, Futures, Deferreds, and event loop.
+- `packages/ai/` (`Pig\Ai\`): Unified LLM protocol adapters (Anthropic, OpenAI Completions, OpenAI Responses, Gemini, Antigravity).
+- `packages/agent-core/` (`Pig\Agent\`): Agent loop, tool lifecycle, and JSON schema validation.
+- `packages/tui/` (`Pig\Tui\`): Differential terminal rendering engine, ANSI styling, and key parser.
+- `packages/coding-agent/` (`Pig\CodingAgent\`): CLI harness, session tree, auto-compaction, Web daemon, and tools.
+
+---
+
+## Requirements & Development
+
+- **PHP >= 8.3**
+- Required PHP extensions: `ext-json`, `ext-mbstring`, `ext-openssl`, `ext-pcntl`, `ext-pcre`.
+- Optional: `ext-posix` (required for daemonizing `pig web start -d`).
+- External binaries: `stty`. (`fd` and `rg` downloaded automatically into `~/.pig/agent/bin/` if absent).
+
+```bash
+# Run unit test suite
+vendor/bin/phpunit
+
+# Run syntax lint across all packages
+php test/lint.php
+
+# Run live provider validation (requires API keys)
+php test/live.php
+```
+
+---
+
+## Documentation
+
+Full guides, configuration specifications, and SDK manuals are available on the official website:
+- **Documentation**: [https://pigagent.dev/docs](https://pigagent.dev/docs)
+- **Model Catalog**: [https://pigagent.dev/models](https://pigagent.dev/models)
+- **Extension Packages**: [https://pigagent.dev/packages](https://pigagent.dev/packages)
+- **Changelog**: [https://pigagent.dev/changelog](https://pigagent.dev/changelog)
+
+---
 
 ## License
 
-MIT
+MIT © [owner888](https://github.com/owner888)

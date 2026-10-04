@@ -26,9 +26,13 @@ final class LoggerTest extends TestCase
         Logger::reset();
         $files = glob("{$this->tempDir}/*") ?: [];
         foreach ($files as $file) {
-            @unlink($file);
+            if (is_file($file)) {
+                unlink($file);
+            }
         }
-        @rmdir($this->tempDir);
+        if (is_dir($this->tempDir)) {
+            rmdir($this->tempDir);
+        }
         parent::tearDown();
     }
 

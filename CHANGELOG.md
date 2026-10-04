@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.16] - 2026-10-04
+
+### Changed
+
+- **Comprehensive README and documentation overhaul in English and Chinese**:
+  - Synchronized `README.md` and `README.zh-CN.md` with official documentation at [pigagent.dev](https://pigagent.dev).
+  - Added modern installation guides (`curl -fsSL https://pigagent.dev/install.sh | sh` and `composer global require pigagent/pig`).
+  - Added dedicated sections for persistent Web UI mode (`pig web start -d`), sub-500ms startup architecture, built-in pure PHP extensions (`pig-antigravity`, `pig-web-search`, `pig-computer`, `pig-codemode`, `pig-mcp`), unified logger (`Pig\Logger`), and troubleshooting diagnostics (`/doctor`).
+
 ## [0.3.15] - 2026-10-04
 
 ### Added
