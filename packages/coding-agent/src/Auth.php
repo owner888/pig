@@ -605,6 +605,13 @@ final class Auth
             };
             $renewed = $provider->refresh($credentials, null, $id, $secret);
         } catch (Throwable $problem) {
+            if (\Fiber::getCurrent() === null && str_contains($problem->getMessage(), 'inside a coroutine')) {
+                // Outside a coroutine (e.g. peeking during startup or session restore before the
+                // loop starts): do not crash on the async refresh; return the existing credentials
+                // and let the actual turn refresh properly inside the event loop.
+                return $credentials;
+            }
+
             throw new OauthError(
                 "Could not renew the {$provider->value} token: {$problem->getMessage()}",
                 0,

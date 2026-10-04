@@ -292,7 +292,11 @@ final class AgentSession
             // falls back on either — an afternoon on a borrowed `--api-key` comes back tomorrow
             // with no key for that provider, and restoring it would mean a conversation that
             // reopens onto a model whose every turn fails.
-            if ($model !== null && $this->keyFor($model) !== null) {
+            $hasKey = $model !== null && ($this->auth !== null
+                ? $this->auth->hasKeyFor($model->provider)
+                : $this->keyFor($model) !== null);
+
+            if ($hasKey) {
                 $this->agent->setModel($model);
             }
         }

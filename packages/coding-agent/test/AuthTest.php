@@ -763,4 +763,23 @@ final class AuthTest extends TestCase
 
         $this->assertStringContainsString('Could not write', $problem->getMessage());
     }
+
+    public function testAnExpiredTokenOutsideACoroutineReturnsWithoutCrashingOnFutureAwait(): void
+    {
+        $auth = $this->auth();
+        // A credential expired 1 hour ago
+        $expired = new Credentials(
+            refresh: 'r_token',
+            access: 'old_access',
+            expires: (time() - 3600) * 1000,
+            projectId: 'proj-1',
+        );
+        $auth->setCredentials(Provider::Antigravity, $expired);
+
+        // Outside a coroutine (e.g. during startup, restoreSettings, or peeking): must not throw
+        $this->assertNull(\Fiber::getCurrent());
+        $key = $auth->apiKey(Provider::Antigravity->value);
+        $this->assertNotNull($key);
+        $this->assertStringContainsString('old_access', $key);
+    }
 }

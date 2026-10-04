@@ -155,26 +155,82 @@ final class SessionManager
     /** Read one back. Its messages are in `messages()`. */
     public static function open(string $path): self
     {
-        $lines = self::lines($path);
-
-        if ($lines === null) {
+        if (!is_file($path) || !is_readable($path)) {
             throw new AgentError("Could not read the session at {$path}");
         }
 
-        $header = json_decode($lines[0] ?? '', true);
+        $fh = fopen($path, 'rb');
 
-        if (!is_array($header) || ($header['type'] ?? null) !== 'session') {
+        if ($fh === false) {
+            throw new AgentError("Could not read the session at {$path}");
+        }
+
+        $firstLine = fgets($fh);
+
+        if ($firstLine === false || trim($firstLine) === '') {
+            fclose($fh);
             throw new AgentError("Not a pig session file: {$path}");
         }
 
-        $upgraded = self::upgrade($lines, $header);
+        $header = json_decode(trim($firstLine), true);
 
-        if ($upgraded !== null) {
-            $lines = $upgraded;
-            $header = json_decode($lines[0], true);
-            self::rewrite($path, $lines);
+        if (!is_array($header) || ($header['type'] ?? null) !== 'session') {
+            fclose($fh);
+            throw new AgentError("Not a pig session file: {$path}");
         }
 
+        $version = (int) ($header['version'] ?? 1);
+
+        // Rare migration branch for legacy v1/v2 files: read full lines array and rewrite
+        if ($version < self::VERSION) {
+            fclose($fh);
+            $lines = self::lines($path) ?? throw new AgentError("Could not read the session at {$path}");
+            $upgraded = self::upgrade($lines, $header);
+
+            if ($upgraded !== null) {
+                $lines = $upgraded;
+                $header = json_decode($lines[0], true);
+                self::rewrite($path, $lines);
+            }
+
+            return self::buildFromLines($path, $lines, $header);
+        }
+
+        $session = new self(
+            $path,
+            (string) ($header['id'] ?? ''),
+            (string) ($header['cwd'] ?? ''),
+            SessionEntries::millis($header['timestamp'] ?? null),
+        );
+
+        $session->started = true;
+        $previous = null;
+
+        while (($line = fgets($fh)) !== false) {
+            $line = trim($line);
+
+            if ($line === '') {
+                continue;
+            }
+
+            $raw = json_decode($line, true);
+
+            if (!is_array($raw)) {
+                continue;
+            }
+
+            self::populateEntry($session, $raw, $previous);
+        }
+
+        fclose($fh);
+        $session->leaf = $previous;
+
+        return $session;
+    }
+
+    /** @param list<string> $lines */
+    private static function buildFromLines(string $path, array $lines, array $header): self
+    {
         $session = new self(
             $path,
             (string) ($header['id'] ?? ''),
@@ -192,41 +248,42 @@ final class SessionManager
                 continue;
             }
 
-            // A line pig has nothing to do with — `thinking_level_change`, `model_change`,
-            // `label`, all pi's — is kept in the tree as a node with nothing in it rather
-            // than skipped. **Skipping it broke the chain**: the entries after it name it
-            // as their parent, so walking back from the leaf stopped there and a pi
-            // conversation came back as its first message and nothing else. It is walked
-            // past on the way out instead, where it costs nothing.
-            $id = (string) ($raw['id'] ?? self::newId($session->entries));
-
-            $item = SessionEntries::decode($raw);
-
-            $session->entries[$id] = [
-                'message' => $item,
-                'parent' => is_string($raw['parentId'] ?? null) ? $raw['parentId'] : null,
-            ];
-
-            // In file order, so the last thing said about a point is what it is called —
-            // including "nothing", which is how a name is taken off again.
-            if ($item instanceof Label) {
-                if ($item->label === null) {
-                    unset($session->labels[$item->targetId]);
-                } else {
-                    $session->labels[$item->targetId] = $item->label;
-                }
-            } elseif ($item instanceof SessionInfoEntry) {
-                $session->sessionName = $item->name !== '' ? $item->name : null;
-            }
-
-            $previous = $id;
+            self::populateEntry($session, $raw, $previous);
         }
 
-        // The end of the file is the end of the branch that was being talked on: a
-        // branch is made by appending, so the newest entry is always on it.
         $session->leaf = $previous;
 
         return $session;
+    }
+
+    /**
+     * Parse one entry from disk and wire it into the session tree and metadata.
+     *
+     * @param array<string, mixed> $raw
+     */
+    private static function populateEntry(self $session, array $raw, ?string &$previous): void
+    {
+        $id = (string) ($raw['id'] ?? self::newId($session->entries));
+        $item = SessionEntries::decode($raw);
+
+        $session->entries[$id] = [
+            'message' => $item,
+            'parent' => is_string($raw['parentId'] ?? null) ? $raw['parentId'] : null,
+        ];
+
+        // In file order, so the last thing said about a point is what it is called —
+        // including "nothing", which is how a name is taken off again.
+        if ($item instanceof Label) {
+            if ($item->label === null) {
+                unset($session->labels[$item->targetId]);
+            } else {
+                $session->labels[$item->targetId] = $item->label;
+            }
+        } elseif ($item instanceof SessionInfoEntry) {
+            $session->sessionName = $item->name !== '' ? $item->name : null;
+        }
+
+        $previous = $id;
     }
 
     /**

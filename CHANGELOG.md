@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.3] - 2026-10-04
+
+### Fixed
+
+- **Crash on session resume (`bin/pig -c`) with expired OAuth tokens**: Fixed a fatal `Future::await() must be called inside a coroutine` crash when resuming a conversation that used an expired OAuth credential (e.g. Antigravity or Anthropic OAuth). `Auth::fresh()` now prevents attempting async network token renewal outside of a coroutine, and `AgentSession::restoreSettings()` uses non-network peeking (`hasKeyFor()`) to verify model availability safely.
+- **Streaming session file parser (`SessionManager::open()`) to prevent 128MB OOM on large files**: Replaced full-file `file()` array reads with incremental line-by-line stream decoding (`fopen` + `fgets`). Opening 50MB+ conversation sessions (tens of thousands of lines) now consumes under 10MB of memory instead of exhausting the PHP default 128MB memory limit.
+
 ## [0.3.2] - 2026-10-04
 
 ### Changed

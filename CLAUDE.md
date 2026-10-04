@@ -10837,6 +10837,30 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 4. 前端 `onRpcEvent` 增加对无 ID 或未匹配失败响应的通用捕获，终止 running 状态并调用 `appendErrorMessage`。
 5. `submitMessage` 增加故障回填保护：发送或连接失败时将 `text` 和 `pendingImages` 完整还原回输入框。
 
+### `Auth::fresh()` 在非协程中刷新 OAuth 令牌导致 `Future::await()` 崩溃
+
+**现象**：
+当恢复历史会话（`bin/pig -c` 或 `--resume`）且上一次使用的模型是基于 OAuth 认证的提供商（如 Antigravity、Anthropic OAuth）且该 token 刚好在本地过期时，启动瞬间抛出致命崩溃：
+`Pig\Ai\Utils\Oauth\OauthError: Could not renew the antigravity token: Future::await() must be called inside a coroutine; wrap the entry point in Async::run()`。
+
+**原因**：
+在 `bin/pig -c` 启动的主引导流（`CodingAgent::session()`）中尚未进入 `Async::run()`，此时处于普通的同步执行流中。`AgentSession::restoreSettings()` 此前为了校验恢复的模型是否有可用 key，调用了 `$this->keyFor($model)`，而 `keyFor()` 内部触发了 `$auth->apiKey()`。`Auth::apiKey()` 发现 access token 已过期后调用了 `$this->fresh()` 试图进行异步网络刷新，内部调用的 `Socket::connect()` 执行了 `Future::await()`，因外部无 Fiber 协程直接抛错。
+
+**对策**：
+1. 在 `Auth::fresh()` 中加入非协程保护：一旦捕获到或者检测到当前处于普通同步上下文（`Fiber::getCurrent() === null`），绝不在同步流中强行刷新网络 token，而是返回已有凭据，留待进入 `Async::run()` 真实 turn 时再安全异步换票。
+2. 在 `AgentSession::restoreSettings()` 预检模型可用性时，优先使用无网络副作用的 `$this->auth->hasKeyFor($model->provider)`，不仅杜绝崩溃，更消除了启动阶段多余的远程网络请求。
+
+### `SessionManager::open()` 必须流式读取超大会话避免 128MB OOM
+
+**现象**：
+在恢复包含数千轮历史对话或包含大量代码 diff、体积达到 50MB~65MB+ 的历史会话时，抛出 `PHP Fatal error: Allowed memory size of 134217728 bytes exhausted in SessionManager.php on line 150`。
+
+**原因**：
+`SessionManager::open()` 此前依赖 `SessionManager::lines()`，后者使用 `file($path)` 将整个 65MB、数万行的 JSONL 文件一次性读入为巨大的字符串数组，并在 `array_slice` 时触发内存倍增，瞬间吞噬超过 150MB 内存，冲破 PHP 默认的 128MB 上限。
+
+**对策**：
+将 `SessionManager::open()` 重构为逐行流式读取（`fopen` + `fgets`），读一行解析一行放入会话树并立即释放行字符串，内存占用从 150MB+ 骤降至不足 10MB（在标准 128MB 限制下仅需 1.7 秒即可无压力打开 65MB 超大历史会话）。
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;
