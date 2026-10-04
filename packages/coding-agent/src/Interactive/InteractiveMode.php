@@ -27,6 +27,7 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\Oauth\Provider;
+use Pig\CodingAgent\Logger;
 use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -352,6 +353,9 @@ final class InteractiveMode
     /** Wire everything up and draw the first frame. */
     public function start(): void
     {
+        // Suppress raw console log outputs in TUI to prevent screen corruption; logs continue writing to file
+        Logger::setConsoleOutput(false);
+
         $this->layout();
         $this->bindKeys();
         $this->bindEditor();
@@ -522,6 +526,7 @@ final class InteractiveMode
         }
 
         $this->running = false;
+        Logger::setConsoleOutput(true);
         // Stopping the web server winds its children down and suspends while it does, and this
         // runs from a key handler — inside the loop's callback — so it goes in a fiber of its own.
         if ($this->webServer !== null) {
@@ -587,6 +592,7 @@ final class InteractiveMode
 
             $said[$message] = true;
             $this->sayError($message);
+            Logger::error("Loop error: {$message}", ['trace' => $error->getTraceAsString()]);
 
             // Survived, drawn, and written down: a throw the loop had to catch is a pig bug by
             // definition, and `/bug` attaches these. Once per message, like the line above.

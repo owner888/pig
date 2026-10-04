@@ -35,7 +35,10 @@
             "Pig\\Codemode\\": "packages/codemode/src/",
             "Pig\\Mcp\\": "packages/mcp/src/",
             "Pig\\Tui\\": "packages/tui/src/"
-        }
+        },
+        "files": [
+            "packages/coding-agent/src/Logger.php"
+        ]
     },
     "autoload-dev": {
         "psr-4": {

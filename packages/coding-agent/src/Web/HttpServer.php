@@ -14,6 +14,7 @@ use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Rpc\RpcClient;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Web\Protocols\Websocket;
+use Pig\CodingAgent\Logger;
 use Throwable;
 
 /**
@@ -185,9 +186,9 @@ final class HttpServer
                             $this->handleWsMessage($c, $id, $data);
                         }
                     } catch (Throwable $e) {
-                        if (is_resource(STDERR)) {
-                            fwrite(STDERR, "[HttpServer] Error processing message (#{$id}): " . $e->getMessage() . "\n");
-                        }
+                        Logger::error("[HttpServer] Error processing message (#{$id}): " . $e->getMessage(), [
+                            'trace' => $e->getTraceAsString(),
+                        ]);
                         if (!$c->isClosed()) {
                             if (is_array($data)) {
                                 $c->sendResponse(500, ['Content-Type' => 'application/json'], json_encode([
@@ -204,9 +205,7 @@ final class HttpServer
                 },
                 onClose: fn (Connection $c) => $this->handleClose($id),
                 onError: function (Connection $c, Throwable $e) use ($id): void {
-                    if (is_resource(STDERR)) {
-                        fwrite(STDERR, "[HttpServer] Connection error (#{$id}): " . $e->getMessage() . "\n");
-                    }
+                    Logger::error("[HttpServer] Connection error (#{$id}): " . $e->getMessage());
                     if (!$c->isClosed()) {
                         if ($c->getProtocol() === Http::class) {
                             $c->sendResponse(500, ['Content-Type' => 'application/json'], json_encode([
@@ -230,9 +229,9 @@ final class HttpServer
 
         // Fault isolation boundary: keep the daemon running on uncaught loop callback errors
         Loop::get()->setErrorHandler(static function (Throwable $e): void {
-            if (is_resource(STDERR)) {
-                fwrite(STDERR, "[HttpServer] Uncaught loop error: " . $e->getMessage() . "\n");
-            }
+            Logger::error("[HttpServer] Uncaught loop error: " . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
         });
 
         $this->isRunning = true;

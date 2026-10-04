@@ -119,6 +119,16 @@ Both were chosen explicitly, not by default:
   3. `Socket` & `Retry`: Non-blocking OpenSSL transport failures (`Broken pipe`, `SSL operation failed`,
      handshake drops, zero-write stalls) are recognized as retryable transient errors in `Retry::WORDS`,
      triggering automatic backoff retries rather than aborting sessions.
+- **Unified Zero-Dependency Logger (aligned with smart-book OmniPHP\Logger specifications).**
+  `Pig\CodingAgent\Logger` (aliased as `Pig\Logger`) provides a static, zero-dependency logging suite:
+  - 5 log levels with ANSI terminal colors: `VERBOSE` (34 blue, 0), `DEBUG` (36 cyan, 1), `INFO` (32 green, 2),
+    `WARNING` (33 yellow, 3), `ERROR` (31 red, 4).
+  - Configurable priority threshold via `PIG_LOG_LEVEL` or `LOG_LEVEL` (default: `INFO`).
+  - Automatic daily log rotation (`~/.pig/agent/logs/pig-YYYY-MM-DD.log`) with configurable retention (default: 5 days,
+    `PIG_LOG_KEEP_DAYS`).
+  - Safe console toggling (`setConsoleOutput(false)`) during interactive TUI sessions to prevent screen buffer
+    corruption while maintaining persistent disk logs.
+  - Standard helpers: `dump($label, $data)`, `time($label)`, and `timeEnd($label)`.
 
 `Pig\Async` has no counterpart in *upstream* at all — JS ships an event loop, PHP does not. It has a
 reference all the same: it is read against workerman's `EventInterface` in the traps below, which is

@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.15] - 2026-10-04
+
+### Added
+
+- **Unified zero-dependency `Pig\Logger` (aligned with smart-book `OmniPHP\Logger` specification)**:
+  - **Five-tier logging API with ANSI terminal coloring**: Added `Logger::verbose` (blue), `debug` (cyan), `info` (green), `warning` (yellow), and `error` (red), prioritizing `ERROR(4) > WARNING(3) > INFO(2) > DEBUG(1) > VERBOSE(0)`.
+  - **Dynamic level filtering**: Controlled via `PIG_LOG_LEVEL` or `LOG_LEVEL` environment variable (defaults to `INFO`).
+  - **Daily file rotation and retention**: Automatically persists logs to `~/.pig/agent/logs/pig-YYYY-MM-DD.log` with automatic cleanup of files older than 5 days (`PIG_LOG_KEEP_DAYS`).
+  - **TUI-safe console toggling**: Added `setConsoleOutput(false)` during interactive TUI execution to prevent background log writes from polluting raw terminal rendering, while keeping persistent disk logs active.
+  - **Performance and debugging helpers**: Included `Logger::dump()`, `Logger::time()`, and `Logger::timeEnd()`. Accessible via both `Pig\CodingAgent\Logger` and global alias `Pig\Logger`.
+
 ## [0.3.14] - 2026-10-04
 
 ### Added
