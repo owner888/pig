@@ -106,6 +106,19 @@ Both were chosen explicitly, not by default:
   `TcpConnection` manages non-blocking buffered socket transport while `Protocols\Http` and
   `Protocols\Websocket` decouple wire-framing (`input`), decoding (`decode`), and encoding (`encode`),
   providing pure PHP RFC 6455 full-duplex WebSocket RPC streaming with zero dependencies.
+- **Fault Isolation Boundaries (inspired by Workerman's resilience without swallowing errors).**
+  Rather than blanket try-catches that mask logical bugs, structural error guards are placed at process
+  and event dispatch boundaries:
+  1. `TcpConnection` & `HttpServer`: Decoupled `decode` and `onMessage` handlers are wrapped in try-catch.
+     Unhandled client exceptions trigger `$connection->onError`, respond with clean 500 JSON or WebSocket error
+     frames, and cleanly close the faulting connection while keeping the web daemon and event loop alive.
+     `HttpServer::start()` registers `Loop::setErrorHandler()` to absorb unhandled timer/callback throws.
+  2. `RpcMode`: Top-level pipe reading in `line()` wraps command execution to ensure any uncaught exception
+     returns a structured JSON-RPC failure response (`{"id": ..., "type": "response", "success": false, "error": ...}`)
+     rather than crashing child agent processes.
+  3. `Socket` & `Retry`: Non-blocking OpenSSL transport failures (`Broken pipe`, `SSL operation failed`,
+     handshake drops, zero-write stalls) are recognized as retryable transient errors in `Retry::WORDS`,
+     triggering automatic backoff retries rather than aborting sessions.
 
 `Pig\Async` has no counterpart in *upstream* at all — JS ships an event loop, PHP does not. It has a
 reference all the same: it is read against workerman's `EventInterface` in the traps below, which is

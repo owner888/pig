@@ -572,4 +572,32 @@ final class WebModeTest extends TestCase
             $server->stop();
         });
     }
+
+    public function testFaultIsolationBoundaryPreventsServerCrashOnErrors(): void
+    {
+        $port = 28102;
+        $server = $this->server($port);
+
+        Async::run(function () use ($server, $port) {
+            $server->start();
+            $http = new HttpClient();
+
+            // 1. Send an invalid/malformed request body to an endpoint that expects valid JSON
+            $res = $http->send(new Request(
+                'POST',
+                "http://127.0.0.1:{$port}/api/sessions/delete",
+                ['Content-Type' => 'application/json'],
+                '{"malformed_json: missing_value',
+            ));
+            // Should return 400 Bad Request or 500 without crashing the server
+            $this->assertTrue(in_array($res->status, [400, 500], true));
+
+            // 2. Verify server is still alive and responds normally to subsequent requests
+            $res2 = $http->send(new Request('GET', "http://127.0.0.1:{$port}/api/models"));
+            $this->assertSame(200, $res2->status);
+            $this->assertTrue($server->isRunning());
+
+            $server->stop();
+        });
+    }
 }

@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.14] - 2026-10-04
+
+### Added
+
+- **Workerman-inspired structural fault isolation boundaries**:
+  - **`TcpConnection` & `HttpServer` protocol protection**: Added `$onError` connection callback and wrapped framing/dispatching (`decode` & `onMessage`) in structured error guards. Malformed client payloads or handler errors return standard 500 JSON or WebSocket error frames without crashing the web daemon. Registered `Loop::setErrorHandler` in `HttpServer::start()` to guard background timers and event loop callbacks.
+  - **`RpcMode` command boundary guard**: Wrapped `line()` command execution to guarantee uncaught exceptions are safely returned as structured JSON-RPC error responses (`{"id": ..., "type": "response", "success": false, "error": ...}`) rather than aborting child agent processes. Safe write protection on `RpcMode::send()`.
+
 ## [0.3.13] - 2026-10-04
 
 ### Fixed

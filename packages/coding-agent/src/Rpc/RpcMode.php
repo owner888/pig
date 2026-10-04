@@ -210,7 +210,16 @@ final class RpcMode
             $this->buffer = substr($this->buffer, $break + 1);
 
             if (trim($line) !== '') {
-                $this->line($line);
+                try {
+                    $this->line($line);
+                } catch (Throwable $e) {
+                    $this->send([
+                        'type' => 'response',
+                        'command' => 'dispatch',
+                        'success' => false,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
             }
         }
     }
@@ -836,11 +845,16 @@ final class RpcMode
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE,
         );
 
-        if ($line === false) {
+        if ($line === false || !is_resource($this->out)) {
             return;
         }
 
-        fwrite($this->out, $line . "\n");
+        set_error_handler(static fn (): bool => true);
+        try {
+            fwrite($this->out, $line . "\n");
+        } finally {
+            restore_error_handler();
+        }
     }
 
     /** @param list<\Pig\CodingAgent\CustomTools\ToolProblem> $problems */

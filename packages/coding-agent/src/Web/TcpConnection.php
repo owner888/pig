@@ -29,12 +29,14 @@ class TcpConnection
      * @param Closure(self, mixed): void $onMessage
      * @param Closure(self): void $onClose
      * @param class-string<ProtocolInterface> $protocol
+     * @param Closure(self, Throwable): void|null $onError fault-isolation callback
      */
     public function __construct(
         public readonly mixed $socket,
         protected readonly Closure $onMessage,
         protected readonly Closure $onClose,
         string $protocol = Http::class,
+        protected readonly ?Closure $onError = null,
     ) {
         stream_set_blocking($this->socket, false);
         $this->protocol = $protocol;
@@ -92,10 +94,24 @@ class TcpConnection
             $rawPackage = substr($this->readBuffer, 0, $packageLen);
             $this->readBuffer = substr($this->readBuffer, $packageLen);
 
-            $data = ($this->protocol)::decode($rawPackage, $this);
+            try {
+                $data = ($this->protocol)::decode($rawPackage, $this);
 
-            if ($data !== null) {
-                ($this->onMessage)($this, $data);
+                if ($data !== null) {
+                    ($this->onMessage)($this, $data);
+                }
+            } catch (Throwable $e) {
+                if ($this->onError !== null) {
+                    ($this->onError)($this, $e);
+                } else {
+                    // Default fault isolation: if HTTP, return 500 JSON; otherwise close safely
+                    if ($this->protocol === Http::class && !$this->isClosed) {
+                        $this->sendResponse(500, ['Content-Type' => 'application/json'], json_encode([
+                            'error' => 'Internal server error: ' . $e->getMessage(),
+                        ]));
+                    }
+                    $this->close();
+                }
             }
         }
     }

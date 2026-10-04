@@ -178,18 +178,61 @@ final class HttpServer
             $conn = new Connection(
                 $client,
                 onMessage: function (Connection $c, mixed $data) use ($id): void {
-                    if (is_array($data)) {
-                        $this->handleRequest($c, $data, $id);
-                    } elseif (is_string($data)) {
-                        $this->handleWsMessage($c, $id, $data);
+                    try {
+                        if (is_array($data)) {
+                            $this->handleRequest($c, $data, $id);
+                        } elseif (is_string($data)) {
+                            $this->handleWsMessage($c, $id, $data);
+                        }
+                    } catch (Throwable $e) {
+                        if (is_resource(STDERR)) {
+                            fwrite(STDERR, "[HttpServer] Error processing message (#{$id}): " . $e->getMessage() . "\n");
+                        }
+                        if (!$c->isClosed()) {
+                            if (is_array($data)) {
+                                $c->sendResponse(500, ['Content-Type' => 'application/json'], json_encode([
+                                    'error' => 'Internal Server Error: ' . $e->getMessage(),
+                                ]));
+                            } elseif (is_string($data)) {
+                                Websocket::send($c, json_encode([
+                                    'type' => 'error',
+                                    'message' => 'Internal server error: ' . $e->getMessage(),
+                                ]));
+                            }
+                        }
                     }
                 },
                 onClose: fn (Connection $c) => $this->handleClose($id),
+                onError: function (Connection $c, Throwable $e) use ($id): void {
+                    if (is_resource(STDERR)) {
+                        fwrite(STDERR, "[HttpServer] Connection error (#{$id}): " . $e->getMessage() . "\n");
+                    }
+                    if (!$c->isClosed()) {
+                        if ($c->getProtocol() === Http::class) {
+                            $c->sendResponse(500, ['Content-Type' => 'application/json'], json_encode([
+                                'error' => 'Internal Server Error: ' . $e->getMessage(),
+                            ]));
+                        } elseif ($c->getProtocol() === Websocket::class) {
+                            Websocket::send($c, json_encode([
+                                'type' => 'error',
+                                'message' => 'Internal server error: ' . $e->getMessage(),
+                            ]));
+                        }
+                        $c->close();
+                    }
+                },
             );
 
             $this->connections[$id] = $conn;
             $watcher = Loop::get()->onReadable($client, static fn () => $conn->onReadable());
             $conn->setReadableWatcher($watcher);
+        });
+
+        // Fault isolation boundary: keep the daemon running on uncaught loop callback errors
+        Loop::get()->setErrorHandler(static function (Throwable $e): void {
+            if (is_resource(STDERR)) {
+                fwrite(STDERR, "[HttpServer] Uncaught loop error: " . $e->getMessage() . "\n");
+            }
         });
 
         $this->isRunning = true;
@@ -213,6 +256,7 @@ final class HttpServer
         }
 
         $this->isRunning = false;
+        Loop::get()->setErrorHandler(null);
 
         if ($this->heartbeatTimer !== null) {
             Loop::get()->cancel($this->heartbeatTimer);
