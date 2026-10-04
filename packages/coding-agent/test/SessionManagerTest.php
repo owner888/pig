@@ -1067,16 +1067,17 @@ final class SessionManagerTest extends TestCase
         $this->converse($session, 'Hello world');
 
         $this->assertNull($session->sessionName());
+        // Even if passed with telemetry metrics suffix, it must be automatically cleaned to pure title
         $session->setSessionName('仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms');
-        $this->assertSame('仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms', $session->sessionName());
+        $this->assertSame('仿写更新日志规则模板', $session->sessionName());
 
         $reopened = SessionManager::open($session->path);
-        $this->assertSame('仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms', $reopened->sessionName());
+        $this->assertSame('仿写更新日志规则模板', $reopened->sessionName());
 
-        // And in listFor/describe, session name is displayed instead of the first message
+        // And in listFor/describe, clean session name is displayed instead of the first message
         $list = SessionManager::listFor($this->cwd());
         $this->assertNotEmpty($list);
-        $this->assertSame('仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms', $list[0]->opening);
+        $this->assertSame('仿写更新日志规则模板', $list[0]->opening);
     }
 
     // ---- writing ------------------------------------------------------------------------------
@@ -1176,6 +1177,23 @@ final class SessionManagerTest extends TestCase
         // 5. Unknown session ID returns null
         $this->assertNull(SessionManager::find($cwdA, 'non-existent-session-id'));
         $this->assertNull(SessionManager::find($cwdA, ''));
+    }
+
+    public function testCleanSessionNameStripsTelemetrySuffixAndStandaloneMetrics(): void
+    {
+        $this->assertSame(
+            '京东加购人体工学椅',
+            SessionManager::cleanSessionName('京东加购人体工学椅 • ⚡ 612 tok/s · avg 458 · TTFT 127ms'),
+        );
+        $this->assertSame(
+            '仿写更新日志规则模板',
+            SessionManager::cleanSessionName('仿写更新日志规则模板 • ⚡ 1654 tok/s'),
+        );
+        $this->assertNull(SessionManager::cleanSessionName('⚡ …'));
+        $this->assertNull(SessionManager::cleanSessionName('⚡ 123 tok/s · TTFT 2ms'));
+        $this->assertNull(SessionManager::cleanSessionName(''));
+        $this->assertNull(SessionManager::cleanSessionName(null));
+        $this->assertSame('Normal Title', SessionManager::cleanSessionName('Normal Title'));
     }
 
     private function cwd(): string

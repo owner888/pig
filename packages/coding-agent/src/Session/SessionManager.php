@@ -280,7 +280,7 @@ final class SessionManager
                 $session->labels[$item->targetId] = $item->label;
             }
         } elseif ($item instanceof SessionInfoEntry) {
-            $session->sessionName = $item->name !== '' ? $item->name : null;
+            $session->sessionName = self::cleanSessionName($item->name);
         }
 
         $previous = $id;
@@ -1044,6 +1044,24 @@ final class SessionManager
         $this->labels[$entryId] = $label;
     }
 
+    /**
+     * Clean a raw session name, stripping any dynamic telemetry metrics suffixes like " • ⚡ ...".
+     */
+    public static function cleanSessionName(?string $name): ?string
+    {
+        if ($name === null || $name === '') {
+            return null;
+        }
+
+        $cleaned = (string) preg_replace('/\s*•\s*⚡.*$/u', '', $name);
+        $cleaned = trim($cleaned);
+        if (str_starts_with($cleaned, '⚡')) {
+            return null;
+        }
+
+        return $cleaned !== '' ? $cleaned : null;
+    }
+
     /** The friendly display name of the session, or null if unset. */
     public function sessionName(): ?string
     {
@@ -1061,9 +1079,9 @@ final class SessionManager
      */
     public function setSessionName(string $name): void
     {
-        $name = trim($name);
-        $this->sessionName = $name !== '' ? $name : null;
-        $this->append(new SessionInfoEntry($name));
+        $clean = self::cleanSessionName($name) ?? '';
+        $this->sessionName = $clean !== '' ? $clean : null;
+        $this->append(new SessionInfoEntry($clean));
     }
 
     /** Record that the model changed here, so resuming this conversation comes back to it. */
@@ -1488,9 +1506,9 @@ final class SessionManager
             }
 
             if (($entry['type'] ?? null) === 'session_info' && isset($entry['name']) && is_string($entry['name'])) {
-                $customName = trim($entry['name']);
-                if ($customName !== '') {
-                    $sessionName = $customName;
+                $clean = self::cleanSessionName($entry['name']);
+                if ($clean !== null) {
+                    $sessionName = $clean;
                 }
             }
 

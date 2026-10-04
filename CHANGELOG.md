@@ -43,6 +43,25 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.24] - 2026-10-04
+
+### Fixed
+
+- **TLS non-blocking socket stall false alarm**:
+  - Replaced the brittle 10-iteration loop limit in `Socket::write()` with wall-clock timeout stall detection, preventing normal non-blocking zero-byte writes from prematurely killing connections on large payloads.
+  - Sliced outgoing data in standard 16KB TLS-record chunks (`substr($data, $offset, 16384)`), complying with RFC 8446 to prevent OpenSSL buffer rejections.
+  - Added slight adaptive delay (`Async::delay(0.01)`) after consecutive zero writes to allow the OS network stack to flush buffers and process incoming TCP ACKs.
+- **Session title telemetry pollution & manual name protection**:
+  - Fixed `smart-session` extension persisting transient speed metrics (` • ⚡ ...`) into `session_info` titles. Session titles are now strictly clean business labels (e.g. `京东加购人体工学椅`), with speed telemetry rendered purely in UI runtime status.
+  - Added `SessionManager::cleanSessionName()` to automatically sanitize historical dirty titles across session loading, describing, and editing.
+
+### Added
+
+- **Unified mobile-friendly Modal system for Web UI**:
+  - Extracted common `openModal()` dialog architecture matching the Account popup design, with centered positioning, frosted backdrop blur, responsive touch button layouts, and Esc/Enter keyboard handling.
+  - Refactored sidebar session renaming into a centered modal dialog with pre-filled clean session titles, eliminating awkward inline input clipping on mobile devices.
+  - Replaced native `window.confirm()` with a unified modal confirmation for session deletions.
+
 ## [0.3.23] - 2026-10-04
 
 ### Changed

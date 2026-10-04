@@ -378,33 +378,98 @@
     }
     .hud-desc { color: var(--text-muted); text-align: right; }
 
-    /* Accounts panel: the Antigravity sign-ins, which one is live, and its quota */
+    /* Reusable Modal System (Accounts, Session Rename, Delete, etc.) */
     .modal-backdrop {
       position: fixed; inset: 0;
-      background: rgba(0,0,0,0.55);
-      display: flex; align-items: flex-start; justify-content: center;
-      padding-top: 8vh;
-      z-index: 200;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 16px;
+      box-sizing: border-box;
+      z-index: 1200;
+      animation: modalFadeIn 0.15s ease-out;
+    }
+    @keyframes modalFadeIn {
+      from { opacity: 0; transform: scale(0.96); }
+      to { opacity: 1; transform: scale(1); }
     }
     .modal {
-      width: min(640px, 92vw);
-      max-height: 80vh;
-      overflow: auto;
+      width: min(480px, 94vw);
+      max-height: 85vh;
+      overflow: hidden;
       background: var(--bg-sidebar);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      border-radius: 12px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.65);
       font-size: 13px;
+      display: flex;
+      flex-direction: column;
     }
     .modal-header {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 16px;
+      padding: 14px 18px;
       border-bottom: 1px solid var(--border);
       font-weight: 600;
+      font-size: 14px;
     }
     .modal-close { cursor: pointer; color: var(--text-dim); font-size: 18px; line-height: 1; }
     .modal-close:hover { color: var(--text); }
-    .modal-body { padding: 12px 16px 16px; }
+    .modal-body { padding: 16px 18px; flex: 1; overflow: auto; }
+    .modal-footer {
+      display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+      padding: 12px 18px;
+      border-top: 1px solid var(--border);
+      background: rgba(0,0,0,0.15);
+    }
+    .modal-btn {
+      padding: 7px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: #182232;
+      color: var(--text-muted);
+      transition: all 0.15s;
+    }
+    .modal-btn:hover {
+      color: var(--text);
+      border-color: #38bdf8;
+    }
+    .modal-btn.primary {
+      background: #0284c7;
+      border-color: #38bdf8;
+      color: #fff;
+    }
+    .modal-btn.primary:hover {
+      background: #0369a1;
+    }
+    .modal-btn.danger {
+      background: rgba(220, 38, 38, 0.2);
+      border-color: rgba(239, 68, 68, 0.5);
+      color: #f87171;
+    }
+    .modal-btn.danger:hover {
+      background: #dc2626;
+      color: #fff;
+    }
+    .modal-input {
+      width: 100%;
+      box-sizing: border-box;
+      background: #090d16;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 14px;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .modal-input:focus {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+    }
     .modal-section { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin: 14px 0 6px; }
     .account-row {
       display: flex; align-items: center; gap: 10px;
@@ -2375,6 +2440,119 @@
       return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
+    /**
+     * Clean a raw session title, stripping any transient telemetry metrics like " • ⚡ ...".
+     */
+    function cleanSessionTitle(raw) {
+      if (!raw) return "";
+      const cleaned = String(raw).replace(/\s*•\s*⚡.*$/u, "").trim();
+      if (cleaned.startsWith("⚡")) return "";
+      return cleaned;
+    }
+
+    /**
+     * Unified, reusable Modal Dialog system matching the Accounts popup design.
+     * Perfect for mobile touch, centering, keyboard Esc/Enter and backdrop closing.
+     */
+    function openModal({
+      title = "",
+      bodyHtml = "",
+      confirmText = "Confirm",
+      cancelText = "Cancel",
+      isDanger = false,
+      hideFooter = false,
+      headerExtraHtml = "",
+      width = "460px",
+      onOpen = (modalEl, closeFn) => {},
+      onConfirm = async (modalEl, closeFn) => true,
+      onCancel = () => {},
+    }) {
+      const backdrop = document.createElement("div");
+      backdrop.className = "modal-backdrop";
+
+      const modal = document.createElement("div");
+      modal.className = "modal";
+      if (width) modal.style.width = width;
+
+      modal.innerHTML = `
+        <div class="modal-header">
+          <span>${escapeHtml(title)}</span>
+          <div style="display:flex; align-items:center; gap:10px;">
+            ${headerExtraHtml}
+            <span class="modal-close">×</span>
+          </div>
+        </div>
+        <div class="modal-body">${bodyHtml}</div>
+        ${hideFooter ? "" : `
+          <div class="modal-footer">
+            <button class="modal-btn modal-cancel-btn">${escapeHtml(cancelText)}</button>
+            <button class="modal-btn ${isDanger ? "danger" : "primary"} modal-confirm-btn">${escapeHtml(confirmText)}</button>
+          </div>
+        `}
+      `;
+
+      backdrop.appendChild(modal);
+      document.body.appendChild(backdrop);
+
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        window.removeEventListener("keydown", onKeyDown);
+        backdrop.remove();
+      };
+
+      const cancel = () => {
+        onCancel();
+        close();
+      };
+
+      const confirm = async () => {
+        const confirmBtn = modal.querySelector(".modal-confirm-btn");
+        if (confirmBtn) {
+          confirmBtn.disabled = true;
+          confirmBtn.style.opacity = "0.7";
+        }
+        try {
+          const ok = await onConfirm(modal, close);
+          if (ok !== false) {
+            close();
+          }
+        } finally {
+          if (confirmBtn && !closed) {
+            confirmBtn.disabled = false;
+            confirmBtn.style.opacity = "";
+          }
+        }
+      };
+
+      const onKeyDown = (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          cancel();
+        } else if (e.key === "Enter" && !hideFooter) {
+          if (e.target?.tagName === "TEXTAREA" || e.isComposing || e.keyCode === 229) {
+            return;
+          }
+          e.preventDefault();
+          confirm();
+        }
+      };
+      window.addEventListener("keydown", onKeyDown);
+
+      backdrop.addEventListener("click", (e) => {
+        if (e.target === backdrop) cancel();
+      });
+      modal.querySelector(".modal-close").addEventListener("click", cancel);
+      if (!hideFooter) {
+        modal.querySelector(".modal-cancel-btn").addEventListener("click", cancel);
+        modal.querySelector(".modal-confirm-btn").addEventListener("click", confirm);
+      }
+
+      onOpen(modal, close);
+      return { modal, backdrop, close };
+    }
+
     function renderDiff(oldText, newText) {
       const oldLines = oldText ? oldText.split("\n") : [];
       const newLines = newText ? newText.split("\n") : [];
@@ -2893,7 +3071,8 @@
 
     function tabLabel(t) {
       // Not the filename: a UUID is not a label anybody can tell from the next one.
-      return t.name || t.opening || "new session";
+      const raw = t.name || t.opening || "new session";
+      return cleanSessionTitle(raw) || "new session";
     }
 
     /** Make `tab` the one on screen. */
@@ -3043,7 +3222,8 @@
       if (!t) return;
       cwdDisplay.innerText = t.cwd ? (t.cwd.split("/").filter(Boolean).pop() || t.cwd) : "~";
       if (sessionTitleDisplay) {
-        sessionTitleDisplay.innerText = t.name ? ` • ${t.name}` : (t.opening ? ` • ${t.opening}` : "");
+        const cleanName = cleanSessionTitle(t.name || t.opening);
+        sessionTitleDisplay.innerText = cleanName ? ` • ${cleanName}` : "";
       }
       updateSessionFileBadge(t);
       sendBtn.style.display = t.isRunning ? "none" : "flex";
@@ -3279,7 +3459,7 @@
           const label = document.createElement("span");
           label.className = "drawer-label";
           label.title = s.filename;
-          label.textContent = s.opening || s.filename;
+          label.textContent = cleanSessionTitle(s.opening) || s.filename;
 
           const actions = document.createElement("div");
           actions.className = "drawer-item-actions";
@@ -3315,100 +3495,111 @@
       }
     }
 
+    /** Rename session via a clean, mobile-friendly centered Modal (matching Account popup) */
     function startRenameSession(item, labelEl, session, cwd) {
-      if (item.querySelector(".drawer-rename-input")) return;
-      const currentName = labelEl.textContent.trim();
-      labelEl.style.display = "none";
+      const currentCleanName = cleanSessionTitle(labelEl.textContent) || session.filename;
 
-      const input = document.createElement("input");
-      input.className = "drawer-rename-input";
-      input.value = currentName;
-      item.insertBefore(input, labelEl);
-      input.focus();
-      input.select();
-
-      let committed = false;
-      const finish = async (save) => {
-        if (committed) return;
-        committed = true;
-        const newName = input.value.trim();
-        input.remove();
-        labelEl.style.display = "";
-
-        if (!save || newName === "" || newName === currentName) {
-          return;
-        }
-
-        labelEl.textContent = newName;
-        try {
-          const res = await fetch("/api/sessions/rename", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ path: session.path, name: newName, cwd: cwd }),
-          });
-          const data = await res.json();
-          if (!data.success) {
-            labelEl.textContent = currentName;
-            alert(data.error || "Failed to rename session");
-            return;
+      openModal({
+        title: "Rename Session",
+        bodyHtml: `
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <label style="color:var(--text-muted); font-size:12px;">Enter a new title for this session:</label>
+            <input class="modal-input" id="rename-session-input" type="text" value="${escapeHtml(currentCleanName)}" placeholder="Session title..." autocomplete="off">
+            <div style="color:var(--text-dim); font-size:11px; font-family:var(--font-mono); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(session.filename)}">
+              File: ${escapeHtml(session.filename)}
+            </div>
+          </div>
+        `,
+        confirmText: "Save",
+        onOpen: (modalEl) => {
+          const input = modalEl.querySelector("#rename-session-input");
+          if (input) {
+            input.focus();
+            input.select();
           }
-          const matchedTab = tabs.find((t) => t.sessionPath === session.path || t.sessionFile === session.filename);
-          if (matchedTab) {
-            matchedTab.name = newName;
-            renderTabs();
-            if (active === matchedTab) applyActiveTabToChrome();
+        },
+        onConfirm: async (modalEl) => {
+          const input = modalEl.querySelector("#rename-session-input");
+          const newName = cleanSessionTitle(input?.value ?? "");
+          if (!newName || newName === currentCleanName) {
+            return true;
           }
-        } catch (e) {
-          labelEl.textContent = currentName;
-          alert("Network error renaming session");
-        }
-      };
 
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          finish(true);
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          finish(false);
+          try {
+            const res = await fetch("/api/sessions/rename", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ path: session.path, name: newName, cwd: cwd }),
+            });
+            const data = await res.json();
+            if (!data.success) {
+              alert(data.error || "Failed to rename session");
+              return false;
+            }
+            labelEl.textContent = newName;
+            const matchedTab = tabs.find((t) => t.sessionPath === session.path || t.sessionFile === session.filename);
+            if (matchedTab) {
+              matchedTab.name = newName;
+              renderTabs();
+              if (active === matchedTab) applyActiveTabToChrome();
+            }
+            return true;
+          } catch (e) {
+            alert("Network error renaming session");
+            return false;
+          }
         }
       });
-      input.addEventListener("blur", () => finish(true));
-      input.addEventListener("click", (e) => e.stopPropagation());
     }
 
-    async function confirmDeleteSession(item, session, cwd) {
-      const displayName = session.opening || session.filename;
-      if (!confirm(`Are you sure you want to delete this session?\n\n"${displayName}"\n\nThis cannot be undone.`)) {
-        return;
-      }
+    /** Delete session via unified Modal dialog */
+    function confirmDeleteSession(item, session, cwd) {
+      const displayName = cleanSessionTitle(session.opening) || session.filename;
 
-      try {
-        const res = await fetch("/api/sessions/delete", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: session.path, cwd: cwd }),
-        });
-        const data = await res.json();
-        if (!data.success) {
-          alert(data.error || "Failed to delete session");
-          return;
+      openModal({
+        title: "Delete Session",
+        bodyHtml: `
+          <div style="line-height:1.6; font-size:13px;">
+            Are you sure you want to permanently delete this session?
+            <div style="margin:12px 0; padding:10px 12px; background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:6px; font-weight:600; color:var(--text); word-break:break-word;">
+              ${escapeHtml(displayName)}
+            </div>
+            <div style="color:#f87171; font-size:12px;">⚠️ This action cannot be undone. All conversation records in this file will be permanently removed.</div>
+          </div>
+        `,
+        confirmText: "Delete Permanently",
+        isDanger: true,
+        onConfirm: async () => {
+          try {
+            const res = await fetch("/api/sessions/delete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ path: session.path, cwd: cwd }),
+            });
+            const data = await res.json();
+            if (!data.success) {
+              alert(data.error || "Failed to delete session");
+              return false;
+            }
+
+            item.style.transition = "opacity 0.2s, height 0.2s, padding 0.2s";
+            item.style.opacity = "0";
+            item.style.height = "0px";
+            item.style.paddingTop = "0px";
+            item.style.paddingBottom = "0px";
+            setTimeout(() => item.remove(), 200);
+
+            const matchedTab = tabs.find((t) => t.sessionPath === session.path || t.sessionFile === session.filename);
+            if (matchedTab) {
+              closeTab(matchedTab);
+            }
+            return true;
+          } catch (e) {
+            alert("Network error deleting session");
+            return false;
+          }
         }
-
-        item.style.transition = "opacity 0.2s, height 0.2s, padding 0.2s";
-        item.style.opacity = "0";
-        item.style.height = "0px";
-        item.style.paddingTop = "0px";
-        item.style.paddingBottom = "0px";
-        setTimeout(() => item.remove(), 200);
-
-        const matchedTab = tabs.find((t) => t.sessionPath === session.path || t.sessionFile === session.filename);
-        if (matchedTab) {
-          closeTab(matchedTab);
-        }
-      } catch (e) {
-        alert("Network error deleting session");
-      }
+      });
     }
 
     /** Picking a conversation in the sidebar opens it as a tab (or focuses the one it is in). */

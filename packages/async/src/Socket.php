@@ -86,7 +86,9 @@ final class Socket
         $this->assertOpen();
         $length = strlen($data);
         $offset = 0;
-        $zeroWrites = 0;
+        $stallStart = null;
+        $stallLimit = $timeout > 0.0 ? $timeout : 30.0;
+        $consecutiveZeros = 0;
 
         while ($offset < $length) {
             $signal?->throwIfAborted();
@@ -97,8 +99,10 @@ final class Socket
                 throw new SocketError('Write failed: Connection closed by peer');
             }
 
+            // Write in TLS-record-sized chunks (RFC 8446 max record length 16KB) to prevent OpenSSL buffer rejections
+            $slice = substr($data, $offset, 16384);
             [$written, $warning] = self::capturingWarnings(
-                fn () => fwrite($this->stream, substr($data, $offset))
+                fn () => fwrite($this->stream, $slice)
             );
 
             if ($written === false) {
@@ -109,21 +113,35 @@ final class Socket
             }
 
             if ($written === 0) {
-                $zeroWrites++;
+                if (feof($this->stream)) {
+                    $this->close();
 
-                if ($zeroWrites > 10 || feof($this->stream)) {
+                    throw new SocketError('Write failed: Connection closed by peer');
+                }
+
+                $now = microtime(true);
+                $stallStart ??= $now;
+
+                if (($now - $stallStart) >= $stallLimit) {
                     $this->close();
                     $reason = $warning !== '' ? ": {$warning}" : '';
 
-                    throw new SocketError("Write failed: Connection closed or stalled{$reason}");
+                    throw new SocketError("Write failed: Connection closed or stalled after {$stallLimit}s{$reason}");
                 }
 
-                $this->awaitReady(true, $timeout, $signal);
+                $consecutiveZeros++;
+                $this->awaitReady(true, min(1.0, $stallLimit), $signal);
+
+                // If non-blocking write repeatedly returns 0, yield slightly to let OS flush TCP buffer / receive ACK
+                if ($consecutiveZeros > 3) {
+                    Async::delay(0.01);
+                }
 
                 continue;
             }
 
-            $zeroWrites = 0;
+            $consecutiveZeros = 0;
+            $stallStart = null;
             $offset += $written;
         }
     }
