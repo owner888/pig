@@ -10,6 +10,7 @@ use Pig\Ai\Models;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Rpc\RpcClient;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Web\Protocols\Websocket;
@@ -378,6 +379,77 @@ final class HttpServer
             return;
         }
 
+        // 9b. Delete a session file
+        if ($path === '/api/sessions/delete') {
+            $headers = [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ];
+
+            if ($req['method'] !== 'POST') {
+                $conn->sendResponse(405, $headers, json_encode(['success' => false, 'error' => 'POST only']));
+                return;
+            }
+
+            $data = json_decode($req['body'] ?? '{}', true) ?: [];
+            $rawPath = is_string($data['path'] ?? null) ? $data['path'] : '';
+            $targetCwd = is_string($data['cwd'] ?? null) ? $data['cwd'] : null;
+            $safePath = $this->resolveSafeSessionPath($rawPath, $targetCwd);
+
+            if ($safePath === null) {
+                $conn->sendResponse(400, $headers, json_encode(['success' => false, 'error' => 'Invalid session file']));
+                return;
+            }
+
+            set_error_handler(static fn () => true);
+            $ok = unlink($safePath);
+            restore_error_handler();
+
+            if (!$ok) {
+                $conn->sendResponse(500, $headers, json_encode(['success' => false, 'error' => 'Failed to delete session file']));
+                return;
+            }
+
+            $this->pool->closeBySessionFile($safePath);
+            $conn->sendResponse(200, $headers, json_encode(['success' => true]));
+            return;
+        }
+
+        // 9c. Rename a session (append SessionInfoEntry)
+        if ($path === '/api/sessions/rename') {
+            $headers = [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ];
+
+            if ($req['method'] !== 'POST') {
+                $conn->sendResponse(405, $headers, json_encode(['success' => false, 'error' => 'POST only']));
+                return;
+            }
+
+            $data = json_decode($req['body'] ?? '{}', true) ?: [];
+            $rawPath = is_string($data['path'] ?? null) ? $data['path'] : '';
+            $newName = trim((string) ($data['name'] ?? ''));
+            $targetCwd = is_string($data['cwd'] ?? null) ? $data['cwd'] : null;
+            $safePath = $this->resolveSafeSessionPath($rawPath, $targetCwd);
+
+            if ($safePath === null) {
+                $conn->sendResponse(400, $headers, json_encode(['success' => false, 'error' => 'Invalid session file']));
+                return;
+            }
+
+            try {
+                $sm = SessionManager::open($safePath);
+                $sm->setSessionName($newName);
+            } catch (Throwable $e) {
+                $conn->sendResponse(500, $headers, json_encode(['success' => false, 'error' => $e->getMessage()]));
+                return;
+            }
+
+            $conn->sendResponse(200, $headers, json_encode(['success' => true, 'name' => $newName]));
+            return;
+        }
+
         // 10.2b Serve local file/image for preview
         if ($path === '/api/file') {
             $filePath = $req['query']['path'] ?? '';
@@ -743,5 +815,43 @@ final class HttpServer
         });
 
         return $list;
+    }
+
+    /**
+     * Resolve and validate that a session file path is safe and points inside a legitimate session root.
+     */
+    private function resolveSafeSessionPath(string $rawPath, ?string $cwd = null): ?string
+    {
+        $rawPath = trim($rawPath);
+        if ($rawPath === '') {
+            return null;
+        }
+
+        $resolved = null;
+        if (is_file($rawPath)) {
+            $resolved = realpath($rawPath);
+        } elseif ($cwd !== null) {
+            $found = SessionManager::find($cwd, $rawPath);
+            if ($found !== null && is_file($found)) {
+                $resolved = realpath($found);
+            }
+        }
+
+        if ($resolved === false || $resolved === null || !str_ends_with($resolved, '.jsonl')) {
+            return null;
+        }
+
+        $allowedRoots = [
+            realpath(Config::home() . '/sessions'),
+            realpath(Config::piHome() . '/sessions'),
+        ];
+
+        foreach ($allowedRoots as $root) {
+            if ($root !== false && str_starts_with($resolved, $root . DIRECTORY_SEPARATOR)) {
+                return $resolved;
+            }
+        }
+
+        return null;
     }
 }

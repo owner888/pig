@@ -142,6 +142,29 @@ final class SessionPool
         return null;
     }
 
+    /**
+     * Terminate and close any child processes managing this session file.
+     */
+    public function closeBySessionFile(string $sessionPath): void
+    {
+        $real = realpath($sessionPath);
+        $filename = basename($sessionPath);
+
+        foreach ($this->byKey as $managed) {
+            if ($managed->closing || $managed->sessionFile === null) {
+                continue;
+            }
+
+            $matches = $managed->sessionFile === $sessionPath
+                || $managed->sessionFile === $filename
+                || ($real !== false && realpath($managed->sessionFile) === $real);
+
+            if ($matches) {
+                $this->close($managed);
+            }
+        }
+    }
+
     /** Unbind a connection's tab (or all its tabs if $tabId is null); the session may start idle countdown. */
     public function detach(int $connectionId, ?string $tabId = null): void
     {

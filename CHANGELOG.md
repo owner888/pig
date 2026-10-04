@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.11] - 2026-10-04
+
+### Added
+
+- **Sidebar session rename and deletion with hover actions in Web UI**:
+  - **Inline session renaming**: Added an edit icon (`✏️`) on hover (and touch-persistent on mobile) to rename sessions directly from the sidebar. Saves via `POST /api/sessions/rename` and immediately synchronizes the active tab and header titles.
+  - **Session deletion with confirmation**: Added a delete icon (`🗑️`) to remove `.jsonl` files from disk via `POST /api/sessions/delete` with strict path validation inside session roots. Automatically closes open tabs and terminates associated child processes in `SessionPool`.
+  - **Mobile touch optimization**: Actions are rendered persistently with comfortable touch targets on touchscreens (<768px), ensuring full mobile parity.
+
 ## [0.3.10] - 2026-10-04
 
 ### Fixed

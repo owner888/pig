@@ -510,4 +510,66 @@ final class WebModeTest extends TestCase
             $server->stop();
         });
     }
+
+    public function testRenameAndDeleteSessionEndpoints(): void
+    {
+        $port = 28101;
+        $server = $this->server($port);
+        $session = \Pig\CodingAgent\Session\SessionManager::create($this->cwd);
+        $session->append(new \Pig\Ai\UserMessage([new \Pig\Ai\TextContent('hello')]));
+        $session->append(new \Pig\Ai\AssistantMessage(
+            [new \Pig\Ai\TextContent('world')],
+            \Pig\Ai\Api::AnthropicMessages,
+            'anthropic',
+            'claude-test',
+            new \Pig\Ai\Usage(),
+            \Pig\Ai\StopReason::Stop,
+        ));
+
+        $this->assertFileExists($session->path);
+
+        Async::run(function () use ($server, $port, $session) {
+            $server->start();
+            $http = new HttpClient();
+
+            // 1. Rename session
+            $renameRes = $http->send(new Request(
+                'POST',
+                "http://127.0.0.1:{$port}/api/sessions/rename",
+                ['Content-Type' => 'application/json'],
+                json_encode(['path' => $session->path, 'name' => 'Renamed Test Session']),
+            ));
+            $this->assertSame(200, $renameRes->status);
+            $renameBody = json_decode($renameRes->body->all(), true);
+            $this->assertTrue($renameBody['success']);
+            $this->assertSame('Renamed Test Session', $renameBody['name']);
+
+            // Verify rename persisted on disk
+            $opened = \Pig\CodingAgent\Session\SessionManager::open($session->path);
+            $this->assertSame('Renamed Test Session', $opened->getSessionName());
+
+            // 2. Reject unsafe deletion path outside session roots
+            $badRes = $http->send(new Request(
+                'POST',
+                "http://127.0.0.1:{$port}/api/sessions/delete",
+                ['Content-Type' => 'application/json'],
+                json_encode(['path' => '/etc/passwd']),
+            ));
+            $this->assertSame(400, $badRes->status);
+
+            // 3. Delete session successfully
+            $delRes = $http->send(new Request(
+                'POST',
+                "http://127.0.0.1:{$port}/api/sessions/delete",
+                ['Content-Type' => 'application/json'],
+                json_encode(['path' => $session->path]),
+            ));
+            $this->assertSame(200, $delRes->status);
+            $delBody = json_decode($delRes->body->all(), true);
+            $this->assertTrue($delBody['success']);
+            $this->assertFileDoesNotExist($session->path);
+
+            $server->stop();
+        });
+    }
 }
