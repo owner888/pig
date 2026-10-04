@@ -113,6 +113,15 @@ final class RetryTest extends TestCase
         yield 'broken pipe' => ['Broken pipe writing to the socket'];
         yield 'stream cut' => ['stream ended without a stop reason'];
         yield 'overloaded, worded' => ['The model is overloaded, please try again'];
+        yield 'fwrite ssl failed' => ['Write failed: fwrite(): SSL operation failed with code 5. OpenSSL Error messages: error:80000020:system library::Broken pipe'];
+        yield 'fwrite ssl code 5' => ['Write failed: fwrite(): SSL operation failed with code 5'];
+        yield 'fwrite ssl code 1' => ['Write failed: fwrite(): SSL operation failed with code 1'];
+        yield 'fread ssl failed' => ['Read failed: fread(): SSL operation failed with code 5'];
+        yield 'tls handshake failed' => ['TLS handshake with api.anthropic.com failed: stream_socket_enable_crypto(): SSL operation failed with code 1'];
+        yield 'connection refused' => ['Cannot connect to api.anthropic.com:443: Connection refused'];
+        yield 'network unreachable' => ['Cannot connect to 127.0.0.1:7890: Network is unreachable'];
+        yield 'proxy connection refused' => ['Cannot reach the proxy socks5://127.0.0.1:7890: Connection refused'];
+        yield 'socket closed or stalled' => ['Write failed: Connection closed or stalled'];
     }
 
     #[DataProvider('transportFailures')]

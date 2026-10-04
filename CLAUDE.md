@@ -10876,6 +10876,22 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 2. 当写入或读取返回 `false` 时，主动调用 `$this->close()` 释放已失效连接，并将 `$warning` 详细原因追加至异常信息中（形如 `Write failed: ... Broken pipe`）。
 3. 异常信息包含 `Broken pipe` 后，上层会话重试模块 `Retry::worthRetrying()` 能瞬间识别网络抖动与对端重置，从而自动触发无缝透明重试。
 
+### `fwrite(): SSL operation failed` 零写死循环、fclose close_notify 警告泄露与网络重试补强
+
+**现象**：
+长对话、网络波动、代理服务器关闭连接或发送大 payload 时，偶发抛出 `fwrite(): SSL operation failed with code 5` / `SSL operation failed with code 1` / `Broken pipe`，或者终端突然冒出原生 PHP Warning；会话直接红字中断报错，未能进入自动重试。
+
+**原因**：
+1. **零写死循环（Zero-write loop）**：在 OpenSSL 非阻塞流上，当连接被对端提早关闭时，`fwrite` 并不总是返回 `false`，而是返回 `0`。在非阻塞模式下，已关闭的 TCP socket 在 `stream_select` 中永远处于 Writable 状态，因此 `$this->awaitReady(true)` 瞬间返回，导致 `while ($offset < $length)` 在毫秒级内空转上万次并耗尽超时，甚至导致 OpenSSL 状态机崩溃报错。且 `Socket::write()` 原先缺少对 `feof($this->stream)` 的即时检测。
+2. **`fclose()` close_notify 警告泄露**：当连接已被底层异常打断时，直接执行 `fclose($stream)` 会触发 OpenSSL 尝试发送 TLS `close_notify` alert，在 Broken pipe 连接上写入直接向终端抛出裸露的 `Warning: fwrite(): SSL operation failed with code 5`。
+3. **`Retry::WORDS` 正则漏判 PHP 原生网络异常**：`Retry::WORDS` 原先仅涵盖了 `broken pipe` 和 `connection reset` 等字眼。而 PHP 在发生 SSL 故障、握手失败、写失败时，异常信息通常为 `Write failed: fwrite(): SSL operation failed with code 5`、`Read failed: ...`、`TLS handshake with ... failed`、`Cannot connect to ...`。这些关键错误信息未被纳入正则，导致所有此类网络波动被误判为“不可重试的请求错误”，直接中断会话。
+
+**对策**：
+1. 在 `Socket::write()` 中加入前置 `feof()` 检查及连续零写（`$zeroWrites > 10`）熔断保护，遇到断开立即安全抛出 `SocketError`，杜绝死循环空转与状态机损坏。
+2. 在 `Socket::close()` 中使用 `self::capturingWarnings()` 包裹 `fclose($stream)`，彻底静音已断连 SSL 的 `close_notify` 原生警告。
+3. `Socket::capturingWarnings()` 改为字符串累加（`$warning .= ' ' . $message`），确保 OpenSSL 的连续复合报警（如 Code 5 叠加具体 Broken pipe）不丢失。
+4. 全面扩充 `Retry::WORDS` 正则，将 `ssl.*operation failed`、`tls.*handshake.*failed`、`write failed`、`read failed`、`cannot connect`、`network.*unreachable`、`host.*unreachable`、`socket.*closed` 等原生异常全部纳入自动重试机制。遇网络抖动或 SSL 断连自动无缝重试，彻底保障长时间无人值守运行的稳定性。
+
 ### 会话树回溯 O(N²) 数组重分配与 `latestFor` 全文件扫描导致 `pig -c` 启动严重迟钝
 
 **现象**：

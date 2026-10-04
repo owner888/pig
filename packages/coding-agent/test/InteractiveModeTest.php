@@ -1401,7 +1401,7 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
 
         // dark's toolErrorBg.
-        $this->assertStringContainsString("\e[48;2;60;40;40m", implode('', $this->mode->screen()->render(80)));
+        $this->assertStringContainsString(\Pig\CodingAgent\Theme\Colour::background(Palette::dark(true)->hex('toolErrorBg'), true), implode('', $this->mode->screen()->render(80)));
         $this->assertSame(3, $this->session->messages()[0]->exitCode);
     }
 

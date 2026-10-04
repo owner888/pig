@@ -590,19 +590,25 @@ final class HeadlessBrowser
     private static function remove(string $path): void
     {
         if (is_dir($path) && !is_link($path)) {
-            foreach (scandir($path) ?: [] as $entry) {
-                if ($entry !== '.' && $entry !== '..') {
-                    self::remove($path . '/' . $entry);
+            for ($attempt = 0; $attempt < 10; $attempt++) {
+                foreach (scandir($path) ?: [] as $entry) {
+                    if ($entry !== '.' && $entry !== '..') {
+                        self::remove($path . '/' . $entry);
+                    }
                 }
-            }
 
-            rmdir($path);
+                if (@rmdir($path) || !is_dir($path)) {
+                    return;
+                }
+
+                usleep(20000);
+            }
 
             return;
         }
 
         if (file_exists($path) || is_link($path)) {
-            unlink($path);
+            @unlink($path);
         }
     }
 }

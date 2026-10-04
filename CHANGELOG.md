@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.13] - 2026-10-04
+
+### Fixed
+
+- **Robust SSL socket write resilience, zero-write spin loop guard, and auto-retry coverage**:
+  - **Zero-write loop & EOF protection in `Socket::write()`**: Added pre-write `feof()` validation and consecutive zero-byte write circuit breaker (`>10` attempts) to prevent rapid CPU spin loops when an OpenSSL stream is disconnected by the peer.
+  - **Suppressed `fclose()` SSL close_notify warnings**: Wrapped `fclose($stream)` in `capturingWarnings()` within `Socket::close()`, silencing raw PHP warnings triggered when attempting TLS shutdown over a broken connection.
+  - **Comprehensive auto-retry pattern matching**: Expanded `Retry::WORDS` to recognize native PHP transport errors (`ssl.*operation failed`, `tls.*handshake.*failed`, `write failed`, `read failed`, `cannot connect`, `network.*unreachable`, `host.*unreachable`, `socket.*closed`), ensuring transient network blips and SSL drops trigger automatic retry rather than aborting turns.
+
 ## [0.3.12] - 2026-10-04
 
 ### Changed

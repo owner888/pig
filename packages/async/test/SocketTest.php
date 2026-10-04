@@ -94,6 +94,23 @@ final class SocketTest extends TestCase
         });
     }
 
+    public function testClosingAlreadyBrokenSocketDoesNotLeakWarningsOrThrow(): void
+    {
+        [$host, $port] = $this->server(static function ($conn): void {
+            fclose($conn);
+        });
+
+        Async::run(function () use ($host, $port): void {
+            $socket = Socket::connect($host, $port);
+            Loop::get()->delay(0.05, static fn () => null);
+
+            // Double close on broken socket is safe and clean
+            $socket->close();
+            $socket->close();
+            $this->assertTrue($socket->isClosed());
+        });
+    }
+
     public function testReadReturnsNullWhenThePeerHangsUp(): void
     {
         [$host, $port] = $this->server(static function ($connection): void {

@@ -86,9 +86,17 @@ final class Socket
         $this->assertOpen();
         $length = strlen($data);
         $offset = 0;
+        $zeroWrites = 0;
 
         while ($offset < $length) {
             $signal?->throwIfAborted();
+
+            if (feof($this->stream)) {
+                $this->close();
+
+                throw new SocketError('Write failed: Connection closed by peer');
+            }
+
             [$written, $warning] = self::capturingWarnings(
                 fn () => fwrite($this->stream, substr($data, $offset))
             );
@@ -101,11 +109,21 @@ final class Socket
             }
 
             if ($written === 0) {
+                $zeroWrites++;
+
+                if ($zeroWrites > 10 || feof($this->stream)) {
+                    $this->close();
+                    $reason = $warning !== '' ? ": {$warning}" : '';
+
+                    throw new SocketError("Write failed: Connection closed or stalled{$reason}");
+                }
+
                 $this->awaitReady(true, $timeout, $signal);
 
                 continue;
             }
 
+            $zeroWrites = 0;
             $offset += $written;
         }
     }
@@ -165,7 +183,9 @@ final class Socket
 
         $stream = $this->stream;
         $this->stream = null;
-        fclose($stream);
+
+        // Cleanly close without letting broken-pipe / SSL shutdown warnings escape to terminal.
+        self::capturingWarnings(static fn () => fclose($stream));
     }
 
     /**
@@ -289,7 +309,7 @@ final class Socket
     {
         $warning = '';
         set_error_handler(static function (int $severity, string $message) use (&$warning): bool {
-            $warning = $message;
+            $warning = $warning === '' ? $message : "{$warning} {$message}";
 
             return true;
         });

@@ -65,8 +65,11 @@ final class Retry
      * finished: real, retryable, and never an HTTP response.
      */
     private const string WORDS = '/overloaded|rate.?limit|too many requests|service.?unavailable'
-        . '|server error|internal error|connection.?(error|reset|closed)|timed? ?out'
-        . '|stream ended|broken pipe/i';
+        . '|server.?error|internal.?error|connection.?(error|reset|closed|refused|lost)'
+        . '|cannot connect|timed? ?out|stream ended|broken pipe'
+        . '|ssl.*operation failed|ssl routines|tls.*handshake.*failed'
+        . '|write failed|read failed|socket.*closed|socket.*error'
+        . '|network.*unreachable|host.*unreachable/i';
 
     /**
      * Should this failed turn be tried again?
