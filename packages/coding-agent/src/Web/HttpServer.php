@@ -73,6 +73,19 @@ final class HttpServer
     private ?string $heartbeatTimer = null;
     private const PING_INTERVAL = 25.0;
 
+    public const FAVICON_SVG = '<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">'
+        . '<circle cx="50" cy="50" r="44" fill="#F472B6"/>'
+        . '<ellipse cx="50" cy="56" rx="22" ry="16" fill="#FBCFE8"/>'
+        . '<ellipse cx="42" cy="56" rx="4" ry="6" fill="#BE185D"/>'
+        . '<ellipse cx="58" cy="56" rx="4" ry="6" fill="#BE185D"/>'
+        . '<circle cx="34" cy="38" r="6" fill="#1F2937"/>'
+        . '<circle cx="66" cy="38" r="6" fill="#1F2937"/>'
+        . '<circle cx="36" cy="36" r="2" fill="#FFFFFF"/>'
+        . '<circle cx="68" cy="36" r="2" fill="#FFFFFF"/>'
+        . '<path d="M22 28C18 16 30 18 36 24" fill="#F472B6" stroke="#DB2777" stroke-width="3"/>'
+        . '<path d="M78 28C82 16 70 18 64 24" fill="#F472B6" stroke="#DB2777" stroke-width="3"/>'
+        . '</svg>';
+
     private int $nextConnectionId = 0;
     private bool $isRunning = false;
     private readonly Auth $auth;
@@ -346,6 +359,17 @@ final class HttpServer
             $conn->sendResponse(200, [
                 'Content-Type' => 'text/html; charset=utf-8',
             ], $html);
+
+            return;
+        }
+
+        // 1.1 Mascot pig favicon (/favicon.ico & /favicon.svg)
+        if ($path === '/favicon.ico' || $path === '/favicon.svg') {
+            $conn->sendResponse(200, [
+                'Content-Type' => 'image/svg+xml; charset=utf-8',
+                'Cache-Control' => 'public, max-age=86400',
+                'Access-Control-Allow-Origin' => '*',
+            ], self::FAVICON_SVG);
 
             return;
         }

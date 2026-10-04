@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.46] - 2026-10-04
+
+### Added
+
+- **Official pig mascot SVG favicon for Web UI (`/favicon.ico` & `/favicon.svg`).** Browsers requesting `/favicon.ico` previously returned a 404 error. `HttpServer` now directly serves the official cute pink piglet vector icon (`HttpServer::FAVICON_SVG`), and `index.html` registers both `<link rel="icon" type="image/svg+xml" href="/favicon.svg">` and `/favicon.ico` fallback with 24-hour client caching (`Cache-Control: public, max-age=86400`).
+
 ## [0.2.45] - 2026-10-04
 
 ### Changed
