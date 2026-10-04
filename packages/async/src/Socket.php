@@ -134,7 +134,11 @@ final class Socket
 
                 // If non-blocking write repeatedly returns 0, yield slightly to let OS flush TCP buffer / receive ACK
                 if ($consecutiveZeros > 3) {
-                    Async::delay(0.01);
+                    if (\Fiber::getCurrent() !== null) {
+                        Async::delay(0.01);
+                    } else {
+                        usleep(10000);
+                    }
                 }
 
                 continue;

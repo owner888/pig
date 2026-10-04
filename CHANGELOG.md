@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.25] - 2026-10-04
+
+### Fixed
+
+- **Socket write delay synchronization safety**:
+  - Guarded adaptive write-delay in `Socket::write()` to check `Fiber::getCurrent() !== null`, falling back to `usleep(10000)` outside coroutines to prevent `Future::await()` exceptions in non-coroutine contexts.
+
 ## [0.3.24] - 2026-10-04
 
 ### Fixed
