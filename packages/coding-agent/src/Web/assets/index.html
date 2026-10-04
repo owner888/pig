@@ -716,6 +716,66 @@
     }
     .select-pill:hover { border-color: #475569; }
     .select-pill:focus { border-color: #38bdf8; box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.2); }
+
+    /* Custom dropdown menu (desktop): anchored flush above the pill, never floating mid-screen.
+       On touch devices the native <select> picker is kept — see enhanceSelect(). */
+    .select-wrap {
+      position: relative;
+      display: flex;
+      min-width: 0;
+    }
+    .select-wrap .select-pill { width: 100%; }
+    .select-wrap.open .select-pill {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.2);
+    }
+    .dropdown-menu {
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 0;
+      min-width: 100%;
+      max-width: 320px;
+      max-height: 280px;
+      overflow-y: auto;
+      background: #121824;
+      border: 1px solid #2d3b50;
+      border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.3);
+      padding: 4px;
+      z-index: 120;
+      display: none;
+      animation: dropdownIn 0.12s ease-out;
+      scrollbar-width: thin;
+      scrollbar-color: #334155 transparent;
+    }
+    .dropdown-menu.show { display: block; }
+    @keyframes dropdownIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .dropdown-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 6px 10px;
+      border-radius: 5px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--text);
+      cursor: pointer;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .dropdown-item:hover, .dropdown-item.active {
+      background: rgba(56, 189, 248, 0.12);
+      color: #fff;
+    }
+    .dropdown-item.selected { color: #38bdf8; }
+    .dropdown-item.selected::after {
+      content: "✓";
+      font-size: 11px;
+      color: #38bdf8;
+    }
+    .dropdown-item.disabled { opacity: 0.4; cursor: default; }
+
     .status-telemetry {
       color: var(--text-dim);
     }
@@ -859,6 +919,7 @@
         width: 100%;
         gap: 4px;
       }
+      .select-wrap { flex: 1; }
       .select-pill {
         flex: 1;
         min-width: 0;
@@ -1020,6 +1081,135 @@
         toggleSidebar.innerText = "›";
       });
     }
+
+    // ---- custom dropdown over native <select> ------------------------------------------------
+    //
+    // A native <select> opens its list wherever the OS decides: macOS anchors it on the *selected*
+    // row, so with the sixth of seven providers chosen the menu floats a hundred pixels above the
+    // pill with nothing between. The menu here is a DOM element anchored flush above the pill,
+    // whatever is selected. The <select> stays as the source of truth (its options, its value,
+    // its "change" event) so the three cascading handlers below do not know the difference.
+    //
+    // Touch devices keep the native picker — iOS's bottom wheel is the better control there, and
+    // a hover-driven menu is the wrong shape for a thumb.
+    const isTouchDevice = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+    let openDropdown = null;
+
+    function closeDropdown() {
+      if (!openDropdown) return;
+      openDropdown.menu.classList.remove("show");
+      openDropdown.wrap.classList.remove("open");
+      openDropdown = null;
+    }
+
+    function enhanceSelect(select) {
+      if (isTouchDevice) return;
+
+      const wrap = document.createElement("div");
+      wrap.className = "select-wrap";
+      select.parentNode.insertBefore(wrap, select);
+      wrap.appendChild(select);
+
+      const menu = document.createElement("div");
+      menu.className = "dropdown-menu";
+      menu.setAttribute("role", "listbox");
+      wrap.appendChild(menu);
+
+      let activeIndex = -1;
+
+      function build() {
+        menu.innerHTML = "";
+        const options = Array.from(select.options);
+        options.forEach((opt, i) => {
+          const item = document.createElement("div");
+          item.className = "dropdown-item" + (opt.selected ? " selected" : "") + (opt.disabled ? " disabled" : "");
+          item.setAttribute("role", "option");
+          item.dataset.index = String(i);
+          item.textContent = opt.textContent;
+          if (!opt.disabled) {
+            item.addEventListener("mousedown", (e) => { e.preventDefault(); choose(i); });
+            item.addEventListener("mouseenter", () => setActive(i));
+          }
+          menu.appendChild(item);
+        });
+        activeIndex = select.selectedIndex;
+      }
+
+      function setActive(i) {
+        activeIndex = i;
+        menu.querySelectorAll(".dropdown-item").forEach((el, idx) => {
+          el.classList.toggle("active", idx === i);
+        });
+        const el = menu.children[i];
+        if (el && typeof el.scrollIntoView === "function") {
+          el.scrollIntoView({ block: "nearest" });
+        }
+      }
+
+      function choose(i) {
+        if (i < 0 || i >= select.options.length || select.options[i].disabled) return;
+        const changed = select.selectedIndex !== i;
+        select.selectedIndex = i;
+        close();
+        if (changed) select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+
+      function open() {
+        if (select.disabled) return;
+        closeDropdown();
+        build();
+        menu.classList.add("show");
+        wrap.classList.add("open");
+        openDropdown = { menu, wrap };
+        setActive(select.selectedIndex);
+      }
+
+      function close() {
+        if (openDropdown && openDropdown.menu === menu) closeDropdown();
+      }
+
+      // Swallow the native popup: mousedown is what opens it, and preventing that leaves the
+      // pill focusable and the keyboard working on the <select> itself.
+      select.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        select.focus();
+        if (menu.classList.contains("show")) close(); else open();
+      });
+
+      select.addEventListener("keydown", (e) => {
+        const isOpen = menu.classList.contains("show");
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          if (!isOpen) { open(); return; }
+          const dir = e.key === "ArrowDown" ? 1 : -1;
+          let next = activeIndex;
+          for (let n = 0; n < select.options.length; n++) {
+            next = (next + dir + select.options.length) % select.options.length;
+            if (!select.options[next].disabled) break;
+          }
+          setActive(next);
+        } else if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          if (isOpen) choose(activeIndex); else open();
+        } else if (e.key === "Escape" && isOpen) {
+          e.preventDefault();
+          close();
+        } else if (e.key === "Tab") {
+          close();
+        }
+      });
+
+      select.addEventListener("blur", () => setTimeout(close, 0));
+    }
+
+    document.addEventListener("mousedown", (e) => {
+      if (openDropdown && !openDropdown.wrap.contains(e.target)) closeDropdown();
+    });
+    window.addEventListener("resize", closeDropdown);
+
+    enhanceSelect(providerSelect);
+    enhanceSelect(modelSelect);
+    enhanceSelect(thinkingSelect);
 
     // Auto-grow textarea
     promptInput.addEventListener("input", () => {
@@ -2444,21 +2634,15 @@
       } catch (err) {}
     });
 
+    // One request per change. This used to send the switch over the socket *and* then POST it,
+    // so every pick ran setModel() twice and wrote two model_change lines into the session file.
+    // HTTP is the one channel here because its answer carries the state the dropdowns are
+    // redrawn from — and now also the reason when the switch did not happen.
     async function sendModelChange() {
       userIsInteracting = true;
       const modelId = modelSelect.value;
       const provider = providerSelect.value;
       const thinkingLevel = thinkingSelect.value;
-      const msg = {
-        type: "set_model",
-        modelId,
-        provider,
-        thinkingLevel,
-      };
-
-      if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(msg));
-      }
 
       try {
         const res = await fetch("/api/model", {
@@ -2467,11 +2651,15 @@
           body: JSON.stringify({ modelId, provider, thinkingLevel }),
         });
         const d = await res.json();
+        if (d && d.error) {
+          appendErrorMessage(d.error);
+        }
         if (d && d.state) {
           userIsInteracting = false;
           applyState(d.state);
         }
       } catch (err) {
+        appendErrorMessage("Could not switch model: " + (err && err.message ? err.message : String(err)));
       } finally {
         setTimeout(() => { userIsInteracting = false; }, 300);
       }

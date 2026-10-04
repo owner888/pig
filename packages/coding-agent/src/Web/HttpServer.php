@@ -720,19 +720,23 @@ final class HttpServer
             $thinkingStr = is_array($data) && isset($data['thinkingLevel']) ? (string) $data['thinkingLevel'] : null;
             $thinking = $thinkingStr !== null ? ThinkingLevel::tryFrom($thinkingStr) : null;
 
+            // A switch that did not happen must say so: the page re-reads `state` from this
+            // answer, and `ok: true` with the old model in it is a dropdown that looks like it
+            // worked. Both failures — no such model, and a model this machine has no key for —
+            // used to be swallowed here.
+            $problem = null;
             if ($modelId !== '') {
                 try {
-                    $model = Models::get($provider === null ? $modelId : "{$provider}/{$modelId}") ?? Models::get($modelId);
-                    if ($model !== null) {
-                        $this->session->setModel($model, $thinking, persistAsDefault: false);
-                    }
-                } catch (Throwable) {}
+                    $this->session->setModel(self::resolveModel($provider, $modelId), $thinking, persistAsDefault: false);
+                } catch (Throwable $e) {
+                    $problem = $e->getMessage();
+                }
             }
 
-            $conn->sendResponse(200, [
+            $conn->sendResponse($problem === null ? 200 : 400, [
                 'Content-Type' => 'application/json',
                 'Access-Control-Allow-Origin' => '*',
-            ], json_encode(['ok' => true, 'state' => $this->getStatePayload()]));
+            ], json_encode(['ok' => $problem === null, 'error' => $problem, 'state' => $this->getStatePayload()]));
 
             return;
         }
@@ -902,11 +906,7 @@ final class HttpServer
 
                 if ($modelId !== '') {
                     try {
-                        $model = Models::get($provider === null ? $modelId : "{$provider}/{$modelId}") ?? Models::get($modelId);
-                        if ($model === null) {
-                            throw new \RuntimeException("No such model: {$provider}/{$modelId}");
-                        }
-                        $this->session->setModel($model, $thinking, persistAsDefault: false);
+                        $this->session->setModel(self::resolveModel($provider, $modelId), $thinking, persistAsDefault: false);
                         $conn->send(['id' => $id, 'type' => 'response', 'success' => true, 'state' => $this->getStatePayload()]);
                     } catch (Throwable $e) {
                         $conn->send(['id' => $id, 'type' => 'response', 'success' => false, 'error' => $e->getMessage()]);
@@ -1114,6 +1114,40 @@ final class HttpServer
         }
 
         return '';
+    }
+
+    /**
+     * The model a `set_model` names, by the two shapes a client sends: `provider` + bare
+     * `modelId`, or a single `provider/id` string in `modelId` with no `provider` at all.
+     *
+     * **The provider used to be ignored.** `Models::get()` takes a bare id and compares it with
+     * `$model->id`, so the `"provider/id"` string the old code built there matched nothing, and
+     * the `?? Models::get($modelId)` fallback then resolved the bare id — to the *direct*
+     * provider, by `Models::RESOLD`. The page sends `provider: "antigravity"` with
+     * `modelId: "gemini-3.8-flash"`; what the session was switched to was Google's public model
+     * of that name, on a different bill and a different quota, with `ok: true` and nothing on
+     * screen to say so. Found by a test that restored a model and got the wrong one back.
+     *
+     * `Models::find()` is the keyed lookup, so a named provider is honoured exactly; a bare id
+     * with no provider is still the direct provider's, which is what somebody typing
+     * `gemini-3.8-flash` means. A miss throws rather than returning null, because the caller is
+     * about to answer a request and `ok: true` for a switch that did not happen is the bug.
+     */
+    private static function resolveModel(?string $provider, string $modelId): \Pig\Ai\Model
+    {
+        if ($provider === null && str_contains($modelId, '/')) {
+            [$provider, $modelId] = explode('/', $modelId, 2);
+        }
+
+        $model = $provider === null ? Models::get($modelId) : Models::find($provider, $modelId);
+
+        if ($model === null) {
+            $named = $provider === null ? $modelId : "{$provider}/{$modelId}";
+
+            throw new \RuntimeException("No such model: {$named}");
+        }
+
+        return $model;
     }
 
     /** @return array<string, mixed> */

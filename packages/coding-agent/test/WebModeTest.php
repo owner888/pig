@@ -421,6 +421,75 @@ final class WebModeTest extends TestCase
         });
     }
 
+    /**
+     * `gemini-2.5-flash` is sold by Google directly and resold by Antigravity, so it is the id
+     * that tells the two apart: a bare lookup answers Google's by `Models::RESOLD`, and the only
+     * way to reach Antigravity's is to honour the `provider` the page sends. The old code built
+     * `"provider/id"` and handed it to `Models::get()`, which compares bare ids — so it missed,
+     * fell back to the bare id, and switched to Google's with `ok: true`.
+     */
+    public function testANamedProviderIsHonouredRatherThanResolvedToTheDirectOne(): void
+    {
+        $port = 28093;
+        $session = $this->session();
+        $server = new HttpServer($session, $port);
+
+        Async::run(function () use ($server, $port, $session) {
+            $server->start();
+            $http = new HttpClient(2.0);
+
+            $body = json_encode(['modelId' => 'gemini-2.5-flash', 'provider' => 'antigravity']);
+            $resp = $http->follow(new Request('POST', "http://127.0.0.1:{$port}/api/model", body: $body));
+            $answer = json_decode($resp->body->all(), true);
+
+            $this->assertSame(200, $resp->status);
+            $this->assertTrue($answer['ok']);
+            $this->assertSame('antigravity', $session->model()?->provider, 'the provider the page named, not the direct one');
+            $this->assertSame('gemini-2.5-flash', $session->model()?->id);
+            $this->assertSame('antigravity', $answer['state']['provider']);
+
+            // A combined "provider/id" string with no separate provider is the same request.
+            $body = json_encode(['modelId' => 'google/gemini-2.5-flash']);
+            $resp = $http->follow(new Request('POST', "http://127.0.0.1:{$port}/api/model", body: $body));
+            $this->assertSame(200, $resp->status);
+            $this->assertSame('google', $session->model()?->provider);
+
+            $server->stop();
+        });
+    }
+
+    /**
+     * The page redraws its three dropdowns from the `state` in this answer, so `ok: true` with
+     * the old model inside is a pick that looked like it took. A switch that did not happen is a
+     * 400 with the reason, and the state still says what the session is actually on.
+     */
+    public function testASwitchToAModelThatDoesNotExistSaysSoRatherThanAnsweringOk(): void
+    {
+        $port = 28094;
+        $session = $this->session();
+        $server = new HttpServer($session, $port);
+
+        Async::run(function () use ($server, $port, $session) {
+            $server->start();
+            $http = new HttpClient(2.0);
+
+            $http->follow(new Request('POST', "http://127.0.0.1:{$port}/api/model", body: json_encode(['modelId' => 'gemini-2.5-flash', 'provider' => 'google'])));
+            $this->assertSame('google', $session->model()?->provider);
+
+            $body = json_encode(['modelId' => 'no-such-model', 'provider' => 'antigravity']);
+            $resp = $http->follow(new Request('POST', "http://127.0.0.1:{$port}/api/model", body: $body));
+            $answer = json_decode($resp->body->all(), true);
+
+            $this->assertSame(400, $resp->status);
+            $this->assertFalse($answer['ok']);
+            $this->assertSame('No such model: antigravity/no-such-model', $answer['error']);
+            $this->assertSame('google', $answer['state']['provider'], 'the state is what the session is still on');
+            $this->assertSame('gemini-2.5-flash', $session->model()?->id, 'nothing was switched');
+
+            $server->stop();
+        });
+    }
+
     public function testWebModeInstantiatesAndExposesStop(): void
     {
         $session = $this->session();

@@ -43,6 +43,18 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.2.48] - 2026-10-04
+
+### Added
+
+- **Custom dropdown menu for the provider / model / thinking selectors on desktop.** A native `<select>` opens its list wherever the OS decides — macOS anchors it on the *selected* row, so with the sixth of seven providers chosen the menu floated a hundred pixels above the pill with nothing between. The menu is now a DOM element anchored flush above the pill (6px gap, whatever is selected), in the page's own dark theme, with hover/active rows, a `✓` on the current one, and full keyboard support (↑↓ to move, Enter/Space to pick, Esc to close, Tab closes). The `<select>` stays as the source of truth — its options, its value, its `change` event — so the three cascading handlers are untouched. Touch devices keep the native picker: iOS's bottom wheel is the better control there.
+
+### Fixed
+
+- **Switching model from the Web UI ignored the provider and switched to the direct one.** `/api/model` and the WebSocket `set_model` built `"provider/id"` and handed it to `Models::get()`, which compares *bare* ids — so the lookup missed, the `?? Models::get($modelId)` fallback resolved the bare id to the direct provider by `Models::RESOLD`, and a pick of `antigravity / gemini-2.5-flash` switched the session to **Google's public** `gemini-2.5-flash` on a different bill and quota, with `ok: true`. Both paths go through `resolveModel()` now, which uses the keyed `Models::find()` when a provider is named and also accepts a combined `provider/id` string.
+- **A model switch that did not happen answered `ok: true`.** The HTTP handler swallowed every failure — no such model, no API key — and returned 200 with the old model in `state`, so the dropdowns redrew as though the pick had taken. It answers 400 with the reason now, and the page shows it.
+- **Every model pick ran `setModel()` twice.** `sendModelChange()` sent the switch over the WebSocket *and* then POSTed it, which wrote two `model_change` lines into the session file per pick. One request, over HTTP, because its answer carries the state the dropdowns redraw from.
+
 ## [0.2.47] - 2026-10-04
 
 ### Fixed
