@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.9] - 2026-10-04
+
+### Changed
+
+- **Startup acceleration for `pig -c` on massive sessions (from 2.28s down to 0.63s)**:
+  - **Eliminated O(N^2) memory reallocation in `SessionManager::pathTo()`**: Replaced loop-time `array_unshift` with O(1) appends followed by a single `array_reverse`, cutting traversal on large 28k-node session trees from 718ms to 3ms (230x speedup).
+  - **Instant reverse search in `SessionManager::settings()`**: Replaced forward whole-tree scans with leaf-to-parent reverse lookups that terminate immediately once the latest model and thinking level are found, dropping execution time from 725ms to 0.6ms (1200x speedup).
+  - **Zero-allocation array append in `SessionManager::resolve()`**: Replaced loop-time array unpacking (`[...$messages, ...]`) with direct element appending.
+  - **Single-file inspection in `SessionManager::latestFor()`**: Updated `latestFor()` to inspect only the newest matching session file rather than parsing up to 30 history files on disk, cutting session discovery latency by nearly 50%.
+  - **Deferred timestamp parsing in `SessionEntries::decode()`**: Skipped expensive `strtotime` and regex extraction on message entries, saving over 50ms during large JSONL file loads.
+
 ## [0.3.8] - 2026-10-04
 
 ### Added

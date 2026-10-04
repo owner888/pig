@@ -160,12 +160,17 @@ final class SessionEntries
      */
     public static function decode(array $line): mixed
     {
+        $type = $line['type'] ?? null;
+
+        // Fast path for the vast majority of entries: messages do not require timestamp millis or details
+        if ($type === 'message') {
+            return is_array($line['message'] ?? null) ? SessionCodec::decode($line['message']) : null;
+        }
+
         $at = self::millis($line['timestamp'] ?? null);
         $details = is_array($line['details'] ?? null) ? $line['details'] : [];
 
-        return match ($line['type'] ?? null) {
-            'message' => is_array($line['message'] ?? null) ? SessionCodec::decode($line['message']) : null,
-
+        return match ($type) {
             'model_change' => new ModelChange(
                 (string) ($line['provider'] ?? ''),
                 (string) ($line['modelId'] ?? ''),

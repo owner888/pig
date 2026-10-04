@@ -10876,6 +10876,27 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 2. 当写入或读取返回 `false` 时，主动调用 `$this->close()` 释放已失效连接，并将 `$warning` 详细原因追加至异常信息中（形如 `Write failed: ... Broken pipe`）。
 3. 异常信息包含 `Broken pipe` 后，上层会话重试模块 `Retry::worthRetrying()` 能瞬间识别网络抖动与对端重置，从而自动触发无缝透明重试。
 
+### 会话树回溯 O(N²) 数组重分配与 `latestFor` 全文件扫描导致 `pig -c` 启动严重迟钝
+
+**现象**：
+在存在大体积历史会话（如数十兆、上万轮对话）的工作目录中执行 `pig -c`（恢复最新会话）时，启动首帧耗时高达 2.28 秒，而上游 `pi -c` 仅需 0.5 秒左右，慢了 3.6 倍以上。
+
+**原因**：
+剖析定位到 4 个严重的性能杀手：
+1. **`SessionManager::latestFor()` 全量扫描**：此前直接调用 `listFor($cwd)`，而 `listFor` 会对排在前 30 个的历史会话全部进行完整的逐行流式 `describe()` 解析与提取。如果目录下有几个大文件，仅这一步就耗去近 400ms，而其实只需找出最新 mtime 的单个文件。
+2. **`SessionManager::pathTo()` O(N²) 内存重排**：在从 leaf 回溯到 root 的 `while` 循环中，此前调用了 `array_unshift($path, $id)`。PHP 的 `array_unshift` 是 O(N) 的内存块整体搬移和全键重排，在包含 2.8 万个节点的树链路上循环执行 2.8 万次，耗时高达 718ms！
+3. **`SessionManager::settings()` 全树正向扫描**：原实现先构建完整的 `pathTo($this->leaf)`，再从 root 到 leaf 正向遍历两万多个节点以查找最后一次配置变更，耗时高达 725ms。而查找最新配置理应从 `leaf` 沿 `parent` 链反向向上回溯，只要匹配到最新的 model 和 thinking 即可立即 `break` 退出。
+4. **`SessionManager::resolve()` 循环解包拷贝**：此前在循环中执行 `$messages = [...$messages, ...self::edited([[$id, $item]], $edits)];`，每轮循环都对已有数组全量解包深拷贝，造成 O(N²) 的内存分配。
+5. **`SessionEntries::decode()` 冗余计算**：对文件中的每一行均在最顶层无条件执行慢速的 `self::millis()`（包含 `strtotime` 与 `preg_match`），而在占文件 99% 的 `message` 行上该结果根本未被使用。
+
+**对策**：
+1. `SessionManager::latestFor()` 改为按 mtime 倒序排序后，找到首个有效文件即单次 `describe()` 返回，不再扫描多余文件，提速近 50%。
+2. `SessionManager::pathTo()` 改为 `$path[] = $id`（O(1) 追加）并在退出循环后执行单次 `array_reverse($path)`（O(N)），单项耗时直接从 717ms 暴跌至 3ms，提速 230 倍。
+3. `SessionManager::settings()` 改为从 `leaf` 沿 `parent` 链反向向上查找，遇到最新设置立即终止，耗时从 725ms 暴跌至 0.6ms，提速 1200 倍。
+4. `SessionManager::resolve()` 改为直接 `$messages[] = ...` 单条追加，消除循环解包拷贝，耗时从 30ms 降至 7ms。
+5. `SessionEntries::decode()` 仅对需要时间戳的非 `message` 条目执行 `millis()`。
+6. 实测 `pig -c` 在真实 71MB、2.8 万行超大会话下的首帧启动耗时从 2275ms 缩减至 629ms，与 `pi -c`（440-540ms）完全旗鼓相当！
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;

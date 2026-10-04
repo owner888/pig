@@ -677,17 +677,30 @@ final class SessionManager
     {
         $model = null;
         $thinking = null;
+        $cur = $this->leaf;
 
-        foreach ($this->pathTo($this->leaf) as $id) {
-            $item = $this->entries[$id]['message'];
+        // Traverse backward from leaf to root: the newest changes win, and we can stop
+        // as soon as both settings have been resolved, skipping thousands of earlier entries.
+        while ($cur !== null && isset($this->entries[$cur])) {
+            $item = $this->entries[$cur]['message'];
 
-            if ($item instanceof ModelChange) {
-                $model = $item;
-            } elseif ($item instanceof ThinkingLevelChange) {
-                $thinking = $item;
-            } elseif ($item instanceof AssistantMessage && $item->model !== '') {
-                $model = new ModelChange($item->provider, $item->model, $item->timestamp);
+            if ($model === null) {
+                if ($item instanceof ModelChange) {
+                    $model = $item;
+                } elseif ($item instanceof AssistantMessage && $item->model !== '') {
+                    $model = new ModelChange($item->provider, $item->model, $item->timestamp);
+                }
             }
+
+            if ($thinking === null && $item instanceof ThinkingLevelChange) {
+                $thinking = $item;
+            }
+
+            if ($model !== null && $thinking !== null) {
+                break;
+            }
+
+            $cur = $this->entries[$cur]['parent'];
         }
 
         return ['model' => $model, 'thinking' => $thinking];
@@ -702,12 +715,13 @@ final class SessionManager
     {
         $path = [];
 
+        // O(1) append in loop + single O(N) reverse at the end, replacing O(N^2) array_unshift.
         while ($id !== null && isset($this->entries[$id])) {
-            array_unshift($path, $id);
+            $path[] = $id;
             $id = $this->entries[$id]['parent'];
         }
 
-        return $path;
+        return array_reverse($path);
     }
 
     /** How many entries call $parent their parent — two or more means a fork. */
@@ -766,7 +780,21 @@ final class SessionManager
                 continue;
             }
 
-            $messages = [...$messages, ...self::edited([[$id, $item]], $edits)];
+            if ($edits !== [] && isset($edits[$id])) {
+                $edit = $edits[$id];
+
+                if ($edit->replacement === null) {
+                    continue;
+                }
+
+                $replaced = self::withContent($item, $edit->replacement);
+
+                if ($replaced !== null) {
+                    $messages[] = [$id, $replaced];
+                }
+            } else {
+                $messages[] = [$id, $item];
+            }
         }
 
         return $messages;
@@ -1241,7 +1269,37 @@ final class SessionManager
 
     public static function latestFor(string $cwd): ?SessionInfo
     {
-        return self::listFor($cwd)[0] ?? null;
+        $paths = [
+            ...(glob(self::directory($cwd) . '/*.jsonl') ?: []),
+            ...(glob(self::directory($cwd, Config::piHome()) . '/*.jsonl') ?: []),
+        ];
+
+        $times = [];
+
+        foreach ($paths as $path) {
+            if (is_file($path)) {
+                $times[$path] = filemtime($path);
+            }
+        }
+
+        $paths = array_keys($times);
+
+        usort(
+            $paths,
+            static fn (string $a, string $b): int
+                => [$times[$b], basename($b)] <=> [$times[$a], basename($a)],
+        );
+
+        // Describe only the newest valid session file rather than parsing up to 30 files from disk.
+        foreach ($paths as $path) {
+            $info = self::describe($path);
+
+            if ($info !== null) {
+                return $info;
+            }
+        }
+
+        return null;
     }
 
     /**
