@@ -595,6 +595,27 @@ final class HttpServer
             return;
         }
 
+        // 10.6 Web Terminal Tab completion (Commands, files and directories)
+        if ($path === '/api/terminal/complete') {
+            $headers = [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ];
+
+            $line = (string) ($req['query']['line'] ?? '');
+            $targetCwd = (string) ($req['query']['cwd'] ?? $this->cwd);
+            $safeCwd = realpath($targetCwd) ?: $this->cwd;
+
+            $completions = $this->getTerminalCompletions($line, $safeCwd);
+
+            $conn->sendResponse(200, $headers, (string) json_encode([
+                'success' => true,
+                ...$completions,
+            ]));
+
+            return;
+        }
+
         if ($path === '/api/terminal/exec') {
             $headers = [
                 'Content-Type' => 'application/json',
@@ -1045,5 +1066,110 @@ final class HttpServer
         }
 
         return null;
+    }
+
+    /**
+     * Compute terminal tab completions for command names and filesystem paths.
+     *
+     * @return array{prefix: string, completions: list<string>, commonPrefix: string}
+     */
+    private function getTerminalCompletions(string $line, string $cwd): array
+    {
+        $line = ltrim($line);
+        if ($line === '') {
+            return ['prefix' => '', 'completions' => [], 'commonPrefix' => ''];
+        }
+
+        $hasTrailingSpace = str_ends_with($line, ' ');
+        $parts = preg_split('/\s+/', trim($line));
+        if ($parts === false || $parts === []) {
+            return ['prefix' => '', 'completions' => [], 'commonPrefix' => ''];
+        }
+
+        $tokenIndex = $hasTrailingSpace ? count($parts) : count($parts) - 1;
+        $currentToken = $hasTrailingSpace ? '' : end($parts);
+
+        $completions = [];
+
+        // 1. Command completion at position 0
+        if ($tokenIndex === 0) {
+            $commonCommands = [
+                'git', 'composer', 'php', 'cat', 'ls', 'cd', 'pwd', 'clear', 'rm', 'cp', 'mv',
+                'mkdir', 'rmdir', 'touch', 'chmod', 'chown', 'grep', 'find', 'curl', 'wget',
+                'docker', 'npm', 'node', 'yarn', 'pnpm', 'python', 'pip', 'make', 'ssh', 'tar',
+                'zip', 'unzip', 'pig', 'kill', 'ps', 'top', 'df', 'du', 'head', 'tail', 'less',
+                'more', 'echo', 'which', 'env', 'export', 'source'
+            ];
+            foreach ($commonCommands as $cmd) {
+                if ($currentToken === '' || str_starts_with($cmd, $currentToken)) {
+                    $completions[] = $cmd;
+                }
+            }
+        }
+
+        // 2. File / Path completion (at position > 0 or if token starts with ./, /, or ~)
+        if ($tokenIndex > 0 || str_starts_with($currentToken, './') || str_starts_with($currentToken, '/') || str_starts_with($currentToken, '~')) {
+            $rawPath = $currentToken;
+            $isHome = str_starts_with($rawPath, '~');
+            if ($isHome) {
+                $home = getenv('HOME') ?: '/';
+                $expanded = $home . substr($rawPath, 1);
+            } else {
+                $expanded = $rawPath;
+            }
+
+            if (str_contains($expanded, '/')) {
+                $lastSlash = (int) strrpos($expanded, '/');
+                $dirPart = substr($expanded, 0, $lastSlash + 1);
+                $filePrefix = substr($expanded, $lastSlash + 1);
+                $searchDir = str_starts_with($dirPart, '/') ? $dirPart : ($cwd . '/' . $dirPart);
+                $rawPrefix = substr($rawPath, 0, (int) strrpos($rawPath, '/') + 1);
+            } else {
+                $searchDir = $cwd;
+                $filePrefix = $rawPath;
+                $rawPrefix = '';
+            }
+
+            $realSearchDir = realpath($searchDir);
+            if ($realSearchDir !== false && is_dir($realSearchDir)) {
+                $entries = @scandir($realSearchDir) ?: [];
+                foreach ($entries as $entry) {
+                    if ($entry === '.' || $entry === '..') {
+                        continue;
+                    }
+                    if (!str_starts_with($filePrefix, '.') && str_starts_with($entry, '.')) {
+                        continue;
+                    }
+
+                    if ($filePrefix === '' || str_starts_with(strtolower($entry), strtolower($filePrefix))) {
+                        $isDir = is_dir($realSearchDir . '/' . $entry);
+                        $completions[] = $rawPrefix . $entry . ($isDir ? '/' : '');
+                    }
+                }
+            }
+        }
+
+        sort($completions);
+        $completions = array_values(array_unique($completions));
+
+        $commonPrefix = '';
+        if (count($completions) === 1) {
+            $commonPrefix = $completions[0];
+        } elseif (count($completions) > 1) {
+            $first = $completions[0];
+            $last = end($completions);
+            $len = min(strlen($first), strlen($last));
+            $i = 0;
+            while ($i < $len && $first[$i] === $last[$i]) {
+                $i++;
+            }
+            $commonPrefix = substr($first, 0, $i);
+        }
+
+        return [
+            'prefix' => $currentToken,
+            'completions' => $completions,
+            'commonPrefix' => $commonPrefix,
+        ];
     }
 }

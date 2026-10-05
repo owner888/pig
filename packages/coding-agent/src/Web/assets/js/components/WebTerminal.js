@@ -151,6 +151,10 @@ export class WebTerminal {
         if (cmd) {
           this.executeCommand(cmd);
         }
+      } else if (e.key === "Tab") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.handleTabCompletion();
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         this.navigateHistory(-1);
@@ -300,6 +304,81 @@ export class WebTerminal {
       this.scrollToBottom();
       this.inputEl.focus();
     }
+  }
+
+  async handleTabCompletion() {
+    const rawVal = this.inputEl.value;
+    if (!rawVal.trim()) return;
+
+    try {
+      const res = await fetch(`/api/terminal/complete?line=${encodeURIComponent(rawVal)}&cwd=${encodeURIComponent(this.cwd || "")}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.success || !data.completions || data.completions.length === 0) {
+        return;
+      }
+
+      const { prefix, completions, commonPrefix } = data;
+
+      // Case 1: Single unique completion
+      if (completions.length === 1) {
+        const full = completions[0];
+        const isDir = full.endsWith("/");
+        const replacement = full + (isDir ? "" : " ");
+        this.replaceCurrentToken(rawVal, prefix, replacement);
+        return;
+      }
+
+      // Case 2: Multiple completions
+      // If common prefix is longer than what user already typed, complete up to common prefix
+      if (commonPrefix && commonPrefix.length > prefix.length) {
+        this.replaceCurrentToken(rawVal, prefix, commonPrefix);
+      }
+
+      // Render candidates list in terminal viewport like real bash
+      this.renderCompletionsList(completions);
+    } catch (e) {}
+  }
+
+  replaceCurrentToken(rawLine, prefix, replacement) {
+    if (prefix === "") {
+      this.inputEl.value = rawLine + replacement;
+    } else {
+      const lastIdx = rawLine.lastIndexOf(prefix);
+      if (lastIdx !== -1) {
+        this.inputEl.value = rawLine.slice(0, lastIdx) + replacement + rawLine.slice(lastIdx + prefix.length);
+      } else {
+        this.inputEl.value = rawLine + replacement;
+      }
+    }
+    this.inputEl.focus();
+    const len = this.inputEl.value.length;
+    this.inputEl.selectionStart = this.inputEl.selectionEnd = len;
+  }
+
+  renderCompletionsList(completions) {
+    const lineRecord = document.createElement("div");
+    lineRecord.className = "term-history-entry term-completions-entry";
+
+    const isMobile = window.innerWidth <= 640;
+    const shortPath = this.formatPath(this.cwd, isMobile);
+
+    const cols = completions.map(item => {
+      const isDir = item.endsWith("/");
+      const color = isDir ? "#38bdf8; font-weight:600;" : "#f8fafc;";
+      return `<span class="term-completion-item" style="color:${color}">${escapeHtml(item)}</span>`;
+    }).join("");
+
+    lineRecord.innerHTML = `
+      <div class="term-command-line">
+        <span class="web-term-prompt-prefix">${this.renderPromptPrefixHtml(shortPath)}</span>
+        <span class="term-command-text">${escapeHtml(this.inputEl.value)}</span>
+      </div>
+      <div class="term-completions-grid">${cols}</div>
+    `;
+
+    this.outputEl.appendChild(lineRecord);
+    this.scrollToBottom();
   }
 
   clear() {

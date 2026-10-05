@@ -1576,6 +1576,24 @@
       color: #cbd5e1;
     }
     .term-running-spinner { color: #38bdf8; font-style: italic; }
+    .term-completions-entry {
+      margin-bottom: 8px;
+    }
+    .term-completions-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 16px;
+      margin-top: 5px;
+      padding: 6px 10px;
+      background: rgba(0, 0, 0, 0.25);
+      border-radius: 6px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .term-completion-item {
+      font-family: var(--font-mono);
+      white-space: nowrap;
+    }
     .web-term-prompt-line {
       display: flex;
       align-items: baseline;
