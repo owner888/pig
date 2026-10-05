@@ -3239,11 +3239,15 @@ files redundant and break the first rule of this document. The shell is I/O-boun
 one process is enough; the work happens in N children, which is multi-core for free. If a concrete
 bottleneck ever wants Workerman's multi-worker model, that is the time to argue it with a number.
 
-**Landed 2026-10-04 in three steps**: **① `pig web start|stop|status|restart [-d]`** — the
+**Landed 2026-10-04 in four steps**: **① `pig web start|stop|status|restart [-d]`** — the
 subcommand and the daemon (`WebDaemon.php`); **② the session pool** (`SessionPool.php`) and the
 `HttpServer` rewrite to route connections to isolated `pig --mode rpc` child processes with 60s
 idle reaping; **③ the multi-session tab bar in `index.html`** multiplexed over **a single physical WebSocket**
-connection with `tabId` tagging, per-tab chat scroll areas, background streaming indicators, and state recovery on reload.
+connection with `tabId` tagging, per-tab chat scroll areas, background streaming indicators, and state recovery on reload;
+**④ Telegram-style language pack import/export and ExtensionApi locale registration** (`v0.3.26`–`v0.3.30`):
+full bilingual client-side `I18N` dictionary with 101 symmetric keys (defaulting to `zh-CN`), instant zero-refresh language modal (`#lang-btn`),
+Telegram-style JSON import/export, `$pig->registerLocale()` on `ExtensionApi` with `/api/locales` aggregation, and in-session
+interactive `/web restart`, `/web status`, and `/web stop` controls.
 
 `PrintMode` is the smallest of the three because `RpcMode` did the work: `RpcEvents` already
 encodes the events, and wiring hooks and custom tools with no UI is already something that
