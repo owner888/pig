@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.33] - 2026-10-05
+
+### Fixed
+
+- **Interactive TUI Full-Interface Theme Repainting & Prompt Helper Visibility**:
+  - Fixed `/theme` command only changing the editor border by triggering a full interface replay (`$this->chat->clear(); $this->replay()`), updating `$this->banner`, updating `$this->footer->setPalette()`, and repainting borders with `$this->paintBorder()`. All past messages, diffs, tool outputs, and status lines now instantly repaint in the new theme colors.
+  - Updated `/theme` description in `COMMANDS` table from legacy `"Switch between dark and light"` to `"Switch themes (dark, light, labra, or custom) (/theme [name])"`, ensuring autocomplete and `/help` accurately surface the Labra theme and custom theme capabilities.
+  - Enhanced theme switch confirmation notice to list all currently available themes: `(Available themes: dark, light, labra...)`.
+
 ## [0.3.32] - 2026-10-05
 
 ### Changed

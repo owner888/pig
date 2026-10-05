@@ -1547,7 +1547,7 @@ final class InteractiveMode
         ['web', 'Browser UI server & daemon (/web [start|stop|status|restart] [port])'],
         ['login', 'Sign in with a subscription instead of an API key'],
         ['logout', 'Forget a sign-in'],
-        ['theme', 'Switch between dark and light'],
+        ['theme', 'Switch themes (dark, light, labra, or custom) (/theme [name])'],
         ['settings', 'Change what is switchable, and see what it is set to'],
         ['changelog', 'What changed, release by release'],
         ['reload', 'Reload extensions, skills, commands, tools, and context files'],
@@ -3922,14 +3922,24 @@ final class InteractiveMode
     private function useTheme(string $wanted): void
     {
         $this->theme = $wanted;
-        $this->palette = Palette::named($wanted);
+        $this->palette = Palette::named($wanted, cwd: $this->cwd);
         $this->settings->setTheme($wanted);
 
-        // Everything already on screen keeps the colours it was drawn with: a component
-        // holds its palette, and repainting the transcript would mean rebuilding it from
-        // messages this session does not keep. New output comes out in the new theme.
-        $this->editor->setTheme($this->palette->editorTheme());
-        $this->say("Theme: {$wanted} — already-drawn output keeps its colours");
+        // Update banner text and colors
+        if ($this->banner !== null) {
+            $this->banner->setText($this->banner());
+        }
+
+        // Replay chat history so existing messages and tool blocks update to new theme
+        $this->chat->clear();
+        $this->replay();
+
+        // Update footer and editor with new palette
+        $this->footer->setPalette($this->palette);
+        $this->paintBorder();
+
+        $available = implode(', ', Palette::names($this->cwd));
+        $this->say("Theme: {$wanted} — already-drawn output keeps its colours (Available themes: {$available})");
 
         // **Not forced**, which it was: nothing has overwritten this screen, so there is a previous
         // frame to diff against and the lines whose colours changed are the only ones to rewrite.

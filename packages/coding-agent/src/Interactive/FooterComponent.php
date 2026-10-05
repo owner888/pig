@@ -58,11 +58,17 @@ final class FooterComponent implements Component
      */
     public function __construct(
         private readonly AgentSession $session,
-        private readonly Palette $palette,
+        private Palette $palette,
         private readonly string $cwd,
         private readonly ?Settings $settings = null,
         private readonly ?Auth $auth = null,
     ) {
+    }
+
+    public function setPalette(Palette $palette): void
+    {
+        $this->palette = $palette;
+        $this->invalidate();
     }
 
     #[\Override]
