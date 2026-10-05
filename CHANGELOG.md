@@ -43,6 +43,24 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.43] - 2026-10-05
+
+### Changed
+
+- **Web UI Native ES Modules Architecture Refactoring (Zero-Build Frontend Modularization)**:
+  - Eliminated the monolithic ~5,000-line `index.html` in favor of a modern, clean, browser-native ES6 Module architecture with **zero build tools, zero bundlers, and zero external dependencies**.
+  - **Modular Component Separation**:
+    - `index.html`: Streamlined from ~5,000 lines down to a pristine ~120-line HTML skeleton.
+    - `css/style.css`: Extracted all dark, light, and labra theme styles, responsive layouts, and animations.
+    - `js/utils.js`: Reusable modal dialogs (`openModal`), HTML sanitization, and title/filename formatters.
+    - `js/i18n.js`: Telegram-style dictionary engine, dynamic language pack loader, and modal.
+    - `js/theme.js`: Complete theme switcher with swatch preview modals and system persistence.
+    - `js/network.js`: Multiplexed shared WebSocket transport, heartbeat, and exponential reconnect.
+    - `js/markdown.js`: Fast native Markdown parser, code block copying, and Git unified diff view.
+    - `js/accounts.js`: Antigravity account management and Claude iOS style quota card renderer.
+    - `js/app.js`: Master coordinator managing multi-session tabs, streaming chat cards, and drawer views.
+  - **Native Asset Serving**: `HttpServer.php` now serves `/assets/` with strict path traversal verification and accurate MIME types while preserving instantaneous local live-reloading.
+
 ## [0.3.42] - 2026-10-05
 
 ### Changed

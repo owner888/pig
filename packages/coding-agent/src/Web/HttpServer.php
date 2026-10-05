@@ -361,6 +361,38 @@ final class HttpServer
             return;
         }
 
+        // 1.2 Modular static assets (/assets/..., /css/..., /js/...) with path traversal guard
+        if (str_starts_with($path, '/assets/') || str_starts_with($path, '/css/') || str_starts_with($path, '/js/')) {
+            $rel = str_starts_with($path, '/assets/') ? substr($path, 8) : ltrim($path, '/');
+            $assetBase = realpath(__DIR__ . '/assets') ?: (__DIR__ . '/assets');
+            $target = realpath($assetBase . '/' . $rel);
+
+            if ($target !== false && str_starts_with($target, $assetBase) && is_file($target)) {
+                $ext = strtolower(pathinfo($target, PATHINFO_EXTENSION));
+                $mime = match ($ext) {
+                    'css' => 'text/css; charset=utf-8',
+                    'js', 'mjs' => 'application/javascript; charset=utf-8',
+                    'svg' => 'image/svg+xml; charset=utf-8',
+                    'json' => 'application/json; charset=utf-8',
+                    'png' => 'image/png',
+                    'jpg', 'jpeg' => 'image/jpeg',
+                    default => 'application/octet-stream',
+                };
+
+                $conn->sendResponse(200, [
+                    'Content-Type' => $mime,
+                    'Cache-Control' => 'no-cache',
+                    'Access-Control-Allow-Origin' => '*',
+                ], file_get_contents($target) ?: '');
+
+                return;
+            }
+
+            $conn->sendResponse(404, ['Content-Type' => 'text/plain'], "Asset Not Found: {$path}");
+
+            return;
+        }
+
         // 2. Available models list — a fact about this machine's keys, not about any session.
         if ($path === '/api/models') {
             $conn->sendResponse(200, $json, json_encode($this->getModelsPayload()));
