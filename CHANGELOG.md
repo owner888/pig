@@ -43,6 +43,26 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.44] - 2026-10-05
+
+### Added
+
+- **Web UI Markdown Tables & Typography Parity with TUI (GFM Table & Rich Formatting Support)**:
+  - Fixed an issue where the Web UI failed to parse Markdown tables, causing tabular data to collapse into a single chaotic line of text.
+  - **GFM Table Parsing & Alignment**:
+    - Full support for GFM table syntax including header rows, separator rows with column alignment (`:---`, `:---:`, `---:`), and multi-row datasets.
+    - Wrapped tables in responsive `.table-wrapper` containers with smooth horizontal touch-scrolling on mobile devices to prevent layout breakage.
+  - **3-Theme Visual Design**:
+    - **Dark Theme**: Subtle translucent border, elevated table header, and row hover transitions.
+    - **Light Theme**: Pure white card background (`#ffffff`), fine `#e2e8f0` grid lines, and high-contrast typography.
+    - **Labra Theme**: Cyberpunk deep dark-green backdrop with signature pink/accent highlights.
+  - **Complete Typography System**:
+    - Blockquotes (`<blockquote>`) with left accent border and dim text;
+    - Unordered (`<ul>`) and ordered (`<ol>`) lists with tidy indentations;
+    - Clean horizontal rules (`<hr>`);
+    - Secure external links (filtering `javascript:`, `data:`, and `vbscript:` protocols);
+    - Full heading hierarchy (`<h1>` through `<h6>`).
+
 ## [0.3.43] - 2026-10-05
 
 ### Changed

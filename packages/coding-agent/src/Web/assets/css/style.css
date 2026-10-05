@@ -1086,9 +1086,150 @@
     .diff-del { background: var(--diff-del-bg); color: var(--diff-del-text); }
     .diff-ctx { color: var(--text-dim); }
 
-    /* Prose / Markdown with code block header and copy button */
+    /* Prose / Markdown with code block header, tables and copy button */
     .prose p { margin-bottom: 0.75em; }
     .prose p:last-child { margin-bottom: 0; }
+
+    /* Markdown Tables */
+    .prose .table-wrapper {
+      margin: 12px 0;
+      max-width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.25);
+    }
+    .prose table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      line-height: 1.5;
+      text-align: left;
+    }
+    .prose th,
+    .prose td {
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+    }
+    .prose th:last-child,
+    .prose td:last-child {
+      border-right: none;
+    }
+    .prose tbody tr:last-child td {
+      border-bottom: none;
+    }
+    .prose th {
+      font-weight: 600;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05);
+      white-space: nowrap;
+    }
+    .prose tbody tr {
+      transition: background-color 0.15s ease;
+    }
+    .prose tbody tr:nth-child(even) {
+      background: rgba(255, 255, 255, 0.015);
+    }
+    .prose tbody tr:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    /* Light Theme Table overrides */
+    [data-theme="light"] .prose .table-wrapper {
+      background: #ffffff;
+      border-color: #cbd5e1;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    }
+    [data-theme="light"] .prose th,
+    [data-theme="light"] .prose td {
+      border-color: #e2e8f0;
+    }
+    [data-theme="light"] .prose th {
+      background: #f8fafc;
+      color: #0f172a;
+    }
+    [data-theme="light"] .prose tbody tr:nth-child(even) {
+      background: #f8fafc;
+    }
+    [data-theme="light"] .prose tbody tr:hover {
+      background: #f1f5f9;
+    }
+
+    /* Labra Theme Table overrides */
+    [data-theme="labra"] .prose .table-wrapper {
+      border-color: var(--border);
+      background: rgba(14, 18, 14, 0.5);
+    }
+    [data-theme="labra"] .prose th {
+      color: var(--accent);
+      background: rgba(0, 0, 0, 0.35);
+    }
+    [data-theme="labra"] .prose tbody tr:hover {
+      background: rgba(236, 72, 153, 0.08);
+    }
+
+    /* Markdown Blockquotes, Lists, Headings, HR, Links */
+    .prose blockquote {
+      margin: 10px 0;
+      padding: 6px 14px;
+      border-left: 3px solid var(--accent, #38bdf8);
+      background: rgba(255, 255, 255, 0.02);
+      border-radius: 0 6px 6px 0;
+      color: var(--text-dim);
+    }
+    [data-theme="light"] .prose blockquote {
+      background: #f8fafc;
+      border-left-color: #0284c7;
+      color: #475569;
+    }
+    [data-theme="labra"] .prose blockquote {
+      background: rgba(0, 0, 0, 0.2);
+      border-left-color: var(--accent);
+    }
+
+    .prose ul, .prose ol {
+      margin: 8px 0;
+      padding-left: 22px;
+    }
+    .prose li {
+      margin-bottom: 4px;
+      line-height: 1.55;
+    }
+    .prose hr {
+      margin: 16px 0;
+      border: none;
+      border-top: 1px solid var(--border);
+    }
+    [data-theme="light"] .prose hr {
+      border-top-color: #e2e8f0;
+    }
+
+    .prose a {
+      color: var(--accent, #38bdf8);
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      transition: opacity 0.15s;
+    }
+    .prose a:hover {
+      opacity: 0.8;
+    }
+    [data-theme="light"] .prose a {
+      color: #0284c7;
+    }
+
+    .prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+      margin: 14px 0 8px 0;
+      font-weight: 600;
+      line-height: 1.35;
+      color: var(--text);
+    }
+    .prose h1 { font-size: 1.5em; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+    .prose h2 { font-size: 1.3em; }
+    .prose h3 { font-size: 1.15em; }
+    .prose h4 { font-size: 1.05em; }
+    .prose h5, .prose h6 { font-size: 1em; }
     .code-block-wrapper {
       position: relative;
       margin: 10px 0;
