@@ -1228,6 +1228,41 @@
         gap: 6px;
       }
     }
+
+    /* Language packs & switcher styling */
+    .lang-item-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      margin-bottom: 8px;
+    }
+    .lang-item-row:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: #38bdf8;
+    }
+    .lang-item-row.active {
+      background: rgba(56, 189, 248, 0.12);
+      border-color: #38bdf8;
+      color: #38bdf8;
+      font-weight: 600;
+    }
+    .lang-badge {
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-dim);
+    }
+    .lang-item-row.active .lang-badge {
+      background: rgba(56, 189, 248, 0.2);
+      color: #38bdf8;
+    }
   </style>
 </head>
 <body>
@@ -1400,12 +1435,26 @@
         "token_left_m": "令牌剩余 {m} 分钟",
         "token_left_h": "令牌剩余 {h} 小时",
         "switch_lang": "中 / EN",
-        "switch_lang_title": "切换语言 / Switch Language",
+        "switch_lang_title": "语言与语言包设置",
         "tab_new_session": "新会话",
         "in_memory": "（内存暂存）",
         "in_memory_hint": "会话尚未保存至磁盘（首轮回复后自动写入）",
         "delete_permanently": "永久删除",
-        "delete_warning": "此操作无法撤销。该文件中的所有历史对话记录将被永久删除。"
+        "delete_warning": "此操作无法撤销。该文件中的所有历史对话记录将被永久删除。",
+        "lang_settings_title": "语言与语言包设置",
+        "lang_select_label": "界面显示语言",
+        "lang_zh_cn": "简体中文 (Simplified Chinese)",
+        "lang_en": "English (英语)",
+        "lang_custom_badge": "自定义",
+        "lang_ext_badge": "扩展提供",
+        "import_pack_btn": "📥 导入语言包 (.json)",
+        "export_pack_btn": "📤 导出当前语言包 (.json)",
+        "import_pack_hint": "支持导入 Telegram 风格的 JSON 键值语言包文件。",
+        "import_success": "成功导入语言包：{name}！",
+        "import_error": "导入失败：文件必须是包含有效词条的 JSON 字典对象",
+        "delete_custom_lang": "删除此自定义语言包",
+        "delete_custom_confirm": "确定删除自定义语言包「{name}」吗？",
+        "close": "关闭"
       },
       "en": {
         "workspaces": "Workspaces",
@@ -1489,21 +1538,63 @@
         "token_left_m": "token {m}m left",
         "token_left_h": "token {h}h left",
         "switch_lang": "中 / EN",
-        "switch_lang_title": "Switch Language / 切换语言",
+        "switch_lang_title": "Language & Language Pack Settings",
         "tab_new_session": "new session",
         "in_memory": "(in-memory)",
         "in_memory_hint": "Session not yet saved to disk (will save on first turn)",
         "delete_permanently": "Delete Permanently",
-        "delete_warning": "This action cannot be undone. All conversation records in this file will be permanently removed."
+        "delete_warning": "This action cannot be undone. All conversation records in this file will be permanently removed.",
+        "lang_settings_title": "Language & Language Packs",
+        "lang_select_label": "Display Language",
+        "lang_zh_cn": "简体中文 (Simplified Chinese)",
+        "lang_en": "English",
+        "lang_custom_badge": "Custom",
+        "lang_ext_badge": "Extension",
+        "import_pack_btn": "📥 Import Language Pack (.json)",
+        "export_pack_btn": "📤 Export Current Pack (.json)",
+        "import_pack_hint": "Supports importing Telegram-style key-value JSON language packs.",
+        "import_success": "Successfully imported language pack: {name}!",
+        "import_error": "Failed to import: file is not a valid JSON dictionary",
+        "delete_custom_lang": "Delete this custom language pack",
+        "delete_custom_confirm": "Delete custom language pack '{name}'?",
+        "close": "Close"
       }
     };
+
+    // ---- Locale & Language Pack Management (Telegram-inspired) -----------------------------
+    let customLocales = {};
+    try {
+      customLocales = JSON.parse(localStorage.getItem("pig_web_custom_locales") || "{}");
+      for (const [loc, pack] of Object.entries(customLocales)) {
+        if (pack && pack.translations) {
+          I18N[loc] = { ...(I18N["en"] || {}), ...pack.translations };
+        }
+      }
+    } catch (e) { customLocales = {}; }
+
+    let extensionLocales = {};
+    async function loadExtensionLocales() {
+      try {
+        const res = await fetch("/api/locales");
+        const data = await res.json();
+        if (data.success && data.locales) {
+          extensionLocales = data.locales;
+          for (const [loc, pack] of Object.entries(extensionLocales)) {
+            if (pack && pack.translations) {
+              I18N[loc] = { ...(I18N["en"] || {}), ...pack.translations };
+            }
+          }
+          applyI18n();
+        }
+      } catch (e) {}
+    }
 
     let currentLocale = localStorage.getItem("pig_web_locale");
     if (!currentLocale) {
       currentLocale = (navigator.language && navigator.language.startsWith("zh")) ? "zh-CN" : "en";
     }
 
-    function t(key, params = {}) {
+    function __t(key, params = {}) {
       const dict = I18N[currentLocale] || I18N["zh-CN"] || {};
       let str = dict[key] ?? (I18N["en"]?.[key] ?? key);
       for (const [k, v] of Object.entries(params)) {
@@ -1511,13 +1602,16 @@
       }
       return str;
     }
+    const t = __t;
 
     function setLocale(lang) {
-      if (lang !== "zh-CN" && lang !== "en") lang = "zh-CN";
+      if (!I18N[lang]) lang = "zh-CN";
       currentLocale = lang;
       localStorage.setItem("pig_web_locale", lang);
       document.documentElement.lang = lang;
       applyI18n();
+      renderTabs();
+      applyActiveTabToChrome();
       if (sidebar && !sidebar.classList.contains("collapsed")) {
         if (currentView === "sessions" && selectedWorkspace) {
           enterWorkspace(selectedWorkspace);
@@ -1525,10 +1619,6 @@
           loadWorkspaces();
         }
       }
-    }
-
-    function toggleLocale() {
-      setLocale(currentLocale === "zh-CN" ? "en" : "zh-CN");
     }
 
     function applyI18n() {
@@ -1552,7 +1642,14 @@
       // 3. Update lang switch button
       const langBtn = document.getElementById("lang-btn");
       if (langBtn) {
-        langBtn.textContent = currentLocale === "zh-CN" ? "中 / EN" : "EN / 中";
+        if (currentLocale === "zh-CN") {
+          langBtn.textContent = "中 / EN";
+        } else if (currentLocale === "en") {
+          langBtn.textContent = "EN / 中";
+        } else {
+          const customName = customLocales[currentLocale]?.label || extensionLocales[currentLocale]?.label || currentLocale.toUpperCase();
+          langBtn.textContent = `${customName.slice(0, 3).toUpperCase()} / 中`;
+        }
         langBtn.title = t("switch_lang_title");
       }
 
@@ -1561,6 +1658,212 @@
       if (sub && currentView === "workspaces") {
         sub.textContent = t("directories");
       }
+    }
+
+    /** Export active locale translations as a Telegram-style JSON language pack */
+    function exportLanguagePack() {
+      const activeDict = I18N[currentLocale] || I18N["zh-CN"];
+      const label = currentLocale === "zh-CN"
+        ? "简体中文"
+        : (currentLocale === "en" ? "English" : (customLocales[currentLocale]?.label || currentLocale));
+
+      const payload = {
+        _meta: {
+          locale: currentLocale,
+          label: label,
+          author: "pig user",
+          version: "1.0.0",
+          exported_at: new Date().toISOString()
+        },
+        ...activeDict
+      };
+
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `pig-locale-${currentLocale}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    /** Import a Telegram-style JSON language pack file and apply immediately */
+    function importLanguagePackFile(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (!data || typeof data !== "object" || Array.isArray(data)) {
+            alert(t("import_error"));
+            return;
+          }
+
+          let locale = data._meta?.locale;
+          let label = data._meta?.label;
+
+          // If no _meta, derive from filename e.g. pig-locale-ja.json -> ja
+          if (!locale) {
+            const m = file.name.match(/(?:locale-)?([a-zA-Z0-9_-]+)\.json$/i);
+            locale = m ? m[1] : "custom-" + Date.now();
+          }
+          if (!label) label = locale;
+
+          const translations = {};
+          for (const [k, v] of Object.entries(data)) {
+            if (k !== "_meta" && typeof v === "string") {
+              translations[k] = v;
+            }
+          }
+
+          if (Object.keys(translations).length === 0) {
+            alert(t("import_error"));
+            return;
+          }
+
+          customLocales[locale] = { label, translations };
+          localStorage.setItem("pig_web_custom_locales", JSON.stringify(customLocales));
+
+          // Merge into live I18N
+          I18N[locale] = { ...(I18N["en"] || {}), ...translations };
+
+          setLocale(locale);
+          alert(t("import_success", { name: label }));
+        } catch (err) {
+          alert(t("import_error") + ": " + err.message);
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    /** Telegram-style Language & Language Packs Management Modal */
+    function openLanguageModal() {
+      const renderModalBody = () => {
+        let html = `
+          <div style="font-size:12px; color:var(--text-muted); margin-bottom:10px; font-weight:600;">
+            ${escapeHtml(t("lang_select_label"))}
+          </div>
+          <div id="lang-list-container" style="display:flex; flex-direction:column; gap:6px; margin-bottom:18px;">
+            <div class="lang-item-row ${currentLocale === 'zh-CN' ? 'active' : ''}" data-loc="zh-CN">
+              <span>${escapeHtml(t("lang_zh_cn"))}</span>
+              ${currentLocale === 'zh-CN' ? '<span>✓</span>' : ''}
+            </div>
+            <div class="lang-item-row ${currentLocale === 'en' ? 'active' : ''}" data-loc="en">
+              <span>${escapeHtml(t("lang_en"))}</span>
+              ${currentLocale === 'en' ? '<span>✓</span>' : ''}
+            </div>
+        `;
+
+        // Render extension locales
+        for (const [loc, pack] of Object.entries(extensionLocales)) {
+          if (loc === "zh-CN" || loc === "en") continue;
+          const isActive = currentLocale === loc;
+          html += `
+            <div class="lang-item-row ${isActive ? 'active' : ''}" data-loc="${escapeHtml(loc)}">
+              <span>${escapeHtml(pack.label || loc)}</span>
+              <div style="display:flex; gap:6px; align-items:center;">
+                <span class="lang-badge">${escapeHtml(t("lang_ext_badge"))}</span>
+                ${isActive ? '<span>✓</span>' : ''}
+              </div>
+            </div>
+          `;
+        }
+
+        // Render custom imported locales
+        for (const [loc, pack] of Object.entries(customLocales)) {
+          if (loc === "zh-CN" || loc === "en") continue;
+          const isActive = currentLocale === loc;
+          html += `
+            <div class="lang-item-row ${isActive ? 'active' : ''}" data-loc="${escapeHtml(loc)}">
+              <span>${escapeHtml(pack.label || loc)}</span>
+              <div style="display:flex; gap:6px; align-items:center;">
+                <span class="lang-badge">${escapeHtml(t("lang_custom_badge"))}</span>
+                <button class="mini-btn danger del-custom-lang" data-del="${escapeHtml(loc)}" title="${escapeHtml(t("delete_custom_lang"))}" style="padding:1px 5px; font-size:11px;">×</button>
+                ${isActive ? '<span>✓</span>' : ''}
+              </div>
+            </div>
+          `;
+        }
+
+        html += `
+          </div>
+          <div style="border-top:1px solid var(--border); padding-top:14px; display:flex; flex-direction:column; gap:10px;">
+            <div style="font-size:11px; color:var(--text-dim); line-height:1.4;">
+              ${escapeHtml(t("import_pack_hint"))}
+            </div>
+            <div style="display:flex; gap:8px;">
+              <input type="file" id="lang-pack-input" accept=".json" style="display:none;">
+              <button id="import-pack-btn" class="mini-btn" style="flex:1; padding:8px 12px; font-size:12px; font-weight:600;">
+                ${escapeHtml(t("import_pack_btn"))}
+              </button>
+              <button id="export-pack-btn" class="mini-btn" style="flex:1; padding:8px 12px; font-size:12px; font-weight:600;">
+                ${escapeHtml(t("export_pack_btn"))}
+              </button>
+            </div>
+          </div>
+        `;
+        return html;
+      };
+
+      const modalInstance = openModal({
+        title: t("lang_settings_title"),
+        bodyHtml: renderModalBody(),
+        hideFooter: true,
+        width: "420px",
+        onOpen: (modalEl, closeFn) => {
+          const bindEvents = () => {
+            modalEl.querySelectorAll(".lang-item-row").forEach(row => {
+              row.addEventListener("click", (e) => {
+                if (e.target.closest(".del-custom-lang")) return;
+                const loc = row.dataset.loc;
+                if (loc) {
+                  setLocale(loc);
+                  modalEl.querySelector(".modal-body").innerHTML = renderModalBody();
+                  bindEvents();
+                }
+              });
+            });
+
+            modalEl.querySelectorAll(".del-custom-lang").forEach(btn => {
+              btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const loc = btn.dataset.del;
+                const name = customLocales[loc]?.label || loc;
+                if (confirm(t("delete_custom_confirm", { name }))) {
+                  delete customLocales[loc];
+                  delete I18N[loc];
+                  localStorage.setItem("pig_web_custom_locales", JSON.stringify(customLocales));
+                  if (currentLocale === loc) setLocale("zh-CN");
+                  modalEl.querySelector(".modal-body").innerHTML = renderModalBody();
+                  bindEvents();
+                }
+              });
+            });
+
+            const importBtn = modalEl.querySelector("#import-pack-btn");
+            const packInput = modalEl.querySelector("#lang-pack-input");
+            const exportBtn = modalEl.querySelector("#export-pack-btn");
+
+            if (importBtn && packInput) {
+              importBtn.addEventListener("click", () => packInput.click());
+              packInput.addEventListener("change", () => {
+                if (packInput.files && packInput.files[0]) {
+                  importLanguagePackFile(packInput.files[0]);
+                  closeFn();
+                }
+              });
+            }
+
+            if (exportBtn) {
+              exportBtn.addEventListener("click", () => exportLanguagePack());
+            }
+          };
+
+          bindEvents();
+        }
+      });
     }
 
     const chatArea = document.getElementById("chat-area");
@@ -1589,7 +1892,7 @@
     const langBtn = document.getElementById("lang-btn");
 
     if (langBtn) {
-      langBtn.addEventListener("click", toggleLocale);
+      langBtn.addEventListener("click", openLanguageModal);
     }
 
     let currentView = "workspaces"; // "workspaces" | "sessions"
@@ -3324,10 +3627,10 @@
       } catch (e) {}
     }
 
-    function tabLabel(t) {
+    function tabLabel(tab) {
       // Not the filename: a UUID is not a label anybody can tell from the next one.
-      const fallback = t("tab_new_session");
-      const raw = t.name || t.opening || fallback;
+      const fallback = __t("tab_new_session");
+      const raw = tab.name || tab.opening || fallback;
       return cleanSessionTitle(raw) || fallback;
     }
 
@@ -3439,19 +3742,19 @@
 
     if (sessionFileBadge) {
       sessionFileBadge.addEventListener("click", () => {
-        const t = active;
-        if (!t) return;
-        const targetText = t.sessionPath || t.sessionFile;
+        const cur = active;
+        if (!cur) return;
+        const targetText = cur.sessionPath || cur.sessionFile;
         if (!targetText) return;
         const copyFn = (navigator.clipboard && navigator.clipboard.writeText)
           ? navigator.clipboard.writeText(targetText)
           : Promise.reject(new Error("No clipboard API"));
         copyFn.then(() => {
           sessionFileBadge.classList.add("copied");
-          sessionFileText.innerText = t("copied");
+          sessionFileText.innerText = __t("copied");
           setTimeout(() => {
             sessionFileBadge.classList.remove("copied");
-            if (active === t) updateSessionFileBadge(t);
+            if (active === cur) updateSessionFileBadge(cur);
           }, 1200);
         }).catch(() => {
           const temp = document.createElement("textarea");
@@ -3461,10 +3764,10 @@
           try {
             document.execCommand("copy");
             sessionFileBadge.classList.add("copied");
-            sessionFileText.innerText = "Copied!";
+            sessionFileText.innerText = __t("copied");
             setTimeout(() => {
               sessionFileBadge.classList.remove("copied");
-              if (active === t) updateSessionFileBadge(t);
+              if (active === cur) updateSessionFileBadge(cur);
             }, 1200);
           } catch (e) {}
           document.body.removeChild(temp);
@@ -3474,17 +3777,17 @@
 
     /** The header, the dropdowns and the telemetry line all describe the active tab. */
     function applyActiveTabToChrome() {
-      const t = active;
-      if (!t) return;
-      cwdDisplay.innerText = t.cwd ? (t.cwd.split("/").filter(Boolean).pop() || t.cwd) : "~";
+      const cur = active;
+      if (!cur) return;
+      cwdDisplay.innerText = cur.cwd ? (cur.cwd.split("/").filter(Boolean).pop() || cur.cwd) : "~";
       if (sessionTitleDisplay) {
-        const cleanName = cleanSessionTitle(t.name || t.opening);
+        const cleanName = cleanSessionTitle(cur.name || cur.opening);
         sessionTitleDisplay.innerText = cleanName ? ` • ${cleanName}` : "";
       }
-      updateSessionFileBadge(t);
-      sendBtn.style.display = t.isRunning ? "none" : "flex";
-      stopBtn.style.display = t.isRunning ? "flex" : "none";
-      const s = t.state;
+      updateSessionFileBadge(cur);
+      sendBtn.style.display = cur.isRunning ? "none" : "flex";
+      stopBtn.style.display = cur.isRunning ? "flex" : "none";
+      const s = cur.state;
       if (!s) { telemetryStats.innerText = ""; return; }
       applyState(s);
     }
@@ -3492,13 +3795,13 @@
     /** `get_state`'s answer, drawn into the chrome. Shape is `RpcMode::state()`'s. */
     function applyState(s) {
       if (!s || !active) return;
-      const t = active;
+      const cur = active;
       const model = s.model || {};
       const window_ = model.contextWindow || 0;
       const tokens = s.contextTokens || 0;
       const pct = window_ > 0 ? (tokens / window_ * 100).toFixed(1) : "0.0";
       const windowLabel = window_ >= 1000000 ? (window_ / 1000000).toFixed(1) + "M" : Math.round(window_ / 1000) + "k";
-      const stats = t.stats || {};
+      const stats = cur.stats || {};
       telemetryStats.innerText = (telemetryStats.dataset.hook ? telemetryStats.dataset.hook + "  " : "")
         + `↑${formatK(stats.input || 0)} ↓${formatK(stats.output || 0)} $${Number(stats.cost || 0).toFixed(3)} ${pct}%/${windowLabel}`;
 
@@ -3992,6 +4295,7 @@
     // cold start.
     async function boot() {
       applyI18n();
+      loadExtensionLocales();
       loadModels();
       network.connect();
       let saved = null;

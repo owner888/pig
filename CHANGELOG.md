@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.27] - 2026-10-04
+
+### New Features
+
+- **Telegram-style Language Pack Import/Export & Extension Registration**:
+  - Implemented Telegram-inspired language pack management for Web UI with instant JSON import and template export.
+  - Added `ExtensionApi::registerLocale()` allowing extensions to register custom language translations (e.g. `ja`, `es`, `zh-TW`).
+  - Added `/api/locales` endpoint in `HttpServer` to serve extension-provided locales.
+  - Added centered Language Settings modal (`#lang-btn`) with one-click language selection, custom language deletion, file drag-and-drop import, and zero-refresh tab/badge re-rendering.
+  - Resolved local variable shadowing on translation helper `__t()`.
+
 ## [0.3.26] - 2026-10-04
 
 ### New Features

@@ -529,6 +529,19 @@ final class HttpServer
             return;
         }
 
+        // 10.4 Custom extension locales and language packs
+        if ($path === '/api/locales') {
+            $conn->sendResponse(200, [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ], (string) json_encode([
+                'success' => true,
+                'locales' => \Pig\CodingAgent\Extensions\ExtensionApi::registeredLocales(),
+            ]));
+
+            return;
+        }
+
         $conn->sendResponse(404, ['Content-Type' => 'text/plain'], "Not Found: {$path}");
     }
 

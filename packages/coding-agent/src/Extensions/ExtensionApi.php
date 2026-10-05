@@ -24,6 +24,9 @@ final class ExtensionApi extends HookApi
     /** @var list<CustomTool> */
     private array $tools = [];
 
+    /** @var array<string, array{label: string, translations: array<string, string>}> */
+    private static array $registeredLocales = [];
+
     /** Told when `tools()` changes after load — see `onToolsChanged()`. */
     private ?Closure $toolsChanged = null;
 
@@ -101,5 +104,45 @@ final class ExtensionApi extends HookApi
     public function tools(): array
     {
         return $this->tools;
+    }
+
+    /**
+     * Register a custom language pack / locale from this extension.
+     *
+     * @param string $locale E.g. 'ja', 'es', 'zh-TW'
+     * @param string $label E.g. '日本語', 'Español', '繁體中文'
+     * @param array<string, string> $translations Key-value translation dictionary
+     */
+    public function registerLocale(string $locale, string $label, array $translations): void
+    {
+        $cleanLocale = trim($locale);
+        if ($cleanLocale === '') {
+            return;
+        }
+
+        self::$registeredLocales[$cleanLocale] = [
+            'label' => $label !== '' ? $label : $cleanLocale,
+            'translations' => $translations,
+        ];
+    }
+
+    /**
+     * Get all custom locales registered across loaded extensions.
+     *
+     * @return array<string, array{label: string, translations: array<string, string>}>
+     */
+    public static function registeredLocales(): array
+    {
+        return self::$registeredLocales;
+    }
+
+    /**
+     * Reset registered locales (for testing).
+     *
+     * @internal
+     */
+    public static function resetRegisteredLocales(): void
+    {
+        self::$registeredLocales = [];
     }
 }
