@@ -43,6 +43,27 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.45] - 2026-10-05
+
+### Added
+
+- **Web UI Native ES Components Suite (TUI Parity for Thinking, Tools & Empty States)**:
+  - **`ThinkingBlock` Component (`components/ThinkingBlock.js`)**:
+    - Live pulsing purple indicator during thought generation;
+    - Real-time elapsed duration and character count telemetry (`1.8s · 420 words`);
+    - Smart auto-collapse on thought completion to keep final assistant response immediately visible, with seamless click-to-expand.
+  - **`ToolCard` Component (`components/ToolCard.js`)**:
+    - Dedicated visual identities, icons, and accent border colors for `bash` (⚡ sky blue), `read` (📄 emerald), `edit` (✏️ purple with unified diffs), `write` (💾 orange), `computer` (🖱️ rose), and `web_search` (🌐 blue);
+    - Built-in one-click output copy button (`📋`);
+    - Enhanced status pills showing execution time, exit codes, and truncation notes;
+    - Smooth collapsible body toggling.
+  - **`EmptyState` Component (`components/EmptyState.js`)**:
+    - Centered welcome card featuring the official pink Piglet mascot vector logo;
+    - 4 quick-action starter chips (code review, test suite, git status, doctor check) that populate the prompt on click;
+    - Automatically cleans up as soon as a turn begins.
+  - **`ImageLightbox` Component (`components/ImageLightbox.js`)**:
+    - Ambient fullscreen modal with backdrop blur for tool screenshots and attachments, dismissing via background click or `Escape` key.
+
 ## [0.3.44] - 2026-10-05
 
 ### Added

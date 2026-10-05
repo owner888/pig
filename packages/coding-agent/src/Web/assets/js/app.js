@@ -8,6 +8,10 @@ import { THEMES, currentTheme, applyTheme, openThemeModal, initTheme } from "./t
 import { clientId, network } from "./network.js";
 import { renderMarkdown, renderDiff, renderDiffFromUnified, copyCode } from "./markdown.js";
 import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateHook } from "./accounts.js";
+import { ThinkingBlock } from "./components/ThinkingBlock.js";
+import { ToolCard } from "./components/ToolCard.js";
+import { EmptyState } from "./components/EmptyState.js";
+import { openImageLightbox } from "./components/ImageLightbox.js";
 
     const chatArea = document.getElementById("chat-area");
     const promptInput = document.getElementById("prompt-input");
@@ -59,6 +63,8 @@ import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateH
         this.currentThinkingText = "";
         this.currentThinkingBox = null;
         this.userScrolledUp = false;
+        this.toolCards = new Map();
+        this.emptyState = null;
 
         this.scroller = document.createElement("div");
         this.scroller.className = "chat-scroll";
@@ -593,6 +599,13 @@ import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateH
     }
 
     function appendUserMessage(text, images = []) {
+      const tab = T();
+      if (tab?.emptyState) {
+        tab.emptyState.remove();
+        tab.emptyState = null;
+      }
+      chatScroll.querySelector(".empty-state-hero")?.remove();
+
       const block = document.createElement("div");
       block.className = "msg-block msg-user";
 
@@ -612,7 +625,7 @@ import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateH
           imgEl.src = `/api/file?path=${encodeURIComponent(imgPath)}`;
           imgEl.className = "msg-image-thumb";
           imgEl.title = "Local clipboard image: " + imgPath;
-          imgEl.addEventListener("click", () => window.open(imgEl.src, "_blank"));
+          imgEl.addEventListener("click", () => openImageLightbox(imgEl.src));
           grid.appendChild(imgEl);
           block.appendChild(grid);
         }
@@ -627,7 +640,7 @@ import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateH
           imgEl.src = src;
           imgEl.className = "msg-image-thumb";
           imgEl.title = "Click to open full view";
-          imgEl.addEventListener("click", () => window.open(src, "_blank"));
+          imgEl.addEventListener("click", () => openImageLightbox(src));
           grid.appendChild(imgEl);
         }
         block.appendChild(grid);
@@ -661,13 +674,25 @@ import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateH
     // tab's hidden scroller. `refreshState()` with no argument is the rendering tab's.
     function onEvent(evt) {
       const tab = T();
+      if (tab?.emptyState) {
+        tab.emptyState.remove();
+        tab.emptyState = null;
+      }
+      chatScroll.querySelector(".empty-state-hero")?.remove();
+
       if (evt.type === "message_start") {
+        if (currentThinkingBox?.finish) {
+          currentThinkingBox.finish();
+        }
         currentAssistantBlock = null;
         currentAssistantText = "";
       } else if (evt.type === "agent_start" || evt.type === "turn_start") {
         setRunningState(true);
       } else if (evt.type === "agent_end" || evt.type === "turn_end") {
         setRunningState(false);
+        if (currentThinkingBox?.finish) {
+          currentThinkingBox.finish();
+        }
         currentAssistantBlock = null;
         currentAssistantText = "";
         currentThinkingText = "";
@@ -692,15 +717,17 @@ import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateH
           currentThinkingText += d.delta || "";
           const box = ensureAssistantBlock();
           if (!currentThinkingBox) {
-            currentThinkingBox = document.createElement("details");
-            currentThinkingBox.className = "thinking-box";
-            currentThinkingBox.open = true;
-            currentThinkingBox.innerHTML = `<summary>${escapeHtml(t("thinking"))}</summary><div class="thinking-content"></div>`;
-            box.insertBefore(currentThinkingBox, box.firstChild);
+            currentThinkingBox = new ThinkingBlock();
+            box.insertBefore(currentThinkingBox.element, box.firstChild);
           }
-          currentThinkingBox.querySelector(".thinking-content").innerText = currentThinkingText;
+          if (currentThinkingBox.appendDelta) {
+            currentThinkingBox.appendDelta(d.delta || "");
+          }
           scrollToBottomIfNeeded();
         } else if (d.type === "text_delta") {
+          if (currentThinkingBox?.finish) {
+            currentThinkingBox.finish();
+          }
           currentAssistantText += d.delta || "";
           const box = ensureAssistantBlock();
           let prose = box.querySelector(".assistant-prose");
@@ -713,14 +740,30 @@ import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateH
           scrollToBottomIfNeeded();
         }
       } else if (evt.type === "tool_execution_start") {
+        if (currentThinkingBox?.finish) {
+          currentThinkingBox.finish();
+        }
         currentAssistantBlock = null;
         currentAssistantText = "";
-        chatScroll.appendChild(createToolCard(evt));
+        tab.toolCards = tab.toolCards || new Map();
+        const card = new ToolCard(evt);
+        tab.toolCards.set(evt.toolCallId, card);
+        chatScroll.appendChild(card.element);
         scrollToBottomIfNeeded();
       } else if (evt.type === "tool_execution_update") {
-        updateToolCardProgress({ toolCallId: evt.toolCallId, output: textOf(evt.partial?.content) });
+        const card = tab?.toolCards?.get(evt.toolCallId);
+        if (card) {
+          card.updateProgress(textOf(evt.partial?.content));
+        } else {
+          updateToolCardProgress({ toolCallId: evt.toolCallId, output: textOf(evt.partial?.content) });
+        }
       } else if (evt.type === "tool_execution_end") {
-        updateToolCard({ toolCallId: evt.toolCallId, result: evt.result, isError: evt.isError });
+        const card = tab?.toolCards?.get(evt.toolCallId);
+        if (card) {
+          card.finish({ result: evt.result, isError: evt.isError });
+        } else {
+          updateToolCard({ toolCallId: evt.toolCallId, result: evt.result, isError: evt.isError });
+        }
         currentAssistantBlock = null;
         currentAssistantText = "";
       } else if (evt.type === "retry_start") {
@@ -1438,6 +1481,16 @@ import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateH
       active = tab;
       tab.scroller.hidden = false;
       if (!tab.bound) tab.subscribe();
+
+      // Show friendly EmptyState if tab has no messages yet
+      if (tab.scroller.children.length === 0 && !tab.emptyState) {
+        tab.emptyState = new EmptyState((prompt) => {
+          promptInput.value = prompt;
+          promptInput.focus();
+        });
+        tab.scroller.appendChild(tab.emptyState.element);
+      }
+
       applyActiveTabToChrome();
       saveTabs();
       renderTabs();
@@ -1961,7 +2014,29 @@ import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateH
      */
     function renderMessages(msgs) {
       {
+        const tab = T();
         chatScroll.innerHTML = "";
+        if (tab) {
+          tab.toolCards = tab.toolCards || new Map();
+          tab.toolCards.clear();
+        }
+
+        if (!Array.isArray(msgs) || msgs.length === 0) {
+          if (tab) {
+            tab.emptyState = new EmptyState((prompt) => {
+              promptInput.value = prompt;
+              promptInput.focus();
+            });
+            chatScroll.appendChild(tab.emptyState.element);
+          }
+          return;
+        }
+
+        if (tab?.emptyState) {
+          tab.emptyState.remove();
+          tab.emptyState = null;
+        }
+
         for (const m of msgs) {
           if (m.role === "user") {
             let text = "";
@@ -1979,17 +2054,17 @@ import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateH
             if (Array.isArray(m.content)) {
               for (const c of m.content) {
                 if (c.type === "thinking" && (c.thinking || c.text)) {
-                  const box = document.createElement("details");
-                  box.className = "thinking-box";
-                  box.innerHTML = `<summary>Thinking...</summary><div class="thinking-content">${escapeHtml(c.thinking || c.text)}</div>`;
-                  chatScroll.appendChild(box);
+                  const tb = new ThinkingBlock(c.thinking || c.text);
+                  tb.finish();
+                  chatScroll.appendChild(tb.element);
                 } else if (c.type === "tool_call" || c.type === "toolCall") {
-                  const card = createToolCard({
+                  const card = new ToolCard({
                     toolCallId: c.id,
                     toolName: c.name,
                     arguments: c.arguments,
                   });
-                  chatScroll.appendChild(card);
+                  if (tab) tab.toolCards.set(c.id, card);
+                  chatScroll.appendChild(card.element);
                 } else if (c.type === "text" && c.text) {
                   const block = document.createElement("div");
                   block.className = "msg-block msg-assistant prose";
@@ -2002,17 +2077,17 @@ import { openAccounts, closeAccounts, loadAccounts, loadUsage, setAccountsStateH
               appendErrorMessage(m.errorMessage);
             }
           } else if (m.role === "tool_result" || m.role === "toolResult") {
-            let card = toolCardFor(m.toolCallId);
+            let card = tab?.toolCards?.get(m.toolCallId);
             if (!card) {
-              card = createToolCard({
+              card = new ToolCard({
                 toolCallId: m.toolCallId,
                 toolName: m.toolName || "tool",
                 arguments: {},
               });
-              chatScroll.appendChild(card);
+              if (tab) tab.toolCards.set(m.toolCallId, card);
+              chatScroll.appendChild(card.element);
             }
-            updateToolCard({
-              toolCallId: m.toolCallId,
+            card.finish({
               result: m.content || m.result || m.details,
               isError: m.isError,
             });
