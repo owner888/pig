@@ -43,6 +43,20 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.46] - 2026-10-05
+
+### Added
+
+- **Web UI Slash Command Autocomplete Component (`components/SlashAutocomplete.js`)**:
+  - Implemented an ambient floating popup that automatically triggers when typing `/` into the prompt input;
+  - **Smart Command Filtering & Curation**:
+    - Safely excluded pure TUI-specific or destructive commands (`web`, `hotkeys`, `exit`, `quit`, `tree`, `label`, `resume`, `copy`, `login`, `logout`) that are either redundant in a browser or risk killing backend child processes;
+    - Retained and curated all 21 high-value commands with bilingual descriptions (`/compact`, `/export`, `/diff`, `/commit`, `/model`, `/thinking`, `/name`, `/session`, `/doctor`, `/accounts`, `/antigravity.*`, etc.);
+  - **Fluid Keyboard & Mouse Navigation**:
+    - Real-time fuzzy filtering as the user types (e.g. `/co` filters down to `/compact`, `/commit`, `/accounts`);
+    - Full keyboard control with `ArrowUp` / `ArrowDown` navigation, `Enter` / `Tab` completion, and `Escape` dismissal;
+    - Complete theme styling across Dark, Light, and Labra themes.
+
 ## [0.3.45] - 2026-10-05
 
 ### Added

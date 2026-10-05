@@ -12,6 +12,7 @@ import { ThinkingBlock } from "./components/ThinkingBlock.js";
 import { ToolCard } from "./components/ToolCard.js";
 import { EmptyState } from "./components/EmptyState.js";
 import { openImageLightbox } from "./components/ImageLightbox.js";
+import { SlashAutocomplete } from "./components/SlashAutocomplete.js";
 
     const chatArea = document.getElementById("chat-area");
     const promptInput = document.getElementById("prompt-input");
@@ -2191,6 +2192,11 @@ import { openImageLightbox } from "./components/ImageLightbox.js";
     });
 
     initTheme();
+
+    new SlashAutocomplete({
+      inputElement: promptInput,
+      anchorElement: document.querySelector(".input-wrapper"),
+    });
 
     boot();
 
