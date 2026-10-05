@@ -1378,9 +1378,9 @@
         <span class="hud-hint" data-i18n="hud_hint">Release ⌘ to close</span>
       </div>
       <div class="hud-grid">
-        <div class="hud-row"><span class="hud-key">⌘ + Enter</span><span class="hud-desc" data-i18n="hud_send">Send message / Follow-up queue</span></div>
+        <div class="hud-row"><span class="hud-key">Enter</span><span class="hud-desc" data-i18n="hud_enter">Send message / Submit prompt</span></div>
         <div class="hud-row"><span class="hud-key">Shift + Enter</span><span class="hud-desc" data-i18n="hud_newline">Insert newline</span></div>
-        <div class="hud-row"><span class="hud-key">Enter</span><span class="hud-desc" data-i18n="hud_enter">Insert newline / Steer interrupt</span></div>
+        <div class="hud-row"><span class="hud-key">⌘ + Enter</span><span class="hud-desc" data-i18n="hud_send">Send message / Follow-up queue</span></div>
         <div class="hud-row"><span class="hud-key">Escape</span><span class="hud-desc" data-i18n="hud_stop">Stop turn / Close dialog</span></div>
         <div class="hud-row"><span class="hud-key">Ctrl + C</span><span class="hud-desc" data-i18n="hud_clear">Clear prompt / Interrupt</span></div>
         <div class="hud-row"><span class="hud-key">Ctrl + O</span><span class="hud-desc" data-i18n="hud_tools">Expand / collapse tools</span></div>
@@ -1426,15 +1426,15 @@
         "provider": "服务商",
         "model": "模型",
         "thinking_level": "思考等级",
-        "placeholder": "向 pig 提问或粘贴图片...（⌘+Enter 发送，Shift+Enter 换行）",
+        "placeholder": "向 pig 提问或粘贴图片...（Enter 发送，Shift+Enter 换行）",
         "attach_title": "添加图片（或直接粘贴剪贴板）",
-        "send_title": "发送消息（Cmd+Enter / Ctrl+Enter）",
+        "send_title": "发送消息（Enter）",
         "stop_title": "停止生成（Escape）",
         "hud_title": "⌘ 快捷键速查",
         "hud_hint": "松开 ⌘ 键关闭",
         "hud_send": "发送消息 / 加入跟进队列",
         "hud_newline": "输入换行",
-        "hud_enter": "输入换行 / 打断干预",
+        "hud_enter": "发送消息 / 提交提示词",
         "hud_stop": "停止生成 / 关闭弹窗",
         "hud_clear": "清空输入 / 打断",
         "hud_tools": "展开 / 折叠工具详情",
@@ -1545,15 +1545,15 @@
         "provider": "Provider",
         "model": "Model",
         "thinking_level": "Thinking Level",
-        "placeholder": "Ask pig a question or paste images... (⌘+Enter to send, Shift+Enter for new line)",
+        "placeholder": "Ask pig a question or paste images... (Enter to send, Shift+Enter for new line)",
         "attach_title": "Attach image (or paste clipboard)",
-        "send_title": "Send message (Cmd+Enter / Ctrl+Enter)",
+        "send_title": "Send message (Enter)",
         "stop_title": "Stop (Escape)",
         "hud_title": "⌘ Shortcuts",
         "hud_hint": "Release ⌘ to close",
         "hud_send": "Send message / Follow-up queue",
         "hud_newline": "Insert newline",
-        "hud_enter": "Insert newline / Steer interrupt",
+        "hud_enter": "Send message / Submit prompt",
         "hud_stop": "Stop turn / Close dialog",
         "hud_clear": "Clear prompt / Interrupt",
         "hud_tools": "Expand / collapse tools",
@@ -2498,10 +2498,11 @@
     promptInput.addEventListener("compositionend", () => { isComposing = false; });
 
     promptInput.addEventListener("keydown", (e) => {
-      // Submit message on Command+Enter (Mac) or Ctrl+Enter (Windows/Linux)
-      const isSubmitKey = e.key === "Enter" && (e.metaKey || e.ctrlKey);
+      // Direct send on Enter (matching TUI), Shift+Enter inserts newline
+      const isPlainEnter = e.key === "Enter" && !e.shiftKey;
+      const isModifierEnter = e.key === "Enter" && (e.metaKey || e.ctrlKey);
 
-      if (isSubmitKey) {
+      if (isPlainEnter || isModifierEnter) {
         if (e.isComposing || isComposing || e.keyCode === 229) {
           return;
         }
@@ -2512,7 +2513,7 @@
         e.preventDefault();
         abortTurn();
       }
-      // Note: Normal Enter and Shift+Enter naturally insert a newline into the textarea!
+      // Note: Shift+Enter naturally inserts a newline into the textarea!
     });
 
     // Command key long-press HUD (Blink Shell / iPadOS style)

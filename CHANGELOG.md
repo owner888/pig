@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.32] - 2026-10-05
+
+### Changed
+
+- **Web UI Enter Key Direct Send Aligned with Terminal TUI**:
+  - Aligned Web UI keyboard behavior with terminal TUI: pressing `Enter` directly submits and sends the prompt (with robust IME composition guards preventing accidental sends during candidate word selection).
+  - `Shift+Enter` naturally inserts a newline with smooth auto-expanding textarea height.
+  - Maintained `⌘+Enter` and `Ctrl+Enter` as secondary send shortcuts for user convenience.
+  - Updated input placeholder hints, send button titles, and HUD shortcut cheatsheet to reflect `Enter` as the primary submit key.
+
 ## [0.3.31] - 2026-10-05
 
 ### New Features
