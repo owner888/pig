@@ -40,6 +40,13 @@
         <button id="theme-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" title="切换主题 / Switch Theme">🎨 Dark</button>
         <button id="lang-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" title="切换语言 / Switch Language">中 / EN</button>
         <button id="accounts-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" data-i18n="accounts" data-i18n-attr="title:accounts">Accounts</button>
+        <button id="terminal-btn" class="toggle-sidebar-btn header-btn desktop-only-btn ctrl-btn terminal-btn" data-i18n-attr="title:terminal_title" title="网页终端 / Web Terminal">
+          <svg class="terminal-btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5"></polyline>
+            <line x1="12" y1="19" x2="20" y2="19"></line>
+          </svg>
+          <span class="terminal-btn-label" data-i18n="terminal">终端</span>
+        </button>
 
         <div class="more-menu-wrapper mobile-only-btn">
           <button id="more-menu-btn" class="toggle-sidebar-btn more-btn" data-i18n-attr="title:more_options" title="更多设置 / More Options">
@@ -50,6 +57,10 @@
             </svg>
           </button>
           <div id="more-menu-dropdown" class="more-dropdown" style="display:none;">
+            <div class="more-dropdown-item" id="more-terminal-btn">
+              <span class="more-item-icon">💻</span>
+              <span class="more-item-text" data-i18n="terminal">Terminal</span>
+            </div>
             <div class="more-dropdown-item" id="more-theme-btn">
               <span class="more-item-icon">🎨</span>
               <span class="more-item-text" data-i18n="menu_theme">Theme</span>

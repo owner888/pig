@@ -574,6 +574,110 @@ final class HttpServer
             return;
         }
 
+        // 10.5 Web Terminal info & command execution
+        if ($path === '/api/terminal/info') {
+            $targetCwd = $req['query']['cwd'] ?? $this->cwd;
+            $safeCwd = realpath($targetCwd) ?: $this->cwd;
+            $user = getenv('USER') ?: (getenv('LOGNAME') ?: 'user');
+            $hostname = gethostname() ?: 'pig';
+
+            $conn->sendResponse(200, [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ], (string) json_encode([
+                'success' => true,
+                'user' => $user,
+                'hostname' => $hostname,
+                'cwd' => $safeCwd,
+                'home' => getenv('HOME') ?: '/',
+            ]));
+
+            return;
+        }
+
+        if ($path === '/api/terminal/exec') {
+            $headers = [
+                'Content-Type' => 'application/json',
+                'Access-Control-Allow-Origin' => '*',
+            ];
+
+            if ($req['method'] !== 'POST') {
+                $conn->sendResponse(405, $headers, (string) json_encode(['success' => false, 'error' => 'POST only']));
+                return;
+            }
+
+            $data = json_decode($req['body'], true);
+            $command = is_array($data) ? trim((string) ($data['command'] ?? '')) : '';
+            $targetCwd = is_array($data) ? (string) ($data['cwd'] ?? '') : '';
+            $safeCwd = realpath($targetCwd) ?: $this->cwd;
+
+            if ($command === '') {
+                $conn->sendResponse(400, $headers, (string) json_encode(['success' => false, 'error' => 'Command is required']));
+                return;
+            }
+
+            // Built-in cd command handling to update working directory across calls
+            if (preg_match('/^cd(?:\s+(.*))?$/', $command, $m)) {
+                $target = trim($m[1] ?? '');
+                if ($target === '' || $target === '~') {
+                    $target = getenv('HOME') ?: '/';
+                } elseif (str_starts_with($target, '~/')) {
+                    $home = getenv('HOME') ?: '';
+                    $target = $home . substr($target, 1);
+                } elseif (!str_starts_with($target, '/')) {
+                    $target = $safeCwd . '/' . $target;
+                }
+                $realTarget = realpath($target);
+                if ($realTarget !== false && is_dir($realTarget)) {
+                    $conn->sendResponse(200, $headers, (string) json_encode([
+                        'success' => true,
+                        'stdout' => '',
+                        'stderr' => '',
+                        'exitCode' => 0,
+                        'stopped' => false,
+                        'cwd' => $realTarget,
+                    ]));
+                    return;
+                }
+
+                $conn->sendResponse(200, $headers, (string) json_encode([
+                    'success' => true,
+                    'stdout' => '',
+                    'stderr' => "cd: no such file or directory: " . ($m[1] ?? '') . "\n",
+                    'exitCode' => 1,
+                    'stopped' => false,
+                    'cwd' => $safeCwd,
+                ]));
+                return;
+            }
+
+            \Pig\Async\Async::spawn(function () use ($conn, $headers, $command, $safeCwd): void {
+                try {
+                    [$exit, $stdout, $stderr] = \Pig\Tui\Process::runAsync(
+                        ['bash', '-c', $command],
+                        timeout: 120.0,
+                        cwd: $safeCwd,
+                    );
+
+                    $conn->sendResponse(200, $headers, (string) json_encode([
+                        'success' => true,
+                        'stdout' => $stdout,
+                        'stderr' => $stderr,
+                        'exitCode' => $exit,
+                        'stopped' => $exit === \Pig\Tui\Process::STOPPED,
+                        'cwd' => $safeCwd,
+                    ]));
+                } catch (\Throwable $e) {
+                    $conn->sendResponse(500, $headers, (string) json_encode([
+                        'success' => false,
+                        'error' => $e->getMessage(),
+                    ]));
+                }
+            });
+
+            return;
+        }
+
         $conn->sendResponse(404, ['Content-Type' => 'text/plain'], "Not Found: {$path}");
     }
 

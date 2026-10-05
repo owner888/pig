@@ -13,6 +13,7 @@ import { ToolCard } from "./components/ToolCard.js";
 import { EmptyState } from "./components/EmptyState.js";
 import { openImageLightbox } from "./components/ImageLightbox.js";
 import { SlashAutocomplete } from "./components/SlashAutocomplete.js";
+import { WebTerminal } from "./components/WebTerminal.js";
 
     const chatArea = document.getElementById("chat-area");
     const promptInput = document.getElementById("prompt-input");
@@ -2196,6 +2197,31 @@ import { SlashAutocomplete } from "./components/SlashAutocomplete.js";
     new SlashAutocomplete({
       inputElement: promptInput,
       anchorElement: document.querySelector(".input-wrapper"),
+    });
+
+    const webTerminal = new WebTerminal({
+      getActiveCwd: () => active?.cwd || serverCwd || "",
+      onCwdChanged: (newCwd) => {
+        if (active && !active.sessionFile) {
+          active.cwd = newCwd;
+          applyActiveTabToChrome();
+          saveTabs();
+          renderTabs();
+        }
+      }
+    });
+
+    document.getElementById("terminal-btn")?.addEventListener("click", () => webTerminal.toggle());
+    document.getElementById("more-terminal-btn")?.addEventListener("click", () => {
+      moreMenuDropdown.style.display = "none";
+      webTerminal.toggle();
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "`") {
+        e.preventDefault();
+        webTerminal.toggle();
+      }
     });
 
     boot();

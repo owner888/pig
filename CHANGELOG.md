@@ -43,6 +43,26 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.47] - 2026-10-05
+
+### Added
+
+- **Web UI Embedded Web Terminal Component (`components/WebTerminal.js` & `/api/terminal/exec`)**:
+  - **Top-Right Terminal Entry**:
+    - Added a modern `>_ Terminal` icon button in the top navigation bar and mobile dropdown;
+    - Supports click or global shortcut `Ctrl + \`` to toggle terminal drawer instantly.
+  - **Active CWD & Directory Tracking**:
+    - Automatically initializes in the active conversation's working directory (`active.cwd`);
+    - Displays interactive path capsule (`~/path`), with click-to-copy;
+    - Built-in `cd` tracking that dynamically updates the terminal's working directory and prompts across sessions.
+  - **Rich Interactive Console**:
+    - Authentic command line prompt (`user@hostname:path $ `) with monospace JetBrains typography;
+    - Command history navigation with `ArrowUp` / `ArrowDown`;
+    - Fast ANSI color code parser rendering `git status`, `diff`, `ls`, and test suites in full terminal fidelity;
+    - Quick-action chips (`git status`, `ls -la`), clear screen (`🧹` / `Ctrl+L`), and full-screen drawer toggling (`⛶`).
+  - **Zero-Dependency Non-Blocking Execution Engine**:
+    - Powered by `Process::runAsync` in `HttpServer.php`, executing bash commands with sub-millisecond dispatch and 120s timeout without blocking the event loop.
+
 ## [0.3.46] - 2026-10-05
 
 ### Added
