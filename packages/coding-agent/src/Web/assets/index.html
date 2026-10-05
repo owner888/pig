@@ -2191,14 +2191,14 @@
           this.render(() => setRunningState(this.isRunning));
           saveTabs(); renderTabs();
           if (this === active) applyActiveTabToChrome();
-        } catch (err) { if (this === active) pigUnreachable("the session state", err); }
+        } catch (err) { if (this === active && !this.ended) pigUnreachable("the session state", err); }
       }
 
       async loadMessages() {
         try {
           const d = await this.rpc({ type: "get_messages" });
           this.render(() => renderMessages(d.messages || []));
-        } catch (err) { if (this === active) pigUnreachable("the conversation", err); }
+        } catch (err) { if (this === active && !this.ended) pigUnreachable("the conversation", err); }
       }
 
       close() {

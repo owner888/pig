@@ -110,7 +110,7 @@ final class HttpServer
         $this->auth = $auth ?? Auth::discover();
         $this->pool = new SessionPool(
             spawn: $spawn ?? static function (string $cwd, ?string $sessionFile): RpcClient {
-                $sessionArg = $sessionFile !== null ? (SessionManager::find($cwd, $sessionFile) ?? $sessionFile) : null;
+                $sessionArg = $sessionFile !== null ? SessionManager::find($cwd, $sessionFile) : null;
 
                 return new RpcClient(
                     cwd: $cwd,

@@ -36,23 +36,12 @@ final class WebMode
     public function run(): int
     {
         $port = $this->port;
-        $bound = false;
 
-        for ($attempt = 0; $attempt < 10; $attempt++) {
-            $candidatePort = $port + $attempt;
-            try {
-                $this->server = new HttpServer($this->cwd, $candidatePort, $this->host, $this->auth);
-                $this->server->start();
-                $bound = true;
-                $port = $candidatePort;
-                break;
-            } catch (\Throwable) {
-                continue;
-            }
-        }
-
-        if (!$bound || $this->server === null) {
-            fwrite(STDERR, Style::red("Error: Failed to bind Web UI to {$this->host}:{$port} (ports in use)\n"));
+        try {
+            $this->server = new HttpServer($this->cwd, $port, $this->host, $this->auth);
+            $this->server->start();
+        } catch (\Throwable $e) {
+            fwrite(STDERR, Style::red("Error: Failed to bind Web UI to {$this->host}:{$port} ({$e->getMessage()})\n"));
 
             return 1;
         }

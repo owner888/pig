@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test\Web;
 
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Web\HttpServer;
 use Pig\CodingAgent\Web\Protocols\Http;
 use Pig\CodingAgent\Web\TcpConnection;
 
@@ -72,5 +73,24 @@ final class HttpProtocolTest extends TestCase
 
         $conn->close();
         fclose($clientSock);
+    }
+
+    public function testDefaultSpawnDoesNotPassSessionForNonExistentFile(): void
+    {
+        $server = new HttpServer(sys_get_temp_dir());
+        $pool = $server->pool();
+
+        $ref = new \ReflectionClass($pool);
+        $spawnProp = $ref->getProperty('spawn');
+        $spawnFn = $spawnProp->getValue($pool);
+
+        /** @var \Pig\CodingAgent\Rpc\RpcClient $client */
+        $client = $spawnFn(sys_get_temp_dir(), 'non-existent-session-2026-10-04.jsonl');
+
+        $clientRef = new \ReflectionClass($client);
+        $argsProp = $clientRef->getProperty('arguments');
+        $args = $argsProp->getValue($client);
+
+        $this->assertNotContains('--session', $args);
     }
 }

@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.30] - 2026-10-04
+
+### Fixed
+
+- **Web UI Non-Existent Session Auto-Recovery & Strict Port Binding**:
+  - Fixed `HttpServer` passing `--session` for nonexistent, deleted, or missing session files, gracefully falling back to a clean new session and preventing child RPC processes from crashing with `exit(1)` and causing endless `no active session` reconnect loops.
+  - Eliminated silent port jumping (`port + 1`) in `WebMode.php`, ensuring the daemon strictly binds to the requested port without port discrepancy between printed URL and listening socket.
+  - Guarded `pigUnreachable` in web frontend to avoid showing misleading reconnection banners when the child process has already signaled exit.
+  - Added unit test `testDefaultSpawnDoesNotPassSessionForNonExistentFile` verifying graceful fallback.
+
 ## [0.3.29] - 2026-10-04
 
 ### Added
