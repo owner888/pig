@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.36] - 2026-10-05
+
+### Changed
+
+- **Web UI Quota Cards Claude iOS Layout Alignment**:
+  - Replaced the cramped 3-column horizontal table with Claude's official iOS Usage vertical card design for Antigravity quota display.
+  - **Header Row**: Model and limit name on the left with prominent weight, remaining percentage right-aligned.
+  - **Full-Width Progress Bar**: 100% full-width rounded pill progress bar with dynamic status colors (normal cyan/blue, warning amber when <20%, alert red when empty).
+  - **Dedicated Reset Row**: Reset timer (e.g. `44 小时 7 分后重置` / `resets in ...`) now occupies its own dedicated row below the progress bar, completely eliminating mobile line wrapping and layout tearing.
+
 ## [0.3.35] - 2026-10-05
 
 ### Added
