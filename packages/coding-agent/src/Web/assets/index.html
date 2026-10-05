@@ -14,12 +14,24 @@
       --text: #f1f5f9;
       --text-muted: #cbd5e1;
       --text-dim: #94a3b8;
+      --card-bg: #111827;
+      --card-header-bg: rgba(30, 41, 59, 0.5);
+      --card-header-hover: rgba(51, 65, 85, 0.6);
+      --tool-body-bg: #090d16;
+      --input-bg: #121824;
+      --btn-attach-bg: #182232;
+      --select-bg: #121824;
+      --dropdown-bg: #121824;
+      --dropdown-border: #2d3b50;
+      --thinking-bg: rgba(0, 0, 0, 0.25);
       --user-bg: #141c2b;
       --user-border: #28374d;
       --assistant-bg: #1e293b;
       --assistant-text: #f8fafc;
       --btn-send: #5eead4;
       --btn-send-hover: #2dd4bf;
+      --btn-send-text: #0f172a;
+      --btn-stop-bg: #1e293b;
       --diff-add-bg: rgba(34, 197, 94, 0.18);
       --diff-add-text: #86efac;
       --diff-del-bg: rgba(239, 68, 68, 0.18);
@@ -35,12 +47,24 @@
       --text: #d3d7b5;
       --text-muted: #9ea188;
       --text-dim: #585d58;
+      --card-bg: #070c07;
+      --card-header-bg: rgba(29, 32, 29, 0.85);
+      --card-header-hover: rgba(45, 50, 45, 0.9);
+      --tool-body-bg: #040704;
+      --input-bg: #0c100c;
+      --btn-attach-bg: #1d201d;
+      --select-bg: #0c100c;
+      --dropdown-bg: #0c100c;
+      --dropdown-border: #3e4438;
+      --thinking-bg: rgba(29, 32, 29, 0.5);
       --user-bg: #151915;
       --user-border: #89974a;
-      --assistant-bg: #0c100c;
+      --assistant-bg: #070c07;
       --assistant-text: #d3d7b5;
       --btn-send: #e33d84;
       --btn-send-hover: #fd5ea0;
+      --btn-send-text: #040704;
+      --btn-stop-bg: #1d201d;
       --diff-add-bg: rgba(143, 162, 10, 0.18);
       --diff-add-text: #8fa20a;
       --diff-del-bg: rgba(238, 88, 93, 0.18);
@@ -53,17 +77,91 @@
       --border: #e2e8f0;
       --text: #0f172a;
       --text-muted: #475569;
-      --text-dim: #64748b;
-      --user-bg: #f8fafc;
+      --text-dim: #94a3b8;
+      --card-bg: #ffffff;
+      --card-header-bg: #f8fafc;
+      --card-header-hover: #f1f5f9;
+      --tool-body-bg: #f8fafc;
+      --input-bg: #ffffff;
+      --btn-attach-bg: #f1f5f9;
+      --select-bg: #ffffff;
+      --dropdown-bg: #ffffff;
+      --dropdown-border: #cbd5e1;
+      --thinking-bg: #f1f5f9;
+      --user-bg: #f1f5f9;
       --user-border: #cbd5e1;
       --assistant-bg: #ffffff;
       --assistant-text: #0f172a;
-      --btn-send: #0ea5e9;
-      --btn-send-hover: #0284c7;
+      --btn-send: #0284c7;
+      --btn-send-hover: #0369a1;
+      --btn-send-text: #ffffff;
+      --btn-stop-bg: #fee2e2;
       --diff-add-bg: rgba(34, 197, 94, 0.12);
-      --diff-add-text: #16a34a;
+      --diff-add-text: #15803d;
       --diff-del-bg: rgba(239, 68, 68, 0.12);
-      --diff-del-text: #dc2626;
+      --diff-del-text: #b91c1c;
+    }
+
+    .theme-item-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--input-bg);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+    .theme-item-card:hover {
+      border-color: #38bdf8;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    }
+    .theme-item-card.active {
+      border-color: #38bdf8;
+      background: rgba(56, 189, 248, 0.08);
+    }
+    .theme-card-left {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+    .theme-card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .theme-card-desc {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .theme-card-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    .theme-swatches {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+    .theme-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      flex-shrink: 0;
+    }
+    [data-theme="light"] .theme-swatch {
+      border-color: rgba(0, 0, 0, 0.15);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -685,7 +783,7 @@
 
     /* Thinking block inside assistant */
     .thinking-box {
-      background: rgba(0, 0, 0, 0.25);
+      background: var(--thinking-bg);
       border-left: 2px solid var(--text-dim);
       padding: 8px 12px;
       margin-bottom: 12px;
@@ -710,7 +808,7 @@
     /* Tool execution cards matching pi-web */
     .tool-card {
       width: 100%;
-      background: #111827;
+      background: var(--card-bg);
       border: 1px solid var(--border);
       border-radius: 8px;
       margin: 6px 0;
@@ -722,7 +820,7 @@
     }
     .tool-header {
       padding: 10px 14px;
-      background: rgba(30, 41, 59, 0.5);
+      background: var(--card-header-bg);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -733,7 +831,7 @@
       border-left: 3px solid #64748b;
       transition: background 0.15s ease;
     }
-    .tool-header:hover { background: rgba(51, 65, 85, 0.6); }
+    .tool-header:hover { background: var(--card-header-hover); }
     .tool-header-left {
       display: flex;
       align-items: center;
@@ -756,8 +854,9 @@
     .tool-header-status { font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
     .tool-body {
       padding: 12px 14px;
-      background: #090d16;
-      color: #f1f5f9;
+      background: var(--tool-body-bg);
+      color: var(--text);
+      border-top: 1px solid var(--border);
       white-space: pre-wrap;
       max-height: 420px;
       overflow-y: auto;
@@ -981,7 +1080,7 @@
       appearance: none;
       -webkit-appearance: none;
       -moz-appearance: none;
-      background-color: #121824;
+      background-color: var(--select-bg);
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2394a3b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
       background-repeat: no-repeat;
       background-position: right 8px center;
@@ -1020,10 +1119,10 @@
       max-width: 320px;
       max-height: 280px;
       overflow-y: auto;
-      background: #121824;
-      border: 1px solid #2d3b50;
+      background: var(--dropdown-bg);
+      border: 1px solid var(--dropdown-border);
       border-radius: 8px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.2);
       padding: 4px;
       z-index: 120;
       display: none;
@@ -1071,7 +1170,7 @@
     }
     .input-wrapper {
       flex: 1;
-      background: #121824;
+      background: var(--input-bg);
       border: 1px solid var(--border);
       border-radius: 8px;
       display: flex;
@@ -1115,23 +1214,56 @@
       box-sizing: border-box;
     }
     .btn-attach {
-      background: #182232;
+      background: var(--btn-attach-bg);
       border-color: var(--border);
       color: var(--text-muted);
     }
     .btn-attach:hover { color: var(--text); border-color: #475569; }
     .btn-send {
-      background: #5eead4;
-      color: #0f172a;
+      background: var(--btn-send);
+      color: var(--btn-send-text);
     }
-    .btn-send:hover { background: #2dd4bf; }
+    .btn-send:hover { background: var(--btn-send-hover); }
     .btn-stop {
-      background: #1e293b;
+      background: var(--btn-stop-bg);
       border-color: var(--border);
       color: #ef4444;
       display: none;
     }
-    .btn-stop:hover { background: #334155; }
+    .btn-stop:hover { opacity: 0.85; }
+
+    [data-theme="light"] .toggle-sidebar-btn {
+      background: #ffffff;
+      border-color: #cbd5e1;
+      color: #334155;
+    }
+    [data-theme="light"] .toggle-sidebar-btn:hover {
+      background: #f1f5f9;
+      color: #0f172a;
+      border-color: #94a3b8;
+    }
+    [data-theme="light"] .session-file-badge {
+      background: #f1f5f9;
+      border-color: #cbd5e1;
+      color: #475569;
+    }
+    [data-theme="light"] .dropdown-item:hover,
+    [data-theme="light"] .dropdown-item.active {
+      background: #e0f2fe;
+      color: #0284c7;
+    }
+    [data-theme="light"] .dropdown-menu {
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.05);
+    }
+    [data-theme="light"] .tool-card {
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+    }
+    [data-theme="light"] .input-wrapper {
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+    }
+    [data-theme="light"] .select-pill {
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+    }
 
     /* Sidebar backdrop for mobile view */
     .sidebar-backdrop {
@@ -1509,7 +1641,15 @@
         "quota_resets_d": "{d} 天后重置",
         "quota_fetching": "正在获取配额…",
         "quota_unavailable": "配额不可用",
-        "quota_empty_groups": "未返回配额信息。"
+        "quota_empty_groups": "未返回配额信息。",
+        "theme_settings": "界面主题设置",
+        "theme_select_label": "选择界面配色方案：",
+        "theme_dark": "暗夜黑 (Dark)",
+        "theme_dark_desc": "默认暗色主题，低对比度护眼，紫色与青色高光",
+        "theme_labra": "赛博朋克墨绿 (Labra)",
+        "theme_labra_desc": "来自 omarchy-labra 的极简墨绿配洋红粉高光",
+        "theme_light": "清新浅白 (Light)",
+        "theme_light_desc": "优雅明亮主题，适合日间采光与高清晰度阅读"
       },
       "en": {
         "workspaces": "Workspaces",
@@ -1628,7 +1768,15 @@
         "quota_resets_d": "resets in {d}d",
         "quota_fetching": "Fetching…",
         "quota_unavailable": "Quota unavailable",
-        "quota_empty_groups": "No quota groups returned."
+        "quota_empty_groups": "No quota groups returned.",
+        "theme_settings": "Theme Settings",
+        "theme_select_label": "Select interface color scheme:",
+        "theme_dark": "Dark Night (Dark)",
+        "theme_dark_desc": "Default dark theme with balanced contrast, violet & teal accents",
+        "theme_labra": "Cyberpunk Olive (Labra)",
+        "theme_labra_desc": "Minimalist deep green-black background with vibrant hot pink highlights",
+        "theme_light": "Fresh Light (Light)",
+        "theme_light_desc": "Clean and bright theme for daylight and high-contrast reading"
       }
     };
 
@@ -1988,12 +2136,91 @@
     }
     applyTheme(currentTheme);
 
-    if (themeBtn) {
-      themeBtn.addEventListener("click", () => {
-        const idx = THEMES.indexOf(currentTheme);
-        const next = THEMES[(idx + 1) % THEMES.length];
-        applyTheme(next);
+    /** Theme Switcher Modal matching Language Settings popup design */
+    function openThemeModal() {
+      const themes = [
+        {
+          key: "dark",
+          title: t("theme_dark"),
+          desc: t("theme_dark_desc"),
+          swatches: ["#0b0f17", "#1e293b", "#5eead4", "#a798d7"],
+        },
+        {
+          key: "labra",
+          title: t("theme_labra"),
+          desc: t("theme_labra_desc"),
+          swatches: ["#040704", "#151915", "#e33d84", "#89974a"],
+        },
+        {
+          key: "light",
+          title: t("theme_light"),
+          desc: t("theme_light_desc"),
+          swatches: ["#f8fafc", "#ffffff", "#0284c7", "#7459b4"],
+        },
+      ];
+
+      const renderBody = () => {
+        let rows = themes.map(th => `
+          <div class="theme-item-card ${currentTheme === th.key ? 'active' : ''}" data-theme="${th.key}">
+            <div class="theme-card-left">
+              <div class="theme-card-title">${escapeHtml(th.title)}</div>
+              <div class="theme-card-desc">${escapeHtml(th.desc)}</div>
+            </div>
+            <div class="theme-card-right">
+              <div class="theme-swatches">
+                ${th.swatches.map(c => `<span class="theme-swatch" style="background:${c};"></span>`).join("")}
+              </div>
+              <span class="theme-check" style="color:#38bdf8; font-weight:700; width:16px; text-align:center;">
+                ${currentTheme === th.key ? "✓" : ""}
+              </span>
+            </div>
+          </div>
+        `).join("");
+
+        return `
+          <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px; font-weight:600;">
+            ${escapeHtml(t("theme_select_label"))}
+          </div>
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            ${rows}
+          </div>
+        `;
+      };
+
+      openModal({
+        title: t("theme_settings"),
+        bodyHtml: renderBody(),
+        hideFooter: true,
+        width: "480px",
+        onOpen: (modalEl, closeFn) => {
+          modalEl.querySelectorAll(".theme-item-card").forEach(card => {
+            card.addEventListener("click", () => {
+              const selected = card.dataset.theme;
+              applyTheme(selected);
+              modalEl.querySelectorAll(".theme-item-card").forEach(c => {
+                const isActive = c.dataset.theme === selected;
+                c.classList.toggle("active", isActive);
+                const checkEl = c.querySelector(".theme-check");
+                if (checkEl) checkEl.textContent = isActive ? "✓" : "";
+              });
+              setTimeout(closeFn, 180);
+            });
+          });
+        }
       });
+    }
+
+    if (themeBtn) {
+      themeBtn.addEventListener("click", openThemeModal);
+    }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const queryTheme = urlParams.get("theme");
+    if (queryTheme) {
+      applyTheme(queryTheme);
+    }
+    if (urlParams.get("test_theme_modal")) {
+      setTimeout(openThemeModal, 250);
     }
 
     if (langBtn) {

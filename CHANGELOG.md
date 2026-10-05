@@ -43,6 +43,21 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.34] - 2026-10-05
+
+### New Features
+
+- **Frosted Glass Theme Settings Modal (Web UI)**:
+  - Upgraded theme selection in Web UI to a centered frosted-glass Theme Settings modal dialog matching the Language Settings modal architecture.
+  - Displays each palette (`Dark`, `Labra`, `Light`) with 4-color swatch preview pills, clear descriptive subtitles, and active checkmarks with instant zero-refresh switching and `localStorage` persistence.
+
+### Fixed
+
+- **Comprehensive Light Theme Visual Overhaul (Web UI)**:
+  - Eliminated jarring black/white contrast tears where tool execution cards, prompt input wrappers, dropdown selectors, and action buttons remained pitch black in light mode.
+  - Abstracted all hardcoded component colors into theme-aware CSS variables (`--card-bg`, `--card-header-bg`, `--tool-body-bg`, `--input-bg`, `--select-bg`, `--dropdown-bg`, `--thinking-bg`, `--btn-send`, `--btn-send-text`).
+  - Redesigned Light mode into an elegant, high-contrast palette inspired by modern GitHub/Linear themes: soft daylight gray-white background (`#f8fafc`), pure white cards with soft shadow elevation, deep slate text (`#0f172a`), and crystal blue send buttons (`#0284c7`).
+
 ## [0.3.33] - 2026-10-05
 
 ### Fixed
