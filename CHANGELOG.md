@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.41] - 2026-10-05
+
+### Changed
+
+- **Web UI Prompt Input Minimalist Placeholder & Design Discipline**:
+  - Eliminated bloated shortcut instructions from the main textarea placeholder, streamlining it from `Ask pig a question or paste images... (Enter to send, Shift+Enter for new line)` to concise `Ask pig a question` (English) and `向 pig 提问...` (Chinese).
+  - Codified the UI Placeholder Minimalist Convention in `CLAUDE.md`: strictly prohibiting dumping functional instructions and keybindings into primary interactive controls to maintain a clean, distraction-free aesthetic.
+
 ## [0.3.40] - 2026-10-05
 
 ### Fixed
