@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.35] - 2026-10-05
+
+### Added
+
+- **100% Upstream Theme Tokens Parity (56/56 Tokens)**:
+  - Augmented built-in palettes (`DARK`, `LIGHT`, and `LABRA`) with all 7 remaining theme tokens: `scrollbarTrack`, `scrollbarThumb`, `searchMatchBg`, `searchMatchText`, `syntaxOperator`, `syntaxPunctuation`, and `thinkingMax`.
+  - Verified 100% byte-for-byte hex color parity with upstream `@earendil-works/pi-coding-agent`'s `getResolvedThemeColors("dark")` and `getResolvedThemeColors("light")` with 0 diffs.
+  - Expanded `PaletteTest::NAMES` to validate all 56 color tokens across all built-in themes.
+
 ## [0.3.34] - 2026-10-05
 
 ### New Features

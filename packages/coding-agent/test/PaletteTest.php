@@ -198,16 +198,16 @@ final class PaletteTest extends TestCase
     private const array NAMES = [
         'accent', 'border', 'borderAccent', 'borderMuted', 'success', 'error', 'warning',
         'muted', 'dim', 'text', 'thinkingText',
-        'selectedBg', 'userMessageBg', 'userMessageText', 'customMessageBg',
-        'customMessageText', 'customMessageLabel', 'toolPendingBg', 'toolSuccessBg',
+        'selectedBg', 'searchMatchBg', 'searchMatchText', 'userMessageBg', 'userMessageText', 'customMessageBg',
+        'customMessageText', 'customMessageLabel', 'scrollbarTrack', 'scrollbarThumb', 'toolPendingBg', 'toolSuccessBg',
         'toolErrorBg', 'toolTitle', 'toolOutput',
         'mdHeading', 'mdLink', 'mdLinkUrl', 'mdCode', 'mdCodeBlock', 'mdCodeBlockBorder',
         'mdQuote', 'mdQuoteBorder', 'mdHr', 'mdListBullet',
         'toolDiffAdded', 'toolDiffRemoved', 'toolDiffContext',
         'syntaxComment', 'syntaxKeyword', 'syntaxFunction', 'syntaxVariable',
-        'syntaxString', 'syntaxNumber', 'syntaxType',
+        'syntaxString', 'syntaxNumber', 'syntaxType', 'syntaxOperator', 'syntaxPunctuation',
         'thinkingOff', 'thinkingMinimal', 'thinkingLow', 'thinkingMedium', 'thinkingHigh',
-        'thinkingXhigh', 'bashMode',
+        'thinkingXhigh', 'thinkingMax', 'bashMode',
     ];
 
     // ---- what the environment says the terminal can do ------------------------------
