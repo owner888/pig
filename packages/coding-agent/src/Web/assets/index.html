@@ -429,6 +429,87 @@
     }
     .toggle-sidebar-btn:hover { color: var(--text); border-color: #475569; }
 
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header-btn {
+      width: auto;
+      padding: 0 10px;
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .desktop-only-btn {
+      display: inline-flex;
+    }
+    .mobile-only-btn {
+      display: none;
+    }
+
+    /* More Options dropdown (Mobile overflow menu) */
+    .more-menu-wrapper {
+      position: relative;
+    }
+    .more-btn {
+      width: 32px;
+      height: 32px;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      padding-bottom: 3px;
+    }
+    .more-dropdown {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      min-width: 196px;
+      background: var(--bg-sidebar);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+      padding: 5px;
+      z-index: 1100;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      animation: modalFadeIn 0.12s ease-out;
+    }
+    [data-theme="light"] .more-dropdown {
+      background: #ffffff;
+      border-color: #cbd5e1;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.12);
+    }
+    .more-dropdown-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      color: var(--text);
+      transition: background 0.1s ease;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .more-dropdown-item:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+    [data-theme="light"] .more-dropdown-item:hover {
+      background: #f1f5f9;
+      color: #0284c7;
+    }
+    .more-item-icon {
+      font-size: 15px;
+      width: 18px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
     /* New Session Button in Sidebar */
     .new-session-btn {
       width: 100%;
@@ -1387,17 +1468,23 @@
       .top-header {
         padding: 8px 12px;
       }
+      .desktop-only-btn {
+        display: none !important;
+      }
+      .mobile-only-btn {
+        display: inline-flex !important;
+      }
       .path-cwd {
         font-size: 12px;
       }
       .path-title {
         font-size: 12px;
-        max-width: calc(100vw - 140px);
+        max-width: calc(100vw - 90px);
       }
       .session-file-badge {
         font-size: 10px;
         padding: 1px 5px;
-        max-width: calc(100vw - 120px);
+        max-width: calc(100vw - 90px);
       }
       .path-file {
         font-size: 11px;
@@ -1546,10 +1633,29 @@
           <span class="copy-icon" data-i18n-attr="title:copy">📋</span>
         </div>
       </div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <button id="theme-btn" class="toggle-sidebar-btn" title="切换主题 / Switch Theme" style="width:auto; padding:0 8px; font-size:12px; font-weight:600;">🎨 Dark</button>
-        <button id="lang-btn" class="toggle-sidebar-btn" title="切换语言 / Switch Language" style="width:auto; padding:0 8px; font-size:12px; font-weight:600;">中 / EN</button>
-        <button id="accounts-btn" class="toggle-sidebar-btn" data-i18n="accounts" data-i18n-attr="title:accounts" style="width:auto; padding:0 10px; font-size:12px;">Accounts</button>
+      <div class="header-actions">
+        <button id="theme-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" title="切换主题 / Switch Theme">🎨 Dark</button>
+        <button id="lang-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" title="切换语言 / Switch Language">中 / EN</button>
+        <button id="accounts-btn" class="toggle-sidebar-btn header-btn desktop-only-btn" data-i18n="accounts" data-i18n-attr="title:accounts">Accounts</button>
+
+        <div class="more-menu-wrapper mobile-only-btn">
+          <button id="more-menu-btn" class="toggle-sidebar-btn more-btn" data-i18n-attr="title:more_options" title="更多设置 / More Options">⋯</button>
+          <div id="more-menu-dropdown" class="more-dropdown" style="display:none;">
+            <div class="more-dropdown-item" id="more-theme-btn">
+              <span class="more-item-icon">🎨</span>
+              <span class="more-item-text" data-i18n="theme_settings">Theme</span>
+            </div>
+            <div class="more-dropdown-item" id="more-lang-btn">
+              <span class="more-item-icon">🌐</span>
+              <span class="more-item-text" data-i18n="lang_settings_title">Language</span>
+            </div>
+            <div class="more-dropdown-item" id="more-accounts-btn">
+              <span class="more-item-icon">🔑</span>
+              <span class="more-item-text" data-i18n="accounts_title">Accounts</span>
+            </div>
+          </div>
+        </div>
+
         <button id="toggle-sidebar" class="toggle-sidebar-btn" data-i18n-attr="title:toggle_sidebar">‹</button>
       </div>
     </div>
@@ -1612,6 +1718,7 @@
         "sessions": "历史会话",
         "new_session": "+ 新建会话",
         "new_session_title": "创建新会话",
+        "more_options": "更多操作",
         "back_workspaces": "‹ 返回工作区",
         "sessions_count": "{count} 个会话",
         "loading_folders": "正在加载工作区...",
@@ -1739,6 +1846,7 @@
         "sessions": "Sessions",
         "new_session": "+ New Session",
         "new_session_title": "Create a new session",
+        "more_options": "More options",
         "back_workspaces": "‹ Workspaces",
         "sessions_count": "{count} sessions",
         "loading_folders": "Loading workspaces...",
@@ -4066,6 +4174,58 @@
 
     accountsBtn.addEventListener("click", openAccounts);
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && accountsModal) closeAccounts(); });
+
+    // Mobile More Menu dropdown handling
+    const moreMenuBtn = document.getElementById("more-menu-btn");
+    const moreMenuDropdown = document.getElementById("more-menu-dropdown");
+    const moreThemeBtn = document.getElementById("more-theme-btn");
+    const moreLangBtn = document.getElementById("more-lang-btn");
+    const moreAccountsBtn = document.getElementById("more-accounts-btn");
+
+    function toggleMoreMenu(show) {
+      if (!moreMenuDropdown) return;
+      const willShow = (typeof show === "boolean") ? show : (moreMenuDropdown.style.display === "none");
+      moreMenuDropdown.style.display = willShow ? "flex" : "none";
+    }
+
+    if (moreMenuBtn) {
+      moreMenuBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleMoreMenu();
+      });
+    }
+
+    if (moreThemeBtn) {
+      moreThemeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleMoreMenu(false);
+        openThemeModal();
+      });
+    }
+
+    if (moreLangBtn) {
+      moreLangBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleMoreMenu(false);
+        openLangModal();
+      });
+    }
+
+    if (moreAccountsBtn) {
+      moreAccountsBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleMoreMenu(false);
+        openAccounts();
+      });
+    }
+
+    document.addEventListener("click", (e) => {
+      if (moreMenuDropdown && moreMenuDropdown.style.display !== "none") {
+        if (!moreMenuDropdown.contains(e.target) && e.target !== moreMenuBtn) {
+          toggleMoreMenu(false);
+        }
+      }
+    });
 
     // ---- session tabs -------------------------------------------------------------------
     //

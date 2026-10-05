@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.39] - 2026-10-05
+
+### Added
+
+- **Web UI Mobile Responsive "More Options" Overflow Menu**:
+  - Solved top-header layout congestion on mobile screens where packing 4 wide buttons (`Theme`, `Language`, `Accounts`, `Toggle Sidebar`) caused button text wrapping, vertical collisions, and severely squished the session title and badge.
+  - **Responsive Overflow System**:
+    - **Mobile Viewport (<= 768px)**: Seamlessly collapsed secondary actions into an elegant `⋯` ("More options") pill button, leaving only `[ ⋯ ]` and `[ ‹ ]` on the right and reclaiming 170px+ of horizontal space for directory and session title displays.
+    - **Desktop Viewport (> 768px)**: Retained direct desktop header action buttons for quick one-click access.
+  - **Frosted Dropdown Interaction**: Clicking `⋯` opens a native-feeling floating action menu with icons (`🎨 Theme`, `🌐 Language`, `🔑 Accounts`), featuring single-line non-wrapping text, outside-click auto-close, and seamless integration with existing modal dialogs.
+
 ## [0.3.38] - 2026-10-05
 
 ### Changed
