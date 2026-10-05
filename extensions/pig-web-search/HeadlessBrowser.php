@@ -590,25 +590,40 @@ final class HeadlessBrowser
     private static function remove(string $path): void
     {
         if (is_dir($path) && !is_link($path)) {
-            for ($attempt = 0; $attempt < 10; $attempt++) {
-                foreach (scandir($path) ?: [] as $entry) {
-                    if ($entry !== '.' && $entry !== '..') {
-                        self::remove($path . '/' . $entry);
+            // A browser that has just been told to quit is still writing into its profile for
+            // a moment: scandir() and rmdir() both warn on a directory that changes under
+            // them. The retry loop is the answer to that, not the warning, so the handler
+            // covers the whole attempt.
+            set_error_handler(static fn (): bool => true);
+            try {
+                for ($attempt = 0; $attempt < 10; $attempt++) {
+                    foreach (scandir($path) ?: [] as $entry) {
+                        if ($entry !== '.' && $entry !== '..') {
+                            self::remove($path . '/' . $entry);
+                        }
                     }
-                }
 
-                if (@rmdir($path) || !is_dir($path)) {
-                    return;
-                }
+                    if (rmdir($path) || !is_dir($path)) {
+                        return;
+                    }
 
-                usleep(20000);
+                    usleep(20000);
+                }
+            } finally {
+                restore_error_handler();
             }
 
             return;
         }
 
         if (file_exists($path) || is_link($path)) {
-            @unlink($path);
+            // Best-effort cleanup of a profile directory the browser may still be touching.
+            set_error_handler(static fn (): bool => true);
+            try {
+                unlink($path);
+            } finally {
+                restore_error_handler();
+            }
         }
     }
 }

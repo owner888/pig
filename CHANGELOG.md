@@ -43,6 +43,18 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.55] - 2026-10-05
+
+### Added
+
+- **`test/lint.php` sweeps closures for uncaptured variables** (`uncapturedClosureReads()`): a variable read inside a closure body that is not a parameter, not in its `use` list, not `$this` (for a non-static closure), not a superglobal and not assigned in the body is reported with its line. This is the class of bug behind `Undefined variable $pi` in an extension handler — `php -l` cannot see it; PHP's own tokens can. Zero hits across 618 files; putting the bug back turns it red.
+- **`lint.php` takes extra directories as arguments** (`php test/lint.php ~/.pig/agent/extensions`), and now sweeps the repository's `extensions/` by default.
+
+### Fixed
+
+- Three `@` error suppressions that had survived in `extensions/` because that directory was never linted (`pig-computer` health probe, `pig-web-search` profile cleanup) and one new in this session (`HttpServer` tab completion) — each replaced with a scoped error handler or a precondition check.
+- `HeadlessBrowser::remove()` now covers `scandir()` as well as `rmdir()` with its handler: a browser still writing into its profile warned from the first and only the second was guarded.
+
 ## [0.3.54] - 2026-10-05
 
 ### Fixed

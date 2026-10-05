@@ -1131,8 +1131,8 @@ final class HttpServer
             }
 
             $realSearchDir = realpath($searchDir);
-            if ($realSearchDir !== false && is_dir($realSearchDir)) {
-                $entries = @scandir($realSearchDir) ?: [];
+            if ($realSearchDir !== false && is_dir($realSearchDir) && is_readable($realSearchDir)) {
+                $entries = scandir($realSearchDir) ?: [];
                 foreach ($entries as $entry) {
                     if ($entry === '.' || $entry === '..') {
                         continue;

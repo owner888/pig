@@ -148,7 +148,14 @@ return static function (ExtensionApi $pi): void {
         handler: static function (string $args, $ctx) use ($browserEndpoint, $pi): void {
             $cmd = trim($args);
             if ($cmd === 'status' || $cmd === '') {
-                $status = @file_get_contents("{$browserEndpoint}/health");
+                // A service that is down warns as well as answering false; the warning
+                // would land in the transcript, and false is the whole answer.
+                set_error_handler(static fn (): bool => true);
+                try {
+                    $status = file_get_contents("{$browserEndpoint}/health");
+                } finally {
+                    restore_error_handler();
+                }
                 if ($status === false) {
                     $pi->sendMessage("❌ Browser service unavailable at {$browserEndpoint}. Start it with: docker compose -f docker/browser/docker-compose.yml up -d");
                     return;

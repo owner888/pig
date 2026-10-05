@@ -2970,6 +2970,37 @@ skipped, because an inherited or magic property cannot be seen from one file. Ov
 found this one site and nothing else, costs nothing measurable beside the per-file `php -l`, and
 putting the typo back turns it red.
 
+### A closure read `$pi` it never captured, and the warning was swallowed by its own `catch`
+
+Reported as `PHP Warning: Undefined variable $pi in …/smart-session.php on line 486`. Every
+extension handler is `static function (…) use (…)` — the shape `/reload` requires — and `$pi`
+exists only in the file's outermost closure, so a handler that reads it without `use ($pi)` is
+reading nothing. Two sites: `session_start` read `$pi->getSessionName()` (null, so the default
+branch ran and nobody noticed) and the auto-namer called `$pi->setSessionName($title)` inside a
+`catch (Throwable) { /* Silent fallback */ }` — **so the warning printed and the title was never
+set**, which is a feature failing on the exact line that made it worth having. Both are `$ctx->…`
+now; `HookContext` had the two methods for precisely this.
+
+**`uncapturedClosureReads()` in `test/lint.php` is the sweep**, one token over again from the
+property check: for every closure, a variable read in its body that is not a parameter, not in its
+`use` list, not `$this` (unless the closure is `static`), not a superglobal, and not assigned
+anywhere in that body is reported with its line. "Assigned" is `=` and the compound operators,
+`foreach … as`, destructuring, `catch (T $e)`, `static`/`global`, a `use (&$x)` on a nested closure
+(by-ref capture springs into existence as null), and **a variable whose first appearance is as a
+call argument** — `preg_match($re, $s, $m)` and `exec($cmd, $out, $code)` assign through a
+reference and nothing outside the callee says so. That last rule is the deliberate blind spot: a
+plain `f($undefined)` is not flagged. Arrow functions are skipped (they capture the enclosing
+scope); nested closures are each checked in their own scope.
+
+Over 618 files it found the one site and nothing else — after three rounds of false positives
+that were each a syntax shape the first version did not know: `catch (\Fully\Qualified $e)`
+tokenizes as `T_NAME_FULLY_QUALIFIED` and not `T_STRING`, `foreach ($rows as [$s, $e])` puts the
+targets inside brackets, and a nested `use (&$acc)` is an assignment and not a read. Putting the
+`$pi` back turns it red on line 486. **`lint.php` now also takes directories on the command line**
+— `php test/lint.php ~/.pig/agent/extensions` — because the extensions a person wrote load into the
+same process and fail the same ways, and `extensions/` in the repository is swept by default; it
+was not before, which is how three `@` suppressions had survived in it.
+
 
 
 Reported as *"任务还没完成，但是总是偶发触发系统通知"* — the desktop notification extension firing
