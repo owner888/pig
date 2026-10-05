@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.50] - 2026-10-05
+
+### Fixed
+
+- **Command Key Long-Press HUD Conflict with macOS Screenshots (Blink Shell / iPadOS Solo-Modifier Standard)**:
+  - Fixed an issue where taking a screenshot on macOS (`Shift + Command + 4`) prematurely triggered the Shortcuts HUD, blocking the screen capture area.
+  - **Strict Solo-Modifier Validation**:
+    - Enforced `!e.shiftKey && !e.altKey && !e.ctrlKey` on `Meta` keydown; if Shift is already pressed (typical screenshot posture), the HUD timer is never started.
+  - **Threshold Adjustment**: Increased the hold duration threshold from an aggressive 450ms to the industry-standard 850ms, safely bypassing the human keystroke hesitation window.
+  - **Combination Abort & System Blur Guard**: Any subsequent keypress immediately marks the sequence as a combo and cancels the HUD timer, and window blur (when `screencapture` takes system focus) unconditionally closes the modal.
+
 ## [0.3.49] - 2026-10-05
 
 ### Added

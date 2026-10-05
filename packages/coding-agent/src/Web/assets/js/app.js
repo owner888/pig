@@ -471,15 +471,16 @@ import { WebTerminal } from "./components/WebTerminal.js";
       // Note: Shift+Enter naturally inserts a newline into the textarea!
     });
 
-    // Command key long-press HUD (Blink Shell / iPadOS style)
+    // Command key long-press HUD (Blink Shell / iPadOS strict solo-modifier style)
     let commandHudTimer = null;
     let isCommandHudOpen = false;
+    let metaIsCombo = false;
     const commandHudModal = document.getElementById("command-hud-modal");
 
     function showCommandHud() {
-      if (isCommandHudOpen) return;
+      if (isCommandHudOpen || metaIsCombo) return;
       isCommandHudOpen = true;
-      commandHudModal.style.display = "flex";
+      if (commandHudModal) commandHudModal.style.display = "flex";
     }
 
     function hideCommandHud() {
@@ -489,30 +490,45 @@ import { WebTerminal } from "./components/WebTerminal.js";
       }
       if (isCommandHudOpen) {
         isCommandHudOpen = false;
-        commandHudModal.style.display = "none";
+        if (commandHudModal) commandHudModal.style.display = "none";
       }
     }
 
-    window.addEventListener("keydown", (e) => {
+    document.addEventListener("keydown", (e) => {
       if (e.key === "Meta") {
+        // Strict Solo-Modifier check: if Shift, Alt, or Ctrl is pressed simultaneously
+        // (such as macOS Shift+Cmd+4 screenshot shortcut), abort immediately!
+        if (e.shiftKey || e.altKey || e.ctrlKey) {
+          metaIsCombo = true;
+          hideCommandHud();
+          return;
+        }
+
         if (!commandHudTimer && !isCommandHudOpen) {
+          metaIsCombo = false;
+          // 850ms threshold matching iPadOS/Blink standards to eliminate hesitation false-positives
           commandHudTimer = setTimeout(() => {
             showCommandHud();
-          }, 450);
+          }, 850);
         }
       } else {
-        // Any other key press immediately hides the HUD
+        // Any subsequent keypress immediately marks this Command press as a combo and cancels HUD
+        metaIsCombo = true;
         hideCommandHud();
       }
     });
 
-    window.addEventListener("keyup", (e) => {
+    document.addEventListener("keyup", (e) => {
       if (e.key === "Meta") {
+        metaIsCombo = false;
         hideCommandHud();
       }
     });
 
     window.addEventListener("blur", () => {
+      metaIsCombo = false;
+      hideCommandHud();
+    });
       hideCommandHud();
     });
 
