@@ -621,11 +621,92 @@
     .account-meta { color: var(--text-dim); font-size: 11px; font-family: var(--font-mono); white-space: nowrap; }
     .account-meta.expired { color: #f87171; }
     .mini-btn {
-      background: #182232; border: 1px solid var(--border); color: var(--text-muted);
-      border-radius: 5px; padding: 3px 9px; font-size: 11px; cursor: pointer;
+      background: var(--input-bg, #1e293b);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1.2;
     }
-    .mini-btn:hover { color: var(--text); border-color: #334155; }
-    .mini-btn.danger:hover { color: #f87171; border-color: rgba(248,113,113,0.5); }
+    .mini-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+    .mini-btn.danger {
+      color: #f87171;
+      border-color: rgba(248, 113, 113, 0.3);
+    }
+    .mini-btn.danger:hover {
+      background: rgba(248, 113, 113, 0.15);
+      color: #fca5a5;
+      border-color: rgba(248, 113, 113, 0.6);
+    }
+
+    /* Light Theme Button Override */
+    [data-theme="light"] .mini-btn {
+      background: #f1f5f9;
+      border-color: #cbd5e1;
+      color: #334155;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+    [data-theme="light"] .mini-btn:hover {
+      background: #e2e8f0;
+      border-color: #94a3b8;
+      color: #0f172a;
+    }
+    [data-theme="light"] .mini-btn.danger {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: #ef4444;
+    }
+    [data-theme="light"] .mini-btn.danger:hover {
+      background: #fee2e2;
+      border-color: #f87171;
+      color: #dc2626;
+    }
+    [data-theme="light"] .account-row {
+      background: #f8fafc;
+      border-color: #e2e8f0;
+    }
+    [data-theme="light"] .account-row:hover {
+      background: #f1f5f9;
+    }
+    [data-theme="light"] .account-row.active {
+      border-color: #0284c7;
+      background: #f0f9ff;
+    }
+    [data-theme="light"] .account-row.active .account-dot {
+      background: #0284c7;
+    }
+
+    /* Labra Theme Button Override */
+    [data-theme="labra"] .mini-btn {
+      background: #0d140d;
+      border-color: #344422;
+      color: #d3d7b5;
+    }
+    [data-theme="labra"] .mini-btn:hover {
+      background: #182518;
+      border-color: #e33d84;
+      color: #e33d84;
+    }
+    [data-theme="labra"] .mini-btn.danger {
+      color: #e33d84;
+      border-color: rgba(227, 61, 132, 0.3);
+    }
+    [data-theme="labra"] .mini-btn.danger:hover {
+      background: rgba(227, 61, 132, 0.15);
+      border-color: #e33d84;
+      color: #ff65a5;
+    }
     .quota-group { margin-bottom: 16px; }
     .quota-group-name { font-size: 12px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; padding-left: 2px; }
     .quota-card { background: var(--card-bg, #111a28); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
@@ -635,7 +716,7 @@
     .quota-item-title { font-size: 13px; font-weight: 600; color: var(--text); }
     .quota-pct { font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--text-muted); }
     .quota-bar { width: 100%; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 999px; overflow: hidden; }
-    body.theme-light .quota-bar { background: #e2e8f0; }
+    [data-theme="light"] .quota-bar { background: #e2e8f0; }
     .quota-bar > div { height: 100%; background: #0284c7; border-radius: 999px; transition: width 0.3s ease; }
     .quota-bar.low > div { background: #f59e0b; }
     .quota-bar.empty > div { background: #ef4444; }

@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.37] - 2026-10-05
+
+### Fixed
+
+- **Web UI Light & Labra Theme Button Contrast & Legibility**:
+  - Fixed hardcoded `#182232` dark background on `.mini-btn`, which caused `Rotate`, `Refresh`, `Remove`, and dialog action buttons to appear as pitch-black illegible blocks in Light theme.
+  - Aligned theme overrides with `[data-theme="light"]` and `[data-theme="labra"]` selectors:
+    - **Light Theme**: Transformed buttons to modern soft-gray pills (`#f1f5f9` bg, `#cbd5e1` border, `#334155` text) with clear contrast and subtle elevation; dangerous actions (`Remove`) styled with soft-rose background and crimson text.
+    - **Labra Theme**: Seamlessly integrated with deep cyberpunk olive and hot-pink hover states.
+
 ## [0.3.36] - 2026-10-05
 
 ### Changed
