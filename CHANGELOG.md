@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.54] - 2026-10-05
+
+### Fixed
+
+- **"Cannot reach pig: the conversation: limit is not defined"** when opening any session containing a ranged `read` (`offset`/`limit`). `ToolCard` built the `read a.php:10-39` title with `Number(limit)` instead of `Number(args.limit)` — a free variable that parsed fine and threw on first use, taking the whole conversation replay down with it.
+- **Regression guard**: `WebModeTest::testToolCardRendersEveryToolItKnowsWithoutThrowing` runs `ToolCard` and `ThinkingBlock` under Node against a minimal DOM over 17 argument shapes a real session replays. `node --check` cannot see an undefined name; executing the component can — putting the typo back fails the test with the exact message the user saw.
+
 ## [0.3.53] - 2026-10-05
 
 ### Added

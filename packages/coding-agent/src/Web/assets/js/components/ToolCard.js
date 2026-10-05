@@ -64,7 +64,7 @@ export class ToolCard {
         let range = "";
         if (args.offset !== undefined || args.limit !== undefined) {
           const start = args.offset || 1;
-          const end = args.limit !== undefined ? `-${Number(start) + Number(limit) - 1}` : "";
+          const end = args.limit !== undefined ? `-${Number(start) + Number(args.limit) - 1}` : "";
           range = `:${start}${end}`;
         }
         return `read ${path}${range}`;

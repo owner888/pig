@@ -632,4 +632,80 @@ final class WebModeTest extends TestCase
             $this->assertSame(0, $code, basename($path) . " does not parse:\n" . implode("\n", $out));
         }
     }
+
+    /**
+     * `node --check` parses; it does not resolve names. `Number(limit)` for `Number(args.limit)`
+     * parsed fine and threw `limit is not defined` the moment a session with a ranged `read`
+     * was replayed — every tab opening that conversation showed "Cannot reach pig". So the
+     * components are *run*, against a minimal DOM, over the argument shapes a real session
+     * replays: `read` with and without a range, every tool the card knows, a bash card.
+     */
+    public function testToolCardRendersEveryToolItKnowsWithoutThrowing(): void
+    {
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the components');
+        }
+
+        $root = realpath(__DIR__ . '/../src/Web/assets/js');
+        $script = <<<'JS'
+        // Just enough DOM for the components to construct and render their HTML.
+        const els = [];
+        const mk = () => ({
+          className: "", id: "", dataset: {}, style: {}, innerHTML: "", textContent: "", title: "", open: false,
+          classList: { add() {}, remove() {}, toggle() { return false; }, contains() { return false; } },
+          children: [], appendChild(c) { this.children.push(c); return c; },
+          querySelector() { return mk(); }, querySelectorAll() { return []; },
+          addEventListener() {}, remove() {}, insertBefore(c) { this.children.unshift(c); return c; },
+          closest() { return null; },
+        });
+        globalThis.document = { createElement: () => { const e = mk(); els.push(e); return e; }, body: mk(), getElementById: () => mk() };
+        globalThis.window = globalThis; globalThis.localStorage = { getItem: () => null, setItem() {} };
+        Object.defineProperty(globalThis, "navigator", { value: { clipboard: { writeText: async () => {} } }, configurable: true });
+        globalThis.requestAnimationFrame = (f) => f();
+
+        const { ToolCard } = await import(process.argv[2] + "/components/ToolCard.js");
+        const { ThinkingBlock } = await import(process.argv[2] + "/components/ThinkingBlock.js");
+
+        const cases = [
+          ["read", { path: "a.php" }],
+          ["read", { path: "a.php", offset: 10 }],
+          ["read", { path: "a.php", limit: 30 }],
+          ["read", { path: "a.php", offset: 10, limit: 30 }],
+          ["bash", { command: "ls -la", timeout: 5 }],
+          ["edit", { path: "a.php", oldText: "a", newText: "b" }],
+          ["write", { path: "a.php", content: "x\ny" }],
+          ["grep", { pattern: "foo", path: "src" }],
+          ["find", { pattern: "*.php", path: "." }],
+          ["ls", { path: "." }],
+          ["web_search", { query: "pig" }],
+          ["fetch_web_page", { url: "https://x" }],
+          ["browse_web_page", { url: "https://x" }],
+          ["computer", { action: "click", coordinate: [1, 2], text: "hi" }],
+          ["generate_image", { prompt: "a pig" }],
+          ["some_unknown_tool", { a: 1 }],
+          ["read", {}],
+        ];
+        for (const [toolName, args] of cases) {
+          const c = new ToolCard({ toolCallId: "t", toolName, arguments: args });
+          c.updateProgress("partial");
+          c.finish({ result: { content: [{ type: "text", text: "done" }], details: { exitCode: 0 } }, isError: false });
+          c.finish({ result: "plain", isError: true });
+        }
+        const tb = new ThinkingBlock("x"); tb.appendDelta("y"); tb.finish();
+        console.log("rendered", cases.length, "tool cards");
+        JS;
+
+        $file = tempnam(sys_get_temp_dir(), 'pig-tc-') . '.mjs';
+        file_put_contents($file, $script);
+        try {
+            $out = [];
+            $code = 0;
+            exec(escapeshellarg($node) . ' ' . escapeshellarg($file) . ' ' . escapeshellarg($root) . ' 2>&1', $out, $code);
+            $this->assertSame(0, $code, "components threw while rendering:\n" . implode("\n", $out));
+            $this->assertStringContainsString('rendered 17 tool cards', implode("\n", $out));
+        } finally {
+            unlink($file);
+        }
+    }
 }
