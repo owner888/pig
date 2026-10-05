@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.40] - 2026-10-05
+
+### Fixed
+
+- **Web UI Mobile "More Options" Icon Pixel-Perfect Vertical Centering**:
+  - Replaced the baseline-sensitive Unicode `⋯` character and bottom padding with a native 16x16 vector SVG icon (`cy="8"` geometric center).
+  - Ensured mathematical and visual vertical/horizontal centering for the three dots across all device densities, system fonts, and zoom levels, aligning seamlessly with the adjacent sidebar toggle icon.
+
 ## [0.3.39] - 2026-10-05
 
 ### Added
