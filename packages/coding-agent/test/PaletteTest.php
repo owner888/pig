@@ -79,10 +79,12 @@ final class PaletteTest extends TestCase
         // other, which is the only way this can go wrong.
         $dark = Palette::dark(true);
         $light = Palette::light(true);
+        $labra = Palette::labra(true);
 
         foreach (self::NAMES as $name) {
             $this->assertSame('x', Ansi::strip($dark->fg($name, 'x')), "dark {$name}");
             $this->assertSame('x', Ansi::strip($light->fg($name, 'x')), "light {$name}");
+            $this->assertSame('x', Ansi::strip($labra->fg($name, 'x')), "labra {$name}");
         }
     }
 
@@ -125,8 +127,37 @@ final class PaletteTest extends TestCase
         $this->assertThrows(
             InvalidArgumentException::class,
             static fn () => Palette::named('solarized'),
-            'dark and light',
+            'dark, light, labra',
         );
+    }
+
+    public function testCustomThemesAreDiscoveredAndLoaded(): void
+    {
+        $tmp = sys_get_temp_dir() . '/pig-test-themes-' . bin2hex(random_bytes(6));
+        $themesDir = $tmp . '/.pig/themes';
+        mkdir($themesDir, 0777, true);
+
+        try {
+            file_put_contents($themesDir . '/nord.json', json_encode([
+                'name' => 'nord',
+                'vars' => ['accent' => '#88c0d0'],
+                'colors' => [
+                    'accent' => 'accent',
+                    'border' => '#81a1c1',
+                ],
+            ]));
+
+            $names = Palette::names($tmp);
+            $this->assertContains('nord', $names);
+
+            $palette = Palette::named('nord', true, $tmp);
+            $this->assertSame("\e[38;2;136;192;208mx\e[39m", $palette->fg('accent', 'x'));
+        } finally {
+            unlink($themesDir . '/nord.json');
+            rmdir($themesDir);
+            rmdir($tmp . '/.pig');
+            rmdir($tmp);
+        }
     }
 
     // ---- what it hands to pig/tui ----------------------------------------------------

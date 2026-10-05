@@ -192,6 +192,7 @@ Logger::timeEnd('benchmark');
 | `~/.pig/agent/mcp.json` | 标准 MCP 服务配置（stdio 与 HTTP）。 |
 | `~/.pig/agent/trust.json` | 项目资源信任授权记录。 |
 | `~/.pig/agent/keybindings.json` | 快捷键自定义映射表。 |
+| `~/.pig/agent/themes/` | 自定义主题 JSON 目录（内置 `dark`、`light`、`labra`，支持任意第三方主题）。 |
 | `~/.pig/agent/sessions/` | 遵循标准 `.jsonl` 格式的持久化会话树日志。 |
 
 ---

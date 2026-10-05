@@ -12,6 +12,35 @@ use PigWebSearch\HeadlessBrowser;
 
 final class WebSearchExtensionTest extends TestCase
 {
+    #[\Override]
+    protected function setUp(): void
+    {
+        parent::setUp();
+        self::cleanStaleChromeDirs();
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        self::cleanStaleChromeDirs();
+        parent::tearDown();
+    }
+
+    private static function cleanStaleChromeDirs(): void
+    {
+        foreach (glob(sys_get_temp_dir() . '/pig-chrome-*') ?: [] as $dir) {
+            if (is_dir($dir)) {
+                foreach (scandir($dir) ?: [] as $file) {
+                    if ($file !== '.' && $file !== '..') {
+                        $p = $dir . '/' . $file;
+                        is_dir($p) ? rmdir($p) : unlink($p);
+                    }
+                }
+                rmdir($dir);
+            }
+        }
+    }
+
     public function testExtensionLoadsAndRegistersToolsAndCommands(): void
     {
         $root = dirname(__DIR__, 4);

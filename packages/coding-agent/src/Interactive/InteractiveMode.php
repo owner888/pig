@@ -1641,7 +1641,7 @@ final class InteractiveMode
             'web' => $this->handleWebCommand(trim(substr($text, strlen($name) + 1))),
             'login' => $this->showSignIns('login'),
             'logout' => $this->showSignIns('logout'),
-            'theme' => $this->switchTheme(),
+            'theme' => $this->handleThemeCommand(trim(substr($text, strlen($name) + 1))),
             'settings' => $this->showSettings(),
             'changelog' => $this->showChangelog(),
             'reload' => $this->reload(),
@@ -3677,9 +3677,70 @@ final class InteractiveMode
         $this->tui->requestRender();
     }
 
+    private function handleThemeCommand(string $arg = ''): void
+    {
+        $names = Palette::names($this->cwd);
+
+        if ($arg !== '') {
+            if (in_array($arg, $names, true)) {
+                $this->useTheme($arg);
+                return;
+            }
+
+            $this->sayError("No theme called '{$arg}'. Available themes: " . implode(', ', $names) . '.');
+            return;
+        }
+
+        // Without arguments: cycle through available themes in order
+        $currentIndex = array_search($this->theme, $names, true);
+        $nextIndex = ($currentIndex !== false && $currentIndex + 1 < count($names)) ? $currentIndex + 1 : 0;
+        $this->useTheme($names[$nextIndex]);
+    }
+
+    private function showThemeSelector(): void
+    {
+        $names = Palette::names($this->cwd);
+        $items = [];
+        $selectedIndex = 0;
+
+        foreach ($names as $index => $name) {
+            $isCurrent = $name === $this->theme;
+            if ($isCurrent) {
+                $selectedIndex = $index;
+            }
+            $desc = match ($name) {
+                'dark' => 'Default dark theme (violet accent, balanced contrast)',
+                'light' => 'Clean light theme (violet accent for bright environments)',
+                'labra' => 'Cyberpunk dark olive & hot pink theme (from omarchy-labra)',
+                default => 'Custom theme',
+            };
+            $items[] = new SelectItem(
+                $name,
+                $name . ($isCurrent ? ' ·' : ''),
+                $desc,
+                $name,
+            );
+        }
+
+        $picker = new SelectList($items, 8, $this->palette->selectListTheme());
+        $picker->setSelectedIndex($selectedIndex);
+        $picker->setSelectHandler(function (SelectItem $item): void {
+            $this->closePicker();
+            $this->useTheme($item->value);
+        });
+        $picker->setCancelHandler($this->closePicker(...));
+
+        $this->overlay->clear();
+        $this->overlay->addChild(new Spacer(1));
+        $this->overlay->addChild(new Text($this->palette->fg('muted', 'Pick a theme — enter to switch, esc to cancel'), 1, 0));
+        $this->overlay->addChild($picker);
+        $this->tui->setFocus($picker);
+        $this->tui->requestRender();
+    }
+
     private function switchTheme(): void
     {
-        $this->useTheme($this->theme === 'dark' ? 'light' : 'dark');
+        $this->handleThemeCommand('');
     }
 
     /**
@@ -3705,7 +3766,7 @@ final class InteractiveMode
                 'Theme',
                 $this->theme,
                 'Already-drawn output keeps the colours it was drawn with.',
-                values: ['dark', 'light'],
+                values: Palette::names($this->cwd),
             ),
         ];
 

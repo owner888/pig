@@ -166,9 +166,9 @@ final class ToolExecutionTest extends TestCase
     {
         // The state has to be readable without reading anything, because that is what
         // someone scrolling past a hundred tool calls is doing.
-        $pendingBg = "\e[48;2;40;40;50m";
-        $successBg = "\e[48;2;40;50;40m";
-        $errorBg = "\e[48;2;60;40;40m";
+        $pendingBg = "\e[48;2;52;56;58m";
+        $successBg = "\e[48;2;37;65;49m";
+        $errorBg = "\e[48;2;91;40;42m";
 
         $tool = $this->tool('ls', ['path' => '.']);
         $this->assertStringContainsString($pendingBg, $this->raw($tool));
@@ -185,7 +185,7 @@ final class ToolExecutionTest extends TestCase
         $tool = $this->tool('bash', ['command' => 'sleep 1']);
         $tool->updateResult($this->said('halfway'), false, true);
 
-        $this->assertStringContainsString("\e[48;2;40;40;50m", $this->raw($tool));
+        $this->assertStringContainsString("\e[48;2;52;56;58m", $this->raw($tool));
     }
 
     // ---- the heading -------------------------------------------------------------------
@@ -337,7 +337,7 @@ final class ToolExecutionTest extends TestCase
         $tool->updateResult($this->said("<?php\nreturn 1;\n"));
 
         // dark's syntaxKeyword.
-        $this->assertStringContainsString("\e[38;2;86;156;214mreturn", $this->raw($tool));
+        $this->assertStringContainsString("\e[38;2;105;173;208mreturn", $this->raw($tool));
     }
 
     public function testAFileWithNoKnownLanguageIsShownPlain(): void
@@ -345,7 +345,7 @@ final class ToolExecutionTest extends TestCase
         $tool = $this->tool('read', ['path' => 'notes.txt']);
         $tool->updateResult($this->said("return 1;\n"));
 
-        $this->assertStringNotContainsString("\e[38;2;86;156;214m", $this->raw($tool));
+        $this->assertStringNotContainsString("\e[38;2;105;173;208m", $this->raw($tool));
         $this->assertStringContainsString('return 1;', $this->text($tool));
     }
 
@@ -830,7 +830,7 @@ final class ToolExecutionTest extends TestCase
         $tool = $this->custom(renderCall: static fn (): Component => new Text('mine', 0, 0));
         $tool->fail('it broke');
 
-        $this->assertStringContainsString("\e[48;2;60;40;40m", $this->raw($tool));
+        $this->assertStringContainsString("\e[48;2;91;40;42m", $this->raw($tool));
     }
 
     private function custom(
@@ -865,6 +865,6 @@ final class ToolExecutionTest extends TestCase
         $tool->fail('Operation aborted');
 
         $this->assertStringContainsString('Operation aborted', $this->text($tool));
-        $this->assertStringContainsString("\e[48;2;60;40;40m", $this->raw($tool));
+        $this->assertStringContainsString("\e[48;2;91;40;42m", $this->raw($tool));
     }
 }

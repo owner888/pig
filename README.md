@@ -192,6 +192,7 @@ Logger::timeEnd('benchmark');
 | `~/.pig/agent/mcp.json` | MCP server configurations (stdio & HTTP). |
 | `~/.pig/agent/trust.json` | Project resource authorization records. |
 | `~/.pig/agent/keybindings.json` | Custom keyboard shortcut mappings. |
+| `~/.pig/agent/themes/` | Custom JSON themes directory (built-in `dark`, `light`, `labra`, plus any user-defined theme). |
 | `~/.pig/agent/sessions/` | Saved session logs in standard `.jsonl` format. |
 
 ---

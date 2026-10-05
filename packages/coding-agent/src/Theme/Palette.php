@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Theme;
 use Closure;
 use InvalidArgumentException;
 use Pig\Agent\ThinkingLevel;
+use Pig\CodingAgent\Config;
 use Pig\Tui\Components\EditorTheme;
 use Pig\Tui\Components\MarkdownTheme;
 use Pig\Tui\Components\SelectListTheme;
@@ -68,21 +69,124 @@ final class Palette
         return new self(self::LIGHT, $truecolor ?? Colour::truecolor());
     }
 
-    /** @return list<string> */
-    public static function names(): array
+    public static function labra(?bool $truecolor = null): self
     {
-        return ['dark', 'light'];
+        return new self(self::LABRA, $truecolor ?? Colour::truecolor());
     }
 
-    public static function named(string $name, ?bool $truecolor = null): self
+    /** @return list<string> */
+    public static function names(?string $cwd = null): array
     {
+        $builtins = ['dark', 'light', 'labra'];
+        $customs = array_keys(self::customThemes($cwd));
+        $all = array_values(array_unique([...$builtins, ...$customs]));
+        sort($all);
+
+        // Put builtins first in standard order, then custom themes sorted
+        return array_values(array_unique(['dark', 'light', 'labra', ...$all]));
+    }
+
+    public static function named(string $name, ?bool $truecolor = null, ?string $cwd = null): self
+    {
+        $tc = $truecolor ?? Colour::truecolor();
+
         return match ($name) {
-            'dark' => self::dark($truecolor),
-            'light' => self::light($truecolor),
-            default => throw new InvalidArgumentException(
-                "No theme called '{$name}'. There is " . implode(' and ', self::names()) . '.',
-            ),
+            'dark' => self::dark($tc),
+            'light' => self::light($tc),
+            'labra' => self::labra($tc),
+            default => self::custom($name, $tc, $cwd),
         };
+    }
+
+    private static function custom(string $name, bool $truecolor, ?string $cwd = null): self
+    {
+        $customThemes = self::customThemes($cwd);
+
+        if (isset($customThemes[$name])) {
+            return new self($customThemes[$name], $truecolor);
+        }
+
+        throw new InvalidArgumentException(
+            "No theme called '{$name}'. Available themes: " . implode(', ', self::names($cwd)) . '.',
+        );
+    }
+
+    /**
+     * Scan user custom themes directories and project local themes directory.
+     *
+     * @return array<string, array{vars: array<string, string>, colors: array<string, string>}>
+     */
+    public static function customThemes(?string $cwd = null): array
+    {
+        $dirs = [
+            Config::home() . '/themes',
+            Config::piHome() . '/themes',
+        ];
+
+        if ($cwd !== null && $cwd !== '') {
+            $dirs[] = rtrim($cwd, '/') . '/.pig/themes';
+            $dirs[] = rtrim($cwd, '/') . '/.pi/themes';
+        }
+
+        $result = [];
+
+        foreach ($dirs as $dir) {
+            if (!is_dir($dir) || !is_readable($dir)) {
+                continue;
+            }
+
+            $entries = scandir($dir);
+            if ($entries === false) {
+                continue;
+            }
+
+            foreach ($entries as $file) {
+                if (!str_ends_with($file, '.json') || str_starts_with($file, '.')) {
+                    continue;
+                }
+
+                $path = $dir . '/' . $file;
+                if (!is_file($path) || !is_readable($path)) {
+                    continue;
+                }
+
+                $content = file_get_contents($path);
+                if ($content === false || $content === '') {
+                    continue;
+                }
+
+                $json = json_decode($content, true);
+                if (!is_array($json) || !isset($json['colors']) || !is_array($json['colors'])) {
+                    continue;
+                }
+
+                $themeName = is_string($json['name'] ?? null) && trim($json['name']) !== ''
+                    ? trim($json['name'])
+                    : substr($file, 0, -5);
+
+                if (str_contains($themeName, '/')) {
+                    continue;
+                }
+
+                if (isset($result[$themeName])) {
+                    continue;
+                }
+
+                $vars = is_array($json['vars'] ?? null) ? $json['vars'] : [];
+                $colors = is_array($json['colors'] ?? null) ? $json['colors'] : [];
+
+                // Fill missing colors from DARK theme defaults so custom themes with partial keys won't crash
+                $mergedColors = array_merge(self::DARK['colors'], $colors);
+                $mergedVars = array_merge(self::DARK['vars'], $vars);
+
+                $result[$themeName] = [
+                    'vars' => $mergedVars,
+                    'colors' => $mergedColors,
+                ];
+            }
+        }
+
+        return $result;
     }
 
     // ---- using it ------------------------------------------------------------------
@@ -379,6 +483,81 @@ final class Palette
             'thinkingXhigh' => '#e585cd',
 
             'bashMode' => '#40976c',
+        ],
+    ];
+
+    private const array LABRA = [
+        'vars' => [
+            'text' => '#d3d7b5',
+            'muted' => '#585d58',
+            'accent' => '#e33d84',
+            'pink' => '#fd5ea0',
+            'green' => '#8fa20a',
+            'darkGreen' => '#747f11',
+            'red' => '#ee585d',
+            'yellow' => '#d3dd2c',
+            'cyan' => '#89974a',
+            'magenta' => '#d54a8e',
+            'bg' => '#040704',
+            'darkerBg' => '#020402',
+            'surfaceBg' => '#1d201d',
+        ],
+        'colors' => [
+            'accent' => 'accent',
+            'border' => 'cyan',
+            'borderAccent' => 'pink',
+            'borderMuted' => 'muted',
+            'success' => 'green',
+            'error' => 'red',
+            'warning' => 'yellow',
+            'muted' => 'muted',
+            'dim' => '#3e4438',
+            'text' => '',
+            'thinkingText' => '#9ea188',
+
+            'selectedBg' => '#1d201d',
+            'userMessageBg' => '#141814',
+            'userMessageText' => '',
+            'customMessageBg' => '#1d201d',
+            'customMessageText' => '',
+            'customMessageLabel' => 'accent',
+            'toolPendingBg' => '#1d201d',
+            'toolSuccessBg' => '#0f1f0f',
+            'toolErrorBg' => '#2d0f14',
+            'toolTitle' => '',
+            'toolOutput' => 'muted',
+
+            'mdHeading' => 'yellow',
+            'mdLink' => 'pink',
+            'mdLinkUrl' => 'muted',
+            'mdCode' => 'accent',
+            'mdCodeBlock' => 'green',
+            'mdCodeBlockBorder' => 'muted',
+            'mdQuote' => 'muted',
+            'mdQuoteBorder' => 'cyan',
+            'mdHr' => 'muted',
+            'mdListBullet' => 'accent',
+
+            'toolDiffAdded' => 'green',
+            'toolDiffRemoved' => 'red',
+            'toolDiffContext' => 'muted',
+
+            'syntaxComment' => 'muted',
+            'syntaxKeyword' => 'accent',
+            'syntaxFunction' => 'yellow',
+            'syntaxVariable' => '#dee1c8',
+            'syntaxString' => 'green',
+            'syntaxNumber' => 'magenta',
+            'syntaxType' => 'cyan',
+
+            'thinkingOff' => 'muted',
+            'thinkingMinimal' => '#3e4438',
+            'thinkingLow' => 'darkGreen',
+            'thinkingMedium' => 'cyan',
+            'thinkingHigh' => 'magenta',
+            'thinkingXhigh' => 'accent',
+
+            'bashMode' => 'green',
         ],
     ];
 }

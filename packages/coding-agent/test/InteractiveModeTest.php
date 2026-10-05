@@ -677,6 +677,36 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString("\x1b[2K", $written, 'a differential update, not a fresh frame');
     }
 
+    public function testSwitchingToSpecificThemeLikeLabraWorksAndIsRemembered(): void
+    {
+        $this->start();
+        $this->settle();
+
+        $this->terminal->clearWrites();
+        $this->type('/theme labra');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $written = $this->terminal->output();
+        $this->assertStringContainsString('Theme: labra', Ansi::strip($written));
+        $this->assertSame('labra', $this->settings->theme());
+    }
+
+    public function testSwitchingToUnknownThemeReportsAvailableThemes(): void
+    {
+        $this->start();
+        $this->settle();
+
+        $this->terminal->clearWrites();
+        $this->type('/theme unknown-theme');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $written = $this->terminal->output();
+        $this->assertStringContainsString("No theme called 'unknown-theme'", Ansi::strip($written));
+        $this->assertStringContainsString('Available themes: dark, light, labra', Ansi::strip($written));
+    }
+
     public function testEveryKeyTheEditorAnswersToIsNamedSomewhere(): void
     {
         // `Editor` answers to all of these and pig named none of them: the application keys were

@@ -363,12 +363,17 @@ the queue of messages someone typed while the agent was working, the thinking le
 session has cost, persistence, compaction, tree navigation and the hook events. Each of the
 rest can arrive on its own when something needs it.
 
-`Theme\Palette` is upstream's `theme.ts` down to what it is for: the two built-in themes as
-tables, and the bridges that turn them into `pig/tui`'s `MarkdownTheme`, `EditorTheme` and
+`Theme\Palette` is upstream's `theme.ts` down to what it is for: three built-in themes as
+tables (`dark`, `light`, and `labra` — aligned with `HANCORE-linux/omarchy-labra-theme` cyberpunk dark olive & hot pink),
+and the bridges that turn them into `pig/tui`'s `MarkdownTheme`, `EditorTheme` and
 `SelectListTheme`. A component asks for `accent` or `toolOutput` and never for cyan, so an
 unknown name throws where the component is wired rather than rendering colourless later.
-Reading a theme from JSON, the custom-themes directory and the watcher that reloads one as
-it is edited are not ported; they arrive with a `/theme` command if that is ever wanted.
+**Custom themes from JSON are 100% aligned with upstream pi**: `Palette::customThemes()` automatically
+discovers user theme files from `~/.pig/agent/themes/*.json`, `~/.pi/agent/themes/*.json`, and
+`<cwd>/.pig/themes/*.json`. Missing color tokens inherit safely from `dark` defaults.
+The `/theme [name]` command cycles themes without arguments, accepts explicit names (`/theme labra`, `/theme dark`),
+and `/settings` dynamically reflects all installed themes. Web UI (`pig --mode web`) natively provides
+instant theme toggling (`Dark`, `Labra`, `Light`) with `localStorage` persistence.
 
 Audited against `theme.ts` difference by difference, and it is the one area so far where that
 found nothing to fix — worth recording, because "nothing was wrong" is only worth anything with

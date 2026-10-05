@@ -43,6 +43,25 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.31] - 2026-10-05
+
+### New Features
+
+- **Cyberpunk Dark Olive & Hot Pink Built-in Theme `labra`**:
+  - Added official built-in `labra` theme faithfully matching `HANCORE-linux/omarchy-labra-theme` color philosophy (deep green-black background `#040704`, linen white foreground `#d3d7b5`, hot pink accent `#e33d84`, and dark olive gold borders `#89974a`).
+- **100% Upstream Theme Parity & Custom JSON Theme Discovery**:
+  - `Palette::customThemes()` now automatically discovers custom theme JSON files from `~/.pig/agent/themes/*.json`, `~/.pi/agent/themes/*.json`, and `<cwd>/.pig/themes/*.json`.
+  - Parsed theme objects safely merge with default `dark` tokens so incomplete theme definitions will never crash the renderer.
+- **Web UI Instant Theme Toggling**:
+  - Added `🎨 Theme` button in Web UI header providing instant zero-refresh toggling across `Dark`, `Labra`, and `Light` palettes with `localStorage` persistence.
+
+### Added
+
+- **Enhanced `/theme [name]` Slash Command**:
+  - `/theme` without arguments cycles smoothly across all installed themes (`dark -> light -> labra -> ...`).
+  - `/theme <name>` directly switches to the specified theme, with clear validation and available theme suggestions on typos.
+  - `/settings` dynamically adapts its `Theme` row to cycle through all discovered themes.
+
 ## [0.3.30] - 2026-10-04
 
 ### Fixed
