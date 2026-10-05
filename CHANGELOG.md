@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.52] - 2026-10-05
+
+### Fixed
+
+- **Web UI stuck on "Loading session…" after v0.3.50**: a stray `});` left behind by the Command HUD edit made `app.js` fail to parse, so the module never ran and the page never bound to a session. Removed.
+- **Regression guard**: `WebModeTest::testEveryServedJsAssetParses` now runs `node --check` over every JS module under `Web/assets/js/`, so a syntax error in any served script fails the suite instead of shipping.
+
 ## [0.3.51] - 2026-10-05
 
 ### Fixed

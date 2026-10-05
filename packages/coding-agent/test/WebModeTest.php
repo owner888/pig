@@ -600,4 +600,36 @@ final class WebModeTest extends TestCase
             $server->stop();
         });
     }
+
+    /**
+     * Every JS module the page loads must parse. A stray brace from a botched edit shipped once
+     * and left the whole UI stuck on "Loading session…" — nothing in the PHP suite could see it,
+     * because the server happily serves a file whether or not a browser can execute it.
+     */
+    public function testEveryServedJsAssetParses(): void
+    {
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to parse the assets');
+        }
+
+        $root = realpath(__DIR__ . '/../src/Web/assets/js');
+        $this->assertNotFalse($root);
+
+        $files = [];
+        $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root));
+        foreach ($it as $file) {
+            if ($file->isFile() && $file->getExtension() === 'js') {
+                $files[] = $file->getPathname();
+            }
+        }
+        $this->assertNotEmpty($files);
+
+        foreach ($files as $path) {
+            $out = [];
+            $code = 0;
+            exec(escapeshellarg($node) . ' --check ' . escapeshellarg($path) . ' 2>&1', $out, $code);
+            $this->assertSame(0, $code, basename($path) . " does not parse:\n" . implode("\n", $out));
+        }
+    }
 }

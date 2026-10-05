@@ -529,8 +529,6 @@ import { WebTerminal } from "./components/WebTerminal.js";
       metaIsCombo = false;
       hideCommandHud();
     });
-      hideCommandHud();
-    });
 
     sendBtn.addEventListener("click", submitMessage);
     stopBtn.addEventListener("click", abortTurn);
