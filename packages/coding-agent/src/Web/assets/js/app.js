@@ -445,8 +445,12 @@ import { WebTerminal } from "./components/WebTerminal.js";
     }
 
     let isComposing = false;
+    let compositionEndTime = 0;
     promptInput.addEventListener("compositionstart", () => { isComposing = true; });
-    promptInput.addEventListener("compositionend", () => { isComposing = false; });
+    promptInput.addEventListener("compositionend", () => {
+      isComposing = false;
+      compositionEndTime = Date.now();
+    });
 
     promptInput.addEventListener("keydown", (e) => {
       // Direct send on Enter (matching TUI), Shift+Enter inserts newline
@@ -454,7 +458,7 @@ import { WebTerminal } from "./components/WebTerminal.js";
       const isModifierEnter = e.key === "Enter" && (e.metaKey || e.ctrlKey);
 
       if (isPlainEnter || isModifierEnter) {
-        if (e.isComposing || isComposing || e.keyCode === 229) {
+        if (e.isComposing || isComposing || e.keyCode === 229 || (Date.now() - compositionEndTime < 60)) {
           return;
         }
         e.preventDefault();

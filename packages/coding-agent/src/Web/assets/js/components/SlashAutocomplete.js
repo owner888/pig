@@ -129,6 +129,8 @@ export class SlashAutocomplete {
     this.selectedIndex = 0;
     this.filteredCommands = [];
 
+    this.isComposing = false;
+    this.compositionEndTime = 0;
     this.popup = document.createElement("div");
     this.popup.className = "slash-autocomplete-popup";
     this.popup.style.display = "none";
@@ -139,6 +141,11 @@ export class SlashAutocomplete {
   }
 
   bindEvents() {
+    this.input.addEventListener("compositionstart", () => { this.isComposing = true; });
+    this.input.addEventListener("compositionend", () => {
+      this.isComposing = false;
+      this.compositionEndTime = Date.now();
+    });
     this.input.addEventListener("input", () => this.handleInput());
     this.input.addEventListener("keydown", (e) => this.handleKeyDown(e));
 
@@ -222,6 +229,10 @@ export class SlashAutocomplete {
 
   handleKeyDown(e) {
     if (!this.isOpen) return;
+
+    if (e.isComposing || this.isComposing || e.keyCode === 229 || (Date.now() - this.compositionEndTime < 60)) {
+      return;
+    }
 
     if (e.key === "ArrowDown") {
       e.preventDefault();

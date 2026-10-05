@@ -43,6 +43,18 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.48] - 2026-10-05
+
+### Fixed
+
+- **Chinese IME Composition Enter Protection (No More Accidental Message/Command Submissions)**:
+  - Fixed an issue where pressing `Enter` to confirm Chinese Pinyin composition or select a candidate word prematurely triggered prompt submission or terminal command execution.
+  - Implemented an industrial-standard 60ms cooldown window on `compositionend` alongside `isComposing` and `keyCode === 229` guards across the main chat prompt input, the Web Terminal interactive input, and the Slash Autocomplete popup.
+- **Mobile Web Terminal Prompt Auto-Compactness & Pixel-Perfect Cursor Alignment**:
+  - Fixed an issue where long hostnames and deep directory paths caused the terminal prompt prefix to break across multiple lines on mobile screens, resulting in detached, vertically misaligned floating cursors.
+  - **Responsive Prompt Compactness**: On narrow mobile screens (<= 640px), the lengthy hostname (e.g. `@kakadeMacBook-Air.local`) is automatically hidden and long paths are abbreviated to `~/.../folder` without breaking.
+  - **Baseline Lock & Wrap Prevention**: Enforced `white-space: nowrap; flex-shrink: 0;` and locked `align-items: baseline` with matched 20px line heights, ensuring the input caret is permanently glued directly after the `$` prompt symbol across all mobile screen sizes.
+
 ## [0.3.47] - 2026-10-05
 
 ### Added

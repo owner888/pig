@@ -54,6 +54,8 @@ export class WebTerminal {
     this.isRunning = false;
     this.isMaximized = false;
     this.isOpen = false;
+    this.isComposing = false;
+    this.compositionEndTime = 0;
 
     this.initElement();
     this.fetchInfo();
@@ -129,7 +131,20 @@ export class WebTerminal {
       });
     });
 
+    this.inputEl.addEventListener("compositionstart", () => {
+      this.isComposing = true;
+    });
+    this.inputEl.addEventListener("compositionend", () => {
+      this.isComposing = false;
+      this.compositionEndTime = Date.now();
+    });
+
     this.inputEl.addEventListener("keydown", (e) => {
+      // Prevent Chinese/IME composition Enter from submitting prematurely
+      if (e.isComposing || this.isComposing || e.keyCode === 229 || (Date.now() - this.compositionEndTime < 60)) {
+        return;
+      }
+
       if (e.key === "Enter") {
         e.preventDefault();
         const cmd = this.inputEl.value.trim();
@@ -171,19 +186,32 @@ export class WebTerminal {
     } catch (e) {}
   }
 
-  formatPath(p) {
+  formatPath(p, isCompact = false) {
     if (!p) return "~";
+    let formatted = p;
     if (this.home && p.startsWith(this.home)) {
-      return "~" + p.slice(this.home.length);
+      formatted = "~" + p.slice(this.home.length);
     }
-    return p;
+    // On small mobile screens or long paths, abbreviate middle path segments
+    if (isCompact && formatted.length > 20) {
+      const parts = formatted.split("/").filter(Boolean);
+      if (parts.length > 1) {
+        return (formatted.startsWith("~") ? "~/.../" : ".../") + parts[parts.length - 1];
+      }
+    }
+    return formatted;
+  }
+
+  renderPromptPrefixHtml(shortPath) {
+    return `<span class="term-user-host"><span class="term-user">${escapeHtml(this.user)}</span><span class="term-host">@${escapeHtml(this.hostname)}</span>:</span><span class="term-path" title="${escapeHtml(this.cwd)}">${escapeHtml(shortPath)}</span><span class="term-dollar">$</span>`;
   }
 
   updatePrompt() {
-    const short = this.formatPath(this.cwd);
-    this.cwdBadge.textContent = short;
+    const isMobile = window.innerWidth <= 640;
+    const short = this.formatPath(this.cwd, isMobile);
+    this.cwdBadge.textContent = this.formatPath(this.cwd, false);
     this.cwdBadge.title = this.cwd;
-    this.promptPrefix.innerHTML = `<span class="term-user">${escapeHtml(this.user)}@${escapeHtml(this.hostname)}</span>:<span class="term-path">${escapeHtml(short)}</span><span class="term-dollar">$</span> `;
+    this.promptPrefix.innerHTML = this.renderPromptPrefixHtml(short);
   }
 
   navigateHistory(delta) {
@@ -213,12 +241,13 @@ export class WebTerminal {
     this.historyIndex = -1;
     this.tempInput = "";
 
-    const shortPath = this.formatPath(this.cwd);
+    const isMobile = window.innerWidth <= 640;
+    const shortPath = this.formatPath(this.cwd, isMobile);
     const lineRecord = document.createElement("div");
     lineRecord.className = "term-history-entry";
     lineRecord.innerHTML = `
       <div class="term-command-line">
-        <span class="term-user">${escapeHtml(this.user)}@${escapeHtml(this.hostname)}</span>:<span class="term-path">${escapeHtml(shortPath)}</span><span class="term-dollar">$</span>
+        <span class="web-term-prompt-prefix">${this.renderPromptPrefixHtml(shortPath)}</span>
         <span class="term-command-text">${escapeHtml(cmd)}</span>
       </div>
       <div class="term-command-output"><span class="term-running-spinner">⏳ Running...</span></div>
