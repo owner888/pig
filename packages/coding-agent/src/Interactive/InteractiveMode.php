@@ -3474,12 +3474,12 @@ final class InteractiveMode
             }
 
             try {
-                $flags = $ffi->CGEventSourceFlagsState(1); // kCGEventSourceStateCombinedSessionState
-                $commandPressed = ($flags & 0x00100000) !== 0; // kCGEventFlagMaskCommand
+                $flags = (int) $ffi->CGEventSourceFlagsState(1); // kCGEventSourceStateCombinedSessionState
 
-                if ($commandPressed) {
+                if (self::isSoloCommand($flags)) {
                     $this->commandPressedMs += 80;
-                    if ($this->commandPressedMs >= 480 && !$this->commandHudOpen && $this->overlay->children() === []) {
+                    // 850ms threshold matching iPadOS/Blink standards to eliminate hesitation false-positives
+                    if ($this->commandPressedMs >= 850 && !$this->commandHudOpen && $this->overlay->children() === []) {
                         $this->showCommandHud();
                     }
                 } else {
@@ -3495,6 +3495,23 @@ final class InteractiveMode
         };
 
         $this->commandHudTimer = Loop::get()->delay(0.08, $tick);
+    }
+
+    /**
+     * Determine whether macOS CGEventFlags indicates a pure, isolated Command key press
+     * with no other active modifiers (Shift, Control, Option/Alt).
+     */
+    public static function isSoloCommand(int $flags): bool
+    {
+        // macOS CoreGraphics modifier bitmasks:
+        // kCGEventFlagMaskCommand   = 0x00100000 (1 << 20)
+        // kCGEventFlagMaskShift     = 0x00020000 (1 << 17)
+        // kCGEventFlagMaskControl   = 0x00040000 (1 << 18)
+        // kCGEventFlagMaskAlternate = 0x00080000 (1 << 19, Option/Alt)
+        $hasCommand = ($flags & 0x00100000) !== 0;
+        $hasOtherModifiers = ($flags & (0x00020000 | 0x00040000 | 0x00080000)) !== 0;
+
+        return $hasCommand && !$hasOtherModifiers;
     }
 
     private function showCommandHud(): void

@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.51] - 2026-10-05
+
+### Fixed
+
+- **TUI Command HUD Solo-Modifier Validation (Resolving `Shift + Command` False Triggers)**:
+  - Fixed an issue in the terminal (TUI) where holding `Shift + Command` (e.g. macOS `Shift + Command + 4` screenshot shortcut) still triggered the Command Shortcuts HUD overlay.
+  - **Root Cause**: The native macOS CoreGraphics event monitor (`CGEventSourceFlagsState`) previously only checked for the `kCGEventFlagMaskCommand` (0x00100000) bit, ignoring co-pressed modifiers.
+  - **Strict Solo Command Detection**: Introduced `InteractiveMode::isSoloCommand()`, which validates the Command bit is set while ensuring the `Shift` (0x00020000), `Control` (0x00040000), and `Option/Alt` (0x00080000) bits are all unset.
+  - **Threshold Alignment**: Increased the TUI long-press hold threshold from 480ms to 850ms, matching the Web UI and iPadOS/Blink Shell standards.
+
 ## [0.3.50] - 2026-10-05
 
 ### Fixed
