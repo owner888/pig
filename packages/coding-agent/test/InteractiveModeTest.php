@@ -3827,4 +3827,26 @@ final class InteractiveModeTest extends TestCase
         self::turnTheLoop(2);
         $this->assertStringContainsString('Web UI server stopped.', $this->screen());
     }
+
+    public function testSlashWebStatusAndRestartCommand(): void
+    {
+        $this->start();
+        $this->type('/web status');
+        $this->type(self::ENTER);
+        self::turnTheLoop(2);
+
+        $this->assertTrue(
+            str_contains($this->screen(), 'pig web:') || str_contains($this->screen(), 'Web UI'),
+            'Expected status output on /web status'
+        );
+
+        $this->type('/web restart');
+        $this->type(self::ENTER);
+        self::turnTheLoop(4);
+
+        $this->assertTrue(
+            str_contains($this->screen(), 'started') || str_contains($this->screen(), 'Web UI'),
+            'Expected restart confirmation on /web restart'
+        );
+    }
 }

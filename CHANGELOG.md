@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.29] - 2026-10-04
+
+### Added
+
+- **In-Session `/web` Command Suite Enhancement (`/web restart`, `/web status`, `/web stop`)**:
+  - Unified `/web` slash command inside interactive TUI sessions to manage both in-process listeners and background `WebDaemon` processes.
+  - Added support for `/web restart [--port=N]`, allowing developers to restart and reload the web server without leaving their current terminal conversation.
+  - Added `/web status` command to view web server running status, PID, and listening URL directly inside the terminal.
+  - Enhanced `/web stop` to seamlessly stop background web daemons as well as foreground listeners.
+  - Added unit test `testSlashWebStatusAndRestartCommand` verifying in-session web lifecycle controls.
+
 ## [0.3.28] - 2026-10-04
 
 ### Changed

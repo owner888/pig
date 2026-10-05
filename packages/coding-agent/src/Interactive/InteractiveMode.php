@@ -1544,7 +1544,7 @@ final class InteractiveMode
         ['name', 'Show or set the session name'],
         ['diff', 'Show git working tree changes (/diff [--staged])'],
         ['commit', 'Review changes and commit with Conventional Commits message'],
-        ['web', 'Launch browser-based web interface (/web [port], /web stop)'],
+        ['web', 'Browser UI server & daemon (/web [start|stop|status|restart] [port])'],
         ['login', 'Sign in with a subscription instead of an API key'],
         ['logout', 'Forget a sign-in'],
         ['theme', 'Switch between dark and light'],
@@ -2805,23 +2805,81 @@ final class InteractiveMode
 
     private function handleWebCommand(string $args): void
     {
-        $args = trim($args);
+        $rawArgs = trim($args);
+        $parts = $rawArgs === '' ? [] : (preg_split('/\s+/', $rawArgs) ?: []);
+        $action = strtolower($parts[0] ?? '');
 
-        if ($args === 'stop') {
-            if ($this->webServer === null || !$this->webServer->isRunning()) {
-                $this->say('Web UI is not running.');
-
-                return;
+        // 1. /web stop: stop foreground server & background daemon
+        if ($action === 'stop') {
+            $stoppedForeground = false;
+            if ($this->webServer !== null && $this->webServer->isRunning()) {
+                $server = $this->webServer;
+                $this->webServer = null;
+                Async::spawn(static fn () => $server->stop());
+                $stoppedForeground = true;
             }
 
-            $server = $this->webServer;
-            $this->webServer = null;
-            Async::spawn(static fn () => $server->stop());
-            $this->say('Web UI server stopped.');
+            [$daemonCode, $daemonOut] = Process::run([...$this->resolvePigBinary(), 'web', 'stop']);
+            $stoppedDaemon = $daemonCode === 0 && str_contains($daemonOut, 'stopped');
+
+            if ($stoppedForeground || $stoppedDaemon) {
+                $this->say('Web UI server stopped.');
+            } else {
+                $this->say('Web UI is not running.');
+            }
 
             return;
         }
 
+        // 2. /web status: report foreground and background daemon status
+        if ($action === 'status') {
+            if ($this->webServer !== null && $this->webServer->isRunning()) {
+                $url = "http://{$this->webServer->host}:{$this->webServer->port}";
+                $this->say('Web UI foreground server: ' . $this->palette->fg('accent', 'running') . " at {$url}");
+            }
+
+            [, $daemonOut] = Process::run([...$this->resolvePigBinary(), 'web', 'status']);
+            $statusLine = trim($daemonOut);
+            if ($statusLine !== '') {
+                $this->say($statusLine);
+            }
+
+            return;
+        }
+
+        // 3. /web restart [port]: restart daemon (and stop foreground if running)
+        if ($action === 'restart') {
+            if ($this->webServer !== null && $this->webServer->isRunning()) {
+                $server = $this->webServer;
+                $this->webServer = null;
+                Async::spawn(static fn () => $server->stop());
+            }
+
+            $rest = array_slice($parts, 1);
+            $daemonArgs = ['web', 'restart'];
+            if (isset($rest[0])) {
+                if (ctype_digit($rest[0])) {
+                    $daemonArgs[] = '--port=' . $rest[0];
+                } else {
+                    $daemonArgs = array_merge($daemonArgs, $rest);
+                }
+            }
+
+            [$exitCode, $stdout, $stderr] = Process::run([...$this->resolvePigBinary(), ...$daemonArgs]);
+            if ($exitCode === 0) {
+                foreach (explode("\n", trim($stdout)) as $line) {
+                    if (trim($line) !== '') {
+                        $this->say($line);
+                    }
+                }
+            } else {
+                $this->sayError('Failed to restart Web UI: ' . trim($stderr ?: $stdout));
+            }
+
+            return;
+        }
+
+        // 4. Default: /web or /web [port]
         if ($this->webServer !== null && $this->webServer->isRunning()) {
             $url = "http://{$this->webServer->host}:{$this->webServer->port}";
             $this->say("Web UI is already running at {$url}");
@@ -2829,13 +2887,35 @@ final class InteractiveMode
             return;
         }
 
-        $port = is_numeric($args) ? (int) $args : 8088;
+        // If user explicitly asks for `-d` or `--daemon`, start in background
+        if ($action === 'start' || in_array('-d', $parts, true) || in_array('--daemon', $parts, true)) {
+            $rest = $action === 'start' ? array_slice($parts, 1) : $parts;
+            $daemonArgs = ['web', 'start', '-d'];
+            if (isset($rest[0])) {
+                if (ctype_digit($rest[0])) {
+                    $daemonArgs[] = '--port=' . $rest[0];
+                } else {
+                    $daemonArgs = array_merge($daemonArgs, $rest);
+                }
+            }
+            [$startCode, $startOut, $startErr] = Process::run([...$this->resolvePigBinary(), ...$daemonArgs]);
+            if ($startCode === 0) {
+                foreach (explode("\n", trim($startOut)) as $line) {
+                    if (trim($line) !== '') {
+                        $this->say($line);
+                    }
+                }
+            } else {
+                $this->sayError('Failed to start Web UI daemon: ' . trim($startErr ?: $startOut));
+            }
+
+            return;
+        }
+
+        // Otherwise start in-process attached to this session (matching original /web [port])
+        $port = is_numeric($rawArgs) ? (int) $rawArgs : 8088;
         $bound = false;
 
-        // The shell and nothing else: `HttpServer` holds no session now, each tab in the page
-        // is a `pig --mode rpc` child of its own, and this terminal keeps the conversation it
-        // is in. `/web` used to hand the browser *this* session, so a tab click moved the
-        // terminal too — the thing the new process model exists to stop.
         for ($attempt = 0; $attempt < 10; $attempt++) {
             $candidatePort = $port + $attempt;
             try {
@@ -2862,6 +2942,22 @@ final class InteractiveMode
         $url = "http://127.0.0.1:{$port}";
         $this->say('Web UI started at ' . $this->palette->fg('accent', $url));
         $this->say($this->palette->fg('dim', 'Runs while this session is open. To keep it running in background: pig web start -d'));
+    }
+
+    /** @return list<string> */
+    private function resolvePigBinary(): array
+    {
+        $localBin = __DIR__ . '/../../../../bin/pig';
+        if (is_file($localBin)) {
+            return [PHP_BINARY, (string) realpath($localBin)];
+        }
+
+        $script = $_SERVER['SCRIPT_FILENAME'] ?? '';
+        if ($script !== '' && is_file($script) && basename($script) === 'pig') {
+            return [PHP_BINARY, (string) realpath($script)];
+        }
+
+        return ['pig'];
     }
 
     private function handleDiffCommand(string $args): void
