@@ -883,6 +883,29 @@ final class RpcModeTest extends TestCase
         $this->assertSame(0, $this->data(['type' => 'get_state'])['messageCount']);
     }
 
+    /**
+     * A host draws a `!command` as it runs, the way the terminal does. Without these a
+     * `flutter run` shows nothing until it is stopped, and nothing is what a hang looks like.
+     */
+    public function testBashStreamsItsOutputAsEventsCarryingTheCommandsId(): void
+    {
+        $this->start();
+        $this->lines();
+        $this->send(['type' => 'bash', 'id' => 'b1', 'command' => 'echo one; echo two']);
+        $lines = $this->lines();
+
+        $events = $this->of('bash_output', $lines);
+        $this->assertNotEmpty($events, 'expected at least one bash_output event');
+        foreach ($events as $event) {
+            $this->assertSame('b1', $event['id'], 'the event names the command it belongs to');
+        }
+        $this->assertStringContainsString('two', end($events)['output']);
+
+        $response = $this->of('response', $lines)[0];
+        $this->assertSame('b1', $response['id']);
+        $this->assertTrue($response['success']);
+    }
+
     public function testAbortBashWithNoBashRunningIsStillASuccess(): void
     {
         $this->start();

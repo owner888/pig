@@ -619,9 +619,23 @@ final class RpcMode
     /** @param array<string, mixed> $command */
     private function bash(array $command): array
     {
+        $text = self::text($command, 'command');
+        $id = isset($command['id']) ? (string) $command['id'] : null;
+
+        // The TUI draws a `!command`'s output as it arrives; a host gets the same through
+        // `bash_output` events carrying the command's id, so it can find the card. Without
+        // them a long-running command — `flutter run`, `npm run dev` — shows nothing until
+        // it is stopped, and "nothing" is what a stuck process looks like.
         $execution = $this->session->executeBash(
-            self::text($command, 'command'),
+            $text,
             ($command['remember'] ?? true) === true,
+            function (string $output) use ($id): void {
+                $this->send(array_filter([
+                    'type' => 'bash_output',
+                    'id' => $id,
+                    'output' => $output,
+                ], static fn ($v) => $v !== null));
+            },
         );
 
         // `encode()` is nullable for a message type it does not know, and `BashExecution` is

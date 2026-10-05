@@ -66,6 +66,8 @@ import { WebTerminal } from "./components/WebTerminal.js";
         this.currentThinkingBox = null;
         this.userScrolledUp = false;
         this.toolCards = new Map();
+        this.bashCards = new Map();   // rpc id -> ToolCard for a `!command`
+        this.bashRunning = false;     // a `!command` is in flight (Stop sends abort_bash)
         this.emptyState = null;
 
         this.scroller = document.createElement("div");
@@ -103,14 +105,16 @@ import { WebTerminal } from "./components/WebTerminal.js";
       }
 
       /** Send an rpc command and resolve with its response's `data` (or reject on failure). */
-      rpc(command, timeoutMs = 30000) {
+      rpc(command, timeoutMs = 30000, onId = null) {
         return new Promise((resolve, reject) => {
           if (!this.bound) { reject(new Error("no active session")); return; }
           const id = "ui-" + (++this.nextId);
-          const timer = setTimeout(() => {
+          if (typeof onId === "function") onId(id);
+          // timeoutMs <= 0 means "wait as long as it takes": a `!command` has no deadline.
+          const timer = timeoutMs > 0 ? setTimeout(() => {
             this.pending.delete(id);
             reject(new Error(`${command.type}: no answer in ${timeoutMs / 1000}s`));
-          }, timeoutMs);
+          }, timeoutMs) : null;
           this.pending.set(id, { resolve, reject, timer });
           network.send({
             type: "rpc_command",
@@ -170,6 +174,11 @@ import { WebTerminal } from "./components/WebTerminal.js";
               appendErrorMessage(evt.error || `${evt.command || "command"} failed`);
             });
           }
+          return;
+        }
+        if (evt.type === "bash_output") {
+          const card = this.bashCards?.get(evt.id);
+          if (card) card.updateProgress(evt.output || "");
           return;
         }
         if (evt.type === "hook_ui_request") { this.render(() => onHookUiRequest(evt)); return; }
@@ -1132,6 +1141,21 @@ import { WebTerminal } from "./components/WebTerminal.js";
       if (!active) return;
       const tab = active;
 
+      // ---- `!command` / `!!command` ---------------------------------------------------------
+      // The TUI's two bash doors, over rpc. `!` runs the command and its output joins the
+      // conversation as a BashExecution (the model reads it next turn, zero tokens to run);
+      // `!!` runs it and remembers nothing. Neither goes anywhere near the model to execute,
+      // which is what makes it deterministic — before this they were sent as prompt text and
+      // the model decided whether to run them. The card streams through `bash_output` events
+      // and the Stop button sends `abort_bash`, so a `flutter run` can be ended from here.
+      if (text.startsWith("!")) {
+        const remember = !text.startsWith("!!");
+        const command = text.replace(/^!!?/, "").trim();
+        if (!command) return;
+        await runBangCommand(tab, command, remember);
+        return;
+      }
+
       // ---- the slash commands the page answers itself -------------------------------------
       // Each is an rpc command to the active tab's child (`RpcMode`'s `doctor`, `bug`, `diff`,
       // `export_markdown`): the child owns the session, so the child answers about it.
@@ -1275,7 +1299,72 @@ import { WebTerminal } from "./components/WebTerminal.js";
     }
 
     async function abortTurn() {
+      // Stop means "stop whatever this tab is doing": a `!command` has no agent turn to abort.
+      if (active?.bashRunning) {
+        try { await active.rpc({ type: "abort_bash" }); } catch (err) {}
+        return;
+      }
       try { await active?.rpc({ type: "abort" }); } catch (err) {}
+    }
+
+    /**
+     * Run a `!command` through the child's `bash` rpc command and draw it as a bash card.
+     *
+     * The card is registered under the rpc id *before* the command is sent (via `onId`), so
+     * the first `bash_output` event — which can arrive before the response — finds it. The
+     * rpc has no timeout: `!` is "I am watching this", and the Stop button is how it ends.
+     */
+    async function runBangCommand(tab, command, remember) {
+      if (tab.bashRunning) {
+        appendErrorMessage("A command is already running. Press Stop first.");
+        return;
+      }
+      if (tab.ended || !tab.bound) {
+        tab.subscribe();
+        const until = Date.now() + 10000;
+        while (!tab.bound && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+        if (!tab.bound) { appendErrorMessage("Could not reach the agent for this conversation."); return; }
+      }
+
+      tab.render(() => {
+        tab.emptyState?.remove(); tab.emptyState = null;
+        chatScroll.querySelector(".empty-state-hero")?.remove();
+      });
+
+      const card = new ToolCard({ toolCallId: "bang-" + Date.now(), toolName: "bash", arguments: { command } });
+      if (!remember) {
+        const title = card.element.querySelector(".tool-header-title");
+        if (title) title.textContent = "$$ " + command;
+        card.element.title = "!! — not added to the conversation";
+      }
+      tab.render(() => { chatScroll.appendChild(card.element); scrollToBottomIfNeeded(); });
+
+      tab.bashRunning = true;
+      tab.render(() => setRunningState(true));
+
+      let rpcId = null;
+      try {
+        const data = await tab.rpc(
+          { type: "bash", command, remember },
+          0,
+          (id) => { rpcId = id; tab.bashCards.set(id, card); },
+        );
+        // `data` is SessionCodec::encode(BashExecution): output, exitCode, cancelled, truncated, spillPath.
+        const details = {};
+        if (data?.exitCode !== undefined && data.exitCode !== null) details.exitCode = data.exitCode;
+        if (data?.cancelled) details.cancelled = true;
+        if (data?.spillPath) details.fullOutputPath = data.spillPath;
+        card.finish({
+          result: { content: [{ type: "text", text: data?.output ?? "" }], details },
+          isError: !!data?.cancelled || (typeof data?.exitCode === "number" && data.exitCode !== 0),
+        });
+      } catch (err) {
+        card.finish({ result: String(err?.message || err), isError: true });
+      } finally {
+        if (rpcId) tab.bashCards.delete(rpcId);
+        tab.bashRunning = false;
+        tab.render(() => { setRunningState(false); scrollToBottomIfNeeded(); });
+      }
     }
 
     /** The active tab's state, refreshed — what the old page-wide `refreshState()` meant. */

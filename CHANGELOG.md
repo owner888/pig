@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.53] - 2026-10-05
+
+### Added
+
+- **Web UI `!command` / `!!command` now run exactly as in the TUI** — pig executes them directly, deterministically, with zero model tokens, and `!` output joins the conversation as a `BashExecution` for the model to read next turn (`!!` runs and remembers nothing). Before this the Web prompt sent `!cmd` to the model as plain text and left it to decide whether to call the `bash` tool.
+- **`bash_output` RPC event**: `RpcMode::bash()` now streams a command's output as it arrives, each event carrying the command's `id` so a host can find the card. A `flutter run` or `npm run dev` shows its log live instead of nothing until it is stopped.
+- **Stop works for `!command` in the Web UI**: the Stop button sends `abort_bash` while a bash card is in flight (`abort` otherwise), so a resident process can be ended from the browser — verified to leave no stray process behind.
+
 ## [0.3.52] - 2026-10-05
 
 ### Fixed
