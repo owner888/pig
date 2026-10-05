@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.42] - 2026-10-05
+
+### Changed
+
+- **Web UI Mobile More Menu Minimalist Copy Refinement**:
+  - Streamlined dropdown menu labels from verbose titles to clean, iconic single-word items: `Theme`, `Language`, `Account` (and `主题`, `语言`, `账号` in Chinese).
+  - Compacted dropdown popover width to a sleek 140px, giving mobile views a refined, native-app grade elegance.
+
 ## [0.3.41] - 2026-10-05
 
 ### Changed
