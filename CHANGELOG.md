@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.38] - 2026-10-05
+
+### Changed
+
+- **Web UI & RPC Delayed Persistence State & Real-time Auto-naming Alignment**:
+  - Aligned Web UI with TUI delayed persistence lifecycle: a new session does not write any empty `.jsonl` file to disk until the first assistant message arrives.
+  - Added `isPersisted` boolean flag to `RpcMode::state()`. Web UI displays `📄 （内存暂存）` / `(in-memory)` for draft sessions, eliminating misleading ghost filenames before the first prompt.
+  - Supported real-time `session_info_changed` broadcasting over RPC: `SessionInfoChangedEvent` now implements `AgentEvent` and is announced to RPC subscribers; `RpcEvents::encode` translates it so Web UI automatically updates top bar title, session tab label, and sidebar list when `smart-session` generates a title.
+
 ## [0.3.37] - 2026-10-05
 
 ### Fixed

@@ -523,7 +523,9 @@ final class AgentSession
         $name = trim($name);
         $this->sessionName = $name !== '' ? $name : null;
         $this->store?->setSessionName($name);
-        $this->hooks?->emit(new SessionInfoChangedEvent($name));
+        $event = new SessionInfoChangedEvent($name);
+        $this->hooks?->emit($event);
+        $this->announce($event);
 
         foreach ($this->nameListeners as $listener) {
             $listener($name);

@@ -1225,6 +1225,30 @@ final class RpcModeTest extends TestCase
         $this->assertStringContainsString('cannot start', $errors[0]['error']);
     }
 
+    public function testSessionInfoChangedEventIsEmittedOverRpc(): void
+    {
+        $this->start(answers: ['pong'], store: true);
+        $this->session->setSessionName('自动总结标题测试');
+
+        $events = $this->of('session_info_changed');
+        $this->assertCount(1, $events);
+        $this->assertSame('自动总结标题测试', $events[0]['name']);
+    }
+
+    public function testNewSessionStartsUnpersistedAndPersistsAfterFirstTurn(): void
+    {
+        $this->start(answers: ['first reply'], store: true);
+
+        // Before any turn, isPersisted is false and no file exists on disk
+        $state = $this->data(['type' => 'get_state']);
+        $this->assertFalse($state['isPersisted']);
+
+        // After the first turn, file is created and isPersisted becomes true
+        $this->send(['type' => 'prompt', 'message' => 'hello']);
+        $afterState = $this->data(['type' => 'get_state']);
+        $this->assertTrue($afterState['isPersisted']);
+    }
+
     // ---- the fixtures ------------------------------------------------------------------
 
     /** @param array<string, callable> $handlers */

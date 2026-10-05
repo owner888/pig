@@ -30,6 +30,7 @@ use Pig\Ai\ThinkingStartEvent;
 use Pig\Ai\ToolCallDeltaEvent;
 use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
+use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
 use Pig\CodingAgent\Session\AutoCompactionEndEvent;
 use Pig\CodingAgent\Session\AutoCompactionStartEvent;
 use Pig\CodingAgent\Session\RetryEndEvent;
@@ -146,6 +147,11 @@ final class RpcEvents
                 'willRetry' => $event->willRetry,
                 'summary' => $event->summary === null ? null : SessionCodec::encode($event->summary),
                 'error' => $event->error,
+            ],
+
+            $event instanceof SessionInfoChangedEvent => [
+                'type' => 'session_info_changed',
+                'name' => $event->name,
             ],
 
             default => null,

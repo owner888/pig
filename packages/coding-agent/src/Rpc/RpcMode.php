@@ -421,6 +421,7 @@ final class RpcMode
             'queueMode' => $this->session->queueMode()->value,
             'isBashRunning' => $this->session->isBashRunning(),
             'sessionFile' => $this->session->store()?->path,
+            'isPersisted' => $this->session->store()?->isPersisted() ?? false,
             'messageCount' => count($this->session->messages()),
             'queuedMessageCount' => count($this->session->queued()),
             'contextTokens' => $this->session->contextTokens(),
@@ -697,7 +698,11 @@ final class RpcMode
 
         $this->report($this->customTools?->notify('switch', $switch->previous) ?? []);
 
-        return ['cancelled' => false, 'sessionFile' => $this->session->store()?->path];
+        return [
+            'cancelled' => false,
+            'sessionFile' => $this->session->store()?->path,
+            'isPersisted' => $this->session->store()?->isPersisted() ?? false,
+        ];
     }
 
     /**

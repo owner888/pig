@@ -2562,9 +2562,13 @@
           const [s, stats] = await Promise.all([this.rpc({ type: "get_state" }), this.rpc({ type: "get_session_stats" })]);
           this.state = s;
           this.stats = stats;
-          if (s.sessionFile) {
+          this.isPersisted = (typeof s.isPersisted === "boolean") ? s.isPersisted : !!(s.sessionFile && (s.messageCount > 0));
+          if (this.isPersisted && s.sessionFile) {
             this.sessionPath = s.sessionFile;
             this.sessionFile = s.sessionFile.split("/").pop();
+          } else if (!this.isPersisted) {
+            this.sessionPath = null;
+            this.sessionFile = null;
           }
           if (s.cwd) this.cwd = s.cwd;
           this.name = s.sessionName || null;
@@ -3068,7 +3072,14 @@
         currentAssistantText = "";
         currentThinkingText = "";
         currentThinkingBox = null;
-        if (evt.type === "agent_end") tab?.refreshState();
+        if (evt.type === "agent_end") {
+          tab?.refreshState();
+          if (currentView === "sessions" && selectedWorkspace) {
+            enterWorkspace(selectedWorkspace);
+          } else {
+            loadWorkspaces();
+          }
+        }
         const err = evt.error || lastErrorMessage(evt.messages);
         if (err) {
           appendErrorMessage(err);
@@ -3126,7 +3137,18 @@
         if (tab === active) hideStatusBanner();
         tab?.refreshState();
       } else if (evt.type === "session_info_changed") {
+        if (tab) {
+          tab.name = evt.name || null;
+          saveTabs();
+          renderTabs();
+          if (tab === active) applyActiveTabToChrome();
+        }
         tab?.refreshState();
+        if (currentView === "sessions" && selectedWorkspace) {
+          enterWorkspace(selectedWorkspace);
+        } else {
+          loadWorkspaces();
+        }
       }
     }
 
