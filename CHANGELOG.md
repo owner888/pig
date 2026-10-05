@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.28] - 2026-10-04
+
+### Changed
+
+- **Antigravity Quota & Reset Countdown Full Localization**:
+  - Localized Antigravity model group names (`Gemini Models` -> `Gemini 模型`, `Claude and GPT models` -> `Claude 与 GPT 模型`).
+  - Localized quota bucket limits (`Weekly Limit Remaining` -> `周限额剩余`, `Five Hour Limit Remaining` -> `5 小时限额剩余`, `Daily Limit Remaining` -> `日限额剩余`, `Hourly Limit Remaining` -> `小时限额剩余`).
+  - Localized reset countdown labels (`resets in 46h 26m` -> `46 小时 26 分后重置`, `resets in 7d` -> `7 天后重置`, `resets now` -> `立即重置`).
+  - Added localized quota loading, unavailable, and empty status messages.
+
 ## [0.3.27] - 2026-10-04
 
 ### New Features
