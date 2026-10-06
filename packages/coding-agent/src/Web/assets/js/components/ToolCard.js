@@ -2,26 +2,26 @@ import { escapeHtml } from "../utils.js";
 import { t } from "../i18n.js";
 import { renderDiff, renderDiffFromUnified } from "../markdown.js";
 
-/** Map tool names to icons and theme accent colors matching TUI */
+/** Browser affordances; all tools use the active theme's execution colors. */
 const TOOL_CONFIGS = {
-  bash: { icon: "⚡", label: "bash", color: "#38bdf8", defaultOpen: true },
-  read: { icon: "📄", label: "read", color: "#34d399", defaultOpen: false },
-  edit: { icon: "✏️", label: "edit", color: "#c084fc", defaultOpen: true },
-  write: { icon: "💾", label: "write", color: "#fb923c", defaultOpen: true },
-  grep: { icon: "🔍", label: "grep", color: "#facc15", defaultOpen: false },
-  find: { icon: "🔎", label: "find", color: "#facc15", defaultOpen: false },
-  ls: { icon: "📁", label: "ls", color: "#94a3b8", defaultOpen: false },
-  web_search: { icon: "🌐", label: "web_search", color: "#60a5fa", defaultOpen: false },
-  fetch_web_page: { icon: "🌐", label: "fetch_web_page", color: "#60a5fa", defaultOpen: false },
-  browse_web_page: { icon: "🖥️", label: "browse_web_page", color: "#60a5fa", defaultOpen: false },
-  computer: { icon: "🖱️", label: "computer", color: "#f43f5e", defaultOpen: true },
-  generate_image: { icon: "🎨", label: "generate_image", color: "#ec4899", defaultOpen: true },
+  bash: { icon: "⚡", defaultOpen: true },
+  read: { icon: "📄", defaultOpen: false },
+  edit: { icon: "✏️", defaultOpen: true },
+  write: { icon: "💾", defaultOpen: true },
+  grep: { icon: "🔍", defaultOpen: false },
+  find: { icon: "🔎", defaultOpen: false },
+  ls: { icon: "📁", defaultOpen: false },
+  web_search: { icon: "🌐", defaultOpen: false },
+  fetch_web_page: { icon: "🌐", defaultOpen: false },
+  browse_web_page: { icon: "🖥️", defaultOpen: false },
+  computer: { icon: "🖱️", defaultOpen: true },
+  generate_image: { icon: "🎨", defaultOpen: true },
 };
 
 /**
  * ToolCard Component
  *
- * Implements full TUI-parity tool execution cards with:
+ * Browser tool execution cards sharing the TUI's result data and theme semantics:
  * - Specific tool icons and accent left-borders
  * - Status pills (running pulse, done checkmark, error badge)
  * - Rich action summaries (file paths, bash commands, diffs)
@@ -39,7 +39,7 @@ export class ToolCard {
     this.isFinished = false;
     this.startTime = Date.now();
 
-    const cfg = TOOL_CONFIGS[this.toolName] || { icon: "🔧", label: this.toolName, color: "#64748b", defaultOpen: true };
+    const cfg = TOOL_CONFIGS[this.toolName] || { icon: "🔧", defaultOpen: true };
     this.config = cfg;
 
     this.element = document.createElement("div");
@@ -98,14 +98,14 @@ export class ToolCard {
     const isExpanded = this.config.defaultOpen;
 
     let bodyHtml = "";
-    if (this.toolName === "edit" && this.args.oldText && this.args.newText) {
+    if (this.toolName === "edit" && typeof this.args.oldText === "string" && typeof this.args.newText === "string") {
       bodyHtml = renderDiff(this.args.oldText, this.args.newText);
     } else {
       bodyHtml = `<div class="tool-terminal">${escapeHtml(t("tool_running"))}</div>`;
     }
 
     this.element.innerHTML = `
-      <div class="tool-header" style="border-left-color: ${this.config.color};">
+      <div class="tool-header">
         <div class="tool-header-left">
           <span class="tool-header-chevron ${isExpanded ? 'expanded' : ''}">▶</span>
           <span class="tool-header-icon">${this.config.icon}</span>
@@ -120,6 +120,7 @@ export class ToolCard {
         </div>
       </div>
       <div class="tool-body ${isExpanded ? 'expanded' : ''}">${bodyHtml}</div>
+      <div class="tool-details-footer" hidden></div>
     `;
 
     const header = this.element.querySelector(".tool-header");
@@ -160,10 +161,30 @@ export class ToolCard {
         : `<span>✔</span> ${escapeHtml(t("tool_done"))} <span class="tool-duration">${elapsed}s</span>`;
     }
 
+    this.element.dataset.status = this.isError ? "error" : "done";
     const body = this.element.querySelector(".tool-body");
     if (body) {
       body.innerHTML = this.formatResultBody();
+      if (this.isError) {
+        body.classList.add("expanded");
+        this.element.querySelector(".tool-header-chevron")?.classList.add("expanded");
+      }
     }
+    // Status and truncation must remain visible even when the output is collapsed.
+    const footer = this.element.querySelector(".tool-details-footer");
+    footer.textContent = this.#resultNotes().join("\n");
+    footer.hidden = footer.textContent === "";
+  }
+
+  #resultNotes() {
+    const det = this.result?.details;
+    if (!det || typeof det !== "object") return [];
+    const notes = [];
+    if (det.cancelled) notes.push(t("command_cancelled"));
+    if (typeof det.exitCode === "number" && det.exitCode !== 0) notes.push(t("command_exit", { code: det.exitCode }));
+    if (det.fullOutputPath) notes.push(t("output_truncated", { path: det.fullOutputPath }));
+    if (det.notice) notes.push(det.notice);
+    return notes;
   }
 
   formatResultBody() {
@@ -172,9 +193,10 @@ export class ToolCard {
       return "";
     }
 
-    // 1. If result carries unified diff (edit tool)
-    if (result.diff) {
-      return renderDiffFromUnified(result.diff);
+    // The execution result's diff wins over the arguments' preview.
+    if (this.toolName === "edit" && result.details?.diff) {
+      this.rawOutput = result.details.diff;
+      return renderDiffFromUnified(result.details.diff);
     }
 
     // 2. Extract text and images if structured AgentToolResult
@@ -203,30 +225,20 @@ export class ToolCard {
 
     this.rawOutput = textOutput;
 
-    // Check details for truncation / status
-    let detailsFooter = "";
-    if (result.details && typeof result.details === "object") {
-      const det = result.details;
-      const notes = [];
-      if (det.cancelled) notes.push("(cancelled)");
-      if (det.exitCode !== undefined && det.exitCode !== 0) notes.push(`(exit ${det.exitCode})`);
-      if (det.fullOutputPath) notes.push(`Output truncated. Full output: ${det.fullOutputPath}`);
-      if (det.notice) notes.push(det.notice);
-      if (notes.length > 0) {
-        detailsFooter = `<div class="tool-details-footer">${escapeHtml(notes.join("\n"))}</div>`;
-      }
-    }
-
     let imagesHtml = "";
     if (images.length > 0) {
-      imagesHtml = `<div class="msg-images-grid" style="margin-top:8px;">${images.map(img => `<img src="data:${img.mimeType || 'image/png'};base64,${img.data}" class="msg-image-thumb" onclick="window.openImageLightbox?.(this.src)" title="Click to view full image">`).join("")}</div>`;
+      imagesHtml = `<div class="msg-images-grid" style="margin-top:8px;">${images.map(img => `<img src="data:${escapeHtml(img.mimeType || 'image/png')};base64,${escapeHtml(img.data)}" class="msg-image-thumb" onclick="window.openImageLightbox?.(this.src)" title="Click to view full image">`).join("")}</div>`;
     }
 
-    if (this.toolName === "edit" && this.args?.oldText && this.args?.newText && !result.diff) {
-      return renderDiff(this.args.oldText, this.args.newText) + detailsFooter + imagesHtml;
+    if (!this.isError && this.toolName === "edit" && typeof this.args.oldText === "string" && typeof this.args.newText === "string") {
+      return renderDiff(this.args.oldText, this.args.newText) + imagesHtml;
+    }
+    if (!this.isError && this.toolName === "write" && typeof this.args.content === "string") {
+      this.rawOutput = this.args.content;
+      return `<div class="tool-terminal">${escapeHtml(this.args.content)}</div>${imagesHtml}`;
     }
 
-    return `<div class="tool-terminal">${escapeHtml(textOutput)}</div>${detailsFooter}${imagesHtml}`;
+    return `<div class="tool-terminal">${escapeHtml(textOutput)}</div>${imagesHtml}`;
   }
 }
 
@@ -241,7 +253,7 @@ if (typeof window !== "undefined") {
     navigator.clipboard.writeText(text).then(() => {
       const orig = btn.innerText;
       btn.innerText = "✓";
-      btn.style.color = "#34d399";
+      btn.style.color = "var(--diff-add-text)";
       setTimeout(() => {
         btn.innerText = orig;
         btn.style.color = "";

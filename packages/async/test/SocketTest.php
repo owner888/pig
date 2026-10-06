@@ -72,6 +72,29 @@ final class SocketTest extends TestCase
         $this->assertSame(strlen($payload), $received);
     }
 
+    public function testAWriteStalledByAPeerThatDoesNotReadGetsTheWholeWriteTimeout(): void
+    {
+        [$host, $port] = $this->server(static function ($conn): void {
+            // Keep the connection open and deliberately never read from it. The client fills
+            // its kernel send buffer, gets a zero-byte write, and must keep waiting until the
+            // write timeout as a whole expires rather than until the one-second poll slice does.
+        });
+
+        $started = microtime(true);
+
+        $error = $this->assertThrows(SocketError::class, static function () use ($host, $port): void {
+            Async::run(static function () use ($host, $port): void {
+                $socket = Socket::connect($host, $port);
+                $socket->write(str_repeat('x', 32 * 1024 * 1024), 1.5);
+            });
+        });
+
+        $elapsed = microtime(true) - $started;
+        $this->assertStringContainsString('timed out', $error->getMessage());
+        $this->assertGreaterThan(1.25, $elapsed, 'the one-second slice must not be the timeout');
+        $this->assertLessThan(3.0, $elapsed);
+    }
+
     public function testWritingToClosedPeerThrowsCleanlyWithoutLeakingPhpWarnings(): void
     {
         [$host, $port] = $this->server(static function ($conn): void {

@@ -43,11 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## [0.3.57] - 2026-10-06
+## [0.3.59] - 2026-10-06
 
 ### Fixed
 
-- Fixed every transcript entry carrying an extra blank row under its last line. `Markdown::block()` added a block's trailing blank line after the **last** block too, where upstream guards each one with `nextTokenType && …` — so a one-line user message sat on two empty rows of background where pi draws one, and every assistant message and tool result was one row taller than its content. The last block leaves no blank now; the gap after a message belongs to whoever placed it (`Spacer`, or the component's own `paddingY`).
+- Fixed socket writes to a peer that accepts a connection but stops reading: the internal one-second writable wait slice was treated as the whole write timeout, so a stalled write failed after about one second even when the caller allowed longer. The write loop now waits only for the remaining overall timeout and has a regression test for the non-reading peer case.
+- Fixed TUI compaction, branch-summary and hook-message blocks to use the same padded transcript shape, theme tokens and folding behaviour: compactions show `[compaction]` plus `Compacted from <tokens> tokens`, branch summaries and hook messages share the same custom-message background, and expanded text stays inside the block.
+- Fixed Web transcript replay for app messages and tool details: hook messages now cross `SessionCodec` as `role: "custom"`, automatic compaction summaries render in the chat and de-duplicate against the following `message_end`, historical `!command` executions draw as bash cards, and tool results keep `details.diff`, truncation notices and full-output paths.
 
 ## [0.3.58] - 2026-10-06
 
@@ -70,6 +72,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 ### Removed
 
 - `Api::Antigravity`, `Models::ANTIGRAVITY_MODELS`, `Oauth\Provider::Antigravity`, `Providers\Antigravity`, `Oauth\Antigravity`, `Ai\Antigravity\Routing`, `CodingAgent\Antigravity\*`, `Auth::accounts()/rotateAntigravityAccount()/activateAntigravityAccount()/removeAntigravityAccount()/antigravityClient()`, and `HttpServer`'s `/api/accounts` handlers — all moved into the extension.
+
+## [0.3.57] - 2026-10-06
+
+### Fixed
+
+- Fixed every transcript entry carrying an extra blank row under its last line. `Markdown::block()` added a block's trailing blank line after the **last** block too, where upstream guards each one with `nextTokenType && …` — so a one-line user message sat on two empty rows of background where pi draws one, and every assistant message and tool result was one row taller than its content. The last block leaves no blank now; the gap after a message belongs to whoever placed it (`Spacer`, or the component's own `paddingY`).
 
 ## [0.3.56] - 2026-10-06
 

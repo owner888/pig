@@ -13,7 +13,11 @@ use Pig\Ai\ThinkingContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\Usage;
 use Pig\CodingAgent\Interactive\AssistantMessageComponent;
+use Pig\CodingAgent\Interactive\BranchSummaryComponent;
+use Pig\CodingAgent\Interactive\CompactionComponent;
 use Pig\CodingAgent\Interactive\UserMessageComponent;
+use Pig\CodingAgent\Session\BranchSummary;
+use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
 use Pig\Tui\Components\Spacer;
@@ -72,6 +76,61 @@ final class MessageComponentsTest extends TestCase
 
         $this->assertStringContainsString("\e[1m", implode('', $lines));
         $this->assertStringContainsString('some bold text', $this->text($lines));
+    }
+
+    // ---- summary blocks -----------------------------------------------------------------
+
+    public function testACompactionIsDrawnAsAPiStyleBlock(): void
+    {
+        $summary = new CompactionSummary('what changed', tokensBefore: 256653, replaced: 42);
+        $component = new CompactionComponent($summary, $this->palette);
+        $lines = $component->render(self::WIDTH);
+        $text = $this->text($lines);
+
+        $this->assertStringContainsString('[compaction]', $text);
+        $this->assertStringContainsString('Compacted from 256,653 tokens (ctrl+o to expand)', $text);
+        $this->assertStringNotContainsString('what changed', $text);
+        $this->assertBlockBackground($lines, 'customMessageBg');
+    }
+
+    public function testExpandingACompactionKeepsTheSummaryInsideTheBlock(): void
+    {
+        $summary = new CompactionSummary('**important** summary', tokensBefore: 1200, replaced: 3);
+        $component = new CompactionComponent($summary, $this->palette, expanded: true);
+        $lines = $component->render(self::WIDTH);
+        $text = $this->text($lines);
+
+        $this->assertStringContainsString('[compaction]', $text);
+        $this->assertStringNotContainsString('ctrl+o to expand', $text);
+        $this->assertStringContainsString('important summary', $text);
+        $this->assertBlockBackground($lines, 'customMessageBg');
+    }
+
+    public function testABranchSummaryUsesTheSameBlockShape(): void
+    {
+        $summary = new BranchSummary('handover notes');
+        $lines = (new BranchSummaryComponent($summary, $this->palette))->render(self::WIDTH);
+        $text = $this->text($lines);
+
+        $this->assertStringContainsString('[branch summary]', $text);
+        $this->assertStringContainsString('Branch summar', $text);
+        $this->assertStringContainsString('ctrl+o to expand', $text);
+        $this->assertBlockBackground($lines, 'customMessageBg');
+    }
+
+    /** @param list<string> $lines */
+    private function assertBlockBackground(array $lines, string $colour): void
+    {
+        $bg = ltrim($this->palette->hex($colour), '#');
+        [$r, $g, $b] = array_map(hexdec(...), str_split($bg, 2));
+        $escape = "\e[48;2;{$r};{$g};{$b}m";
+
+        $painted = array_values(array_filter($lines, static fn (string $line): bool => str_contains($line, $escape)));
+        $this->assertNotSame([], $painted, 'no line carried the block background');
+
+        foreach ($painted as $line) {
+            $this->assertSame(self::WIDTH, mb_strwidth(Ansi::strip($line)));
+        }
     }
 
     // ---- what the model said ------------------------------------------------------------

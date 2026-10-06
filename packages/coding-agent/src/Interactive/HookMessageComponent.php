@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Interactive;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\Shell;
+use Pig\Tui\Components\Box;
 use Pig\Tui\Components\DefaultTextStyle;
 use Pig\Tui\Components\Markdown;
 use Pig\Tui\Components\Spacer;
@@ -36,6 +37,8 @@ final class HookMessageComponent extends Container
     /** Lines kept while folded. Upstream's number. */
     private const int PREVIEW_LINES = 5;
 
+    private readonly Box $box;
+
     private readonly Text $heading;
 
     private readonly string $text;
@@ -49,8 +52,11 @@ final class HookMessageComponent extends Container
         // words than a tool's result is — and this was the one of the three that had no
         // guard at all: one stray byte from a build log threw out of `render()`.
         $this->text = Shell::sanitize($message->toText());
-        $this->heading = new Text('', 1, 0);
+        $this->box = new Box(1, 1, $palette->of('customMessageBg'));
+        $this->heading = new Text('', 0, 0);
 
+        $this->addChild(new Spacer(1));
+        $this->addChild($this->box);
         $this->setExpanded($expanded);
     }
 
@@ -60,17 +66,18 @@ final class HookMessageComponent extends Container
         $cut = !$expanded && count($lines) > self::PREVIEW_LINES;
 
         $this->heading->setText(
-            $this->palette->fg('muted', "◆ {$this->message->customType}")
-            . ($cut ? $this->palette->fg('dim', '  ctrl+o to read it') : ''),
+            $this->palette->fg('customMessageLabel', "[{$this->message->customType}]")
+            . ($cut ? $this->palette->fg('muted', ' (ctrl+o to expand)') : ''),
         );
 
-        $this->clear();
-        $this->addChild(new Spacer(1));
-        $this->addChild($this->heading);
+        $this->box->clear();
+        $this->box->addChild($this->heading);
 
         if (trim($this->text) === '') {
             return;
         }
+
+        $this->box->addChild(new Spacer(1));
 
         // Cut the *source* before the markdown, as upstream does: a hook's lines reflow into
         // paragraphs on the way out, so cutting the drawn rows would cut whole paragraphs.
@@ -79,9 +86,9 @@ final class HookMessageComponent extends Container
                 . "\n\n... (" . (count($lines) - self::PREVIEW_LINES) . ' more lines)'
             : $this->text;
 
-        $this->addChild(new Markdown(
+        $this->box->addChild(new Markdown(
             $shown,
-            2,
+            0,
             0,
             $this->palette->markdownTheme(),
             new DefaultTextStyle(colour: $this->palette->of('muted')),

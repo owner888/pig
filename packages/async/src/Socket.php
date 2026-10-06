@@ -130,7 +130,8 @@ final class Socket
                 }
 
                 $consecutiveZeros++;
-                $this->awaitReady(true, min(1.0, $stallLimit), $signal);
+                $remaining = $stallLimit - ($now - $stallStart);
+                $this->awaitReady(true, $remaining, $signal);
 
                 // If non-blocking write repeatedly returns 0, yield slightly to let OS flush TCP buffer / receive ACK
                 if ($consecutiveZeros > 3) {

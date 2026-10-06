@@ -640,8 +640,8 @@ import { WebTerminal } from "./components/WebTerminal.js";
 
       if (text) {
         const p = document.createElement("div");
-        p.className = "msg-user-text";
-        p.innerText = text;
+        p.className = "msg-user-text prose";
+        p.innerHTML = renderMarkdown(text);
         block.appendChild(p);
 
         // Also check if text contains an image file path (like clipboard paste /path/to/pig-clipboard-xxx.png)
@@ -715,6 +715,13 @@ import { WebTerminal } from "./components/WebTerminal.js";
         }
         currentAssistantBlock = null;
         currentAssistantText = "";
+      } else if (evt.type === "message_end") {
+        const message = evt.message;
+        if (message?.role === "custom") appendHookMessage(message);
+        if (message?.role === "compactionSummary" || message?.role === "branchSummary") appendSummaryMessage(message);
+        if (message?.role === "assistant" && message.stopReason === "aborted" && !message.content?.some(c => c.type === "toolCall")) {
+          appendErrorMessage(t("operation_aborted"));
+        }
       } else if (evt.type === "agent_start" || evt.type === "turn_start") {
         setRunningState(true);
       } else if (evt.type === "agent_end" || evt.type === "turn_end") {
@@ -807,6 +814,8 @@ import { WebTerminal } from "./components/WebTerminal.js";
         if (tab === active) showStatusBanner(t("compacting_banner"));
       } else if (evt.type === "auto_compaction_end") {
         if (tab === active) hideStatusBanner();
+        if (evt.summary) appendSummaryMessage(evt.summary);
+        if (!evt.succeeded && evt.error) appendErrorMessage(evt.error);
         tab?.refreshState();
       } else if (evt.type === "session_info_changed") {
         if (tab) {
@@ -841,117 +850,7 @@ import { WebTerminal } from "./components/WebTerminal.js";
     }
 
     function createToolCard(evt) {
-      const card = document.createElement("div");
-      card.id = `tool-${evt.toolCallId}`;
-      card.className = "tool-card";
-      card.dataset.tool = evt.toolName || "";
-      if (evt.arguments) {
-        card.dataset.args = JSON.stringify(evt.arguments);
-      }
-
-      let title = evt.toolName;
-      let bodyHtml = "";
-      let borderCol = "#64748b";
-
-      if (evt.toolName === "bash") {
-        borderCol = "#38bdf8"; // sky blue
-        const cmd = evt.arguments?.command || "";
-        const timeout = evt.arguments?.timeout;
-        title = `$ ${cmd}` + (timeout ? ` (timeout ${timeout}s)` : "");
-        bodyHtml = `<div class="tool-terminal">${escapeHtml(t("tool_executing"))}</div>`;
-      } else if (evt.toolName === "read") {
-        borderCol = "#34d399"; // emerald green
-        const path = evt.arguments?.path || "";
-        const offset = evt.arguments?.offset;
-        const limit = evt.arguments?.limit;
-        let range = "";
-        if (offset !== undefined || limit !== undefined) {
-          const start = offset || 1;
-          const end = limit !== undefined ? `-${Number(start) + Number(limit) - 1}` : "";
-          range = `:${start}${end}`;
-        }
-        title = `read ${path}${range}`;
-        bodyHtml = `<div class="tool-terminal">${escapeHtml(t("tool_reading"))}</div>`;
-      } else if (evt.toolName === "edit") {
-        borderCol = "#c084fc"; // purple
-        const path = evt.arguments?.path || "";
-        const oldText = evt.arguments?.oldText || "";
-        const newText = evt.arguments?.newText || "";
-        title = `edit ${path}`;
-        bodyHtml = renderDiff(oldText, newText);
-      } else if (evt.toolName === "write") {
-        borderCol = "#fb923c"; // orange
-        const path = evt.arguments?.path || "";
-        const content = evt.arguments?.content || "";
-        title = `write ${path}`;
-        if (content) {
-          const lines = content.split("\n");
-          const preview = lines.slice(0, 10).join("\n");
-          const more = lines.length > 10 ? `\n... (+${lines.length - 10} more lines)` : "";
-          bodyHtml = `<div class="tool-terminal">${escapeHtml(preview + more)}</div>`;
-        } else {
-          bodyHtml = `<div class="tool-terminal">${escapeHtml(t("tool_writing"))}</div>`;
-        }
-      } else if (evt.toolName === "grep") {
-        borderCol = "#facc15"; // yellow
-        const pattern = evt.arguments?.pattern || "";
-        const path = evt.arguments?.path ? ` in ${evt.arguments.path}` : "";
-        title = `grep /${pattern}/${path}`;
-        bodyHtml = `<div class="tool-terminal">${escapeHtml(t("tool_searching"))}</div>`;
-      } else if (evt.toolName === "find") {
-        borderCol = "#facc15";
-        const pattern = evt.arguments?.pattern || "";
-        const path = evt.arguments?.path ? ` in ${evt.arguments.path}` : "";
-        title = `find "${pattern}"${path}`;
-        bodyHtml = `<div class="tool-terminal">${escapeHtml(t("tool_finding"))}</div>`;
-      } else if (evt.toolName === "ls") {
-        borderCol = "#94a3b8";
-        const path = evt.arguments?.path || ".";
-        title = `ls ${path}`;
-        bodyHtml = `<div class="tool-terminal">${escapeHtml(t("tool_listing"))}</div>`;
-      } else if (evt.toolName === "web_search") {
-        borderCol = "#60a5fa";
-        const query = evt.arguments?.query || "";
-        title = `web_search 🔍 "${query}"`;
-        bodyHtml = `<div class="tool-terminal">${escapeHtml(t("tool_web_searching"))}</div>`;
-      } else if (evt.toolName === "fetch_web_page") {
-        borderCol = "#60a5fa";
-        const url = evt.arguments?.url || "";
-        title = `fetch_web_page 🌐 ${url}`;
-        bodyHtml = `<div class="tool-terminal">${escapeHtml(t("tool_fetching_page"))}</div>`;
-      } else if (evt.toolName === "browse_web_page") {
-        borderCol = "#60a5fa";
-        const url = evt.arguments?.url || "";
-        title = `browse_web_page 🖥️ ${url}`;
-        bodyHtml = `<div class="tool-terminal">${escapeHtml(t("tool_rendering_dom"))}</div>`;
-      } else if (evt.toolName === "computer") {
-        borderCol = "#f43f5e";
-        const act = evt.arguments?.action || "action";
-        title = `computer 🖱️ ${act}`;
-        bodyHtml = `<div class="tool-terminal">${escapeHtml(t("tool_computer_action"))}</div>`;
-      } else {
-        bodyHtml = `<pre><code>${escapeHtml(JSON.stringify(evt.arguments || {}, null, 2))}</code></pre>`;
-      }
-
-      card.innerHTML = `
-        <div class="tool-header" style="border-left-color: ${borderCol};">
-          <div class="tool-header-left">
-            <span class="tool-header-chevron">▶</span>
-            <span class="tool-header-title">${escapeHtml(title)}</span>
-          </div>
-          <span class="tool-header-status">${escapeHtml(t("tool_running"))}</span>
-        </div>
-        <div class="tool-body">${bodyHtml}</div>
-      `;
-
-      card.querySelector(".tool-header").addEventListener("click", () => {
-        const body = card.querySelector(".tool-body");
-        const chevron = card.querySelector(".tool-header-chevron");
-        const isExp = body.classList.toggle("expanded");
-        chevron.classList.toggle("expanded", isExp);
-      });
-
-      return card;
+      return new ToolCard(evt).element;
     }
 
     /**
@@ -963,93 +862,21 @@ import { WebTerminal } from "./components/WebTerminal.js";
       return root ? root.querySelector(`#${CSS.escape("tool-" + toolCallId)}`) : null;
     }
 
-    function formatToolResultBody(toolName, result, args) {
-      if (result === undefined || result === null) {
-        return "";
-      }
-
-      // 1. If result carries unified diff (edit tool)
-      if (result.diff) {
-        return renderDiffFromUnified(result.diff);
-      }
-
-      // 2. Extract text and images if structured AgentToolResult
-      let textOutput = "";
-      const images = [];
-
-      if (typeof result === "string") {
-        textOutput = result;
-      } else if (Array.isArray(result)) {
-        for (const item of result) {
-          if (item?.type === "text" && item.text) textOutput += item.text;
-          if (item?.type === "image" && item.data) images.push(item);
-        }
-      } else if (result.content && Array.isArray(result.content)) {
-        for (const item of result.content) {
-          if (item?.type === "text" && item.text) textOutput += item.text;
-          if (item?.type === "image" && item.data) images.push(item);
-        }
-      } else if (result.output) {
-        textOutput = typeof result.output === "string" ? result.output : JSON.stringify(result.output, null, 2);
-      } else if (result.text) {
-        textOutput = result.text;
-      } else {
-        textOutput = JSON.stringify(result, null, 2);
-      }
-
-      // Check details for truncation / status
-      let detailsFooter = "";
-      if (result.details && typeof result.details === "object") {
-        const det = result.details;
-        const notes = [];
-        if (det.cancelled) notes.push("(cancelled)");
-        if (det.exitCode !== undefined && det.exitCode !== 0) notes.push(`(exit ${det.exitCode})`);
-        if (det.fullOutputPath) notes.push(`Output truncated. Full output: ${det.fullOutputPath}`);
-        if (det.notice) notes.push(det.notice);
-        if (notes.length > 0) {
-          detailsFooter = `<div style="margin-top:8px; padding-top:6px; border-top:1px dashed rgba(255,255,255,0.1); color:var(--text-dim); font-size:11px;">${escapeHtml(notes.join("\n"))}</div>`;
-        }
-      }
-
-      let imagesHtml = "";
-      if (images.length > 0) {
-        imagesHtml = `<div class="msg-images-grid" style="margin-top:8px;">${images.map(img => `<img src="data:${img.mimeType || 'image/png'};base64,${img.data}" class="msg-image-thumb" onclick="window.open(this.src)" title="Click to view full image">`).join("")}</div>`;
-      }
-
-      if (toolName === "edit" && args?.oldText && args?.newText && !result.diff) {
-        return renderDiff(args.oldText, args.newText) + detailsFooter + imagesHtml;
-      }
-
-      return `<div class="tool-terminal">${escapeHtml(textOutput)}</div>${detailsFooter}${imagesHtml}`;
-    }
-
     function updateToolCard(evt) {
       const card = toolCardFor(evt.toolCallId);
       if (!card) return;
 
-      const toolName = card.dataset.tool || "";
       let args = {};
       try {
         if (card.dataset.args) args = JSON.parse(card.dataset.args);
       } catch (e) {}
-
-      const statusEl = card.querySelector(".tool-header-status");
-      if (statusEl) {
-        statusEl.innerText = evt.isError ? t("tool_failed") : t("tool_done");
-        statusEl.style.color = evt.isError ? "#ef4444" : "#34d399";
-      }
-
-      const body = card.querySelector(".tool-body");
-      if (evt.result !== undefined && evt.result !== null) {
-        body.innerHTML = formatToolResultBody(toolName, evt.result, args);
-      }
-
-      // If the tool failed, expand it automatically so the user sees the error
-      if (evt.isError) {
-        body.classList.add("expanded");
-        const chevron = card.querySelector(".tool-header-chevron");
-        if (chevron) chevron.classList.add("expanded");
-      }
+      const replacement = new ToolCard({
+        toolCallId: evt.toolCallId,
+        toolName: card.dataset.tool || "tool",
+        arguments: args,
+      });
+      replacement.finish({ result: evt.result, isError: evt.isError });
+      card.replaceWith(replacement.element);
     }
 
     function updateToolCardProgress(evt) {
@@ -1080,7 +907,7 @@ import { WebTerminal } from "./components/WebTerminal.js";
       const why = err && err.message ? err.message : String(err);
       unreachable = t("unreachable", { error: `${what}: ${why}` });
       showStatusBanner(unreachable);
-      setTimeout(() => { refreshState(); loadMessages(); if (availableModels.length === 0) loadModels(); }, 3000);
+      setTimeout(() => { refreshState(); active?.loadMessages(); if (availableModels.length === 0) loadModels(); }, 3000);
     }
     function pigReachable() {
       if (unreachable) { unreachable = null; hideStatusBanner(); }
@@ -2121,6 +1948,43 @@ import { WebTerminal } from "./components/WebTerminal.js";
      * format, which is why `toolCall` / `toolResult` are the names here and `thinking` carries
      * its text under `thinking`.
      */
+    function appendSummaryMessage(message) {
+      // Both a message event and auto_compaction_end may announce the same summary.
+      if (Array.from(chatScroll.querySelectorAll("[data-summary-key]")).some(el => el.dataset.summaryKey === `${message.role}:${message.timestamp}`)) return;
+      const branch = message.role === "branchSummary";
+      const block = document.createElement("details");
+      block.className = "compaction-box";
+      block.dataset.summaryKey = `${message.role}:${message.timestamp}`;
+      const description = branch
+        ? t(message.fromHook ? "branch_summary_hook" : "branch_summary_done")
+        : (message.tokensBefore > 0 ? t("compacted_from", { count: Number(message.tokensBefore).toLocaleString() }) : t("compacted_done"));
+      block.innerHTML = `<summary class="compaction-header"><span class="compaction-title">[${branch ? "branch summary" : "compaction"}]</span><span class="compaction-description">${escapeHtml(description)}</span></summary><div class="compaction-summary-text prose">${renderMarkdown(message.summary || "")}</div>`;
+      chatScroll.appendChild(block);
+      scrollToBottomIfNeeded();
+    }
+
+    function appendHookMessage(message) {
+      if (message.display === false) return;
+      const text = textOf(message.content);
+      const lines = text.split("\n");
+      const cut = lines.length > 5;
+      const block = document.createElement(cut ? "details" : "div");
+      block.className = "compaction-box hook-message";
+      const label = `<span class="compaction-title">[${escapeHtml(message.customType)}]</span>`;
+      block.innerHTML = cut
+        ? `<summary class="compaction-header">${label}<div class="hook-preview prose">${renderMarkdown(lines.slice(0, 5).join("\n"))}<span class="compaction-description">${escapeHtml(t("more_lines", { count: lines.length - 5 }))}</span></div></summary><div class="compaction-summary-text prose">${renderMarkdown(text)}</div>`
+        : `${label}<div class="compaction-summary-text prose">${renderMarkdown(text)}</div>`;
+      for (const image of (message.content || []).filter(c => c.type === "image")) {
+        const img = document.createElement("img");
+        img.className = "msg-image-thumb";
+        img.src = `data:${image.mimeType};base64,${image.data}`;
+        img.addEventListener("click", () => openImageLightbox(img.src));
+        block.appendChild(img);
+      }
+      chatScroll.appendChild(block);
+      scrollToBottomIfNeeded();
+    }
+
     function renderMessages(msgs) {
       {
         const tab = T();
@@ -2184,6 +2048,8 @@ import { WebTerminal } from "./components/WebTerminal.js";
             }
             if (m.stopReason === "error" && m.errorMessage) {
               appendErrorMessage(m.errorMessage);
+            } else if (m.stopReason === "aborted" && !m.content?.some(c => c.type === "toolCall")) {
+              appendErrorMessage(t("operation_aborted"));
             }
           } else if (m.role === "tool_result" || m.role === "toolResult") {
             let card = tab?.toolCards?.get(m.toolCallId);
@@ -2197,54 +2063,20 @@ import { WebTerminal } from "./components/WebTerminal.js";
               chatScroll.appendChild(card.element);
             }
             card.finish({
-              result: m.content || m.result || m.details,
+              result: { content: m.content || [], details: m.details },
               isError: m.isError,
             });
-          } else if (m.role === "compaction" || m.role === "compactionSummary") {
-            const compBox = document.createElement("div");
-            compBox.className = "compaction-box";
-            const fileCount = (m.readFiles?.length || 0) + (m.modifiedFiles?.length || 0);
-            const fileNote = fileCount > 0 ? ` · ${fileCount} files remembered` : "";
-            compBox.innerHTML = `
-              <div class="compaction-header">
-                <span class="compaction-title">⊙ Compacted · ${Number(m.replaced || 0).toLocaleString()} earlier messages summarised${fileNote}</span>
-                <span class="tool-header-chevron">▶</span>
-              </div>
-              <div class="compaction-summary-text prose" style="display:none;">${renderMarkdown(m.summary || "")}</div>
-            `;
-            compBox.querySelector(".compaction-header").addEventListener("click", () => {
-              const body = compBox.querySelector(".compaction-summary-text");
-              const chevron = compBox.querySelector(".tool-header-chevron");
-              const isExp = body.style.display !== "none";
-              body.style.display = isExp ? "none" : "block";
-              chevron.classList.toggle("expanded", !isExp);
+          } else if (m.role === "compactionSummary" || m.role === "branchSummary") {
+            appendSummaryMessage(m);
+          } else if (m.role === "custom") {
+            appendHookMessage(m);
+          } else if (m.role === "bashExecution") {
+            const card = new ToolCard({ toolCallId: `bash-${m.timestamp}`, toolName: "bash", arguments: { command: m.command } });
+            card.finish({
+              result: { content: [{ type: "text", text: m.output }], details: { exitCode: m.exitCode, cancelled: m.cancelled, fullOutputPath: m.spillPath } },
+              isError: !!m.cancelled || (typeof m.exitCode === "number" && m.exitCode !== 0),
             });
-            chatScroll.appendChild(compBox);
-          } else if (m.role === "branch_summary" || m.role === "branchSummary") {
-            const branchBox = document.createElement("div");
-            branchBox.className = "compaction-box";
-            const fileCount = (m.readFiles?.length || 0) + (m.modifiedFiles?.length || 0);
-            const fileNote = fileCount > 0 ? ` · ${fileCount} files remembered` : "";
-            branchBox.innerHTML = `
-              <div class="compaction-header">
-                <span class="compaction-title">⑂ Branch summarised${m.fromHook ? " by a hook" : ""}${fileNote}</span>
-                <span class="tool-header-chevron">▶</span>
-              </div>
-              <div class="compaction-summary-text prose" style="display:none;">${renderMarkdown(m.summary || "")}</div>
-            `;
-            branchBox.querySelector(".compaction-header").addEventListener("click", () => {
-              const body = branchBox.querySelector(".compaction-summary-text");
-              const chevron = branchBox.querySelector(".tool-header-chevron");
-              const isExp = body.style.display !== "none";
-              body.style.display = isExp ? "none" : "block";
-              chevron.classList.toggle("expanded", !isExp);
-            });
-            chatScroll.appendChild(branchBox);
-          } else if (m.role === "hook_message" && m.display !== false) {
-            const hookBox = document.createElement("div");
-            hookBox.className = "msg-block msg-assistant";
-            hookBox.innerHTML = `<div style="font-size:11px; color:#c084fc; font-weight:600; margin-bottom:4px;">[Hook: ${escapeHtml(m.customType || "custom")}]</div><div class="prose">${renderMarkdown(m.content || "")}</div>`;
-            chatScroll.appendChild(hookBox);
+            chatScroll.appendChild(card.element);
           }
         }
         chatScroll.scrollTop = chatScroll.scrollHeight;

@@ -911,7 +911,7 @@
       border: 1px solid var(--user-border);
       color: var(--text);
     }
-    .msg-user-text { white-space: pre-wrap; }
+    .msg-user-text { white-space: normal; }
 
     .msg-assistant {
       background: var(--assistant-bg);
@@ -919,9 +919,9 @@
     }
 
     .msg-error {
-      background: rgba(239, 68, 68, 0.15);
-      border: 1px solid rgba(239, 68, 68, 0.4);
-      color: #fca5a5;
+      background: var(--diff-del-bg);
+      border: 1px solid var(--diff-del-text);
+      color: var(--diff-del-text);
       font-family: var(--font-mono);
       font-size: 13px;
     }
@@ -942,7 +942,7 @@
       object-fit: cover;
       transition: transform 0.15s;
     }
-    .msg-image-thumb:hover { transform: scale(1.02); border-color: #38bdf8; }
+    .msg-image-thumb:hover { transform: scale(1.02); border-color: var(--btn-send); }
 
     /* Thinking block inside assistant */
     .thinking-box {
@@ -957,7 +957,7 @@
       transition: background 0.15s ease;
     }
     .thinking-box:hover {
-      background: rgba(255, 255, 255, 0.02);
+      background: var(--card-header-hover);
     }
     .thinking-box summary {
       cursor: pointer;
@@ -1051,7 +1051,7 @@
       cursor: pointer;
       user-select: none;
       font-size: 13px;
-      border-left: 3px solid #64748b;
+      border-left: 3px solid var(--btn-send);
       transition: background 0.15s ease;
     }
     .tool-header:hover { background: var(--card-header-hover); }
@@ -1106,7 +1106,7 @@
       transition: all 0.15s ease;
     }
     .tool-copy-btn:hover {
-      background: rgba(255, 255, 255, 0.08);
+      background: var(--card-header-hover);
       border-color: var(--border);
       color: var(--text);
     }
@@ -1119,20 +1119,19 @@
       flex-shrink: 0;
       font-family: var(--font-sans);
     }
-    .tool-header-status.running {
-      color: #38bdf8;
+    .tool-header-status.running { color: var(--btn-send); }
+    .tool-header-status.done { color: var(--diff-add-text); }
+    .tool-header-status.error { color: var(--diff-del-text); }
+    .tool-card[data-status="error"] .tool-header {
+      background: var(--diff-del-bg);
+      border-left-color: var(--diff-del-text);
     }
-    .tool-header-status.done {
-      color: #34d399;
-    }
-    .tool-header-status.error {
-      color: #ef4444;
-    }
+    .tool-card[data-status="done"] .tool-header { border-left-color: var(--diff-add-text); }
     .tool-status-dot {
       width: 6px;
       height: 6px;
       border-radius: 50%;
-      background: #38bdf8;
+      background: var(--btn-send);
       display: inline-block;
       animation: pulseThinking 1.2s infinite ease-in-out;
     }
@@ -1157,9 +1156,8 @@
       display: block;
     }
     .tool-details-footer {
-      margin-top: 8px;
-      padding-top: 6px;
-      border-top: 1px dashed rgba(255, 255, 255, 0.1);
+      padding: 8px 14px;
+      border-top: 1px dashed var(--border);
       color: var(--text-dim);
       font-size: 11px;
       white-space: pre-wrap;
@@ -1681,8 +1679,8 @@
     /* Compaction and Branch Summaries in Web UI */
     .compaction-box {
       width: 100%;
-      background: rgba(167, 152, 215, 0.08);
-      border: 1px dashed rgba(167, 152, 215, 0.35);
+      background: var(--card-header-bg);
+      border: 1px solid var(--border);
       border-radius: 8px;
       padding: 10px 14px;
       margin: 8px 0;
@@ -1691,23 +1689,24 @@
     }
     .compaction-header {
       cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
       color: var(--text);
       font-weight: 500;
       user-select: none;
+      list-style: none;
     }
-    .compaction-title {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      color: #c4b5fd;
+    .compaction-header::-webkit-details-marker { display: none; }
+    .compaction-title { color: var(--btn-send); }
+    .compaction-description {
+      display: block;
+      margin-top: 8px;
+      color: var(--text-muted);
     }
+    .hook-preview { margin-top: 8px; }
+    .hook-message[open] .hook-preview { display: none; }
     .compaction-summary-text {
       margin-top: 10px;
       padding-top: 10px;
-      border-top: 1px dashed rgba(167, 152, 215, 0.2);
+      border-top: 1px dashed var(--border);
       color: var(--text-muted);
       font-size: 13px;
       line-height: 1.6;
@@ -1716,7 +1715,7 @@
       font-family: var(--font-mono);
       font-size: 13px;
       line-height: 1.5;
-      color: #f1f5f9;
+      color: var(--text);
       white-space: pre-wrap;
       word-break: break-all;
     }

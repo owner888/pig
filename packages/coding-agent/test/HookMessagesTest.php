@@ -587,8 +587,13 @@ final class HookMessagesTest extends TestCase
         $text = implode("\n", array_map(static fn (int $i): string => "line {$i}", range(1, 20)));
         $component = new HookMessageComponent(new HookMessage('build', [new TextContent($text)]), Palette::named('dark'));
 
-        $collapsed = implode("\n", array_map(Ansi::strip(...), $component->render(60)));
+        $collapsedLines = $component->render(60);
+        $collapsed = implode("\n", array_map(Ansi::strip(...), $collapsedLines));
 
+        $bg = ltrim(Palette::named('dark')->hex('customMessageBg'), '#');
+        [$r, $g, $b] = array_map(hexdec(...), str_split($bg, 2));
+        $this->assertStringContainsString("\e[48;2;{$r};{$g};{$b}m", implode('', $collapsedLines));
+        $this->assertStringContainsString('[build]', $collapsed);
         $this->assertStringContainsString('line 5', $collapsed);
         $this->assertStringNotContainsString('line 6', $collapsed);
         $this->assertStringContainsString('15 more lines', $collapsed);

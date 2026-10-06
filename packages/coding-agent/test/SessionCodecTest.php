@@ -5,26 +5,29 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
+use Pig\Ai\ImageContent;
+use Pig\Ai\TextContent;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\Label;
 use Pig\CodingAgent\Session\ModelChange;
 use Pig\CodingAgent\Session\SessionCodec;
 
 /**
- * The three message kinds only pig has, as they go over the wire.
+ * The app message kinds only pig has, as they go over the wire.
  *
  * `SessionEntries` writes the *line*; this writes the *message* inside one, and for the three LLM
  * roles it delegates to `MessageJson`. What is left is pig's own — a compaction summary, a branch
- * summary and a typed `!command` — and the one reader of them in that shape is `RpcEvents`, so a
+ * summary, a hook message and a typed `!command` — and the one reader of them in that shape is `RpcEvents`, so a
  * host is the thing on the other side of every default here.
  *
  * Which is why the defaults are the subject: a host sends back what it was given, minus whatever
  * its own encoder dropped for being false. A mutation sweep put 43 mutations through this class and
  * every one of those defaults survived, along with the `default` arm that refuses a role this pig
- * does not know.
+ * does not know; `HookMessage` joined the same wire after Web was found dropping it.
  */
 final class SessionCodecTest extends TestCase
 {
@@ -55,6 +58,28 @@ final class SessionCodecTest extends TestCase
         $back = SessionCodec::decode($encoded);
 
         $this->assertInstanceOf(UserMessage::class, $back);
+    }
+
+    public function testAHooksMessageGoesOverTheWireWholeRatherThanBeingDropped(): void
+    {
+        $message = new HookMessage('build', [new TextContent('log'), new ImageContent('aGVsbG8=', 'image/png')],
+            display: false, details: ['code' => 3], timestamp: 1234);
+        $encoded = SessionCodec::encode($message);
+
+        $this->assertIsArray($encoded);
+        $this->assertSame('custom', $encoded['role']);
+        $this->assertSame('build', $encoded['customType']);
+        $this->assertFalse($encoded['display']);
+        $this->assertSame(['code' => 3], $encoded['details']);
+        $this->assertCount(2, $encoded['content']);
+        $this->assertEquals($message, SessionCodec::decode($encoded));
+    }
+
+    public function testAHooksMessageWithNoDisplayFlagIsShown(): void
+    {
+        $message = SessionCodec::decode(['role' => 'custom', 'customType' => 'build', 'content' => []]);
+        $this->assertInstanceOf(HookMessage::class, $message);
+        $this->assertTrue($message->display);
     }
 
     public function testACompactionThatSaysNothingAboutWhoWroteItIsPigsOwn(): void

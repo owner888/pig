@@ -10921,6 +10921,16 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 4. 前端 `onRpcEvent` 增加对无 ID 或未匹配失败响应的通用捕获，终止 running 状态并调用 `appendErrorMessage`。
 5. `submitMessage` 增加故障回填保护：发送或连接失败时将 `text` 和 `pendingImages` 完整还原回输入框。
 
+### Web 历史回放消息块不能有第二套更窄的 wire 规则
+
+**现象**：Web 重新打开会话或自动压缩后，若干 transcript block 与 TUI 不一致甚至直接丢失：压缩摘要仍显示旧文案、不按 `tokensBefore` 展示；自动压缩完成事件带了 summary 却没有追加块；hook 消息完全不显示；历史工具结果丢失 `details.diff`、截断提示和完整输出路径；`!command` 历史回放没有自己的块。
+
+**原因**：Web 有两条分叉：后端 `SessionCodec` 只编码 compaction / branch / bash 三种 app message，漏掉 `HookMessage`，所以 RPC/Web 事件链上 hook 消息变成 `null`；前端历史回放又有一套手写工具卡和 summary/hook HTML，读取 `result.diff` 而不是真实的 `result.details.diff`，并把工具结果的 `details` 丢掉。这是 TUI、session file、RPC wire 和 Web 四端各自回答同一个问题。
+
+**规则**：Web 历史回放必须消费 `SessionCodec::encode()` 的完整形状；工具卡只允许 `ToolCard` 一处决定 result 怎么画，不能在 `app.js` 再写一套 `formatToolResultBody()`；压缩、分支摘要和 hook 消息都用同一个主题 token block，而不是硬编码紫色或旧文案。自动压缩的 `auto_compaction_end.summary` 和后续 `message_end` 可能是同一个摘要，前端必须按 `role:timestamp` 去重。
+
+**对策**：`SessionCodec` 增加 `HookMessage` 的 `role: "custom"` 编解码；Web 回放把 tool result 包成 `{content, details}` 交给 `ToolCard`，`edit` 优先显示 `details.diff`，`write` 显示写入内容，`bashExecution` 走 bash card；compaction / branch / hook 使用 `.compaction-box` + theme token，hook 消息五行预览并可点击展开；`auto_compaction_end` 追加 summary 且与 `message_end` 去重。回归测试用 PHP 实际消息生成 JSON，再由 Node 运行 Web renderer，避免测试自己发明一套 wire。
+
 ### `Auth::fresh()` 在非协程中刷新 OAuth 令牌导致 `Future::await()` 崩溃
 
 **现象**：
@@ -10969,12 +10979,14 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 1. **零写死循环（Zero-write loop）**：在 OpenSSL 非阻塞流上，当连接被对端提早关闭时，`fwrite` 并不总是返回 `false`，而是返回 `0`。在非阻塞模式下，已关闭的 TCP socket 在 `stream_select` 中永远处于 Writable 状态，因此 `$this->awaitReady(true)` 瞬间返回，导致 `while ($offset < $length)` 在毫秒级内空转上万次并耗尽超时，甚至导致 OpenSSL 状态机崩溃报错。且 `Socket::write()` 原先缺少对 `feof($this->stream)` 的即时检测。
 2. **`fclose()` close_notify 警告泄露**：当连接已被底层异常打断时，直接执行 `fclose($stream)` 会触发 OpenSSL 尝试发送 TLS `close_notify` alert，在 Broken pipe 连接上写入直接向终端抛出裸露的 `Warning: fwrite(): SSL operation failed with code 5`。
 3. **`Retry::WORDS` 正则漏判 PHP 原生网络异常**：`Retry::WORDS` 原先仅涵盖了 `broken pipe` 和 `connection reset` 等字眼。而 PHP 在发生 SSL 故障、握手失败、写失败时，异常信息通常为 `Write failed: fwrite(): SSL operation failed with code 5`、`Read failed: ...`、`TLS handshake with ... failed`、`Cannot connect to ...`。这些关键错误信息未被纳入正则，导致所有此类网络波动被误判为“不可重试的请求错误”，直接中断会话。
+4. **一秒轮询片段被误当成整体写入超时**：连续零写时，代码用 `awaitReady(true, min(1.0, $stallLimit))` 等下一次可写。这样一个 30 秒或 5 秒的整体写入超时，遇到对端暂时不读、socket 一秒内没有重新可写，就会提前抛出 `Socket timed out after 1.0s`。这不是 provider 超时，而是 pig 把内部 poll slice 当成了用户可见超时；大 payload 或代理背压时尤其容易触发。
 
 **对策**：
 1. 在 `Socket::write()` 中加入前置 `feof()` 检查及连续零写（`$zeroWrites > 10`）熔断保护，遇到断开立即安全抛出 `SocketError`，杜绝死循环空转与状态机损坏。
 2. 在 `Socket::close()` 中使用 `self::capturingWarnings()` 包裹 `fclose($stream)`，彻底静音已断连 SSL 的 `close_notify` 原生警告。
 3. `Socket::capturingWarnings()` 改为字符串累加（`$warning .= ' ' . $message`），确保 OpenSSL 的连续复合报警（如 Code 5 叠加具体 Broken pipe）不丢失。
 4. 全面扩充 `Retry::WORDS` 正则，将 `ssl.*operation failed`、`tls.*handshake.*failed`、`write failed`、`read failed`、`cannot connect`、`network.*unreachable`、`host.*unreachable`、`socket.*closed` 等原生异常全部纳入自动重试机制。遇网络抖动或 SSL 断连自动无缝重试，彻底保障长时间无人值守运行的稳定性。
+5. 零写后的等待使用整体写入超时剩余值（`$stallLimit - elapsed`），而不是固定的一秒片段；`SocketTest::testAWriteStalledByAPeerThatDoesNotReadGetsTheWholeWriteTimeout` 用一个接受但不读取的本地 peer 证明旧代码约 1 秒失败，新代码等完整 1.5 秒。
 
 ### 会话树回溯 O(N²) 数组重分配与 `latestFor` 全文件扫描导致 `pig -c` 启动严重迟钝
 

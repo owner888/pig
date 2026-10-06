@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Interactive;
 
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Theme\Palette;
+use Pig\Tui\Components\Box;
 use Pig\Tui\Components\DefaultTextStyle;
 use Pig\Tui\Components\Markdown;
 use Pig\Tui\Components\Spacer;
@@ -24,7 +25,11 @@ use Pig\Tui\Container;
  */
 final class BranchSummaryComponent extends Container
 {
-    private readonly Text $heading;
+    private readonly Box $box;
+
+    private readonly Text $label;
+
+    private readonly Text $detail;
 
     private readonly Markdown $body;
 
@@ -35,45 +40,48 @@ final class BranchSummaryComponent extends Container
         private readonly Palette $palette,
         bool $expanded = false,
     ) {
-        $this->heading = new Text('', 1, 0);
+        $this->box = new Box(1, 1, $palette->of('customMessageBg'));
+        $this->label = new Text($palette->fg('customMessageLabel', '[branch summary]'), 0, 0);
+        $this->detail = new Text('', 0, 0);
         $this->body = new Markdown(
             $summary->summary,
-            2,
+            0,
             0,
             $palette->markdownTheme(),
             new DefaultTextStyle(colour: $palette->of('muted')),
         );
 
         $this->addChild(new Spacer(1));
-        $this->addChild($this->heading);
+        $this->addChild($this->box);
         $this->setExpanded($expanded);
     }
 
     public function setExpanded(bool $expanded): void
     {
         $this->expanded = $expanded;
-        $this->heading->setText($this->line());
+        $this->detail->setText($this->line());
 
-        $this->clear();
-        $this->addChild(new Spacer(1));
-        $this->addChild($this->heading);
+        $this->box->clear();
+        $this->box->addChild($this->label);
+        $this->box->addChild(new Spacer(1));
+        $this->box->addChild($this->detail);
 
         if ($expanded) {
-            $this->addChild($this->body);
+            $this->box->addChild(new Spacer(1));
+            $this->box->addChild($this->body);
         }
     }
 
     private function line(): string
     {
-        $files = count($this->summary->readFiles) + count($this->summary->modifiedFiles);
+        $line = $this->summary->fromHook
+            ? 'Branch summary provided by a hook'
+            : 'Branch summarised';
 
-        $line = $this->palette->fg('accent', '⑂ Branch summarised')
-            . $this->palette->fg('muted', $this->summary->fromHook ? ' · by a hook' : '');
-
-        if ($files > 0) {
-            $line .= $this->palette->fg('muted', sprintf(' · %d files remembered', $files));
+        if (!$this->expanded) {
+            $line .= ' (ctrl+o to expand)';
         }
 
-        return $line . $this->palette->fg('dim', $this->expanded ? '' : '  ctrl+o to read it');
+        return $this->palette->fg('muted', $line);
     }
 }

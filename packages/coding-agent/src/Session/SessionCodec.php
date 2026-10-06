@@ -11,8 +11,8 @@ use Pig\Ai\Utils\MessageJson;
  *
  * The three message types of `Pig\Ai` are `Ai\Utils\MessageJson`'s, and this delegates them: the
  * same shape goes to a session file, to an RPC host and to `Agent\StreamProxy`'s gateway, and
- * `agent-core` cannot reach into this package to get it. What is left here is the three roles only
- * pig has — a compaction summary, a branch summary, a bash execution — plus the `encodeContent()`,
+ * `agent-core` cannot reach into this package to get it. What is left here is the app's own roles
+ * — a compaction summary, a branch summary, a hook message, a bash execution — plus the `encodeContent()`,
  * `decodeContent()` and `plain()` names that the rest of `coding-agent` already calls.
  *
  * The wire format is upstream's, so a session file from either can be read by the other:
@@ -51,6 +51,14 @@ final class SessionCodec
                 // the translation lives. This is pig's own wire, where "there was no leaf" says so.
                 'fromId' => $message->fromId,
                 'fromHook' => $message->fromHook,
+                'timestamp' => $message->timestamp,
+            ],
+            $message instanceof HookMessage => [
+                'role' => 'custom',
+                'customType' => $message->customType,
+                'content' => self::encodeContent($message->content),
+                'display' => $message->display,
+                'details' => self::plain($message->details),
                 'timestamp' => $message->timestamp,
             ],
             $message instanceof BashExecution => [
@@ -98,6 +106,13 @@ final class SessionCodec
                 array_values(array_map(strval(...), (array) ($entry['modifiedFiles'] ?? []))),
                 isset($entry['fromId']) ? (string) $entry['fromId'] : null,
                 (bool) ($entry['fromHook'] ?? false),
+                $timestamp,
+            ),
+            'custom' => new HookMessage(
+                (string) ($entry['customType'] ?? ''),
+                self::decodeContent((array) ($entry['content'] ?? [])),
+                ($entry['display'] ?? true) === true,
+                $entry['details'] ?? null,
                 $timestamp,
             ),
             'bashExecution' => new BashExecution(
