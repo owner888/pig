@@ -164,6 +164,99 @@ final class RpcUi implements HookUi
         return $this->palette;
     }
 
+    #[\Override]
+    public function pasteToEditor(string $text): void
+    {
+        $this->tell(['method' => 'paste_to_editor', 'text' => $text]);
+    }
+
+    #[\Override]
+    public function setTitle(string $title): void
+    {
+        $this->tell(['method' => 'set_title', 'title' => $title]);
+    }
+
+    #[\Override]
+    public function setWorkingMessage(?string $message = null): void
+    {
+        $this->tell(['method' => 'set_working_message', 'message' => $message]);
+    }
+
+    #[\Override]
+    public function setWorkingVisible(bool $visible): void
+    {
+        $this->tell(['method' => 'set_working_visible', 'visible' => $visible]);
+    }
+
+    #[\Override]
+    public function setHiddenThinkingLabel(?string $label = null): void
+    {
+        $this->tell(['method' => 'set_hidden_thinking_label', 'label' => $label]);
+    }
+
+    #[\Override]
+    public function getToolsExpanded(): bool
+    {
+        return false;
+    }
+
+    #[\Override]
+    public function setToolsExpanded(bool $expanded): void
+    {
+        $this->tell(['method' => 'set_tools_expanded', 'expanded' => $expanded]);
+    }
+
+    #[\Override]
+    public function setWidget(string $key, array|Closure|null $content, array $options = []): void
+    {
+        $this->tell([
+            'method' => 'set_widget',
+            'key' => $key,
+            'content' => is_array($content) ? $content : null,
+            'placement' => $options['placement'] ?? 'above',
+        ]);
+    }
+
+    #[\Override]
+    public function setHeader(?Closure $factory): void
+    {
+    }
+
+    #[\Override]
+    public function setFooter(?Closure $factory): void
+    {
+    }
+
+    #[\Override]
+    public function getAllThemes(): array
+    {
+        return Palette::names();
+    }
+
+    #[\Override]
+    public function getTheme(string $name): ?Palette
+    {
+        try {
+            return Palette::named($name);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    #[\Override]
+    public function setTheme(string $name): bool
+    {
+        $this->tell(['method' => 'set_theme', 'theme' => $name]);
+
+        return true;
+    }
+
+    #[\Override]
+    public function onTerminalInput(callable $handler): Closure
+    {
+        return static fn () => null;
+    }
+
     /**
      * Ask, and park until the answer arrives.
      *

@@ -84,9 +84,9 @@ final class HookWiringTest extends TestCase
     /**
      * Every event a plain run fires, in order.
      *
-     * `before_agent_start` comes first because it is the one that can still change what
-     * is about to be sent — by the time `agent_start` goes out, the prompt is already in
-     * the conversation.
+     * `input` comes first — it sees what was typed, before anything is expanded or sent — and
+     * `before_agent_start` next, because it is the last that can still change what is about to
+     * be sent: by the time `agent_start` goes out, the prompt is already in the conversation.
      */
     public function testARunReportsItselfFromStartToEnd(): void
     {
@@ -96,6 +96,7 @@ final class HookWiringTest extends TestCase
 
         $this->assertSame(
             [
+                'input',
                 'before_agent_start',
                 'agent_start',
                 'turn_start',

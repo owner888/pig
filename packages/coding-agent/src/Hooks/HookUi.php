@@ -108,4 +108,57 @@ interface HookUi
 
     /** The colours this session is drawn in, for styling a status line. */
     public function palette(): Palette;
+
+    /** Put text at the editor caret, as if pasted. Upstream's `pasteToEditor()`. */
+    public function pasteToEditor(string $text): void;
+
+    /** Set the terminal window/tab title. Upstream's `setTitle()`. */
+    public function setTitle(string $title): void;
+
+    /** Set custom text on the working loader (null restores default). Upstream's `setWorkingMessage()`. */
+    public function setWorkingMessage(?string $message = null): void;
+
+    /** Show or hide the working loader explicitly. Upstream's `setWorkingVisible()`. */
+    public function setWorkingVisible(bool $visible): void;
+
+    /** Set label for hidden thinking blocks. Upstream's `setHiddenThinkingLabel()`. */
+    public function setHiddenThinkingLabel(?string $label = null): void;
+
+    /** Whether tools are currently expanded in the transcript. Upstream's `getToolsExpanded()`. */
+    public function getToolsExpanded(): bool;
+
+    /** Expand or collapse tools in the transcript. Upstream's `setToolsExpanded()`. */
+    public function setToolsExpanded(bool $expanded): void;
+
+    /**
+     * Add or update an extension widget above or below the prompt. Upstream's `setWidget()`.
+     *
+     * @param string $key unique widget identifier
+     * @param list<string>|Closure(\Pig\Tui\Tui, Palette): \Pig\Tui\Component|null $content null removes it
+     * @param array{placement?: 'above'|'below'} $options
+     */
+    public function setWidget(string $key, array|Closure|null $content, array $options = []): void;
+
+    /** Set a custom header component above the chat. Null removes it. Upstream's `setHeader()`. */
+    public function setHeader(?Closure $factory): void;
+
+    /** Set a custom footer component. Null removes it. Upstream's `setFooter()`. */
+    public function setFooter(?Closure $factory): void;
+
+    /** All installed theme names. Upstream's `getAllThemes()`. @return list<string> */
+    public function getAllThemes(): array;
+
+    /** Find a theme by name. Upstream's `getTheme()`. */
+    public function getTheme(string $name): ?Palette;
+
+    /** Switch the active theme. Upstream's `setTheme()`. Returns true on success. */
+    public function setTheme(string $name): bool;
+
+    /**
+     * Intercept raw terminal input before components see it. Upstream's `onTerminalInput()`.
+     *
+     * @param callable(string): (bool|array{consume?: bool, data?: string}|null) $handler
+     * @return Closure(): void unregister callback
+     */
+    public function onTerminalInput(callable $handler): Closure;
 }

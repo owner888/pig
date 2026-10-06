@@ -28,8 +28,15 @@ use Pig\Tui\Container;
  */
 final class UserMessageComponent extends Container
 {
-    public function __construct(string $text, Palette $palette)
+    /**
+     * @param list<Closure(string, array{role: string, isStreaming: bool}): string> $transformers
+     */
+    public function __construct(string $text, Palette $palette, array $transformers = [])
     {
+        foreach ($transformers as $transformer) {
+            $text = $transformer($text, ['role' => 'user', 'isStreaming' => false]);
+        }
+
         $this->addChild(new Spacer(1));
         $this->addChild(new Markdown(
             Shell::sanitize($text),

@@ -21,7 +21,6 @@ use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\Extensions\ExtensionError;
-use Pig\CodingAgent\Hooks\HookedTool;
 use Pig\CodingAgent\Hooks\HookLoader;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
@@ -36,9 +35,9 @@ use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Prompt\SlashCommands;
-use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Tools\Shell;
 use Pig\CodingAgent\Tools\ToolSelection;
+use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\CodingAgent\Tools\ToolSet;
 use Throwable;
 
@@ -114,22 +113,18 @@ final class CodingAgent
         // Custom tools go in beside the built-in ones and are then wrapped with them, so
         // a `tool_call` hook guards a tool somebody wrote exactly as it guards `bash`.
         // The built-ins come first: they are what the system prompt lists in that order.
-        $agent->setTools(HookedTool::wrap(
-            [...ToolSet::create($cwd, $tools), ...($customTools?->agentTools() ?? [])],
-            $hooks ?? new HookRunner(),
-        ));
         $agent->setThinkingLevel($thinking);
-        [$snippets, $guidelines] = $customTools?->promptContributions() ?? [[], []];
-        $agent->setSystemPrompt(SystemPrompt::build(
+        (new ToolLoadout(
+            $agent,
             $cwd,
             $tools,
-            SystemPrompt::resolve($systemPrompt),
-            SystemPrompt::resolve($appendSystemPrompt),
+            $customTools ?? new CustomToolSet(),
+            $hooks ?? new HookRunner(),
             $contextFiles,
             $skills,
-            $snippets,
-            $guidelines,
-        ));
+            $systemPrompt,
+            $appendSystemPrompt,
+        ))->apply();
 
         return $agent;
     }
@@ -466,20 +461,12 @@ final class CodingAgent
         Timings::mark('agent');
 
         // A tool that arrives after startup — an MCP server connecting — reaches the model the
-        // same way the ones at startup did: beside the built-ins, wrapped with the hooks.
-        $customTools->onChange(static function (CustomToolSet $tools) use ($agent, $cwd, $builtIn, $hooks, $contextFiles, $skills): void {
-            $agent->setTools(HookedTool::wrap(
-                [...ToolSet::create($cwd, $builtIn), ...$tools->agentTools()],
-                $hooks,
-            ));
+        // same way the ones at startup did: beside the built-ins, wrapped with the hooks, and
+        // filtered by whatever an extension narrowed the active set to.
+        $loadout = new ToolLoadout($agent, $cwd, $builtIn, $customTools, $hooks, $contextFiles, $skills);
+        $customTools->onChange(static fn () => $loadout->apply());
 
-            // A tool with something to say in the system prompt — codemode's snippet and guideline —
-            // says it from the moment it is on the model, not from the next start.
-            [$snippets, $guidelines] = $tools->promptContributions();
-            $agent->setSystemPrompt(SystemPrompt::build($cwd, $builtIn, contextFiles: $contextFiles, skills: $skills, toolSnippets: $snippets, toolGuidelines: $guidelines));
-        });
-
-        $session = new AgentSession($agent, $cwd, $store, $settings, $hooks, $fileCommands, $scope, auth: $auth);
+        $session = new AgentSession($agent, $cwd, $store, $settings, $hooks, $fileCommands, $scope, auth: $auth, loadout: $loadout, projectTrusted: $projectTrusted);
 
         // What the hooks and the custom tools are told about the session is wired by the mode, not
         // here: the interactive one is what has a screen to draw a dialog on, and upstream says the

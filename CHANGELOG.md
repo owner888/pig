@@ -43,6 +43,28 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.60] - 2026-10-06
+
+### Added
+
+- **Inter-extension event bus** — `$pi->events()`, upstream's `pi.events`: pub/sub channels (`on()` returning an unsubscribe closure, `emit()`, `clear()`) shared across all extensions of a load, with error isolation so one handler throwing does not break others.
+- **Full lifecycle hook events** — `tool_execution_start`, `tool_execution_update` (streaming tool deltas), `tool_execution_end`, `session_compact_failed` (with reason, abort flag, and error message), `user_bash` (intercepting typed `!command`), and `input` (intercepting user input before skill/template expansion).
+- **Input transform & interception** — `InputEvent` & `InputEventResult` (`continue`, `transform`, `handled`), fired before prompt expansion and during queue steering/follow-up, chaining text/image modifications across extensions.
+- **User bash command interception** — `UserBashEvent` & `UserBashEventResult`: extensions can execute commands on remote hosts/containers and return `BashExecution` without falling back to local execution.
+- **Active tool loadout management** — `ToolLoadout`, unifying tool filtering across session creation, `/reload`, and runtime; `$pi->setActiveTools()`, `$pi->getActiveTools()`, and `$pi->getAllTools()`.
+- **Extension tool execution** — `$ctx->executeTool($name, $args)`: runs tools on an extension's behalf through schema validation and `tool_call` permission guards.
+- **Context usage and session control on `$ctx`** — `$ctx->getContextUsage()` (`ContextUsage` with tokens, contextWindow, and percent), `$ctx->getSystemPrompt()`, `$ctx->isProjectTrusted()`, `$ctx->mode()`, `$ctx->thinkingLevel()`, `$ctx->compact()`, and `$ctx->shutdown()`.
+- **Rich extension UI capabilities on `$ctx->ui`** — `pasteToEditor()`, `setTitle()`, `setWorkingMessage()`, `setWorkingVisible()`, `setHiddenThinkingLabel()`, `getToolsExpanded()`, `setToolsExpanded()`, `setWidget()`, `setHeader()`, `setFooter()`, `getAllThemes()`, `getTheme()`, `setTheme()`, and `onTerminalInput()`.
+- **Extension keyboard shortcuts** — `$pi->registerShortcut($key, $handler, $desc)`: custom shortcuts bound on the editor, executed in a fiber with context, and displayed in `/help`.
+- **Markdown transformers** — `$pi->registerMarkdownTransformer($transformer)`: transforms user and assistant Markdown before rendering in transcript.
+- **Tool renderers** — `$pi->registerToolRenderer($resolver)`: onion-middleware chain allowing extensions to customize call and result rendering for both built-in and custom tools.
+- **Custom entry renderers** — `$pi->registerEntryRenderer($customType, $renderer)`: draws custom session tree entries in the transcript.
+
+### Fixed
+
+- Fixed `/reload` silently dropping the `--tools` / `--exclude-tools` filter: reload now preserves active tool loadout states through `ToolLoadout`.
+- Fixed permission gate false positives: anchored dangerous system commands to command position and blanked non-shell quoted strings.
+
 ## [0.3.59] - 2026-10-06
 
 ### Fixed

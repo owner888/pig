@@ -87,4 +87,83 @@ final readonly class NoUi implements HookUi
     {
         return $this->palette ?? Palette::dark();
     }
+
+    #[\Override]
+    public function pasteToEditor(string $text): void
+    {
+    }
+
+    #[\Override]
+    public function setTitle(string $title): void
+    {
+    }
+
+    #[\Override]
+    public function setWorkingMessage(?string $message = null): void
+    {
+    }
+
+    #[\Override]
+    public function setWorkingVisible(bool $visible): void
+    {
+    }
+
+    #[\Override]
+    public function setHiddenThinkingLabel(?string $label = null): void
+    {
+    }
+
+    #[\Override]
+    public function getToolsExpanded(): bool
+    {
+        return false;
+    }
+
+    #[\Override]
+    public function setToolsExpanded(bool $expanded): void
+    {
+    }
+
+    #[\Override]
+    public function setWidget(string $key, array|Closure|null $content, array $options = []): void
+    {
+    }
+
+    #[\Override]
+    public function setHeader(?Closure $factory): void
+    {
+    }
+
+    #[\Override]
+    public function setFooter(?Closure $factory): void
+    {
+    }
+
+    #[\Override]
+    public function getAllThemes(): array
+    {
+        return ['dark', 'light', 'labra'];
+    }
+
+    #[\Override]
+    public function getTheme(string $name): ?Palette
+    {
+        try {
+            return Palette::named($name);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    #[\Override]
+    public function setTheme(string $name): bool
+    {
+        return false;
+    }
+
+    #[\Override]
+    public function onTerminalInput(callable $handler): Closure
+    {
+        return static fn () => null;
+    }
 }

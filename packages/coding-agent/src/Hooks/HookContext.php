@@ -12,7 +12,12 @@ use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\Stream;
 use Pig\Ai\TextContent;
 use Pig\Ai\UserMessage;
+use Pig\Agent\AgentToolResult;
+use Pig\Agent\ThinkingLevel;
 use Pig\Async\AbortSignal;
+use Pig\Async\Async;
+use Pig\CodingAgent\Session\CompactionSummary;
+use Pig\CodingAgent\Session\ContextUsage;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 
@@ -148,5 +153,93 @@ final readonly class HookContext
     public function hasQueuedMessages(): bool
     {
         return $this->hasQueuedMessages !== null && ($this->hasQueuedMessages)();
+    }
+
+    // ---- upstream's ExtensionContext, the parts that need the session -------------------
+    //
+    // Each answers the empty thing — null, `print`, true — when there is no session, which is a
+    // hook file being read at startup or a test that built a context by hand. Not a fallback over
+    // a failure: there is genuinely nothing to report yet.
+
+    /** `tui`, `print`, `json` or `rpc`. Upstream's `ctx.mode`. */
+    public function mode(): string
+    {
+        return $this->session?->mode() ?? 'print';
+    }
+
+    public function thinkingLevel(): ?ThinkingLevel
+    {
+        return $this->session?->thinkingLevel();
+    }
+
+    /** Whether `<cwd>/.pig/` was allowed to load. */
+    public function isProjectTrusted(): bool
+    {
+        return $this->session?->isProjectTrusted() ?? true;
+    }
+
+    /** How full the context window is; null with no model or no window. */
+    public function getContextUsage(): ?ContextUsage
+    {
+        return $this->session?->contextUsage();
+    }
+
+    /** The system prompt the next request carries. */
+    public function getSystemPrompt(): string
+    {
+        return $this->session?->systemPrompt() ?? '';
+    }
+
+    /**
+     * Summarise the conversation, in the background. Upstream's `ctx.compact()`.
+     *
+     * Fire-and-forget, because a handler that waited would be waiting inside the turn it wants
+     * to make room after. `$onComplete` gets the summary (null when it was cancelled), `$onError`
+     * the throwable — "Agent is working" among them, when it is asked mid-turn.
+     *
+     * @param (Closure(CompactionSummary|null): void)|null $onComplete
+     * @param (Closure(\Throwable): void)|null            $onError
+     */
+    public function compact(?string $customInstructions = null, ?Closure $onComplete = null, ?Closure $onError = null): void
+    {
+        $session = $this->session;
+
+        if ($session === null) {
+            return;
+        }
+
+        Async::spawn(static function () use ($session, $customInstructions, $onComplete, $onError): void {
+            try {
+                $summary = $session->compact($customInstructions);
+            } catch (\Throwable $error) {
+                if ($onError !== null) {
+                    $onError($error);
+                }
+
+                return;
+            }
+
+            if ($onComplete !== null) {
+                $onComplete($summary);
+            }
+        });
+    }
+
+    /** Ask pig to quit — now if idle, once the prompt settles otherwise. */
+    public function shutdown(): void
+    {
+        $this->session?->requestShutdown();
+    }
+
+    /**
+     * Run one of the model's tools, through the same gate the model's calls go through.
+     *
+     * @param array<string, mixed> $arguments
+     */
+    public function executeTool(string $name, array $arguments = []): AgentToolResult
+    {
+        $session = $this->session ?? throw new \LogicException('executeTool() needs a session — call it from a handler.');
+
+        return $session->executeTool($name, $arguments, $this->signal);
     }
 }

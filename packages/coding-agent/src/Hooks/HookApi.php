@@ -73,6 +73,12 @@ class HookApi
         'before_retry',
         'model_select',
         'thinking_level_select',
+        'tool_execution_start',
+        'tool_execution_update',
+        'tool_execution_end',
+        'session_compact_failed',
+        'user_bash',
+        'input',
     ];
 
     /**
@@ -98,6 +104,9 @@ class HookApi
 
     /** @var array<string, Closure> one renderer per custom message type */
     private array $renderers = [];
+
+    /** @var array<string, Closure> one renderer per custom entry type */
+    private array $entryRenderers = [];
 
     /** Handed in once the session exists; null while the hook file is being read. */
     private ?Closure $send = null;
@@ -228,6 +237,23 @@ class HookApi
     public function renderers(): array
     {
         return $this->renderers;
+    }
+
+    /**
+     * Draw this hook's custom session entries in the transcript.
+     * Upstream's `registerEntryRenderer`. Custom entries do not participate in LLM context.
+     *
+     * @param callable(CustomEntry, RenderOptions, Palette): mixed $renderer
+     */
+    public function registerEntryRenderer(string $customType, callable $renderer): void
+    {
+        $this->entryRenderers[self::customType($customType)] = Closure::fromCallable($renderer);
+    }
+
+    /** @return array<string, Closure> */
+    public function entryRenderers(): array
+    {
+        return $this->entryRenderers;
     }
 
     /**

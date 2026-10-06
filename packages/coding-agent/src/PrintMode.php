@@ -101,6 +101,9 @@ final class PrintMode
 
     private function start(): void
     {
+        // No shutdown handler: this mode ends when the prompt does, which is what a quit asks for.
+        $this->session->setMode($this->mode === 'json' ? 'json' : 'print');
+
         // The same wiring as the other two modes, with the one difference that matters: no UI.
         $this->hooks?->initialize(
             getModel: fn () => $this->session->model(),

@@ -64,7 +64,6 @@ use Pig\CodingAgent\Hooks\HookContext;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookLoader;
 use Pig\CodingAgent\Hooks\HookRunner;
-use Pig\CodingAgent\Hooks\HookedTool;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Hooks\RegisteredCommand;
 use Pig\CodingAgent\Prompt\ContextFile;
@@ -73,8 +72,8 @@ use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Prompt\SlashCommands;
-use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Tools\ToolInstaller;
+use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Tui\Env;
 use Pig\CodingAgent\Session\SessionCodec;
@@ -169,6 +168,12 @@ final class InteractiveMode
      * checking it, which is the arrangement that failed.
      */
     private readonly Container $overlay;
+    private readonly Container $widgetsAbove;
+    private readonly Container $widgetsBelow;
+    private readonly Container $customHeader;
+    private readonly Container $customFooter;
+    private ?string $customWorkingMessage = null;
+    private ?string $hiddenThinkingLabel = null;
 
     private readonly CustomEditor $editor;
 
@@ -303,6 +308,10 @@ final class InteractiveMode
         $this->pending = new Container();
         $this->status = new Container();
         $this->overlay = new Container();
+        $this->widgetsAbove = new Container();
+        $this->widgetsBelow = new Container();
+        $this->customHeader = new Container();
+        $this->customFooter = new Container();
         $this->editor = new CustomEditor(new Editor($palette->editorTheme()), $this->keybindings);
         // `$this->settings` rather than the argument: with none given it is the in-memory one
         // that `/settings` writes to, and the footer has to read what that screen changes.
@@ -323,7 +332,52 @@ final class InteractiveMode
             // thing in both places and there is one piece of code to get right.
             fn (string $text): ?string => $this->externalEditor($text),
             $this->keybindings,
+            $this->widgetsAbove,
+            $this->widgetsBelow,
+            $this->customHeader,
+            $this->customFooter,
+            onWorkingMessage: function (?string $message): void {
+                $this->customWorkingMessage = $message;
+                if ($this->working !== null) {
+                    $this->working->setText($message ?? 'Working... (esc to interrupt)');
+                    $this->tui->requestRender();
+                }
+            },
+            onWorkingVisible: function (bool $visible): void {
+                if ($visible) {
+                    $this->showLoader($this->customWorkingMessage ?? 'Working... (esc to interrupt)');
+                } else {
+                    $this->hideLoader();
+                }
+            },
+            onHiddenThinkingLabel: function (?string $label): void {
+                $this->hiddenThinkingLabel = $label;
+                foreach ($this->chat->children() as $child) {
+                    if ($child instanceof AssistantMessageComponent) {
+                        $child->setHiddenThinkingLabel($label);
+                    }
+                }
+                $this->tui->requestRender();
+            },
+            getToolsExpanded: fn (): bool => $this->expanded,
+            setToolsExpanded: fn (bool $expanded) => $this->setToolsExpanded($expanded),
+            onTheme: function (string $name): bool {
+                if (!in_array($name, Palette::names($this->cwd), true)) {
+                    return false;
+                }
+                $this->useTheme($name);
+                return true;
+            },
+            cwd: $this->cwd,
         );
+
+        // What a handler's `$ctx->mode()` answers, and what `$ctx->shutdown()` does here: quit,
+        // on the next tick rather than from inside whichever handler asked, because stopping
+        // the TUI from inside a callback it is running is the thing `stop()` cannot survive.
+        $session->setMode('tui');
+        $session->onShutdownRequest(function (): void {
+            Loop::get()->defer(fn () => $this->stop());
+        });
 
         $hooks?->initialize(
             getModel: static fn () => $session->model(),
@@ -432,7 +486,11 @@ final class InteractiveMode
 
         foreach ($this->session->messages() as $message) {
             if ($message instanceof UserMessage) {
-                $this->chat->addChild(new UserMessageComponent(self::textOf($message), $this->palette));
+                $this->chat->addChild(new UserMessageComponent(
+                    self::textOf($message),
+                    $this->palette,
+                    $this->hooks?->markdownTransformers() ?? [],
+                ));
 
                 continue;
             }
@@ -462,7 +520,13 @@ final class InteractiveMode
             }
 
             if ($message instanceof AssistantMessage) {
-                $this->chat->addChild(new AssistantMessageComponent($this->palette, $message, $this->hideThinking));
+                $this->chat->addChild(new AssistantMessageComponent(
+                    $this->palette,
+                    $message,
+                    $this->hideThinking,
+                    $this->hooks?->markdownTransformers() ?? [],
+                    $this->hiddenThinkingLabel,
+                ));
 
                 foreach ($message->content as $block) {
                     if ($block instanceof ToolCall) {
@@ -484,6 +548,24 @@ final class InteractiveMode
         // Nothing is left pending: every tool in a saved conversation has already run,
         // and one still showing as running would never stop.
         $this->tools = [];
+
+        // Upstream's `registerEntryRenderer`: if a hook or extension registered a custom
+        // renderer for `CustomEntry` entries stored in the session tree, render them into the chat.
+        $entryRenderers = $this->hooks?->entryRenderers() ?? [];
+        if ($entryRenderers !== []) {
+            foreach ($this->session->store()?->customEntries() ?? [] as $entry) {
+                if (isset($entryRenderers[$entry->customType])) {
+                    $comp = ($entryRenderers[$entry->customType])(
+                        $entry,
+                        new \Pig\CodingAgent\CustomTools\RenderOptions($this->expanded, false),
+                        $this->palette,
+                    );
+                    if ($comp instanceof \Pig\Tui\Component) {
+                        $this->chat->addChild($comp);
+                    }
+                }
+            }
+        }
     }
 
     private function replayBash(BashExecution $execution): void
@@ -494,6 +576,7 @@ final class InteractiveMode
             $this->palette,
             bashLines: ToolExecutionComponent::TYPED_BASH_LINES,
             showImages: $this->showImages,
+            toolRenderers: $this->toolRenderers('bash'),
         );
         $shown->setExpanded($this->expanded);
         $shown->updateResult(
@@ -617,10 +700,29 @@ final class InteractiveMode
         });
     }
 
+    public function setToolsExpanded(bool $expanded): void
+    {
+        $this->expanded = $expanded;
+        $this->banner?->setText($this->banner());
+
+        foreach ($this->chat->children() as $child) {
+            if ($child instanceof ToolExecutionComponent
+                || $child instanceof CompactionComponent
+                || $child instanceof BranchSummaryComponent
+                || $child instanceof HookMessageComponent
+            ) {
+                $child->setExpanded($this->expanded);
+            }
+        }
+
+        $this->tui->requestRender();
+    }
+
     private function layout(): void
     {
         $this->banner = new Text($this->banner(), 1, 0);
 
+        $this->tui->addChild($this->customHeader);
         $this->tui->addChild(new Spacer(1));
         $this->tui->addChild($this->banner);
         $this->tui->addChild(new Spacer(1));
@@ -630,9 +732,12 @@ final class InteractiveMode
         // Below what is happening and directly above the editor, because it is the thing
         // being answered and the editor is where the eyes already are.
         $this->tui->addChild($this->overlay);
+        $this->tui->addChild($this->widgetsAbove);
         $this->tui->addChild(new Spacer(1));
         $this->tui->addChild($this->editor);
+        $this->tui->addChild($this->widgetsBelow);
         $this->tui->addChild($this->footer);
+        $this->tui->addChild($this->customFooter);
         $this->tui->setFocus($this->editor);
     }
 
@@ -879,26 +984,29 @@ final class InteractiveMode
         });
 
         $this->editor->on('app.tools.expand', function (): void {
-            $this->expanded = !$this->expanded;
-            $this->banner?->setText($this->banner());
-
-            foreach ($this->chat->children() as $child) {
-                if ($child instanceof ToolExecutionComponent
-                    || $child instanceof CompactionComponent
-                    || $child instanceof BranchSummaryComponent
-                    || $child instanceof HookMessageComponent
-                ) {
-                    $child->setExpanded($this->expanded);
-                }
-            }
-
-            $this->tui->requestRender();
+            $this->setToolsExpanded(!$this->expanded);
         });
 
         $this->editor->on('app.thinking.toggle', function (): void {
             $this->useHideThinking(!$this->hideThinking);
             $this->say($this->hideThinking ? 'Thinking hidden' : 'Thinking shown');
         });
+
+        foreach ($this->hooks?->shortcuts() ?? [] as $spec) {
+            $this->editor->registerShortcut(
+                $spec['key'],
+                function () use ($spec): void {
+                    Async::spawn(function () use ($spec): void {
+                        try {
+                            ($spec['handler'])($this->hooks->context());
+                        } catch (\Throwable $e) {
+                            $this->sayError("Shortcut error ({$spec['key']}): {$e->getMessage()}");
+                        }
+                    });
+                },
+                $spec['description'],
+            );
+        }
     }
 
     /**
@@ -1371,6 +1479,7 @@ final class InteractiveMode
             $this->palette,
             bashLines: ToolExecutionComponent::TYPED_BASH_LINES,
             showImages: $this->showImages,
+            toolRenderers: $this->toolRenderers('bash'),
         );
         $shown->setExpanded($this->expanded);
         $this->chat->addChild($shown);
@@ -1463,7 +1572,7 @@ final class InteractiveMode
             // has already waited for it.
             if ($this->session->shouldCompact()) {
                 $this->say($this->palette->fg('muted', 'Context is nearly full — summarising first.'));
-                $this->compact();
+                $this->compact(reason: 'threshold');
             }
 
             $this->session->prompt($text, $images);
@@ -1481,7 +1590,8 @@ final class InteractiveMode
      *
      * @param string|null $instructions from `/compact focus on the parser`
      */
-    private function compact(?string $instructions = null): void
+    /** @param 'manual'|'threshold' $reason what started it, for a hook's `session_compact_failed` */
+    private function compact(?string $instructions = null, string $reason = 'manual'): void
     {
         if ($this->compaction !== null) {
             return;
@@ -1495,7 +1605,7 @@ final class InteractiveMode
         $failure = null;
 
         try {
-            $summary = $this->session->compact($instructions, $signal);
+            $summary = $this->session->compact($instructions, $signal, $reason);
         } catch (Throwable $error) {
             $summary = null;
             $failure = $error->getMessage();
@@ -2079,9 +2189,15 @@ final class InteractiveMode
     private function keysAndCommands(): string
     {
         $keys = $this->keys();
+        $shortcuts = [];
+        foreach ($this->editor->shortcuts() as $s) {
+            $shortcuts[$s['name']] = $s['description'] !== '' ? $s['description'] : 'extension shortcut';
+        }
+
         $labels = [
             ...array_keys($keys),
             ...array_keys(self::EDITING_KEYS),
+            ...array_keys($shortcuts),
             ...array_map(static fn (array $row): string => '/' . $row[0], self::COMMANDS),
         ];
 
@@ -2092,7 +2208,12 @@ final class InteractiveMode
 
         $rows = [];
 
-        foreach ([$keys, self::EDITING_KEYS] as $table) {
+        $tables = [$keys, self::EDITING_KEYS];
+        if ($shortcuts !== []) {
+            $tables[] = $shortcuts;
+        }
+
+        foreach ($tables as $table) {
             foreach ($table as $key => $does) {
                 $rows[] = $this->palette->fg('dim', Width::pad($key, $column)) . $this->palette->fg('muted', $does);
             }
@@ -2538,6 +2659,7 @@ final class InteractiveMode
         );
         $allCustomTools = [...$diskTools, ...$loadedTools];
         $customTools = new CustomToolSet($allCustomTools, $toolApi);
+        $previousTools = $this->customTools;
         $this->customTools = $customTools;
         $customTools->withUi($this->ui);
 
@@ -2545,32 +2667,29 @@ final class InteractiveMode
             $customTools->adopt($ext);
         }
 
-        $customTools->onChange(function (CustomToolSet $tools) use ($hooks): void {
-            $this->session->agent->setTools(HookedTool::wrap(
-                [...ToolSet::create($this->cwd, $this->builtInTools), ...$tools->agentTools()],
-                $hooks,
-            ));
-            [$snippets, $guidelines] = $tools->promptContributions();
-            $this->session->agent->setSystemPrompt(SystemPrompt::build($this->cwd, $this->builtInTools, contextFiles: $this->contextFiles, skills: $this->skills, toolSnippets: $snippets, toolGuidelines: $guidelines));
-        });
+        // `--tools` and `--exclude-tools` survive a reload. The new set used to be built
+        // without the filter, so `/reload` put back every tool the command line had left out.
+        $filter = $previousTools?->filter();
+
+        if ($filter !== null) {
+            $customTools->keep($filter);
+        }
+
         $customTools->withContext(fn () => $hooks->context());
 
-        // 7. Update agent tools & system prompt
-        $builtIn = ToolSet::create($this->cwd, $this->builtInTools);
-        $allTools = [...$builtIn, ...$customTools->agentTools()];
-        $wrapped = HookedTool::wrap($allTools, $hooks);
-        $this->session->agent->setTools($wrapped);
+        // 7. Update agent tools & system prompt — through the session's loadout, the one place
+        // that builds them, so an extension's narrowed active set survives too.
+        $loadout = $this->session->loadout();
 
-        [$snippets, $guidelines] = $customTools->promptContributions();
-        $systemPrompt = SystemPrompt::build(
-            $this->cwd,
-            $this->builtInTools,
-            contextFiles: $this->contextFiles,
-            skills: $this->skills,
-            toolSnippets: $snippets,
-            toolGuidelines: $guidelines,
-        );
-        $this->session->agent->setSystemPrompt($systemPrompt);
+        if ($loadout === null) {
+            $loadout = new ToolLoadout($this->session->agent, $this->cwd, $this->builtInTools, $customTools, $hooks, $this->contextFiles, $this->skills);
+            $this->session->useLoadout($loadout);
+            $loadout->apply();
+        } else {
+            $loadout->reloaded($customTools, $this->contextFiles, $this->skills);
+        }
+
+        $customTools->onChange(static fn () => $loadout->apply());
 
         // 8. Rebind autocomplete on editor and update banner
         $this->bindEditor();
@@ -4040,6 +4159,10 @@ final class InteractiveMode
      */
     private function showLoader(string $message): Loader
     {
+        if ($this->customWorkingMessage !== null && $message === 'Working... (esc to interrupt)') {
+            $message = $this->customWorkingMessage;
+        }
+
         $this->working?->stop();
         $this->status->clear();
 
@@ -4067,7 +4190,11 @@ final class InteractiveMode
     private function onMessageStart(MessageStartEvent $event): void
     {
         if ($event->message instanceof UserMessage) {
-            $this->chat->addChild(new UserMessageComponent(self::textOf($event->message), $this->palette));
+            $this->chat->addChild(new UserMessageComponent(
+                self::textOf($event->message),
+                $this->palette,
+                $this->hooks?->markdownTransformers() ?? [],
+            ));
             $this->editor->setText('');
             $this->showQueue();
 
@@ -4075,7 +4202,13 @@ final class InteractiveMode
         }
 
         if ($event->message instanceof AssistantMessage) {
-            $this->streaming = new AssistantMessageComponent($this->palette, $event->message, $this->hideThinking);
+            $this->streaming = new AssistantMessageComponent(
+                $this->palette,
+                $event->message,
+                $this->hideThinking,
+                $this->hooks?->markdownTransformers() ?? [],
+                $this->hiddenThinkingLabel,
+            );
             $this->chat->addChild($this->streaming);
         }
     }
@@ -4301,21 +4434,33 @@ final class InteractiveMode
     }
 
     /** @param array<string, mixed> $arguments */
+    private function toolRenderers(string $name, ?CustomTool $custom = null): ?array
+    {
+        $base = $custom === null ? null : static fn (): array => array_filter([
+            'renderCall' => $custom->renderCall,
+            'renderResult' => $custom->renderResult,
+        ]);
+
+        return $this->hooks?->resolveToolRenderers($name, $base);
+    }
+
     private function addTool(string $id, string $name, array $arguments): ToolExecutionComponent
     {
         // A custom tool may draw its own call and result, so the declaration is looked up
         // rather than the name being enough. Null for every built-in, which is all of them
         // unless something was loaded.
+        $custom = $this->customTools?->find($name);
         $tool = new ToolExecutionComponent(
             $name,
             $arguments,
             $this->palette,
-            $this->customTools?->find($name),
+            $custom,
             function (string $problem) use ($name): void {
                 $this->sayWarning("tool {$name}: {$problem}");
             },
             showImages: $this->showImages,
             cwd: $this->cwd,
+            toolRenderers: $this->toolRenderers($name, $custom),
         );
         $tool->setExpanded($this->expanded);
         $this->chat->addChild($tool);

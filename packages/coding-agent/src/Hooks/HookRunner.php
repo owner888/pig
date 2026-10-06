@@ -18,6 +18,10 @@ use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeTreeEvent;
 use Pig\CodingAgent\Hooks\Events\ToolCallEvent;
 use Pig\CodingAgent\Hooks\Events\ToolResultEvent;
+use Pig\CodingAgent\Hooks\Events\InputEvent;
+use Pig\CodingAgent\Hooks\Events\UserBashEvent;
+use Pig\CodingAgent\Hooks\Results\InputEventResult;
+use Pig\CodingAgent\Hooks\Results\UserBashEventResult;
 use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
 use Pig\CodingAgent\Hooks\Results\ContextEventResult;
 use Pig\CodingAgent\Hooks\Results\BeforeProviderRequestResult;
@@ -176,6 +180,87 @@ final class HookRunner
         }
 
         return $renderers;
+    }
+
+    /** @return array<string, Closure> */
+    public function entryRenderers(): array
+    {
+        $renderers = [];
+
+        foreach ($this->hooks as $hook) {
+            foreach ($hook->api->entryRenderers() as $type => $renderer) {
+                $renderers[$type] = $renderer;
+            }
+        }
+
+        return $renderers;
+    }
+
+    /** @return list<Closure(string, array{role: string, isStreaming: bool}): string> */
+    public function markdownTransformers(): array
+    {
+        $transformers = [];
+
+        foreach ($this->hooks as $hook) {
+            if ($hook->api instanceof \Pig\CodingAgent\Extensions\ExtensionApi) {
+                foreach ($hook->api->markdownTransformers() as $t) {
+                    $transformers[] = $t;
+                }
+            }
+        }
+
+        return $transformers;
+    }
+
+    /** @return array<string, array{key: string, handler: Closure, description: string, hookPath: string}> */
+    public function shortcuts(): array
+    {
+        $shortcuts = [];
+
+        foreach ($this->hooks as $hook) {
+            if ($hook->api instanceof \Pig\CodingAgent\Extensions\ExtensionApi) {
+                foreach ($hook->api->shortcuts() as $key => $spec) {
+                    $shortcuts[$key] = [...$spec, 'hookPath' => $hook->path];
+                }
+            }
+        }
+
+        return $shortcuts;
+    }
+
+    /**
+     * Resolve custom tool renderers through the registered resolvers onion chain.
+     * Upstream's `resolveToolRenderers()`.
+     *
+     * @return array{renderCall?: Closure, renderResult?: Closure}|null
+     */
+    public function resolveToolRenderers(string $toolName, ?Closure $base = null): ?array
+    {
+        $resolvers = [];
+
+        foreach ($this->hooks as $hook) {
+            if ($hook->api instanceof \Pig\CodingAgent\Extensions\ExtensionApi) {
+                foreach ($hook->api->toolRenderers() as $r) {
+                    $resolvers[] = $r;
+                }
+            }
+        }
+
+        if ($resolvers === []) {
+            return $base !== null ? $base() : null;
+        }
+
+        $chain = static function (int $index) use (&$chain, $resolvers, $toolName, $base): ?array {
+            if (!isset($resolvers[$index])) {
+                return $base !== null ? $base() : null;
+            }
+
+            $resolver = $resolvers[$index];
+
+            return $resolver($toolName, static fn (): ?array => $chain($index + 1));
+        };
+
+        return $chain(0);
     }
 
     /** Where every hook that loaded came from. @return list<string> */
@@ -506,6 +591,116 @@ final class HookRunner
     public function emitBeforeRetry(BeforeRetryEvent $event): ?BeforeRetryResult
     {
         return $this->ask($event, BeforeRetryResult::class, static fn (object $r): bool => true);
+    }
+
+    /**
+     * Ask whether a hook will run a typed `!command` itself. Upstream's `emitUserBash()`.
+     *
+     * The first handler with an answer decides. A handler that **throws** is reported and the
+     * throw goes on to the caller, which is upstream's rule and the reason is worth keeping: a
+     * hook that exists to send commands somewhere else (a container, a remote machine) and
+     * fails must not fall back to running the command here, on the machine the person was
+     * keeping it away from.
+     */
+    public function emitUserBash(UserBashEvent $event): ?UserBashEventResult
+    {
+        $context = $this->context();
+
+        foreach ($this->hooks as $hook) {
+            foreach ($hook->api->handlers('user_bash') as $handler) {
+                try {
+                    $result = $handler($event, $context);
+                } catch (Throwable $error) {
+                    $this->fail($hook, 'user_bash', $error);
+
+                    throw $error;
+                }
+
+                if ($result === null) {
+                    continue;
+                }
+
+                if (!$result instanceof UserBashEventResult) {
+                    $this->wrongType($hook, 'user_bash', UserBashEventResult::class, $result);
+
+                    continue;
+                }
+
+                return $result;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Show the hooks what is about to be sent, and let them change it or take it.
+     * Upstream's `emitInput()`.
+     *
+     * Chained, like `context`: each handler is given the text the one before it transformed,
+     * because two extensions that each rewrite input — one expanding an abbreviation, one
+     * redacting a key — have to compose. `handled` stops the walk and nothing is sent. A
+     * handler that throws is reported and skipped; the input goes on as it was.
+     *
+     * Answers `continue` when nothing changed, `transform` with the final text when something
+     * did, and `handled` when a handler took it.
+     */
+    public function emitInput(InputEvent $event): InputEventResult
+    {
+        if (!$this->listensTo('input')) {
+            return InputEventResult::continue();
+        }
+
+        $context = $this->context();
+        $text = $event->text;
+        $images = $event->images;
+
+        foreach ($this->hooks as $hook) {
+            foreach ($hook->api->handlers('input') as $handler) {
+                try {
+                    $result = $handler(new InputEvent($text, $images, $event->source, $event->streamingBehavior), $context);
+                } catch (Throwable $error) {
+                    $this->fail($hook, 'input', $error);
+
+                    continue;
+                }
+
+                if ($result === null) {
+                    continue;
+                }
+
+                if (!$result instanceof InputEventResult) {
+                    $this->wrongType($hook, 'input', InputEventResult::class, $result);
+
+                    continue;
+                }
+
+                if ($result->action === 'handled') {
+                    return $result;
+                }
+
+                if ($result->action === 'transform') {
+                    $text = (string) $result->text;
+                    $images = $result->images ?? $images;
+                }
+            }
+        }
+
+        return $text !== $event->text || $images !== $event->images
+            ? InputEventResult::transform($text, $images)
+            : InputEventResult::continue();
+    }
+
+    /** Whether any hook subscribed to this event, so a caller can skip building one for nobody. */
+    public function listensTo(string $event): bool
+    {
+        foreach ($this->hooks as $hook) {
+            if ($hook->api->handlers($event) !== []) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** Whether anything is listening on either provider event, so `HttpClient` is not observed for nobody. */

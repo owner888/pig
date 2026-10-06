@@ -58,6 +58,15 @@ final class ExtensionApi extends HookApi
      */
     private static array $httpRoutes = [];
 
+    /** @var array<string, array{key: string, handler: Closure, description: string}> */
+    private array $shortcuts = [];
+
+    /** @var list<Closure(string, array{role: string, isStreaming: bool}): string> */
+    private array $markdownTransformers = [];
+
+    /** @var list<Closure(string, Closure(): ?array): ?array> */
+    private array $toolRenderers = [];
+
     public function __construct(
         string $cwd,
         string $path,
@@ -66,8 +75,47 @@ final class ExtensionApi extends HookApi
         ?Closure $send = null,
         ?Closure $note = null,
         ?Closure $context = null,
+        ?EventBus $events = null,
     ) {
         parent::__construct($cwd, $path, $send, $note, $context);
+        $this->events = $events ?? new EventBus();
+    }
+
+    private readonly EventBus $events;
+
+    /** The channel every extension of this load shares. Upstream's `pi.events`. */
+    public function events(): EventBus
+    {
+        return $this->events;
+    }
+
+    /** @return list<string> the tools the model is offered now. Upstream's `getActiveTools()`. */
+    public function getActiveTools(): array
+    {
+        return $this->session()?->activeTools() ?? [];
+    }
+
+    /**
+     * Every registered tool, active or not, with its description and schema. Upstream's `getAllTools()`.
+     *
+     * @return list<array{name: string, description: string, parameters: array<string, mixed>, active: bool}>
+     */
+    public function getAllTools(): array
+    {
+        return $this->session()?->allTools() ?? [];
+    }
+
+    /**
+     * Offer the model only these tools, from its next request. Upstream's `setActiveTools()`.
+     * Nothing is unregistered, so a later call can put any of them back; a name nothing
+     * registered is ignored.
+     *
+     * @param list<string> $names
+     */
+    public function setActiveTools(array $names): void
+    {
+        ($this->session() ?? throw new \LogicException('setActiveTools() needs a session — call it from a handler.'))
+            ->setActiveTools($names);
     }
 
     /**
@@ -346,12 +394,12 @@ final class ExtensionApi extends HookApi
         $session = $this->session() ?? throw new \LogicException('sendUserMessage() needs a session — call it from a handler.');
 
         if (!$session->isStreaming()) {
-            $session->prompt($text);
+            $session->prompt($text, source: 'extension');
 
             return;
         }
 
-        $deliverAs === 'steer' ? $session->steer($text) : $session->followUp($text);
+        $deliverAs === 'steer' ? $session->steer($text, 'extension') : $session->followUp($text, 'extension');
     }
 
     /** Name a point in the conversation, or clear the name with null. Upstream's `setLabel()`. */
@@ -383,6 +431,60 @@ final class ExtensionApi extends HookApi
      * @return list<CustomTool>
      * @internal
      */
+    /**
+     * Register a keyboard shortcut. Upstream's `registerShortcut()`.
+     *
+     * @param callable(\Pig\CodingAgent\Hooks\HookContext): void $handler
+     */
+    public function registerShortcut(string $shortcut, callable $handler, string $description = ''): void
+    {
+        $this->shortcuts[strtolower($shortcut)] = [
+            'key' => $shortcut,
+            'handler' => Closure::fromCallable($handler),
+            'description' => $description,
+        ];
+    }
+
+    /** @return array<string, array{key: string, handler: Closure, description: string}> */
+    public function shortcuts(): array
+    {
+        return $this->shortcuts;
+    }
+
+    /**
+     * Transform user and assistant Markdown before it is rendered in the transcript.
+     * Upstream's `registerMarkdownTransformer()`.
+     *
+     * @param callable(string, array{role: string, isStreaming: bool}): string $transformer
+     */
+    public function registerMarkdownTransformer(callable $transformer): void
+    {
+        $this->markdownTransformers[] = Closure::fromCallable($transformer);
+    }
+
+    /** @return list<Closure(string, array{role: string, isStreaming: bool}): string> */
+    public function markdownTransformers(): array
+    {
+        return $this->markdownTransformers;
+    }
+
+    /**
+     * Choose how calls to a tool are drawn. Upstream's `registerToolRenderer()`.
+     *
+     * The resolver is `fn (string $toolName, Closure $next): ?array{renderCall?: Closure, renderResult?: Closure}`.
+     * Resolvers run in extension load order as an onion chain.
+     */
+    public function registerToolRenderer(callable $resolver): void
+    {
+        $this->toolRenderers[] = Closure::fromCallable($resolver);
+    }
+
+    /** @return list<Closure> */
+    public function toolRenderers(): array
+    {
+        return $this->toolRenderers;
+    }
+
     public function tools(): array
     {
         return $this->tools;

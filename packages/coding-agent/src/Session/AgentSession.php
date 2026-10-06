@@ -19,6 +19,9 @@ use Pig\Agent\QueueMode;
 use Pig\Agent\ThinkingLevel;
 use Pig\Agent\TurnEndEvent;
 use Pig\Agent\TurnStartEvent;
+use Pig\Agent\ToolExecutionStartEvent;
+use Pig\Agent\ToolExecutionUpdateEvent;
+use Pig\Agent\ToolExecutionEndEvent;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
 use Pig\Ai\ImageContent;
@@ -50,6 +53,12 @@ use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeTreeEvent;
 use Pig\CodingAgent\Hooks\Events\SessionCompactEvent;
+use Pig\CodingAgent\Hooks\Events\SessionCompactFailedEvent;
+use Pig\CodingAgent\Hooks\Events\InputEvent;
+use Pig\CodingAgent\Hooks\Events\UserBashEvent;
+use Pig\CodingAgent\Hooks\Events\ToolExecutionStartEvent as HookToolExecutionStart;
+use Pig\CodingAgent\Hooks\Events\ToolExecutionUpdateEvent as HookToolExecutionUpdate;
+use Pig\CodingAgent\Hooks\Events\ToolExecutionEndEvent as HookToolExecutionEnd;
 use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
 use Pig\CodingAgent\Hooks\Events\SessionSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionTreeEvent;
@@ -69,6 +78,9 @@ use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Settings;
+use Pig\CodingAgent\Tools\ToolLoadout;
+use Pig\Agent\AgentTool;
+use Pig\Agent\ToolArguments;
 use Pig\CodingAgent\Tools\Run;
 use Pig\CodingAgent\Tools\Truncate;
 use Throwable;
@@ -171,6 +183,8 @@ final class AgentSession
         array $fileCommands = [],
         array $modelScope = [],
         public readonly ?Auth $auth = null,
+        private ?ToolLoadout $loadout = null,
+        private bool $projectTrusted = true,
     ) {
         $this->fileCommands = $fileCommands;
         $this->modelScope = $modelScope;
@@ -535,6 +549,24 @@ final class AgentSession
             return;
         }
 
+        if ($event instanceof ToolExecutionStartEvent) {
+            $this->hooks->emit(new HookToolExecutionStart($event->toolCallId, $event->toolName, $event->arguments));
+
+            return;
+        }
+
+        if ($event instanceof ToolExecutionUpdateEvent) {
+            $this->hooks->emit(new HookToolExecutionUpdate($event->toolCallId, $event->toolName, $event->arguments, $event->partialResult));
+
+            return;
+        }
+
+        if ($event instanceof ToolExecutionEndEvent) {
+            $this->hooks->emit(new HookToolExecutionEnd($event->toolCallId, $event->toolName, $event->result, $event->isError));
+
+            return;
+        }
+
         if ($event instanceof AgentEndEvent) {
             $this->hooks->emit(new HookAgentEnd($event->messages));
         }
@@ -547,6 +579,205 @@ final class AgentSession
         // notification extension — said "task complete" three times during a turn that was
         // still retrying a 429. It goes out from `finishBackgroundWork()`, which is pig's "nothing
         // more is coming".
+    }
+
+    // ---- what an extension can ask of the session ------------------------------------
+
+    /** `tui`, `print`, `json` or `rpc` — set by whichever mode is driving. Upstream's `ctx.mode`. */
+    private string $mode = 'print';
+
+    /** @var (Closure(): void)|null what the mode does when an extension asks pig to quit */
+    private ?Closure $onShutdown = null;
+
+    private bool $shutdownRequested = false;
+
+    /** @param 'tui'|'print'|'json'|'rpc' $mode */
+    public function setMode(string $mode): void
+    {
+        $this->mode = $mode;
+    }
+
+    public function mode(): string
+    {
+        return $this->mode;
+    }
+
+    /** What the session's tools are, for the mode that rebuilds them on `/reload`. */
+    public function loadout(): ?ToolLoadout
+    {
+        return $this->loadout;
+    }
+
+    public function useLoadout(?ToolLoadout $loadout): void
+    {
+        $this->loadout = $loadout;
+    }
+
+    /** Whether `<cwd>/.pig/` was allowed to load. Upstream's `ctx.isProjectTrusted()`. */
+    public function isProjectTrusted(): bool
+    {
+        return $this->projectTrusted;
+    }
+
+    public function setProjectTrusted(bool $trusted): void
+    {
+        $this->projectTrusted = $trusted;
+    }
+
+    /** @param (Closure(): void)|null $handler */
+    public function onShutdownRequest(?Closure $handler): void
+    {
+        $this->onShutdown = $handler;
+    }
+
+    /**
+     * An extension asked pig to quit. Upstream's `ctx.shutdown()`.
+     *
+     * Now if nothing is running, otherwise once the prompt has settled — upstream's rule, and
+     * the reason is the same: a quit requested from a `turn_end` handler must not cut off the
+     * retry or the compaction that turn is about to start, or the answer the person asked for.
+     */
+    public function requestShutdown(): void
+    {
+        if ($this->onShutdown === null) {
+            return;
+        }
+
+        if ($this->isIdle()) {
+            ($this->onShutdown)();
+
+            return;
+        }
+
+        $this->shutdownRequested = true;
+    }
+
+    /** Nothing running and nothing about to: no turn, no retry, no summary. Upstream's `isIdle`. */
+    public function isIdle(): bool
+    {
+        return !$this->isStreaming() && $this->settled === null && $this->compacting === null;
+    }
+
+    /** The system prompt the next request carries. Upstream's `ctx.getSystemPrompt()`. */
+    public function systemPrompt(): string
+    {
+        return $this->agent->state->systemPrompt;
+    }
+
+    /**
+     * How full the context window is. Upstream's `getContextUsage()`.
+     *
+     * Null with no model, or a model that declares no window. `tokens` is null right after a
+     * compaction until a turn has come back, because the last reading describes the conversation
+     * before it was summarised and nothing has measured the one after — upstream's rule, and the
+     * same one `Compaction::lastUsage()` is written to. Otherwise it is the last turn's own count
+     * plus an estimate for whatever was said since, which is what the next request will carry.
+     */
+    public function contextUsage(): ?ContextUsage
+    {
+        $model = $this->model();
+
+        if ($model === null || $model->contextWindow <= 0) {
+            return null;
+        }
+
+        $messages = $this->messages();
+        $usage = Compaction::lastUsage($messages);
+        $compacted = array_filter($messages, static fn ($m): bool => $m instanceof CompactionSummary) !== [];
+
+        if ($usage === null && $compacted) {
+            return new ContextUsage(null, $model->contextWindow, null);
+        }
+
+        $tokens = 0;
+        $since = $messages;
+
+        if ($usage !== null) {
+            $tokens = Compaction::contextTokens($usage);
+
+            for ($i = count($messages) - 1; $i >= 0; $i--) {
+                if ($messages[$i] instanceof AssistantMessage && $messages[$i]->usage === $usage) {
+                    $since = array_slice($messages, $i + 1);
+                    break;
+                }
+            }
+        }
+
+        foreach ($since as $message) {
+            $tokens += Compaction::estimateTokens($message);
+        }
+
+        return new ContextUsage($tokens, $model->contextWindow, $tokens / $model->contextWindow * 100);
+    }
+
+    /** @return list<string> the tools the model is offered now. Upstream's `getActiveTools()`. */
+    public function activeTools(): array
+    {
+        return $this->loadout?->activeNames()
+            ?? array_map(static fn (AgentTool $tool): string => $tool->definition()->name, $this->agent->state->tools);
+    }
+
+    /**
+     * Every registered tool, active or not. Upstream's `getAllTools()`.
+     *
+     * @return list<array{name: string, description: string, parameters: array<string, mixed>, active: bool}>
+     */
+    public function allTools(): array
+    {
+        return $this->loadout?->describe() ?? array_map(static fn (AgentTool $tool): array => [
+            'name' => $tool->definition()->name,
+            'description' => $tool->definition()->description,
+            'parameters' => $tool->definition()->parameters,
+            'active' => true,
+        ], $this->agent->state->tools);
+    }
+
+    /**
+     * Offer the model only these, from its next request. Upstream's `setActiveTools()`. Names
+     * nothing registered are ignored.
+     *
+     * @param list<string> $names
+     */
+    public function setActiveTools(array $names): void
+    {
+        if ($this->loadout === null) {
+            throw new AgentError('This session has no tool loadout to narrow.');
+        }
+
+        $this->loadout->setActive($names);
+    }
+
+    private int $extensionCalls = 0;
+
+    /**
+     * Run one of the model's tools on an extension's behalf. Upstream's `ctx.executeTool()`.
+     *
+     * Through the same wrapped tool the model would get — so the arguments are checked against
+     * the schema with the message the model would read, and a `tool_call` hook (the permission
+     * gate) is asked exactly as it would be: an extension is not a way round a guard. Only an
+     * active tool, for the same reason: a tool an extension switched off is off.
+     *
+     * Upstream records such a call on its caller's result as `nestedCalls` with a
+     * `<parent>/<n>` id; pig has no parent to hang it on when the caller is a command or an
+     * event handler, so it is not recorded, and the id says who made it.
+     *
+     * @param array<string, mixed> $arguments
+     * @throws AgentError when no active tool has that name; whatever the tool throws otherwise
+     */
+    public function executeTool(string $name, array $arguments, ?\Pig\Async\AbortSignal $signal = null): AgentToolResult
+    {
+        foreach ($this->agent->state->tools as $tool) {
+            if ($tool->definition()->name !== $name) {
+                continue;
+            }
+
+            $id = 'extension-' . (++$this->extensionCalls);
+            $arguments = ToolArguments::validate($tool->definition(), new ToolCall($id, $name, $arguments));
+
+            return $tool->execute($id, $arguments, $signal ?? $this->signal());
+        }
+
+        throw new AgentError("No active tool called '{$name}'.");
     }
 
     // ---- state -------------------------------------------------------------------
@@ -820,7 +1051,7 @@ final class AgentSession
      * @param list<ImageContent> $images
      * @throws AgentError if the agent is already working, or there is no model
      */
-    public function prompt(string $text, array $images = []): void
+    public function prompt(string $text, array $images = [], string $source = 'interactive'): void
     {
         if ($this->runHookCommand($text)) {
             return;
@@ -839,6 +1070,15 @@ final class AgentSession
             throw new AgentError('No model selected.');
         }
 
+        // Before the stored prompt is expanded, as upstream has it: an `input` handler sees
+        // `/review foo.php`, which is what was typed, and not forty lines of template.
+        $input = $this->runInputHandlers($text, $images, $source, null);
+
+        if ($input === null) {
+            return;
+        }
+
+        [$text, $images] = $input;
         $text = $this->expandFileCommand($text);
 
         // A hook may put a note in front of the prompt. It goes in as its own user
@@ -903,6 +1143,29 @@ final class AgentSession
      * upstream's hands back the text it was given — so the `??` here is the translation and not
      * a fallback papering over a failure.
      */
+    /**
+     * What the `input` handlers made of a message, or null when one of them took it.
+     * Upstream's `_runInputHandlers()`.
+     *
+     * @param list<ImageContent>      $images
+     * @param 'steer'|'followUp'|null $streaming
+     * @return array{0: string, 1: list<ImageContent>}|null
+     */
+    private function runInputHandlers(string $text, array $images, string $source, ?string $streaming): ?array
+    {
+        if ($this->hooks === null) {
+            return [$text, $images];
+        }
+
+        $result = $this->hooks->emitInput(new InputEvent($text, $images, $source, $streaming));
+
+        return match ($result->action) {
+            'handled' => null,
+            'transform' => [(string) $result->text, $result->images ?? $images],
+            default => [$text, $images],
+        };
+    }
+
     private function expandFileCommand(string $text): string
     {
         return SlashCommands::expand($text, $this->fileCommands) ?? $text;
@@ -984,8 +1247,15 @@ final class AgentSession
      * back. Upstream queues the raw line at both ends, so the model there is handed the literal
      * `/review foo.php` whenever the command was typed during a turn.
      */
-    public function steer(string $text): void
+    public function steer(string $text, string $source = 'interactive'): void
     {
+        $input = $this->runInputHandlers($text, [], $source, 'steer');
+
+        if ($input === null) {
+            return;
+        }
+
+        $text = $input[0];
         $this->steering[] = $text;
         $this->agent->steer(new UserMessage($this->expandFileCommand($text)));
     }
@@ -1009,8 +1279,15 @@ final class AgentSession
     }
 
     /** Queue something for after the agent has finished the request it is on. `steer()` on the expansion. */
-    public function followUp(string $text): void
+    public function followUp(string $text, string $source = 'interactive'): void
     {
+        $input = $this->runInputHandlers($text, [], $source, 'followUp');
+
+        if ($input === null) {
+            return;
+        }
+
+        $text = $input[0];
         $this->followUps[] = $text;
         $this->agent->followUp(new UserMessage($this->expandFileCommand($text)));
     }
@@ -1104,6 +1381,19 @@ final class AgentSession
     {
         if ($this->bash !== null) {
             throw new AgentError('A command is already running. Press esc to stop it first.');
+        }
+
+        // A hook may run it somewhere else — a container, a remote box — and hand back what
+        // came of it. A hook that throws stops it here: falling back to running the command on
+        // this machine is exactly what such a hook exists to prevent. Upstream's rule.
+        $handled = $this->hooks?->emitUserBash(new UserBashEvent($command, !$remember, $this->cwd));
+
+        if ($handled !== null) {
+            if ($remember) {
+                $this->append($handled->result);
+            }
+
+            return $handled->result;
         }
 
         $this->bash = new AbortController();
@@ -1669,7 +1959,7 @@ final class AgentSession
         $this->dropLastAssistantMessage();
 
         try {
-            $summary = $this->compact();
+            $summary = $this->compact(reason: 'overflow');
         } catch (Throwable $problem) {
             $this->announce(new AutoCompactionEndEvent(false, false, null, $problem->getMessage()));
             $this->finishBackgroundWork();
@@ -1869,6 +2159,13 @@ final class AgentSession
         if ($waiting !== null && !$waiting->isComplete()) {
             $waiting->complete(null);
         }
+
+        // A quit an extension asked for while this was running. After the waiter is released, so
+        // a `-p` exiting on `prompt()`'s return has already had its answer.
+        if ($this->shutdownRequested && $this->onShutdown !== null) {
+            $this->shutdownRequested = false;
+            ($this->onShutdown)();
+        }
     }
 
     /**
@@ -1884,7 +2181,7 @@ final class AgentSession
      * @throws AgentError if the agent is working, there is no model, there is nothing to
      *                    compact, or the model fails
      */
-    public function compact(?string $instructions = null, ?AbortSignal $signal = null): ?CompactionSummary
+    public function compact(?string $instructions = null, ?AbortSignal $signal = null, string $reason = 'manual'): ?CompactionSummary
     {
         if ($this->isStreaming()) {
             throw new AgentError('Agent is working. Let it finish, or press esc, then compact.');
@@ -1902,8 +2199,22 @@ final class AgentSession
 
         $listener = $signal?->onAbort(fn () => $this->compacting?->abort('Cancelled'));
 
+        $this->hookCancelledCompaction = false;
+
         try {
-            return $this->summariseAndSwapIn($instructions, $this->compacting->signal);
+            $summary = $this->summariseAndSwapIn($instructions, $this->compacting->signal);
+        } catch (Throwable $problem) {
+            // Upstream's `session_compact_failed`, beside `session_compact` so a hook reacting to
+            // one is not left guessing about the other. A hook's own cancel is an abort, as
+            // escape is: nothing went wrong, somebody decided.
+            $this->hooks?->emit(new SessionCompactFailedEvent(
+                $reason,
+                aborted: $this->hookCancelledCompaction,
+                errorMessage: $this->hookCancelledCompaction ? null : $problem->getMessage(),
+                willRetry: $reason === 'overflow',
+            ));
+
+            throw $problem;
         } finally {
             $this->compacting = null;
 
@@ -1911,7 +2222,16 @@ final class AgentSession
                 $signal?->removeListener($listener);
             }
         }
+
+        if ($summary === null) {
+            $this->hooks?->emit(new SessionCompactFailedEvent($reason, aborted: true, willRetry: $reason === 'overflow'));
+        }
+
+        return $summary;
     }
+
+    /** Set when the last compaction was stopped by a `session_before_compact` handler, which is an abort and not an error. */
+    private bool $hookCancelledCompaction = false;
 
     /** Whether a summariser is running right now, from either door. */
     public function isCompacting(): bool
@@ -1969,6 +2289,8 @@ final class AgentSession
         );
 
         if ($answer !== null && $answer->cancel) {
+            $this->hookCancelledCompaction = true;
+
             throw new AgentError('A hook stopped the compaction.');
         }
 

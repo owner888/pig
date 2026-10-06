@@ -64,6 +64,12 @@ final class CustomToolSet
      *
      * @param Closure(string): bool $which given a tool's name
      */
+    /** The filter `keep()` set, for `/reload` to carry over to the set it builds. */
+    public function filter(): ?Closure
+    {
+        return $this->keep;
+    }
+
     public function keep(Closure $which): void
     {
         $this->keep = $which;
@@ -155,14 +161,19 @@ final class CustomToolSet
      * What the tools in the set want the system prompt to say — `CustomTool::$promptSnippet` by
      * name, and every `$promptGuidelines` line. Both empty for a set with nothing to add.
      *
+     * @param list<string>|null $names only these tools — what `ToolLoadout` has active — or all
      * @return array{0: array<string, string>, 1: list<string>}
      */
-    public function promptContributions(): array
+    public function promptContributions(?array $names = null): array
     {
         $snippets = [];
         $guidelines = [];
 
         foreach ($this->tools as $one) {
+            if ($names !== null && !in_array($one->tool->name, $names, true)) {
+                continue;
+            }
+
             if ($one->tool->promptSnippet !== null) {
                 $snippets[$one->tool->name] = $one->tool->promptSnippet;
             }

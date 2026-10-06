@@ -64,6 +64,7 @@ final class ExtensionLoader
         $extensions = [];
         $errors = [];
         $seen = [];
+        $events = new EventBus();
 
         foreach ($paths as $path) {
             $real = realpath($path) ?: $path;
@@ -82,7 +83,7 @@ final class ExtensionLoader
 
             $seen[$real] = true;
 
-            [$loaded, $error] = self::one($path, $real, $cwd, $auth);
+            [$loaded, $error] = self::one($path, $real, $cwd, $auth, $events);
 
             if ($error !== null) {
                 $errors[] = $error;
@@ -134,7 +135,7 @@ final class ExtensionLoader
      *
      * @return array{0: LoadedExtension|null, 1: ExtensionError|null}
      */
-    private static function one(string $path, string $resolved, string $cwd, ?Auth $auth): array
+    private static function one(string $path, string $resolved, string $cwd, ?Auth $auth, EventBus $events): array
     {
         if (!is_readable($path)) {
             return [null, new ExtensionError($path, 'load', 'not a readable file')];
@@ -147,7 +148,7 @@ final class ExtensionLoader
         }
 
         $name = self::nameOf($path);
-        $api = new ExtensionApi($cwd, $path, $name, $auth);
+        $api = new ExtensionApi($cwd, $path, $name, $auth, events: $events);
 
         ob_start();
 

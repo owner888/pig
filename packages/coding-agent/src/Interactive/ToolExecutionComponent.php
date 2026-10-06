@@ -137,6 +137,8 @@ final class ToolExecutionComponent extends Container
         private readonly int $bashLines = self::BASH_LINES,
         private bool $showImages = true,
         private readonly ?string $cwd = null,
+        /** @var array{renderCall?: Closure, renderResult?: Closure}|null */
+        private readonly ?array $toolRenderers = null,
     ) {
         $this->addChild(new Spacer(1));
 
@@ -320,6 +322,10 @@ final class ToolExecutionComponent extends Container
     /** Whether this tool brought at least one renderer of its own. */
     private function drawsItself(): bool
     {
+        if ($this->toolRenderers !== null && ($this->toolRenderers['renderCall'] ?? null !== null || $this->toolRenderers['renderResult'] ?? null !== null)) {
+            return true;
+        }
+
         return $this->custom !== null
             && ($this->custom->renderCall !== null || $this->custom->renderResult !== null);
     }
@@ -334,9 +340,10 @@ final class ToolExecutionComponent extends Container
      */
     private function drawCustom(): void
     {
-        $heading = $this->drawnBy(
+        $renderCall = $this->toolRenderers['renderCall'] ?? $this->custom?->renderCall;
+        $heading = $renderCall === null ? null : $this->drawnBy(
             'renderCall',
-            fn (): mixed => ($this->custom->renderCall)($this->arguments, $this->palette),
+            fn (): mixed => $renderCall($this->arguments, $this->palette),
         );
 
         $this->box->addChild($heading ?? new Text(
@@ -349,9 +356,10 @@ final class ToolExecutionComponent extends Container
             return;
         }
 
-        $body = $this->drawnBy(
+        $renderResult = $this->toolRenderers['renderResult'] ?? $this->custom?->renderResult;
+        $body = $renderResult === null ? null : $this->drawnBy(
             'renderResult',
-            fn (): mixed => ($this->custom->renderResult)(
+            fn (): mixed => $renderResult(
                 $this->result,
                 new RenderOptions($this->expanded, $this->partial),
                 $this->palette,

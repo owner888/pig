@@ -101,6 +101,9 @@ final class TerminalUi implements HookUi
      * @param Closure(string): ?string|null $externalEditor `$VISUAL` on some text, for Ctrl+G
      *        inside the dialog; null when the host cannot hand the terminal over
      */
+    /** @var array<string, array{content: array|Closure|null, placement: string}> */
+    private array $widgets = [];
+
     public function __construct(
         private readonly Tui $tui,
         private readonly Container $chat,
@@ -110,6 +113,17 @@ final class TerminalUi implements HookUi
         private readonly Closure $palette,
         private readonly ?Closure $externalEditor = null,
         private readonly Keybindings $keybindings = new Keybindings(),
+        private readonly ?Container $widgetsAbove = null,
+        private readonly ?Container $widgetsBelow = null,
+        private readonly ?Container $customHeader = null,
+        private readonly ?Container $customFooter = null,
+        private readonly ?Closure $onWorkingMessage = null,
+        private readonly ?Closure $onWorkingVisible = null,
+        private readonly ?Closure $onHiddenThinkingLabel = null,
+        private readonly ?Closure $getToolsExpanded = null,
+        private readonly ?Closure $setToolsExpanded = null,
+        private readonly ?Closure $onTheme = null,
+        private readonly ?string $cwd = null,
     ) {
     }
 
@@ -353,6 +367,150 @@ final class TerminalUi implements HookUi
     public function palette(): Palette
     {
         return ($this->palette)();
+    }
+
+    #[\Override]
+    public function pasteToEditor(string $text): void
+    {
+        $this->editor->insertAtCursor($text);
+        $this->tui->requestRender();
+    }
+
+    #[\Override]
+    public function setTitle(string $title): void
+    {
+        $this->tui->terminal->write("\033]0;{$title}\007");
+    }
+
+    #[\Override]
+    public function setWorkingMessage(?string $message = null): void
+    {
+        if ($this->onWorkingMessage !== null) {
+            ($this->onWorkingMessage)($message);
+        }
+    }
+
+    #[\Override]
+    public function setWorkingVisible(bool $visible): void
+    {
+        if ($this->onWorkingVisible !== null) {
+            ($this->onWorkingVisible)($visible);
+        }
+    }
+
+    #[\Override]
+    public function setHiddenThinkingLabel(?string $label = null): void
+    {
+        if ($this->onHiddenThinkingLabel !== null) {
+            ($this->onHiddenThinkingLabel)($label);
+        }
+    }
+
+    #[\Override]
+    public function getToolsExpanded(): bool
+    {
+        return $this->getToolsExpanded !== null ? ($this->getToolsExpanded)() : false;
+    }
+
+    #[\Override]
+    public function setToolsExpanded(bool $expanded): void
+    {
+        if ($this->setToolsExpanded !== null) {
+            ($this->setToolsExpanded)($expanded);
+        }
+    }
+
+    #[\Override]
+    public function setWidget(string $key, array|Closure|null $content, array $options = []): void
+    {
+        if ($content === null) {
+            unset($this->widgets[$key]);
+        } else {
+            $this->widgets[$key] = [
+                'content' => $content,
+                'placement' => $options['placement'] ?? 'above',
+            ];
+        }
+
+        $this->rebuildWidgets();
+        $this->tui->requestRender();
+    }
+
+    private function rebuildWidgets(): void
+    {
+        $this->widgetsAbove?->clear();
+        $this->widgetsBelow?->clear();
+
+        foreach ($this->widgets as $widget) {
+            $target = ($widget['placement'] === 'below') ? $this->widgetsBelow : $this->widgetsAbove;
+            if ($target === null) {
+                continue;
+            }
+
+            $content = $widget['content'];
+            if (is_array($content)) {
+                $target->addChild(new Text(implode("\n", $content), 0, 0));
+            } elseif ($content instanceof Closure) {
+                $comp = $content($this->tui, $this->palette());
+                if ($comp instanceof Component) {
+                    $target->addChild($comp);
+                }
+            }
+        }
+    }
+
+    #[\Override]
+    public function setHeader(?Closure $factory): void
+    {
+        $this->customHeader?->clear();
+        if ($factory !== null) {
+            $comp = $factory($this->tui, $this->palette());
+            if ($comp instanceof Component) {
+                $this->customHeader?->addChild($comp);
+            }
+        }
+        $this->tui->requestRender();
+    }
+
+    #[\Override]
+    public function setFooter(?Closure $factory): void
+    {
+        $this->customFooter?->clear();
+        if ($factory !== null) {
+            $comp = $factory($this->tui, $this->palette());
+            if ($comp instanceof Component) {
+                $this->customFooter?->addChild($comp);
+            }
+        }
+        $this->tui->requestRender();
+    }
+
+    #[\Override]
+    public function getAllThemes(): array
+    {
+        return Palette::names($this->cwd);
+    }
+
+    #[\Override]
+    public function getTheme(string $name): ?Palette
+    {
+        try {
+            return Palette::named($name, cwd: $this->cwd);
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    #[\Override]
+    public function setTheme(string $name): bool
+    {
+        return $this->onTheme !== null ? ($this->onTheme)($name) : false;
+    }
+
+    #[\Override]
+    public function onTerminalInput(callable $handler): Closure
+    {
+        return $this->tui->onInput(Closure::fromCallable($handler));
     }
 
     /**

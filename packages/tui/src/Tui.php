@@ -280,8 +280,45 @@ class Tui extends Container
         $this->draw();
     }
 
+    /** @var array<int, Closure(string): (bool|array{consume?: bool, data?: string}|null)> */
+    private array $inputListeners = [];
+
+    private int $nextListenerId = 0;
+
+    /**
+     * Intercept or observe raw terminal input before components see it. Upstream's `tui.addInputListener()`.
+     *
+     * A listener that returns true or `['consume' => true]` stops the keystroke from reaching
+     * whatever holds focus. A returned `['data' => $text]` replaces the input for subsequent
+     * listeners and the focused component.
+     *
+     * @param Closure(string): (bool|array{consume?: bool, data?: string}|null) $listener
+     * @return Closure(): void call it to stop listening
+     */
+    public function onInput(Closure $listener): Closure
+    {
+        $id = $this->nextListenerId++;
+        $this->inputListeners[$id] = $listener;
+
+        return function () use ($id): void {
+            unset($this->inputListeners[$id]);
+        };
+    }
+
     private function handleInput(string $data): void
     {
+        foreach ($this->inputListeners as $listener) {
+            $res = $listener($data);
+
+            if ($res === true || (is_array($res) && ($res['consume'] ?? false))) {
+                return;
+            }
+
+            if (is_array($res) && isset($res['data'])) {
+                $data = (string) $res['data'];
+            }
+        }
+
         if ($this->awaitingCellSize) {
             $data = $this->takeCellSizeReply($data);
 

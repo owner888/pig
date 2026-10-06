@@ -131,6 +131,11 @@ final class RpcMode
 
         $this->session->subscribe($this->onAgentEvent(...));
 
+        $this->session->setMode('rpc');
+        $this->session->onShutdownRequest(function (): void {
+            Loop::get()->defer(fn () => $this->stop());
+        });
+
         // Each mode wires its own UI; this one's is the protocol.
         $this->hooks?->initialize(
             getModel: fn () => $this->session->model(),
@@ -365,7 +370,7 @@ final class RpcMode
         // which is why `agent_end` exists.
         Async::spawn(function () use ($message, $images, $id): void {
             try {
-                $this->session->prompt($message, $images);
+                $this->session->prompt($message, $images, 'rpc');
             } catch (Throwable $error) {
                 $this->send(array_filter([
                     'id' => $id,
@@ -386,9 +391,9 @@ final class RpcMode
         $message = self::text($command, 'message');
 
         if ($steer) {
-            $this->session->steer($message);
+            $this->session->steer($message, 'rpc');
         } else {
-            $this->session->followUp($message);
+            $this->session->followUp($message, 'rpc');
         }
 
         return null;

@@ -59,11 +59,19 @@ final class AssistantMessageComponent extends Container
     /** Which slot `keep()` is filling, for the length of one update. */
     private int $slot = 0;
 
+    private ?string $hiddenThinkingLabel = null;
+
+    /**
+     * @param list<Closure(string, array{role: string, isStreaming: bool}): string> $transformers
+     */
     public function __construct(
         private readonly Palette $palette,
         ?AssistantMessage $message = null,
         private bool $hideThinking = false,
+        private readonly array $transformers = [],
+        ?string $hiddenThinkingLabel = null,
     ) {
+        $this->hiddenThinkingLabel = $hiddenThinkingLabel;
         $this->content = new Container();
         $this->addChild($this->content);
 
@@ -75,6 +83,11 @@ final class AssistantMessageComponent extends Container
     public function setHideThinking(bool $hide): void
     {
         $this->hideThinking = $hide;
+    }
+
+    public function setHiddenThinkingLabel(?string $label): void
+    {
+        $this->hiddenThinkingLabel = $label;
     }
 
     public function update(AssistantMessage $message): void
@@ -89,10 +102,16 @@ final class AssistantMessageComponent extends Container
             if ($block instanceof TextContent && trim($block->text) !== '') {
                 // paddingY = 0: a tool execution follows immediately after, and a blank
                 // line between the sentence and the tool it describes reads as a gap.
+                $saidText = trim($block->text);
+                $isStreaming = $message->stopReason === null;
+                foreach ($this->transformers as $transformer) {
+                    $saidText = $transformer($saidText, ['role' => 'assistant', 'isStreaming' => $isStreaming]);
+                }
+
                 $said = $this->keep('said', fn (): Component => new Markdown('', 1, 0, $this->palette->markdownTheme()));
 
                 if ($said instanceof Markdown) {
-                    $said->setText(trim($block->text));
+                    $said->setText($saidText);
                 }
 
                 continue;
@@ -132,7 +151,8 @@ final class AssistantMessageComponent extends Container
     private function thinking(string $thinking, bool $textAfter): void
     {
         if ($this->hideThinking) {
-            $label = $this->palette->fg('thinkingText', "\e[3mThinking...\e[23m");
+            $txt = $this->hiddenThinkingLabel ?? 'Thinking...';
+            $label = $this->palette->fg('thinkingText', "\e[3m{$txt}\e[23m");
             $this->keep('thought-label', static fn (): Component => new Text($label, 1, 0));
 
             if ($textAfter) {

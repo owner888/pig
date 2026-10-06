@@ -35,6 +35,35 @@ final class CustomEditor implements Caret, Component, InputHandler
     /** @var array<string, Closure(): void> */
     private array $handlers = [];
 
+    /** @var array<string, array{name: string, handler: Closure, description: string}> */
+    private array $shortcuts = [];
+
+    /** Insert text at the editor caret, as if pasted. */
+    public function insertAtCursor(string $text): void
+    {
+        $this->editor->insertAtCursor($text);
+    }
+
+    /**
+     * Register a keyboard shortcut from an extension.
+     *
+     * @param Closure(): void $handler
+     */
+    public function registerShortcut(string $name, Closure $handler, string $description = ''): void
+    {
+        $this->shortcuts[strtolower($name)] = [
+            'name' => $name,
+            'handler' => $handler,
+            'description' => $description,
+        ];
+    }
+
+    /** @return array<string, array{name: string, handler: Closure, description: string}> */
+    public function shortcuts(): array
+    {
+        return $this->shortcuts;
+    }
+
     public function __construct(
         private readonly Editor $editor,
         // Which key means which action. The defaults are upstream's; `keybindings.json` moves
@@ -63,6 +92,14 @@ final class CustomEditor implements Caret, Component, InputHandler
             ($this->handlers[$key])();
 
             return;
+        }
+
+        foreach ($this->shortcuts as $spec) {
+            if (Keys::matchesName($data, $spec['name'])) {
+                ($spec['handler'])();
+
+                return;
+            }
         }
 
         // Ctrl+D is swallowed either way: it means end-of-input, and there is nothing
