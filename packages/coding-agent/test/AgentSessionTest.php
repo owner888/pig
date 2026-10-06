@@ -11,6 +11,7 @@ use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentOptions;
+use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Api;
@@ -951,7 +952,7 @@ final class AgentSessionTest extends TestCase
         $this->assertNotContains(RetryStartEvent::class, $seen);
     }
 
-    public function testAQuotaTenMinutesAwayEndsTheTurnInsteadOfPretendingToRetry(): void
+    public function testAQuotaTenMinutesAwayEndsTheTurnInPisWordsInsteadOfPretendingToRetry(): void
     {
         $session = $this->session(
             [],
@@ -972,13 +973,29 @@ final class AgentSessionTest extends TestCase
         // No countdown, because a ten-minute countdown is a screen that looks like a hang.
         $this->assertNotContains(RetryStartEvent::class, array_map('get_class', $seen));
 
-        // And what the provider said is what is left in front of the person — it names the time,
-        // which is the only useful thing anybody can act on here.
+        $expected = 'Quota reached. Please wait 10m15s. Next: switch models or try again after reset.';
         $messages = $session->messages();
         $last = $messages[count($messages) - 1];
 
         $this->assertInstanceOf(AssistantMessage::class, $last);
-        $this->assertStringContainsString('reset after 10m15s', $last->errorMessage ?? '');
+        $this->assertSame($expected, $last->errorMessage);
+
+        $messageEnd = array_values(array_filter(
+            $seen,
+            static fn (AgentEvent $event): bool => $event instanceof MessageEndEvent
+                && $event->message instanceof AssistantMessage,
+        ))[0] ?? null;
+        $agentEnd = array_values(array_filter($seen, static fn (AgentEvent $event): bool => $event instanceof AgentEndEvent))[0] ?? null;
+
+        $this->assertInstanceOf(MessageEndEvent::class, $messageEnd);
+        $this->assertInstanceOf(AgentEndEvent::class, $agentEnd);
+        $ended = array_values(array_filter(
+            $agentEnd->messages,
+            static fn (mixed $message): bool => $message instanceof AssistantMessage,
+        ))[0] ?? null;
+        $this->assertInstanceOf(AssistantMessage::class, $ended);
+        $this->assertSame($expected, $messageEnd->message->errorMessage);
+        $this->assertSame($expected, $ended->errorMessage);
     }
 
     public function testRetryingCanBeTurnedOff(): void

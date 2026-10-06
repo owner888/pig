@@ -379,6 +379,16 @@ final class AgentSession
         // the run, so a UI redrawing on that event already has them.
         if ($event instanceof AgentEndEvent) {
             $this->flushBash();
+            $event = $this->normaliseAgentEnd($event);
+        }
+
+        if ($event instanceof MessageEndEvent) {
+            $message = $this->normaliseFinalMessage($event->message);
+
+            if ($message !== $event->message) {
+                $this->replaceLastMessage($event->message, $message);
+                $event = new MessageEndEvent($message);
+            }
         }
 
         $this->tellHooks($event);
@@ -405,6 +415,57 @@ final class AgentSession
         if ($event instanceof AgentEndEvent) {
             $this->afterTheRun();
         }
+    }
+
+    private function normaliseAgentEnd(AgentEndEvent $event): AgentEndEvent
+    {
+        $messages = [];
+        $changed = false;
+
+        foreach ($event->messages as $message) {
+            $normalised = $this->normaliseFinalMessage($message);
+            $messages[] = $normalised;
+            $changed = $changed || $normalised !== $message;
+        }
+
+        return $changed ? new AgentEndEvent($messages) : $event;
+    }
+
+    private function normaliseFinalMessage(mixed $message): mixed
+    {
+        if (!$message instanceof AssistantMessage || $message->stopReason !== StopReason::Error || $message->errorMessage === null) {
+            return $message;
+        }
+
+        $error = Retry::quotaMessage($message->errorMessage);
+
+        if ($error === null) {
+            return $message;
+        }
+
+        return new AssistantMessage(
+            $message->content,
+            $message->api,
+            $message->provider,
+            $message->model,
+            $message->usage,
+            $message->stopReason,
+            $error,
+            $message->timestamp,
+        );
+    }
+
+    private function replaceLastMessage(mixed $old, mixed $new): void
+    {
+        $messages = $this->messages();
+        $last = $messages === [] ? null : $messages[count($messages) - 1];
+
+        if ($last !== $old) {
+            return;
+        }
+
+        $messages[count($messages) - 1] = $new;
+        $this->agent->replaceMessages($messages);
     }
 
     /**

@@ -255,6 +255,20 @@ final class RetryTest extends TestCase
         $this->assertSame(7.0, Retry::statedDelay('google returned 429: Your quota will reset after 6s'));
     }
 
+    public function testAQuotaResetTooFarAwayIsSaidInPisWords(): void
+    {
+        $this->assertSame(
+            'Quota reached. Please wait 15h7m17s. Next: switch models or try again after reset.',
+            Retry::quotaMessage('antigravity is out of quota (429): Your quota will reset after 15h7m17s'),
+        );
+    }
+
+    public function testAQuotaMessageIsOnlyForAQuotaThatWouldNotBeWaitedOut(): void
+    {
+        $this->assertNull(Retry::quotaMessage('google returned 429: Your quota will reset after 39s'));
+        $this->assertNull(Retry::quotaMessage('the stream ended. Please retry in 300s'));
+    }
+
     public function testAWaitLongerThanAMinuteIsNotWorthWaiting(): void
     {
         // The point of retrying is that the turn carries on. A quota that comes back in ten

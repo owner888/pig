@@ -10921,6 +10921,16 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 4. 前端 `onRpcEvent` 增加对无 ID 或未匹配失败响应的通用捕获，终止 running 状态并调用 `appendErrorMessage`。
 5. `submitMessage` 增加故障回填保护：发送或连接失败时将 `text` 和 `pendingImages` 完整还原回输入框。
 
+### 长 quota reset 是行动提示，不是原始 provider 错误
+
+**现象**：pi 在当前模型 quota 用尽且 reset 很久以后时显示 `Quota reached. Please wait 15h7m17s. Next: switch models or try again after reset.`；pig 只显示 provider 原始错误（例如 Antigravity/Google 的 429、`RESOURCE_EXHAUSTED`、`Your quota will reset after …`），用户需要自己从 JSON/长句里看出下一步。
+
+**原因**：`Retry::statedDelay()` 已经能读出 reset 时间，`Retry::worthRetrying()` 也会在超过 `MAX_STATED_WAIT` 时拒绝等待，但拒绝后没有规范化错误文案；`AgentSession` 直接 settle，UI/RPC/print/session file 都保留原始 provider 文案。更细的一层：失败 assistant 先通过 `MessageEndEvent` 写盘，再通过 `AgentEndEvent` 通知 UI，所以只在 `afterTheRun()` 改最后消息会修当前状态而漏掉 session file 和 `agent_end`。
+
+**规则**：短 reset 仍然按 provider 指定时间重试；超过 `MAX_STATED_WAIT` 且错误像 quota/rate-limit 的，统一显示 pi 风格行动提示。规范化必须发生在 `MessageEndEvent` 写盘前，也必须反映到 `AgentEndEvent` 发给 UI 的 messages 上。
+
+**对策**：`Retry::quotaMessage()` 负责识别长 quota reset 并格式化 `h/m/s`；`AgentSession::onAgentEvent()` 在 fan-out 前规范化 `MessageEndEvent` 与 `AgentEndEvent`，同时替换 agent state 的最后一条 assistant message。回归测试断言不会出现 retry countdown，session state、`MessageEndEvent` 和 `AgentEndEvent` 三处都是同一句 pi 文案。
+
 ### Web 历史回放消息块不能有第二套更窄的 wire 规则
 
 **现象**：Web 重新打开会话或自动压缩后，若干 transcript block 与 TUI 不一致甚至直接丢失：压缩摘要仍显示旧文案、不按 `tokensBefore` 展示；自动压缩完成事件带了 summary 却没有追加块；hook 消息完全不显示；历史工具结果丢失 `details.diff`、截断提示和完整输出路径；`!command` 历史回放没有自己的块。

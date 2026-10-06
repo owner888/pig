@@ -158,6 +158,18 @@ final class Retry
      * different decision: do not retry at all. Upstream waits whatever it is told, in a
      * `setTimeout` nobody can see; eighteen hours of that is a session that looks dead.
      */
+    public static function quotaMessage(string $error): ?string
+    {
+        $delay = self::statedDelay($error);
+
+        if ($delay === null || $delay <= self::MAX_STATED_WAIT || !self::soundsLikeQuota($error)) {
+            return null;
+        }
+
+        return 'Quota reached. Please wait ' . self::duration(max(1, (int) floor($delay - 1)))
+            . '. Next: switch models or try again after reset.';
+    }
+
     public static function statedDelay(string $error): ?float
     {
         // "Your quota will reset after 18h31m10s" — hours and minutes optional, seconds not.
@@ -176,6 +188,31 @@ final class Retry
         }
 
         return null;
+    }
+
+    private static function soundsLikeQuota(string $error): bool
+    {
+        return preg_match('/quota|RESOURCE_EXHAUSTED|rate.?limit|\b429\b/i', $error) === 1;
+    }
+
+    private static function duration(int $seconds): string
+    {
+        $h = intdiv($seconds, 3600);
+        $seconds %= 3600;
+        $m = intdiv($seconds, 60);
+        $s = $seconds % 60;
+
+        $out = '';
+
+        if ($h > 0) {
+            $out .= $h . 'h';
+        }
+
+        if ($m > 0 || $h > 0) {
+            $out .= $m . 'm';
+        }
+
+        return $out . $s . 's';
     }
 
     private static function seconds(float $value, string $unit): ?float
