@@ -620,4 +620,30 @@ final class EditorTest extends TestCase
         $second = $this->editor->render(40);
         $this->assertSame($first, $second);
     }
+
+    public function testAStatusGoesIntoTheTopRuleAndTheRuleStaysTheWidth(): void
+    {
+        // Upstream's `renderTopBorder()` with `embedWorkingStatus`: `── status ────`, and the
+        // bottom rule untouched. Truncated to fit, never wider than the terminal, and a status
+        // with nothing to say is a plain rule again.
+        $this->editor->setBorderStatus(static fn (int $room): string => 'Working... (esc to interrupt)');
+
+        foreach ([80, 30, 12] as $width) {
+            $lines = $this->editor->render($width);
+            $top = Ansi::strip($lines[0]);
+
+            $this->assertSame($width, Width::visible($lines[0]));
+            $this->assertStringStartsWith('── Working', $top);
+            $this->assertStringEndsWith('─', $top);
+            $this->assertSame(str_repeat('─', $width), Ansi::strip($lines[count($lines) - 1]));
+        }
+
+        $this->assertSame(str_repeat('─', 5), Ansi::strip($this->editor->render(5)[0]), 'too narrow for any of it');
+
+        $this->editor->setBorderStatus(static fn (int $room): string => '');
+        $this->assertSame(str_repeat('─', 40), Ansi::strip($this->editor->render(40)[0]));
+
+        $this->editor->setBorderStatus(null);
+        $this->assertSame(str_repeat('─', 40), Ansi::strip($this->editor->render(40)[0]));
+    }
 }

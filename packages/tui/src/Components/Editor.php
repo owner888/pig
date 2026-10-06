@@ -116,6 +116,9 @@ final class Editor implements Caret, Component, InputHandler
 
     private EditorTheme $theme;
 
+    /** @var ?Closure(int): string */
+    private ?Closure $borderStatus = null;
+
     public function __construct(?EditorTheme $theme = null)
     {
         // Not a default parameter: a theme is made of closures, and a default value has
@@ -134,6 +137,44 @@ final class Editor implements Caret, Component, InputHandler
     {
         $this->theme = $theme;
         $this->invalidate();
+    }
+
+    /**
+     * Something to show in the rule above the text.
+     *
+     * Upstream's `CustomEditor.renderTopBorder()` with `embedWorkingStatus`: the working, retry,
+     * compaction and branch-summary spinners live **inside the top border** of the prompt
+     * (`── ⠋ Working... ────`) rather than on a line of their own above it, so a turn starting
+     * and ending does not grow and shrink the frame by two rows every time. The closure answers
+     * the already-styled text for the room it is given, or `''` for a plain rule; it is asked on
+     * every frame, which is what lets a spinner tick without the editor knowing one is there.
+     *
+     * @param ?Closure(int): string $status
+     */
+    public function setBorderStatus(?Closure $status): void
+    {
+        $this->borderStatus = $status;
+        $this->invalidate();
+    }
+
+    /** The rule above the text, with the status worked into it when there is one. */
+    private function topBorder(int $width, string $rule): string
+    {
+        if ($this->borderStatus === null || $width < 6) {
+            return $rule;
+        }
+
+        // `── ` in front and ` ─` behind are five columns; the status gets the rest.
+        $status = Width::truncate(($this->borderStatus)($width - 5), $width - 5, '');
+        $statusWidth = Width::visible($status);
+
+        if ($statusWidth === 0) {
+            return $rule;
+        }
+
+        $border = $this->theme->border;
+
+        return $border('── ') . $status . $border(' ' . str_repeat('─', $width - $statusWidth - 4));
     }
 
     public function setAutocompleteProvider(?AutocompleteProvider $provider): void
@@ -247,7 +288,7 @@ final class Editor implements Caret, Component, InputHandler
         // 140-column rule was 3,360 bytes and 280 escape sequences — 40% of a frame, on two
         // lines, on every frame. Upstream styles `"─".repeat(width)` once.
         $rule = ($this->theme->border)(str_repeat('─', $width));
-        $lines = [$rule];
+        $lines = [$this->topBorder($width, $rule)];
 
         foreach ($this->layout($width) as $layoutLine) {
             $lines[] = $this->draw($layoutLine, $width);

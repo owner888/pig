@@ -78,6 +78,17 @@ class Loader extends Text
         return $this->running;
     }
 
+    /**
+     * The spinner and its message as one line, for `Editor::setBorderStatus()`.
+     *
+     * Upstream's `StatusIndicator.renderInBorder()`: the same text `render()` draws, without
+     * the blank line above and the padding round it, because the border supplies both.
+     */
+    public function inBorder(): string
+    {
+        return ($this->spinnerStyle)(self::FRAMES[$this->frame]) . ' ' . ($this->messageStyle)($this->message);
+    }
+
     public function setMessage(string $message): void
     {
         $this->message = $message;
@@ -104,7 +115,7 @@ class Loader extends Text
 
     private function update(): void
     {
-        $this->setText(($this->spinnerStyle)(self::FRAMES[$this->frame]) . ' ' . ($this->messageStyle)($this->message));
+        $this->setText($this->inBorder());
         $this->tui->requestRender();
     }
 }

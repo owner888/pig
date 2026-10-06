@@ -1415,13 +1415,16 @@ final class InteractiveMode
     }
 
     /** Green while the line is a command, otherwise the thinking level's colour. */
-    private function paintBorder(): void
+    private function borderColour(): Closure
     {
-        $colour = $this->bashMode
+        return $this->bashMode
             ? $this->palette->of('bashMode')
             : $this->palette->thinkingBorder($this->session->thinkingLevel());
+    }
 
-        $this->editor->setTheme(new EditorTheme($colour, $this->palette->selectListTheme()));
+    private function paintBorder(): void
+    {
+        $this->editor->setTheme(new EditorTheme($this->borderColour(), $this->palette->selectListTheme()));
         $this->tui->requestRender();
     }
 
@@ -1480,16 +1483,7 @@ final class InteractiveMode
             return;
         }
 
-        $this->working?->stop();
-        $this->status->clear();
-        $this->working = new Loader(
-            $this->tui,
-            $this->palette->of('accent'),
-            $this->palette->of('muted'),
-            'Summarising the conversation... (esc to cancel)',
-        );
-        $this->status->addChild($this->working);
-        $this->tui->requestRender();
+        $this->showLoader('Summarising the conversation... (esc to cancel)');
 
         $this->compaction = new AbortController();
         $signal = $this->compaction->signal;
@@ -1503,9 +1497,7 @@ final class InteractiveMode
             $failure = $error->getMessage();
         } finally {
             $this->compaction = null;
-            $this->working?->stop();
-            $this->working = null;
-            $this->status->clear();
+            $this->hideLoader();
         }
 
         if ($failure !== null) {
@@ -3212,24 +3204,13 @@ final class InteractiveMode
         $controller = new AbortController();
         $this->compaction = $controller;
 
-        $loader = new Loader(
-            $this->tui,
-            fn (string $frame): string => $this->palette->fg('accent', $frame),
-            fn (string $text): string => $this->palette->fg('muted', $text),
-            'Summarising the branch... (esc to stop)',
-        );
-
-        $this->status->clear();
-        $this->status->addChild(new Spacer(1));
-        $this->status->addChild($loader);
-        $this->tui->requestRender();
+        $this->showLoader('Summarising the branch... (esc to stop)');
 
         try {
             return $this->session->goTo($entryId, summarise: true, signal: $controller->signal);
         } finally {
             $this->compaction = null;
-            $loader->stop();
-            $this->status->clear();
+            $this->hideLoader();
             $this->tui->requestRender();
         }
     }
@@ -4019,6 +4000,20 @@ final class InteractiveMode
 
     private function onStart(): void
     {
+        $this->showLoader('Working... (esc to interrupt)');
+    }
+
+    /**
+     * A loader in the rule above the prompt, where upstream puts every status indicator.
+     *
+     * Upstream's `showStatusIndicator()` with `embedWorkingStatus`: working, retry, compaction
+     * and branch summary all go through here, so there is one loader at a time and one place
+     * that takes it down. It used to be a line of its own in `$status`, with a blank above it,
+     * which grew the frame by two rows at the start of every turn and shrank it at the end; the
+     * border is already there. `$status` stays for anything that is not a loader.
+     */
+    private function showLoader(string $message): Loader
+    {
         $this->working?->stop();
         $this->status->clear();
 
@@ -4026,10 +4021,21 @@ final class InteractiveMode
             $this->tui,
             $this->palette->of('accent'),
             $this->palette->of('muted'),
-            'Working... (esc to interrupt)',
+            $message,
         );
 
-        $this->status->addChild($this->working);
+        $this->editor->setWorkingStatus($this->working, fn (string $text): string => $this->borderColour()($text));
+        $this->tui->requestRender();
+
+        return $this->working;
+    }
+
+    private function hideLoader(): void
+    {
+        $this->working?->stop();
+        $this->working = null;
+        $this->editor->setWorkingStatus(null);
+        $this->status->clear();
     }
 
     private function onMessageStart(MessageStartEvent $event): void
@@ -4154,9 +4160,7 @@ final class InteractiveMode
 
     private function onEnd(): void
     {
-        $this->working?->stop();
-        $this->working = null;
-        $this->status->clear();
+        $this->hideLoader();
         $this->streaming = null;
         $this->tools = [];
     }
@@ -4169,32 +4173,23 @@ final class InteractiveMode
      * A loader rather than a line in the transcript, and on purpose: this is a thing that is
      * happening, not a thing that happened, and it has to say escape works — eight seconds
      * that look like a hang are eight seconds someone spends deciding whether to kill pig.
-     * The reason is said as well as the countdown, because "503" and "rate limited" call for
-     * different amounts of patience.
+     *
+     * Upstream's wording (`Retrying (1/3) in 30s... (esc to cancel)`), and not the error with
+     * the countdown after it, which this used to say: the reason is already a red line in the
+     * transcript by the time the retry starts, and in the prompt's border — where this is drawn
+     * now — an 80-column terminal cut the error off before the one word that matters, which is
+     * the key that stops it.
      */
     private function onRetryStart(RetryStartEvent $event): void
     {
-        $this->working?->stop();
-        $this->status->clear();
-
         $seconds = rtrim(rtrim(number_format($event->delaySeconds, 1), '0'), '.');
 
-        $this->working = new Loader(
-            $this->tui,
-            $this->palette->of('accent'),
-            $this->palette->of('muted'),
-            "{$event->error} — trying again in {$seconds}s"
-                . " ({$event->attempt}/{$event->maxAttempts}, esc to stop)",
-        );
-
-        $this->status->addChild($this->working);
+        $this->showLoader("Retrying ({$event->attempt}/{$event->maxAttempts}) in {$seconds}s... (esc to stop)");
     }
 
     private function onRetryEnd(RetryEndEvent $event): void
     {
-        $this->working?->stop();
-        $this->working = null;
-        $this->status->clear();
+        $this->hideLoader();
 
         if ($event->succeeded) {
             // Nothing said: the answer it retried for is already on screen above this, and
@@ -4215,26 +4210,13 @@ final class InteractiveMode
         // next Enter sends it.
         $this->editor->disableSubmit(true);
 
-        $this->working?->stop();
-        $this->status->clear();
-
-        $this->working = new Loader(
-            $this->tui,
-            $this->palette->of('accent'),
-            $this->palette->of('muted'),
-            'Context is full — summarising, then trying again. (esc to cancel)',
-        );
-
-        $this->status->addChild($this->working);
+        $this->showLoader('Context is full — summarising, then trying again. (esc to cancel)');
     }
 
     private function onOverflowHandled(AutoCompactionEndEvent $event): void
     {
         $this->editor->disableSubmit(false);
-
-        $this->working?->stop();
-        $this->working = null;
-        $this->status->clear();
+        $this->hideLoader();
 
         if ($event->summary !== null) {
             $this->chat->addChild(new CompactionComponent($event->summary, $this->palette, $this->expanded));

@@ -3825,6 +3825,36 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
     }
 
+    public function testTheWorkingLoaderIsDrawnInsideThePromptsBorderAsUpstreamDrawsIt(): void
+    {
+        $this->start(['done']);
+        $held = $this->holdTheAgent();
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // Upstream's `embedWorkingStatus`: the spinner is worked into the rule above the
+        // prompt (`── ⠋ Working... ───`) rather than drawn on a line of its own above it, so a turn
+        // starting and ending does not grow and shrink the frame by two rows every time.
+        $lines = explode("\n", $this->screen());
+        $border = array_values(array_filter($lines, static fn (string $line): bool => str_contains($line, 'Working...')));
+
+        $this->assertCount(1, $border, 'the loader is on exactly one line');
+        $this->assertMatchesRegularExpression('/^\x{2500}\x{2500} \S Working\.\.\. \(esc to interrupt\) \x{2500}+$/u', $border[0]);
+
+        // And that line *is* the prompt's top rule: the editor row sits right under it and the
+        // bottom rule under that, where a loader of its own would have put a blank and a rule
+        // between itself and the prompt.
+        $at = array_search($border[0], $lines, true);
+        $this->assertMatchesRegularExpression('/^\x{2500}+$/u', $lines[$at + 2], 'the bottom rule is two rows down');
+
+        $held();
+        $this->settle();
+
+        $this->assertStringNotContainsString('Working...', $this->screen());
+    }
+
     public function testEscapeClosesTheScreenAndGivesTheEditorBackTheKeys(): void
     {
         $this->start();

@@ -6,12 +6,14 @@ namespace Pig\CodingAgent\Interactive;
 
 use Closure;
 use Pig\CodingAgent\Keybindings;
+use Pig\Tui\Ansi;
 use Pig\Tui\Autocomplete\AutocompleteProvider;
 use Pig\Tui\Clipboard\Clipboard;
 use Pig\Tui\Caret;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Editor;
 use Pig\Tui\Components\EditorTheme;
+use Pig\Tui\Components\Loader;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
 
@@ -138,6 +140,22 @@ final class CustomEditor implements Caret, Component, InputHandler
     public function disableSubmit(bool $disabled): void
     {
         $this->editor->disableSubmit = $disabled;
+    }
+
+    /**
+     * Show a loader in the rule above the prompt, or none.
+     *
+     * Upstream's `setWorkingStatusIndicator()`. The loader is asked on every frame, so its
+     * spinner ticks in the border; it is drawn in the border's own colour, as upstream draws it,
+     * because a rule with text in it reads as one rule and not as a line sitting on one.
+     */
+    public function setWorkingStatus(?Loader $loader, ?Closure $style = null): void
+    {
+        $this->editor->setBorderStatus(
+            $loader === null || $style === null
+                ? null
+                : static fn (int $width): string => $style(Ansi::strip($loader->inBorder())),
+        );
     }
 
     /** Forwarded, or the terminal's cursor would never find the editor inside here. */

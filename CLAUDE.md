@@ -637,10 +637,22 @@ linear log here does not mark.
 becomes which component, which key means what — and `bin/pig` is the entry point.
 
 The screen is five containers between the banner and the footer: `$chat` (the transcript),
-`$pending` (what is queued), `$status` (what is *happening* — the working loader, a retry
-countdown), `$overlay` (what is being *asked* — a picker, `/settings`, a hook's dialog), then the
-editor. `$status` and `$overlay` are separate on purpose and the trap below says why in full: the
-overlay holds whatever has the focus, and only the thing that gave it the focus ever clears it.
+`$pending` (what is queued), `$status` (what is *happening*), `$overlay` (what is being *asked* —
+a picker, `/settings`, a hook's dialog), then the editor. `$status` and `$overlay` are separate on
+purpose and the trap below says why in full: the overlay holds whatever has the focus, and only
+the thing that gave it the focus ever clears it.
+
+**The loaders are not in `$status` any more — they are in the prompt's top border**, which is
+where pi draws them (`CustomEditor.renderTopBorder()` with `embedWorkingStatus`): `── ⠋ Working...
+(esc to interrupt) ─────`. Working, retry, both compactions and the branch summary all go through
+`InteractiveMode::showLoader()`/`hideLoader()`, which hand the `Loader` to
+`CustomEditor::setWorkingStatus()` → `Editor::setBorderStatus()`; the editor asks the closure on
+every frame, so the spinner ticks without the editor knowing one is there, and it is painted in
+the border's own colour so the rule reads as one rule. What it replaced was a line of its own with
+a blank above it, which grew the frame by two rows at the start of every turn and shrank it at the
+end. The retry countdown lost the error text on the way in — it is already a red line in the
+transcript, and in an 80-column border it pushed `esc to stop` off the end — and says upstream's
+`Retrying (1/3) in 30s... (esc to stop)`. `$status` stays for anything that is not a loader.
 
 The
 components it draws with are `UserMessageComponent`, `AssistantMessageComponent`,
