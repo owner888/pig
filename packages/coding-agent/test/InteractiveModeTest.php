@@ -4037,6 +4037,24 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringNotContainsString('Working...', $this->screen());
     }
 
+    public function testTheWorkingLoaderBorderMatchesTheThinkingLevelBorderColor(): void
+    {
+        $this->start(['done']);
+        $this->session->setThinkingLevel(ThinkingLevel::Medium);
+        $held = $this->holdTheAgent();
+
+        $this->type('hello');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // The top border with working status and bottom border both carry the thinkingMedium color (RGB: 97;133;204, #6185cc)
+        $raw = $this->terminal->output();
+        $this->assertStringContainsString("[38;2;97;133;204m", $raw);
+
+        $held();
+        $this->settle();
+    }
+
     public function testEscapeClosesTheScreenAndGivesTheEditorBackTheKeys(): void
     {
         $this->start();

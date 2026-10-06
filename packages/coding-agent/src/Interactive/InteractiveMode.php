@@ -424,6 +424,7 @@ final class InteractiveMode
         $this->layout();
         $this->bindKeys();
         $this->bindEditor();
+        $this->paintBorder();
         $this->reportLoopFailures();
         $this->watchCommandKey();
         $this->session->onSessionNameChanged(function (): void {
@@ -4165,6 +4166,7 @@ final class InteractiveMode
 
         $this->working?->stop();
         $this->status->clear();
+        $this->paintBorder();
 
         $this->working = new Loader(
             $this->tui,
@@ -4185,6 +4187,7 @@ final class InteractiveMode
         $this->working = null;
         $this->editor->setWorkingStatus(null);
         $this->status->clear();
+        $this->paintBorder();
     }
 
     private function onMessageStart(MessageStartEvent $event): void

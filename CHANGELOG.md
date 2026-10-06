@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.61] - 2026-10-06
+
+### Fixed
+
+- Fixed working status border lines and editor borders to match upstream pi's thinking level colors: `paintBorder()` was not called on startup, leaving the editor's top and bottom border rules and the dashes surrounding the working indicator (`── ⠋ Working... ───`) stuck on `borderMuted` (gray `#768186`) instead of matching the active thinking level (e.g. `thinkingMedium` `#6185cc`). Startup, `showLoader()`, and `hideLoader()` now consistently synchronize the editor border to `borderColour()`.
+
 ## [0.3.60] - 2026-10-06
 
 ### Added
