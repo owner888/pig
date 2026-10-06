@@ -74,6 +74,7 @@ use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Prompt\SystemPrompt;
+use Pig\CodingAgent\Tools\ToolInstaller;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Tui\Env;
 use Pig\CodingAgent\Session\SessionCodec;
@@ -3417,9 +3418,20 @@ final class InteractiveMode
      *
      * Two seconds is a ceiling rather than a wait: all three of these commands hand off and
      * return at once, and anything that does not is not going to.
+     *
+     * **`PIG_OFFLINE=1` means no browser**, the same switch that stops `ToolInstaller` fetching.
+     * It is not only for a machine with no network: the test suite drives `/login` through a
+     * `FakeTerminal`, and until this every run of it opened the developer's real browser on
+     * Anthropic's authorize page — a sign-in nobody asked for, against an account that can be
+     * suspended for exactly that. `InteractiveModeTest::setUp()` sets it; the URL is still said
+     * on screen, which is what the tests read.
      */
     private static function openInBrowser(string $url): void
     {
+        if (!ToolInstaller::enabled()) {
+            return;
+        }
+
         $command = match (PHP_OS_FAMILY) {
             'Darwin' => ['open', $url],
             // The empty argument is the window title `start` otherwise takes the URL for.

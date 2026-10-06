@@ -117,6 +117,9 @@ final class InteractiveModeTest extends TestCase
     protected function setUp(): void
     {
         Loop::reset();
+        // `/login` says the URL and then opens it; with this unset, every run of this file opened
+        // the developer's real browser on Anthropic's authorize page. The tests read the screen.
+        putenv('PIG_OFFLINE=1');
         $this->held = null;
         $this->holding = false;
         $this->letThrough = 0;
@@ -140,6 +143,7 @@ final class InteractiveModeTest extends TestCase
     {
         $this->mode->stop();
         putenv('PIG_HOME');
+        putenv('PIG_OFFLINE');
         $this->restoreProviderKeys();
         Models::forgetRegistered();
         self::remove($this->home);
@@ -3513,6 +3517,62 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
 
         $this->assertStringContainsString('Signing in was cancelled.', $this->screen());
+    }
+
+    public function testSlashLoginNeverOpensTheRealBrowserFromATest(): void
+    {
+        // Every run of this file used to open the developer's browser on Anthropic's authorize
+        // page, because `/login` says the URL and then hands it to `open`. A stand-in `open` on
+        // the PATH is what makes both halves observable: with `PIG_OFFLINE` it is never run, and
+        // without it, it is — so the guard is proven at both ends and no real browser is in it.
+        $bin = $this->cwd . '-bin';
+        mkdir($bin, 0700, true);
+        $opener = match (PHP_OS_FAMILY) {
+            'Darwin' => 'open',
+            'Windows' => self::markTestSkipped('a stand-in for `cmd /c start` is not a shell script'),
+            default => 'xdg-open',
+        };
+        $marker = $bin . '/opened';
+        file_put_contents($bin . '/' . $opener, "#!/bin/sh\necho \"\$1\" > " . escapeshellarg($marker) . "\n");
+        chmod($bin . '/' . $opener, 0700);
+        $path = (string) getenv('PATH');
+        putenv('PATH=' . $bin . ':' . $path);
+
+        try {
+            $this->start(auth: Auth::inMemory());
+
+            $this->type('/login');
+            $this->type(self::ENTER);
+            $this->type(self::ENTER); // Anthropic
+            $this->settle();
+            $this->type(self::DOWN);
+            $this->type(self::ENTER); // copy code: the flow says its URL at once
+            $this->settle();
+
+            $this->assertStringContainsString('Open this and approve it', $this->screenText());
+            $this->assertFileDoesNotExist($marker, 'offline, so nothing was opened');
+
+            $this->type(self::ESCAPE);
+            $this->settle();
+
+            putenv('PIG_OFFLINE');
+            $this->type('/login');
+            $this->type(self::ENTER);
+            $this->type(self::ENTER);
+            $this->settle();
+            $this->type(self::DOWN);
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $this->assertFileExists($marker, 'online, the URL is handed to the opener');
+            $this->assertStringContainsString('claude.ai', (string) file_get_contents($marker));
+
+            $this->type(self::ESCAPE);
+            $this->settle();
+        } finally {
+            putenv('PATH=' . $path);
+            self::remove($bin);
+        }
     }
 
     public function testAFlowThatRefusesSaysWhyRatherThanOpeningABrowser(): void

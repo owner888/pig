@@ -5814,6 +5814,28 @@ Regression tests: `TextWrapTest::testInverseIsClosedAtEachLineEndToo`,
 closing the background is the bug the whole mechanism exists to avoid. Dropping any one of the three
 rows turns exactly its own test red.
 
+### Every run of the test suite opened the developer's browser on Anthropic's authorize page
+
+Reported as *怎么每次 phpunit 就打开浏览器 Claude oauth，这样会很容易被封号的*. Since the Anthropic
+1.0.3 sign-in landed (v0.3.56), `/login`'s `onAuth` says the URL and then hands it to `open` —
+and `InteractiveModeTest` drives `/login` through a `FakeTerminal` in four tests, one of which
+picks the copy-code way, whose flow calls `onAuth` at once. So `vendor/bin/phpunit` ran
+`open https://claude.ai/oauth/authorize?…` on the Mac every time: a real sign-in page, with real
+state, against an account that can be suspended for exactly that pattern. **The fake terminal
+fakes the terminal and nothing else** — a subprocess the code starts is as real under a test as
+under a person.
+
+`openInBrowser()` honours `PIG_OFFLINE=1` now, the switch `ToolInstaller` already reads, and
+`InteractiveModeTest::setUp()` sets it. The regression test puts a stand-in `open` on the PATH
+and proves **both ends**: offline it is never run, and with the variable cleared it *is* — so the
+guard cannot become "never open", and the online half runs against the stand-in rather than a
+browser. Mutating the guard away turns the offline half red.
+
+Three places start a browser and they are three answers to one question: this one reads
+`PIG_OFFLINE`, `extensions/pig-mcp` reads `PIG_TESTING` (which `phpunit.xml.dist` sets and the
+shim does not), and `WebMode` takes `openBrowser: false`. One `Browser::open()` honouring one
+switch is the fix if a fourth appears; it is new surface, so it was not done here.
+
 ### The last block of a message left a blank line under itself, and pi does not
 
 Reported with a screenshot: a one-line user message sitting on **two** empty rows of its own
