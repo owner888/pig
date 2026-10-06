@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.57] - 2026-10-06
+
+### Fixed
+
+- Fixed every transcript entry carrying an extra blank row under its last line. `Markdown::block()` added a block's trailing blank line after the **last** block too, where upstream guards each one with `nextTokenType && …` — so a one-line user message sat on two empty rows of background where pi draws one, and every assistant message and tool result was one row taller than its content. The last block leaves no blank now; the gap after a message belongs to whoever placed it (`Spacer`, or the component's own `paddingY`).
+
 ## [0.3.56] - 2026-10-06
 
 ### New Features

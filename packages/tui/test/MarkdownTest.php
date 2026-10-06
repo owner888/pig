@@ -270,7 +270,17 @@ final class MarkdownTest extends TestCase
     {
         $rows = $this->rows("```php\n\$x = 1;\n```");
 
-        $this->assertSame(['```php', '  $x = 1;', '```', ''], $rows);
+        $this->assertSame(['```php', '  $x = 1;', '```'], $rows);
+    }
+
+    public function testTheLastBlockLeavesNoBlankLineUnderItself(): void
+    {
+        // Upstream adds a block's trailing blank only when a next token exists. With one added
+        // after the last block too, a one-line user message drew two empty rows under itself
+        // where pi draws one, and every transcript entry carried an extra row of background.
+        $this->assertSame(['one line'], $this->rows('one line'));
+        $this->assertSame(['first', '', 'second'], $this->rows("first\n\nsecond"));
+        $this->assertSame(['Title', '', 'body'], $this->rows("# Title\nbody"));
     }
 
     public function testAListIsDrawnWithBulletsAndNesting(): void
@@ -391,8 +401,8 @@ final class MarkdownTest extends TestCase
         $markdown = '**' . trim(str_repeat('bold ', 10)) . '**';
         $lines = (new Markdown($markdown, paddingX: 0))->render(20);
 
-        // Three rows of text, then the blank line a paragraph leaves after itself.
-        $this->assertCount(4, $lines);
+        // Three rows of text, and nothing after them: the last block leaves no blank.
+        $this->assertCount(3, $lines);
         // The wrapper reopens the style it broke across.
         $this->assertStringContainsString("\x1b[1m", $lines[1]);
     }

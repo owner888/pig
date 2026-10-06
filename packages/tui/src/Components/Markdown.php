@@ -175,6 +175,11 @@ final class Markdown implements Component
     /**
      * One block, and the blank line after it when the document has not got one.
      *
+     * The last block gets no blank: upstream guards every `lines.push("")` with
+     * `nextTokenType && …`, and the gap after a message belongs to whoever placed it
+     * (`Spacer`, or this component's own `paddingY`). Without that guard a user message
+     * drew two empty rows under one line of text where pi draws one.
+     *
      * @return list<string>
      */
     private function block(BlockToken $token, int $width, ?BlockToken $next): array
@@ -191,7 +196,7 @@ final class Markdown implements Component
             default => [],
         };
 
-        if ($lines === [] || $next instanceof Blank || $token instanceof Blank) {
+        if ($lines === [] || $next === null || $next instanceof Blank || $token instanceof Blank) {
             return $lines;
         }
 

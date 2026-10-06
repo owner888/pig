@@ -5798,6 +5798,26 @@ Regression tests: `TextWrapTest::testInverseIsClosedAtEachLineEndToo`,
 closing the background is the bug the whole mechanism exists to avoid. Dropping any one of the three
 rows turns exactly its own test red.
 
+### The last block of a message left a blank line under itself, and pi does not
+
+Reported with a screenshot: a one-line user message sitting on **two** empty rows of its own
+background, where pi draws one. `Markdown::block()` adds the blank line that separates one block
+from the next, and it added it after the **last** block too 
+dash `$next === null` fell through to
+the `$lines[] = ''`. Upstream guards every one of its eight `lines.push("")` with
+`nextTokenType && 
+dash`, so its last block ends where its text ends and the gap after a message is
+whoever placed it: a `Spacer`, or the component's own `paddingY`. One row per user message, per
+assistant message, per tool result 
+dash invisible on any single frame and a transcript a few
+percent taller than pi's on every one.
+
+Two tests were pinning it (`['```php', '  $x = 1;', '```', '']` and "three rows of text, then the
+blank line a paragraph leaves after itself"), which is the shape this file keeps naming: *a test
+written against what the code says*. Regression test:
+`MarkdownTest::testTheLastBlockLeavesNoBlankLineUnderItself`, which also asserts the blank
+**between** two blocks stays, so the fix cannot become "never add one".
+
 ### A per-line prefix has to go on after the wrap, not before
 
 `Markdown` styles a block, then wraps it. That is right for *inline* styling — the wrapper
