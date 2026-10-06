@@ -8,14 +8,14 @@ use Closure;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\Stream;
+use Pig\Ai\Extension\OauthFlow;
+use Pig\Ai\Extension\ProviderRegistry;
 use Pig\Ai\Utils\Oauth\Anthropic;
 use Pig\Ai\Utils\Oauth\Credentials;
-use Pig\Ai\Utils\Oauth\Antigravity;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\Async\AbortSignal;
-use Pig\CodingAgent\Antigravity\Accounts;
 use Throwable;
 
 /**
@@ -59,12 +59,15 @@ final class Auth
     /** @var list<string> what could not be read, for the caller to complain about */
     private array $problems = [];
 
-    /** Antigravity's several sign-ins, beside this file — see `accounts()`. */
-    private ?Accounts $accounts = null;
+    /**
+     * @var array<string, array{0: Closure(): ?Credentials, 1: Closure(Credentials, Credentials): void}>
+     *      a second place a provider's credentials live, by provider id — see `useSecondStore()`
+     */
+    private array $secondStores = [];
 
     /**
-     * @param Settings|null $settings where Gemini CLI's client id and secret may be kept. Only
-     *        that one flow needs them, and they are not in this repository — see `antigravityClient()`.
+     * @param Settings|null $settings the settings this run started with, for an extension's flow
+     *        to read its own keys out of
      */
     public function __construct(
         private readonly ?string $path,
@@ -227,30 +230,44 @@ final class Auth
     }
 
     /**
-     * The several Antigravity sign-ins the `pi-antigravity` extension keeps, beside this file.
+     * A second place one provider's credentials live, beside this file.
      *
-     * Built on demand and kept, because `credentials()` is asked on every turn and the store is
-     * only read once. Null path — `--no-save`, a test — gets a store that reads and writes
-     * nothing, which is what `Accounts::beside(null)` is.
+     * `auth.json` holds one entry per provider, and an extension may let somebody sign in with
+     * several accounts for one — the Antigravity extension's `antigravity-accounts.json` is the
+     * store, and this file's entry is a copy of whichever account is active. So the two normally
+     * agree, and what this seam is for is the two cases where they do not: a sign-in the copy-out
+     * never reached (`$read`, asked only when this file has nothing), and a renewal pig made that
+     * the store has to be told about (`$renewed`, with the old credential and the new), or the
+     * extension presents a token as valid hours after it was replaced.
+     *
+     * @param Closure(): ?Credentials $read
+     * @param Closure(Credentials, Credentials): void $renewed old, new
      */
-    public function accounts(): Accounts
+    public function useSecondStore(string $provider, Closure $read, Closure $renewed): void
     {
-        return $this->accounts ??= Accounts::beside($this->path);
+        $this->secondStores[$provider] = [$read, $renewed];
     }
 
-    /** The stored tokens for a provider signed in with OAuth, or null. */
-    public function credentials(Provider $provider): ?Credentials
+    /** The settings this run started with, for an extension's flow to read its own keys from. */
+    public function settings(): ?Settings
     {
-        $entry = $this->data[$provider->value] ?? null;
+        return $this->settings;
+    }
+
+    /**
+     * The stored tokens for a provider signed in with OAuth, or null.
+     *
+     * By name as well as by the built-in enum, because a provider an extension registered is a
+     * name and not a case. Only when this file has nothing is a second store asked — a
+     * credential that *is* in `auth.json` is the one both tools are using.
+     */
+    public function credentials(Provider|string $provider): ?Credentials
+    {
+        $id = $provider instanceof Provider ? $provider->value : $provider;
+        $entry = $this->data[$id] ?? null;
 
         if ($entry === null || ($entry['type'] ?? null) !== 'oauth') {
-            // **Antigravity has a second place its credentials live**, because `auth.json` holds
-            // one entry per provider and the extension lets somebody sign in with several Google
-            // accounts. Its `antigravity-accounts.json` is the store and this file's entry is a
-            // copy of whichever account is active — so the two normally agree, and the case this
-            // catches is a sign-in the copy-out never reached. Only when there is nothing here:
-            // a credential that *is* in `auth.json` is the one both tools are using.
-            return $provider === Provider::Antigravity ? $this->accounts()->active() : null;
+            return isset($this->secondStores[$id]) ? ($this->secondStores[$id][0])() : null;
         }
 
         $refresh = $entry['refresh'] ?? null;
@@ -270,75 +287,15 @@ final class Auth
         );
     }
 
-    /**
-     * Failover to the next available Antigravity account and sync active state.
-     */
-    public function rotateAntigravityAccount(): ?Credentials
-    {
-        $newActive = $this->accounts()->rotateNext();
-        if ($newActive !== null) {
-            $this->setCredentials(Provider::Antigravity, $newActive);
-        }
-
-        return $newActive;
-    }
-
-    /**
-     * Make one of the stored Antigravity accounts the active one, in both files at once.
-     *
-     * `rotateAntigravityAccount()`'s sibling, and the one rule all three share: the store is
-     * changed and `auth.json`'s `antigravity` entry is rewritten to match, because that entry is
-     * a copy of the active account and two files that disagree about which account is in use is
-     * exactly the state `Accounts`' docblock describes as the thing to avoid.
-     */
-    public function activateAntigravityAccount(string $id): ?Credentials
-    {
-        $accounts = $this->accounts();
-
-        if (!isset($accounts->accounts()[$id])) {
-            return null;
-        }
-
-        $accounts->activate($id);
-        $active = $accounts->active();
-
-        if ($active !== null) {
-            $this->setCredentials(Provider::Antigravity, $active);
-        }
-
-        return $active;
-    }
-
-    /** Forget one; if it was the active one, whichever is left becomes active — or nothing is. */
-    public function removeAntigravityAccount(string $id): bool
-    {
-        $accounts = $this->accounts();
-
-        if (!isset($accounts->accounts()[$id])) {
-            return false;
-        }
-
-        $accounts->remove($id);
-        $active = $accounts->active();
-
-        if ($active !== null) {
-            $this->setCredentials(Provider::Antigravity, $active);
-        } else {
-            $this->remove(Provider::Antigravity->value);
-        }
-
-        return true;
-    }
-
     public function setApiKey(string $provider, string $key): void
     {
         $this->data[$provider] = ['type' => 'api_key', 'key' => $key];
         $this->save();
     }
 
-    public function setCredentials(Provider $provider, Credentials $credentials): void
+    public function setCredentials(Provider|string $provider, Credentials $credentials): void
     {
-        $this->data[$provider->value] = array_filter(
+        $this->data[$provider instanceof Provider ? $provider->value : $provider] = array_filter(
             [
                 'type' => 'oauth',
                 'refresh' => $credentials->refresh,
@@ -398,8 +355,11 @@ final class Auth
             }
         }
 
-        $named = Provider::tryFrom($provider);
-        $credentials = $named === null ? null : $this->credentials($named);
+        // An extension's sign-in first, then the built-in enum: the registry is what knows how
+        // to turn a stored credential into a key for a provider that did not ship with pig.
+        $flow = ProviderRegistry::oauthFor($provider);
+        $named = $flow ?? Provider::tryFrom($provider);
+        $credentials = $named === null ? null : $this->credentials($provider);
 
         if ($named !== null && $credentials !== null) {
             return $named->apiKey($this->fresh($named, $credentials));
@@ -454,30 +414,51 @@ final class Auth
      *        screen to ask on and the flow takes its default.
      */
     public function login(
-        Provider $provider,
+        Provider|OauthFlow $provider,
         Closure $onAuth,
         Closure $onPrompt,
         ?Closure $onProgress = null,
         ?AbortSignal $signal = null,
         ?Closure $onSelect = null,
     ): ?Credentials {
-        if (!$provider->available()) {
-            throw new OauthError("Signing in with {$provider->label()} is not ported yet.");
-        }
+        if ($provider instanceof OauthFlow) {
+            $credentials = $provider->login($onAuth, $onPrompt, $onProgress, $signal, $onSelect);
+            $id = $provider->id();
+        } else {
+            if (!$provider->available()) {
+                throw new OauthError("Signing in with {$provider->label()} is not ported yet.");
+            }
 
-        $credentials = match ($provider) {
-            Provider::Anthropic => $this->anthropic($onAuth, $onPrompt, $onProgress, $signal, $onSelect),
-            Provider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
-            Provider::Antigravity => $this->antigravity($onAuth, $onProgress, $signal),
-        };
+            $credentials = match ($provider) {
+                Provider::Anthropic => $this->anthropic($onAuth, $onPrompt, $onProgress, $signal, $onSelect),
+                Provider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
+            };
+            $id = $provider->value;
+        }
 
         if ($credentials === null) {
             return null;
         }
 
-        $this->setCredentials($provider, $credentials);
+        $this->setCredentials($id, $credentials);
 
         return $credentials;
+    }
+
+    /**
+     * Every sign-in on offer: the built-in two, then whatever the loaded extensions brought.
+     *
+     * @return list<Provider|OauthFlow>
+     */
+    public static function signIns(): array
+    {
+        return [...Provider::cases(), ...ProviderRegistry::oauthFlows()];
+    }
+
+    /** One sign-in by its id — `anthropic`, or an extension's — or null. */
+    public static function signIn(string $id): Provider|OauthFlow|null
+    {
+        return ProviderRegistry::oauthFor($id) ?? Provider::tryFrom($id);
     }
 
     /**
@@ -558,57 +539,6 @@ final class Auth
         return $credentials;
     }
 
-    /**
-     * @param Closure(string, ?string): void $onAuth
-     * @param Closure(string): void|null $onProgress
-     */
-    private function antigravity(Closure $onAuth, ?Closure $onProgress, ?AbortSignal $signal): ?Credentials
-    {
-        [$id, $secret] = $this->antigravityClient();
-
-        return (new Antigravity($id, $secret))->login($onAuth, $onProgress, $signal);
-    }
-
-    /**
-     * Antigravity's own client id and secret, which this repository does not hold.
-     *
-     * Upstream embeds them behind `atob()`, and for a Google installed-application client that is
-     * defensible — the secret is not confidential by design, it ships in every install, and PKCE
-     * is what protects the exchange. It is still not something a repository can carry: GitHub's
-     * push protection matches them plain **and** base64-decoded, and the scanners that report a
-     * credential get it revoked. So they are configuration, in the order everything else in pig
-     * is: the environment, then the settings file.
-     *
-     * There was a sibling reader for Gemini CLI's pair, on the same rule; it went with that
-     * provider.
-     *
-     * @return array{0: string, 1: string}
-     */
-    public function antigravityClient(bool $allowDefault = false): array
-    {
-        $id = getenv('ANTIGRAVITY_CLIENT_ID');
-        $secret = getenv('ANTIGRAVITY_CLIENT_SECRET');
-
-        $id = is_string($id) && $id !== '' ? $id : $this->setting('antigravity.clientId');
-        $secret = is_string($secret) && $secret !== '' ? $secret : $this->setting('antigravity.clientSecret');
-
-        if (($id === null || $secret === null) && $allowDefault) {
-            // Public Antigravity desktop OAuth client fallback (pure PHP, zero npm dependency)
-            $id ??= base64_decode('MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlc' . 'C5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==', true) ?: null;
-            $secret ??= base64_decode('R09DU1BYLUs1OEZXUjQ' . '4NkxkTEoxbUxCOHNYQzR6NnFEQWY=', true) ?: null;
-        }
-
-        if ($id === null || $secret === null) {
-            throw new OauthError(
-                'Signing in to Antigravity needs its own client id and secret, which pig does not ship. '
-                . 'Set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET, or put antigravity.clientId and '
-                . 'antigravity.clientSecret in ~/.pig/agent/settings.json.',
-            );
-        }
-
-        return [$id, $secret];
-    }
-
     private function setting(string $key): ?string
     {
         $value = $this->settings?->get($key);
@@ -626,28 +556,26 @@ final class Auth
      * an hour after signing in every one of its commands answered 401 — the stored half had
      * expired and only `apiKey()` knew to renew. One door to a fresh token, not two.
      */
-    public function freshCredentials(Provider $provider): ?Credentials
+    public function freshCredentials(Provider|string $provider): ?Credentials
     {
-        $credentials = $this->credentials($provider);
+        $id = $provider instanceof Provider ? $provider->value : $provider;
+        $flow = ProviderRegistry::oauthFor($id) ?? Provider::tryFrom($id);
+        $credentials = $flow === null ? null : $this->credentials($id);
 
-        return $credentials === null ? null : $this->fresh($provider, $credentials);
+        return $credentials === null || $flow === null ? null : $this->fresh($flow, $credentials);
     }
 
     /** The token, renewed first if it is due. A renewal is written down, or it happens every turn. */
-    private function fresh(Provider $provider, Credentials $credentials): Credentials
+    private function fresh(Provider|OauthFlow $provider, Credentials $credentials): Credentials
     {
         if (!$credentials->hasExpired()) {
             return $credentials;
         }
 
+        $id = $provider instanceof Provider ? $provider->value : $provider->id();
+
         try {
-            // Antigravity's own pair, because a renewal carries the client the token was minted
-            // by. The other providers need neither.
-            [$id, $secret] = match ($provider) {
-                Provider::Antigravity => $this->antigravityClient(allowDefault: true),
-                default => [null, null],
-            };
-            $renewed = $provider->refresh($credentials, null, $id, $secret);
+            $renewed = $provider->refresh($credentials);
         } catch (Throwable $problem) {
             if (\Fiber::getCurrent() === null && str_contains($problem->getMessage(), 'inside a coroutine')) {
                 // Outside a coroutine (e.g. peeking during startup or session restore before the
@@ -657,22 +585,17 @@ final class Auth
             }
 
             throw new OauthError(
-                "Could not renew the {$provider->value} token: {$problem->getMessage()}",
+                "Could not renew the {$id} token: {$problem->getMessage()}",
                 0,
                 $problem,
             );
         }
 
-        $this->setCredentials($provider, $renewed);
+        $this->setCredentials($id, $renewed);
 
-        // And into the accounts store, or the extension's copy of this account goes stale: it
-        // keeps a token per account and reaches for them when a quota wall comes back, so one
-        // pig renewed and did not write down is one the extension will present as valid hours
-        // after it was replaced. Matched against the credential it replaces, which is what
-        // upstream's `updateRememberedAccount` takes, because the email is what re-keys an entry
-        // and the old refresh token is what finds it.
-        if ($provider === Provider::Antigravity) {
-            $this->accounts()->renewed($credentials, $renewed);
+        // And into the second store, if the provider keeps one — see `useSecondStore()`.
+        if (isset($this->secondStores[$id])) {
+            ($this->secondStores[$id][1])($credentials, $renewed);
         }
 
         return $renewed;

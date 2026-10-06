@@ -10,6 +10,9 @@ use Pig\Async\AbortSignal;
 use Pig\Ai\Model;
 use Pig\CodingAgent\Hooks\Events\BeforeAgentStartEvent;
 use Pig\CodingAgent\Hooks\Events\ContextEvent;
+use Pig\Ai\Http\Request;
+use Pig\CodingAgent\Hooks\Events\BeforeProviderRequestEvent;
+use Pig\CodingAgent\Hooks\Events\BeforeRetryEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeTreeEvent;
@@ -17,6 +20,8 @@ use Pig\CodingAgent\Hooks\Events\ToolCallEvent;
 use Pig\CodingAgent\Hooks\Events\ToolResultEvent;
 use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
 use Pig\CodingAgent\Hooks\Results\ContextEventResult;
+use Pig\CodingAgent\Hooks\Results\BeforeProviderRequestResult;
+use Pig\CodingAgent\Hooks\Results\BeforeRetryResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeTreeResult;
@@ -461,6 +466,58 @@ final class HookRunner
         }
 
         return $first;
+    }
+
+    /**
+     * Give every handler a chance to change the request going out. Chained, like `context`.
+     */
+    public function emitBeforeProviderRequest(Request $request): Request
+    {
+        $context = $this->context();
+
+        foreach ($this->hooks as $hook) {
+            foreach ($hook->api->handlers('before_provider_request') as $handler) {
+                try {
+                    $result = $handler(new BeforeProviderRequestEvent($request), $context);
+                } catch (Throwable $error) {
+                    $this->fail($hook, 'before_provider_request', $error);
+
+                    continue;
+                }
+
+                if ($result === null) {
+                    continue;
+                }
+
+                if (!$result instanceof BeforeProviderRequestResult) {
+                    $this->wrongType($hook, 'before_provider_request', BeforeProviderRequestResult::class, $result);
+
+                    continue;
+                }
+
+                $request = $result->request;
+            }
+        }
+
+        return $request;
+    }
+
+    /** Ask whether a retry should go ahead, and on what terms. The first answer decides. */
+    public function emitBeforeRetry(BeforeRetryEvent $event): ?BeforeRetryResult
+    {
+        return $this->ask($event, BeforeRetryResult::class, static fn (object $r): bool => true);
+    }
+
+    /** Whether anything is listening on either provider event, so `HttpClient` is not observed for nobody. */
+    public function listensToProviderTraffic(): bool
+    {
+        foreach ($this->hooks as $hook) {
+            if ($hook->api->handlers('before_provider_request') !== [] || $hook->api->handlers('after_provider_response') !== []) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** Ask whether to leave this conversation. The first refusal stops the rest. */

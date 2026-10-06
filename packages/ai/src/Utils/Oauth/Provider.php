@@ -13,12 +13,13 @@ use Pig\Ai\Http\HttpClient;
  * `refreshOAuthToken()` and `getOAuthApiKey()` are methods here rather than free functions,
  * because PHP has no module-level functions and both were a `switch` on the provider anyway.
  *
- * **All four work**, and `available()` is still a table rather than `return true`: the credentials
- * file is keyed by these strings and is shared with pi, so a name pig could not sign in with would
- * still be a name pig has to *read* without choking, and the row is where a half-ported fifth
- * provider says so. They arrived one at a time — Anthropic's pasted code, Copilot's device flow,
- * then the two Google ones with their loopback server — which is what the flows in this directory
- * are.
+ * **The two built-in sign-ins**, matching pi 1.0's: Anthropic and GitHub Copilot. The two Google
+ * ones that used to be cases here went the way upstream's did in 0.71 — the Antigravity flow lives
+ * in `extensions/pig-antigravity` now and registers itself as an `Extension\OauthFlow`, which is
+ * what `CodingAgent\Auth` asks before this enum. `available()` is still a table rather than
+ * `return true`: the credentials file is keyed by these strings and is shared with pi, so a name
+ * pig could not sign in with would still be a name pig has to *read* without choking, and the row
+ * is where a half-ported provider says so.
  */
 enum Provider: string
 {
@@ -26,18 +27,12 @@ enum Provider: string
 
     case GithubCopilot = 'github-copilot';
 
-
-    // `antigravity`, matching `Models::ANTIGRAVITY` — `Auth::apiKey()` looks a provider up
-    // in this enum by that string, so the two cannot drift apart without a key going missing.
-    case Antigravity = 'antigravity';
-
     /** Upstream's wording, because it is what someone picking from a list has to recognise. */
     public function label(): string
     {
         return match ($this) {
             self::Anthropic => 'Anthropic (Claude Pro/Max)',
             self::GithubCopilot => 'GitHub Copilot',
-            self::Antigravity => 'Antigravity (Gemini 3, Claude, GPT-OSS)',
         };
     }
 
@@ -46,8 +41,7 @@ enum Provider: string
      *
      * Offering one pig cannot finish would be the same mistake as offering a model whose
      * protocol is not ported — a list entry that fails after the person has committed to it,
-     * rather than one that says so up front. `Antigravity` answered false here until its
-     * flow and its models arrived.
+     * rather than one that says so up front.
      *
      * **A table, not a computed answer**, which is upstream's shape: `getOAuthProviders()`
      * carries `available` as a literal field on each of its entries and this is that list,
@@ -71,7 +65,6 @@ enum Provider: string
         return match ($this) {
             self::Anthropic => true,
             self::GithubCopilot => true,
-            self::Antigravity => true,
         };
     }
 
@@ -80,16 +73,15 @@ enum Provider: string
         return match ($this) {
             self::Anthropic => true,
             self::GithubCopilot => true,
-            self::Antigravity => true,
         };
     }
 
     /**
      * A new access token, or a refusal naming what is missing.
      *
-     * @param string|null $clientId the two Google flows only: Google's renewal grant carries the
-     *        client id and secret, and this repository holds neither pair — `CodingAgent\Auth`
-     *        finds them and passes them in. Anthropic's and Copilot's need nothing here.
+     * @param string|null $clientId kept for the signature `Auth::fresh()` calls with; neither
+     *        built-in flow needs one. A provider that does (Google's grant carries client id and
+     *        secret) is an extension's `OauthFlow` now and renews itself.
      */
     public function refresh(
         Credentials $credentials,
@@ -109,28 +101,13 @@ enum Provider: string
             // the sign-in ends and how it is renewed — there is no separate refresh endpoint.
             self::GithubCopilot => (new GithubCopilot($http ?? new HttpClient()))
                 ->refresh($credentials->refresh, $credentials->enterpriseUrl),
-            self::Antigravity => (new Antigravity(
-                $clientId ?? throw new OauthError('Renewing an Antigravity token needs its client id and secret.'),
-                $clientSecret ?? throw new OauthError('Renewing an Antigravity token needs its client secret.'),
-                $http ?? new HttpClient(),
-            ))->refresh(
-                $credentials->refresh,
-                // Unlike Gemini CLI's, this one always has a project — `Antigravity::project()`
-                // falls back to a constant rather than failing — so a stored credential without
-                // one was written by something else, and guessing which project it meant is not
-                // something to do with somebody's quota.
-                $credentials->projectId ?? throw new OauthError(
-                    'The stored Antigravity credentials have no Cloud project id, so there is nothing to spend the token against.',
-                ),
-            ),
         };
     }
 
     /**
-     * What goes on a request as the key.
-     *
-     * For Anthropic and Copilot that is the access token itself. The two Google flows encode
-     * the project id alongside it, which is why this is a method and not a field read.
+     * What goes on a request as the key: the access token itself, for both of these. A flow that
+     * needs more on the key — Antigravity's carries a project id — is an extension's `OauthFlow`
+     * and answers for itself.
      */
     public function apiKey(Credentials $credentials): string
     {
@@ -138,27 +115,6 @@ enum Provider: string
             // Both are the short-lived half. Anthropic's is recognised by its `sk-ant-oat`
             // prefix and Copilot's by the provider name, and both go out as bearer tokens.
             self::Anthropic, self::GithubCopilot => $credentials->access,
-            // Upstream's shape: Code Assist needs a Cloud project as well as a token, and the
-            // two travel as one string because that is all an api key field can carry.
-            // `Providers\Antigravity` is what parses it back.
-            self::Antigravity => self::projectKey($credentials),
         };
-    }
-
-    private static function projectKey(Credentials $credentials): string
-    {
-        $project = $credentials->projectId;
-
-        if ($project === null || $project === '') {
-            throw new OauthError('The stored Gemini CLI credentials have no Cloud project id.');
-        }
-
-        $json = json_encode(['token' => $credentials->access, 'projectId' => $project]);
-
-        if ($json === false) {
-            throw new OauthError('Could not encode the Gemini CLI key.');
-        }
-
-        return $json;
     }
 }

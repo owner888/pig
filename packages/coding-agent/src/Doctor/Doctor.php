@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Doctor;
 
 use Pig\Ai\Http\HttpClient;
-use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Theme\Palette;
@@ -50,7 +49,7 @@ final class Doctor
         $authValid = $authReadable && $auth->problems() === [];
 
         $providersList = [];
-        $knownProviders = ['antigravity', 'anthropic', 'openai', 'google', 'github-copilot', 'xai', 'groq', 'deepseek'];
+        $knownProviders = ['anthropic', 'openai', 'google', 'github-copilot', 'xai', 'groq', 'deepseek'];
         $discovered = array_unique([...$auth->providers(), ...$knownProviders]);
 
         foreach ($discovered as $p) {
@@ -61,9 +60,9 @@ final class Doctor
             $detail = 'API key / token present';
             $type = 'api_key';
 
-            $enumProvider = Provider::tryFrom($p);
-            if ($enumProvider !== null) {
-                $cred = $auth->credentials($enumProvider);
+            // The built-in enum or an extension's flow — `Auth::signIn()` knows both.
+            if (Auth::signIn($p) !== null) {
+                $cred = $auth->credentials($p);
                 if ($cred !== null) {
                     $type = 'oauth';
                     $now = (int) (microtime(true) * 1000);
@@ -81,12 +80,9 @@ final class Doctor
             ];
         }
 
-        $antigravityCred = $auth->credentials(Provider::Antigravity);
-        $antigravityAccounts = $antigravityCred !== null ? 1 : 0;
-        if ($authPath !== null) {
-            $accountsStore = \Pig\CodingAgent\Antigravity\Accounts::beside($authPath);
-            $antigravityAccounts = max($antigravityAccounts, $accountsStore->count());
-        }
+        // One sign-in per extension provider counts for one here; an extension that keeps
+        // several accounts has its own `/doctor` command for them (`/antigravity.doctor`).
+        $antigravityAccounts = $auth->credentials('antigravity') !== null ? 1 : 0;
 
         // 4. Network & Proxy
         $proxy = HttpClient::proxy();

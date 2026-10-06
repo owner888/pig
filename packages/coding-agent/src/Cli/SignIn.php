@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Cli;
 
 use Closure;
 use Pig\Ai\Utils\Oauth\OauthError;
+use Pig\Ai\Extension\OauthFlow;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Auth;
@@ -79,8 +80,9 @@ final readonly class SignIn
         }
 
         if ($command === 'list') {
-            foreach (Provider::cases() as $provider) {
-                ($this->say)(sprintf('  %-20s %s', $provider->value, $provider->label()));
+            foreach (Auth::signIns() as $provider) {
+                $id = $provider instanceof Provider ? $provider->value : $provider->id();
+                ($this->say)(sprintf('  %-20s %s', $id, $provider->label()));
             }
 
             return 0;
@@ -97,10 +99,10 @@ final readonly class SignIn
         return $provider === null ? 1 : $this->login($provider);
     }
 
-    private function chooseProvider(?string $named): ?Provider
+    private function chooseProvider(?string $named): Provider|OauthFlow|null
     {
         if ($named !== null) {
-            $provider = Provider::tryFrom($named);
+            $provider = Auth::signIn($named);
 
             if ($provider === null) {
                 ($this->warn)("No provider called '{$named}'. Try `pig-ai list`.");
@@ -109,7 +111,7 @@ final readonly class SignIn
             return $provider;
         }
 
-        $choices = Provider::cases();
+        $choices = Auth::signIns();
 
         ($this->say)('Sign in with:');
         ($this->say)('');
@@ -141,7 +143,7 @@ final readonly class SignIn
      * Antigravity listen on a socket for the browser to come back, and Copilot's device flow
      * sleeps between polls.
      */
-    private function login(Provider $provider): int
+    private function login(Provider|OauthFlow $provider): int
     {
         ($this->say)("Signing in to {$provider->label()}…");
 

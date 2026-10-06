@@ -17,7 +17,10 @@ use Pig\CodingAgent\CustomTools\CustomToolApi;
 use Pig\CodingAgent\CustomTools\CustomToolLoader;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\CustomTools\LoadedCustomTool;
+use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
+use Pig\CodingAgent\Extensions\LoadedExtension;
+use Pig\CodingAgent\Extensions\ExtensionError;
 use Pig\CodingAgent\Hooks\HookedTool;
 use Pig\CodingAgent\Hooks\HookLoader;
 use Pig\CodingAgent\Hooks\HookRunner;
@@ -50,6 +53,14 @@ use Throwable;
  */
 final class CodingAgent
 {
+    /**
+     * What a session opens on when nothing names a model: not `--model`, not `PIG_MODEL`, not the
+     * settings. The one this document and both READMEs have said all along; for a while the code
+     * said `gemini-3.8-flash` on `antigravity`, which was a provider that only exists once an
+     * extension has loaded and is the extension's default to make, not the core's.
+     */
+    public const string DEFAULT_MODEL = 'claude-sonnet-4-5';
+
     /**
      * An agent ready to be prompted.
      *
@@ -163,6 +174,14 @@ final class CodingAgent
      *        tools included — upstream's `--exclude-tools`
      * @param list<string> $disabledExtensions bundled extensions not to load this run, by their
      *        directory name — `pig-mcp` for `--no-mcp`
+     * @param array<string, string> $flags every option the command line carried, for the ones an
+     *        extension declared with `registerFlag()` — `bin/pig` hands over the lot and
+     *        `ExtensionApi::applyFlags()` keeps what was declared
+     * @param array{0: list<LoadedExtension>, 1: list<ExtensionError>}|null $preloadedExtensions
+     *        what `ExtensionLoader::load()` already answered, when the caller had to load them
+     *        before this — `bin/pig` does, so `--list-models` can show a provider an extension
+     *        brings. A factory run twice is an MCP server connected twice, so the one load is
+     *        handed in rather than repeated.
      * @param list<string>|null $models what `--models` said, already split on commas: the patterns
      *        this session is narrowed to, whose first entry is what it opens on
      * @param bool $projectTrusted whether `<cwd>/.pig/` may be loaded — `ProjectTrust::resolve()`'s
@@ -194,6 +213,8 @@ final class CodingAgent
         bool $projectTrusted = true,
         ?array $excludeTools = null,
         array $disabledExtensions = [],
+        array $flags = [],
+        ?array $preloadedExtensions = null,
     ): StartedSession {
         $warnings = [];
 
@@ -227,14 +248,13 @@ final class CodingAgent
             $envModel = self::fromEnvironment($environment, 'PIG_MODEL') ?? self::fromEnvironment($environment, 'PI_MODEL');
             $envProvider = self::fromEnvironment($environment, 'PIG_PROVIDER') ?? self::fromEnvironment($environment, 'PI_PROVIDER');
             $typed = $model ?? $envModel;
-            $wanted = $typed ?? $settings->defaultModel() ?? 'gemini-3.8-flash';
+            $wanted = $typed ?? $settings->defaultModel() ?? self::DEFAULT_MODEL;
 
             // Provider precedence:
             // 1) Explicit in the model name (e.g. `antigravity/gemini-3.8-flash`)
             // 2) From environment (PIG_PROVIDER / PI_PROVIDER)
             // 3) Stored defaultProvider in settings (when using stored defaultModel)
-            // 4) Built-in default: antigravity when using the built-in defaultModel
-            $provider = $envProvider ?? ($typed === null ? ($settings->defaultProvider() ?? ($settings->defaultModel() === null ? 'antigravity' : null)) : null);
+            $provider = $envProvider ?? ($typed === null ? $settings->defaultProvider() : null);
 
             if ($provider !== null && !str_contains($wanted, '/')) {
                 $choice = ModelResolver::parse($provider . '/' . $wanted) ?? ModelResolver::parse($wanted);
@@ -270,7 +290,7 @@ final class CodingAgent
         $level = $thinkingArg !== null
             ? ThinkingLevel::tryFrom($thinkingArg) ?? ThinkingLevel::Off
             : ($choice->thinking === ThinkingLevel::Off
-                ? ($settings->defaultThinkingLevel() ?? ($chosen->provider === 'antigravity' ? ThinkingLevel::Medium : ThinkingLevel::Off))
+                ? ($settings->defaultThinkingLevel() ?? ThinkingLevel::Off)
                 : $choice->thinking);
 
         // Clamped rather than refused: a model that cannot reason and a request that asks it to is
@@ -341,10 +361,18 @@ final class CodingAgent
             $warnings[] = "hook {$problem->toText()}";
         }
 
+        // Before the extensions load, so a factory that reads `getSettings()` at load gets them;
+        // the flags come after, because which flags exist is only known once they have loaded.
+        ExtensionApi::useSettings($settings);
+
         $cliExtensions = $extensionPaths ?? [];
-        [$loadedExtensions, $extensionProblems] = $withExtensions
-            ? ExtensionLoader::load($cwd, $settings->extensions(), $cliExtensions, auth: $auth, projectTrusted: $projectTrusted, disabled: $disabledExtensions)
-            : [[], []];
+        [$loadedExtensions, $extensionProblems] = match (true) {
+            !$withExtensions => [[], []],
+            $preloadedExtensions !== null => $preloadedExtensions,
+            default => ExtensionLoader::load($cwd, $settings->extensions(), $cliExtensions, auth: $auth, projectTrusted: $projectTrusted, disabled: $disabledExtensions),
+        };
+
+        ExtensionApi::applyFlags($flags);
 
         foreach ($extensionProblems as $problem) {
             $warnings[] = "extension {$problem->toText()}";

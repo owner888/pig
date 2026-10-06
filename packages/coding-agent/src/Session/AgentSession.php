@@ -54,6 +54,13 @@ use Pig\CodingAgent\Hooks\Events\SessionInfoChangedEvent;
 use Pig\CodingAgent\Hooks\Events\SessionSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionTreeEvent;
 use Pig\CodingAgent\Hooks\Events\TurnEndEvent as HookTurnEnd;
+use Pig\CodingAgent\Hooks\Events\AfterProviderResponseEvent;
+use Pig\CodingAgent\Hooks\Events\BeforeRetryEvent;
+use Pig\CodingAgent\Hooks\Events\ModelSelectEvent;
+use Pig\CodingAgent\Hooks\Events\ThinkingLevelSelectEvent;
+use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\Request;
+use Pig\Ai\Http\Response;
 use Pig\CodingAgent\Hooks\Events\TurnStartEvent as HookTurnStart;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
@@ -181,7 +188,10 @@ final class AgentSession
         // `HookRunner::setSession()` existed and nothing called it, so `$ctx->session` was null
         // in every handler — a `HookContext` field documented and wired at one end only. The
         // session is the thing that holds the runner, so it is the thing that tells the runner.
-        $this->hooks?->setSession($this);
+        // Through `setHooks()`, which is also what installs the provider-traffic observer; the
+        // constructor's hooks going one way and a later `setHooks()` the other is the same field
+        // wired at one end only, one line down.
+        $this->setHooks($this->hooks);
     }
 
     /** The hooks this session fires at, if any. */
@@ -194,6 +204,22 @@ final class AgentSession
     {
         $this->hooks = $hooks;
         $hooks?->setSession($this);
+
+        // Every provider's bytes go through `HttpClient::send()`, and that is where
+        // `before_provider_request` and `after_provider_response` are fired from — but only when
+        // a hook is listening, so a session with none pays nothing per request. The closures
+        // read `$this->hooks` at call time rather than capturing `$hooks`, so a `/reload` that
+        // swaps the runner is picked up without re-observing.
+        if ($hooks !== null && $hooks->listensToProviderTraffic()) {
+            HttpClient::observe(
+                fn (Request $request): ?Request => $this->hooks?->emitBeforeProviderRequest($request),
+                function (Response $response, Request $request): void {
+                    $this->hooks?->emit(new AfterProviderResponseEvent($response->status, $response->headers, $request));
+                },
+            );
+        } else {
+            HttpClient::observe(null, null);
+        }
     }
 
     /** @param list<FileCommand> $fileCommands */
@@ -629,7 +655,8 @@ final class AgentSession
             throw new AgentError("No API key for {$model->provider}/{$model->id}");
         }
 
-        $changed = $this->model()?->id !== $model->id || $this->model()?->provider !== $model->provider;
+        $previous = $this->model();
+        $changed = $previous?->id !== $model->id || $previous?->provider !== $model->provider;
 
         $this->agent->setModel($model);
 
@@ -639,6 +666,7 @@ final class AgentSession
         // clamp would be a file full of a model changing to itself.
         if ($changed) {
             $this->store?->appendModelChange($model->provider, $model->id);
+            $this->hooks?->emit(new ModelSelectEvent($model, $previous));
         }
 
         // Remembered for the next run when enabled (e.g. CLI interactive mode).
@@ -1510,29 +1538,34 @@ final class AgentSession
         $max = $this->settings?->retryMaxAttempts(Retry::MAX_ATTEMPTS) ?? Retry::MAX_ATTEMPTS;
         $error = $failed->errorMessage ?? 'Unknown error';
 
-        // Check if we can failover to another Antigravity account on quota exhaustion (429)
-        $isAntigravityRateLimit = $this->model()?->provider === 'antigravity'
-            && (str_contains($error, '429') || stripos($error, 'quota') !== false || str_contains($error, 'RESOURCE_EXHAUSTED'));
+        // What the provider asked for, when it said so, and the doubling otherwise. A 429 whose
+        // body names the moment its quota resets is the one case where guessing is strictly
+        // worse: the guess is too early three times over and then the turn is gone.
+        $delay = Retry::statedDelay($error) ?? Retry::delayFor(
+            $this->attempt,
+            $this->settings?->retryBaseDelay(Retry::BASE_DELAY) ?? Retry::BASE_DELAY,
+        );
 
-        if ($isAntigravityRateLimit && $this->auth !== null) {
-            $newCred = $this->auth->rotateAntigravityAccount();
-            if ($newCred !== null) {
-                $email = $newCred->email ?? 'next account';
-                $this->attempt = 0; // Reset retry attempt counter for fresh account
-                $delay = 0.5; // Fast failover without waiting out the old account's quota reset window
-                $this->announce(new RetryStartEvent(1, $max, $delay, "Antigravity quota reached. Switched to account {$email}."));
-                $this->dropLastAssistantMessage();
+        // A hook may change the terms before the count is checked: an extension holding several
+        // accounts for one provider switches on a 429 and asks to go again at once with the
+        // count reset, because a fresh account's quota is a fresh set of attempts. That used to
+        // be an Antigravity special case written into this method; it is the extension's now.
+        $decision = $this->hooks?->emitBeforeRetry(new BeforeRetryEvent($failed, $error, $this->attempt, $max, $delay));
 
-                $signal = $this->retrying?->signal;
-                if ($signal === null || !$this->sleep($delay, $signal)) {
-                    return;
-                }
+        if ($decision?->cancel === true) {
+            $this->attempt = 0;
+            $this->announce(new RetryEndEvent(false, $max, $decision->reason ?? $error));
+            $this->finishBackgroundWork();
 
-                $this->carryOn();
-
-                return;
-            }
+            return;
         }
+
+        if ($decision?->resetAttempts === true) {
+            $this->attempt = 1;
+        }
+
+        $delay = $decision?->delaySeconds ?? $delay;
+        $error = $decision?->reason ?? $error;
 
         if ($this->attempt > $max) {
             $this->attempt = 0;
@@ -1541,14 +1574,6 @@ final class AgentSession
 
             return;
         }
-
-        // What the provider asked for, when it said so, and the doubling otherwise. A 429 whose
-        // body names the moment its quota resets is the one case where guessing is strictly
-        // worse: the guess is too early three times over and then the turn is gone.
-        $delay = Retry::statedDelay($error) ?? Retry::delayFor(
-            $this->attempt,
-            $this->settings?->retryBaseDelay(Retry::BASE_DELAY) ?? Retry::BASE_DELAY,
-        );
 
         $this->announce(new RetryStartEvent($this->attempt, $max, $delay, $error));
         $this->dropLastAssistantMessage();
@@ -1999,12 +2024,14 @@ final class AgentSession
 
     public function setThinkingLevel(ThinkingLevel $level, bool $persistAsDefault = true): void
     {
-        $changed = $this->thinkingLevel() !== $level;
+        $previous = $this->thinkingLevel();
+        $changed = $previous !== $level;
 
         $this->agent->setThinkingLevel($level);
 
         if ($changed) {
             $this->store?->appendThinkingLevelChange($level->value);
+            $this->hooks?->emit(new ThinkingLevelSelectEvent($level, $previous));
         }
 
         // Remembered for the next run when enabled.

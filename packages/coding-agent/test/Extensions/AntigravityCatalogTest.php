@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\Test\Antigravity;
+namespace Pig\CodingAgent\Test\Extensions;
 
 use PHPUnit\Framework\TestCase;
-use Pig\Ai\Antigravity\Routing;
+use PigAntigravity\Routing;
 use Pig\Ai\Models;
-use Pig\CodingAgent\Antigravity\Catalog;
+use PigAntigravity\Catalog;
 
 /**
  * The catalogue the `pi-antigravity` extension leaves on disk.
@@ -18,13 +18,16 @@ use Pig\CodingAgent\Antigravity\Catalog;
  * snapshot: half of one installed is a thinking level that throws at the moment somebody picks
  * it, so it is both or neither.
  */
-final class CatalogTest extends TestCase
+final class AntigravityCatalogTest extends TestCase
 {
+    use LoadsAntigravity;
+
     private string $home;
 
     #[\Override]
     protected function setUp(): void
     {
+        self::registerAntigravity();
         $this->home = sys_get_temp_dir() . '/pig-antigravity-' . bin2hex(random_bytes(6));
         mkdir($this->home, 0o700, true);
         putenv('PI_HOME=' . $this->home);
@@ -33,6 +36,7 @@ final class CatalogTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
+        \Pig\Ai\Extension\ProviderRegistry::forget();
         putenv('PI_HOME');
         Models::forgetRegistered();
         Routing::forgetTables();

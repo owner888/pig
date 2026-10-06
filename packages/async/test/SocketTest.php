@@ -216,13 +216,15 @@ final class SocketTest extends TestCase
             self::markTestSkipped('set PIG_NETWORK_TESTS=1 to run tests that reach the internet');
         }
 
+        // `example.com`, not a provider: what this proves is that TLS and HTTP/1.1 complete
+        // against a real certificate, and a request to an AI provider's API with no key — which
+        // is what this used to send — is a request their abuse detection sees first.
         $status = Async::run(static function (): string {
-            $socket = Socket::connect('api.anthropic.com', 443, true, 10.0);
+            $socket = Socket::connect('example.com', 443, true, 10.0);
             $socket->write(
-                "POST /v1/messages HTTP/1.1\r\n"
-                . "Host: api.anthropic.com\r\n"
-                . "Connection: close\r\n"
-                . "Content-Length: 2\r\n\r\n{}",
+                "HEAD / HTTP/1.1\r\n"
+                . "Host: example.com\r\n"
+                . "Connection: close\r\n\r\n",
             );
 
             $first = $socket->read(8192, 10.0) ?? '';
@@ -231,8 +233,7 @@ final class SocketTest extends TestCase
             return strtok($first, "\r\n") ?: '';
         });
 
-        // No API key, so 401 — what matters is that TLS and HTTP/1.1 completed at all.
-        $this->assertSame('HTTP/1.1 401 Unauthorized', $status);
+        $this->assertStringStartsWith('HTTP/1.1 ', $status);
     }
 
     /** @return array{0: string, 1: int} */

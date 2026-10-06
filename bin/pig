@@ -44,7 +44,6 @@ use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\CodingAgentError;
 use Pig\CodingAgent\CrashLog;
 use Pig\CodingAgent\Keybindings;
-use Pig\CodingAgent\Antigravity\Catalog as AntigravityCatalog;
 use Pig\CodingAgent\CustomModels;
 use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Rpc\RpcMode;
@@ -335,16 +334,23 @@ foreach ($custom->problems as $problem) {
     fwrite(STDERR, Style::yellow("models.json: {$problem}\n"));
 }
 
-// After the declared providers and before the model is resolved, for the same reasons. The
-// catalogue the `pi-antigravity` extension keeps refreshed on disk is a newer reading of the
-// endpoint `Ai\Models::ANTIGRAVITY_MODELS` was printed from — same authority, so it wins; see
-// `Antigravity\Catalog`. `--no-save` reads none of it, as it reads no `models.json`: that flag
-// means this run touches nothing of the person's.
-$catalogue = isset($options['no-save']) ? AntigravityCatalog::none() : AntigravityCatalog::discover();
-$catalogue->install();
+// And the providers the extensions bring, for the same reason `models.json` is read before
+// `--list-models`: a listing that cannot show a model an installed extension sells is a listing
+// nobody will trust about the rest. `--no-extensions` skips them. Loaded once: the result is
+// handed to `CodingAgent::session()` below, because a factory run twice is an MCP server
+// connected twice.
+$preloadedExtensions = null;
 
-foreach ($catalogue->problems as $problem) {
-    fwrite(STDERR, Style::yellow("antigravity: {$problem}\n"));
+if (!isset($options['no-extensions']) && $mode !== 'web') {
+    \Pig\CodingAgent\Extensions\ExtensionApi::useSettings($settings);
+    $preloadedExtensions = \Pig\CodingAgent\Extensions\ExtensionLoader::load(
+        $cwd,
+        $settings->extensions(),
+        isset($options['extension']) ? [$options['extension']] : [],
+        auth: $auth,
+        projectTrusted: $projectTrusted,
+        disabled: isset($options['no-mcp']) ? ['pig-mcp'] : [],
+    );
 }
 
 Timings::mark('customModels');
@@ -541,6 +547,12 @@ try {
         excludeTools: $excludeTools,
         // `--no-mcp`: upstream's `disabledBuiltinExtensions: ["mcp"]`, by pig's directory name.
         disabledExtensions: isset($options['no-mcp']) ? ['pig-mcp'] : [],
+        // Every option, for the flags extensions declare (`registerFlag()`); the parser does not
+        // refuse an option it has not heard of, which is what makes `--my-flag` reachable at all.
+        flags: $options,
+        // Loaded above, once, so `--list-models` could see them; their problems come back in
+        // `$warnings` with everybody else's.
+        preloadedExtensions: $preloadedExtensions,
     );
 } catch (CodingAgentError $error) {
     // Almost always a model name that matches nothing or a missing API key, both worth saying

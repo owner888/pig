@@ -43,11 +43,33 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## [0.3.57] - 2026-10-06
+## [0.3.58] - 2026-10-06
 
 ### Fixed
 
 - Fixed every transcript entry carrying an extra blank row under its last line. `Markdown::block()` added a block's trailing blank line after the **last** block too, where upstream guards each one with `nextTokenType && …` — so a one-line user message sat on two empty rows of background where pi draws one, and every assistant message and tool result was one row taller than its content. The last block leaves no blank now; the gap after a message belongs to whoever placed it (`Spacer`, or the component's own `paddingY`).
+
+## [0.3.58] - 2026-10-06
+
+### New Features
+
+- **Extensions can bring a provider** — `ExtensionApi::registerProvider(new Provider(...))`, pi's `registerProvider()`: models, a wire protocol (`Pig\Ai\Extension\StreamApi`), a sign-in (`OauthFlow`), the environment variables that carry its key, and whether it resells other providers' ids. The models land in the registry, the protocol behind `Api::Extension`, the sign-in in `/login`, `pig-ai list` and `/doctor`. `unregisterProvider()` and `/reload` take it back.
+- **Antigravity is an extension, not a core provider.** Everything about it — `AntigravityApi`, `AntigravityOauth`, `Routing`, the model table, `Accounts`, `Catalog`, `QuotaClient`, `ImageGenerator` — lives under `extensions/pig-antigravity/src/` and registers itself; nothing Antigravity-shaped is in `packages/` any more, which is the move pi made in 0.71 and the community's `pi-antigravity` extension answered. The row in `/login` is there only while the extension is loaded.
+- **Provider-traffic hooks**: `before_provider_request` (rewrite headers or body; chained), `after_provider_response` (status and headers before the body is read), and `before_retry` — pig's own — which lets an extension change the wait, reset the attempt count or cancel. The Antigravity 429 account failover is a `before_retry` handler now rather than a special case inside `AgentSession`.
+- **More of pi's `ExtensionAPI`**: `registerFlag()`/`getFlag()` (`--my-flag` declared by an extension), `getSettings()`, `getModel()`/`setModel()`, `getThinkingLevel()`/`setThinkingLevel()`, `sendUserMessage(text, 'steer'|'followUp')`, `setLabel()`, `getCommands()`, and the `model_select` / `thinking_level_select` events.
+- **`registerHttpRoute()`** — an extension answers `/api/<prefix>/...` in `pig web` from a fiber; the Antigravity accounts panel is served this way instead of from `HttpServer`.
+- **`Auth::useSecondStore()`** — a provider that keeps several accounts beside `auth.json` tells `Auth` where to read when the file has nothing and where to write a renewal.
+
+### Changed
+
+- The default model is `claude-sonnet-4-5` (`CodingAgent::DEFAULT_MODEL`), as both READMEs have said; it had been `antigravity/gemini-3.8-flash`, a provider that only exists once an extension has loaded.
+- `bin/pig` loads the extensions before `--list-models`, so a provider an extension brings is listed, and hands the one load to the session rather than loading twice.
+- `Auth::credentials()`, `setCredentials()` and `freshCredentials()` take a provider name as well as the built-in enum.
+- The two network-reaching tests no longer touch a provider: `SocketTest`'s TLS check goes to `example.com`, and `AnthropicTest::testAgainstTheRealApi` wants `PIG_LIVE_ANTHROPIC=1` on top of `PIG_NETWORK_TESTS=1`, so turning network tests on for the proxy does not spend a request on somebody's Anthropic account.
+
+### Removed
+
+- `Api::Antigravity`, `Models::ANTIGRAVITY_MODELS`, `Oauth\Provider::Antigravity`, `Providers\Antigravity`, `Oauth\Antigravity`, `Ai\Antigravity\Routing`, `CodingAgent\Antigravity\*`, `Auth::accounts()/rotateAntigravityAccount()/activateAntigravityAccount()/removeAntigravityAccount()/antigravityClient()`, and `HttpServer`'s `/api/accounts` handlers — all moved into the extension.
 
 ## [0.3.56] - 2026-10-06
 

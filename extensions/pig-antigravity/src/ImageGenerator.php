@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\Antigravity;
+namespace PigAntigravity;
 
 use InvalidArgumentException;
 use Pig\Ai\Http\HttpClient;

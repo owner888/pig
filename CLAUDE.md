@@ -286,7 +286,7 @@ response was meant to be. Asserting only on the bytes pig *sends* would have pas
 
 ```
 packages/async/      → Pig\Async\        (pig/async)       Loop, Future, Deferred, Async, Socket, Abort*
-packages/ai/         → Pig\Ai\           (pig/ai)          unified LLM API, HTTP/SSE, Anthropic
+packages/ai/         → Pig\Ai\           (pig/ai)          unified LLM API, HTTP/SSE, Anthropic; Extension\ for a provider an extension brings
 packages/agent-core/ → Pig\Agent\        (pig/agent-core)  AgentLoop, Agent, tools, events
 packages/tui/        → Pig\Tui\          (pig/tui)         renderer, widths, keys, editor, markdown, images, env
 packages/coding-agent/ → Pig\CodingAgent\ (pig/coding-agent) tools, theme, session, interactive CLI
@@ -1639,75 +1639,79 @@ act on. The alternative was upstream's, which waits whatever it is told inside a
 eighteen-hour countdown is a session that looks dead, and *a retry whose point is that the turn
 carries on is not a retry when the turn resumes after lunch*.
 
-### Antigravity, which is the same protocol against a different deployment
+### A provider an extension brings: `Pig\Ai\Extension`, and why Antigravity is one
 
-`Utils\Oauth\Antigravity` and the seven models in `Models::ANTIGRAVITY_MODELS`. Upstream's
-`google-antigravity.ts`, and the last of its four sign-ins to arrive. What it buys is models
-Gemini CLI does not offer at all: two of Anthropic's, three Geminis and an open-weights one, all
-on a subscription rather than per token.
+**Decided 2026-10-06.** pi removed Gemini CLI and Antigravity from its core in 0.71 and the
+community rebuilt Antigravity as an extension (`Rahularya01/pi-antigravity`) on pi's
+`registerProvider()`. pig had kept Antigravity built in, spread across `Models`, `Api`, `Stream`,
+`Oauth\Provider`, `Auth`, `AgentSession`, `Doctor`, `HttpServer` and the web front end — 28 source
+files, 95 references — with a 370-line extension that was a thin shell over all of it. Google's
+private protocol (its User-Agent, its envelope, its `v1internal:` endpoints) was pig's largest
+piece of core code with no upstream behind it, and every change Google made meant a core release.
 
-**A separate class, not a base one shared with `GeminiCli`.** Upstream has two files and so does
-this. The overlap is real — both are Google's PKCE loopback flow against the same token
-endpoint — but the two differ in exactly the part that matters, which is what happens *after* the
-tokens arrive: `GeminiCli` provisions a Cloud project and polls until it exists; this one asks two
-endpoints and gives up into a constant. A shared parent would have to hold both shapes, and the
-seam would fall where they are least alike.
+The developer's call was to do pi's move in one step: **nothing about Antigravity is in
+`packages/` any more.** `extensions/pig-antigravity/src/` holds the protocol (`AntigravityApi`),
+the sign-in (`AntigravityOauth`), the routing, the model table, the accounts store, the catalogue,
+quota and image generation; `index.php` registers the provider and wires the rest through hooks.
+Install the extension and `--model antigravity/gemini-3.8-flash` works; remove it and the name
+means nothing. The tracking target is `Rahularya01/pi-antigravity`, not pi.
 
-Four things that are its own, each of which breaks it if guessed:
+**What the core grew to make that possible is the provider half of pi's `ExtensionAPI`**, which pig
+had not ported because nothing needed it — and which is exactly what CLAUDE.md's rule about new
+surface asks for: decided by its first caller.
 
-- **Its own OAuth client**, not Gemini CLI's — and therefore its own pair of settings keys and
-  environment variables (`ANTIGRAVITY_CLIENT_ID`, `antigravity.clientId`). Not in this
-  repository, for the reason in the credentials trap.
-- **Five scopes where Gemini CLI asks three.** `cclog` and `experimentsandconfigs` are the extra
-  two, and the sandbox checks for them: a token minted with Gemini CLI's scopes reaches the same
-  endpoint and is refused.
-- **Port 51121 and `/oauth-callback`**, both registered with Google against that client id. A
-  redirect Google has not been told about is refused before anybody sees a consent screen, so
-  neither is a preference.
-- **`user-agent: antigravity/1.11.5 darwin/arm64`.** The sandbox answers 403 to Gemini CLI's, so
-  this is load-bearing. The version and the platform in it have nothing to do with the machine
-  it runs on; it is upstream's literal string and stays literal, because what the sandbox wants
-  is to be talking to Antigravity.
+- **`Pig\Ai\Extension\Provider`** is one object for what a built-in provider spreads across four
+  classes: id, name, models, a `StreamApi` (or null for a protocol pig already has), an
+  `OauthFlow` (or null for a key), the environment variables that carry its key, and `resold` —
+  `Models::RESOLD`'s dynamic half, so `claude-sonnet-4-6` bare stays Anthropic's.
+- **`ProviderRegistry`** is static for `Models::register()`'s reason, and each of the four core
+  classes asks it when its own table comes up empty: `Models::isResold()` and
+  `Models::forgetProvider()`, `Api::Extension` with `Stream::start()`'s one new arm and
+  `Stream::translate()`'s, `Stream::envApiKey()`'s default, and `Auth`'s `signIns()`/`signIn()`,
+  which `/login`, `pig-ai` and `Doctor` list from in place of `Provider::cases()`.
+  **Still no `default` in `Stream::start()`**: `Api::Extension` is one named arm, and the registry
+  refuses by name — `No extension provides the protocol for antigravity/gemini-3.8-flash. Is its
+  extension loaded?` — where "No API key" would send somebody to the wrong file.
+- **`Auth::useSecondStore(provider, read, renewed)`** is the seam `antigravity-accounts.json`
+  needed: `credentials()` asks it only when `auth.json` has nothing, and `fresh()` tells it about
+  a renewal. `Auth::login()` takes `Provider|OauthFlow` and stores under the flow's `id()`.
+- **Three provider-traffic hooks**, upstream's names where upstream has them: `before_provider_request`
+  (chained like `context`, through `HttpClient::observe()` — the one place every provider's bytes
+  go), `after_provider_response` (status and headers, before the body), and `before_retry`, which
+  is pig's own: the 429 account rotation used to be an `if provider === 'antigravity'` inside
+  `AgentSession::waitAndCarryOn()`, and is now the extension answering `BeforeRetryResult(delay:
+  0.5, resetAttempts: true)`. `model_select` and `thinking_level_select` came in the same batch.
+  The observer is only installed when a hook listens (`HookRunner::listensToProviderTraffic()`),
+  so a session with no provider hooks pays nothing per request.
+- **`ExtensionApi` grew the rest of the gap that this needed**: `registerProvider()`,
+  `registerFlag()`/`getFlag()` (`bin/pig` hands every option over after the extensions load,
+  because which flags exist is only known then), `getSettings()`, `setModel()`,
+  `getThinkingLevel()`/`setThinkingLevel()`, `sendUserMessage()`, `setLabel()`, `getCommands()`, and
+  `registerHttpRoute()` — pig's own, with no upstream counterpart because pi-web imports nothing
+  from an extension; it is how the accounts panel left `HttpServer`.
 
-**Which header set a request gets is decided by the provider name, not by the host** — a
-deliberate difference from upstream, which asks `endpoint.includes("sandbox.googleapis.com")`.
-That is the right question there, where the endpoint is a variable built per request; here the
-two deployments are two registry providers with two fixed base URLs, so the name is the thing
-actually being asked. And it is what makes this testable: a test cannot point a model at the real
-sandbox host *and* have the request arrive at a local canned server, so under the host rule the
-one header set that is load-bearing was the one no test could see.
+Three things about the move that are not obvious from the diff:
 
-Two more things worth knowing:
+- **`bin/pig` loads the extensions before `--list-models`**, and hands the result to
+  `CodingAgent::session()` as `preloadedExtensions` rather than loading twice — a factory run
+  twice is an MCP server connected twice. `HttpServer::start()` loads them for the shell too.
+- **The default model is `claude-sonnet-4-5` again** (`CodingAgent::DEFAULT_MODEL`), which both
+  READMEs have said all along; for a while the code said `antigravity/gemini-3.8-flash`, a provider
+  that only exists once an extension has loaded.
+- **`ProbeModels` gained `zzp-thinker`** — a model whose map says `off => null` — because seven
+  tests had used Antigravity's rows for "a model that cannot be turned off" and "a remembered
+  provider that is not the direct one", which are facts about the rules and not about Google.
 
-- **`google-antigravity` is in `RESOLD`, and it matters more here than for the other two.**
-  `claude-sonnet-4-5` is Anthropic's own id. A bare one has to keep meaning Anthropic's, or
-  somebody with an Antigravity sign-in would find `--model sonnet` quietly going through Google.
-  Regression test: `testAntigravityDoesNotStealAnthropicsOwnId`.
-- **The fallback project is somebody else's.** `rising-fact-p41fc` is upstream's constant, used
-  when neither discovery endpoint names a project, and it is not pig's and not a secret — it is
-  what Antigravity itself falls back to. Requests that land on it are attributed to it, which is
-  worth knowing rather than discovering. Discovery swallows every failure on purpose: a 403 from
-  the production endpoint is the normal case for an account that was always going to use the
-  sandbox.
-- **Multi-account store (`antigravity-accounts.json`) and 429 auto-failover.** `Accounts.php` manages
-  multiple linked Google accounts alongside `auth.json`. When Antigravity returns 429 (Resource has
-  been exhausted / quota exceeded), `AgentSession::waitAndCarryOn()` automatically invokes
-  `$auth->rotateAntigravityAccount()` to activate the next account in round-robin order, syncs credentials
-  back to `auth.json`, resets retry attempts, and carries on with a minimal 0.5s delay. The turn continues
-  seamlessly without human intervention. Manual cycling is also available via `/antigravity.accounts rotate`.
-
-`available()` is true for all four now, so nothing in `/login` is greyed and the "not ported yet"
-label has no case left to describe. The method stays, **as a table and not as a computed answer**:
-upstream's `getOAuthProviders()` carries `available` as a literal field on each of its four
-entries, so here it is a `match` with one line per provider beside `label()`, matching it line for
-line. `return true` would read as a condition that cannot be false — a claim the code makes and
-does not keep — where four lines that each say `true` are a table whose rows currently agree, and a
-fifth provider ported halfway has somewhere to say so without anybody inventing a condition for
-it. No `default`, so a new case stops the `match` instead of defaulting to available.
-
-Its false branch is unreachable today, and therefore untested, in three places: `showSignIns()`
-greys the row, `signIn()` refuses before spawning, and `Auth::login()` refuses again. That is
-known rather than overlooked.
+Regression tests: `ProviderRegistryTest` (8, from the core's side), `ExtensionApiTest` (7, the
+hooks, flags and session drive), `AntigravityExtensionTest::testLoadingTheExtensionRegistersTheProviderAndUnloadingTakesItBack`
+and `…WithoutTheClientPairAndRefusesOnlyAtSignIn`, the moved `AntigravityApiTest` (now registering
+through the registry in `setUp`), `AntigravityOauthTest` (moved out of `OauthTest`),
+`AgentSessionTest::testAHookCanChangeTheTermsOfARetryBeforeItWaits` and `…CanCallARetryOff`, and
+`InteractiveModeTest::testAnExtensionsSignInIsARowInSlashLoginLikeAnyOther`. Verified live:
+`/login` lists Antigravity as `subscription configured` with the extension loaded and not without,
+`--list-models antigravity` shows its fourteen rows, `/antigravity.doctor` answers, and a `-p` turn
+reaches the real deployment (and was told the quota resets in 16h, which is the deployment's
+answer and not pig's).
 
 ### `pig-ai`, the second entry point
 
@@ -4915,7 +4919,7 @@ first shape from the index, on a token.
 
 `Auth::freshCredentials()` is `credentials()` plus the renewal `apiKey()` does, for a caller that
 needs the parts. The extension goes through it; `Doctor` keeps `credentials()` because it only
-counts. Regression tests: `AuthTest::testFreshCredentialsRenewsTheWayApiKeyDoesRatherThanHandingBackTheExpiredHalf`
+counts. Both take a provider *name* now as well as the enum, since the provider is an extension's. Regression tests: `AuthTest::testFreshCredentialsRenewsTheWayApiKeyDoesRatherThanHandingBackTheExpiredHalf`
 and `testFreshCredentialsIsTheStoredOnesWhileTheyStillHold`.
 
 ### A browser opens a connection it never uses, and closing it under its watcher killed the sign-in
@@ -10377,50 +10381,12 @@ equivalent here yet.
 
 ### `ANTIGRAVITY_MODELS` has no upstream left to copy from — but the deployment has a catalogue
 
-`scripts/generate-models.php` explains why this table is hand-written: models.dev does not carry a
-subscription deployment's catalogue, so it is hand-written in upstream's generator too, "and not
-for want of trying". That is now worse and better at the same time.
-
-Worse: **upstream deleted its Antigravity support entirely.** pi `0.87.1` has no trace of it
-outside two changelog lines, and `packages/ai/CHANGELOG.md` records the removal under `0.71.0`
-(2026-04-30) — "provider registration, model metadata, OAuth, and package exports". The
-maintenance story for this table was "copy upstream's hand-written one", and there is no longer
-one to copy. Anyone comparing pig against a current pi and finding Antigravity models there is
-looking at that pi's own `models.json` or at a third-party extension, not at anything built in.
-
-Better: **the deployment answers a catalogue request.**
-
-    POST https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels
-    {"project": "<the Cloud project /login stored>"}
-
-`scripts/fetch-antigravity-models.php` asks it and prints rows in this table's tuple shape. It
-replaced a `probe-antigravity.php` that sent one minimal request per candidate id and read which
-came back — the right method for a deployment with no catalogue, and the wrong answer for one that
-has it. **The lesson is the order**: "there is no catalogue endpoint" was inferred from pig's own
-provider not calling one, which is evidence about pig and not about the deployment.
-
-Three things that run the other way from what the code suggests, all found by reading a working
-implementation rather than pig's:
-
-- **The host has no `sandbox` in it.** `GoogleGeminiCli::SANDBOX_ENDPOINT` says
-  `daily-cloudcode-pa.sandbox.googleapis.com`; the catalogue and a working client both use
-  `daily-cloudcode-pa.googleapis.com`, with `cloudcode-pa.googleapis.com` as the fallback.
-- **The User-Agent moved on.** `antigravity/1.11.5 darwin/arm64` against the CLI's current
-  `antigravity/cli/1.1.23 (aidev_client; os_type=linux; …)`. The docblock on `SANDBOX_HEADERS`
-  is right that this string is load-bearing, which is exactly why a stale one matters.
-- **The catalogue's `name` field is not trustworthy.** `gemini-2.5-flash` and
-  `gemini-2.5-flash-lite` both come back named after a Flash Lite of a different generation, and
-  two caches of the same catalogue disagree about which. The ids and the numbers are sound; the
-  display names are not, so they are worth reading before pasting.
-
-**What the table cannot express, and why that matters more than the rows.** These ids are
-*logical*. The catalogue also carries a `routing` map and a `modelEnums` map: `gemini-3.8-flash`
-at medium is sent as `gemini-3.8-flash-medium`, and that is sent as `MODEL_PLACEHOLDER_M319`. A
-thinking level selecting a different upstream model has no equivalent anywhere in pig — `Model`
-has one id and `ThinkingLevel` maps to a reasoning effort, not to another model. So a row in this
-table is reachable only as far as the bare id works, and filling the table is not the same as
-supporting the provider.
-
+Moved to the extension with the provider: the table is `extensions/pig-antigravity/src/Models.php`,
+the catalogue reader is `Catalog.php` beside it, and `scripts/fetch-antigravity-models.php` prints
+the extension's shape. The point that survives: upstream has no Antigravity to copy from since 0.71,
+the deployment answers `v1internal:fetchAvailableModels` with routing and enums as well as models,
+and the catalogue's display names are not trustworthy where its ids and numbers are. See "A provider
+an extension brings" above for why none of it is in `packages/` any more.
 ### `thinkingLevelMap`: the half of Antigravity's routing that belongs in pig
 
 The Antigravity catalogue carries two maps and they are not the same kind of thing. `routing` and
@@ -10514,50 +10480,9 @@ deliberately untouched: those are per-project directories and did not move.
 
 ### Antigravity: three names for one model choice
 
-`Ai\Antigravity\Routing` is the first piece of an Antigravity provider that pig owns rather than
-reaches through a gateway. It exists because **the id somebody picks is not the id that goes out**:
-
-    gemini-3.8-flash   +  medium   ->  gemini-3.8-flash-medium  ->  MODEL_PLACEHOLDER_M319
-    (logical)             (level)      (runtime)                    (enum, what the wire carries)
-
-Nothing else in pig works like that. A `Model` has one id and `ThinkingLevel` maps to a reasoning
-effort, not to another model — so this lives **inside the provider**: the registry keeps offering
-one id per model and the translation happens where the request is built. The `thinkingLevelMap`
-work in the entry above decides *which levels to offer*; this decides *what to send*. They compose
-and neither needed the other's shape.
-
-**An unknown model is refused, not defaulted.** The implementation this was ported from ends its
-lookup chain with "otherwise Gemini 3.8 Flash", which is right for a gateway taking whatever a
-client sends and wrong here: pig's registry is built from these very tables, so a miss can only be
-a bug in pig, and serving a different model than the one on screen is how such a bug never gets
-found. Same for a runtime id with no enum — that means the two tables were regenerated out of step,
-and guessing would send a request naming nothing.
-
-**The tables are generated and the generator is checked against them.**
-`scripts/fetch-antigravity-models.php` prints all three (model rows, routing, enums) from the
-deployment's catalogue, and running it over the real payload reproduces the committed tables **line
-for line** — which is the only way to know a hand-pasted table still matches its source. Two things
-that cost time:
-
-- **There are three payload shapes in the wild** for the same data: the endpoint's reply, the
-  `antigravity-model-catalog.json` cache (`models` + `routing`, *no* enums), and the
-  `models-store.json` blob, where `modelEnums` sits **beside** the catalogue rather than inside it.
-  The first version of the lookup counted levels by hand, found nothing in the third shape, and
-  printed an empty table. It is a depth-limited breadth-first search now.
-- **Only routing-reachable runtime ids are kept.** The catalogue also enumerates the Antigravity
-  IDE's own models — tab completion, its chat surfaces, image generation, the `-tiered` variants —
-  ten of the thirty-three. A table listing models nothing here can ask for invites somebody to ask
-  for them.
-
-`thinkingBudget()` is the exception to "generated": the catalogue carries no budgets, so it is a
-hand-tuned heuristic ported as-is. The Pro figures being `10_001` and `1_001` — one more than the
-Flash ones — is in the original. A rounder number there changes what the model is asked for.
-
-**Not done yet**: the wire protocol (envelope, thought signatures, endpoint fallback, quota
-handling), the `Api` case and `Stream` dispatch, reading `antigravity` from `auth.json`, and
-removing the built-in `google-antigravity` / `google-gemini-cli`. The removal goes **last** — doing
-it before the new provider works leaves a window where neither does.
-
+`extensions/pig-antigravity/src/Routing.php` now. The three names (logical → runtime → enum) and the
+rule that an unknown model is refused rather than defaulted are unchanged; what changed is where
+they live. See "A provider an extension brings" above.
 ### `defaultProvider` was written from the start and read by nothing
 
 The footer said `(google) gemini-3.8-flash • thinking off` where pi said
@@ -10820,73 +10745,16 @@ can say.
 
 ### The Antigravity provider is `GoogleGeminiCli` plus an envelope
 
-`Providers\Antigravity` was adapted from **pig's own `GoogleGeminiCli`**, not from the
-implementation it was ported from. Both post to `v1internal:streamGenerateContent?alt=sse` and
-both wrap a Gemini request in an envelope, so the streaming, the SSE unwrap, the `data.response`
-unwrap, the error shape and all of `GoogleShared` were already here and already tested. What the
-reference had that this needed was the envelope's *contents*. Porting its hand-rolled SSE loop as
-well would have left two of them in the repository, and only one under test.
-
-What the envelope adds over the Gemini CLI one:
-
-    model        the RUNTIME id, not the one on screen      (Routing)
-    requestType  'agent'
-    userAgent    'antigravity'  — pig used to send 'pig'
-    requestId    agent/{agentId}/{ms}/{trajectoryId}/{steps}
-    request.sessionId, request.labels  — including model_enum and the used_claude pair
-
-**Three constants were wrong in a way that only ever surfaces as a 4xx**: the host has no
-`sandbox` in it, the User-Agent header is the Antigravity CLI's (this deployment answers 403 to
-the wrong one — `SANDBOX_HEADERS`' old docblock said so), and the envelope's own `userAgent` field
-says `antigravity`. Upstream's changelog has that last one as a fix for 429s specifically, which is
-the kind of thing nobody guesses.
-
-**The trajectory id is derived from the conversation, not the clock.** It is what the deployment
-caches against, so the first 64 **bytes** of the first message are hashed into it — a byte cut,
-kept as a byte cut on purpose. Everything else in this repository that cuts text by bytes is a bug
-(see the footer entry); this one's output goes straight into `md5()`, where a cut inside a
-character is a different byte string rather than a broken one, and widening it to characters would
-change every id the deployment has cached. A message with no text at all seeds from a constant and
-not from `uniqid()`, so those conversations stay self-consistent too. Both are pinned by tests,
-because "seed from the clock" passes everything else.
-
-**The fallback host is a constructor argument.** Only 403 and 404 fall through to the second host
-— a 429 is the quota answering and asking the other host gets the same answer, which `Session\Retry`
-one level up is what waits out. Injectable for exactly the reason `$http` is: a test cannot point a
-model at Google's host *and* have the request arrive at a canned server, so under a hardcoded pair
-the one branch that matters is the one no test can see. `GoogleGeminiCli::headersFor()` makes the
-same argument about deciding by provider name rather than by host.
-
-**`thinkingEnabled: false` with a level still set means off**, the reading every other provider
-here gives it. The guard looked redundant and survived every mutation until a test set the two
-contradictory on purpose — which `Stream` can, since it sets both.
-
-**Not done**, and the provider should not be called finished: `normalizeConversationTurns` (three
-rules the reference implementation has to stop the deployment answering 400 on tool-heavy turns —
-a `functionCall` that does not follow a user turn, a request with no natural-language user part, a
-trailing model turn) and thought-signature carry-over. Neither can be written against a canned
-server alone; both need a real turn to check against.
-
+`extensions/pig-antigravity/src/AntigravityApi.php` now, implementing `Pig\Ai\Extension\StreamApi`
+and still built on `GoogleShared`, which is public for exactly this. The three constants that were
+wrong (host, User-Agent, envelope `userAgent`) and the trajectory-id byte cut are as recorded on the
+class. See "A provider an extension brings" above.
 ### `auth.json` says `antigravity`, pig looked for `google-antigravity`
 
-Why `bin/pig -p hi --model google-antigravity/gemini-3-flash` answers *"No API key for provider"*
-while the key is plainly in `~/.pi/agent/auth.json`. The entry is keyed **`antigravity`** — the
-name the `pi-antigravity` extension writes — and pig's `Models::ANTIGRAVITY` is
-`google-antigravity`, which is what upstream called it before deleting the whole provider. The
-credential *shape* matches exactly: `type: oauth`, `access`, `refresh`, `expires` as an int, and a
-non-empty `projectId` are precisely what `Auth::credentials()` wants.
-
-pig already prefers pi's `auth.json` over its own when both exist, and interoperating with that
-file is the only reason that preference is there — so failing to recognise the provider name pi
-writes into it is a bug, not a difference of opinion. The new provider uses `antigravity`.
-
-Worth noting what fixing the name alone would have bought: nothing. The endpoint
-(`daily-cloudcode-pa.**sandbox**.googleapis.com` against a working
-`daily-cloudcode-pa.googleapis.com`) and the User-Agent (`antigravity/1.11.5 darwin/arm64` against
-`antigravity/cli/1.1.23 (aidev_client; …)`) have both drifted, and `SANDBOX_HEADERS`' own docblock
-says a wrong User-Agent is answered with 403. Six of the seven ids in `ANTIGRAVITY_MODELS` no
-longer exist either. The name was the first of four failures, not the only one.
-
+The key in `auth.json` is `antigravity`, and it is the extension's `OauthFlow::id()` now — the
+registry keys `Auth::signIn('antigravity')` by it, so the file and the provider name cannot drift
+apart without a key going missing, which was the point of the rename. See "A provider an extension
+brings" above.
 ### A user quota request sent as `[]` was refused, and `X-Goog-User-Project` triggered a 403
 
 Two bugs in Antigravity quota discovery (`QuotaClient`):

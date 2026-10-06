@@ -2,16 +2,53 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\Test\Antigravity;
+namespace Pig\CodingAgent\Test\Extensions;
 
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
-use Pig\CodingAgent\Antigravity\ImageGenerator;
-use Pig\CodingAgent\Antigravity\QuotaClient;
+use PigAntigravity\ImageGenerator;
+use PigAntigravity\QuotaClient;
+use Pig\Ai\Api;
+use Pig\Ai\Extension\OauthFlow;
+use Pig\Ai\Extension\ProviderRegistry;
+use Pig\Ai\Extension\StreamApi;
+use Pig\Ai\Models;
+use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
 
 final class AntigravityExtensionTest extends TestCase
 {
+    use LoadsAntigravity;
+
+    private string $home;
+
+    #[\Override]
+    protected function setUp(): void
+    {
+        self::loadAntigravity();
+        // An empty home: the loader scans `~/.pig/agent/extensions` as well, and the machine this
+        // runs on has a copy of this very extension installed there.
+        $this->home = sys_get_temp_dir() . '/pig-ag-ext-' . bin2hex(random_bytes(4));
+        mkdir($this->home, 0o700, true);
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        ProviderRegistry::forget();
+        ExtensionApi::forgetHttpRoutes();
+        rmdir($this->home);
+    }
+
+    /** @return array{0: list<\Pig\CodingAgent\Extensions\LoadedExtension>, 1: list<\Pig\CodingAgent\Extensions\ExtensionError>} */
+    private function loadTheExtension(): array
+    {
+        $root = dirname(__DIR__, 4);
+
+        return ExtensionLoader::load($this->home, cliPaths: [$root . '/extensions/pig-antigravity/index.php'], home: $this->home);
+    }
+
     // ---- QuotaClient formatting ---------------------------------------------------------
 
     public function testProgressBarRendersCorrectFractions(): void
@@ -144,13 +181,7 @@ final class AntigravityExtensionTest extends TestCase
     public function testAntigravityExtensionLoadsCommandsAndTool(): void
     {
         $root = dirname(__DIR__, 4);
-        $extPath = is_file($root . '/extensions/pig-antigravity/index.php')
-            ? $root . '/extensions/pig-antigravity/index.php'
-            : $root . '/extensions/antigravity/index.php';
-
-        $this->assertFileExists($extPath);
-
-        [$loaded, $errors] = ExtensionLoader::load($root, cliPaths: [$extPath]);
+        [$loaded, $errors] = $this->loadTheExtension();
 
         $this->assertSame([], $errors);
         $this->assertNotEmpty($loaded);
@@ -186,5 +217,64 @@ final class AntigravityExtensionTest extends TestCase
         $this->assertArrayHasKey('antigravity.doctor', $registeredCommands);
         $this->assertArrayHasKey('antigravity.refresh', $registeredCommands);
         $this->assertArrayHasKey('antigravity.image', $registeredCommands);
+    }
+
+    // ---- what loading the extension puts into the core ----------------------------------
+
+    public function testLoadingTheExtensionRegistersTheProviderAndUnloadingTakesItBack(): void
+    {
+        // The whole of the move: nothing about this provider is in `packages/` any more, so
+        // `--model antigravity/...`, `/login antigravity` and `Stream` only know the name once
+        // the extension has loaded — and forget it when the registry is cleared.
+        $this->assertNull(Models::find('antigravity', 'gemini-3.8-flash'), 'not before the extension loads');
+        $this->assertNull(Auth::signIn('antigravity'));
+        $this->assertFalse(Models::isResold('antigravity'));
+
+        [$loaded, $errors] = $this->loadTheExtension();
+        $this->assertSame([], $errors);
+
+        $model = Models::find('antigravity', 'gemini-3.8-flash');
+        $this->assertNotNull($model);
+        $this->assertSame(Api::Extension, $model->api);
+        $this->assertInstanceOf(StreamApi::class, ProviderRegistry::apiFor($model));
+        $this->assertInstanceOf(OauthFlow::class, Auth::signIn('antigravity'));
+        $this->assertSame('Antigravity (Gemini 3, Claude, GPT-OSS)', Auth::signIn('antigravity')?->label());
+        // Resold: `claude-sonnet-4-6` bare is still Anthropic's.
+        $this->assertTrue(Models::isResold('antigravity'));
+        $this->assertNotSame('antigravity', Models::get('claude-sonnet-4-6')?->provider);
+        // And the web UI's panel.
+        $this->assertNotNull(ExtensionApi::httpRouteFor('/api/accounts/usage'));
+
+        ProviderRegistry::forget();
+        ExtensionApi::forgetHttpRoutes();
+
+        $this->assertNull(Models::find('antigravity', 'gemini-3.8-flash'));
+        $this->assertNull(Auth::signIn('antigravity'));
+    }
+
+    public function testTheExtensionLoadsWithoutTheClientPairAndRefusesOnlyAtSignIn(): void
+    {
+        // The sign-in row has to be there to say what is missing; refusing at load would make the
+        // provider silently absent, which reads as the list being broken.
+        putenv('ANTIGRAVITY_CLIENT_ID');
+        putenv('ANTIGRAVITY_CLIENT_SECRET');
+
+        [, $errors] = $this->loadTheExtension();
+        $this->assertSame([], $errors);
+
+        $flow = Auth::signIn('antigravity');
+        $this->assertInstanceOf(OauthFlow::class, $flow);
+
+        $problem = null;
+
+        try {
+            $flow->login(static function (): void {
+            }, static fn (): ?string => null);
+        } catch (\Throwable $caught) {
+            $problem = $caught;
+        }
+
+        $this->assertNotNull($problem);
+        $this->assertStringContainsString('ANTIGRAVITY_CLIENT_ID', $problem->getMessage());
     }
 }

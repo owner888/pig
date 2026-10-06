@@ -147,11 +147,25 @@ All extensions in `pig` are **100% pure native PHP** with zero external npm or c
 
 | Extension | Namespace / Location | Capabilities |
 | :--- | :--- | :--- |
-| **`pig-antigravity`** | `extensions/pig-antigravity/` | Multi-account Google Antigravity management, token refresh, auto 429 failover, `/antigravity.usage`, `/antigravity.accounts`, and `generate_image` tool. |
+| **`pig-antigravity`** | `extensions/pig-antigravity/` | **The whole Antigravity provider** — models, wire protocol, Google sign-in, model routing — registered through `registerProvider()`, as pi's community `pi-antigravity` does since pi 0.71 dropped it from the core. Plus multi-account management, auto 429 failover (`before_retry`), `/antigravity.usage`, `/antigravity.accounts`, and the `generate_image` tool. |
 | **`pig-web-search`** | `extensions/pig-web-search/` | Real-time web search (`web_search`), readable article extraction (`fetch_web_page`), headless Chrome DOM rendering (`browse_web_page`), `/search <query>`. |
 | **`pig-computer`** | `extensions/pig-computer/` | Anti-detection browser automation (mouse move, click, scroll, typing, screenshots, persistent cookies). |
 | **`pig-codemode`** | `extensions/pig-codemode/` | Fast multi-tool execution in a sandboxed child PHP process (`open_basedir`, `disable_functions`). |
 | **`pig-mcp`** | `extensions/pig-mcp/` | Model Context Protocol client for stdio & streamable HTTP servers with dynamic OAuth (`mcp.json`). |
+
+### What an extension can do
+
+An extension is a PHP file (or a folder with `index.php`) returning `function (ExtensionApi $pi)`. The API tracks pi's `ExtensionAPI`:
+
+| | |
+| :--- | :--- |
+| **Bring a provider** | `registerProvider(new Provider(id, name, models, api: StreamApi, oauth: OauthFlow, envKeys, resold))` — the models go into the registry, the protocol behind `Api::Extension`, the sign-in into `/login`. `unregisterProvider()` takes it back. |
+| **Tools, commands, renderers** | `registerTool()`, `removeTools()`, `registerCommand()`, `registerMessageRenderer()`, `registerLocale()`. |
+| **Events** | `on('…')` for the session lifecycle, the agent loop, tool calls and results, `context`, and now `before_provider_request` (rewrite headers or body), `after_provider_response` (status and headers), `before_retry` (change the wait, reset the count, or cancel), `model_select`, `thinking_level_select`. |
+| **Flags** | `registerFlag('name', 'boolean'|'string', description, default)` declares `--name`; `getFlag()` reads it from a handler. |
+| **The session** | `getSettings()`, `getModel()`, `setModel()`, `getThinkingLevel()`, `setThinkingLevel()`, `sendUserMessage(text, 'steer'|'followUp')`, `sendMessage()`, `setLabel()`, `getCommands()`, `exec()`. |
+| **The web UI** | `registerHttpRoute('/api/prefix', fn (path, req) => ['status', 'body'])` answers requests in `pig web` — how the Antigravity accounts panel is served. |
+| **A second credential store** | `Auth::useSecondStore(provider, read, renewed)` for a provider that keeps several accounts beside `auth.json`. |
 
 ---
 
@@ -203,7 +217,7 @@ Logger::timeEnd('benchmark');
 | :--- | :--- | :--- |
 | **Anthropic (Claude Pro/Max)** | **Browser** (default): pig listens on `http://localhost:53692/callback`, opens `claude.ai`, and the code comes back by itself. A paste box stays open beside it — if the browser is on another machine, paste the final redirect URL there. **Copy code** (headless): the browser lands on Anthropic's own page showing `code#state`; paste that. | The token goes out as Claude Code's — `claude-cli` user agent, both betas, tool names spelled `Read`/`Bash`/`Edit`/`Write` — because that is the identity Anthropic issued it to. Port 53692 is registered with Anthropic and cannot be changed. |
 | **GitHub Copilot** | Device flow: pig shows a code, you type it at `github.com/login/device`, pig polls until it is accepted. Blank at the Enterprise prompt means `github.com`. | Claude's and Grok's models are switched on for the account after signing in. |
-| **Antigravity** | Browser callback on `localhost:51121/oauth-callback`. | Needs `ANTIGRAVITY_CLIENT_ID` / `ANTIGRAVITY_CLIENT_SECRET` in the environment or `antigravity.clientId` / `antigravity.clientSecret` in `settings.json`; pig does not ship them. |
+| **Antigravity** (extension) | Browser callback on `localhost:51121/oauth-callback`. The row is there only while `pig-antigravity` is loaded — it is the extension's provider, not the core's. | Needs `ANTIGRAVITY_CLIENT_ID` / `ANTIGRAVITY_CLIENT_SECRET` in the environment or `antigravity.clientId` / `antigravity.clientSecret` in `settings.json`; pig does not ship them. |
 
 Tokens are renewed automatically when they expire; the file is the same one pi reads, so a sign-in in either tool is a sign-in in both. `/logout` forgets one.
 
@@ -214,7 +228,7 @@ Tokens are renewed automatically when they expire; the file is the same one pi r
 `pig` is organized as clean decoupled namespaces under `packages/`:
 
 - `packages/async/` (`Pig\Async\`): Coroutine runtime, non-blocking TLS Socket, Futures, Deferreds, and event loop.
-- `packages/ai/` (`Pig\Ai\`): Unified LLM protocol adapters (Anthropic, OpenAI Completions, OpenAI Responses, Gemini, Antigravity).
+- `packages/ai/` (`Pig\Ai\`): Unified LLM protocol adapters (Anthropic, OpenAI Completions, OpenAI Responses, Gemini), and `Pig\Ai\Extension\` — the `Provider`/`StreamApi`/`OauthFlow` an extension implements to bring a provider of its own.
 - `packages/agent-core/` (`Pig\Agent\`): Agent loop, tool lifecycle, and JSON schema validation.
 - `packages/tui/` (`Pig\Tui\`): Differential terminal rendering engine, ANSI styling, and key parser.
 - `packages/coding-agent/` (`Pig\CodingAgent\`): CLI harness, session tree, auto-compaction, Web daemon, and tools.

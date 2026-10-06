@@ -2,9 +2,14 @@
 
 declare(strict_types=1);
 
-namespace Pig\Ai\Utils\Oauth;
+namespace PigAntigravity;
 
 use Closure;
+use Pig\Ai\Extension\OauthFlow;
+use Pig\Ai\Utils\Oauth\CallbackServer;
+use Pig\Ai\Utils\Oauth\Credentials;
+use Pig\Ai\Utils\Oauth\OauthError;
+use Pig\Ai\Utils\Oauth\Pkce;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Timestamp;
@@ -33,7 +38,7 @@ use Throwable;
  * scanners decode. `Auth::antigravityClient()` reads them from the environment or the settings
  * and refuses clearly when there are none. See the trap entry on credentials.
  */
-final class Antigravity
+final class AntigravityOauth implements OauthFlow
 {
     public const string AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 
@@ -139,13 +144,89 @@ final class Antigravity
         ]);
     }
 
+    #[\Override]
+    public function id(): string
+    {
+        return 'antigravity';
+    }
+
+    #[\Override]
+    public function label(): string
+    {
+        return 'Antigravity (Gemini 3, Claude, GPT-OSS)';
+    }
+
+    #[\Override]
+    public function isSubscription(): bool
+    {
+        return true;
+    }
+
     /**
-     * Listen, send the browser, take the code, find a project. Null means nobody finished.
-     *
-     * @param Closure(string, ?string): void $onAuth
-     * @param Closure(string): void|null $onProgress
+     * The `OauthFlow` shape of `signIn()`: the box and the select are not needed by a loopback
+     * flow, and are taken so one signature serves every provider in `/login`'s list.
      */
-    public function login(Closure $onAuth, ?Closure $onProgress = null, ?AbortSignal $signal = null): ?Credentials
+    #[\Override]
+    public function login(
+        Closure $onAuth,
+        Closure $onPrompt,
+        ?Closure $onProgress = null,
+        ?AbortSignal $signal = null,
+        ?Closure $onSelect = null,
+    ): ?Credentials {
+        return $this->signIn($onAuth, $onProgress, $signal);
+    }
+
+    /** The `OauthFlow` shape of `renew()`: the project id travels on the credential. */
+    #[\Override]
+    public function refresh(Credentials $credentials): Credentials
+    {
+        if ($credentials->refresh === '') {
+            throw new OauthError('The stored antigravity credentials have no refresh token — sign in again.');
+        }
+
+        // This flow always has a project — `project()` falls back to a constant rather than
+        // failing — so a stored credential without one was written by something else, and
+        // guessing which project it meant is not something to do with somebody's quota.
+        return $this->renew(
+            $credentials->refresh,
+            $credentials->projectId ?? throw new OauthError(
+                'The stored Antigravity credentials have no Cloud project id, so there is nothing to spend the token against.',
+            ),
+        );
+    }
+
+    /**
+     * What goes on a request as the key: Code Assist needs a Cloud project as well as a token,
+     * and the two travel as one string because that is all an api key field can carry.
+     * `AntigravityApi::credentials()` is what parses it back.
+     */
+    #[\Override]
+    public function apiKey(Credentials $credentials): string
+    {
+        return self::keyFor($credentials);
+    }
+
+    /** Static, so `LazyAntigravityOauth` can answer without a client pair. */
+    public static function keyFor(Credentials $credentials): string
+    {
+        $project = $credentials->projectId;
+
+        if ($project === null || $project === '') {
+            throw new OauthError('The stored Antigravity credentials have no Cloud project id.');
+        }
+
+        $json = json_encode(['token' => $credentials->access, 'projectId' => $project]);
+
+        if ($json === false) {
+            throw new OauthError('Could not encode the Antigravity key.');
+        }
+
+        return $json;
+    }
+
+    /** Listen, send the browser, take the code, find a project. Null means nobody finished. */
+    public function signIn(Closure $onAuth, ?Closure $onProgress = null, ?AbortSignal $signal = null): ?Credentials
     {
         $pkce = Pkce::create();
         $server = $this->server ?? new CallbackServer(self::PORT, self::CALLBACK_PATH);
@@ -225,7 +306,7 @@ final class Antigravity
         ];
     }
 
-    public function refresh(string $refreshToken, string $projectId): Credentials
+    public function renew(string $refreshToken, string $projectId): Credentials
     {
         $data = $this->form($this->endpoint(self::TOKEN_URL), [
             'client_id' => $this->clientId,

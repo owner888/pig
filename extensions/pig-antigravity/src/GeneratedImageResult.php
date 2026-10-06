@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\Antigravity;
+namespace PigAntigravity;
 
 /**
  * Result of an image generation call.

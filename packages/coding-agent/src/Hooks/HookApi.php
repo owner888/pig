@@ -68,6 +68,11 @@ class HookApi
         'message_end',
         'tool_call',
         'tool_result',
+        'before_provider_request',
+        'after_provider_response',
+        'before_retry',
+        'model_select',
+        'thinking_level_select',
     ];
 
     /**
@@ -243,6 +248,12 @@ class HookApi
     public function withContext(Closure $context): void
     {
         $this->context = $context;
+    }
+
+    /** The context as it stands now, or null before a mode has wired one. For subclasses. */
+    protected function contextNow(): ?HookContext
+    {
+        return $this->context === null ? null : ($this->context)();
     }
 
     /** The friendly session name, or null if unset. */

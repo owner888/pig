@@ -37,6 +37,8 @@ use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CodingAgent;
+use Pig\CodingAgent\Hooks\Events\BeforeRetryEvent;
+use Pig\CodingAgent\Hooks\Results\BeforeRetryResult;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
@@ -1344,56 +1346,83 @@ final class AgentSessionTest extends TestCase
 
     // ---- the overflow half --------------------------------------------------------------
 
-    public function testAntigravityAccountRotatesAutomaticallyOnRateLimit(): void
+    public function testAHookCanChangeTheTermsOfARetryBeforeItWaits(): void
     {
-        $home = $this->tempHome;
-        mkdir($home, 0700, true);
-        putenv("PI_HOME={$home}");
+        // `before_retry`: what the Antigravity extension's 429 failover goes through. It used to
+        // be an `if provider === 'antigravity'` inside this class; now any extension holding
+        // several accounts for a provider can switch and ask to go again at once, count reset.
+        $seen = [];
+        $hooks = $this->hooks([
+            'before_retry' => static function (BeforeRetryEvent $event) use (&$seen): BeforeRetryResult {
+                $seen[] = [$event->attempt, $event->delaySeconds];
 
-        file_put_contents($home . '/antigravity-accounts.json', json_encode([
-            'version' => 1,
-            'activeAccountId' => 'account1@example.com',
-            'accounts' => [
-                'account1@example.com' => [
-                    'refresh' => 'ref-1',
-                    'access' => 'acc-1',
-                    'expires' => 9_000_000_000_000,
-                    'email' => 'account1@example.com',
-                ],
-                'account2@example.com' => [
-                    'refresh' => 'ref-2',
-                    'access' => 'acc-2',
-                    'expires' => 9_000_000_000_000,
-                    'email' => 'account2@example.com',
-                ],
-            ],
-        ]));
-
-        $auth = Auth::discover();
-        $model = Models::find('antigravity', 'gemini-3.8-flash');
+                return new BeforeRetryResult(delaySeconds: 0.01, resetAttempts: true, reason: 'Switched to account 2.');
+            },
+        ]);
 
         $session = $this->session(
             [],
-            model: $model,
             streamFn: $this->flaky([
-                ['error' => 'Antigravity returned 429: Resource has been exhausted (quota exceeded)'],
+                ['error' => 'zzp returned 429: Resource has been exhausted (quota exceeded)'],
                 'Recovered with account 2!',
             ]),
-            settings: self::quickRetries(['baseDelayMs' => 10]),
-            auth: $auth,
+            settings: self::quickRetries(['baseDelayMs' => 5_000]),
+            hooks: $hooks,
         );
 
-        Async::run(static function () use ($session) {
+        $started = [];
+        $session->subscribe(static function (object $event) use (&$started): void {
+            if ($event instanceof RetryStartEvent) {
+                $started[] = [$event->attempt, $event->delaySeconds, $event->error];
+            }
+        });
+
+        $began = microtime(true);
+        Async::run(static function () use ($session): void {
             $session->prompt('hi');
         });
 
-        // Verify account rotated in auth and store
-        $this->assertSame('account2@example.com', $auth->credentials(\Pig\Ai\Utils\Oauth\Provider::Antigravity)?->email);
+        // The hook saw the session's own terms and replaced them: the screen shows the hook's
+        // reason and the hook's wait, not five seconds of backoff.
+        $this->assertSame([[1, 5.0]], array_map(static fn (array $one): array => [$one[0], round($one[1], 1)], $seen));
+        $this->assertCount(1, $started);
+        $this->assertSame([1, 0.01, 'Switched to account 2.'], $started[0]);
+        $this->assertLessThan(2.0, microtime(true) - $began, 'the hook\'s wait, not the backoff');
 
-        // Turn succeeded
         $messages = $session->messages();
         $this->assertCount(2, $messages);
         $this->assertSame('Recovered with account 2!', $messages[1]->content[0]->text);
+    }
+
+    public function testAHookCanCallARetryOff(): void
+    {
+        $hooks = $this->hooks([
+            'before_retry' => static fn (): BeforeRetryResult => new BeforeRetryResult(cancel: true, reason: 'Not worth it.'),
+        ]);
+
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky([['error' => 'zzp returned 503: overloaded'], 'never sent']),
+            settings: self::quickRetries(['baseDelayMs' => 10]),
+            hooks: $hooks,
+        );
+
+        $ended = [];
+        $session->subscribe(static function (object $event) use (&$ended): void {
+            if ($event instanceof RetryEndEvent) {
+                $ended[] = [$event->succeeded, $event->error];
+            }
+        });
+
+        Async::run(static function () use ($session): void {
+            $session->prompt('hi');
+        });
+
+        $this->assertSame([[false, 'Not worth it.']], $ended);
+        // The failed turn stays, as it does when the count runs out: the turn fails as it stands.
+        $messages = $session->messages();
+        $this->assertCount(2, $messages);
+        $this->assertSame(StopReason::Error, $messages[1]->stopReason);
     }
 
     public function testAPromptTooLongIsSummarisedAndSentAgainRatherThanRetried(): void

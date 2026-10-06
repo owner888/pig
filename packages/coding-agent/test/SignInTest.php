@@ -132,9 +132,10 @@ final class SignInTest extends TestCase
         $this->signIn(['login']);
 
         $this->assertStringContainsString('1. Anthropic (Claude Pro/Max)', $this->said());
-        // Three since Gemini CLI left `Oauth\Provider`; Antigravity is the last of them.
-        $this->assertStringContainsString('3. Antigravity', $this->said());
-        $this->assertStringContainsString('(1-3)', $this->asked[0], 'the numbered one comes first');
+        // Two built in — Antigravity is an extension's row now, and `pig-ai` loads no extensions.
+        $this->assertStringContainsString('2. GitHub Copilot', $this->said());
+        $this->assertStringNotContainsString('Antigravity', $this->said());
+        $this->assertStringContainsString('(1-2)', $this->asked[0], 'the numbered one comes first');
 
         // Two is Copilot, and reaching its own first question — which is what the second entry in
         // `asked` is — proves the number resolved to a flow rather than to a label.
@@ -199,15 +200,13 @@ final class SignInTest extends TestCase
         $this->assertStringContainsString('Nothing was signed in.', implode("\n", $this->warned));
     }
 
-    public function testAFlowWithNoClientCredentialsSaysWhatIsMissing(): void
+    public function testAProviderNoExtensionBroughtIsNotOne(): void
     {
+        // `pig-ai login antigravity` with no extension loaded: the name means nothing here, and
+        // saying so beats a flow that half-starts.
         $this->assertSame(1, $this->signIn(['login', 'antigravity']));
 
-        $warned = implode("\n", $this->warned);
-
-        // The `OauthError` arm: named rather than a stack trace, because every one of these says
-        // what is absent.
-        $this->assertStringContainsString('ANTIGRAVITY_CLIENT_ID', $warned);
+        $this->assertStringContainsString("No provider called 'antigravity'", implode("\n", $this->warned));
         $this->assertSame([], $this->asked, 'refused before anybody was sent anywhere');
     }
 }

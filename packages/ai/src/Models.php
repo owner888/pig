@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Pig\Ai;
 
-use Pig\Ai\Providers\Antigravity;
 
 /**
  * Every model this can talk to, by provider and id.
@@ -57,17 +56,6 @@ final class Models
 
     public const string COPILOT = 'github-copilot';
 
-    /**
-     * `antigravity`, not `google-antigravity`.
-     *
-     * Upstream's name for it before it deleted the provider altogether; the live convention is
-     * this one — it is what the `pi-antigravity` extension writes into `auth.json`, and pig reads
-     * pi's `auth.json` by preference, so the old name meant a key that was plainly there could
-     * not be found. `Oauth\Provider`'s value has to match, because `Auth::apiKey()` looks the
-     * provider up in that enum by this very string.
-     */
-    public const string ANTIGRAVITY = 'antigravity';
-
     private const string ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 
     /**
@@ -106,47 +94,7 @@ final class Models
      *
      * OpenRouter is the next one to belong here, whenever its 236 arrive.
      */
-    private const array RESOLD = [self::COPILOT, self::ANTIGRAVITY];
-
-    /**
-     * Antigravity's fourteen, which are the reason it exists: not Google's models.
-     *
-     * Anthropic's and an open-weights one alongside the Geminis, all on Google's Code Assist
-     * deployment and all billed to a subscription rather than per token.
-     *
-     * In `RESOLD`, and it matters more here than anywhere: `claude-sonnet-4-6` is Anthropic's
-     * own id. A bare one has to keep meaning Anthropic's, or somebody with an Antigravity
-     * sign-in would find their `--model sonnet` quietly going through Google.
-     *
-     * **Every row says `off => null`**, which is the deployment's own answer and not an
-     * oversight: these models always think, and `ThinkingLevel::supportedBy()` is what keeps
-     * `off` out of the picker for them. The routing tables still have an `off` target — that is
-     * what to send if something asks anyway — so the two are consistent rather than at odds.
-     *
-     * Generated from the deployment's catalogue by `scripts/fetch-antigravity-models.php`, with
-     * **two names corrected by hand**: the catalogue calls both `gemini-2.5-flash` and
-     * `gemini-2.5-flash-lite` "Gemini 3.1 Flash Lite", and two of its own caches disagree about
-     * which wrong name to use. The ids and the numbers are sound; the labels for those rows are
-     * not, and a regeneration will bring them back — read the diff.
-     *
-     * [name, context window, max output, reasoning, accepts images, thinkingLevelMap]
-     */
-    private const array ANTIGRAVITY_MODELS = [
-        'gemini-3.8-flash' => ['Gemini 3.8 Flash (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null]],
-        'gemini-3.7-flash' => ['Gemini 3.7 Flash (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null]],
-        'gemini-3.6-flash' => ['Gemini 3.6 Flash (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null]],
-        'gemini-3.5-flash' => ['Gemini 3.5 Flash (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null]],
-        'gemini-3.5-flash-lite' => ['Gemini 3.5 Flash Lite (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
-        'gemini-3.1-flash-lite' => ['Gemini 3.1 Flash Lite (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
-        'gemini-3-flash' => ['Gemini 3 Flash (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
-        'gemini-2.5-flash' => ['Gemini 2.5 Flash (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
-        'gemini-2.5-flash-lite' => ['Gemini 2.5 Flash Lite (Antigravity)', 1_048_576, 65_536, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
-        'claude-opus-4-6' => ['Claude Opus 4.6 (Antigravity)', 250_000, 64_000, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
-        'claude-sonnet-4-6' => ['Claude Sonnet 4.6 (Antigravity)', 200_000, 64_000, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
-        'gemini-3.1-pro' => ['Gemini 3.1 Pro (Antigravity)', 1_048_576, 65_535, true, true, ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null]],
-        'gemini-2.5-pro' => ['Gemini 2.5 Pro (Antigravity)', 1_048_576, 65_535, true, true, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null]],
-        'gpt-oss-120b' => ['GPT-OSS 120B (Antigravity)', 131_072, 32_768, true, false, ['off' => null, 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => null, 'xhigh' => null]],
-    ];
+    private const array RESOLD = [self::COPILOT];
 
     /** provider => where its OpenAI-compatible endpoint lives. */
     private const array OPENAI_COMPATIBLE = [
@@ -443,15 +391,14 @@ final class Models
      * session, `RpcMode` — asks this class by id, and a model that only some of them could see
      * would be a model that works until you save the conversation.
      *
-     * **`$replace` is the one exception to that rule and it has one caller**:
-     * `CodingAgent\Antigravity\Catalog`, reading the catalogue pi keeps refreshed on disk. The
-     * rule above exists so a *person's* file cannot redefine a shipped model; there both sides
-     * have one author — the deployment's own catalogue endpoint — and `ANTIGRAVITY_MODELS` is
-     * itself a frozen print of it, so the two differ only in when they were taken. A snapshot
-     * beating a live reading of the same source is the wrong way round, and what it costs is
-     * visible: those rows carry `new Pricing()` where the catalogue carries real prices, so a
-     * subscription turn reports as free. Nothing else may pass true, and a second caller is the
-     * moment to ask whether this is still an exception or has become a rule.
+     * **`$replace` is the one exception to that rule and it has one caller**: the Antigravity
+     * extension's `Catalog`, reading the catalogue pi keeps refreshed on disk, over the fallback
+     * table the same extension registers first. The rule above exists so a *person's* file cannot
+     * redefine a shipped model; there both sides have one author — the deployment's own catalogue
+     * endpoint — and the fallback is itself a frozen print of it, so the two differ only in when
+     * they were taken. A snapshot beating a live reading of the same source is the wrong way
+     * round. Nothing else may pass true, and a second caller is the moment to ask whether this is
+     * still an exception or has become a rule.
      *
      * @param list<Model> $models
      */
@@ -471,6 +418,15 @@ final class Models
     {
         self::$registered = [];
         self::$replacing = [];
+        self::$models = null;
+    }
+
+    /** Forget one provider's registered models — `ProviderRegistry::unregister()`'s half. */
+    public static function forgetProvider(string $provider): void
+    {
+        $keep = static fn (Model $model): bool => $model->provider !== $provider;
+        self::$registered = array_values(array_filter(self::$registered, $keep));
+        self::$replacing = array_values(array_filter(self::$replacing, $keep));
         self::$models = null;
     }
 
@@ -512,7 +468,7 @@ final class Models
      */
     public static function isResold(string $provider): bool
     {
-        return in_array($provider, self::RESOLD, true);
+        return in_array($provider, self::RESOLD, true) || Extension\ProviderRegistry::isResold($provider);
     }
 
     public static function find(string $provider, string $id): ?Model
@@ -660,31 +616,12 @@ final class Models
             );
         }
 
-        foreach (self::ANTIGRAVITY_MODELS as $id => [$name, $window, $maxTokens, $reasoning, $images, $thinking]) {
-            $models[self::ANTIGRAVITY . '/' . $id] = new Model(
-                $id,
-                $name,
-                // Its own api now, not Gemini CLI's. The envelope, the endpoint and the
-                // User-Agent all differ — see `Providers\Antigravity`, which spells out which
-                // three constants were wrong while this shared the other provider.
-                Api::Antigravity,
-                self::ANTIGRAVITY,
-                Antigravity::ENDPOINT,
-                $window,
-                $maxTokens,
-                $reasoning,
-                $images ? ['text', 'image'] : ['text'],
-                new Pricing(),
-                thinkingLevelMap: $thinking,
-            );
-        }
-
         // Last, and only where nothing is already: see `register()`. A built-in wins.
         foreach (self::$registered as $model) {
             $models[$model->provider . '/' . $model->id] ??= $model;
         }
 
-        // And after even that, the one kind that is allowed to overwrite a built-in row — see
+        // And after even that, the one kind that is allowed to overwrite a row already there — see
         // the `$replace` argument on `register()` for why Antigravity's catalogue is it.
         foreach (self::$replacing as $model) {
             $models[$model->provider . '/' . $model->id] = $model;

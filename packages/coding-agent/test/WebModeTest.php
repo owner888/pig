@@ -10,6 +10,7 @@ use Pig\Ai\Http\Request;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Rpc\RpcClient;
 use Pig\CodingAgent\Web\HttpServer;
 use Pig\CodingAgent\Web\WebMode;
@@ -32,6 +33,8 @@ final class WebModeTest extends TestCase
     private string $cwd;
     private string $home;
 
+    private string|false $previousHome = false;
+
     #[\Override]
     protected function setUp(): void
     {
@@ -40,11 +43,16 @@ final class WebModeTest extends TestCase
         $this->home = $this->cwd . '/home';
         mkdir($this->home, 0700, true);
         $this->forgetProviderKeys();
+        // The shell loads the extensions on `start()`, from `~/.pig/agent/extensions` among other
+        // places — and the machine this runs on has real ones there. An empty home instead.
+        $this->previousHome = getenv('PIG_HOME');
+        putenv('PIG_HOME=' . $this->home);
     }
 
     #[\Override]
     protected function tearDown(): void
     {
+        putenv($this->previousHome === false ? 'PIG_HOME' : 'PIG_HOME=' . $this->previousHome);
         $this->restoreProviderKeys();
         if (is_dir($this->cwd)) {
             $this->rmrf($this->cwd);
@@ -478,37 +486,57 @@ final class WebModeTest extends TestCase
         });
     }
 
-    public function testAccountsUsageEndpointDoesNotCrashOnMissingAsyncImport(): void
+    public function testAnExtensionsHttpRouteIsAnsweredFromAFiber(): void
     {
+        // `ExtensionApi::registerHttpRoute()`: what the Antigravity accounts panel goes through
+        // now, instead of endpoints written into `HttpServer`. A route that is not registered is
+        // a 404; one that is runs in a fiber (it may make a network call) and its answer is the
+        // body; one that throws is a 500 with the message rather than a dead connection.
         $port = 28100;
-        $auth = Auth::inMemory();
-        $server = $this->server($port, $auth);
+        $server = $this->server($port);
 
-        Async::run(function () use ($server, $port, $auth) {
-            $server->start();
-            $http = new HttpClient();
+        $api = new ExtensionApi($this->cwd, 'probe.php', 'probe');
+        $api->registerHttpRoute('/api/probe', static function (string $path, array $req): ?array {
+            return match ($path) {
+                '/api/probe' => ['status' => 200, 'body' => ['ok' => true, 'method' => $req['method']]],
+                '/api/probe/slow' => (static function (): array {
+                    \Pig\Async\Async::delay(0.02);
 
-            // When no antigravity credential is saved, returns 404 cleanly without throwing
-            $res = $http->send(new Request('GET', "http://127.0.0.1:{$port}/api/accounts/usage"));
-            $this->assertSame(404, $res->status);
-            $body = json_decode($res->body->all(), true);
-            $this->assertFalse($body['ok']);
-            $this->assertStringContainsString('No Antigravity account', $body['error']);
-
-            // With credentials present, hits the `Async::spawn` branch. Must not crash with
-            // `Class "Pig\CodingAgent\Web\Async" not found`.
-            $auth->setCredentials(
-                \Pig\Ai\Utils\Oauth\Provider::Antigravity,
-                new \Pig\Ai\Utils\Oauth\Credentials(refresh: 'r', access: 'a', expires: (time() + 3600) * 1000, projectId: 'proj-1'),
-            );
-            // QuotaClient safely runs through Async::spawn, returning 200 with usage and error diagnostics
-            $res2 = $http->send(new Request('GET', "http://127.0.0.1:{$port}/api/accounts/usage"));
-            $this->assertSame(200, $res2->status);
-            $body2 = json_decode($res2->body->all(), true);
-            $this->assertTrue($body2['ok']);
-
-            $server->stop();
+                    return ['status' => 200, 'body' => ['ok' => true, 'slow' => true]];
+                })(),
+                '/api/probe/boom' => throw new \RuntimeException('boom'),
+                default => null,
+            };
         });
+
+        try {
+            Async::run(function () use ($server, $port): void {
+                $server->start();
+                $http = new HttpClient();
+
+                $res = $http->send(new Request('GET', "http://127.0.0.1:{$port}/api/probe"));
+                $this->assertSame(200, $res->status);
+                $this->assertSame(['ok' => true, 'method' => 'GET'], json_decode($res->body->all(), true));
+
+                $res = $http->send(new Request('GET', "http://127.0.0.1:{$port}/api/probe/slow"));
+                $this->assertSame(200, $res->status);
+                $this->assertTrue(json_decode($res->body->all(), true)['slow']);
+
+                $res = $http->send(new Request('GET', "http://127.0.0.1:{$port}/api/probe/boom"));
+                $this->assertSame(500, $res->status);
+                $this->assertStringContainsString('boom', json_decode($res->body->all(), true)['error']);
+
+                $res = $http->send(new Request('GET', "http://127.0.0.1:{$port}/api/probe/nothing"));
+                $this->assertSame(404, $res->status);
+
+                $res = $http->send(new Request('GET', "http://127.0.0.1:{$port}/api/accounts/usage"));
+                $this->assertSame(404, $res->status, 'with no extension loaded there is no such endpoint');
+
+                $server->stop();
+            });
+        } finally {
+            ExtensionApi::forgetHttpRoutes();
+        }
     }
 
     public function testRenameAndDeleteSessionEndpoints(): void

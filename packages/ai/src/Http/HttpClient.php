@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Http;
 
+use Closure;
 use Pig\Async\AbortSignal;
 use Pig\Async\Socket;
 use Throwable;
@@ -54,6 +55,36 @@ final class HttpClient
     public static function proxy(): ?Proxy
     {
         return self::$default;
+    }
+
+    /**
+     * Who is told about every request and response, if anybody.
+     *
+     * Upstream's `before_provider_headers` / `before_provider_request` / `after_provider_response`
+     * hooks, at the one place every provider's bytes go through. Process-wide for the proxy's
+     * reason — thirteen `new HttpClient()` and none of them handed one — and the two closures are
+     * the hook runner's, installed by the mode: an extension that wants to put a tracing header on
+     * every request, or read a 429's `retry-after` before the provider does, reaches it here.
+     *
+     * The request observer may hand back a different request (headers changed, body rewritten);
+     * null means "as it was". The response observer only looks — a response is a socket mid-read,
+     * and there is nothing sensible to hand back in its place.
+     *
+     * @var Closure(Request): ?Request|null
+     */
+    private static ?Closure $onRequest = null;
+
+    /** @var Closure(Response, Request): void|null */
+    private static ?Closure $onResponse = null;
+
+    /**
+     * @param Closure(Request): ?Request|null $onRequest
+     * @param Closure(Response, Request): void|null $onResponse
+     */
+    public static function observe(?Closure $onRequest, ?Closure $onResponse): void
+    {
+        self::$onRequest = $onRequest;
+        self::$onResponse = $onResponse;
     }
 
     /**
@@ -120,6 +151,21 @@ final class HttpClient
 
     /** Send the request and return once status and headers are in. */
     public function send(Request $request, ?AbortSignal $signal = null): Response
+    {
+        if (self::$onRequest !== null) {
+            $request = (self::$onRequest)($request) ?? $request;
+        }
+
+        $response = $this->sendAsIs($request, $signal);
+
+        if (self::$onResponse !== null) {
+            (self::$onResponse)($response, $request);
+        }
+
+        return $response;
+    }
+
+    private function sendAsIs(Request $request, ?AbortSignal $signal): Response
     {
         [$host, $port, $tls, $target] = $this->resolve($request->url);
         $socket = $this->proxy !== null && !$this->proxy->bypasses($host)

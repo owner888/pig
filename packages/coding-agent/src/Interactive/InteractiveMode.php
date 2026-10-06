@@ -26,6 +26,7 @@ use Pig\Ai\TextContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Extension\OauthFlow;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Logger;
 use Pig\Async\AbortController;
@@ -53,6 +54,8 @@ use Pig\CodingAgent\CustomTools\LoadedCustomTool;
 use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\CustomTools\ToolProblem;
 use Pig\CodingAgent\Extensions\ExtensionDiscovery;
+use Pig\Ai\Extension\ProviderRegistry;
+use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
@@ -2468,6 +2471,13 @@ final class InteractiveMode
         // while it was handed `ExtensionDiscovery::discover()`'s *display labels* instead, so every
         // reload complained that `copy.php` and `pig-antigravity` were not readable files under
         // the project directory. A label for a banner is not a path.
+        // What the previous load put into the process-wide registries goes first, or an
+        // extension that was removed keeps its provider, its routes and its flags; the ones
+        // still there register again a line later.
+        ProviderRegistry::forget();
+        ExtensionApi::forgetHttpRoutes();
+        ExtensionApi::forgetFlags();
+
         [$loadedExtensions, $extensionProblems] = ExtensionLoader::load(
             $this->cwd,
             $this->settings->extensions(),
@@ -3248,8 +3258,12 @@ final class InteractiveMode
         $items = [];
         $providers = [];
 
-        foreach (Provider::cases() as $provider) {
-            $signedIn = $this->auth->kind($provider->value) === 'oauth';
+        // The built-in two and then whatever the loaded extensions brought — an extension's
+        // `OauthFlow` is a row here like any other, which is the whole point of the registry.
+        foreach (Auth::signIns() as $provider) {
+            $id = $provider instanceof Provider ? $provider->value : $provider->id();
+            $available = !$provider instanceof Provider || $provider->available();
+            $signedIn = $this->auth->kind($id) === 'oauth';
 
             if (!$signingIn && !$signedIn) {
                 continue;
@@ -3258,12 +3272,12 @@ final class InteractiveMode
             $providers[] = $provider;
             // Upstream's `oauth-selector.ts` wording: a sign-in that is there is "configured", one
             // that is not is "not configured", and the kind is "subscription" only for a provider
-            // whose sign-in is backed by one (all three of pig's are; upstream's Radius is not).
+            // whose sign-in is backed by one (upstream's Radius is not).
             $kind = $provider->isSubscription() ? 'subscription' : 'account';
             $items[] = new SelectItem(
                 (string) (count($providers) - 1),
-                $provider->available() ? $provider->label() : $this->palette->fg('dim', $provider->label()),
-                $signedIn ? "{$kind} configured" : ($provider->available() ? 'not configured' : 'not ported yet'),
+                $available ? $provider->label() : $this->palette->fg('dim', $provider->label()),
+                $signedIn ? "{$kind} configured" : ($available ? 'not configured' : 'not ported yet'),
             );
         }
 
@@ -3301,9 +3315,9 @@ final class InteractiveMode
      * inside the loop's own input callback — suspending there suspends the loop that has to
      * deliver the keystrokes. Same reason `send()` and `startCompaction()` spawn.
      */
-    private function signIn(Provider $provider): void
+    private function signIn(Provider|OauthFlow $provider): void
     {
-        if (!$provider->available()) {
+        if ($provider instanceof Provider && !$provider->available()) {
             $this->sayWarning("{$provider->label()} is not ported yet — pig cannot finish that sign-in.");
 
             return;
@@ -3369,10 +3383,10 @@ final class InteractiveMode
         });
     }
 
-    private function signOut(Provider $provider): void
+    private function signOut(Provider|OauthFlow $provider): void
     {
         try {
-            $this->auth?->remove($provider->value);
+            $this->auth?->remove($provider instanceof Provider ? $provider->value : $provider->id());
             $this->say("Forgot the {$provider->label()} sign-in.");
         } catch (Throwable $problem) {
             $this->sayError($problem->getMessage());

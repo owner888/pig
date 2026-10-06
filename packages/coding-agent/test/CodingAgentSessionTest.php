@@ -211,33 +211,34 @@ final class CodingAgentSessionTest extends TestCase
         // direct provider, so a session last used on Antigravity's `gemini-3.8-flash` reopened on
         // Google's public model of the same name — same id, different model. `defaultProvider`
         // was written from the start and read by nothing.
-        $this->writeSettings(['defaultModel' => 'gemini-3.8-flash', 'defaultProvider' => 'antigravity']);
+        $this->writeSettings(['defaultModel' => 'zzp-alpha', 'defaultProvider' => 'github-copilot']);
 
-        $started = $this->start();
+        $started = $this->start(['GITHUB_TOKEN' => 'gho_x']);
 
-        $this->assertSame('gemini-3.8-flash', $started->model->id);
-        $this->assertSame('antigravity', $started->model->provider);
+        $this->assertSame('zzp-alpha', $started->model->id);
+        $this->assertSame('github-copilot', $started->model->provider);
     }
 
     public function testWithNoRememberedProviderABareIdStillMeansTheDirectOne(): void
     {
         // Settings files written before the provider was read back have no `defaultProvider`.
-        $this->writeSettings(['defaultModel' => 'gemini-3.8-flash']);
+        $this->writeSettings(['defaultModel' => 'zzp-alpha']);
 
-        $this->assertSame('google', $this->start()->model->provider);
+        $this->assertSame('anthropic', $this->start(['GITHUB_TOKEN' => 'gho_x'])->model->provider);
     }
 
     public function testARememberedProviderThatHasGoneFallsBackRatherThanRefusingToStart(): void
     {
         // `google-antigravity` is exactly this case: it was renamed, and any settings file written
-        // before that still names it. Failing here would be a tool that will not start because of
-        // a line it wrote itself.
-        $this->writeSettings(['defaultModel' => 'gemini-3.8-flash', 'defaultProvider' => 'google-antigravity']);
+        // before that still names it — and `antigravity` itself is the case now, for a settings
+        // file written while the extension was installed. Failing here would be a tool that will
+        // not start because of a line it wrote itself.
+        $this->writeSettings(['defaultModel' => 'zzp-alpha', 'defaultProvider' => 'antigravity']);
 
         $started = $this->start();
 
-        $this->assertSame('gemini-3.8-flash', $started->model->id);
-        $this->assertSame('google', $started->model->provider);
+        $this->assertSame('zzp-alpha', $started->model->id);
+        $this->assertSame('anthropic', $started->model->provider);
     }
 
     public function testWhatWasTypedIsNotSecondGuessedWithTheRememberedProvider(): void
@@ -253,26 +254,30 @@ final class CodingAgentSessionTest extends TestCase
 
     public function testPiModelAndPiProviderAreSupportedAsEnvironmentFallbacks(): void
     {
-        $started = $this->start(['PI_MODEL' => 'gemini-3.8-flash', 'PI_PROVIDER' => 'antigravity', 'PI_REASONING_LEVEL' => 'medium']);
-        $this->assertSame('antigravity', $started->model->provider);
-        $this->assertSame('gemini-3.8-flash', $started->model->id);
+        $started = $this->start(['PI_MODEL' => 'zzp-alpha', 'PI_PROVIDER' => 'github-copilot', 'PI_REASONING_LEVEL' => 'medium', 'GITHUB_TOKEN' => 'gho_x']);
+        $this->assertSame('github-copilot', $started->model->provider);
+        $this->assertSame('zzp-alpha', $started->model->id);
         $this->assertSame(ThinkingLevel::Medium, $started->thinking);
     }
 
     public function testStartupThinkingLevelIsClampedForModelsThatRequireReasoning(): void
     {
-        // Antigravity models have `off => null` in thinkingLevelMap (they cannot be turned off).
-        // Startup must clamp `off` to a supported level (low/medium) rather than remaining `off`.
-        $started = $this->start([], ['model' => 'antigravity/gemini-3.8-flash']);
+        // A model with `off => null` in its thinkingLevelMap cannot be turned off (every
+        // Antigravity row is one). Startup must clamp `off` to a level it has rather than leaving
+        // it `off`, or the first request is refused.
+        $started = $this->start(['GITHUB_TOKEN' => 'gho_x'], ['model' => 'github-copilot/zzp-thinker']);
         $this->assertNotSame(ThinkingLevel::Off, $started->thinking);
     }
 
     public function testAndFinallyTheBuiltInDefault(): void
     {
+        // `CodingAgent::DEFAULT_MODEL`, which both READMEs have named all along. It was
+        // `antigravity/gemini-3.8-flash` for a while — a provider that only exists once an
+        // extension has loaded, which is that extension's default to make and not the core's.
         $default = $this->start();
-        $this->assertSame('gemini-3.8-flash', $default->model->id);
-        $this->assertSame('antigravity', $default->model->provider);
-        $this->assertSame(ThinkingLevel::Medium, $default->thinking);
+        $this->assertSame(CodingAgent::DEFAULT_MODEL, $default->model->id);
+        $this->assertSame('anthropic', $default->model->provider);
+        $this->assertSame(ThinkingLevel::Off, $default->thinking);
     }
 
     public function testAnEmptyEnvironmentVariableIsOffRatherThanAModelCalledNothing(): void
@@ -334,16 +339,17 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertSame(ThinkingLevel::Medium, $this->start()->thinking);
     }
 
-    public function testNothingAnywhereIsMediumForDefaultAntigravityModel(): void
+    public function testNothingAnywhereIsOff(): void
     {
-        // gemini-3.8-flash under antigravity defaults to medium, and off is clamped up to low/medium.
-        $this->assertSame(ThinkingLevel::Medium, $this->start()->thinking);
+        $this->assertSame(ThinkingLevel::Off, $this->start()->thinking);
     }
 
     public function testAThinkingLevelThatIsNotOneClampsToSupportedLevel(): void
     {
-        // A model that refuses `off` clamps an invalid level to a supported one.
-        $this->assertSame(ThinkingLevel::Low, $this->start([], ['thinking' => 'very hard'])->thinking);
+        // A level that is not one reads as `off`, and a model that refuses `off` clamps that up
+        // to the nearest level it has.
+        $this->assertSame(ThinkingLevel::Low, $this->start(['GITHUB_TOKEN' => 'gho_x'], ['model' => 'github-copilot/zzp-thinker', 'thinking' => 'very hard'])->thinking);
+        $this->assertSame(ThinkingLevel::Off, $this->start([], ['thinking' => 'very hard'])->thinking);
     }
 
     public function testAModelThatCannotReasonIsClampedRatherThanRefused(): void
@@ -405,7 +411,7 @@ final class CodingAgentSessionTest extends TestCase
 
             // And with nothing in the scope the ordinary order decides, rather than a session that
             // refuses to start over one typo in a flag that is a preference.
-            $this->assertSame('gemini-3.8-flash', $started->model->id);
+            $this->assertSame(CodingAgent::DEFAULT_MODEL, $started->model->id);
             $this->assertSame([], $started->session->modelScope());
         } finally {
             putenv('ANTHROPIC_API_KEY');
@@ -491,8 +497,8 @@ final class CodingAgentSessionTest extends TestCase
         // Upstream's `restoreModelFromSession()` checks the key as well as the model and falls
         // back on either. Restoring it would mean a conversation that reopens onto a model whose
         // every turn fails — from inside the turn, where it looks like the provider's fault.
-        $this->assertSame('gemini-3.8-flash', $again->session->agent->state->model?->id);
-        $this->assertSame('antigravity', $again->session->agent->state->model?->provider);
+        $this->assertSame(CodingAgent::DEFAULT_MODEL, $again->session->agent->state->model?->id);
+        $this->assertSame('anthropic', $again->session->agent->state->model?->provider);
         $this->assertCount(2, $again->session->messages(), 'and the conversation itself still came back');
     }
 

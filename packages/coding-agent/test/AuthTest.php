@@ -4,13 +4,16 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Test;
 
+use Closure;
 use PHPUnit\Framework\TestCase;
+use Pig\Ai\Extension\OauthFlow;
 use Pig\Ai\Utils\Oauth\Anthropic;
 use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
+use Pig\Async\AbortSignal;
 use Pig\Test\AssertsThrows;
 use Pig\Test\WithoutProviderKeys;
 
@@ -175,144 +178,59 @@ final class AuthTest extends TestCase
         $this->assertArrayHasKey('openai', $written);
     }
 
-    // ---- Antigravity's second place --------------------------------------------------------
+    // ---- a second place a provider's credentials live --------------------------------------
 
-    public function testAnAntigravitySignInIsFoundInTheAccountsStoreWhenThisFileHasNone(): void
+    public function testASecondStoreIsAskedOnlyWhenThisFileHasNothing(): void
     {
-        // `auth.json` holds one credential per provider, and the `pi-antigravity` extension lets
-        // somebody sign in with several Google accounts — so it keeps the store and copies the
-        // active one out to here. This is the case where the copy-out never happened.
+        // `auth.json` holds one credential per provider, and an extension may let somebody sign
+        // in with several accounts for one — it keeps the store and copies the active one out to
+        // here. `useSecondStore()` is the seam; this is the case where the copy-out never happened.
         $auth = $this->given('{}');
+        $auth->useSecondStore(
+            'zzp-provider',
+            static fn (): ?Credentials => new Credentials('a-refresh-token', 'an-access-token', 9_000_000_000_000, projectId: 'a-cloud-project'),
+            static function (): void {
+            },
+        );
 
-        file_put_contents($this->home . '/antigravity-accounts.json', json_encode([
-            'version' => 1,
-            'activeAccountId' => 'dev@example',
-            'accounts' => ['dev@example' => [
-                'refresh' => 'a-refresh-token',
-                'access' => 'an-access-token',
-                'expires' => 9_000_000_000_000,
-                'projectId' => 'a-cloud-project',
-                'email' => 'dev@example',
-            ]],
-        ]));
-
-        $credentials = $auth->credentials(Provider::Antigravity);
+        $credentials = $auth->credentials('zzp-provider');
 
         $this->assertNotNull($credentials);
         $this->assertSame('an-access-token', $credentials->access);
         $this->assertSame('a-cloud-project', $credentials->projectId);
     }
 
-    public function testRotateAntigravityAccountRotatesAndSyncsCredentials(): void
-    {
-        $auth = $this->given('{}');
-
-        file_put_contents($this->home . '/antigravity-accounts.json', json_encode([
-            'version' => 1,
-            'activeAccountId' => 'first@example',
-            'accounts' => [
-                'first@example' => [
-                    'refresh' => 'ref-1',
-                    'access' => 'acc-1',
-                    'expires' => 9_000_000_000_000,
-                    'email' => 'first@example',
-                ],
-                'second@example' => [
-                    'refresh' => 'ref-2',
-                    'access' => 'acc-2',
-                    'expires' => 9_000_000_000_000,
-                    'email' => 'second@example',
-                ],
-            ],
-        ]));
-
-        $rotated = $auth->rotateAntigravityAccount();
-        $this->assertNotNull($rotated);
-        $this->assertSame('second@example', $rotated->email);
-        $this->assertSame('acc-2', $rotated->access);
-
-        // Verify that auth.json has been synced with the new active credential
-        $current = $auth->credentials(Provider::Antigravity);
-        $this->assertNotNull($current);
-        $this->assertSame('second@example', $current->email);
-        $this->assertSame('acc-2', $current->access);
-    }
-
-    private function twoAccounts(): Auth
-    {
-        $auth = $this->given('{}');
-
-        file_put_contents($this->home . '/antigravity-accounts.json', json_encode([
-            'version' => 1,
-            'activeAccountId' => 'first@example',
-            'accounts' => [
-                'first@example' => ['refresh' => 'ref-1', 'access' => 'acc-1', 'expires' => 9_000_000_000_000, 'email' => 'first@example'],
-                'second@example' => ['refresh' => 'ref-2', 'access' => 'acc-2', 'expires' => 9_000_000_000_000, 'email' => 'second@example'],
-            ],
-        ]));
-
-        return $auth;
-    }
-
-    public function testActivatingAnAccountMovesBothFilesTogether(): void
-    {
-        $auth = $this->twoAccounts();
-
-        $active = $auth->activateAntigravityAccount('second@example');
-
-        $this->assertSame('second@example', $active?->email);
-        $this->assertSame('acc-2', $auth->credentials(Provider::Antigravity)?->access, 'auth.json follows the store');
-
-        $store = json_decode((string) file_get_contents($this->home . '/antigravity-accounts.json'), true);
-        $this->assertSame('second@example', $store['activeAccountId']);
-
-        $this->assertNull($auth->activateAntigravityAccount('nobody@example'), 'an id nothing has is refused, not invented');
-    }
-
-    public function testRemovingTheActiveAccountFallsBackToWhatIsLeftAndThenToNothing(): void
-    {
-        $auth = $this->twoAccounts();
-
-        $this->assertTrue($auth->removeAntigravityAccount('first@example'));
-        $this->assertSame('acc-2', $auth->credentials(Provider::Antigravity)?->access, 'the other one is live now');
-
-        $this->assertTrue($auth->removeAntigravityAccount('second@example'));
-        $this->assertNull($auth->credentials(Provider::Antigravity), 'nothing left means signed out, not a stale token');
-
-        $this->assertFalse($auth->removeAntigravityAccount('second@example'));
-    }
-
-    public function testThisFileWinsWhenItHasAnAntigravityEntryOfItsOwn(): void
+    public function testThisFileWinsWhenItHasAnEntryOfItsOwn(): void
     {
         // A credential that is in `auth.json` is the one both tools are using — the store is
         // only consulted when there is nothing here.
-        $auth = $this->given(json_encode(['antigravity' => [
+        $auth = $this->given(json_encode(['zzp-provider' => [
             'type' => 'oauth',
             'refresh' => 'the-one-in-auth-json',
             'access' => 'the-access-token-in-auth-json',
             'expires' => 9_000_000_000_000,
         ]]) ?: '{}');
+        $auth->useSecondStore(
+            'zzp-provider',
+            static fn (): ?Credentials => new Credentials('the-one-in-the-store', 'the-stores-access-token', 0),
+            static function (): void {
+            },
+        );
 
-        file_put_contents($this->home . '/antigravity-accounts.json', json_encode([
-            'version' => 1,
-            'activeAccountId' => 'dev@example',
-            'accounts' => ['dev@example' => ['refresh' => 'the-one-in-the-store', 'access' => 'the-stores-access-token']],
-        ]));
-
-        $this->assertSame('the-access-token-in-auth-json', $auth->credentials(Provider::Antigravity)?->access);
+        $this->assertSame('the-access-token-in-auth-json', $auth->credentials('zzp-provider')?->access);
     }
 
     public function testNoOtherProviderLooksInThatStore(): void
     {
-        // The store is Antigravity's, and a provider reading somebody else's credentials file
+        // The store is one provider's, and a provider reading somebody else's credentials file
         // is a worse bug than the one this fixes.
         $auth = $this->given('{}');
-
-        file_put_contents($this->home . '/antigravity-accounts.json', json_encode([
-            'version' => 1,
-            'activeAccountId' => 'dev@example',
-            'accounts' => ['dev@example' => ['refresh' => 'r', 'access' => 'a']],
-        ]));
+        $auth->useSecondStore(
+            'zzp-provider',
+            static fn (): ?Credentials => new Credentials('r', 'a', 0),
+            static function (): void {
+            },
+        );
 
         $this->assertNull($auth->credentials(Provider::Anthropic));
     }
@@ -585,28 +503,56 @@ final class AuthTest extends TestCase
         $this->assertSame(0, $shown);
     }
 
-    public function testAFlowWithNoClientCredentialsIsRefusedBeforeAUrlIsShown(): void
+    public function testAnExtensionsFlowIsSignedInThroughTheSameDoorAndStoredUnderItsId(): void
     {
-        $shown = 0;
+        // `login()` takes an `OauthFlow` as well as the built-in enum: what an extension registers
+        // reaches `/login` through `Auth::signIns()` and is stored under the id the flow names.
+        $flow = new class implements OauthFlow {
+            public function id(): string
+            {
+                return 'zzp-provider';
+            }
 
-        // Antigravity, whose client id and secret are not in this repository and are not set
-        // here either. Gemini CLI's is the same shape for the same reason.
-        $problem = $this->assertThrows(OauthError::class, function () use (&$shown): void {
-            $this->auth()->login(
-                Provider::Antigravity,
-                static function (string $url, ?string $instructions) use (&$shown): void {
-                    $shown++;
-                },
-                static fn (string $message, string $placeholder, bool $allowEmpty): ?string => 'c#s',
-            );
-        });
+            public function label(): string
+            {
+                return 'Probe';
+            }
 
-        // Refused up front, and the message names both variables and both settings keys: sending
-        // somebody to a browser and failing after they have consented is the thing to avoid, and
-        // "it did not work" without saying what is missing is the other one.
-        $this->assertStringContainsString('ANTIGRAVITY_CLIENT_ID', $problem->getMessage());
-        $this->assertStringContainsString('antigravity.clientId', $problem->getMessage());
-        $this->assertSame(0, $shown, 'nobody was sent anywhere');
+            public function isSubscription(): bool
+            {
+                return false;
+            }
+
+            public function login(Closure $onAuth, Closure $onPrompt, ?Closure $onProgress = null, ?AbortSignal $signal = null, ?Closure $onSelect = null): ?Credentials
+            {
+                $onAuth('https://probe.invalid/authorize', null);
+
+                return new Credentials('r', 'sk-probe', 9_000_000_000_000);
+            }
+
+            public function refresh(Credentials $credentials): Credentials
+            {
+                return $credentials;
+            }
+
+            public function apiKey(Credentials $credentials): string
+            {
+                return $credentials->access;
+            }
+        };
+
+        $shown = null;
+        $credentials = $this->auth()->login(
+            $flow,
+            static function (string $url, ?string $instructions) use (&$shown): void {
+                $shown = $url;
+            },
+            static fn (string $message, string $placeholder, bool $allowEmpty): ?string => null,
+        );
+
+        $this->assertSame('sk-probe', $credentials?->access);
+        $this->assertSame('https://probe.invalid/authorize', $shown);
+        $this->assertSame('oauth', $this->auth()->kind('zzp-provider'));
     }
 
     public function testCopilotIsAskedWhichGitHubBeforeAnythingElse(): void
@@ -672,152 +618,6 @@ final class AuthTest extends TestCase
         $this->assertSame($this->home . '/pig/auth.json', Auth::discover()->path());
     }
 
-    // ---- Antigravity's pair, which is not that one -----------------------------------------
-
-    public function testAntigravityReadsItsOwnPairFromEitherPlace(): void
-    {
-        putenv('ANTIGRAVITY_CLIENT_ID=ag-from-the-shell');
-        putenv('ANTIGRAVITY_CLIENT_SECRET=ag-secret-from-the-shell');
-
-        $this->assertSame(
-            ['ag-from-the-shell', 'ag-secret-from-the-shell'],
-            $this->auth()->antigravityClient(),
-        );
-
-        $settings = Settings::inMemory([
-            'antigravity' => ['clientId' => 'ag-from-settings', 'clientSecret' => 'ag-secret-from-settings'],
-        ]);
-
-        putenv('ANTIGRAVITY_CLIENT_ID');
-        putenv('ANTIGRAVITY_CLIENT_SECRET');
-
-        $this->assertSame(
-            ['ag-from-settings', 'ag-secret-from-settings'],
-            (new Auth(null, $settings))->antigravityClient(),
-        );
-    }
-
-    public function testTheEnvironmentBeatsTheSettingsFile(): void
-    {
-        // The order everything else in pig uses: what was typed, then the environment, then what
-        // was chosen last time. **Ported from the reader that went with Gemini CLI** — the rule
-        // is this reader's too and was only ever tested on that one.
-        putenv('ANTIGRAVITY_CLIENT_ID=ag-from-the-shell');
-        putenv('ANTIGRAVITY_CLIENT_SECRET=ag-secret-from-the-shell');
-
-        $settings = Settings::inMemory([
-            'antigravity' => ['clientId' => 'ag-from-settings', 'clientSecret' => 'ag-secret-from-settings'],
-        ]);
-
-        $this->assertSame(
-            ['ag-from-the-shell', 'ag-secret-from-the-shell'],
-            (new Auth(null, $settings))->antigravityClient(),
-        );
-    }
-
-    public function testAVariableExportedWithNothingInItIsNotSet(): void
-    {
-        // `export ANTIGRAVITY_CLIENT_ID` with no value — a docker `-e NAME`, an ssh or tmux
-        // environment forwarding the name — answers `''` rather than absent, which is the
-        // `getenv()` trap. Read as set, it shadows the settings file with nothing.
-        putenv('ANTIGRAVITY_CLIENT_ID=');
-        putenv('ANTIGRAVITY_CLIENT_SECRET=');
-
-        $settings = Settings::inMemory([
-            'antigravity' => ['clientId' => 'ag-from-settings', 'clientSecret' => 'ag-secret-from-settings'],
-        ]);
-
-        $this->assertSame(
-            ['ag-from-settings', 'ag-secret-from-settings'],
-            (new Auth(null, $settings))->antigravityClient(),
-        );
-    }
-
-    public function testASettingThatIsThereAndEmptyIsNotSetEither(): void
-    {
-        $settings = Settings::inMemory(['antigravity' => ['clientId' => 'an-id', 'clientSecret' => '']]);
-
-        $problem = $this->assertThrows(
-            OauthError::class,
-            fn (): array => (new Auth(null, $settings))->antigravityClient(),
-        );
-
-        $this->assertStringContainsString('ANTIGRAVITY_CLIENT_SECRET', $problem->getMessage());
-    }
-
-    public function testTheRefusalSaysWhereTheyGoAndThatPigHasNone(): void
-    {
-        $problem = $this->assertThrows(OauthError::class, fn (): array => $this->auth()->antigravityClient());
-
-        // Somebody who has not got them needs both halves: where they go, and that this is not
-        // something pig can supply.
-        $this->assertStringContainsString('ANTIGRAVITY_CLIENT_ID', $problem->getMessage());
-        $this->assertStringContainsString('antigravity.clientId', $problem->getMessage());
-        $this->assertStringContainsString('does not ship', $problem->getMessage());
-    }
-
-    public function testThisReaderLooksAtItsOwnNamesAndNoOthers(): void
-    {
-        // The test this replaces asserted that Antigravity's pair was not Gemini CLI's, by
-        // reading both. There is only one now, so the surviving half of that rule is this: a
-        // pair sitting under some *other* name is not this one's, and finding none is a refusal
-        // rather than a fallback.
-        putenv('GOOGLE_CLIENT_ID=someone-elses');
-        putenv('GOOGLE_CLIENT_SECRET=someone-elses-secret');
-
-        $settings = Settings::inMemory(['geminiCli' => ['clientId' => 'id', 'clientSecret' => 'secret']]);
-
-        try {
-            $problem = $this->assertThrows(
-                OauthError::class,
-                fn (): array => (new Auth(null, $settings))->antigravityClient(),
-            );
-
-            $this->assertStringContainsString('ANTIGRAVITY_CLIENT_ID', $problem->getMessage());
-        } finally {
-            putenv('GOOGLE_CLIENT_ID');
-            putenv('GOOGLE_CLIENT_SECRET');
-        }
-    }
-
-    public function testHalfOfAntigravitysPairIsRefusedToo(): void
-    {
-        putenv('ANTIGRAVITY_CLIENT_ID=ag-from-the-shell');
-
-        $problem = $this->assertThrows(OauthError::class, fn (): array => $this->auth()->antigravityClient());
-
-        $this->assertStringContainsString('ANTIGRAVITY_CLIENT_SECRET', $problem->getMessage());
-    }
-
-    // ---- writing --------------------------------------------------------------------------
-
-    public function testACredentialThatCouldNotBeWrittenSaysSoRatherThanLookingSaved(): void
-    {
-        // A directory standing where the file should be: its parent exists, so nothing refuses
-        // earlier. Unlike `Settings`, a failure here throws — a preference that did not stick is
-        // one somebody sets again, and a token that did not stick is a sign-in that said it
-        // worked, followed by an authentication error nobody can connect back to this.
-        mkdir($this->home . '/auth.json', 0o700, true);
-
-        // The failing write warns as well as answering false, and a warning fails a test under
-        // this project's phpunit.xml — caught here so it cannot fail the assertion below.
-        set_error_handler(static fn (): bool => true);
-
-        try {
-            $problem = $this->assertThrows(
-                OauthError::class,
-                fn () => $this->auth()->setCredentials(
-                    Provider::Anthropic,
-                    new Credentials(refresh: 'r', access: 'a', expires: time() * 1000 + 3_600_000),
-                ),
-            );
-        } finally {
-            restore_error_handler();
-        }
-
-        $this->assertStringContainsString('Could not write', $problem->getMessage());
-    }
-
     public function testAnExpiredTokenOutsideACoroutineReturnsWithoutCrashingOnFutureAwait(): void
     {
         $auth = $this->auth();
@@ -826,13 +626,12 @@ final class AuthTest extends TestCase
             refresh: 'r_token',
             access: 'old_access',
             expires: (time() - 3600) * 1000,
-            projectId: 'proj-1',
         );
-        $auth->setCredentials(Provider::Antigravity, $expired);
+        $auth->setCredentials(Provider::Anthropic, $expired);
 
         // Outside a coroutine (e.g. during startup, restoreSettings, or peeking): must not throw
         $this->assertNull(\Fiber::getCurrent());
-        $key = $auth->apiKey(Provider::Antigravity->value);
+        $key = $auth->apiKey(Provider::Anthropic->value);
         $this->assertNotNull($key);
         $this->assertStringContainsString('old_access', $key);
     }

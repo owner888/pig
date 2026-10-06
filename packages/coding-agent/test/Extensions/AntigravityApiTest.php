@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace Pig\Ai\Test\Providers;
+namespace Pig\CodingAgent\Test\Extensions;
 
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
 use Pig\Ai\Context;
 use Pig\Ai\Model;
 use Pig\Ai\Pricing;
-use Pig\Ai\Providers\Antigravity;
+use PigAntigravity\AntigravityApi as Antigravity;
 use Pig\Ai\Providers\GoogleOptions;
 use Pig\Ai\Tool;
 use Pig\Ai\UserMessage;
@@ -24,15 +24,24 @@ use Pig\Test\CannedServer;
  * what is this provider's own is the envelope around it — the runtime model, the enum, the
  * labels, the ids — and the two hosts.
  */
-final class AntigravityTest extends TestCase
+final class AntigravityApiTest extends TestCase
 {
+    use LoadsAntigravity;
+
     private CannedServer $server;
 
     #[\Override]
     protected function setUp(): void
     {
+        self::registerAntigravity();
         Loop::reset();
         $this->server = new CannedServer();
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        \Pig\Ai\Extension\ProviderRegistry::forget();
     }
 
     /** What signing in stores: a token and a Cloud project in one string. */
@@ -314,7 +323,7 @@ final class AntigravityTest extends TestCase
         $this->assertCount(14, $listed);
 
         foreach ($listed as $model) {
-            $this->assertSame(Api::Antigravity, $model->api, $model->id);
+            $this->assertSame(Api::Extension, $model->api, $model->id);
             $this->assertSame(Antigravity::ENDPOINT, $model->baseUrl, $model->id);
             // A subscription, so there is no per-token price to report.
             $this->assertSame(0.0, $model->pricing->input, $model->id);
@@ -357,7 +366,7 @@ final class AntigravityTest extends TestCase
                 new Model(
                     $id,
                     $id,
-                    Api::Antigravity,
+                    Api::Extension,
                     'antigravity',
                     $model->baseUrl,
                     $model->contextWindow,
@@ -388,7 +397,7 @@ final class AntigravityTest extends TestCase
         return new Model(
             'gemini-3-flash',
             'Gemini 3 Flash',
-            Api::Antigravity,
+            Api::Extension,
             'antigravity',
             rtrim($baseUrl, '/'),
             1_048_576,

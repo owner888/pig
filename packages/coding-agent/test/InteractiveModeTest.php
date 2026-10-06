@@ -48,6 +48,9 @@ use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\Ai\Extension\OauthFlow;
+use Pig\Ai\Extension\ProviderRegistry;
+use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Credentials;
 use Throwable;
 use Pig\Ai\Utils\Oauth\Provider;
@@ -3401,15 +3404,82 @@ final class InteractiveModeTest extends TestCase
 
         $screen = $this->screen();
 
-        // Three flows, none greyed and none carrying a label. There were four until Gemini CLI
-        // went the way upstream's did; the list is `Oauth\Provider`'s and shrank with it.
+        // The two built-in flows, none greyed and none carrying a label. There were four until
+        // Gemini CLI went the way upstream's did and Antigravity became an extension's; the list
+        // is `Auth::signIns()` — `Oauth\Provider`'s cases plus what the extensions registered.
         $this->assertStringContainsString('Anthropic (Claude Pro/Max)', $screen);
         $this->assertStringContainsString('GitHub Copilot', $screen);
-        $this->assertStringContainsString('Antigravity', $screen);
+        $this->assertStringNotContainsString('Antigravity', $screen);
         $this->assertStringNotContainsString('Google Cloud Code Assist', $screen);
         $this->assertStringNotContainsString('not ported yet', $screen);
         // pi 1.0's label for a provider with no credential, rather than nothing or "unconfigured".
         $this->assertStringContainsString('not configured', $screen);
+    }
+
+    public function testAnExtensionsSignInIsARowInSlashLoginLikeAnyOther(): void
+    {
+        // The whole reason `Auth::signIns()` exists: a provider an extension registered reaches
+        // `/login` without the list knowing it, and choosing it runs the extension's flow.
+        $asked = 0;
+        $flow = new class($asked) implements OauthFlow {
+            public function __construct(private int &$asked)
+            {
+            }
+
+            public function id(): string
+            {
+                return 'zzp-provider';
+            }
+
+            public function label(): string
+            {
+                return 'Probe Sign-in';
+            }
+
+            public function isSubscription(): bool
+            {
+                return false;
+            }
+
+            public function login(\Closure $onAuth, \Closure $onPrompt, ?\Closure $onProgress = null, ?\Pig\Async\AbortSignal $signal = null, ?\Closure $onSelect = null): ?Credentials
+            {
+                $this->asked++;
+
+                return null;
+            }
+
+            public function refresh(Credentials $credentials): Credentials
+            {
+                return $credentials;
+            }
+
+            public function apiKey(Credentials $credentials): string
+            {
+                return $credentials->access;
+            }
+        };
+        ProviderRegistry::register(new \Pig\Ai\Extension\Provider('zzp-provider', 'Probe', [], oauth: $flow));
+
+        try {
+            $this->start(auth: Auth::inMemory());
+
+            $this->type('/login');
+            $this->type(self::ENTER);
+
+            $screen = $this->screen();
+            $this->assertStringContainsString('Probe Sign-in', $screen);
+
+            // Third row: the two built-ins come first.
+            $this->type(self::DOWN);
+            $this->type(self::DOWN);
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $this->assertSame(1, $asked, "the extension's flow ran");
+            $this->assertStringContainsString('Signing in was cancelled.', $this->screen());
+        } finally {
+            ProviderRegistry::forget();
+        }
     }
 
     public function testChoosingAnthropicAsksWhichWayInAndCopyCodeShowsAUrlThenAPasteBox(): void
@@ -3445,25 +3515,60 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('Signing in was cancelled.', $this->screen());
     }
 
-    public function testChoosingAFlowWithNoClientCredentialsSaysWhatIsMissing(): void
+    public function testAFlowThatRefusesSaysWhyRatherThanOpeningABrowser(): void
     {
-        $this->start(auth: Auth::inMemory());
+        // What the Antigravity extension does when its client pair is not set: refuse by name
+        // from inside `login()`, before anybody is sent anywhere. The screen has to carry the
+        // refusal, or the list reads as broken.
+        $flow = new class implements OauthFlow {
+            public function id(): string
+            {
+                return 'zzp-provider';
+            }
 
-        $this->type('/login');
-        $this->type(self::ENTER);
-        // Down to the last one, Antigravity, whose client id and secret pig does not ship and
-        // which are not set here. Two steps rather than three since Gemini CLI left the list.
-        $this->type(self::DOWN);
-        $this->type(self::DOWN);
-        $this->type(self::ENTER);
-        $this->settle();
+            public function label(): string
+            {
+                return 'Probe Sign-in';
+            }
 
-        $screen = $this->screen();
+            public function isSubscription(): bool
+            {
+                return true;
+            }
 
-        // Named, and named before a browser is opened. Upstream ignores a missing client here,
-        // which reads as the list being broken.
-        $this->assertStringContainsString('ANTIGRAVITY_CLIENT_ID', $screen);
-        $this->assertStringNotContainsString('Open this and approve it', $screen);
+            public function login(\Closure $onAuth, \Closure $onPrompt, ?\Closure $onProgress = null, ?\Pig\Async\AbortSignal $signal = null, ?\Closure $onSelect = null): ?Credentials
+            {
+                throw new OauthError('Signing in needs PROBE_CLIENT_ID, which pig does not ship.');
+            }
+
+            public function refresh(Credentials $credentials): Credentials
+            {
+                return $credentials;
+            }
+
+            public function apiKey(Credentials $credentials): string
+            {
+                return $credentials->access;
+            }
+        };
+        ProviderRegistry::register(new \Pig\Ai\Extension\Provider('zzp-provider', 'Probe', [], oauth: $flow));
+
+        try {
+            $this->start(auth: Auth::inMemory());
+
+            $this->type('/login');
+            $this->type(self::ENTER);
+            $this->type(self::DOWN);
+            $this->type(self::DOWN);
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $screen = $this->screen();
+            $this->assertStringContainsString('PROBE_CLIENT_ID', $screen);
+            $this->assertStringNotContainsString('Open this and approve it', $screen);
+        } finally {
+            ProviderRegistry::forget();
+        }
     }
 
     public function testSlashLogoutWithNothingSignedInSaysSo(): void

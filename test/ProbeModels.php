@@ -55,6 +55,13 @@ trait ProbeModels
             self::probe('openai', 'zzp-shared', 'Probe Shared', api: Api::OpenAiResponses),
             self::probe('github-copilot', 'zzp-shared', 'Probe Shared (resold)', api: Api::OpenAiResponses),
             self::probe('github-copilot', 'zzp-only', 'Probe Only Resold', api: Api::OpenAiResponses),
+
+            // One that *always* thinks — `off` is not a level it has — and a resold copy of
+            // `zzp-alpha` on the reseller. What the Antigravity rows were in every test that needed
+            // a model refusing `off` or a remembered provider that is not the direct one, before
+            // that provider became an extension's.
+            self::probe('github-copilot', 'zzp-thinker', 'Probe Thinker', api: Api::OpenAiResponses, thinking: ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null]),
+            self::probe('github-copilot', 'zzp-alpha', 'Probe Alpha (resold)', api: Api::OpenAiResponses),
         ]);
     }
 
@@ -68,12 +75,14 @@ trait ProbeModels
         ];
     }
 
+    /** @param array<string, ?string> $thinking */
     private static function probe(
         string $provider,
         string $id,
         string $name,
         bool $reasoning = true,
         Api $api = Api::AnthropicMessages,
+        array $thinking = [],
     ): Model {
         return new Model(
             $id,
@@ -86,6 +95,7 @@ trait ProbeModels
             $reasoning,
             ['text'],
             new Pricing(1.0, 2.0, 0.1, 0.5),
+            thinkingLevelMap: $thinking,
         );
     }
 }

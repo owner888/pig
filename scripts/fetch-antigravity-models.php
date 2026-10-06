@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * Ask Antigravity what it sells, and print it as rows for `Ai\Models::ANTIGRAVITY_MODELS`.
+ * Ask Antigravity what it sells, and print it as rows for the extension's `PigAntigravity\Models`.
  *
  *   php scripts/fetch-antigravity-models.php [--raw] [--endpoint <url>]
  *
@@ -42,9 +42,9 @@ foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Proxy;
 use Pig\Ai\Http\Request;
-use Pig\Ai\Models;
 use Pig\Async\Async;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Settings;
 use Pig\Tui\Style;
 
@@ -88,7 +88,15 @@ if ($saved === null) {
 // too — outside one it works for exactly as long as the stored token is fresh, which is how
 // this script passed every run until the day it did not.
 $body = $saved !== null ? [200, $raw] : Async::run(static function () use ($endpoint, $settings): array {
-    $key = Auth::discover(settings: $settings)->apiKey(Models::ANTIGRAVITY);
+    // The provider is the extension's now, so load it: `apiKey()` asks the registry how to turn
+    // the stored credential into a key, and the registry is empty until the extension says.
+    [, $problems] = ExtensionLoader::load(getcwd() ?: '.', cliPaths: [__DIR__ . '/../extensions/pig-antigravity/index.php']);
+
+    foreach ($problems as $problem) {
+        fwrite(STDERR, Style::yellow("extension {$problem->toText()}\n"));
+    }
+
+    $key = Auth::discover(settings: $settings)->apiKey('antigravity');
     $credentials = $key === null ? null : json_decode($key, true);
     $token = is_array($credentials) ? ($credentials['token'] ?? null) : null;
     $project = is_array($credentials) ? ($credentials['projectId'] ?? null) : null;
@@ -306,8 +314,8 @@ if ($orphans !== []) {
 }
 
 echo "\n", Style::yellow(
-    "Rows, not a rewrite. The model rows go in `Ai\\Models::ANTIGRAVITY_MODELS`, which has no\n"
-    . "generated markers, and the two tables above go between the markers in\n"
-    . "`Ai\\Antigravity\\Routing`. Read the diff: a routing change moves which model a thinking\n"
+    "Rows, not a rewrite. The model rows go in `extensions/pig-antigravity/src/Models.php`, which\n"
+    . "has no generated markers, and the two tables above go between the markers in\n"
+    . "`extensions/pig-antigravity/src/Routing.php`. Read the diff: a routing change moves which model a thinking\n"
     . "level actually asks for, and every request still succeeds afterwards.\n",
 );

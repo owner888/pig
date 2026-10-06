@@ -147,11 +147,25 @@ pig --mode rpc
 
 | 扩展组件 | 命名空间 / 路径 | 核心能力说明 |
 | :--- | :--- | :--- |
-| **`pig-antigravity`** | `extensions/pig-antigravity/` | 多 Google 账号轮转管理、Token 自动刷新、429 自动换号无缝重试、`/antigravity.usage` 额度面板、`generate_image` 生图工具。 |
+| **`pig-antigravity`** | `extensions/pig-antigravity/` | **完整的 Antigravity provider**——模型表、线路协议、Google 登录、模型路由——通过 `registerProvider()` 注册进核心，与 pi 0.71 删除内置后社区 `pi-antigravity` 扩展的做法一致。另含多账号管理、429 自动换号（`before_retry`）、`/antigravity.usage`、`/antigravity.accounts` 与 `generate_image` 工具。 |
 | **`pig-web-search`** | `extensions/pig-web-search/` | 实时网络搜索（`web_search`）、网页文本抓取（`fetch_web_page`）、无头 Chrome 动态渲染（`browse_web_page`）、`/search <query>` 命令。 |
 | **`pig-computer`** | `extensions/pig-computer/` | 防检测无头浏览器自动化（鼠标移动、点击、滚轮、键盘键入、高清截图与持久化 Cookie）。 |
 | **`pig-codemode`** | `extensions/pig-codemode/` | 在安全沙箱子进程（`open_basedir`, `disable_functions`）中批量并行执行多工具代码，节省巨量上下文。 |
 | **`pig-mcp`** | `extensions/pig-mcp/` | Model Context Protocol 原生客户端，连接标准 stdio 与 HTTP MCP 服务，支持动态 OAuth 换票（`mcp.json`）。 |
+
+### 扩展能做什么
+
+一个扩展是一个返回 `function (ExtensionApi $pi)` 的 PHP 文件（或带 `index.php` 的目录）。API 对齐 pi 的 `ExtensionAPI`：
+
+| | |
+| :--- | :--- |
+| **自带 provider** | `registerProvider(new Provider(id, name, models, api: StreamApi, oauth: OauthFlow, envKeys, resold))`——模型进注册表、协议挂在 `Api::Extension` 后面、登录进 `/login` 列表。`unregisterProvider()` 收回。 |
+| **工具、命令、渲染器** | `registerTool()`、`removeTools()`、`registerCommand()`、`registerMessageRenderer()`、`registerLocale()`。 |
+| **事件** | `on('…')`：会话生命周期、agent 循环、工具调用与结果、`context`，以及新增的 `before_provider_request`（改写 header 或 body）、`after_provider_response`（状态码与 header）、`before_retry`（改等待时长、重置计数或取消）、`model_select`、`thinking_level_select`。 |
+| **命令行参数** | `registerFlag('name', 'boolean'|'string', 说明, 默认值)` 声明 `--name`；handler 里用 `getFlag()` 读。 |
+| **会话** | `getSettings()`、`getModel()`、`setModel()`、`getThinkingLevel()`、`setThinkingLevel()`、`sendUserMessage(text, 'steer'|'followUp')`、`sendMessage()`、`setLabel()`、`getCommands()`、`exec()`。 |
+| **Web UI** | `registerHttpRoute('/api/prefix', fn (path, req) => ['status', 'body'])` 在 `pig web` 里应答请求——Antigravity 账号面板就是这样接进去的。 |
+| **第二个凭据存储** | `Auth::useSecondStore(provider, read, renewed)`，给在 `auth.json` 旁边另存多账号的 provider 用。 |
 
 ---
 
@@ -203,7 +217,7 @@ Logger::timeEnd('benchmark');
 | :--- | :--- | :--- |
 | **Anthropic（Claude Pro/Max）** | **浏览器**（默认）：pig 监听 `http://localhost:53692/callback`，打开 `claude.ai`，授权码自动回传。同时保留一个粘贴框——浏览器在另一台机器上时，把最终跳转的 URL 粘贴进去即可。**复制代码**（无头机器）：浏览器停在 Anthropic 自己的页面上，显示 `code#state`，复制粘贴。 | 令牌以 Claude Code 的身份发出——`claude-cli` User-Agent、两个 beta 头、工具名按 `Read`/`Bash`/`Edit`/`Write` 拼写——因为 Anthropic 就是把它签发给 Claude Code 的。53692 端口已在 Anthropic 注册，不可更改。 |
 | **GitHub Copilot** | 设备码：pig 显示一个代码，你到 `github.com/login/device` 输入，pig 轮询直到通过。Enterprise 提示处留空即 `github.com`。 | 登录后自动为账号开通 Claude 与 Grok 系列模型。 |
-| **Antigravity** | 浏览器回调 `localhost:51121/oauth-callback`。 | 需要环境变量 `ANTIGRAVITY_CLIENT_ID` / `ANTIGRAVITY_CLIENT_SECRET`，或 `settings.json` 里的 `antigravity.clientId` / `antigravity.clientSecret`；pig 不内置。 |
+| **Antigravity**（扩展） | 浏览器回调 `localhost:51121/oauth-callback`。这一行只在 `pig-antigravity` 加载时出现——它是扩展的 provider，不是核心的。 | 需要环境变量 `ANTIGRAVITY_CLIENT_ID` / `ANTIGRAVITY_CLIENT_SECRET`，或 `settings.json` 里的 `antigravity.clientId` / `antigravity.clientSecret`；pig 不内置。 |
 
 令牌过期自动续期；文件与 pi 共用，任一工具登录即两边都已登录。`/logout` 可忘记某个登录。
 
@@ -214,7 +228,7 @@ Logger::timeEnd('benchmark');
 `pig` 在 `packages/` 目录下按清晰的职责分层组织：
 
 - `packages/async/` (`Pig\Async\`): 协程运行时、非阻塞 TLS Socket、Future、Deferred 与基于 Fiber 的事件循环。
-- `packages/ai/` (`Pig\Ai\`): 统一 LLM 协议驱动（Anthropic、OpenAI Completions、OpenAI Responses、Gemini、Antigravity）。
+- `packages/ai/` (`Pig\Ai\`): 统一 LLM 协议驱动（Anthropic、OpenAI Completions、OpenAI Responses、Gemini），以及 `Pig\Ai\Extension\`——扩展自带 provider 时实现的 `Provider`/`StreamApi`/`OauthFlow`。
 - `packages/agent-core/` (`Pig\Agent\`): Agent 核心循环、工具生命周期与 JSON Schema 参数校验。
 - `packages/tui/` (`Pig\Tui\`): 差异化终端渲染引擎、ANSI 样式与键盘输入事件解析器。
 - `packages/coding-agent/` (`Pig\CodingAgent\`): CLI 调度器、会话树、自动上下文压缩、Web 守护进程与核心工具集。

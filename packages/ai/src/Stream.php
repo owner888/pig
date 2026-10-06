@@ -6,7 +6,6 @@ namespace Pig\Ai;
 
 use Pig\Ai\Providers\Anthropic;
 use Pig\Ai\Providers\AnthropicOptions;
-use Pig\Ai\Providers\Antigravity;
 use Pig\Ai\Providers\Google;
 use Pig\Ai\Providers\GoogleOptions;
 use Pig\Ai\Providers\OpenAiCompletions;
@@ -61,8 +60,43 @@ final class Stream
             Api::OpenAiCompletions => (new OpenAiCompletions())->stream($model, $context, self::openAi($options, $apiKey)),
             Api::OpenAiResponses => (new OpenAiResponses())->stream($model, $context, self::openAi($options, $apiKey)),
             Api::GoogleGenerativeAi => (new Google())->stream($model, $context, self::google($options, $apiKey)),
-            Api::Antigravity => (new Antigravity())->stream($model, $context, self::google($options, $apiKey)),
+            // Still no `default`: this arm names the one case that is not a built-in, and the
+            // registry is what answers for it. The options are already in the extension's own
+            // dialect by the time they reach here — `translate()` asked it — or are what the
+            // caller built; either way they carry the key.
+            Api::Extension => self::extensionApi($model)->stream($model, $context, self::withKey($options, $apiKey)),
         };
+    }
+
+    /**
+     * The protocol an extension registered for this model's provider, or a refusal that names it.
+     *
+     * A model saying `Api::Extension` with no provider behind it is one that was in a session
+     * file or a settings file when the extension was installed and is not any more — and "no
+     * API key" or a null three layers down is the wrong sentence for that.
+     */
+    private static function extensionApi(Model $model): Extension\StreamApi
+    {
+        return Extension\ProviderRegistry::apiFor($model)
+            ?? throw new ProviderError("No extension provides the protocol for {$model->provider}/{$model->id}. Is its extension loaded?");
+    }
+
+    /**
+     * The options as they came, with the key on them.
+     *
+     * `translate()` hands the extension the key and the extension puts it on what it builds, so
+     * the common path arrives here with one already. A caller of `start()` with options that
+     * carry none — the shape the four built-in `anthropic()`/`openAi()`/`google()` helpers also
+     * handle — gets the base options with the key, which is the most this can build without
+     * knowing the extension's subclass.
+     */
+    private static function withKey(?StreamOptions $options, string $apiKey): StreamOptions
+    {
+        if ($options !== null && $options->apiKey !== null) {
+            return $options;
+        }
+
+        return new StreamOptions($options?->temperature, $options?->maxTokens, $options?->signal, $apiKey);
     }
 
     /**
@@ -83,7 +117,7 @@ final class Stream
             'openrouter' => ['OPENROUTER_API_KEY'],
             'zai' => ['ZAI_API_KEY'],
             'mistral' => ['MISTRAL_API_KEY'],
-            default => [],
+            default => Extension\ProviderRegistry::envKeysFor($provider),
         };
 
         foreach ($names as $name) {
@@ -133,7 +167,6 @@ final class Stream
                 reasoning: $model->supportsXhigh() ? $options?->reasoning : $options?->reasoning?->clampToHigh(),
             ),
             Api::GoogleGenerativeAi => self::gemini($model, $options, $maxTokens, $apiKey),
-            Api::Antigravity => self::antigravity($options, $maxTokens, $apiKey),
             Api::AnthropicMessages => new AnthropicOptions(
                 $options?->temperature,
                 $maxTokens,
@@ -145,6 +178,8 @@ final class Stream
                 thinkingBudgetTokens: self::anthropicBudget($options?->reasoning),
                 effort: self::anthropicEffort($model, $options?->reasoning),
             ),
+            Api::Extension => self::extensionApi($model)->translate($model, $options, $apiKey
+                ?? throw new ProviderError("No API key for provider: {$model->provider}")),
         };
     }
 
@@ -207,30 +242,6 @@ final class Stream
         }
 
         return new GoogleOptions(...$base, thinkingEnabled: true, thinkingBudget: self::geminiBudget($model, $effort));
-    }
-
-    /**
-     * Antigravity's, which needs the *level* and nothing else about thinking.
-     *
-     * No budget and no clamping here, unlike every other arm: on this deployment a level chooses
-     * a different upstream model, and `Antigravity\Routing` owns both that choice and the budget
-     * that goes with it. Passing a second opinion down would be two things deciding one.
-     *
-     * `ReasoningEffort`'s values are `ThinkingLevel`'s minus `off`, and `off` arrives here as no
-     * reasoning at all — so the level the provider wants is exactly `$options?->reasoning?->value`
-     * with null meaning off. That the two enums line up is luck worth stating: if a case is ever
-     * added to one of them, this is a line to check.
-     */
-    private static function antigravity(?SimpleStreamOptions $options, int $maxTokens, ?string $apiKey): GoogleOptions
-    {
-        return new GoogleOptions(
-            $options?->temperature,
-            $maxTokens,
-            $options?->signal,
-            $apiKey,
-            thinkingEnabled: $options?->reasoning !== null,
-            thinkingLevel: $options?->reasoning?->value,
-        );
     }
 
     /**

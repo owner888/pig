@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Pig\Ai\Test\Antigravity;
+namespace Pig\CodingAgent\Test\Extensions;
 
 use PHPUnit\Framework\TestCase;
-use Pig\Ai\Antigravity\Routing;
+use PigAntigravity\Routing;
 use Pig\Ai\ProviderError;
 
 /**
@@ -15,8 +15,18 @@ use Pig\Ai\ProviderError;
  * recomputed because a regeneration that quietly changes which runtime id a level asks for is the
  * failure this cannot otherwise see: every request still succeeds, against a different model.
  */
-final class RoutingTest extends TestCase
+final class AntigravityRoutingTest extends TestCase
 {
+    use LoadsAntigravity;
+
+    #[\Override]
+    protected function setUp(): void
+    {
+        self::loadAntigravity();
+        // The built-in tables: another test may have installed a catalogue's.
+        Routing::forgetTables();
+    }
+
     public function testEveryRuntimeIdTheRoutingCanReachHasAnEnum(): void
     {
         // The invariant a regeneration breaks. Without it, a level nobody tested sends a request

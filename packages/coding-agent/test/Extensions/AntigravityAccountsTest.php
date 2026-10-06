@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\Test\Antigravity;
+namespace Pig\CodingAgent\Test\Extensions;
 
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Utils\Oauth\Credentials;
-use Pig\CodingAgent\Antigravity\Accounts;
+use PigAntigravity\Accounts;
 
 /**
  * `antigravity-accounts.json`, the several sign-ins the `pi-antigravity` extension keeps.
@@ -17,13 +17,16 @@ use Pig\CodingAgent\Antigravity\Accounts;
  * what it has to get right is that this file belongs to another program — so a renewal updates
  * the entry it matched and leaves everything else exactly as it found it.
  */
-final class AccountsTest extends TestCase
+final class AntigravityAccountsTest extends TestCase
 {
+    use LoadsAntigravity;
+
     private string $directory;
 
     #[\Override]
     protected function setUp(): void
     {
+        self::loadAntigravity();
         $this->directory = sys_get_temp_dir() . '/pig-accounts-' . bin2hex(random_bytes(6));
         mkdir($this->directory, 0o700, true);
     }

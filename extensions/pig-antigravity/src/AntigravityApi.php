@@ -2,11 +2,17 @@
 
 declare(strict_types=1);
 
-namespace Pig\Ai\Providers;
+namespace PigAntigravity;
 
-use Pig\Ai\Antigravity\Routing;
+
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
+use Pig\Ai\Extension\StreamApi;
+use Pig\Ai\Providers\AssistantMessageBuilder;
+use Pig\Ai\Providers\GoogleOptions;
+use Pig\Ai\Providers\GoogleShared;
+use Pig\Ai\SimpleStreamOptions;
+use Pig\Ai\StreamOptions;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
@@ -34,7 +40,7 @@ use Throwable;
  * envelope's *contents* — the labels, the request id shape, the model enum — and those are copied
  * field for field. Porting its hand-rolled SSE loop as well would have meant two of them.
  *
- * **The model on the wire is not the model on screen.** `Antigravity\Routing` turns the id
+ * **The model on the wire is not the model on screen.** `Routing` turns the id
  * somebody chose plus the thinking level into a runtime id and the enum that names it; see that
  * class for why pig has no other provider shaped this way.
  *
@@ -46,7 +52,7 @@ use Throwable;
  * - the envelope's `userAgent` field says `antigravity`, not `pig`. Upstream's changelog has that
  *   one as a fix for 429s specifically.
  */
-final class Antigravity
+final class AntigravityApi implements StreamApi
 {
     /** Where it answers. `daily-` is the live host despite the name; no `sandbox` in it. */
     public const string ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com';
@@ -80,9 +86,36 @@ final class Antigravity
     ) {
     }
 
-    /** Returns at once; the response fills in as it arrives. */
-    public function stream(Model $model, Context $context, ?GoogleOptions $options = null): AssistantMessageEventStream
+    /**
+     * Simple options into Gemini's dialect — what `Stream::translate()` used to do for this
+     * provider as its `antigravity()` arm, and the `StreamApi` contract puts here. Thinking is
+     * said as a level and only when it was asked for; the routing table turns the level into a
+     * runtime model, which is this provider's own business and nobody else's.
+     */
+    #[\Override]
+    public function translate(Model $model, ?SimpleStreamOptions $options, string $apiKey): StreamOptions
     {
+        return new GoogleOptions(
+            $options?->temperature,
+            $options?->maxTokens ?? $model->maxTokens,
+            $options?->signal,
+            $apiKey,
+            thinkingEnabled: $options?->reasoning !== null,
+            thinkingLevel: $options?->reasoning?->value,
+        );
+    }
+
+    /** Returns at once; the response fills in as it arrives. */
+    #[\Override]
+    public function stream(Model $model, Context $context, ?StreamOptions $options = null): AssistantMessageEventStream
+    {
+        // Options that did not come through `translate()` — a caller of `Stream::start()` with
+        // base options — carry the key and nothing Gemini-shaped; `GoogleOptions` is what the
+        // rest of this class reads, so they are widened here.
+        if ($options !== null && !$options instanceof GoogleOptions) {
+            $options = new GoogleOptions($options->temperature, $options->maxTokens, $options->signal, $options->apiKey, thinkingEnabled: false);
+        }
+
         $stream = new AssistantMessageEventStream();
 
         Async::spawn(function () use ($stream, $model, $context, $options): void {

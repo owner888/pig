@@ -491,8 +491,12 @@ final class AnthropicTest extends TestCase
 
     public function testAgainstTheRealApi(): void
     {
-        if (getenv('PIG_NETWORK_TESTS') !== '1') {
-            self::markTestSkipped('set PIG_NETWORK_TESTS=1 to run tests that reach the internet');
+        // Two switches, both on purpose: `PIG_NETWORK_TESTS=1` is the general one, and
+        // `PIG_LIVE_ANTHROPIC=1` is this provider's own, so a run that turns network tests on for
+        // the proxy or the socket does not also spend a request on somebody's Anthropic account.
+        // `test/live.php` is the harness for that, run by hand.
+        if (getenv('PIG_NETWORK_TESTS') !== '1' || getenv('PIG_LIVE_ANTHROPIC') !== '1') {
+            self::markTestSkipped('set PIG_NETWORK_TESTS=1 and PIG_LIVE_ANTHROPIC=1 to reach the real API');
         }
 
         $key = getenv('ANTHROPIC_API_KEY');

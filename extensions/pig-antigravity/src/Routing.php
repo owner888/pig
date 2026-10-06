@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Pig\Ai\Antigravity;
+namespace PigAntigravity;
 
 use Pig\Ai\ProviderError;
 

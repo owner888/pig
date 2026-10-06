@@ -2,20 +2,20 @@
 
 declare(strict_types=1);
 
-namespace Pig\CodingAgent\Antigravity;
+namespace PigAntigravity;
 
-use Pig\Ai\Antigravity\Routing;
+
 use Pig\Ai\Api;
 use Pig\Ai\Model;
-use Pig\Ai\Models;
+use Pig\Ai\Models as Registry;
 use Pig\Ai\Pricing;
-use Pig\Ai\Providers\Antigravity;
+use PigAntigravity\AntigravityApi as Antigravity;
 use Pig\CodingAgent\Config;
 
 /**
  * Antigravity's catalogue, as the `pi-antigravity` extension leaves it on disk.
  *
- * pig's own `Models::ANTIGRAVITY_MODELS` and `Ai\Antigravity\Routing`'s two tables are a print
+ * the extension's own `Models::fallback()` and `Routing`'s two tables are a print
  * of the deployment's catalogue endpoint, taken whenever `scripts/fetch-antigravity-models.php`
  * was last run. The extension asks the same endpoint every four hours and writes the answer
  * down. So this is not a second opinion about what Antigravity sells — it is the same source,
@@ -171,7 +171,7 @@ final readonly class Catalog
         }
 
         Routing::useTables($this->routing, $this->enums);
-        Models::register($this->models, replace: true);
+        Registry::register($this->models, replace: true);
     }
 
     /**
@@ -321,8 +321,8 @@ final readonly class Catalog
         return new Model(
             $id,
             is_string($entry['name'] ?? null) && $entry['name'] !== '' ? $entry['name'] : $id,
-            Api::Antigravity,
-            Models::ANTIGRAVITY,
+            Api::Extension,
+            Models::PROVIDER,
             Antigravity::ENDPOINT,
             $window,
             $maxTokens,
