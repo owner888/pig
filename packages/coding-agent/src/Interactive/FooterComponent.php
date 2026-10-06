@@ -50,6 +50,17 @@ final class FooterComponent implements Component
     private array $statuses = [];
 
     /**
+     * The one status key that belongs on the top line, after the session name, rather than
+     * on a line of its own: `smart-session.php`'s token-speed meter (`⚡ 90.8 tok/s · TTFT 8ms`).
+     * It was the session name's suffix before `SessionManager::cleanSessionName()` started
+     * stripping telemetry out of what gets written to the file — right, since a speed is not a
+     * name — and the extension then had nowhere to put it but `setStatus()`, which draws a third
+     * footer line. A line appearing and vanishing with every turn is exactly what a transient
+     * reading should not do, so it goes back where it read well: `… (main) • <name> • ⚡ …`.
+     */
+    private const string INLINE_STATUS = 'token-speed';
+
+    /**
      * @param Settings|null $settings for the auto-compaction marker; absent means the default,
      *        which is on — the same answer `AgentSession::shouldCompact()` gives without one
      * @param Auth|null     $auth     for "(sub)" and for counting providers; absent means nothing
@@ -107,9 +118,11 @@ final class FooterComponent implements Component
         ];
 
         // A third line only when there is something on it, so a session with no hooks has
-        // the footer it always had.
-        if ($this->statuses !== []) {
-            $lines[] = $this->trim(implode(' · ', $this->statuses), $width);
+        // the footer it always had. The inline one is already on the top line.
+        $own = array_diff_key($this->statuses, [self::INLINE_STATUS => true]);
+
+        if ($own !== []) {
+            $lines[] = $this->trim(implode(' · ', $own), $width);
         }
 
         return $lines;
@@ -150,6 +163,12 @@ final class FooterComponent implements Component
 
         if ($sessionName !== null && $sessionName !== '') {
             $path .= " • {$sessionName}";
+        }
+
+        $speed = $this->statuses[self::INLINE_STATUS] ?? null;
+
+        if ($speed !== null) {
+            $path .= " • {$speed}";
         }
 
         return Width::visible($path) <= $width ? $path : self::elide($path, $width);

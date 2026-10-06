@@ -64,7 +64,7 @@ final class Retry
      * A stream that stopped halfway, a socket that closed, a TLS handshake that never
      * finished: real, retryable, and never an HTTP response.
      */
-    private const string WORDS = '/overloaded|rate.?limit|too many requests|service.?unavailable'
+    private const string WORDS = '/overloaded|rate.?limit|too many requests|service.?unavailable|at capacity'
         . '|server.?error|internal.?error|connection.?(error|reset|closed|refused|lost)'
         . '|cannot connect|timed? ?out|stream ended|broken pipe'
         . '|ssl.*operation failed|ssl routines|tls.*handshake.*failed'

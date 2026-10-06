@@ -303,6 +303,22 @@ final class ArgumentsTest extends TestCase
         $this->assertSame(['fix the bug'], $parsed->messages);
     }
 
+    public function testExcludeToolsTakesItsListToo(): void
+    {
+        $parsed = $this->parse('--exclude-tools', 'bash,mcp__*', 'fix the bug');
+
+        $this->assertSame('bash,mcp__*', $parsed->options['exclude-tools']);
+        $this->assertSame(['fix the bug'], $parsed->messages);
+    }
+
+    public function testNoMcpIsAFlag(): void
+    {
+        $parsed = $this->parse('--no-mcp', 'fix the bug');
+
+        $this->assertTrue($parsed->has('no-mcp'));
+        $this->assertSame(['fix the bug'], $parsed->messages);
+    }
+
     public function testNoToolsIsStillAFlagAboutSomethingElse(): void
     {
         $parsed = $this->parse('--no-tools', 'fix the bug');

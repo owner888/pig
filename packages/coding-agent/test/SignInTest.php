@@ -161,18 +161,30 @@ final class SignInTest extends TestCase
 
     // ---- the flow -------------------------------------------------------------------------
 
-    public function testAnthropicShowsAUrlAndThenAsksForThePaste(): void
+    public function testAnthropicAsksWhichWayInAndThenShowsAUrlAndAsksForThePaste(): void
     {
         // The bug this file was written for: the `$onPrompt` closure captured nothing, so the
-        // first flow to ask a question called null. Escaping the paste box reaches it.
-        $this->answers = [''];
+        // first flow to ask a question called null. Escaping the paste box reaches it. The
+        // method question comes first (pi 1.0): `2` is the copy-code way, the one with a paste.
+        $this->answers = ['2', ''];
 
         $this->assertSame(1, $this->signIn(['login', 'anthropic']));
 
+        $this->assertStringContainsString('Select Anthropic login method', $this->said());
         $this->assertStringContainsString('Open this in your browser:', $this->said());
         $this->assertStringContainsString('claude.ai/oauth/authorize', $this->said());
-        $this->assertCount(1, $this->asked);
-        $this->assertStringContainsString('code#state', $this->asked[0]);
+        $this->assertCount(2, $this->asked);
+        $this->assertStringContainsString('code#state', $this->asked[1]);
+        $this->assertStringContainsString('Nothing was signed in.', implode("\n", $this->warned));
+    }
+
+    public function testEscapingAnthropicsMethodQuestionSendsNobodyAnywhere(): void
+    {
+        $this->answers = [null];
+
+        $this->assertSame(1, $this->signIn(['login', 'anthropic']));
+
+        $this->assertStringNotContainsString('Open this in your browser:', $this->said());
         $this->assertStringContainsString('Nothing was signed in.', implode("\n", $this->warned));
     }
 

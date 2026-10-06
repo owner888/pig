@@ -9,9 +9,10 @@ use Pig\Async\Deferred;
 use Pig\Async\Loop;
 
 /**
- * The one request a browser makes back to this machine at the end of a Google sign-in.
+ * The one request a browser makes back to this machine at the end of a loopback sign-in.
  *
- * Google's flow has no device code and no paste: it redirects to
+ * Written for Google's two flows, and Anthropic's browser flow uses it too, on its own port and
+ * path. Google's flow has no device code and no paste: it redirects to
  * `http://localhost:8085/oauth2callback?code=…&state=…`, so something on this machine has to be
  * listening. Upstream reaches for Node's `http.createServer`; PHP has no HTTP server, so this is
  * one — and deliberately the narrowest one that answers the question. It serves a single path,
@@ -51,16 +52,24 @@ final class CallbackServer
     /** @var array<string, resource> */
     private array $connections = [];
 
+    /** @var array<string, string> each open connection's reader, so `drop()` can cancel it before closing */
+    private array $readers = [];
+
     /** A counter, because an object id can be reused the moment the object is collected. */
     private int $next = 0;
 
+    /**
+     * @param string $who which provider sends the browser here — named in the two messages that
+     *        blame the far end, since Anthropic's flow uses this server as well as Google's two
+     */
     public function __construct(
         private readonly int $port = self::PORT,
         private readonly string $path = self::PATH,
+        private readonly string $who = 'Google',
     ) {
     }
 
-    /** What Google has to be told to come back to. */
+    /** What the provider has to be told to come back to. */
     public function redirectUri(): string
     {
         return "http://localhost:{$this->port}{$this->path}";
@@ -102,7 +111,7 @@ final class CallbackServer
 
             throw new OauthError(
                 "Could not listen on 127.0.0.1:{$this->port} for the sign-in to come back to: {$reason}. "
-                . 'Google will only redirect to that exact port, so whatever is holding it has to stop first.',
+                . "{$this->who} will only redirect to that exact port, so whatever is holding it has to stop first.",
             );
         }
 
@@ -159,12 +168,14 @@ final class CallbackServer
             $this->watcher = null;
         }
 
-        foreach ($this->connections as $id => $connection) {
-            unset($this->connections[$id], $this->partial[$id]);
-
-            if (is_resource($connection)) {
-                fclose($connection);
-            }
+        // Every connection still open, through `drop()`, which cancels its reader first. A browser
+        // opens more than one — a favicon, a speculative preconnect — and the extra one never
+        // sends a whole head, so its reader is still armed when the sign-in finishes. Closing the
+        // stream under an armed watcher is the `stream_select()` trap this file's loop names by
+        // id, and it ended a real sign-in: "Reader r505 watches a closed stream".
+        foreach (array_keys($this->connections) as $id) {
+            // `(string)`: a numeric key comes back out of an array as an int (the trap on hex ids).
+            $this->drop((string) $id);
         }
 
         if (is_resource($this->socket)) {
@@ -192,18 +203,24 @@ final class CallbackServer
         $this->connections[$id] = $connection;
         $this->partial[$id] = '';
 
-        $reader = null;
-        $reader = Loop::get()->onReadable($connection, function (mixed $peer) use ($id, &$reader): void {
+        $this->readers[$id] = Loop::get()->onReadable($connection, function (mixed $peer) use ($id): void {
             $chunk = fread($peer, 8192);
 
-            if ($chunk === false || $chunk === '') {
+            if ($chunk === false || ($chunk === '' && feof($peer))) {
+                // The browser hung up without finishing — a preconnect it never used. Gone, or
+                // its reader stays armed on a stream that will never be readable again.
+                $this->drop($id);
+
+                return;
+            }
+
+            if ($chunk === '') {
                 return;
             }
 
             $this->partial[$id] = ($this->partial[$id] ?? '') . $chunk;
 
             if (strlen($this->partial[$id]) > self::MAX_REQUEST) {
-                Loop::get()->cancel((string) $reader);
                 $this->drop($id);
 
                 return;
@@ -214,7 +231,8 @@ final class CallbackServer
                 return;
             }
 
-            Loop::get()->cancel((string) $reader);
+            // Read, so the reader is done; the connection stays open for the reply.
+            $this->cancelReader($id);
             $this->handle($id, $this->partial[$id]);
         });
     }
@@ -237,7 +255,7 @@ final class CallbackServer
 
         if ($error !== null) {
             $this->reply($id, '400 Bad Request', '<h1>Signing in failed</h1><p>You can close this window.</p>');
-            $this->fail(new OauthError("Google refused the sign-in: {$error}"));
+            $this->fail(new OauthError("{$this->who} refused the sign-in: {$error}"));
 
             return;
         }
@@ -299,13 +317,23 @@ final class CallbackServer
         $this->drop($id);
     }
 
+    /** Cancelled before the close, always: `stream_select()` drops a closed stream silently and then fails. */
     private function drop(string $id): void
     {
+        $this->cancelReader($id);
         $connection = $this->connections[$id] ?? null;
         unset($this->connections[$id], $this->partial[$id]);
 
         if (is_resource($connection)) {
             fclose($connection);
+        }
+    }
+
+    private function cancelReader(string $id): void
+    {
+        if (isset($this->readers[$id])) {
+            Loop::get()->cancel($this->readers[$id]);
+            unset($this->readers[$id]);
         }
     }
 

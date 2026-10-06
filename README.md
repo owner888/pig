@@ -74,7 +74,7 @@ pig
 ```
 
 - **Set API Key**: Run with `ANTHROPIC_API_KEY=sk-... pig` or use `--api-key <key>` for a single run without persisting.
-- **Subscription Login**: Run `/login` inside pig to sign in with Claude Pro/Max, GitHub Copilot, or Google Antigravity. Tokens are saved in `~/.pig/agent/auth.json` (or shared with `~/.pi/agent/auth.json`).
+- **Subscription Login**: Run `/login` inside pig to sign in with Claude Pro/Max, GitHub Copilot, or Google Antigravity. Claude offers two ways in, as pi 1.0 does: a browser that comes back to `localhost:53692` (the default), or copying the code off Anthropic's page for a headless machine. Tokens are saved in `~/.pig/agent/auth.json` (or shared with `~/.pi/agent/auth.json`).
 - **Resume Sessions**:
   - `pig -c` / `pig --continue`: Instantly resume the most recently modified session in the current directory.
   - `pig -r` / `pig --resume`: Open the interactive session picker with fuzzy search.
@@ -194,6 +194,18 @@ Logger::timeEnd('benchmark');
 | `~/.pig/agent/keybindings.json` | Custom keyboard shortcut mappings. |
 | `~/.pig/agent/themes/` | Custom JSON themes directory (built-in `dark`, `light`, `labra`, plus any user-defined theme). |
 | `~/.pig/agent/sessions/` | Saved session logs in standard `.jsonl` format. |
+
+### Signing in with a subscription
+
+`/login` inside pig, or `pig-ai login <provider>` from a shell with no terminal UI. Three providers, each the way pi 1.0.3 does it:
+
+| Provider | How | Notes |
+| :--- | :--- | :--- |
+| **Anthropic (Claude Pro/Max)** | **Browser** (default): pig listens on `http://localhost:53692/callback`, opens `claude.ai`, and the code comes back by itself. A paste box stays open beside it — if the browser is on another machine, paste the final redirect URL there. **Copy code** (headless): the browser lands on Anthropic's own page showing `code#state`; paste that. | The token goes out as Claude Code's — `claude-cli` user agent, both betas, tool names spelled `Read`/`Bash`/`Edit`/`Write` — because that is the identity Anthropic issued it to. Port 53692 is registered with Anthropic and cannot be changed. |
+| **GitHub Copilot** | Device flow: pig shows a code, you type it at `github.com/login/device`, pig polls until it is accepted. Blank at the Enterprise prompt means `github.com`. | Claude's and Grok's models are switched on for the account after signing in. |
+| **Antigravity** | Browser callback on `localhost:51121/oauth-callback`. | Needs `ANTIGRAVITY_CLIENT_ID` / `ANTIGRAVITY_CLIENT_SECRET` in the environment or `antigravity.clientId` / `antigravity.clientSecret` in `settings.json`; pig does not ship them. |
+
+Tokens are renewed automatically when they expire; the file is the same one pi reads, so a sign-in in either tool is a sign-in in both. `/logout` forgets one.
 
 ---
 

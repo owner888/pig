@@ -42,7 +42,9 @@ final class KeybindingsTest extends TestCase
         $this->assertNull($keys->actionFor('a'), 'typing is typing');
         $this->assertSame('ctrl+l', $keys->label('app.model.select'));
         $this->assertSame('esc', $keys->label('app.interrupt'));
-        $this->assertSame('app.message.followUp', $keys->actionFor("\e\r"), 'alt+enter the legacy way');
+        // `\e\r` is not alt+enter: it is Apple Terminal's Shift+Enter, and it goes to the
+        // editor as a new line rather than being claimed here.
+        $this->assertNull($keys->actionFor("\e\r"), "Apple Terminal's Shift+Enter is nobody's action");
         $this->assertSame('app.message.followUp', $keys->actionFor(Keys::kitty(13, 2)), 'and as kitty reports it');
         $this->assertSame('app.message.dequeue', $keys->actionFor("\e[1;3A"));
 

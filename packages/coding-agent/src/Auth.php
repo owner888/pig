@@ -13,7 +13,6 @@ use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\Antigravity;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
-use Pig\Ai\Utils\Oauth\Pkce;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Antigravity\Accounts;
@@ -444,9 +443,15 @@ final class Auth
      * else in common.
      *
      * @param Closure(string, ?string): void $onAuth where to go, and what to type when there
-     * @param Closure(string, string, bool): ?string $onPrompt message, placeholder, may be
-     *        empty; null when the person escaped
+     * @param Closure(string, string, bool, ?AbortSignal=): ?string $onPrompt message, placeholder,
+     *        may be empty, and — from Anthropic's browser flow only — a signal that closes the
+     *        box from outside when the browser answers first; null when the person escaped. The
+     *        fourth argument is optional at the callee because Copilot's flow passes three.
      * @param Closure(string): void|null $onProgress a line for a step that takes a moment
+     * @param Closure(string, list<array{0: string, 1: string}>): ?string|null $onSelect a
+     *        choice between named options — upstream's `prompt({type: "select"})`, which
+     *        Anthropic's flow asks first (browser, or copy the code). Null means there is no
+     *        screen to ask on and the flow takes its default.
      */
     public function login(
         Provider $provider,
@@ -454,13 +459,14 @@ final class Auth
         Closure $onPrompt,
         ?Closure $onProgress = null,
         ?AbortSignal $signal = null,
+        ?Closure $onSelect = null,
     ): ?Credentials {
         if (!$provider->available()) {
             throw new OauthError("Signing in with {$provider->label()} is not ported yet.");
         }
 
         $credentials = match ($provider) {
-            Provider::Anthropic => $this->anthropic($onAuth, $onPrompt),
+            Provider::Anthropic => $this->anthropic($onAuth, $onPrompt, $onProgress, $signal, $onSelect),
             Provider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
             Provider::Antigravity => $this->antigravity($onAuth, $onProgress, $signal),
         };
@@ -475,21 +481,42 @@ final class Auth
     }
 
     /**
+     * Which way in, then that way. pi 1.0's `anthropicOAuth.login()`: a browser that comes back
+     * to a loopback server is the default, and copying the code off Anthropic's page is for a
+     * headless machine. Escaping the choice is a cancellation.
+     *
      * @param Closure(string, ?string): void $onAuth
-     * @param Closure(string, string, bool): ?string $onPrompt
+     * @param Closure(string, string, bool, ?AbortSignal): ?string $onPrompt
+     * @param Closure(string): void|null $onProgress
+     * @param Closure(string, list<array{0: string, 1: string}>): ?string|null $onSelect
      */
-    private function anthropic(Closure $onAuth, Closure $onPrompt): ?Credentials
-    {
-        $pkce = Pkce::create();
-        $onAuth(Anthropic::authorizeUrl($pkce), null);
+    private function anthropic(
+        Closure $onAuth,
+        Closure $onPrompt,
+        ?Closure $onProgress,
+        ?AbortSignal $signal,
+        ?Closure $onSelect,
+    ): ?Credentials {
+        $method = Anthropic::METHOD_BROWSER;
 
-        $pasted = $onPrompt('Paste the authorization code', 'code#state', false);
+        if ($onSelect !== null) {
+            $method = $onSelect('Select Anthropic login method', [
+                [Anthropic::METHOD_BROWSER, 'Browser login (default)'],
+                [Anthropic::METHOD_COPY_CODE, 'Copy code login (headless)'],
+            ]);
 
-        if ($pasted === null || trim($pasted) === '') {
-            return null;
+            if ($method === null) {
+                return null;
+            }
         }
 
-        return (new Anthropic())->exchange($pasted, $pkce->verifier);
+        $flow = new Anthropic();
+
+        return match ($method) {
+            Anthropic::METHOD_BROWSER => $flow->loginWithBrowser($onAuth, $onPrompt, $onProgress, $signal),
+            Anthropic::METHOD_COPY_CODE => $flow->loginWithCopyCode($onAuth, $onPrompt, $onProgress),
+            default => throw new OauthError("Unknown Anthropic login method: {$method}"),
+        };
     }
 
     /**
@@ -587,6 +614,23 @@ final class Auth
         $value = $this->settings?->get($key);
 
         return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    /**
+     * The stored tokens, renewed first if they are due — `credentials()` with the renewal
+     * `apiKey()` does on the way past.
+     *
+     * For a caller that needs the *credential* rather than the api-key string: the Antigravity
+     * extension's quota and model calls want the bare access token and the project id apart,
+     * where `apiKey()` joins them. Reading `credentials()->access` for that is what it did, and
+     * an hour after signing in every one of its commands answered 401 — the stored half had
+     * expired and only `apiKey()` knew to renew. One door to a fresh token, not two.
+     */
+    public function freshCredentials(Provider $provider): ?Credentials
+    {
+        $credentials = $this->credentials($provider);
+
+        return $credentials === null ? null : $this->fresh($provider, $credentials);
     }
 
     /** The token, renewed first if it is due. A renewal is written down, or it happens every turn. */

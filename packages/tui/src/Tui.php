@@ -520,8 +520,16 @@ class Tui extends Container
         }
 
         if ($old > $new) {
+            // Down with `\e[B`, never `\r\n`: a newline on the terminal's last row **scrolls**,
+            // and the vanished rows are still on the screen, so the cursor can be moved to them.
+            // This is upstream's own sweep — `\r\n\x1b[2K` per vanished line — and what it costs
+            // is the whole screen shifting up by that many rows every time the frame shrinks,
+            // which is the end of every turn: the working loader and its spacer go, and the
+            // footer is left two rows above the bottom with blank rows under it. Measured on a
+            // real pty through a VT emulator; a hand-written emulator that did not scroll on
+            // newline said the old sequence was fine, which is why it stayed for a day.
             $extra = $old - $new;
-            $buffer .= self::moveTo($row, $new - 1) . str_repeat("\r\n\x1b[2K", $extra) . "\x1b[{$extra}A";
+            $buffer .= self::moveTo($row, $new - 1) . str_repeat("\x1b[1B\r\x1b[2K", $extra) . "\x1b[{$extra}A";
             $row = $new - 1;
         }
 

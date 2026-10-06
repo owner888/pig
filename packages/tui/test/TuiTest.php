@@ -140,9 +140,28 @@ final class TuiTest extends TestCase
         $this->tui->requestRender();
         $output = $this->frame();
 
-        // Cursor on row 3, frame now ends at row 1: up two, then erase rows 2 and 3.
-        // What it used to write was a single \e[1A before the same sweep.
-        $this->assertStringContainsString("\x1b[2A\r\r\n\x1b[2K\r\n\x1b[2K\x1b[2A", $output);
+        // Cursor on row 3, frame now ends at row 1: up two, then down a row and erase, twice,
+        // then back up. What it used to write was a single \e[1A before the same sweep.
+        $this->assertStringContainsString("\x1b[2A\r\x1b[1B\r\x1b[2K\x1b[1B\r\x1b[2K\x1b[2A", $output);
+    }
+
+    public function testErasingVanishedLinesMovesDownRatherThanScrolling(): void
+    {
+        // `\r\n` on the terminal's last row scrolls; `\e[B` does not. The vanished rows are
+        // still on the screen, so the cursor can be *moved* to them — and a newline there, which
+        // is what upstream writes, shifted the whole screen up and left blank rows under the
+        // footer every time the frame shrank. It shrinks at the end of every turn.
+        $component = new TextComponent("one\ntwo\nthree");
+        $this->tui->addChild($component);
+        $this->tui->start();
+        $this->frame();
+
+        $component->text = 'one';
+        $this->tui->requestRender();
+        $output = $this->frame();
+
+        $this->assertStringNotContainsString("\n", $output, 'nothing in a shrink may scroll');
+        $this->assertSame(2, substr_count($output, "\x1b[1B\r\x1b[2K"));
     }
 
     public function testLinesTheFrameHasGrownByAreWrittenRatherThanAddressed(): void
@@ -195,7 +214,7 @@ final class TuiTest extends TestCase
         $output = $this->frame();
 
         // Two lines dropped: each is cleared, then the cursor comes back up over them.
-        $this->assertStringContainsString("\r\n\x1b[2K\r\n\x1b[2K", $output);
+        $this->assertStringContainsString("\x1b[1B\r\x1b[2K\x1b[1B\r\x1b[2K", $output);
         $this->assertStringContainsString("\x1b[2A", $output);
     }
 

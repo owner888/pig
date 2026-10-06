@@ -1401,29 +1401,38 @@ pig did not already have. The two Google ones waited on a piece that did not exi
 loopback PKCE flows that want an HTTP server on `127.0.0.1` and a browser opened at it, so
 `CallbackServer` had to be written before either could work.
 
-Anthropic's shows a URL, the person opens it, approves, and brings back a `code#state` string;
-`exchange()` redeems it. Copilot's is a **device flow**: pig asks GitHub for a pair of codes,
-shows one, and then asks over and over whether it has been typed in yet. No redirect to catch
-either way, so no server and no port to hope is free.
+Anthropic's is **pi 1.0.3's**, not the anchor's — the one flow updated past the anchor on purpose,
+because the anchor's endpoints had moved under it (`console.anthropic.com`'s callback page is a 301
+to `platform.claude.com`, measured) and its three scopes are half of what a token now carries.
+`/login` asks which way in first, as pi does: **browser**, where `CallbackServer` listens on
+`localhost:53692/callback` and the paste box is open beside it for a browser on another machine,
+whichever answers first winning and the other closed (`Anthropic::firstOf()`, the race
+`McpOauth` already runs); or **copy code**, Anthropic's own page showing a `code#state` to bring
+back. Copilot's is a **device flow**: pig asks GitHub for a pair of codes, shows one, and then asks
+over and over whether it has been typed in yet.
 
-The far end of it was already written and had been since the provider was ported:
-`Providers\Anthropic` recognises an `sk-ant-oat` key, sends it as a bearer token under the
-`oauth-2025-04-20` beta, and puts Claude Code's identity in front of the system prompt, because
-that is the identity the token is issued to. So what was missing was only the part that
-*obtains* one — which is why the first thing added here was a pair of tests asserting what goes
-on the wire for each kind of key: an untested branch that had never run is not a ported branch.
+The far end is `Providers\ClaudeCode`: an `sk-ant-oat` token goes out as a bearer token under
+**both** betas (`claude-code-20250219,oauth-2025-04-20`), `user-agent: claude-cli/2.1.280`,
+`x-app: cli`, Claude Code's identity as the first system block — and **its tools spelled Claude
+Code's way**, `read` → `Read`, `bash` → `Bash`, on the declaration, on the calls already in the
+history, and mapped back to the name this request declared on the call that comes back. Upstream
+calls that "stealth mode" and has carried it since January 2026, a week after the anchor; a token
+Anthropic issued to Claude Code is checked against what Claude Code's requests look like, and the
+anchor's half of it was the half that still passed.
 
 Five things worth keeping straight:
 
 - **`state` is the verifier**, not a second random string. Upstream's choice and Anthropic's
-  flow: the callback hands back `code#state`, so the state travels home through the person's
-  clipboard and the exchange can tell the code came from the request it made.
-- **Half a paste is refused before anything is sent.** One deliberate difference from upstream,
-  which sends no state and lets Anthropic answer `invalid_grant` — a message that describes six
-  different mistakes equally badly. The callback always hands over both halves, so a string
-  with no `#` is a paste that lost its end, and saying that is an answer somebody can act on.
-  The paste is trimmed for the same reason: a code copied out of a terminal arrives with a
-  newline on it about half the time.
+  flow: the callback hands back `code` and `state`, so the state travels home — through the
+  socket or the clipboard — and the exchange can tell the code came from the request it made.
+  **A state that is not the verifier is refused**, on both paths; upstream throws "OAuth state
+  mismatch" there too.
+- **A paste is read in every shape pi reads it** — the whole redirect URL, `code=…&state=…`,
+  `code#state`, a bare code — and **half a paste is refused before anything is sent.** The
+  copy-code page always hands over both halves, so a bare code there is a paste that lost its
+  end, and saying that is an answer somebody can act on where `invalid_grant` is not. The paste
+  is trimmed for the same reason: a code copied out of a terminal arrives with a newline on it
+  about half the time.
 - **The new refresh token replaces the old one.** Anthropic rotates them, so a session that
   kept sending the one it signed in with would work exactly once more.
 - **Five minutes is taken off every expiry**, which is upstream's margin. A token that expires
@@ -4840,6 +4849,81 @@ that would have to end in a newline to slip through, and none of them can be rea
 Changing them tightens what is accepted, which is a behaviour change with no reproduced bug behind
 it. If one of those inputs ever comes from somewhere new, this is the entry to remember.
 
+### Apple Terminal's Shift+Enter is `\e\r`, which pig read as Alt+Enter and sent the prompt
+
+Shift+Enter sent the message instead of breaking the line. `php /tmp/keyprobe.php` in the
+developer's terminal: Shift+Enter is `"\u001b\r"`, Enter is `"\r"`. Apple Terminal does not speak
+the kitty protocol, so it never sends `\e[13;2u`; it sends ESC-prefixed CR, which is **also** the
+ESC-prefix spelling of Alt+Enter that `Keys::isAltEnter()` accepted and `Keys::spec()` generated for
+`alt+enter`. `CustomEditor::claimed()` asks `Keybindings` first, `app.message.followUp` matched, and
+the key never reached `Editor::isNewLine()` — which has read `\e\r` as a new line all along.
+
+One byte string, two keys with opposite meanings at a prompt; pig cannot tell them apart and has to
+pick. Shift+Enter is the one pressed a hundred times a day and Alt+Enter has `command+enter` beside
+it, so `\e\r` goes to the editor: `isAltEnter()` is the kitty form only, and `spec()` builds no
+ESC-prefix legacy for `alt+enter` (it still does for `alt+<letter>`). The three `InteractiveModeTest`
+cases that typed `\e\r` for Alt+Enter now type `\e[13;3u`.
+
+Regression: `KeysTest` (`isAltEnter("\e\r")` false, `matchesName("\e\r", 'alt+enter')` false) and
+`KeybindingsTest::testWithNoFileTheDefaultsAreUpstreams`, which asserts `\e\r` is nobody's action.
+*When a key does the wrong thing, measure the bytes before reading the table* — the table was right
+about every key it named and wrong about which key the bytes were.
+
+### Erasing vanished rows with `\r\n` scrolled the screen, one row per vanished line
+
+Reported with a screenshot: blank rows under the footer, there from the moment a turn starts and
+staying. `Tui::changedLines()` erased the rows a shrinking frame leaves behind with upstream's
+sweep — `\r\n\x1b[2K` per vanished line, then `\e[nA` back up — and **a newline on the terminal's
+last row scrolls**. The working loader and its spacer go at the end of every turn, so every turn
+shifted the screen up two rows and the cursor arithmetic (which is relative) stayed right about a
+footer that was now two rows above the bottom. Upstream has the same bytes; its `tui-main-screen.ts`
+has since grown a separate "deleted lines" path that moves with `\e[1B` and clears without
+scrolling, which is what this is now: `\x1b[1B\r\x1b[2K` per vanished row.
+
+**A hand-rolled emulator said the old sequence was fine, for a day.** It did not scroll on a newline
+at the last row, so it reproduced the renderer's own belief rather than the terminal's. What settled
+it was `bin/pig` in a real pty, a stand-in provider streaming slowly enough for the loader to draw,
+and `pyte` replaying the bytes — frame 64 of 129, footer at row 17 of 20. **`PIG_TUI_TRACE=<file>`**
+on `ProcessTerminal::write()` is what makes that replay possible from a real session; upstream's
+`PI_TUI_DEBUG=1` is the same idea.
+
+Regression tests: `TuiTest::testErasingVanishedLinesMovesDownRatherThanScrolling` (no `\n` in a
+shrink at all) and the two existing shrink tests, re-pinned to the row moves.
+
+### The Antigravity extension read the stored token raw, and it lasts an hour
+
+`/antigravity.usage` an hour after signing in: `401 Request had invalid authentication
+credentials. Expected OAuth 2 access token`. The extension's `$getAuthAndToken` read
+`$auth->credentials(Provider::Antigravity)->access` — the token **as stored**, which Google issues
+for an hour. The renewal lived in one place, `Auth::apiKey()` → `fresh()`, and the extension could
+not use that because `apiKey()` joins token and project into one string for `Providers\Antigravity`
+to split, where the quota endpoint wants them apart. So it took the other door, and the other door
+had no renewal behind it. **Two readers of one credential, one of which knew it expires** — the
+first shape from the index, on a token.
+
+`Auth::freshCredentials()` is `credentials()` plus the renewal `apiKey()` does, for a caller that
+needs the parts. The extension goes through it; `Doctor` keeps `credentials()` because it only
+counts. Regression tests: `AuthTest::testFreshCredentialsRenewsTheWayApiKeyDoesRatherThanHandingBackTheExpiredHalf`
+and `testFreshCredentialsIsTheStoredOnesWhileTheyStillHold`.
+
+### A browser opens a connection it never uses, and closing it under its watcher killed the sign-in
+
+The first real Claude browser sign-in ended with the tokens in hand and pig dead:
+`pig crashed: Reader r505 watches a closed stream; cancel the watcher before closing it`. Chrome
+opens a **speculative second connection** beside the callback — a preconnect — and never writes to
+it, so its reader was still armed when the flow's `finally` called `CallbackServer::close()`, and
+`close()` `fclose()`d every connection without cancelling the readers. The trap below about
+closing a stream without cancelling its watcher, in a class whose `accept()` already knew the rule
+for the *finished* path and not for the abandoned one. `drop()` cancels first now, `close()` goes
+through `drop()`, and a reader that sees EOF drops its connection rather than staying armed on a
+stream that will never be readable again.
+
+Two things in the fix: the reader ids are kept in a map rather than captured by reference in the
+closure, because the one place that needs them all is `close()`, which the closure cannot reach;
+and the `(string)` on `array_keys()` is the hex-id trap — a numeric key comes back as an int.
+Regression tests: `CallbackServerTest::testAConnectionThatNeverSaysAnythingDoesNotTakeTheLoopDownWhenTheServerCloses`
+(red on the old `close()`, with the same message) and `testAConnectionTheBrowserHangsUpOnIsLetGo`.
+
 ### A signal makes `stream_select()` return `false`
 
 Terminal resize sends SIGWINCH. With a handler installed, an in-flight `stream_select()` is
@@ -6247,9 +6331,24 @@ Upstream's default is `codingTools` — the first four — and its `--tools read
 set when something else is wanted. **pig had the wider default and not the flag.**
 
 Both are fixed the same way round: the default is upstream's four, and `--tools` is ported, with a
-name that matches nothing answered on the shell before anything loads ("No tool called 'nope'. There
-is read, bash, edit, write, grep, find, ls."). `--read-only` still *swaps* the set for the read-only
+name that matches nothing refused by name. `--read-only` still *swaps* the set for the read-only
 four rather than narrowing whatever was asked for, which is what it always did.
+
+**Then pi 1.0.3's shape of the flag was taken too**: an entry is a name or a `*` pattern
+(`Tools\ToolSelection`, upstream's `createToolNameMatcher()`), `--exclude-tools` takes away after
+`--tools`, and `--no-mcp` leaves the MCP extension unloaded. Three decisions in it:
+
+- **An MCP tool is kept unless an entry starts with `mcp__`.** `--tools read,codemode` means those
+  two and must not also disconnect every server codemode reaches through; upstream fixed exactly
+  that in 1.0.3. `--exclude-tools` has no exception, because a denylist means what it names.
+  `allows()` and `matches()` are the two questions, on purpose two methods.
+- **The typo check moved from `bin/pig` into `CodingAgent::session()`**, because which names
+  exist is only known once the custom tools have loaded, and the refusal now lists them too. The
+  list is read *before* the filter is applied, or it would be whatever the typo left — the first
+  draft got that backwards and `testAToolsEntryThatNamesNothingIsRefusedByName` said so.
+- **The filter lives on `CustomToolSet` (`keep()`), not in the `onChange()` listener.** An MCP
+  server's tools are adopted after startup, and a filter the listener had to remember to apply is
+  the "wired at one end only" shape; mutating `adopt()` to skip it turns one test red.
 
 **The reason is the rule at the top of this file, in the developer's own words: more tools is more
 confusion.** A model with seven spends part of every turn choosing between them, and searching

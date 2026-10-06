@@ -63,6 +63,7 @@ final class OverflowTest extends TestCase
     public static function realMessages(): iterable
     {
         yield 'Anthropic' => ['prompt is too long: 213462 tokens > 200000 maximum'];
+        yield 'z.ai CN' => ['zai returned 400: {"code":"1261","message":"Prompt exceeds max length"}'];
         yield 'OpenAI' => ['Your input exceeds the context window of this model'];
         yield 'Google' => ['The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)'];
         yield 'xAI' => ["This model's maximum prompt length is 131072 but the request contains 537812 tokens"];

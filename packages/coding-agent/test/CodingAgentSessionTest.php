@@ -887,4 +887,98 @@ PHP);
         [$disabledCommands] = $disabled->hooks->commands();
         $this->assertArrayNotHasKey('bundled_cmd', $disabledCommands);
     }
+
+    // ---- `--tools` with patterns, `--exclude-tools`, `--no-mcp` ---------------------------------
+
+    /** An extension with two tools under one prefix and one MCP-shaped tool, for the pattern cases. */
+    private function writeAnExtensionWithThreeTools(): void
+    {
+        $extDir = $this->cwd . '/.pig/extensions/zoo';
+        mkdir($extDir, 0755, true);
+        file_put_contents($extDir . '/index.php', <<<'PHP'
+<?php
+use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\CustomTools\CustomTool;
+use Pig\Agent\AgentToolResult;
+use Pig\Ai\TextContent;
+return function (ExtensionApi $pi): void {
+    foreach (['zoo_feed', 'zoo_clean', 'mcp__gh__issues'] as $name) {
+        $pi->registerTool(new CustomTool(
+            name: $name, label: $name, description: $name,
+            parameters: ['type' => 'object', 'properties' => []],
+            execute: fn () => new AgentToolResult([new TextContent('ok')]),
+        ));
+    }
+};
+PHP);
+    }
+
+    public function testToolsTakesAStarPatternOverBuiltInsAndCustomToolsAlike(): void
+    {
+        $this->writeAnExtensionWithThreeTools();
+
+        // pi's `--tools read,codemode,'mcp__radius__*'` shape: an exact built-in and a pattern.
+        $names = $this->toolNames($this->start([], ['tools' => ['read', 'zoo_*']]));
+
+        // `mcp__gh__issues` survives: an MCP tool is kept unless an entry starts with `mcp__`,
+        // because `--tools read` means "that built-in" and not "and no MCP servers either".
+        $this->assertSame(['read', 'zoo_feed', 'zoo_clean', 'mcp__gh__issues'], $names);
+    }
+
+    public function testAnMcpEntryInToolsIsWhatNarrowsTheMcpTools(): void
+    {
+        $this->writeAnExtensionWithThreeTools();
+
+        $names = $this->toolNames($this->start([], ['tools' => ['read', 'mcp__other__*']]));
+
+        // Now an entry asked about MCP tools, so the ones it does not match go.
+        $this->assertSame(['read'], $names);
+    }
+
+    public function testExcludeToolsTakesAwayAfterToolsAndReachesMcpToolsToo(): void
+    {
+        $this->writeAnExtensionWithThreeTools();
+
+        $names = $this->toolNames($this->start([], ['excludeTools' => ['bash', 'zoo_clean', 'mcp__*']]));
+
+        // The default four less `bash`, the extension's tools less the two named — a denylist
+        // means what it names, MCP exception or not.
+        $this->assertSame(['read', 'edit', 'write', 'zoo_feed'], $names);
+    }
+
+    public function testAToolsEntryThatNamesNothingIsRefusedByName(): void
+    {
+        $this->writeAnExtensionWithThreeTools();
+
+        $problem = $this->assertThrows(
+            CodingAgentError::class,
+            fn (): StartedSession => $this->start([], ['tools' => ['read', 'raed']]),
+        );
+
+        // Said with the list, which now has the custom tools in it too: that is why the check
+        // moved out of `bin/pig`, which cannot know them.
+        $this->assertStringContainsString("No tool called 'raed'", $problem->getMessage());
+        $this->assertStringContainsString('zoo_feed', $problem->getMessage());
+    }
+
+    public function testAPatternThatMatchesNothingIsATypoToo(): void
+    {
+        $problem = $this->assertThrows(
+            CodingAgentError::class,
+            fn (): StartedSession => $this->start([], ['tools' => ['nope_*']]),
+        );
+
+        $this->assertStringContainsString("No tool called 'nope_*'", $problem->getMessage());
+    }
+
+    public function testADisabledExtensionIsNotLoadedAtAll(): void
+    {
+        $this->writeAnExtensionWithThreeTools();
+
+        // `--no-mcp` is this with `pig-mcp`; the mechanism is by name, so the fixture's name does.
+        $started = $this->start([], ['disabledExtensions' => ['zoo']]);
+
+        $this->assertNotContains('zoo_feed', $started->customTools->names());
+        $this->assertSame([], array_filter($started->extensions, static fn ($ext): bool => $ext->name === 'zoo'));
+    }
 }

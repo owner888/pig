@@ -159,8 +159,12 @@ if (isset($options['help'])) {
       -h, --help        this
       --theme <name>    dark or light (default: dark)
       --thinking <l>    off, minimal, low, medium, high, xhigh
-      --tools <list>    which built-in tools the model gets, comma-separated
+      --tools <list>    which tools the model gets, comma-separated; names or patterns
+                        with `*`: `--tools read,codemode,'mcp__gh__*'`
                         (default: read,bash,edit,write; also grep, find, ls)
+      --exclude-tools <list>
+                        take these away, after --tools; names or `*` patterns
+      --no-mcp          do not load the MCP extension: no servers connect, no MCP tools
       --read-only       no edit, write or bash
       --cwd <path>      where to work (default: here)
       -c, --continue    pick up the most recent session here
@@ -422,23 +426,28 @@ if ($modelPatterns === []) {
     exit(1);
 }
 
+// `--tools` and `--exclude-tools` take names or `*` patterns, and which names exist is only
+// known once the custom tools have loaded — so `CodingAgent::session()` is what refuses a typo,
+// by name. The flag's spelling is the command line's business and what it resolves to is the
+// library's, which is `--models`' division too.
 $toolNames = null;
+$excludeTools = null;
 
 if (isset($options['tools'])) {
-    $toolNames = array_values(array_filter(array_map('trim', explode(',', strtolower($options['tools'])))));
-    $unknown = array_values(array_diff($toolNames, ToolSet::ALL));
+    $toolNames = array_values(array_filter(array_map('trim', explode(',', $options['tools']))));
 
     if ($toolNames === []) {
-        fwrite(STDERR, Style::red('--tools needs at least one name: ' . implode(', ', ToolSet::ALL) . ".\n"));
+        fwrite(STDERR, Style::red('--tools needs at least one name or pattern: ' . implode(', ', ToolSet::ALL) . ", …\n"));
 
         exit(1);
     }
+}
 
-    if ($unknown !== []) {
-        fwrite(STDERR, Style::red(
-            'No tool called ' . implode(' or ', array_map(static fn (string $one): string => "'{$one}'", $unknown))
-                . '. There is ' . implode(', ', ToolSet::ALL) . ".\n",
-        ));
+if (isset($options['exclude-tools'])) {
+    $excludeTools = array_values(array_filter(array_map('trim', explode(',', $options['exclude-tools']))));
+
+    if ($excludeTools === []) {
+        fwrite(STDERR, Style::red("--exclude-tools needs at least one name or pattern after it.\n"));
 
         exit(1);
     }
@@ -529,6 +538,9 @@ try {
         models: $modelPatterns,
         extensionPaths: isset($options['extension']) ? [$options['extension']] : null,
         projectTrusted: $projectTrusted,
+        excludeTools: $excludeTools,
+        // `--no-mcp`: upstream's `disabledBuiltinExtensions: ["mcp"]`, by pig's directory name.
+        disabledExtensions: isset($options['no-mcp']) ? ['pig-mcp'] : [],
     );
 } catch (CodingAgentError $error) {
     // Almost always a model name that matches nothing or a missing API key, both worth saying

@@ -149,12 +149,45 @@ final class FooterTest extends TestCase
         file_put_contents($this->cwd . '/.git/HEAD', "ref: refs/heads/main\n");
 
         $session = $this->session();
-        $session->setSessionName('仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms');
+        $session->setSessionName('仿写更新日志规则模板');
 
         $footer = new FooterComponent($session, $this->palette, $this->cwd);
         $topLine = Ansi::strip($footer->render(160)[0]);
 
-        $this->assertStringContainsString('(main) • 仿写更新日志规则模板 • ⚡ 329 tok/s · avg 460 · TTFT 1ms', $topLine);
+        $this->assertStringContainsString('(main) • 仿写更新日志规则模板', $topLine);
+    }
+
+    public function testTheTokenSpeedGoesOnTheTopLineAfterTheNameAndNotOnALineOfItsOwn(): void
+    {
+        mkdir($this->cwd . '/.git', 0o755, true);
+        file_put_contents($this->cwd . '/.git/HEAD', "ref: refs/heads/main\n");
+
+        // `smart-session.php` sends its meter through `setStatus('token-speed', …)` because the
+        // session name no longer carries it — `cleanSessionName()` strips telemetry from what
+        // is written to the file. A third footer line that comes and goes with every turn is
+        // the thing being avoided: the reading belongs after the name, on the line it used
+        // to be on.
+        $session = $this->session();
+        $session->setSessionName('仿写更新日志规则模板');
+
+        $footer = new FooterComponent($session, $this->palette, $this->cwd);
+        $footer->setStatus('token-speed', '⚡ 90.8 tok/s · TTFT 8ms');
+
+        $lines = array_map(Ansi::strip(...), $footer->render(160));
+
+        $this->assertCount(2, $lines, 'no third line for the speed');
+        $this->assertStringContainsString('(main) • 仿写更新日志规则模板 • ⚡ 90.8 tok/s · TTFT 8ms', $lines[0]);
+
+        // Any other key is still a hook's own line, beside it.
+        $footer->setStatus('watcher', '3 files changed');
+        $lines = array_map(Ansi::strip(...), $footer->render(160));
+
+        $this->assertCount(3, $lines);
+        $this->assertSame('3 files changed', $lines[2], 'and the speed is not repeated there');
+
+        // Cleared between turns, the name stands alone again.
+        $footer->setStatus('token-speed', null);
+        $this->assertStringNotContainsString('⚡', Ansi::strip($footer->render(160)[0]));
     }
 
     public function testATooLongPathIsCutFromTheMiddle(): void

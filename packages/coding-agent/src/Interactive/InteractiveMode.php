@@ -29,6 +29,7 @@ use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Logger;
 use Pig\Async\AbortController;
+use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
@@ -1545,7 +1546,7 @@ final class InteractiveMode
         ['diff', 'Show git working tree changes (/diff [--staged])'],
         ['commit', 'Review changes and commit with Conventional Commits message'],
         ['web', 'Browser UI server & daemon (/web [start|stop|status|restart] [port])'],
-        ['login', 'Sign in with a subscription instead of an API key'],
+        ['login', 'Sign in with a subscription or an account instead of an API key'],
         ['logout', 'Forget a sign-in'],
         ['theme', 'Switch themes (dark, light, labra, or custom) (/theme [name])'],
         ['settings', 'Change what is switchable, and see what it is set to'],
@@ -3274,10 +3275,14 @@ final class InteractiveMode
             }
 
             $providers[] = $provider;
+            // Upstream's `oauth-selector.ts` wording: a sign-in that is there is "configured", one
+            // that is not is "not configured", and the kind is "subscription" only for a provider
+            // whose sign-in is backed by one (all three of pig's are; upstream's Radius is not).
+            $kind = $provider->isSubscription() ? 'subscription' : 'account';
             $items[] = new SelectItem(
                 (string) (count($providers) - 1),
                 $provider->available() ? $provider->label() : $this->palette->fg('dim', $provider->label()),
-                $signedIn ? 'signed in' : ($provider->available() ? '' : 'not ported yet'),
+                $signedIn ? "{$kind} configured" : ($provider->available() ? 'not configured' : 'not ported yet'),
             );
         }
 
@@ -3345,13 +3350,29 @@ final class InteractiveMode
                     },
                     // `$allowEmpty` is part of upstream's contract and is enforced by the flow
                     // that asked, not here: an empty answer is `github.com` for Copilot's
-                    // domain prompt and a cancellation for Anthropic's paste box.
-                    fn (string $message, string $placeholder, bool $allowEmpty): ?string
-                        => $this->ui->input($message, $placeholder),
+                    // domain prompt and a cancellation for Anthropic's paste box. The signal is
+                    // the flow's own, for a box that races a browser callback and has to close
+                    // when the callback wins.
+                    fn (string $message, string $placeholder, bool $allowEmpty, ?AbortSignal $closing = null): ?string
+                        => $this->ui->input($message, $placeholder, $closing),
                     function (string $note): void {
                         $this->say($note);
                     },
                     $controller->signal,
+                    // A choice between named ways in — Anthropic's browser-or-copy-code. The
+                    // labels are what the list shows; the id is what comes back.
+                    function (string $title, array $options): ?string {
+                        $labels = array_map(static fn (array $option): string => $option[1], $options);
+                        $picked = $this->ui->select($title, $labels);
+
+                        foreach ($options as [$id, $label]) {
+                            if ($label === $picked) {
+                                return $id;
+                            }
+                        }
+
+                        return null;
+                    },
                 );
 
                 $this->say($credentials === null

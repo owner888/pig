@@ -37,6 +37,12 @@ final class CustomToolSet
     /** Told after the set changed — what re-sets the agent's tools. */
     private ?Closure $changed = null;
 
+    /** `--tools` / `--exclude-tools`, applied to what is here now and to whatever arrives later. */
+    private ?Closure $keep = null;
+
+    /** @var list<LoadedCustomTool> everything adopted, before `$keep` — so a filter set later still sees it */
+    private array $all;
+
     /**
      * @param list<LoadedCustomTool> $tools
      * @param CustomToolApi|null     $api the one the factories were handed, so `withUi()`
@@ -44,7 +50,24 @@ final class CustomToolSet
      */
     public function __construct(array $tools = [], private readonly ?CustomToolApi $api = null)
     {
+        $this->all = $tools;
         $this->tools = $tools;
+    }
+
+    /**
+     * Narrow the set to the tools `$which` says yes to, now and after every later change.
+     *
+     * What `--tools` and `--exclude-tools` reach for. Kept on the set rather than applied once
+     * because an MCP server's tools are adopted after startup, and a filter the agent's
+     * `onChange()` listener had to remember to apply is one it would forget — the shape this
+     * repository calls "wired at one end only".
+     *
+     * @param Closure(string): bool $which given a tool's name
+     */
+    public function keep(Closure $which): void
+    {
+        $this->keep = $which;
+        $this->tools = $this->filtered($this->all);
     }
 
     /**
@@ -90,19 +113,36 @@ final class CustomToolSet
     public function adopt(\Pig\CodingAgent\Extensions\LoadedExtension $extension): void
     {
         $extension->api->onToolsChanged(function (\Pig\CodingAgent\Extensions\ExtensionApi $api) use ($extension): void {
-            $this->tools = array_values(array_filter(
-                $this->tools,
+            $this->all = array_values(array_filter(
+                $this->all,
                 static fn (LoadedCustomTool $one): bool => $one->resolvedPath !== $extension->resolved,
             ));
 
             foreach ($api->tools() as $tool) {
-                $this->tools[] = new LoadedCustomTool($extension->path, $extension->resolved, $tool);
+                $this->all[] = new LoadedCustomTool($extension->path, $extension->resolved, $tool);
             }
+
+            $this->tools = $this->filtered($this->all);
 
             if ($this->changed !== null) {
                 ($this->changed)($this);
             }
         });
+    }
+
+    /**
+     * @param list<LoadedCustomTool> $tools
+     * @return list<LoadedCustomTool>
+     */
+    private function filtered(array $tools): array
+    {
+        $keep = $this->keep;
+
+        if ($keep === null) {
+            return $tools;
+        }
+
+        return array_values(array_filter($tools, static fn (LoadedCustomTool $one): bool => $keep($one->tool->name)));
     }
 
     /** @param Closure(self): void $listener */

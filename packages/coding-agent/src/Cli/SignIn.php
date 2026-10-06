@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Cli;
 use Closure;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Auth;
 use Throwable;
 
@@ -43,6 +44,9 @@ final readonly class SignIn
     The token is kept in the same file `pig` reads — pi's `~/.pi/agent/auth.json` when pi has one,
     and `~/.pig/agent/auth.json` otherwise. `pig` itself has `/login`, which does the same thing; this is
     for a machine with no terminal UI to do it from.
+
+    Anthropic asks which way in first. On a pipe the browser callback cannot be raced against a
+    paste, so pick "copy code" here: open the URL anywhere, then paste the code#state it shows.
 
     TEXT;
 
@@ -157,7 +161,16 @@ final readonly class SignIn
 
                     ($this->say)('');
                 },
-                function (string $message, string $placeholder, bool $mayBeEmpty): ?string {
+                function (string $message, string $placeholder, bool $mayBeEmpty, ?AbortSignal $closing = null): ?string {
+                    // A box that races a browser callback: on a pipe there is nothing to race,
+                    // so a signal already raised means the callback has won and there is nothing
+                    // to ask. One `fgets()` blocks the loop while it waits, so the browser flow
+                    // on this CLI is really the paste half — `pig-ai` is for a machine without a
+                    // terminal UI, which is usually also one without a browser.
+                    if ($closing?->aborted() === true) {
+                        return null;
+                    }
+
                     $answer = ($this->ask)($placeholder === '' ? "{$message}:" : "{$message} ({$placeholder}):");
 
                     // An empty answer means "the default" to a flow that allows one — Copilot
@@ -168,6 +181,25 @@ final readonly class SignIn
                 },
                 function (string $step): void {
                     ($this->say)($step);
+                },
+                null,
+                // A choice between ways in, numbered the way the provider list is.
+                function (string $title, array $options): ?string {
+                    ($this->say)("{$title}:");
+
+                    foreach ($options as $index => [$id, $label]) {
+                        ($this->say)(sprintf('  %d. %s', $index + 1, $label));
+                    }
+
+                    $picked = ($this->ask)('Which one (1-' . count($options) . ')?');
+
+                    if ($picked === null || trim($picked) === '') {
+                        return null;
+                    }
+
+                    $at = (int) $picked - 1;
+
+                    return isset($options[$at]) ? $options[$at][0] : null;
                 },
             );
         } catch (OauthError $problem) {

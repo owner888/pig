@@ -113,6 +113,9 @@ final class RetryTest extends TestCase
         yield 'broken pipe' => ['Broken pipe writing to the socket'];
         yield 'stream cut' => ['stream ended without a stop reason'];
         yield 'overloaded, worded' => ['The model is overloaded, please try again'];
+        // A 200 whose body is a refusal, which some gateways send: no status to read, so the
+        // words are what there is. pi 1.0.1's `retry.ts` added it after #10278.
+        yield 'at capacity, worded' => ['Selected model is at capacity. Please try again later.'];
         yield 'fwrite ssl failed' => ['Write failed: fwrite(): SSL operation failed with code 5. OpenSSL Error messages: error:80000020:system library::Broken pipe'];
         yield 'fwrite ssl code 5' => ['Write failed: fwrite(): SSL operation failed with code 5'];
         yield 'fwrite ssl code 1' => ['Write failed: fwrite(): SSL operation failed with code 1'];

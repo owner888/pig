@@ -32,6 +32,8 @@ final class Overflow
     private const array PATTERNS = [
         // "prompt is too long: 213462 tokens > 200000 maximum"
         ['/prompt is too long/i', 'Anthropic'],
+        // {"code":"1261","message":"Prompt exceeds max length"} — the CN endpoint's wording
+        ['/prompt exceeds max length/i', 'z.ai (CN)'],
         // "Your input exceeds the context window of this model"
         ['/exceeds the context window/i', 'OpenAI, both APIs'],
         // "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)"

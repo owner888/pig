@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
+use Pig\Ai\Utils\Oauth\Anthropic;
 use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Provider;
@@ -495,21 +496,45 @@ final class AuthTest extends TestCase
         $this->assertTrue($this->auth()->has('anthropic'), 'and it is still on disk');
     }
 
+    public function testFreshCredentialsRenewsTheWayApiKeyDoesRatherThanHandingBackTheExpiredHalf(): void
+    {
+        // What `/antigravity.usage` read: `credentials()->access`, which is the stored token as it
+        // stands — an hour after signing in, an expired one, and a 401 from the quota endpoint
+        // that reads as a broken extension. The renewal is `apiKey()`'s and only `apiKey()`'s;
+        // `freshCredentials()` is the same door for a caller that needs the parts apart. Driven
+        // through the refuse-before-a-socket case, which is the one that proves the renewal
+        // path is entered without a provider to talk to.
+        $auth = $this->given('{"anthropic": {"type": "oauth", "refresh": "", "access": "old", "expires": 1}}');
+
+        $this->assertSame('old', $auth->credentials(Provider::Anthropic)?->access, 'the raw read is the stale one');
+        $this->assertThrows(OauthError::class, static fn (): mixed => $auth->freshCredentials(Provider::Anthropic), 'Could not renew');
+    }
+
+    public function testFreshCredentialsIsTheStoredOnesWhileTheyStillHold(): void
+    {
+        $future = (int) (microtime(true) * 1000) + 3600_000;
+        $auth = $this->given('{"anthropic": {"type": "oauth", "refresh": "r", "access": "sk-ant-oat-live", "expires": ' . $future . '}}');
+
+        $this->assertSame('sk-ant-oat-live', $auth->freshCredentials(Provider::Anthropic)?->access);
+        $this->assertNull($auth->freshCredentials(Provider::GithubCopilot));
+    }
+
     // ---- signing in ----------------------------------------------------------------------
 
     public function testSigningInShowsAUrlWithTheChallengeInIt(): void
     {
         $seen = null;
 
-        // Escaping the paste box: nothing came back, so nothing is exchanged, no request is
-        // made, and this is a cancellation rather than a failure — which is why it answers
-        // null instead of throwing.
+        // The copy-code way in, chosen through `$onSelect`. Escaping the paste box: nothing came
+        // back, so nothing is exchanged, no request is made, and this is a cancellation rather
+        // than a failure — which is why it answers null instead of throwing.
         $credentials = $this->auth()->login(
             Provider::Anthropic,
             static function (string $url, ?string $instructions) use (&$seen): void {
                 $seen = $url;
             },
             static fn (string $message, string $placeholder, bool $allowEmpty): ?string => null,
+            onSelect: static fn (string $title, array $options): ?string => Anthropic::METHOD_COPY_CODE,
         );
 
         $this->assertNull($credentials);
@@ -526,9 +551,38 @@ final class AuthTest extends TestCase
             static function (string $url, ?string $instructions): void {
             },
             static fn (string $message, string $placeholder, bool $allowEmpty): ?string => '   ',
+            onSelect: static fn (string $title, array $options): ?string => Anthropic::METHOD_COPY_CODE,
         );
 
         $this->assertNull($credentials);
+    }
+
+    public function testAnthropicAsksWhichWayInFirstAndEscapingThatIsACancellation(): void
+    {
+        $asked = null;
+        $shown = 0;
+
+        $credentials = $this->auth()->login(
+            Provider::Anthropic,
+            static function (string $url, ?string $instructions) use (&$shown): void {
+                $shown++;
+            },
+            static fn (string $message, string $placeholder, bool $allowEmpty): ?string => 'c#s',
+            onSelect: static function (string $title, array $options) use (&$asked): ?string {
+                $asked = $options;
+
+                return null;
+            },
+        );
+
+        // pi 1.0's two methods, browser first because it is the default; escaping the choice
+        // sends nobody anywhere.
+        $this->assertNull($credentials);
+        $this->assertSame(
+            [Anthropic::METHOD_BROWSER, Anthropic::METHOD_COPY_CODE],
+            array_column((array) $asked, 0),
+        );
+        $this->assertSame(0, $shown);
     }
 
     public function testAFlowWithNoClientCredentialsIsRefusedBeforeAUrlIsShown(): void

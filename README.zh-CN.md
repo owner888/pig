@@ -74,7 +74,7 @@ pig
 ```
 
 - **配置 API Key**：启动时通过环境变量传入 `ANTHROPIC_API_KEY=sk-... pig`，或使用 `--api-key <key>` 为当前运行单独设置而不写入磁盘。
-- **订阅账号直接登录**：在对话中输入 `/login`，支持免配置 Key 直接登录 Claude Pro/Max、GitHub Copilot 或 Google Antigravity。凭据自动安全持久化于 `~/.pig/agent/auth.json`（或与 `~/.pi/agent/auth.json` 互通共享）。
+- **订阅账号直接登录**：在对话中输入 `/login`，支持免配置 Key 直接登录 Claude Pro/Max、GitHub Copilot 或 Google Antigravity。Claude 登录与 pi 1.0 一致提供两种方式：浏览器回调到 `localhost:53692`（默认），或在无浏览器的机器上从 Anthropic 页面复制代码粘贴。凭据自动安全持久化于 `~/.pig/agent/auth.json`（或与 `~/.pi/agent/auth.json` 互通共享）。
 - **恢复与续接历史会话**：
   - `pig -c` / `pig --continue`：毫秒级秒开接上当前目录下最新修改的历史会话。
   - `pig -r` / `pig --resume`：唤出带模糊搜索的历史会话选择器。
@@ -194,6 +194,18 @@ Logger::timeEnd('benchmark');
 | `~/.pig/agent/keybindings.json` | 快捷键自定义映射表。 |
 | `~/.pig/agent/themes/` | 自定义主题 JSON 目录（内置 `dark`、`light`、`labra`，支持任意第三方主题）。 |
 | `~/.pig/agent/sessions/` | 遵循标准 `.jsonl` 格式的持久化会话树日志。 |
+
+### 订阅账号登录
+
+在 pig 里输入 `/login`，或在没有终端 UI 的机器上用 `pig-ai login <provider>`。三个提供商，流程均与 pi 1.0.3 一致：
+
+| 提供商 | 方式 | 说明 |
+| :--- | :--- | :--- |
+| **Anthropic（Claude Pro/Max）** | **浏览器**（默认）：pig 监听 `http://localhost:53692/callback`，打开 `claude.ai`，授权码自动回传。同时保留一个粘贴框——浏览器在另一台机器上时，把最终跳转的 URL 粘贴进去即可。**复制代码**（无头机器）：浏览器停在 Anthropic 自己的页面上，显示 `code#state`，复制粘贴。 | 令牌以 Claude Code 的身份发出——`claude-cli` User-Agent、两个 beta 头、工具名按 `Read`/`Bash`/`Edit`/`Write` 拼写——因为 Anthropic 就是把它签发给 Claude Code 的。53692 端口已在 Anthropic 注册，不可更改。 |
+| **GitHub Copilot** | 设备码：pig 显示一个代码，你到 `github.com/login/device` 输入，pig 轮询直到通过。Enterprise 提示处留空即 `github.com`。 | 登录后自动为账号开通 Claude 与 Grok 系列模型。 |
+| **Antigravity** | 浏览器回调 `localhost:51121/oauth-callback`。 | 需要环境变量 `ANTIGRAVITY_CLIENT_ID` / `ANTIGRAVITY_CLIENT_SECRET`，或 `settings.json` 里的 `antigravity.clientId` / `antigravity.clientSecret`；pig 不内置。 |
+
+令牌过期自动续期；文件与 pi 共用，任一工具登录即两边都已登录。`/logout` 可忘记某个登录。
 
 ---
 

@@ -30,6 +30,7 @@ final class ExtensionLoader
     /**
      * @param list<string> $configured extra paths from settings
      * @param list<string> $cliPaths    explicit paths passed on the command line
+     * @param list<string> $disabled    extension names (their directory or file name) not to load
      * @return array{0: list<LoadedExtension>, 1: list<ExtensionError>}
      */
     public static function load(
@@ -39,6 +40,7 @@ final class ExtensionLoader
         ?string $home = null,
         ?Auth $auth = null,
         bool $projectTrusted = true,
+        array $disabled = [],
     ): array {
         $home ??= Config::home();
         $cwd = rtrim($cwd, '/');
@@ -67,6 +69,14 @@ final class ExtensionLoader
             $real = realpath($path) ?: $path;
 
             if (isset($seen[$real])) {
+                continue;
+            }
+
+            // `--no-mcp`: upstream's `disabledBuiltinExtensions: ["mcp"]`. By name, which is the
+            // directory's, so the same switch reaches the copy under `~/.pig/agent/extensions` and
+            // one in the project. Not loaded at all, rather than loaded and told to do nothing —
+            // an extension that connects servers in a fiber has no "do nothing" to be told.
+            if (in_array(self::nameOf($path), $disabled, true)) {
                 continue;
             }
 

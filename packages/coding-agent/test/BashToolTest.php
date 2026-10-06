@@ -401,6 +401,9 @@ final class BashToolTest extends ToolTestCase
         preg_match('#Full output: (\S+\.log)#', $error->getMessage(), $match);
         $this->assertFileExists($match[1]);
         $this->assertSame($total, substr_count((string) file_get_contents($match[1]), "\n"));
+        // Readable by the user alone: the temp directory is shared, and the file holds
+        // whatever the command printed.
+        $this->assertSame(0600, fileperms($match[1]) & 0777);
         unlink($match[1]);
     }
 

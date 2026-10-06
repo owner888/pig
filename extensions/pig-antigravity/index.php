@@ -19,7 +19,10 @@ use Pig\CodingAgent\Hooks\HookContext;
 return function (ExtensionApi $pi): void {
     $getAuthAndToken = static function () use ($pi): ?array {
         $auth = $pi->auth() ?? Auth::discover();
-        $cred = $auth->credentials(Provider::Antigravity);
+        // `freshCredentials()`, not `credentials()`: the stored access token lives an hour, and
+        // reading it raw answered 401 on every command from the second hour on. The renewal is
+        // written back, so the next turn and the next command both see it.
+        $cred = $auth->freshCredentials(Provider::Antigravity);
         if ($cred === null) {
             return null;
         }

@@ -197,9 +197,17 @@ final class Keys
         return self::matches($data, self::ENTER, self::SUPER);
     }
 
+    /**
+     * Alt+Enter — the kitty form only. `\e\r` is *not* read as it, deliberately: it is what
+     * Apple Terminal sends for **Shift+Enter** (measured), as well as what some terminals send
+     * for Alt+Enter, and the two have opposite meanings at a prompt — a new line and "send".
+     * Shift+Enter is the one somebody presses a hundred times a day, so the ambiguous bytes go
+     * to it; Alt+Enter keeps its unambiguous `\e[13;3u`, and `command+enter` is bound to the
+     * same action for a terminal that speaks the protocol. `Editor::isNewLine()` reads `\e\r`.
+     */
     public static function isAltEnter(string $data): bool
     {
-        return $data === "\x1b\r" || self::matches($data, self::ENTER, self::ALT);
+        return self::matches($data, self::ENTER, self::ALT);
     }
 
     public static function isBackspace(string $data): bool
@@ -390,7 +398,9 @@ final class Keys
         $legacy = match (true) {
             $modifier === 0 => $plain,
             $modifier === self::SHIFT && $key === 'tab' => ["\x1b[Z"],
-            $modifier === self::ALT => array_map(static fn (string $raw): string => "\x1b" . $raw, $plain),
+            // Not for Enter: `\e\r` is Apple Terminal's Shift+Enter — see `isAltEnter()`.
+            $modifier === self::ALT && $key !== 'enter' && $key !== 'return'
+                => array_map(static fn (string $raw): string => "\x1b" . $raw, $plain),
             default => [],
         };
 

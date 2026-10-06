@@ -178,6 +178,15 @@ final class ProcessTerminal implements Terminal
     #[\Override]
     public function write(string $data): void
     {
+        // `PIG_TUI_TRACE=<file>`: every byte that goes to the terminal, appended, for reading a
+        // frame back through a VT emulator when what is on screen and what the renderer meant
+        // disagree. Upstream's `PI_TUI_DEBUG=1` is the same idea with a fixed directory.
+        $trace = getenv('PIG_TUI_TRACE');
+
+        if (is_string($trace) && $trace !== '') {
+            file_put_contents($trace, $data, FILE_APPEND);
+        }
+
         $length = strlen($data);
         $written = 0;
         $waited = 0.0;

@@ -14,6 +14,7 @@ use Pig\Ai\Model;
 use Pig\Ai\Pricing;
 use Pig\Ai\Providers\Anthropic;
 use Pig\Ai\Providers\AnthropicOptions;
+use Pig\Ai\Providers\ClaudeCode;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\TextDeltaEvent;
@@ -392,12 +393,79 @@ final class AnthropicTest extends TestCase
         // Anthropic refuses it in `x-api-key`.
         $this->assertStringContainsString('authorization: Bearer sk-ant-oat01-abc', $head);
         $this->assertStringNotContainsString('x-api-key', $head);
-        $this->assertStringContainsString('anthropic-beta: oauth-2025-04-20', $head);
+        // Both betas, Claude Code's first — pi 1.0's `getBetaFeatures()` order, and the one
+        // upstream has sent since January 2026.
+        $this->assertStringContainsString('anthropic-beta: claude-code-20250219,oauth-2025-04-20', $head);
+        // And Claude Code's own user agent and app marker, which the API checks for on a token
+        // it issued to Claude Code.
+        $this->assertStringContainsString('user-agent: claude-cli/' . ClaudeCode::VERSION, $head);
+        $this->assertStringContainsString('x-app: cli', $head);
 
         // And the identity the token was issued to has to be the first thing in the system
         // prompt, ahead of whatever this session's own prompt says.
         $this->assertSame("You are Claude Code, Anthropic's official CLI for Claude.", $body['system'][0]['text']);
         $this->assertSame('be brief', $body['system'][1]['text']);
+    }
+
+    public function testASubscriptionTokensToolsGoOutUnderClaudeCodesNamesAndComeBackUnderPigs(): void
+    {
+        // Claude Code spells its tools `Read`, `Bash`, `Edit`, `Write`; a request on its token
+        // naming them `read` reads as somebody else's. So the declaration, the earlier calls in
+        // the history and the call that comes back are all mapped — the last one back to the
+        // name *this request* declared, so the loop finds the tool it registered.
+        $url = $this->serveStream([
+            ['content_block_start', ['index' => 0, 'content_block' => ['type' => 'tool_use', 'id' => 'toolu_02', 'name' => 'Read']]],
+            ['content_block_delta', ['index' => 0, 'delta' => ['type' => 'input_json_delta', 'partial_json' => '{"path": "b.php"}']]],
+            ['content_block_stop', ['index' => 0]],
+            ['message_delta', ['delta' => ['stop_reason' => 'tool_use'], 'usage' => []]],
+        ]);
+
+        $tools = [
+            new Tool('read', 'Read a file', ['properties' => ['path' => ['type' => 'string']], 'required' => ['path']]),
+            new Tool('bash', 'Run a command', ['properties' => ['command' => ['type' => 'string']], 'required' => ['command']]),
+            new Tool('wc', 'Count lines', ['properties' => [], 'required' => []]),
+        ];
+
+        $final = Async::run(function () use ($url, $tools): ?ToolCall {
+            $final = null;
+            $context = new Context([
+                new UserMessage('hi'),
+                $this->fromAnthropic([new ToolCall('c1', 'bash', ['command' => 'ls'])]),
+                new ToolResultMessage('c1', 'bash', [new TextContent('a.php')], false),
+            ], 'be brief', $tools);
+
+            foreach ($this->anthropic()->stream($this->model($url), $context, new AnthropicOptions(apiKey: 'sk-ant-oat01-abc')) as $event) {
+                if ($event instanceof ToolCallEndEvent) {
+                    $final = $event->toolCall;
+                }
+            }
+
+            return $final;
+        });
+
+        $body = $this->server->receivedJson();
+
+        // Declared under Claude Code's spelling; a tool Claude Code has no name for is left alone.
+        $this->assertSame(['Read', 'Bash', 'wc'], array_column($body['tools'], 'name'));
+        // The call already in the history goes out the same way, or the model is shown a call
+        // to a tool it was never offered.
+        $this->assertSame('Bash', $body['messages'][1]['content'][0]['name']);
+        // And what comes back is pig's name again.
+        $this->assertInstanceOf(ToolCall::class, $final);
+        $this->assertSame('read', $final->name);
+    }
+
+    public function testAnApiKeysToolsKeepTheirOwnNames(): void
+    {
+        $body = $this->sendAndCapture(new Context(
+            [new UserMessage('hi')],
+            null,
+            [new Tool('read', 'Read a file', ['properties' => ['path' => ['type' => 'string']], 'required' => ['path']])],
+        ));
+
+        // The mapping is a fact about the token and nothing else: with an API key the names are
+        // pig's, because that is what the system prompt lists.
+        $this->assertSame(['read'], array_column($body['tools'], 'name'));
     }
 
     public function testAnApiKeyDoesNotClaimToBeClaudeCode(): void
@@ -413,9 +481,11 @@ final class AnthropicTest extends TestCase
 
         $this->assertStringContainsString('x-api-key: test-key', $head);
         $this->assertStringNotContainsString('authorization:', $head);
-        // Sending the beta without the token would be claiming an identity this request has
-        // no right to, and the system block goes with it.
+        // Sending the betas without the token would be claiming an identity this request has
+        // no right to, and the system block, the user agent and the tool names go with it.
         $this->assertStringNotContainsString('oauth-2025-04-20', $head);
+        $this->assertStringNotContainsString('claude-code-20250219', $head);
+        $this->assertStringNotContainsString('claude-cli/', $head);
         $this->assertSame('be brief', $this->server->receivedJson()['system'][0]['text']);
     }
 

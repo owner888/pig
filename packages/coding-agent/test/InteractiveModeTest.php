@@ -79,7 +79,8 @@ final class InteractiveModeTest extends TestCase
     private const string ESC = "\e";
 
     private const string ENTER = "\r";
-    private const string ALT_ENTER = "\e\r";
+    /** The kitty form: `\e\r` is Apple Terminal's Shift+Enter and is a new line. */
+    private const string ALT_ENTER = "\e[13;3u";
     private const string CMD_ENTER = "\x1b[13;9u";
     private const string SHIFT_ENTER = "\x1b[13;2u";
     private const string ALT_UP = "\e[1;3A";
@@ -3407,6 +3408,41 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('Antigravity', $screen);
         $this->assertStringNotContainsString('Google Cloud Code Assist', $screen);
         $this->assertStringNotContainsString('not ported yet', $screen);
+        // pi 1.0's label for a provider with no credential, rather than nothing or "unconfigured".
+        $this->assertStringContainsString('not configured', $screen);
+    }
+
+    public function testChoosingAnthropicAsksWhichWayInAndCopyCodeShowsAUrlThenAPasteBox(): void
+    {
+        $this->start(auth: Auth::inMemory());
+
+        $this->type('/login');
+        $this->type(self::ENTER);
+        $this->type(self::ENTER); // Anthropic, the first row
+        $this->settle();
+
+        // pi 1.0: the browser is the default and copying the code is for a headless machine.
+        $screen = $this->screen();
+        $this->assertStringContainsString('Select Anthropic login method', $screen);
+        $this->assertStringContainsString('Browser login (default)', $screen);
+        $this->assertStringContainsString('Copy code login (headless)', $screen);
+
+        $this->type(self::DOWN);
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // The copy-code way: Anthropic's own page, then a box for what it shows. No loopback
+        // is opened, which is the way that works with the browser on another machine. Words,
+        // not layout — the URL wraps.
+        $screen = $this->screenText();
+        $this->assertStringContainsString('Open this and approve it', $screen);
+        $this->assertStringContainsString('platform.claude.com%2Foauth%2Fcode%2Fcallback', $screen);
+        $this->assertStringContainsString('code#state', $screen);
+
+        $this->type(self::ESCAPE);
+        $this->settle();
+
+        $this->assertStringContainsString('Signing in was cancelled.', $this->screen());
     }
 
     public function testChoosingAFlowWithNoClientCredentialsSaysWhatIsMissing(): void

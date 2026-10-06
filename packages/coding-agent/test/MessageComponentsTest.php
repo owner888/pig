@@ -54,8 +54,14 @@ final class MessageComponentsTest extends TestCase
 
         // A background that stops where the text stops leaves a ragged block, which is
         // the one thing marking where one exchange ended in the scrollback.
+        // The theme's own `userMessageBg`, not a hex written into the test: this asserted
+        // `#343541` and went red the day the palette was aligned with upstream's (`#213b49`),
+        // which is a test of the colour table and not of the component.
+        $bg = ltrim($this->palette->hex('userMessageBg'), '#');
+        [$r, $g, $b] = array_map(hexdec(...), str_split($bg, 2));
+
         foreach (array_slice($lines, 1) as $line) {
-            $this->assertStringContainsString("\e[48;2;52;53;65m", $line);
+            $this->assertStringContainsString("\e[48;2;{$r};{$g};{$b}m", $line);
             $this->assertSame(self::WIDTH, mb_strwidth(Ansi::strip($line)));
         }
     }

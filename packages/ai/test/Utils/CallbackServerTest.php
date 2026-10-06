@@ -265,6 +265,58 @@ final class CallbackServerTest extends TestCase
         $this->assertSame(['code' => 'c', 'state' => 's'], $answer);
     }
 
+    public function testAConnectionThatNeverSaysAnythingDoesNotTakeTheLoopDownWhenTheServerCloses(): void
+    {
+        // What ended a real Claude sign-in: Chrome opens a speculative second connection beside
+        // the callback and never writes to it, so its reader is still armed when the flow's
+        // `finally` closes the server — and a stream closed under an armed watcher is
+        // `Reader r505 watches a closed stream`, out of the loop, with the tokens already in hand.
+        $answer = Async::run(function (): mixed {
+            $this->server->listen();
+
+            Loop::get()->defer(function (): void {
+                $idle = stream_socket_client("tcp://127.0.0.1:{$this->port}", $errno, $errstr, 2.0);
+                self::assertNotFalse($idle, $errstr);
+                stream_set_blocking($idle, false);
+                $this->clients[] = $idle; // connected, silent
+                $this->ask('/oauth2callback?code=c&state=s');
+            });
+
+            $result = $this->server->await();
+            // The flow's `finally`, then the loop goes round again with whatever is still armed.
+            $this->server->close();
+            Async::delay(0.05);
+
+            return $result;
+        });
+
+        $this->assertSame(['code' => 'c', 'state' => 's'], $answer);
+    }
+
+    public function testAConnectionTheBrowserHangsUpOnIsLetGo(): void
+    {
+        // The other half: a preconnect that is opened and closed again before anything is sent.
+        // Its reader fires with EOF and must stop watching, or the loop spins on it.
+        $answer = Async::run(function (): mixed {
+            $this->server->listen();
+
+            Loop::get()->defer(function (): void {
+                $gone = stream_socket_client("tcp://127.0.0.1:{$this->port}", $errno, $errstr, 2.0);
+                self::assertNotFalse($gone, $errstr);
+                fclose($gone);
+                $this->ask('/oauth2callback?code=c&state=s');
+            });
+
+            $result = $this->server->await();
+            Async::delay(0.05);
+            $this->server->close();
+
+            return $result;
+        });
+
+        $this->assertSame(['code' => 'c', 'state' => 's'], $answer);
+    }
+
     // ---- giving up ------------------------------------------------------------------------
 
     public function testTheWaitingCanBeCalledOff(): void

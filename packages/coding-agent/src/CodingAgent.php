@@ -35,6 +35,7 @@ use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Tools\Shell;
+use Pig\CodingAgent\Tools\ToolSelection;
 use Pig\CodingAgent\Tools\ToolSet;
 use Throwable;
 
@@ -153,9 +154,15 @@ final class CodingAgent
      * @param string|null $thinking what `--thinking` said, which beats a `:level` on the model
      * @param string|null $resume   a session file to open, already chosen
      * @param string|null $apiKey   a key for this run only, never written down
-     * @param list<string>|null $tools which built-in tools the model gets, as `ToolSet` names them.
-     *        Null means the default set — upstream's four — and `--read-only` swaps that for the
-     *        read-only four rather than narrowing this one.
+     * @param list<string>|null $tools which tools the model gets — `ToolSet` names, custom tools'
+     *        names, or patterns with `*` in them (`ToolSelection`). Null means the default set —
+     *        upstream's four built-ins plus every custom tool — and `--read-only` swaps the
+     *        built-ins for the read-only four rather than narrowing this one. An MCP tool is kept
+     *        unless an entry starts with `mcp__`, as upstream keeps it.
+     * @param list<string>|null $excludeTools names or patterns to take away, after `$tools`, MCP
+     *        tools included — upstream's `--exclude-tools`
+     * @param list<string> $disabledExtensions bundled extensions not to load this run, by their
+     *        directory name — `pig-mcp` for `--no-mcp`
      * @param list<string>|null $models what `--models` said, already split on commas: the patterns
      *        this session is narrowed to, whose first entry is what it opens on
      * @param bool $projectTrusted whether `<cwd>/.pig/` may be loaded — `ProjectTrust::resolve()`'s
@@ -185,6 +192,8 @@ final class CodingAgent
         ?array $models = null,
         ?array $extensionPaths = null,
         bool $projectTrusted = true,
+        ?array $excludeTools = null,
+        array $disabledExtensions = [],
     ): StartedSession {
         $warnings = [];
 
@@ -334,7 +343,7 @@ final class CodingAgent
 
         $cliExtensions = $extensionPaths ?? [];
         [$loadedExtensions, $extensionProblems] = $withExtensions
-            ? ExtensionLoader::load($cwd, $settings->extensions(), $cliExtensions, auth: $auth, projectTrusted: $projectTrusted)
+            ? ExtensionLoader::load($cwd, $settings->extensions(), $cliExtensions, auth: $auth, projectTrusted: $projectTrusted, disabled: $disabledExtensions)
             : [[], []];
 
         foreach ($extensionProblems as $problem) {
@@ -356,7 +365,18 @@ final class CodingAgent
         // because a model with seven tools spends more of every turn deciding between them, and
         // searching through `bash` with `rg` is what the prompt already tells it to do. pig is a
         // minimal agent: see the rule at the top of this file.
-        $builtIn = $tools ?? ($readOnly ? ToolSet::READ_ONLY : ToolSet::CODING);
+        $selection = $tools === null ? null : new ToolSelection($tools);
+        $excluded = $excludeTools === null ? null : new ToolSelection($excludeTools);
+        $builtIn = $readOnly ? ToolSet::READ_ONLY : ToolSet::CODING;
+
+        if ($selection !== null) {
+            // `--tools` names the whole set: the built-ins it matches, in `ToolSet::ALL`'s order.
+            $builtIn = array_values(array_filter(ToolSet::ALL, $selection->allows(...)));
+        }
+
+        if ($excluded !== null) {
+            $builtIn = array_values(array_filter($builtIn, static fn (string $name): bool => !$excluded->matches($name)));
+        }
 
         // Held onto rather than left to the loader: it is what a mode later hands the UI to, and it
         // is the object every tool factory closed over.
@@ -381,6 +401,25 @@ final class CodingAgent
 
         foreach ($loadedExtensions as $ext) {
             $customTools->adopt($ext);
+        }
+
+        // The same two filters over the custom tools, now and every time an extension changes its
+        // list — an MCP server's tools arrive after startup, and `--exclude-tools 'mcp__gh__*'`
+        // has to reach them then. The filter is kept on the set so `onChange()` need not know.
+        if ($selection !== null || $excluded !== null) {
+            // A `--tools` entry that names nothing anywhere is a typo, and saying so is what
+            // stops `--tools raed` from quietly starting with no tools. Read before the filter is
+            // applied, or the list would be what the typo left.
+            $available = [...ToolSet::ALL, ...$customTools->names()];
+
+            $customTools->keep(static fn (string $name): bool
+                => ($selection === null || $selection->allows($name)) && ($excluded === null || !$excluded->matches($name)));
+
+            foreach ($selection?->unmatched($available) ?? [] as $entry) {
+                throw new CodingAgentError(
+                    "No tool called '{$entry}'. There is " . implode(', ', $available) . '.',
+                );
+            }
         }
 
         $agent = self::create(

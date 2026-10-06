@@ -105,9 +105,74 @@ final class OauthTest extends TestCase
         // how `exchange()` can tell the code came from the request it made.
         $this->assertSame($pkce->verifier, $query['state']);
         $this->assertSame(Anthropic::CLIENT_ID, $query['client_id']);
-        $this->assertSame(Anthropic::REDIRECT_URI, $query['redirect_uri']);
+        // With no redirect named, the copy-code page: the URL a paste comes back from.
+        $this->assertSame(Anthropic::COPY_CODE_REDIRECT_URI, $query['redirect_uri']);
         $this->assertSame(Anthropic::SCOPES, $query['scope']);
         $this->assertSame('code', $query['response_type']);
+    }
+
+    public function testTheEndpointsAndScopesArePiOnePointZeros(): void
+    {
+        // The anchor had `console.anthropic.com` and three scopes. pi 1.0 moved both to
+        // `platform.claude.com` — the old callback page is a 301 to the new one, measured — and
+        // asks for six scopes, three of which a token minted under the old three does not carry.
+        $this->assertSame('https://platform.claude.com/v1/oauth/token', Anthropic::TOKEN_URL);
+        $this->assertSame('https://platform.claude.com/oauth/code/callback', Anthropic::COPY_CODE_REDIRECT_URI);
+
+        foreach (['user:sessions:claude_code', 'user:mcp_servers', 'user:file_upload', 'user:inference'] as $scope) {
+            $this->assertStringContainsString($scope, Anthropic::SCOPES);
+        }
+
+        // The browser flow's loopback, registered with Anthropic for this client id.
+        $this->assertSame('http://localhost:53692/callback', Anthropic::callbackRedirectUri());
+    }
+
+    public function testTheBrowserFlowsUrlNamesTheLoopback(): void
+    {
+        $url = Anthropic::authorizeUrl(Pkce::create(), 'http://localhost:53692/callback');
+        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+
+        $this->assertSame('http://localhost:53692/callback', $query['redirect_uri']);
+    }
+
+    // ---- what somebody pasted, in every shape it arrives in -----------------------------
+
+    /** @return iterable<string, array{0: string, 1: ?string, 2: ?string}> */
+    public static function pastes(): iterable
+    {
+        yield 'code#state' => ['abc#xyz', 'abc', 'xyz'];
+        yield 'the whole redirect URL' => ['http://localhost:53692/callback?code=abc&state=xyz', 'abc', 'xyz'];
+        yield 'a redirect URL with only a code' => ['http://localhost:53692/callback?code=abc', 'abc', null];
+        yield 'a bare query string' => ['code=abc&state=xyz', 'abc', 'xyz'];
+        yield 'just the code' => ['abc', 'abc', null];
+        yield 'whitespace around it' => ["  abc#xyz\n", 'abc', 'xyz'];
+        yield 'nothing' => ['   ', null, null];
+        yield 'half a paste' => ['abc#', 'abc', null];
+    }
+
+    #[DataProvider('pastes')]
+    public function testEveryShapeOfPasteIsReadTheSameWay(string $input, ?string $code, ?string $state): void
+    {
+        // Upstream's `parseAuthorizationInput()`: the browser flow's box takes the redirect URL
+        // out of the address bar, the copy-code page shows `code#state`, and a paste that lost
+        // its end is a bare code — which `exchange()` then refuses by name.
+        $this->assertSame(['code' => $code, 'state' => $state], Anthropic::parseAuthorizationInput($input));
+    }
+
+    public function testAPastedStateThatIsNotTheVerifierIsRefused(): void
+    {
+        $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 60]);
+
+        // The state is the verifier, so a code with somebody else's state on it did not come
+        // from the request this pig made. Upstream throws "OAuth state mismatch" here too.
+        $problem = $this->assertThrows(
+            OauthError::class,
+            fn (): mixed => $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))
+                ->exchange('c#somebody-elses', 'the-verifier')),
+        );
+
+        $this->assertStringContainsString('wrong state', $problem->getMessage());
+        $this->assertSame('', $this->server->received(), 'and nothing was sent');
     }
 
     // ---- redeeming what was pasted ------------------------------------------------------
@@ -116,16 +181,17 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['access_token' => 'sk-ant-oat-x', 'refresh_token' => 'r1', 'expires_in' => 3600]);
 
+        // The state *is* the verifier, so a paste whose state matches is the only one accepted.
         $credentials = $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))
-            ->exchange('the-code#the-state', 'the-verifier'));
+            ->exchange('the-code#the-verifier', 'the-verifier'));
 
         $sent = $this->server->receivedJson();
 
         $this->assertSame('authorization_code', $sent['grant_type']);
         $this->assertSame('the-code', $sent['code']);
-        $this->assertSame('the-state', $sent['state']);
+        $this->assertSame('the-verifier', $sent['state']);
         $this->assertSame('the-verifier', $sent['code_verifier']);
-        $this->assertSame(Anthropic::REDIRECT_URI, $sent['redirect_uri']);
+        $this->assertSame(Anthropic::COPY_CODE_REDIRECT_URI, $sent['redirect_uri']);
 
         $this->assertSame('sk-ant-oat-x', $credentials->access);
         $this->assertSame('r1', $credentials->refresh);
@@ -135,12 +201,12 @@ final class OauthTest extends TestCase
     {
         $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 60]);
 
-        $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->exchange("  c#s\n", 'v'));
+        $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->exchange("  c#v\n", 'v'));
 
         // A code pasted out of a terminal arrives with a newline on it about half the time,
         // and a trailing newline inside the code is a 400 that says `invalid_grant`.
         $this->assertSame('c', $this->server->receivedJson()['code']);
-        $this->assertSame('s', $this->server->receivedJson()['state']);
+        $this->assertSame('v', $this->server->receivedJson()['state']);
     }
 
     public function testHalfAPasteIsRefusedBeforeAnythingIsSent(): void
@@ -159,12 +225,129 @@ final class OauthTest extends TestCase
         $this->assertSame('', $this->server->received());
     }
 
+    // ---- the browser flow: the callback and the paste box race -----------------------------
+
+    public function testTheBrowserFlowTakesTheCodeOffTheSocketAndClosesThePasteBox(): void
+    {
+        $port = self::freePort();
+        $server = new CallbackServer($port, Anthropic::CALLBACK_PATH, 'Anthropic');
+        $url = $this->serve(['access_token' => 'sk-ant-oat-b', 'refresh_token' => 'r', 'expires_in' => 3600]);
+        $shown = null;
+        $boxClosed = false;
+
+        $credentials = $this->onTheLoop(function () use ($url, $server, $port, &$shown, &$boxClosed): ?Credentials {
+            return (new Anthropic(new HttpClient(), $url, $server))->loginWithBrowser(
+                static function (string $u, ?string $i) use (&$shown, $port): void {
+                    $shown = $u;
+                    // The browser: the redirect lands on the loopback with the state the URL
+                    // carried, which is the verifier.
+                    parse_str((string) parse_url($u, PHP_URL_QUERY), $query);
+                    Loop::get()->defer(static function () use ($port, $query): void {
+                        self::pretendBrowser($port, "/callback?code=from-the-browser&state={$query['state']}");
+                    });
+                },
+                // The paste box, parked until something closes it. When the callback wins it is
+                // told to, and answers null — a box left open over a finished sign-in is the
+                // bug this closes.
+                static function (string $m, string $p, bool $e, $closing) use (&$boxClosed): ?string {
+                    $parked = new \Pig\Async\Deferred();
+                    $closing->onAbort(static function () use ($parked, &$boxClosed): void {
+                        $boxClosed = true;
+                        if (!$parked->isComplete()) {
+                            $parked->complete(null);
+                        }
+                    });
+
+                    return $parked->future->await();
+                },
+            );
+        });
+
+        $this->assertNotNull($credentials);
+        $this->assertSame('sk-ant-oat-b', $credentials->access);
+        $this->assertTrue($boxClosed, 'the paste box was closed when the callback won');
+        $this->assertStringContainsString("localhost%3A{$port}%2Fcallback", (string) $shown, 'the URL names the loopback');
+
+        $sent = $this->server->receivedJson();
+        $this->assertSame('from-the-browser', $sent['code']);
+        $this->assertSame("http://localhost:{$port}/callback", $sent['redirect_uri']);
+    }
+
+    public function testTheBrowserFlowTakesAPastedRedirectUrlWhenTheBrowserIsElsewhere(): void
+    {
+        $port = self::freePort();
+        $server = new CallbackServer($port, Anthropic::CALLBACK_PATH, 'Anthropic');
+        $url = $this->serve(['access_token' => 'sk-ant-oat-p', 'refresh_token' => 'r', 'expires_in' => 3600]);
+
+        $credentials = $this->onTheLoop(function () use ($url, $server): ?Credentials {
+            $verifier = null;
+
+            return (new Anthropic(new HttpClient(), $url, $server))->loginWithBrowser(
+                static function (string $u, ?string $i) use (&$verifier): void {
+                    parse_str((string) parse_url($u, PHP_URL_QUERY), $query);
+                    $verifier = $query['state'];
+                },
+                // Nothing reaches the socket; the person brings the redirect URL back by hand.
+                static fn (string $m, string $p, bool $e, $closing): ?string
+                    => "http://localhost:53692/callback?code=pasted-code&state={$verifier}",
+            );
+        });
+
+        $this->assertNotNull($credentials);
+        $this->assertSame('pasted-code', $this->server->receivedJson()['code']);
+    }
+
+    public function testEscapingTheBrowserFlowsPasteBoxIsACancellation(): void
+    {
+        $port = self::freePort();
+        $server = new CallbackServer($port, Anthropic::CALLBACK_PATH, 'Anthropic');
+        $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 60]);
+
+        $credentials = $this->onTheLoop(fn (): ?Credentials => (new Anthropic(new HttpClient(), $url, $server))->loginWithBrowser(
+            static function (string $u, ?string $i): void {
+            },
+            static fn (string $m, string $p, bool $e, $closing): ?string => null,
+        ));
+
+        $this->assertNull($credentials);
+        $this->assertSame('', $this->server->received(), 'nothing was exchanged');
+    }
+
+    public function testACallbackWithTheWrongStateIsRefusedByTheBrowserFlowToo(): void
+    {
+        $port = self::freePort();
+        $server = new CallbackServer($port, Anthropic::CALLBACK_PATH, 'Anthropic');
+        $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 60]);
+
+        $problem = $this->assertThrows(OauthError::class, function () use ($url, $server, $port): void {
+            $this->onTheLoop(fn (): ?Credentials => (new Anthropic(new HttpClient(), $url, $server))->loginWithBrowser(
+                static function (string $u, ?string $i) use ($port): void {
+                    Loop::get()->defer(static function () use ($port): void {
+                        self::pretendBrowser($port, '/callback?code=c&state=not-the-verifier');
+                    });
+                },
+                static function (string $m, string $p, bool $e, $closing): ?string {
+                    $parked = new \Pig\Async\Deferred();
+                    $closing->onAbort(static function () use ($parked): void {
+                        if (!$parked->isComplete()) {
+                            $parked->complete(null);
+                        }
+                    });
+
+                    return $parked->future->await();
+                },
+            ));
+        });
+
+        $this->assertStringContainsString('wrong state', $problem->getMessage());
+    }
+
     public function testTheExpiryHasTheSafetyMarginTakenOffIt(): void
     {
         $url = $this->serve(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 3600]);
 
         $before = (int) (microtime(true) * 1000);
-        $credentials = $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->exchange('c#s', 'v'));
+        $credentials = $this->onTheLoop(fn (): Credentials => (new Anthropic(new HttpClient(), $url))->exchange('c#v', 'v'));
 
         // An hour, less the five minutes upstream subtracts. A token that expires in flight
         // fails the request it was attached to rather than the next one.

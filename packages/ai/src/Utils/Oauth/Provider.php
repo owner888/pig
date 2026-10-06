@@ -59,6 +59,22 @@ enum Provider: string
      * No `default`, like `refresh()` and `apiKey()`: an enum is closed, so a new case is a
      * `match` that stops rather than a silent `true`.
      */
+    /**
+     * Whether this sign-in is backed by a subscription, or is an account somebody has.
+     *
+     * Upstream's `isSubscription` on each `OAuthAuth`: Anthropic's and Copilot's say so, and the
+     * label in `/login` reads "subscription" for them and "account" for the rest. A table, like
+     * `available()`, so a new case stops the `match` instead of defaulting either way.
+     */
+    public function isSubscription(): bool
+    {
+        return match ($this) {
+            self::Anthropic => true,
+            self::GithubCopilot => true,
+            self::Antigravity => true,
+        };
+    }
+
     public function available(): bool
     {
         return match ($this) {

@@ -23,7 +23,9 @@ final class KeysTest extends TestCase
 
         // Enter: 13, Alt: modifier bit 2, value 3 -> \e[13;3u
         $this->assertTrue(Keys::isAltEnter("\x1b[13;3u"));
-        $this->assertTrue(Keys::isAltEnter("\x1b\r"));
+        // `\e\r` is Apple Terminal's Shift+Enter, measured, so it is not Alt+Enter here —
+        // read as one, it took the follow-up key and sent the prompt instead of breaking the line.
+        $this->assertFalse(Keys::isAltEnter("\x1b\r"));
     }
 
     public function testMatchesNameSupportsCommandAndShiftCombinations(): void
@@ -35,6 +37,7 @@ final class KeysTest extends TestCase
 
         $this->assertTrue(Keys::matchesName("\x1b[13;2u", 'shift+enter'));
         $this->assertTrue(Keys::matchesName("\x1b[13;3u", 'alt+enter'));
-        $this->assertTrue(Keys::matchesName("\x1b\r", 'alt+enter'));
+        $this->assertFalse(Keys::matchesName("\x1b\r", 'alt+enter'), "Apple Terminal's Shift+Enter");
+        $this->assertTrue(Keys::matchesName("\x1bx", 'alt+x'), 'the ESC-prefix form still holds for letters');
     }
 }

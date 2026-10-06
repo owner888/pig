@@ -43,6 +43,31 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.56] - 2026-10-06
+
+### New Features
+
+- **Anthropic sign-in brought up to pi 1.0.3** — `/login` with Claude Pro/Max now asks which way in: a browser that comes back to a loopback on `localhost:53692/callback` (the default), with the paste box open beside it for a browser on another machine; or copying the code off Anthropic's page for a headless setup. The endpoints are `platform.claude.com` (the anchor's `console.anthropic.com` callback page is a 301 to it), the scopes are pi's six, and a token goes out as Claude Code's: both betas (`claude-code-20250219,oauth-2025-04-20`), `user-agent: claude-cli/2.1.280`, `x-app: cli`, and tool names spelled Claude Code's way (`read` → `Read`) on the way out and mapped back on the way in (`Pig\Ai\Providers\ClaudeCode`).
+- **`--tools` takes `*` patterns and `--exclude-tools` takes them away** — `--tools read,codemode,'mcp__gh__*'`, as pi does. An MCP tool is kept unless an entry starts with `mcp__`, so `--tools read` does not silently disconnect every server; `--exclude-tools` has no such exception. A typo (`--tools raed`) is refused by name with the whole list, custom tools included, which is why the check moved from `bin/pig` into `CodingAgent::session()`. The filter is kept on `CustomToolSet` so a server connecting after startup is filtered too (`CustomToolSet::keep()`, `Tools\ToolSelection`).
+- **`--no-mcp`** — start without loading the MCP extension at all (`ExtensionLoader::load(disabled:)`, by directory name).
+
+### Changed
+
+- The token-speed meter (`⚡ 90.8 tok/s · TTFT 8ms`) is drawn on the footer's top line after the session name — `~/pig (main) • <name> • ⚡ …` — rather than as a third footer line that appeared and vanished with every turn. `FooterComponent` treats the `token-speed` status key as inline; every other key still gets the hooks' own line.
+- `/login` and `/logout` label a provider as `not configured` or `subscription configured`, pi 1.0's wording (`Oauth\Provider::isSubscription()`).
+- A pasted authorization code is accepted in every shape pi accepts: the whole redirect URL, a `code=…&state=…` query, `code#state`, or a bare code; and a pasted state that is not the verifier is refused (`Anthropic::parseAuthorizationInput()`).
+- `Oauth\CallbackServer` names the provider it listens for in its two messages, since Anthropic's flow uses it as well as Google's.
+
+### Fixed
+
+- The Claude browser sign-in no longer crashes pig once the tokens have arrived: a browser's speculative second connection, never written to, was closed under an armed reader (`Reader r505 watches a closed stream`). `CallbackServer::close()` cancels every reader before closing, and a reader at EOF lets its connection go.
+- `/antigravity.usage`, `/antigravity.models`, `/antigravity.image` and the rest of the Antigravity extension's commands answered `401 Request had invalid authentication credentials` from the second hour after signing in: they read the stored access token raw, and only `Auth::apiKey()` knew to renew an expired one. `Auth::freshCredentials()` is that renewal for a caller that needs the token and the project apart, and the extension goes through it.
+- `Selected model is at capacity` is retried rather than ending the turn (pi 1.0.1, #10278).
+- z.ai's CN endpoint's `Prompt exceeds max length` is recognised as a context overflow and compacted rather than retried (pi 0.99.2, #10208).
+- The file a truncated command's output is spilled to is readable by the user alone (`0600`), as pi 1.0.3 makes its output files.
+- Shift+Enter in Apple Terminal sent the prompt instead of breaking the line. That terminal sends `\e\r` for Shift+Enter (measured), which `Keys::isAltEnter()` also accepted as Alt+Enter's legacy form — so `app.message.followUp` claimed the key before the editor saw it. `\e\r` is a new line now; Alt+Enter is its kitty form `\e[13;3u` only, and `command+enter` is bound to the same follow-up action.
+- The screen no longer scrolls up by the number of rows the frame shrank by at the end of every turn, which left blank rows under the footer. The erase of vanished rows moves the cursor down with `\e[B` rather than `\r\n` — a newline on the terminal's last row scrolls. Measured on a real pty through a VT emulator (`PIG_TUI_TRACE=<file>` records every byte written to the terminal, for exactly this).
+
 ## [0.3.55] - 2026-10-05
 
 ### Added

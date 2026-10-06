@@ -81,6 +81,10 @@ final class Anthropic
     ): void {
         $builder = new AssistantMessageBuilder($model);
         $signal = $options?->signal;
+        // A subscription token's tools go out under Claude Code's names and come back under
+        // them too, so the name on a `tool_use` block is mapped back to the tool this request
+        // declared. Decided once here, because `dispatch()` has no options to ask.
+        $tools = ClaudeCode::isToken($options?->apiKey ?? '') ? $context->tools : [];
 
         try {
             $response = $this->http->send($this->request($model, $context, $options), $signal);
@@ -94,7 +98,7 @@ final class Anthropic
 
             foreach ($response->body as $chunk) {
                 foreach ($parser->feed($chunk) as $event) {
-                    $this->dispatch($event, $builder, $stream);
+                    $this->dispatch($event, $builder, $stream, $tools);
                 }
             }
 
@@ -113,7 +117,8 @@ final class Anthropic
         }
     }
 
-    private function dispatch(SseEvent $event, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream): void
+    /** @param list<Tool> $tools the request's tools when they went out under Claude Code's names, else empty */
+    private function dispatch(SseEvent $event, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array $tools = []): void
     {
         $data = json_decode($event->data, true);
 
@@ -123,7 +128,7 @@ final class Anthropic
 
         match ($event->type) {
             'message_start' => $this->onMessageStart($data, $builder),
-            'content_block_start' => $this->onBlockStart($data, $builder, $stream),
+            'content_block_start' => $this->onBlockStart($data, $builder, $stream, $tools),
             'content_block_delta' => $this->onBlockDelta($data, $builder, $stream),
             'content_block_stop' => $this->onBlockStop($data, $builder, $stream),
             'message_delta' => $this->onMessageDelta($data, $builder),
@@ -140,8 +145,11 @@ final class Anthropic
         $builder->setUsage(self::update(new Usage(), $data['message']['usage'] ?? []));
     }
 
-    /** @param array<string, mixed> $data */
-    private function onBlockStart(array $data, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream): void
+    /**
+     * @param array<string, mixed> $data
+     * @param list<Tool> $tools
+     */
+    private function onBlockStart(array $data, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array $tools = []): void
     {
         $wire = (int) ($data['index'] ?? 0);
         $block = $data['content_block'] ?? [];
@@ -150,7 +158,11 @@ final class Anthropic
             'text' => $stream->push(new TextStartEvent($builder->startText($wire), $builder->snapshot())),
             'thinking' => $stream->push(new ThinkingStartEvent($builder->startThinking($wire), $builder->snapshot())),
             'tool_use' => $stream->push(new ToolCallStartEvent(
-                $builder->startToolCall($wire, (string) ($block['id'] ?? ''), (string) ($block['name'] ?? '')),
+                $builder->startToolCall(
+                    $wire,
+                    (string) ($block['id'] ?? ''),
+                    ClaudeCode::nameIn((string) ($block['name'] ?? ''), $tools),
+                ),
                 $builder->snapshot(),
             )),
             default => null,
@@ -297,8 +309,9 @@ final class Anthropic
     private function request(Model $model, Context $context, ?AnthropicOptions $options): Request
     {
         $apiKey = $options?->apiKey ?? '';
-        // An OAuth token authenticates as Claude Code and goes in a bearer header instead.
-        $isOAuth = str_contains($apiKey, 'sk-ant-oat');
+        // A subscription token authenticates as Claude Code: a bearer header, Claude Code's
+        // user agent, and the two betas in front — see `ClaudeCode`.
+        $isOAuth = ClaudeCode::isToken($apiKey);
 
         $beta = [self::FINE_GRAINED_STREAMING];
 
@@ -307,7 +320,7 @@ final class Anthropic
         }
 
         if ($isOAuth) {
-            array_unshift($beta, 'oauth-2025-04-20');
+            $beta = [...ClaudeCode::BETAS, ...$beta];
         }
 
         $headers = [
@@ -315,7 +328,7 @@ final class Anthropic
             'content-type' => 'application/json',
             'anthropic-version' => self::VERSION,
             'anthropic-beta' => implode(',', $beta),
-            ...($isOAuth ? ['authorization' => "Bearer {$apiKey}"] : ['x-api-key' => $apiKey]),
+            ...($isOAuth ? ClaudeCode::headers($apiKey) : ['x-api-key' => $apiKey]),
             ...$model->headers,
         ];
 
@@ -344,7 +357,7 @@ final class Anthropic
     {
         $body = [
             'model' => $model->id,
-            'messages' => $this->messages($context, $model),
+            'messages' => $this->messages($context, $model, $isOAuth),
             'max_tokens' => $options?->maxTokens ?? intdiv($model->maxTokens, 3),
             'stream' => true,
         ];
@@ -360,7 +373,7 @@ final class Anthropic
         }
 
         if ($context->tools !== []) {
-            $body['tools'] = array_map($this->tool(...), $context->tools);
+            $body['tools'] = array_map(fn (Tool $tool): array => $this->tool($tool, $isOAuth), $context->tools);
         }
 
         if (($options?->thinkingEnabled ?? false) && $model->reasoning) {
@@ -390,7 +403,7 @@ final class Anthropic
 
         // An OAuth token is Claude Code's, and Anthropic requires the matching identity.
         if ($isOAuth) {
-            $blocks[] = $this->cachedText("You are Claude Code, Anthropic's official CLI for Claude.");
+            $blocks[] = $this->cachedText(ClaudeCode::IDENTITY);
         }
 
         if ($context->systemPrompt !== null && $context->systemPrompt !== '') {
@@ -407,10 +420,10 @@ final class Anthropic
     }
 
     /** @return array<string, mixed> */
-    private function tool(Tool $tool): array
+    private function tool(Tool $tool, bool $isOAuth): array
     {
         return [
-            'name' => $tool->name,
+            'name' => $isOAuth ? ClaudeCode::nameOut($tool->name) : $tool->name,
             'description' => $tool->description,
             'input_schema' => [
                 'type' => 'object',
@@ -433,7 +446,7 @@ final class Anthropic
      *
      * @return list<array<string, mixed>>
      */
-    private function messages(Context $context, Model $model): array
+    private function messages(Context $context, Model $model, bool $isOAuth = false): array
     {
         $out = [];
         $messages = TransformMessages::apply($context->messages, $model);
@@ -453,7 +466,7 @@ final class Anthropic
             }
 
             if ($message instanceof AssistantMessage) {
-                $blocks = $this->assistantBlocks($message);
+                $blocks = $this->assistantBlocks($message, $isOAuth);
 
                 if ($blocks !== []) {
                     $out[] = ['role' => 'assistant', 'content' => $blocks];
@@ -504,7 +517,7 @@ final class Anthropic
     }
 
     /** @return list<array<string, mixed>> */
-    private function assistantBlocks(AssistantMessage $message): array
+    private function assistantBlocks(AssistantMessage $message, bool $isOAuth = false): array
     {
         $blocks = [];
 
@@ -540,7 +553,8 @@ final class Anthropic
                 $blocks[] = [
                     'type' => 'tool_use',
                     'id' => $this->toolCallId($content->id),
-                    'name' => $content->name,
+                    // The name the model saw it declared under, or it answers "unknown tool".
+                    'name' => $isOAuth ? ClaudeCode::nameOut($content->name) : $content->name,
                     'input' => $content->arguments === [] ? new \stdClass() : $content->arguments,
                 ];
             }

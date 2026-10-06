@@ -248,6 +248,11 @@ final class Run
                 return;
             }
 
+            // Readable by the user alone, as pi 1.0.3 makes its output files: a command's
+            // output is whatever the command printed, which on a bad day is a `.env`, and the
+            // temp directory is shared. Set before the first byte goes in rather than after.
+            chmod($path, 0600);
+
             $this->spillPath = $path;
             $this->spill = $handle;
             // Everything seen so far, so the file holds the whole output and not just
