@@ -4140,7 +4140,10 @@ final class InteractiveMode
                         break;
                     }
                 }
-                if (!$hasContent) {
+                // The assistant component itself renders an error message for a failed turn. This
+                // fallback is only for a malformed event stream that never opened a component;
+                // otherwise the same provider failure is printed twice.
+                if (!$hasContent && $this->streaming === null) {
                     $this->sayError($said);
                 }
 

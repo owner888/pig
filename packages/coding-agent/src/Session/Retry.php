@@ -146,9 +146,9 @@ final class Retry
      * its own that pig does not have — the policy is the right place for it here, because pig has
      * one retry and it is this one.
      *
-     * Three shapes, upstream's three, and they are Google's prose rather than a header: `Your
-     * quota will reset after 18h31m10s`, `Please retry in 250ms`, and a `retryDelay` field in the
-     * error body. Anything else answers null and gets the doubling.
+     * Four shapes, upstream's three plus Antigravity's: `Your quota will reset after 18h31m10s`,
+     * `Resets in 13h58m52s`, `Please retry in 250ms`, and a `retryDelay` field in the error body.
+     * Anything else answers null and gets the doubling.
      *
      * **A second is added**, as upstream adds it: coming back at the exact moment a quota resets
      * is a coin toss between two clocks, and losing it costs the attempt.
@@ -172,8 +172,9 @@ final class Retry
 
     public static function statedDelay(string $error): ?float
     {
-        // "Your quota will reset after 18h31m10s" — hours and minutes optional, seconds not.
-        if (preg_match('/reset after (?:(\d+)h)?(?:(\d+)m)?(\d+(?:\.\d+)?)s/i', $error, $match) === 1) {
+        // "Your quota will reset after 18h31m10s" and Antigravity's "Resets in 13h58m52s" —
+        // hours and minutes optional, seconds not.
+        if (preg_match('/reset(?:s)? (?:after|in) (?:(\d+)h)?(?:(\d+)m)?(\d+(?:\.\d+)?)s/i', $error, $match) === 1) {
             $seconds = ((int) ($match[1] ?: 0) * 60 + (int) ($match[2] ?: 0)) * 60 + (float) $match[3];
 
             return $seconds > 0 ? $seconds + 1 : null;

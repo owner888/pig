@@ -2300,8 +2300,9 @@ final class InteractiveModeTest extends TestCase
 
         $screen = $this->screen();
 
+        $this->assertStringContainsString('[compaction]', $screen);
         $this->assertStringContainsString('Compacted', $screen);
-        $this->assertStringContainsString('earlier messages summarised', $screen);
+        $this->assertStringContainsString('earlier messages', $screen);
 
         // Collapsed by default: the summary is long, and the transcript above it is what
         // the person was reading.
@@ -3099,6 +3100,22 @@ final class InteractiveModeTest extends TestCase
         // either way — in the editor rather than in the transcript — so asserting on it is an
         // assertion that cannot fail. What only happens if the turn ran is the reply.
         $this->assertStringContainsString('and one more', $this->screen());
+    }
+
+    public function testAQuotaErrorIsShownOnceInTheActionableWords(): void
+    {
+        $raw = 'antigravity is out of quota (429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 13h58m52s.';
+        $expected = 'Quota reached. Please wait 13h58m52s. Next: switch models or try again after reset.';
+
+        $this->start(answers: [self::failed($raw)]);
+        $this->type('hi');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $screen = $this->screenText();
+        $this->assertStringContainsString($expected, $screen);
+        $this->assertSame(1, substr_count($screen, $expected));
+        $this->assertStringNotContainsString('antigravity is out of quota', $screen);
     }
 
     public function testEscapeStopsTheRetryTheScreenSaysItCanStop(): void

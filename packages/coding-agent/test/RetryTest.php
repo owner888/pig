@@ -234,6 +234,7 @@ final class RetryTest extends TestCase
             ['google returned 429: Your quota will reset after 39s', 40.0],
             ['google returned 429: Your quota will reset after 10m15s', 616.0],
             ['google returned 429: Your quota will reset after 18h31m10s', 66_671.0],
+            ['antigravity is out of quota (429): Individual quota reached. Resets in 13h58m52s.', 50_333.0],
             ['google returned 429: Please retry in 12.5s', 13.5],
             ['google returned 429: Please retry in 250ms', 1.25],
             ['google returned 429: {"error":{"details":[{"retryDelay":"34.074824224s"}]}}', 35.074824224],
@@ -260,6 +261,10 @@ final class RetryTest extends TestCase
         $this->assertSame(
             'Quota reached. Please wait 15h7m17s. Next: switch models or try again after reset.',
             Retry::quotaMessage('antigravity is out of quota (429): Your quota will reset after 15h7m17s'),
+        );
+        $this->assertSame(
+            'Quota reached. Please wait 13h58m52s. Next: switch models or try again after reset.',
+            Retry::quotaMessage('antigravity is out of quota (429): Individual quota reached. Resets in 13h58m52s.'),
         );
     }
 
