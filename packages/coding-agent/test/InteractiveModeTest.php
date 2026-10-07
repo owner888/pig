@@ -4307,4 +4307,86 @@ final class InteractiveModeTest extends TestCase
             putenv('PIG_TUI_MODE');
         }
     }
+
+    public function testSwitchingTuiModeMovesTheSameTreeAndListenersToTheNewRenderer(): void
+    {
+        // Upstream's `switchTuiMode()`: the transcript, the focus and an extension's terminal
+        // listener all carry over, and what components hold keeps working.
+        putenv('PIG_TUI_MODE=fullscreen');
+        try {
+            $this->start(['first answer']);
+            $this->assertInstanceOf(TuiAltScreen::class, $this->mode->screen());
+
+            $heard = [];
+            $ui = (new \ReflectionProperty($this->mode, 'ui'))->getValue($this->mode);
+            $ui->onTerminalInput(static function (string $data) use (&$heard): null {
+                $heard[] = $data;
+
+                return null;
+            });
+
+            $this->type('hello');
+            $this->type(self::ENTER);
+            $this->settle();
+
+            $switch = new \ReflectionMethod($this->mode, 'switchTuiMode');
+            $this->assertTrue($switch->invoke($this->mode, 'regular'));
+            $this->settle();
+
+            $this->assertInstanceOf(\Pig\Tui\TuiMainScreen::class, $this->mode->screen());
+            $this->assertStringContainsString('first answer', $this->screen());
+            $this->type('x');
+            $this->settle();
+            $this->assertContains('x', $heard, 'the listener was moved to the new renderer');
+            $this->assertStringContainsString('x', $this->screen(), 'the editor still has the focus');
+
+            $this->assertTrue($switch->invoke($this->mode, 'fullscreen'));
+            $this->settle();
+            $tui = $this->mode->screen();
+            $this->assertInstanceOf(TuiAltScreen::class, $tui);
+            $this->assertStringContainsString('first answer', implode("\n", array_map(Ansi::strip(...), $tui->getScreenLines())));
+        } finally {
+            putenv('PIG_TUI_MODE');
+        }
+    }
+
+    public function testLeavingFullscreenPrintsTheTranscriptThroughARegularRenderer(): void
+    {
+        putenv('PIG_TUI_MODE=fullscreen');
+        try {
+            $this->start(['an answer to keep']);
+            $this->type('question');
+            $this->type(self::ENTER);
+            $this->settle();
+            $this->terminal->clearWrites();
+
+            $this->mode->stop();
+
+            $written = $this->terminal->output();
+            $this->assertStringContainsString("\x1b[?1049l", $written, 'the alternate screen is left first');
+            $this->assertGreaterThan(strpos($written, "\x1b[?1049l"), strpos($written, 'an answer to keep'), 'then the transcript is drawn on the normal screen');
+        } finally {
+            putenv('PIG_TUI_MODE');
+        }
+    }
+
+    public function testResumeHintExitLeavesOnlyTheNormalScreen(): void
+    {
+        putenv('PIG_TUI_MODE=fullscreen');
+        try {
+            $this->start(['an answer not to print'], settings: Settings::inMemory(['fullscreenExitOutput' => 'resume-hint']));
+            $this->type('question');
+            $this->type(self::ENTER);
+            $this->settle();
+            $this->terminal->clearWrites();
+
+            $this->mode->stop();
+
+            $written = $this->terminal->output();
+            $this->assertStringContainsString("\x1b[?1049l", $written);
+            $this->assertStringNotContainsString('an answer not to print', $written);
+        } finally {
+            putenv('PIG_TUI_MODE');
+        }
+    }
 }

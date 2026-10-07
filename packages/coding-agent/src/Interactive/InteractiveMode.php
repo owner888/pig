@@ -117,6 +117,8 @@ use Pig\Tui\Process;
 use Pig\Tui\ProcessTerminal;
 use Pig\Tui\Style;
 use Pig\Tui\Terminal;
+use Pig\Tui\TUI;
+use Pig\Tui\TuiMainScreen;
 use Pig\Tui\TuiAltScreen;
 use Pig\Tui\TuiStopOptions;
 use Pig\Tui\TuiBase;
@@ -141,7 +143,23 @@ final class InteractiveMode
     /** Two presses inside this many seconds mean the second one. */
     private const float DOUBLE_PRESS = 0.5;
 
-    private readonly TuiBase $tui;
+    /**
+     * Upstream's `ui`: what components hold. It forwards to `$renderer`, so it stays right when
+     * `switchTuiMode()` replaces the renderer.
+     */
+    private readonly TUI $tui;
+
+    /** Upstream's `renderer`: the `TuiMainScreen` or `TuiAltScreen` drawing right now. */
+    private TuiBase $renderer;
+
+    /** Upstream's `mainScreenRenderState`: what the regular renderer had on screen when it was left. */
+    private ?array $mainScreenRenderState = null;
+
+    /** The one component tree both renderers mount — upstream's containers in `init()`. */
+    private ?Container $documentContainer = null;
+
+    /** @var list<Component> */
+    private array $mountedComponents = [];
 
     private readonly Container $chat;
 
@@ -322,19 +340,9 @@ final class InteractiveMode
         // Injected so a test can drive this without a terminal, the same way the editor
         // takes its clipboard: everything below here is arrangement, and arrangement is
         // exactly what is worth testing.
-        $this->tui = TuiRenderer::createInteractiveTui(
-            $terminal ?? new ProcessTerminal(),
-            $this->tuiMode,
-            $this->settings->showHardwareCursor(),
-            $this->clipboard,
-            $this->scrollToEndIndicator(...),
-            // Read at each call: `/theme` replaces the palette after the renderer exists.
-            fn (): Palette => $this->palette,
-            self::openInBrowser(...),
-            $this->settings->fullscreenCopyOnSelect(),
-            $this->settings->fullscreenWheelScrollLines(),
-        );
-        $this->tui->setClearOnShrink($this->settings->clearOnShrink());
+        $this->renderer = $this->createRenderer($terminal ?? new ProcessTerminal(), $this->tuiMode, $this->settings->showHardwareCursor());
+        $this->renderer->setClearOnShrink($this->settings->clearOnShrink());
+        $this->tui = TuiRenderer::createInteractiveTuiReference(fn (): TuiBase => $this->renderer);
         $this->chat = new Container();
         $this->pending = new Container();
         $this->status = new Container();
@@ -658,7 +666,7 @@ final class InteractiveMode
     /** @internal for tests, which drive the terminal rather than the loop */
     public function screen(): TuiBase
     {
-        return $this->tui;
+        return $this->renderer;
     }
 
     /** @internal for tests */
@@ -714,12 +722,11 @@ final class InteractiveMode
         // Stopped here and not only in run()'s finally: whoever calls this wants the
         // terminal back — raw mode off, cursor shown — whether or not the loop is what
         // they are waiting on.
-        // In fullscreen the renderer prints the conversation back into the normal screen on its
-        // way out (`TuiAltScreen::afterTerminalStop()`), unless `fullscreenExitOutput` asks for
-        // only the resume hint, which `bin/pig` prints after this either way.
-        $this->tui->stop(new TuiStopOptions(
-            preserveScreen: $this->tui instanceof TuiAltScreen && $this->settings->fullscreenExitOutput() === 'resume-hint',
-        ));
+        // Upstream's way out of fullscreen: with `fullscreenExitOutput` at `transcript` the tree
+        // moves to a regular renderer that draws the conversation into the normal screen; with
+        // `resume-hint` the alternate screen is just left, and `bin/pig` prints the hint after
+        // this either way.
+        $this->stopInteractiveTui($this->settings->fullscreenExitOutput());
         Loop::get()->stop();
     }
 
@@ -787,67 +794,140 @@ final class InteractiveMode
     {
         $this->banner = new Text($this->banner(), 1, 0);
 
-        if ($this->tui instanceof TuiAltScreen) {
-            $document = new Container();
-            $document->addChild($this->customHeader);
-            $document->addChild(new Spacer(1));
-            $document->addChild($this->banner);
-            $document->addChild(new Spacer(1));
-            $document->addChild($this->chat);
+        // One component tree for both renderers, as upstream keeps it: regular mode mounts these
+        // in order, fullscreen mounts the same ones and draws the `ChatViewport` laid over them.
+        $document = new Container();
+        $document->addChild($this->customHeader);
+        $document->addChild(new Spacer(1));
+        $document->addChild($this->banner);
+        $document->addChild(new Spacer(1));
+        $document->addChild($this->chat);
+        $this->documentContainer = $document;
 
-            // Upstream's dock slots: status, widgets above (with the spacer over the editor),
-            // editor, widgets below, footer. pig's in-dock dialogs ride with the status and its
-            // extension footer with the footer, in the order the regular layout draws them.
-            $statusSlot = new Container();
-            $statusSlot->addChild($this->status);
-            $statusSlot->addChild($this->overlay);
-            $widgetsAboveSlot = new Container();
-            $widgetsAboveSlot->addChild($this->widgetsAbove);
-            $widgetsAboveSlot->addChild(new Spacer(1));
-            $footerSlot = new Container();
-            $footerSlot->addChild($this->footer);
-            $footerSlot->addChild($this->customFooter);
+        // Upstream's dock slots: status, widgets above (with the spacer over the editor), editor,
+        // widgets below, footer. pig's in-dock dialogs ride with the status — below what is
+        // happening and directly above the editor, because it is the thing being answered — and
+        // its extension footer with the footer.
+        $statusSlot = new Container();
+        $statusSlot->addChild($this->status);
+        $statusSlot->addChild($this->overlay);
+        $widgetsAboveSlot = new Container();
+        $widgetsAboveSlot->addChild($this->widgetsAbove);
+        $widgetsAboveSlot->addChild(new Spacer(1));
+        $footerSlot = new Container();
+        $footerSlot->addChild($this->footer);
+        $footerSlot->addChild($this->customFooter);
 
-            $this->viewport = ChatViewport::create(
-                document: $document,
-                pendingMessages: $this->pending,
-                status: $statusSlot,
-                editor: $this->editor,
-                footer: $footerSlot,
-                widgetsAbove: $widgetsAboveSlot,
-                widgetsBelow: $this->widgetsBelow,
-                scrollbar: $this->settings->fullscreenScrollbar(),
-                scrollbarTrackStyle: fn (string $text): string => $this->palette->fg('scrollbarTrack', $text),
-                scrollbarThumbStyle: fn (string $text): string => $this->palette->fg('scrollbarThumb', $text),
-            );
+        $this->viewport = ChatViewport::create(
+            document: $document,
+            pendingMessages: $this->pending,
+            status: $statusSlot,
+            editor: $this->editor,
+            footer: $footerSlot,
+            widgetsAbove: $widgetsAboveSlot,
+            widgetsBelow: $this->widgetsBelow,
+            scrollbar: $this->settings->fullscreenScrollbar(),
+            scrollbarTrackStyle: fn (string $text): string => $this->palette->fg('scrollbarTrack', $text),
+            scrollbarThumbStyle: fn (string $text): string => $this->palette->fg('scrollbarThumb', $text),
+        );
 
-            // Mounted for invalidation and mouse routing; the layout root is what is drawn.
-            foreach ([$document, $this->pending, $statusSlot, $widgetsAboveSlot, $this->editor, $this->widgetsBelow, $footerSlot] as $component) {
-                $this->tui->addChild($component);
-            }
-            $this->tui->setLayoutRoot($this->viewport->root);
-            $this->tui->setFocus($this->editor);
+        $this->mountedComponents = [$document, $this->pending, $statusSlot, $widgetsAboveSlot, $this->editor, $this->widgetsBelow, $footerSlot];
+        $this->mountInteractiveTui($this->renderer, $this->mountedComponents);
+        $this->tui->setFocus($this->editor);
+    }
 
-            return;
+    /** Upstream's `mountInteractiveTui()`. */
+    private function mountInteractiveTui(TuiBase $tui, array $components): void
+    {
+        foreach ($components as $component) {
+            $tui->addChild($component);
+        }
+        if ($tui instanceof TuiAltScreen) {
+            $tui->setLayoutRoot($this->viewport?->root ?? throw new \LogicException('Fullscreen layout is not initialized'));
+        }
+    }
+
+    /** Upstream's `createInteractiveTui()` call, with this session's settings. */
+    private function createRenderer(Terminal $terminal, string $mode, bool $showHardwareCursor): TuiBase
+    {
+        return TuiRenderer::createInteractiveTui(
+            $terminal,
+            $mode,
+            $showHardwareCursor,
+            $this->clipboard,
+            $this->scrollToEndIndicator(...),
+            // Read at each call: `/theme` replaces the palette after the renderer exists.
+            fn (): Palette => $this->palette,
+            self::openInBrowser(...),
+            $this->settings->fullscreenCopyOnSelect(),
+            $this->settings->fullscreenWheelScrollLines(),
+        );
+    }
+
+    /**
+     * Upstream's `switchTuiMode()`: move the same component tree onto a new renderer on the same
+     * terminal. Refused while an overlay is shown, which upstream says in the status line.
+     *
+     * @param 'regular'|'fullscreen' $mode
+     */
+    private function switchTuiMode(string $mode, bool $startRenderer = true): bool
+    {
+        $previousUi = $this->renderer;
+        if ($mode === $previousUi->mode) {
+            return true;
+        }
+        if ($previousUi->hasOverlayEntries()) {
+            return false;
         }
 
-        $this->tui->addChild($this->customHeader);
-        $this->tui->addChild(new Spacer(1));
-        $this->tui->addChild($this->banner);
-        $this->tui->addChild(new Spacer(1));
-        $this->tui->addChild($this->chat);
-        $this->tui->addChild($this->pending);
-        $this->tui->addChild($this->status);
-        // Below what is happening and directly above the editor, because it is the thing
-        // being answered and the editor is where the eyes already are.
-        $this->tui->addChild($this->overlay);
-        $this->tui->addChild($this->widgetsAbove);
-        $this->tui->addChild(new Spacer(1));
-        $this->tui->addChild($this->editor);
-        $this->tui->addChild($this->widgetsBelow);
-        $this->tui->addChild($this->footer);
-        $this->tui->addChild($this->customFooter);
-        $this->tui->setFocus($this->editor);
+        $components = $previousUi->children();
+        $focus = $previousUi->getFocusedComponent();
+        $terminal = $previousUi->terminal;
+        $showHardwareCursor = $previousUi->getShowHardwareCursor();
+        $clearOnShrink = $previousUi->getClearOnShrink();
+        $onDebug = $previousUi->onDebug;
+        if ($previousUi instanceof TuiMainScreen) {
+            $this->mainScreenRenderState = $previousUi->captureRenderState();
+        }
+
+        $previousUi->stop(new TuiStopOptions(preserveScreen: true));
+        $previousUi->setFocus(null);
+        $previousUi->clear();
+        if ($previousUi instanceof TuiAltScreen) {
+            $previousUi->setLayoutRoot(null);
+        }
+
+        $nextUi = $this->createRenderer($terminal, $mode, $showHardwareCursor);
+        $nextUi->setClearOnShrink($clearOnShrink);
+        $nextUi->onDebug = $onDebug;
+        if ($nextUi instanceof TuiMainScreen && $this->mainScreenRenderState !== null) {
+            $nextUi->restoreRenderState($this->mainScreenRenderState);
+        }
+        $this->renderer = $nextUi;
+        $this->tuiMode = $mode;
+        $this->mountInteractiveTui($nextUi, $components);
+        $nextUi->invalidate();
+        $nextUi->setFocus($focus);
+        if (!$startRenderer) {
+            return true;
+        }
+        $nextUi->start();
+        $this->ui->rebindTerminalInputListeners();
+
+        return true;
+    }
+
+    /** Upstream's `stopInteractiveTui()`. */
+    private function stopInteractiveTui(string $fullscreenExitOutput): void
+    {
+        if ($this->renderer instanceof TuiAltScreen && $fullscreenExitOutput === 'transcript') {
+            while ($this->renderer->hasOverlayEntries()) {
+                $this->renderer->hideOverlay();
+            }
+            $this->switchTuiMode('regular', startRenderer: false);
+            $this->renderer->renderNow();
+        }
+        $this->tui->stop(new TuiStopOptions(preserveScreen: $this->renderer instanceof TuiAltScreen));
     }
 
     private function scrollToEndIndicator(): string
@@ -1069,7 +1149,7 @@ final class InteractiveMode
         // setter were all there — and nothing ever called the setter, so the one key that works
         // whatever holds the focus did nothing. The same shape as ctrl+p: machinery wired at one
         // end. Not on the editor, because the point of it is that the editor may not be listening.
-        $this->tui->onDebug = $this->writeDebugLog(...);
+        $this->renderer->onDebug = $this->writeDebugLog(...);
 
         // Bound by *action*, upstream's names: which key each one is on is `Keybindings`'
         // business, and the editor claims whatever keys the bindings say — so a `keybindings.json`
@@ -2286,7 +2366,7 @@ final class InteractiveMode
             "pig {$this->version} — " . date('c'),
             '',
             '=== the frame ===',
-            $this->tui->frame(),
+            $this->renderer->frame(),
             '=== the conversation ===',
         ];
 
@@ -3779,7 +3859,7 @@ final class InteractiveMode
         }
 
         // Only watch for physical terminals, never for unit tests running on FakeTerminal
-        if (!$this->tui->terminal instanceof \Pig\Tui\ProcessTerminal) {
+        if (!$this->renderer->terminal instanceof \Pig\Tui\ProcessTerminal) {
             return;
         }
 
@@ -4174,9 +4254,14 @@ final class InteractiveMode
             values: ['on', 'off'],
         );
 
-        // Upstream's fullscreen rows. TUI mode itself is not offered: switching renderers inside a
-        // running session (upstream's `switchTuiMode()`) is not ported yet, and a row that only
-        // takes effect after a restart would be a row that changes nothing now.
+        // Upstream's TUI rows. The mode switches renderers in place (`switchTuiMode()`).
+        $rows[] = new SettingItem(
+            'tuiMode',
+            'TUI mode',
+            $this->tuiMode,
+            "Interface layout; regular mode uses the terminal's normal scrollback",
+            values: ['regular', 'fullscreen'],
+        );
         $rows[] = new SettingItem(
             'fullscreenExitOutput',
             'Fullscreen exit output',
@@ -4211,6 +4296,11 @@ final class InteractiveMode
 
         $list = new SettingsList($rows, 8, $this->palette->settingsListTheme());
         $list->setChangeHandler(function (string $id, string $value) use ($list): void {
+            if ($id === 'tuiMode') {
+                $this->useTuiMode($value, $list);
+
+                return;
+            }
             $this->applySetting($id, $value);
 
             // The theme is the one that changes how this very screen is painted, and the
@@ -4300,6 +4390,21 @@ final class InteractiveMode
         };
     }
 
+    /** Upstream's `onTuiModeChange`. */
+    private function useTuiMode(string $value, SettingsList $list): void
+    {
+        $mode = $value === 'regular' ? 'regular' : 'fullscreen';
+        if (!$this->switchTuiMode($mode)) {
+            $list->setValue('tuiMode', $this->tuiMode);
+            $this->say('Close active overlays before changing TUI mode');
+
+            return;
+        }
+        $this->settings->setTuiMode($mode);
+        $list->setValue('tuiMode', $mode);
+        $this->say("TUI mode: {$mode}");
+    }
+
     /** Upstream's `applyFullscreenScrollbarSetting()`, after saving. */
     private function useFullscreenScrollbar(string $mode): void
     {
@@ -4312,8 +4417,8 @@ final class InteractiveMode
     private function useFullscreenCopyOnSelect(bool $enabled): void
     {
         $this->settings->setFullscreenCopyOnSelect($enabled);
-        if ($this->tui instanceof TuiAltScreen) {
-            $this->tui->setCopyOnSelect($enabled);
+        if ($this->renderer instanceof TuiAltScreen) {
+            $this->renderer->setCopyOnSelect($enabled);
         }
     }
 
@@ -4321,8 +4426,8 @@ final class InteractiveMode
     private function useFullscreenWheelScrollLines(int|string $lines): void
     {
         $this->settings->setFullscreenWheelScrollLines($lines);
-        if ($this->tui instanceof TuiAltScreen) {
-            $this->tui->setWheelScrollLines($this->settings->fullscreenWheelScrollLines());
+        if ($this->renderer instanceof TuiAltScreen) {
+            $this->renderer->setWheelScrollLines($this->settings->fullscreenWheelScrollLines());
         }
     }
 

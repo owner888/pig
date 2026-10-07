@@ -32,6 +32,12 @@ interface TUI extends Component
 
     public function setFocus(?Component $component): void;
 
+    public function showOverlay(Component $component, ?OverlayOptions $options = null): OverlayHandle;
+
+    public function hideOverlay(): void;
+
+    public function hasOverlay(): bool;
+
     public function start(): void;
 
     public function stop(?TuiStopOptions $options = null): void;

@@ -11007,6 +11007,7 @@ $before = Width::sliceByColumn($line, 0, $start, true);
 | `Caret` 接口、`caret()`、`Container::rowOf()` | `Focusable` + `public bool $focused` + `TUI::CURSOR_MARKER` |
 | `ScrollView::scrollToBottom()`、`contentLines()` | `scrollToEnd()`、`LayoutBox::$scrollContentLines` |
 | `TuiAltScreen::scrollPage()`、`InteractiveMode` 里查 `tui.altScreen.*` 的输入监听 | `TuiAltScreen::handleViewportKey()` + `Pig\Tui\Keybindings`（`keybindings.ts`） |
+| `InteractiveMode::$tui`（具体渲染器） | `$tui` 是 `TuiRenderer::createInteractiveTuiReference()` 给的转发引用（upstream 的 `ui`），具体渲染器是 `$renderer`（upstream 的 `renderer`） |
 
 **macOS 大小写陷阱**：`Tui.php` → `TUI.php` 只差大小写。APFS 默认不区分大小写、git 默认 `core.ignorecase=true`，`git add -A` 不会记下改名，Linux 上 PSR-4 找不到 `TUI.php`。必须 `git rm --cached packages/tui/src/Tui.php && git add packages/tui/src/TUI.php`。
 
@@ -11019,6 +11020,12 @@ $before = Width::sliceByColumn($line, 0, $start, true);
 ```php
 TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 ```
+
+### 运行中切换 TUI 模式：组件拿的是转发引用，`instanceof` 只能问 `$renderer`
+
+**结构**：照 upstream 的 `switchTuiMode()`，`/settings` 里改 TUI mode 时同一棵组件树（document、pending、status 槽、widgetsAbove 槽、editor、widgetsBelow、footer 槽）从旧渲染器卸下、挂到新渲染器上；fullscreen 另外 `setLayoutRoot(ChatViewport)`。退出时 `fullscreenExitOutput=transcript` 也是切到 regular 再 `renderNow()` 打出对话，`resume-hint` 只离开备用屏。
+
+**避坑规则**：`InteractiveMode::$tui` 是 `TUI` 转发引用，Loader、TerminalUi、扩展拿到的都是它，切换后仍然有效；`$this->tui instanceof TuiAltScreen` 永远是 false，判断模式、调 `setLayoutRoot()`/`setCopyOnSelect()`/`frame()` 一律用 `$this->renderer`。扩展经 `TerminalUi::onTerminalInput()` 加的监听挂在旧渲染器上，切换后由 `rebindTerminalInputListeners()` 搬过去，新加输入监听的入口也要进这个登记表。有 overlay 栈条目时拒绝切换（upstream 同样）。
 
 ### 全屏鼠标：组件优先，滚轮在 overlay 聚焦时留给 overlay
 

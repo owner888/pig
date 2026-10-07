@@ -51,6 +51,9 @@ use Throwable;
  */
 final class TerminalUi implements HookUi
 {
+    /** @var array<int, array{handler: Closure, unsubscribe: Closure(): void}> upstream's `extensionTerminalInputSubscriptions` */
+    private array $terminalInputSubscriptions = [];
+
     /**
      * Set while a dialog of this object's own is in flight.
      *
@@ -510,7 +513,33 @@ final class TerminalUi implements HookUi
     #[\Override]
     public function onTerminalInput(callable $handler): Closure
     {
-        return $this->tui->addInputListener(Closure::fromCallable($handler));
+        $listener = Closure::fromCallable($handler);
+        $id = spl_object_id($listener);
+        $this->terminalInputSubscriptions[$id] = [
+            'handler' => $listener,
+            'unsubscribe' => $this->tui->addInputListener($listener),
+        ];
+
+        return function () use ($id): void {
+            $subscription = $this->terminalInputSubscriptions[$id] ?? null;
+            if ($subscription === null) {
+                return;
+            }
+            unset($this->terminalInputSubscriptions[$id]);
+            ($subscription['unsubscribe'])();
+        };
+    }
+
+    /**
+     * Upstream's `rebindExtensionTerminalInputListeners()`: after `switchTuiMode()` the listeners
+     * extensions added belong to the renderer that was replaced, so each is added to the new one.
+     */
+    public function rebindTerminalInputListeners(): void
+    {
+        foreach ($this->terminalInputSubscriptions as $id => $subscription) {
+            ($subscription['unsubscribe'])();
+            $this->terminalInputSubscriptions[$id]['unsubscribe'] = $this->tui->addInputListener($subscription['handler']);
+        }
     }
 
     /**

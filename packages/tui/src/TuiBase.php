@@ -286,12 +286,13 @@ abstract class TuiBase extends Container implements TUI
     }
 
     /** Whether an overlay is shown at all, hidden or not — upstream's `hasOverlayEntries`. */
-    protected function hasOverlayEntries(): bool
+    public function hasOverlayEntries(): bool
     {
         return $this->overlayStack !== [];
     }
 
     /** Show a component over the content; the handle hides, focuses and moves it — upstream's `showOverlay()`. */
+    #[\Override]
     public function showOverlay(Component $component, ?OverlayOptions $options = null): OverlayHandle
     {
         $entry = new OverlayStackEntry($component, $options, $this->focusedComponent, false, ++$this->focusOrderCounter);
@@ -427,6 +428,7 @@ abstract class TuiBase extends Container implements TUI
     }
 
     /** Hide the topmost overlay and give focus back — upstream's `hideOverlay()`. */
+    #[\Override]
     public function hideOverlay(): void
     {
         $overlay = $this->overlayStack[count($this->overlayStack) - 1] ?? null;
@@ -453,6 +455,7 @@ abstract class TuiBase extends Container implements TUI
         }
     }
 
+    #[\Override]
     public function hasOverlay(): bool
     {
         foreach ($this->overlayStack as $entry) {

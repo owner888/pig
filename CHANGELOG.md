@@ -43,6 +43,26 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.12] - 2026-10-07
+
+### New Features
+
+- **Live TUI Mode Switching (`switchTuiMode()`) & Fullscreen Exit Transcript Replay**:
+  - Implemented in-session live switching between `regular` (streaming scrollback) and `fullscreen` (AltScreen viewport) via `/settings` without restarting the process.
+  - Aligned `fullscreenExitOutput` behavior with upstream pi: when quitting fullscreen mode with `fullscreenExitOutput: "transcript"` (the default), the entire conversation transcript is seamlessly rendered into the terminal scrollback buffer.
+
+### Added
+
+- **Dynamic Interactive TUI Reference Proxy & Overlay Controls**:
+  - Ported upstream's `createInteractiveTuiReference()`, allowing components, extensions, and loaders to hold a stable `TUI` reference while `InteractiveMode` hot-swaps active renderers under the hood.
+  - Added unit tests covering dynamic mode switching, listener preservation across renderer migration, and exit transcript output formatting.
+
+### Changed
+
+- **Clean Terminal Extension Listener Rebinding**:
+  - Automatically rebinds all extension terminal input listeners via `TerminalUi::rebindTerminalInputListeners()` upon renderer migration.
+  - Replaced ad-hoc exit handling with structured `stopInteractiveTui()`, ensuring overlays are dismissed and terminal state is cleanly restored.
+
 ## [0.4.11] - 2026-10-07
 
 ### New Features
