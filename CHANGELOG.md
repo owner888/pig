@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.63] - 2026-10-06
+
+### Fixed
+
+- Fixed startup model resolution ignoring extension-provided default providers: `CodingAgent::session()` resolved the startup model before loading extensions, so when `settings.json` configured an extension provider as `defaultProvider` (e.g. `antigravity`), resolution failed to find the unregistered provider and fell back to direct built-ins (e.g. `google/gemini-3.8-flash`). Extensions and custom providers are now loaded before model resolution runs.
+
 ## [0.3.62] - 2026-10-06
 
 ### Fixed

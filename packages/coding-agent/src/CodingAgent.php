@@ -220,6 +220,23 @@ final class CodingAgent
             $warnings[] = ProjectTrust::warning();
         }
 
+        // Before the extensions load, so a factory that reads `getSettings()` at load gets them;
+        // the flags come after, because which flags exist is only known once they have loaded.
+        ExtensionApi::useSettings($settings);
+
+        $cliExtensions = $extensionPaths ?? [];
+        [$loadedExtensions, $extensionProblems] = match (true) {
+            !$withExtensions => [[], []],
+            $preloadedExtensions !== null => $preloadedExtensions,
+            default => ExtensionLoader::load($cwd, $settings->extensions(), $cliExtensions, auth: $auth, projectTrusted: $projectTrusted, disabled: $disabledExtensions),
+        };
+
+        ExtensionApi::applyFlags($flags);
+
+        foreach ($extensionProblems as $problem) {
+            $warnings[] = "extension {$problem->toText()}";
+        }
+
         // `--models sonnet:high,'anthropic/*'` narrows the session, which is what upstream's
         // `--models` means. Resolved against the models a key reaches, because a scope holding
         // one that cannot be spoken to is a scope ctrl+p walks into and fails on.
@@ -356,22 +373,6 @@ final class CodingAgent
             $warnings[] = "hook {$problem->toText()}";
         }
 
-        // Before the extensions load, so a factory that reads `getSettings()` at load gets them;
-        // the flags come after, because which flags exist is only known once they have loaded.
-        ExtensionApi::useSettings($settings);
-
-        $cliExtensions = $extensionPaths ?? [];
-        [$loadedExtensions, $extensionProblems] = match (true) {
-            !$withExtensions => [[], []],
-            $preloadedExtensions !== null => $preloadedExtensions,
-            default => ExtensionLoader::load($cwd, $settings->extensions(), $cliExtensions, auth: $auth, projectTrusted: $projectTrusted, disabled: $disabledExtensions),
-        };
-
-        ExtensionApi::applyFlags($flags);
-
-        foreach ($extensionProblems as $problem) {
-            $warnings[] = "extension {$problem->toText()}";
-        }
 
         foreach ($loadedExtensions as $ext) {
             $loadedHooks[] = new LoadedHook($ext->path, $ext->resolved, $ext->api);
