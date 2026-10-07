@@ -24,7 +24,6 @@ final class LayoutContext
     public function __construct(
         public readonly LayoutViewport $viewport,
         public readonly Closure $requestRender,
-        public readonly ?Component $focused,
     ) {
         $this->renderCache = new SplObjectStorage();
     }

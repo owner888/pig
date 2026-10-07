@@ -90,8 +90,7 @@ final class BashOutputTest extends TestCase
         // The wrap is over the *whole* output and keeps a handful of rows, so it costs what the
         // command printed rather than what is on screen. A resumed transcript is nothing but
         // finished commands, and one keystroke re-wrapped every one of them — measured on a real
-        // session with 201 tool results: **1.5 seconds a keystroke**, three times over, because
-        // `Container::rowOf()` renders the tree twice more to find the caret.
+        // session with 201 tool results: **1.5 seconds a keystroke**.
         $component = new BashOutputComponent(20, null);
         $component->setText(str_repeat(str_repeat('x', 400) . "\n", 2000));
 

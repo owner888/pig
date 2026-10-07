@@ -4302,7 +4302,7 @@ door, and discarding half of what somebody pasted is worse than keeping both hal
 clamped with `min($cursor, strlen($value))`, which is upstream's line and cannot hold in bytes.
 Cursor 4 in `abcdef`, then `setValue('你好')`: four bytes in is the middle of `好`,
 `Graphemes::split()` of half a character answers false, and what comes out is
-`Grapheme split failed` — from `caret()`, inside the renderer, or from the next keystroke, inside
+`Grapheme split failed` — from `render()`, inside the renderer, or from the next keystroke, inside
 the loop's input callback, where nothing catches it. Measured rather than reasoned about: the probe
 prints `valid utf-8: NO` and then three throws.
 
@@ -4893,24 +4893,15 @@ about every key it named and wrong about which key the bytes were.
 
 ### Erasing vanished rows with `\r\n` scrolled the screen, one row per vanished line
 
-Reported with a screenshot: blank rows under the footer, there from the moment a turn starts and
-staying. `TuiMainScreen::changedLines()` erased the rows a shrinking frame leaves behind with upstream's
-sweep — `\r\n\x1b[2K` per vanished line, then `\e[nA` back up — and **a newline on the terminal's
-last row scrolls**. The working loader and its spacer go at the end of every turn, so every turn
-shifted the screen up two rows and the cursor arithmetic (which is relative) stayed right about a
-footer that was now two rows above the bottom. Upstream has the same bytes; its `tui-main-screen.ts`
-has since grown a separate "deleted lines" path that moves with `\e[1B` and clears without
-scrolling, which is what this is now: `\x1b[1B\r\x1b[2K` per vanished row.
+Blank rows under the footer from the moment a turn started: rows a shrinking frame leaves behind were
+erased with `\r\n\x1b[2K`, and **a newline on the terminal's last row scrolls**. Upstream's
+`TuiMainScreen` has a separate "all changes are in deleted lines" path that moves with `\x1b[1B` and
+clears without scrolling; pig now runs that literally. `PIG_TUI_TRACE=<file>` on
+`ProcessTerminal::write()` records every byte for replaying a real session through a VT emulator —
+a hand-rolled emulator that does not scroll on a newline at the last row will agree with the bug.
 
-**A hand-rolled emulator said the old sequence was fine, for a day.** It did not scroll on a newline
-at the last row, so it reproduced the renderer's own belief rather than the terminal's. What settled
-it was `bin/pig` in a real pty, a stand-in provider streaming slowly enough for the loader to draw,
-and `pyte` replaying the bytes — frame 64 of 129, footer at row 17 of 20. **`PIG_TUI_TRACE=<file>`**
-on `ProcessTerminal::write()` is what makes that replay possible from a real session; upstream's
-`PI_TUI_DEBUG=1` is the same idea.
-
-Regression tests: `TuiTest::testErasingVanishedLinesMovesDownRatherThanScrolling` (no `\n` in a
-shrink at all) and the two existing shrink tests, re-pinned to the row moves.
+Regression tests: `TuiTest::testErasingVanishedLinesMovesDownRatherThanScrolling`,
+`TuiMainScreenTest::testClearsAllRenderedLinesWhenContentShrinksToZero`.
 
 ### The Antigravity extension read the stored token raw, and it lasts an hour
 
@@ -5039,7 +5030,8 @@ what a resize needs and is what the docblock claimed.** That meaning wants a cle
 record does not give one: the renderer reads an empty `previousLines` as the first frame ever and
 writes from wherever the cursor is with nothing cleared. A full-screen editor restores what it found
 on the way out, so what is there is pig's own last frame and the new one lands underneath it — the
-same doubling, arriving by the one door nobody had checked. `TuiMainScreen::$screenIsLost` is the second fact
+same doubling, arriving by the one door nobody had checked. Upstream's `resetRenderState()` sets the
+remembered size to -1, so the next frame is a width change and clears — the second fact
 that an empty record cannot carry: the very first frame has an empty record too, and clearing *there*
 would wipe whatever the shell had printed before pig started. Both halves have a test
 (`TuiTest::testAForcedRenderClearsTheScreenItNoLongerOwns` and
@@ -5369,37 +5361,20 @@ Regression tests: `SearchToolsTest::testABadPatternIsReportedRatherThanReadAsNoM
 
 ### An input method draws where the terminal's cursor is, not where the caret is drawn
 
-A component paints its caret as an inverted cell; the terminal has a cursor of its own,
-and writing a frame leaves that one at the end of the last line. Nothing looked wrong
-until someone typed Chinese: macOS draws the composing text and the candidate list at the
-terminal's cursor, so the pinyin appeared over the footer, three lines below the box it
-was going into.
+A component paints its cursor as an inverted cell; the terminal has a cursor of its own, and macOS
+draws the composing text and the candidate list there. Upstream's mechanism, which pig now uses:
+a `Focusable` component (`public bool $focused`, set by `TuiBase::setFocus()`) puts
+`TUI::CURSOR_MARKER` (`\e_pi:c\a`, zero-width APC) just before its drawn cursor while focused; the
+renderer finds it with `extractCursorPosition()`, strips it, and moves the hardware cursor there
+(`positionHardwareCursor()` in `TuiMainScreen`, absolute in `TuiAltScreen`). The cursor stays hidden
+unless `showHardwareCursor` is on.
 
-So `TuiMainScreen` moves the cursor to the focused component's caret at the end of every frame. A
-component opts in by implementing `Caret` — a small separate interface, like
-`InputHandler` — and reports the caret in its own coordinates; `Container::rowOf()` turns
-that into a row in the frame. The cursor stays hidden; only its position matters.
+**A wrapper must pass focus on.** `CustomEditor` and `SessionList` hold the real `Editor`/`Input` and
+set `->focused` on it in `render()`; a focusable wrapper that does not stays silent and the candidate
+list goes back to the bottom of the frame.
 
-Two things fall out of it. `cursorRow` has to be updated to the caret, or the next
-differential draw counts rows from a bottom the cursor is no longer at. And `drawAll()`
-now starts with `\r`, because the caret can leave the cursor part-way along a line and
-that path writes from wherever it is.
-
-A wrapper has to forward `caret()` or the whole thing silently does nothing —
-`Interactive\CustomEditor` wraps the editor, and that is exactly what it did at first.
-
-**`Components\Input` never implemented it at all**, which was missed because the interface was
-added for the prompt and the prompt is an `Editor`. `Input` is the focused component every time
-a hook asks a question and every time the session picker is open, so both of those drew the
-candidate list at the bottom of the frame. It answers now — one row, and the column is the
-prompt's width plus the cursor's own, less however far the line has scrolled. **Adding a
-capability interface leaves every component that does not implement it silently wrong**; the
-list to check is whatever can hold the focus.
-
-Regression tests: `TuiTest::testTheCursorEndsUpAtTheFocusedComponentsCaret`,
-`testTheNextFrameStillCountsRowsFromWhereTheCursorActuallyIs`,
-`EditorTest::testTheCaretIsMeasuredInColumnsNotCharacters`, and the five
-`InputTest::testTheCaret…` cases.
+Regression tests: `TuiMainScreenTest::testTheHardwareCursorGoesWhereTheFocusedComponentPutItsMarker`,
+`EditorTest::testTheCaretIsMeasuredInColumnsNotCharacters`, `InputTest::testTheCaret…`.
 
 ### A line starting with `/` is not a command, and neither is one that merely looks like a name
 
@@ -10137,99 +10112,22 @@ kill that mutation.
 
 ### A spinner above the prompt repainted the line somebody was typing into
 
-Reported from a real session, with a screenshot: typing Chinese while the agent worked put the
-pinyin and its candidate list **below the footer**, and it would not stay put. An input method
-draws what is being composed at the terminal's cursor and anchors its candidate window there, so
-the question is never "why is the IME wrong" but "what is pig doing to that line and to that
-cursor". Two things, and both were in the renderer rather than anywhere near the editor:
+Reported with a screenshot: typing Chinese while the agent worked put the pinyin and its candidate
+list below the footer, moving on every spinner tick. pig's own renderer fixed it by rewriting only
+changed lines, never touching the composing line, and moving the caret *inside* the
+synchronized-output wrapper (Terminal.app does not support 2026, so the per-line diff was what
+mattered). **The developer then chose a literal port of upstream's `TuiMainScreen` and
+`CURSOR_MARKER`, accepting that this may come back.** If it does, the differences to look at first:
+upstream rewrites every row from the first change to the last change (a change above *and* below
+the editor rewrites the editor), and `positionHardwareCursor()` writes the cursor move *after* the
+`\e[?2026l`.
 
-- **`drawFrom()` rewrote from the first difference to the end of the frame.** A spinner tick
-  changes one line, and everything below it — the editor, its borders, the footer — was erased
-  (`\e[2K`) and written again at the spinner's rate. Measured on a real frame: **one line changed,
-  eight rewritten, 1,885 bytes a tick**, including the line holding `ni hao`.
-- **The caret move went out *after* the synchronized-output wrapper.** So the terminal painted the
-  frame with the cursor wherever the last line left it — the bottom of the screen — and only then
-  moved it back. Two painted states per frame, the first of them with the cursor under the footer,
-  which is the candidate window going there and coming back twenty times a second.
-
-Both fixed, and the numbers are the point: **1,885 bytes → 95**, one line erased instead of eight,
-the composing line not touched at all, and one write per frame with the caret move inside the
-wrapper. Per keystroke, separately: **2,550 bytes → 214**.
-
-**Two things fell out of the rewrite, and the first is a bug the old shape had all along.** The
-erase of the lines a shrinking frame leaves behind counted from where the last *write* left the
-cursor — and when the change is beyond the new frame's end, which is a loader vanishing from the
-bottom and therefore every turn, it wrote nothing: the sweep started a row too low, so the first
-dead line survived and the last `\r\n` ran one row past the frame, scrolling the screen to erase a
-line that was never ours. The three regions need three different escapes and that is why
-`changedLines()` is not one loop: a line already on screen is addressed with a relative move, a
-line the frame has **grown** by has to be written after a `\r\n` (a cursor-down at the bottom of the
-screen stays where it is, so addressing a row that does not exist yet overwrites the last one), and
-a line the frame has **shrunk** by is erased from the new last line downwards.
-
-The second: **where the window starts is a fact about the frame, not about the cursor.** It was
-`cursorRow - height + 1`, which was the frame's last row only because writing one left the cursor
-there. With just the changed lines rewritten the cursor is wherever the last change was, so that
-expression becomes a window nearly the whole frame fits inside — and a change that has scrolled into
-the scrollback is then answered by moving the cursor to a row the terminal no longer has. It is
-`count($this->previousLines) - $height` now. *A derived value stops being derivable the moment the
-thing it was riding on changes, and nothing says so.*
-
-**The third measurement is the other half of the report — "typing is slow after a task" — and it is
-in the transcript rather than the renderer.** `AssistantMessageComponent::update()` threw every
-`Markdown` away and built it again on every delta, so `Markdown`'s cache (keyed on text and width)
-could never hit: 0.5ms at 40 lines, 2.2 at 200, 8.8 at 800, **20.6 at 2,000**, per delta, with the
-whole UI waiting on it — and the same at 2,000 lines of ASCII, so it is the parsing and not the
-character widths. The components are kept and set again now, by position, each slot tagged with what
-it is for. A 1,600-line answer whose first two blocks had settled: **19.6ms a delta → 0.1ms.**
-
-That needed the other half to work at all, and it is the part that looks like a no-op:
-**`setText()` returns early for the text it already has.** Every block but the last is set to
-exactly what it is showing, and invalidating there throws away the lines `render()` was about to
-hand back. With the guard removed and everything else in place the same case measures **18.6ms**
-again, which is the evidence that a mutation no test can kill is still load-bearing — there is no
-seam to observe a cache through, the same standing as `HttpClient::follow()`'s `body->close()`.
-
-**Confirmed on a real terminal afterwards, and the confirmation says which half of it mattered.**
-The candidate window now sits under the composing text and stays there; before, it fell every time.
-And the terminal it was fixed on — Apple's Terminal.app — **does not support synchronized output**,
-measured rather than assumed: `printf '\033[?2026$p'` gets no DECRQM reply, just the literal `p`
-back. So the wrapper around the frame is inert there, and what fixed it is the **per-line diff**:
-the composing line is no longer erased and rewritten twelve times a second.
-
-That is worth keeping straight, because the two halves look interchangeable and are not. The
-wrapper is still right, and it is the only thing that helps a terminal which *does* implement 2026
-— there the cursor's trip away and back is never painted. On everything else the only defence is
-not writing to that line at all.
-
-**One thing this did not fix, stated rather than left to be rediscovered.** A message that is one
-long text block still costs ~20ms a delta at 2,000 lines, because that block's text really did
-change and `Markdown` cannot parse incrementally — a render throttle is the answer if it ever
-matters, and that is new behaviour rather than a fix.
-
-**And it did not fix the other half of the report at all**, which is the entry below: "typing is
-slow after a task" is a third bug in a third place, and the reason this entry spent a paragraph
-saying it could not be reproduced is that the transcript it was reproduced against was built out of
-`Text` components. *A synthetic frame is a claim about the code that built it.*
-
-Regression tests, and each of these ends was mutated separately:
-`TuiTest::testALineChangingAboveThePromptLeavesThePromptAlone`,
-`testTheFirstOfTheVanishedLinesIsTheOneErasedFirst`,
-`testLinesTheFrameHasGrownByAreWrittenRatherThanAddressed`,
-`testWhereTheWindowStartsIsAFactAboutTheFrameAndNotAboutTheCursor`,
-`testAFrameThatLeavesTheCursorWhereItAlreadyIsMovesItNoFurther`, the strengthened
-`testTheCursorEndsUpAtTheFocusedComponentsCaret` (which now asserts the move is *inside* the
-wrapper), and in `MessageComponentsTest`
-`testABlockThatHasStoppedChangingKeepsTheComponentThatDrewIt`,
-`testABlockWhoseKindChangesDoesNotInheritTheWrongComponent` and
+The other half of that report stays fixed in the components: `AssistantMessageComponent::update()`
+keeps its `Markdown` components and sets them again by position, and `setText()` returns early for
+the text it already has — without that guard a 1,600-line answer costs ~19ms a delta instead of 0.1.
+Regression tests: `MessageComponentsTest::testABlockThatHasStoppedChangingKeepsTheComponentThatDrewIt`,
+`testABlockWhoseKindChangesDoesNotInheritTheWrongComponent`,
 `testAMessageWithFewerBlocksThanLastTimeDrawsOnlyWhatItHasNow`.
-
-**And the harness bit for the seventh time, in the shape it has bitten in before**: a mutation run
-hit the two-minute limit on the tool calling it, python was killed, its `finally` never ran, and the
-next run measured a mutated file as its baseline — `1 failed` where the baseline must be green. Trap
-6's rule caught it (the copy on disk written first), and the reading is the one to keep: **a
-baseline that is not green means the numbers under it are worth nothing in either direction**, so
-check it before reading anything else.
 
 ### One keystroke took a second and a half, and the component said it was cheap
 
@@ -11066,7 +10964,7 @@ PHP 的空安全调用操作符 `$this->terminals[$id]?->resize()` 仅在左侧�
 2. `ChatViewport::create()`（`chat-viewport.ts` 的 `createChatViewport()`）：`VStack[transcript ScrollView(basis 0, grow 1, min 1), dock VStack(basis auto)]`；dock 各项可收缩，编辑器最少 3 行。pig 的 overlay 跟 status 一槽、extension footer 跟 footer 一槽、编辑器上方的 Spacer 放在 widgetsAbove 槽。
 3. `ScrollView`（`components/scroll-view.ts`）只管状态：`updateLayout()` 时跟随末尾，`scrollBy()` 返回没滚完的行数（滚轮外溢、拖选自动滚动都靠它），滚动条 `hidden|auto|always`。
 4. 浮条、滚动条、选择高亮都在 `TuiAltScreen::doRender()` 里合成；`tui.altScreen.top/bottom/pageUp/pageDown` 由 `InteractiveMode` 按 `Keybindings` 调 `TuiAltScreen::scrollToTop()/scrollToBottom()/scrollPage()`。
-5. 光标：upstream 找 `CURSOR_MARKER`，pig 用 `Caret`——`Layout::caretIn()` 算出焦点组件在哪个叶子盒子的哪一行。
+5. 光标：和 upstream 一样找 `TUI::CURSOR_MARKER`；叶子盒子比分到的高度高时，`Layout` 让带标记的那一行留在盒子里。
 
 ### 全屏模式滚轮失灵、底部 Dock 被顶走：AltScreen 必须开鼠标上报 + 关 autowrap
 
@@ -11106,6 +11004,7 @@ $before = Width::sliceByColumn($line, 0, $start, true);
 | `handleInput()` / `draw()` | `handleTerminalInput()` / `doRender()` |
 | `setViewportRenderer()` / `setPrimaryScrollView()` / `setCopySelection()` | `setLayoutRoot()` / 布局里 `primary: true` 的 `ScrollView` / `TuiAltScreenOptions` |
 | `new ChatViewport(...)`、`renderViewport()`、`indicatorRect()` | `ChatViewport::create(...)`；浮条由 `TuiAltScreen` 合成 |
+| `Caret` 接口、`caret()`、`Container::rowOf()` | `Focusable` + `public bool $focused` + `TUI::CURSOR_MARKER` |
 | `ScrollView::scrollToBottom()`、`contentLines()` | `scrollToEnd()`、`LayoutBox::$scrollContentLines` |
 
 **macOS 大小写陷阱**：`Tui.php` → `TUI.php` 只差大小写。APFS 默认不区分大小写、git 默认 `core.ignorecase=true`，`git add -A` 不会记下改名，Linux 上 PSR-4 找不到 `TUI.php`。必须 `git rm --cached packages/tui/src/Tui.php && git add packages/tui/src/TUI.php`。

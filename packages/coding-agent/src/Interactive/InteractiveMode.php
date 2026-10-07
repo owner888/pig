@@ -318,7 +318,8 @@ final class InteractiveMode
         // Injected so a test can drive this without a terminal, the same way the editor
         // takes its clipboard: everything below here is arrangement, and arrangement is
         // exactly what is worth testing.
-        $this->tui = TuiRenderer::createInteractiveTui($terminal ?? new ProcessTerminal(), $this->tuiMode, $this->clipboard, $this->scrollToEndIndicator(...));
+        $this->tui = TuiRenderer::createInteractiveTui($terminal ?? new ProcessTerminal(), $this->tuiMode, $this->settings->showHardwareCursor(), $this->clipboard, $this->scrollToEndIndicator(...));
+        $this->tui->setClearOnShrink($this->settings->clearOnShrink());
         $this->chat = new Container();
         $this->pending = new Container();
         $this->status = new Container();

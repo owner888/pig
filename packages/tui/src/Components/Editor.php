@@ -14,9 +14,10 @@ use Pig\Tui\Clipboard\Clipboard;
 use Pig\Tui\Clipboard\ClipboardFile;
 use Pig\Tui\Component;
 use Pig\Tui\Graphemes;
-use Pig\Tui\Caret;
+use Pig\Tui\Focusable;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
+use Pig\Tui\TUI;
 use Pig\Tui\Width;
 
 /**
@@ -33,8 +34,11 @@ use Pig\Tui\Width;
  * line, up and down move between visual ones, because that is what the cursor looks like
  * it is doing.
  */
-final class Editor implements Caret, Component, InputHandler
+final class Editor implements Component, Focusable, InputHandler
 {
+    /** Set by the renderer; while true the cursor carries `TUI::CURSOR_MARKER` for the input method. */
+    public bool $focused = false;
+
     /** Reverse video for the block cursor, and back to normal. */
     private const string CURSOR_ON = "\x1b[7m";
     private const string CURSOR_OFF = "\x1b[27m";
@@ -262,24 +266,6 @@ final class Editor implements Caret, Component, InputHandler
         $this->cachedLayoutWidth = null;
     }
 
-    /**
-     * Where the caret is, for the terminal's own cursor to follow.
-     *
-     * One row down for the top border, and the column is measured rather than counted:
-     * the text before the caret may be CJK, which is two columns a character.
-     */
-    #[\Override]
-    public function caret(int $width): ?array
-    {
-        foreach ($this->layout($width) as $row => $line) {
-            if ($line->cursorPos !== null) {
-                return [$row + 1, Width::visible(substr($line->text, 0, $line->cursorPos))];
-            }
-        }
-
-        return null;
-    }
-
     #[\Override]
     public function render(int $width): array
     {
@@ -315,13 +301,16 @@ final class Editor implements Caret, Component, InputHandler
 
         $before = substr($text, 0, $line->cursorPos);
         $after = substr($text, $line->cursorPos);
+        // Zero-width, just before the drawn cursor: where the hardware cursor goes, so an input
+        // method composes here even while a suggestion list is open under the editor.
+        $marker = $this->focused ? TUI::CURSOR_MARKER : '';
 
         if ($after !== '') {
             // On a character: invert it, which costs no columns.
             $grapheme = Graphemes::split($after)[0];
-            $text = $before . self::CURSOR_ON . $grapheme . self::CURSOR_OFF . substr($after, strlen($grapheme));
+            $text = $before . $marker . self::CURSOR_ON . $grapheme . self::CURSOR_OFF . substr($after, strlen($grapheme));
         } elseif ($visible < $width) {
-            $text = $before . self::CURSOR_ON . ' ' . self::CURSOR_OFF;
+            $text = $before . $marker . self::CURSOR_ON . ' ' . self::CURSOR_OFF;
             $visible++;
         } else {
             // The row is already full, so there is no cell to add. Invert the last
@@ -330,7 +319,7 @@ final class Editor implements Caret, Component, InputHandler
 
             if ($graphemes !== []) {
                 $last = array_pop($graphemes);
-                $text = implode('', $graphemes) . self::CURSOR_ON . $last . self::CURSOR_OFF;
+                $text = implode('', $graphemes) . $marker . self::CURSOR_ON . $last . self::CURSOR_OFF;
             }
         }
 

@@ -393,8 +393,40 @@ final class Width
         return $tracker->activeBackgroundCode();
     }
 
+    /**
+     * What a line is written as — upstream's `normalizeTerminalOutput()`. Thai and Lao SARA AM are
+     * decomposed, because terminals give the precomposed character a different width than the
+     * layout measured; visible tabs become the three spaces layout counts them as, so a terminal's
+     * own tab stops cannot wrap a line. Tabs inside escape sequences are left alone.
+     */
+    public static function normalizeTerminalOutput(string $text): string
+    {
+        if (str_contains($text, "\u{0e33}") || str_contains($text, "\u{0eb3}")) {
+            $text = str_replace(["\u{0e33}", "\u{0eb3}"], ["\u{0e4d}\u{0e32}", "\u{0ecd}\u{0eb2}"], $text);
+        }
+        if (!str_contains($text, "\t")) {
+            return $text;
+        }
+
+        $result = '';
+        $length = strlen($text);
+        $index = 0;
+        while ($index < $length) {
+            $code = Ansi::at($text, $index);
+            if ($code !== null) {
+                $result .= $code[0];
+                $index += $code[1];
+                continue;
+            }
+            $result .= $text[$index] === "\t" ? '   ' : $text[$index];
+            $index++;
+        }
+
+        return $result;
+    }
+
     /** Closes an overlay's styling and any hyperlink it opened — upstream's `SEGMENT_RESET`. */
-    private const string SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
+    public const string SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
 
     /**
      * Composite an overlay string into a line at a specific column — upstream's

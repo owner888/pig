@@ -43,6 +43,22 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.10] - 2026-10-07
+
+### Added
+
+- **Upstream Pi Focus Management & Virtual Terminal Integration (`Focusable`, `VirtualTerminal`, `TuiMainScreenTest`)**:
+  - Replaced ad-hoc caret interface with upstream's standard `Focusable` contract (`focus()`, `blur()`, `isFocused()`), aligning focus lifecycle across all interactive widgets.
+  - Added `VirtualTerminal` in test suite for deterministic VT sequence simulation and exact terminal screen assertions.
+  - Added `TuiMainScreenTest` unit test suite covering full `TuiMainScreen` rendering, differential line updates, shrink handling, and terminal lifecycle.
+
+### Changed
+
+- **Standardized TUI Class Names and Component Hierarchy**:
+  - Renamed `Pig\Tui\Tui` to uppercase `Pig\Tui\TUI` matching upstream TypeScript export conventions.
+  - Unified input caret mapping and focus delegation through `Container::focusPath()` and `LayoutContext`.
+  - Refactored `Editor` and `Input` to implement `Focusable`, ensuring cursor positioning and IME composition anchor correctly in both main screen and alt-screen layouts.
+
 ## [0.4.9] - 2026-10-07
 
 ### New Features

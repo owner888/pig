@@ -4,19 +4,23 @@ declare(strict_types=1);
 
 namespace Pig\Tui\Test;
 
-use Pig\Tui\Caret;
 use Pig\Tui\Component;
+use Pig\Tui\Focusable;
 use Pig\Tui\InputHandler;
 use Pig\Tui\TextWrap;
+use Pig\Tui\TUI;
+use Pig\Tui\Width;
 
 /** Lines of text that a test can change between frames, and that records what it was typed. */
-final class TextComponent implements Caret, Component, InputHandler
+final class TextComponent implements Component, Focusable, InputHandler
 {
     /** @var list<string> */
     public array $typed = [];
 
-    /** @var array{0:int,1:int}|null where this pretends its caret is */
-    public ?array $caret = null;
+    public bool $focused = false;
+
+    /** @var array{0:int,1:int}|null row and column where this puts `TUI::CURSOR_MARKER` while focused */
+    public ?array $cursor = null;
 
     public int $invalidated = 0;
 
@@ -32,13 +36,14 @@ final class TextComponent implements Caret, Component, InputHandler
             return [];
         }
 
-        return $this->wrap ? TextWrap::wrap($this->text, $width) : explode("\n", $this->text);
-    }
+        $lines = $this->wrap ? TextWrap::wrap($this->text, $width) : explode("\n", $this->text);
 
-    #[\Override]
-    public function caret(int $width): ?array
-    {
-        return $this->caret;
+        if ($this->focused && $this->cursor !== null && isset($lines[$this->cursor[0]])) {
+            [$row, $column] = $this->cursor;
+            $lines[$row] = Width::sliceByColumn($lines[$row], 0, $column) . TUI::CURSOR_MARKER . Width::sliceByColumn($lines[$row], $column);
+        }
+
+        return $lines;
     }
 
     #[\Override]

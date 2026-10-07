@@ -12,20 +12,19 @@ use Pig\Tui\Components\Stack;
  * The fullscreen layout engine — upstream's `layout.ts`.
  *
  * Gives every `LayoutComponent` (stacks, scroll views) a rectangle, renders the leaves into
- * theirs, clips, and paints one frame exactly `$height` rows tall. Where upstream finds the
- * cursor line by `CURSOR_MARKER`, pig asks the focused component's `Caret`: a leaf taller than
- * its rectangle is scrolled so the caret line stays inside it.
+ * theirs, clips, and paints one frame exactly `$height` rows tall. A leaf taller than its
+ * rectangle is scrolled so the line holding `TUI::CURSOR_MARKER` stays inside it.
  */
 final class Layout
 {
     private const string OSC133_ZONE_PREFIX = '/^(?:\x1b\]133;[ABC](?:\x07|\x1b\\\\))+/';
 
     /** @param Closure(): void $requestRender */
-    public static function renderLayoutFrame(Component $root, int $width, int $height, Closure $requestRender, ?Component $focused = null): LayoutFrame
+    public static function renderLayoutFrame(Component $root, int $width, int $height, Closure $requestRender): LayoutFrame
     {
         $safeWidth = max(1, $width);
         $safeHeight = max(1, $height);
-        $context = new LayoutContext(new LayoutViewport($safeWidth, $safeHeight), $requestRender, $focused);
+        $context = new LayoutContext(new LayoutViewport($safeWidth, $safeHeight), $requestRender);
         $rootBox = self::layoutComponent($context, $root, 0, 0, $safeWidth, $safeHeight, new LayoutRect(0, 0, $safeWidth, $safeHeight));
         $lines = array_fill(0, $safeHeight, '');
         self::paintBox($rootBox, $lines, $safeWidth);
@@ -123,32 +122,6 @@ final class Layout
         return new ScrollbarGeometry($column, $box->rect->y, $trackHeight, $box->rect->y + $thumbOffset, $thumbHeight, $maxScrollTop);
     }
 
-    /**
-     * Which row of `$component`'s own lines the focused component's caret is on, if it is in there.
-     * Stands in for upstream's search for `CURSOR_MARKER` in a box's lines.
-     *
-     * @return array{0: int, 1: int}|null row and column within `$component`
-     */
-    public static function caretIn(Component $component, ?Component $focused, int $width): ?array
-    {
-        if (!$focused instanceof Caret) {
-            return null;
-        }
-
-        $caret = $focused->caret($width);
-        if ($caret === null) {
-            return null;
-        }
-
-        if ($component === $focused) {
-            return $caret;
-        }
-
-        $top = $component instanceof Container ? $component->rowOf($focused, $width) : null;
-
-        return $top === null ? null : [$top + $caret[0], $caret[1]];
-    }
-
     /** @return list<string> */
     private static function renderCached(LayoutContext $context, Component $component, int $width): array
     {
@@ -206,7 +179,13 @@ final class Layout
             $allocatedHeight = $height === null ? count($lines) : max(0, $height);
             $lineOffset = 0;
             if (count($lines) > $allocatedHeight && $allocatedHeight > 0) {
-                $cursorLine = self::caretIn($component, $context->focused, $safeWidth)[0] ?? -1;
+                $cursorLine = -1;
+                foreach ($lines as $index => $line) {
+                    if (str_contains($line, TUI::CURSOR_MARKER)) {
+                        $cursorLine = $index;
+                        break;
+                    }
+                }
                 if ($cursorLine >= $allocatedHeight) {
                     $lineOffset = $cursorLine - $allocatedHeight + 1;
                 }

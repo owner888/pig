@@ -16,6 +16,12 @@ use Closure;
  */
 interface TUI extends Component
 {
+    /**
+     * Cursor position marker — an APC sequence terminals ignore. A focused `Focusable` emits it
+     * at its cursor; the renderer strips it and puts the hardware cursor there.
+     */
+    public const string CURSOR_MARKER = "\x1b_pi:c\x07";
+
     public function addChild(Component $child): void;
 
     public function removeChild(Component $child): void;
@@ -33,6 +39,14 @@ interface TUI extends Component
     public function renderNow(bool $force = false): void;
 
     public function requestRender(bool $force = false): void;
+
+    public function getShowHardwareCursor(): bool;
+
+    public function setShowHardwareCursor(bool $enabled): void;
+
+    public function getClearOnShrink(): bool;
+
+    public function setClearOnShrink(bool $enabled): void;
 
     /**
      * @param Closure(string): (bool|array{consume?: bool, data?: string}|null) $listener

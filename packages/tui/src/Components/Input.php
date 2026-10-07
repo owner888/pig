@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace Pig\Tui\Components;
 
 use Closure;
-use Pig\Tui\Caret;
+use Pig\Tui\Focusable;
 use Pig\Tui\Chars;
 use Pig\Tui\Component;
 use Pig\Tui\Graphemes;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
 use Pig\Tui\Width;
+use Pig\Tui\TUI;
 
 /**
  * One line of editable text, with the usual readline keys.
@@ -38,14 +39,17 @@ use Pig\Tui\Width;
  *   dropped rather than inserted as text, which is the entry in `handlePaste`'s comment.
  * - Escape and Ctrl+C answer, through `setCancelHandler()`. Upstream's input cannot be left
  *   without an answer at all, which in front of a parked turn is a session nobody can get out of.
- * - `caret()` exists, so an input method composes at the box being typed into.
+ * - While focused it puts `TUI::CURSOR_MARKER` at the cursor, so an input method composes at the box being typed into.
  *
  * Home and End do what Ctrl+A and Ctrl+E do, which **upstream has in `editor.ts` and not here** —
  * a rule present in one of two siblings, the commonest shape in `CLAUDE.md`'s traps, on upstream's
  * side of the line. Both of pig's editors answer to both.
  */
-final class Input implements Caret, Component, InputHandler
+final class Input implements Component, Focusable, InputHandler
 {
+    /** Set by the renderer; while true the cursor carries `TUI::CURSOR_MARKER` for the input method. */
+    public bool $focused = false;
+
     private const string PROMPT = '> ';
 
     /** Reverse video for the block cursor, and back to normal. */
@@ -86,7 +90,7 @@ final class Input implements Caret, Component, InputHandler
      * leans on it — `min()` alone breaks that promise the moment the new value is a different
      * shape: cursor 4 in `abcdef`, then `setValue('你好')`, and 4 is the middle of `好`.
      * `Graphemes::split()` of half a character answers false, which comes back as
-     * `Grapheme split failed` out of `caret()` or out of the next keystroke — inside the
+     * `Grapheme split failed` out of `render()` or out of the next keystroke — inside the
      * renderer or the loop's input callback, where nothing catches it. Upstream is clamping
      * UTF-16 code units, where the same slip lands between surrogate halves and JavaScript
      * tolerates it; PHP's bytes do not.
@@ -356,29 +360,6 @@ final class Input implements Caret, Component, InputHandler
         return $graphemes === [] ? 0 : strlen($graphemes[0]);
     }
 
-    /**
-     * Where the terminal's own cursor belongs, so an input method composes in the right place.
-     *
-     * `Editor` has answered this since the trap was found; `Input` never did, and it is the
-     * focused component every time a hook asks a question and every time the session picker
-     * is open. Typing Chinese into either drew the candidate list at the bottom of the frame
-     * — which is where writing a frame leaves the cursor — rather than at the box being typed
-     * into. One line, one row: this component is always exactly one.
-     */
-    #[\Override]
-    public function caret(int $width): ?array
-    {
-        $available = $width - Width::visible(self::PROMPT);
-
-        if ($available <= 0) {
-            return null;
-        }
-
-        $column = Width::visible(substr($this->value, 0, $this->cursor));
-
-        return [0, Width::visible(self::PROMPT) + $column - $this->scrollStart($available)];
-    }
-
     #[\Override]
     public function render(int $width): array
     {
@@ -394,6 +375,8 @@ final class Input implements Caret, Component, InputHandler
         $column = 0;
         $offset = 0;
         $drawnCursor = false;
+        // Zero-width, just before the drawn cursor: where the hardware cursor goes.
+        $marker = $this->focused ? TUI::CURSOR_MARKER : '';
 
         foreach (Graphemes::split($this->value) as $grapheme) {
             $cells = Width::visible($grapheme);
@@ -406,7 +389,7 @@ final class Input implements Caret, Component, InputHandler
                     // covers: half a character is not something a terminal can show.
                     $text .= str_repeat(' ', min($column + $cells, $end) - max($column, $start));
                 } else {
-                    $text .= $isCursor ? self::CURSOR_ON . $grapheme . self::CURSOR_OFF : $grapheme;
+                    $text .= $isCursor ? $marker . self::CURSOR_ON . $grapheme . self::CURSOR_OFF : $grapheme;
                     $drawnCursor = $drawnCursor || $isCursor;
                 }
             }
@@ -417,7 +400,7 @@ final class Input implements Caret, Component, InputHandler
         if (!$drawnCursor && $this->cursor >= strlen($this->value)) {
             // The cursor sits past the last character, on the blank cell the scroll
             // window always leaves room for.
-            $text .= self::CURSOR_ON . ' ' . self::CURSOR_OFF;
+            $text .= $marker . self::CURSOR_ON . ' ' . self::CURSOR_OFF;
         }
 
         $line = self::PROMPT . $text;

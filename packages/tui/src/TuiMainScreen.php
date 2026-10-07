@@ -5,368 +5,532 @@ declare(strict_types=1);
 namespace Pig\Tui;
 
 /**
- * The regular-mode renderer — upstream's `TuiMainScreen`: a component tree, drawn by redrawing
- * as little as possible.
+ * The regular-mode renderer — upstream's `TuiMainScreen` in `tui-main-screen.ts`.
  *
- * Nothing here uses the alternate screen buffer. The UI is written into the normal
- * scrollback, so everything the agent has said stays where the user's scroll wheel can
- * reach it after the program exits — and that is what makes the rendering hard, because
- * lines already committed to scrollback cannot be rewritten.
+ * Renders into the terminal's main screen and its scrollback, so what the agent said stays
+ * where the scroll wheel reaches it after exit. Each frame is compared with the last and only
+ * the rows from the first change to the last change are rewritten; a change above the visible
+ * window, a width change or a height change is a full redraw with the scrollback cleared.
+ * The hardware cursor goes wherever the focused component put `TUI::CURSOR_MARKER`.
  *
- * So each frame is compared against the last and **only the lines that differ are rewritten**.
- * When the first difference is above the top of the window there is nothing to move the cursor
- * to, and the whole screen is redrawn instead.
- *
- * Rewriting *from* the first difference *down* was the obvious way to do that and cost the one
- * thing this arrangement exists to protect: the line somebody is typing into. A spinner tick
- * changes one line above the editor, and everything below it — the editor, its borders, the
- * footer — was erased and written again at the spinner's rate. An input method draws what is
- * being composed at the terminal's cursor and anchors its candidate list there, so a prompt
- * being repainted twenty times a second is a candidate list that will not stay put. Measured on
- * a real frame: one line changed, eight rewritten, 1,885 bytes a tick. Per line it is one line
- * and 130 bytes, and the composing line is not touched at all.
- *
- * **One write per frame, with the caret move inside the synchronized-output wrapper.** The move
- * used to go out after it, so the terminal displayed the frame with the cursor wherever the last
- * line left it and *then* moved it — two painted states, the first of them with the cursor at the
- * bottom of the screen, which is the other half of the same candidate-list problem.
+ * Upstream's `BoundedTerminalWriter` (1 MiB chunks, for V8's string limit) and its debug-log
+ * environment variables are not ported: PHP strings have no such limit.
  */
 class TuiMainScreen extends TuiBase
 {
     public const string MODE = 'regular';
 
+    private const string KITTY_SEQUENCE_PREFIX = "\x1b_G";
+
     /** @var list<string> */
     private array $previousLines = [];
 
-    /** Where the cursor is, counted from the first line this drew. */
+    /** @var array<int, true> */
+    private array $previousKittyImageIds = [];
+
+    /** Where the end of the content is, counted from the first line this drew. */
     private int $cursorRow = 0;
 
-    /**
-     * Which column the cursor is in, counted from the left edge of the line.
-     *
-     * Tracked rather than derived so that a frame which leaves the cursor exactly where the
-     * caret already is writes **nothing** — the row alone cannot say that, and a cursor move
-     * is the one thing an input method follows.
-     *
-     * Everything that writes a frame ends it with a `\r`, so this is 0 far more often than it
-     * looks: the alternative is measuring the last line, which for a line holding an image is
-     * both expensive and meaningless.
-     */
-    private int $cursorColumn = 0;
+    /** Where the terminal's cursor actually is, which `positionHardwareCursor()` moves. */
+    private int $hardwareCursorRow = 0;
+
+    /** The terminal's working area: grows with the content, shrinks only on a cleared redraw. */
+    private int $maxLinesRendered = 0;
+
+    private int $previousViewportTop = 0;
 
     /**
-     * Something else owned the screen, so the next frame clears before it draws.
+     * Upstream's `captureRenderState()`, for handing the screen to another renderer and back.
      *
-     * Not the same fact as an empty `previousLines`, which is also true of the very first frame —
-     * and that one must *not* clear, or starting pig would wipe whatever the shell had printed.
-     *
-     * `commit()` puts it back to false, which no test can see today and is kept anyway: the only
-     * thing that empties the record is the force that sets this, so the two always travel together.
-     * The line is what makes the field mean "the screen is lost *now*" rather than "was lost once",
-     * and the day something else empties the record it is what stops a stale clear.
+     * @return array{previousLines: list<string>, previousWidth: int, previousHeight: int, cursorRow: int, hardwareCursorRow: int, maxLinesRendered: int, previousViewportTop: int}
      */
-    private bool $screenIsLost = false;
+    public function captureRenderState(): array
+    {
+        return [
+            'previousLines' => $this->previousLines,
+            'previousWidth' => $this->previousWidth,
+            'previousHeight' => $this->previousHeight,
+            'cursorRow' => $this->cursorRow,
+            'hardwareCursorRow' => $this->hardwareCursorRow,
+            'maxLinesRendered' => $this->maxLinesRendered,
+            'previousViewportTop' => $this->previousViewportTop,
+        ];
+    }
 
-    /**
-     * Throw away what the screen is believed to hold and ask for a clear — what
-     * `requestRender(true)` means here; see its comment in `TuiBase`.
-     */
+    /** @param array{previousLines: list<string>, previousWidth: int, previousHeight: int, cursorRow: int, hardwareCursorRow: int, maxLinesRendered: int, previousViewportTop: int} $state */
+    public function restoreRenderState(array $state): void
+    {
+        $this->previousLines = array_map(static fn (string $line): string => self::isImageLine($line) ? '' : $line, $state['previousLines']);
+        $this->previousKittyImageIds = [];
+        $this->previousWidth = $state['previousWidth'];
+        $this->previousHeight = $state['previousHeight'];
+        $this->cursorRow = $state['cursorRow'];
+        $this->hardwareCursorRow = $state['hardwareCursorRow'];
+        $this->maxLinesRendered = $state['maxLinesRendered'];
+        $this->previousViewportTop = $state['previousViewportTop'];
+    }
+
     #[\Override]
     protected function resetRenderState(): void
     {
         $this->previousLines = [];
-        $this->previousWidth = 0;
+        $this->previousWidth = -1;
+        $this->previousHeight = -1;
         $this->cursorRow = 0;
-        $this->cursorColumn = 0;
-        $this->screenIsLost = true;
+        $this->hardwareCursorRow = 0;
+        $this->maxLinesRendered = 0;
+        $this->previousViewportTop = 0;
     }
 
+    /** Leave the cursor on a fresh line under the content, so the shell prompt does not overwrite it. */
     #[\Override]
-    protected function doRender(): void
+    protected function beforeTerminalStop(TuiStopOptions $options): void
     {
-        $width = $this->terminal->columns();
-        $height = $this->terminal->rows();
-        $lines = $this->render($width);
-
-        $widthChanged = $this->previousWidth !== 0 && $this->previousWidth !== $width;
-
-        if ($this->previousLines === []) {
-            $this->paint($this->wholeFrame($lines, $width, clear: $this->screenIsLost), $lines, $width);
-
+        if ($options->preserveScreen || $this->previousLines === []) {
             return;
         }
 
-        if ($widthChanged) {
-            $this->paint($this->wholeFrame($lines, $width, clear: true), $lines, $width);
+        $this->terminal->write(' ');
+        $lineDiff = count($this->previousLines) - $this->hardwareCursorRow;
+        if ($lineDiff > 0) {
+            $this->terminal->write("\x1b[{$lineDiff}B");
+        } elseif ($lineDiff < 0) {
+            $this->terminal->write("\x1b[" . -$lineDiff . 'A');
+        }
+        $this->terminal->write("\r\n");
+    }
 
-            return;
+    /** @return array{ids: list<int>, rows: int}|null */
+    private static function parseKittyImageHeader(string $line): ?array
+    {
+        $sequenceStart = strpos($line, self::KITTY_SEQUENCE_PREFIX);
+        if ($sequenceStart === false) {
+            return null;
         }
 
-        $firstChanged = $this->firstDifference($lines);
-
-        if ($firstChanged === null) {
-            return;
+        $paramsStart = $sequenceStart + strlen(self::KITTY_SEQUENCE_PREFIX);
+        $paramsEnd = strpos($line, ';', $paramsStart);
+        if ($paramsEnd === false) {
+            return null;
         }
 
-        // The window shows the last $height lines of the frame, so it starts at
-        // count - height. A change above that is in scrollback, out of the cursor's reach.
-        //
-        // Counted from the frame and not from cursorRow, which is where the *cursor* is: with
-        // only the changed lines rewritten that is wherever the last change was, which may be
-        // anywhere, and the top of the window is not a fact about it.
-        $windowStart = max(0, count($this->previousLines) - $height);
-
-        if ($firstChanged < $windowStart) {
-            // Upstream redraws the whole screen here, and so did this — and the case that made
-            // it a fault is a dialog taller than the terminal has room for: the working spinner
-            // sits *above* the overlay, the overlay pushed it out of the window, and the spinner
-            // ticks twelve times a second. Twelve `\e[2J` a second, the screen flashing for as
-            // long as the question stood.
-            //
-            // A full redraw cannot show a line that is still above the window afterwards; all it
-            // does is make the scrollback right at the price of the flash. So: a change that the
-            // *new* frame would bring into the window is redrawn, as upstream does, because that
-            // is the only way to show it. One that stays above the window is **left undrawn and
-            // unrecorded** — the next frame finds it again and leaves it again — and only what is
-            // visible is rewritten. Unrecorded, not recorded as drawn: that is what makes the
-            // shrink case above find it and redraw.
-            // The second condition is a frame that shrank to above the old window: the rows
-            // left to draw are all in scrollback, which is upstream's "deleted lines moved the
-            // viewport up" case and a full redraw there too.
-            if ($firstChanged >= max(0, count($lines) - $height) || count($lines) <= $windowStart) {
-                $this->paint($this->wholeFrame($lines, $width, clear: true), $lines, $width);
-
-                return;
+        $ids = [];
+        $rows = 1;
+        foreach (explode(',', substr($line, $paramsStart, $paramsEnd - $paramsStart)) as $param) {
+            $parts = explode('=', $param, 2);
+            if (count($parts) < 2 || preg_match('/^\d+$/', $parts[1]) !== 1) {
+                continue;
             }
-
-            $visible = $this->firstDifference($lines, $windowStart);
-
-            if ($visible === null) {
-                return;
+            $value = (int) $parts[1];
+            if ($value <= 0 || $value > 0xffffffff) {
+                continue;
             }
-
-            $frame = $this->changedLines($visible, $lines, $width);
-            $this->terminal->write("\x1b[?2026h" . $frame . $this->caretMove($width) . "\x1b[?2026l");
-            $this->commit([...array_slice($this->previousLines, 0, $windowStart), ...array_slice($lines, $windowStart)], $width);
-
-            return;
+            if ($parts[0] === 'i') {
+                $ids[] = $value;
+            } elseif ($parts[0] === 'r') {
+                $rows = $value;
+            }
         }
 
-        $this->paint($this->changedLines($firstChanged, $lines, $width), $lines, $width);
+        return ['ids' => $ids, 'rows' => $rows];
+    }
+
+    /** @return list<int> */
+    private static function extractKittyImageIds(string $line): array
+    {
+        return self::parseKittyImageHeader($line)['ids'] ?? [];
+    }
+
+    private static function extractKittyImageRows(string $line): int
+    {
+        return self::parseKittyImageHeader($line)['rows'] ?? 1;
+    }
+
+    private static function isTermuxSession(): bool
+    {
+        return (string) getenv('TERMUX_VERSION') !== '';
+    }
+
+    private static function deleteKittyImage(int $imageId): string
+    {
+        return "\x1b_Ga=d,d=I,i={$imageId},q=2\x1b\\";
     }
 
     /**
-     * Put one frame on the screen: the lines, then the caret, in a single write.
-     *
      * @param list<string> $lines
+     * @return array<int, true>
      */
-    private function paint(string $frame, array $lines, int $width): void
+    private static function collectKittyImageIds(array $lines): array
     {
-        $this->terminal->write("\x1b[?2026h" . $frame . $this->caretMove($width) . "\x1b[?2026l");
-        $this->commit($lines, $width);
+        $ids = [];
+        foreach ($lines as $line) {
+            foreach (self::extractKittyImageIds($line) as $id) {
+                $ids[$id] = true;
+            }
+        }
+
+        return $ids;
     }
 
-    /**
-     * Move the terminal's cursor to the focused component's caret.
-     *
-     * Writing a frame leaves the cursor at the end of the last line, which is the bottom
-     * of the screen. An input method draws the text being composed, and its candidate
-     * list, wherever that cursor is — so typing Chinese put the pinyin and the candidates
-     * over the footer instead of in the box they were going into.
-     *
-     * **Nothing is written when the cursor is already there**, which after a frame that
-     * rewrote one line well above the prompt is the only way the composing line is left
-     * alone completely: a move away and back is still a move, and the candidate window
-     * follows it.
-     *
-     * The cursor stays hidden: what is seen is still the component's own inverted cell.
-     * This is only about where the terminal believes it is.
-     */
-    private function caretMove(int $width): string
+    /** @param iterable<int> $ids */
+    private static function deleteKittyImages(iterable $ids): string
     {
-        $focused = $this->getFocusedComponent();
-
-        if (!$focused instanceof Caret) {
-            return '';
+        $buffer = '';
+        foreach ($ids as $id) {
+            $buffer .= self::deleteKittyImage($id);
         }
-
-        $caret = $focused->caret($width);
-        $top = $caret === null ? null : $this->rowOf($focused, $width);
-
-        if ($caret === null || $top === null) {
-            return '';
-        }
-
-        $row = $top + $caret[0];
-
-        if ($row === $this->cursorRow && $caret[1] === $this->cursorColumn) {
-            return '';
-        }
-
-        $up = $this->cursorRow - $row;
-        $buffer = $up > 0 ? "\x1b[{$up}A" : ($up < 0 ? "\x1b[" . -$up . 'B' : '');
-        $buffer .= "\r" . ($caret[1] > 0 ? "\x1b[{$caret[1]}C" : '');
-
-        // Recorded, or the next differential draw would count rows from the bottom of a
-        // frame the cursor is no longer at the bottom of.
-        $this->cursorRow = $row;
-        $this->cursorColumn = $caret[1];
 
         return $buffer;
     }
 
     /** @param list<string> $lines */
-    private function wholeFrame(array $lines, int $width, bool $clear): string
+    private static function getKittyImageReservedRows(array $lines, int $index, ?int $maxIndex = null): int
     {
-        // \e[3J clears the scrollback as well, so a redraw does not leave the previous
-        // frame sitting above the new one for the user to scroll back into. **Screen first,
-        // scrollback last**, which is upstream's order: a terminal paints what it is told in the
-        // order it is told, and clearing the visible rows before the new frame arrives is the
-        // part a person is waiting on — the scrollback can go afterwards.
-        // \r because the caret may have left the cursor part-way along a line, and the
-        // first line below is written from wherever it is.
-        $buffer = $clear ? "\x1b[2J\x1b[H\x1b[3J" : "\r";
-
-        foreach ($lines as $index => $line) {
-            // Checked here as well as in changedLines, and for the same reason. A too-wide
-            // line wraps, and every cursor move after it lands a row low — but this path
-            // draws the *first* frame, whose top half a differential redraw never
-            // revisits, so without this the corruption has no visible cause at all.
-            $this->checkWidth($lines, $index, $width);
-            $buffer .= ($index > 0 ? "\r\n" : '') . $line;
+        $maxIndex ??= count($lines) - 1;
+        $rows = self::extractKittyImageRows($lines[$index] ?? '');
+        if ($rows <= 1) {
+            return 1;
         }
 
-        // After writing N lines the cursor sits at the end of the last one, and the \r puts
-        // it at a column this can state rather than measure — see $cursorColumn.
-        $this->cursorRow = count($lines) - 1;
-        $this->cursorColumn = 0;
+        $maxRows = min($rows, $maxIndex - $index + 1, count($lines) - $index);
+        $reservedRows = 1;
+        while ($reservedRows < $maxRows) {
+            $line = $lines[$index + $reservedRows] ?? '';
+            if (self::isImageLine($line) || Width::visible($line) > 0) {
+                break;
+            }
+            $reservedRows++;
+        }
 
-        return $buffer . "\r";
+        return $reservedRows;
     }
 
     /**
-     * Rewrite the lines that differ, grow or shrink the frame, and leave nothing else touched.
-     *
-     * $from is the first line that differs, so there is nothing to do above it. Below it every
-     * line is compared rather than rewritten, because a change high in the frame says nothing
-     * about the lines under it: a spinner tick above the prompt is one line, not everything
-     * from the spinner to the footer.
-     *
-     * Three regions, and they need different escapes, which is the whole reason this is not one
-     * loop. A line the last frame also had is addressed with a relative cursor move, because it
-     * is already on the screen. A line the frame has **grown** by is not: it is written after a
-     * `\r\n`, which is what makes the terminal scroll to make room — a cursor-down at the bottom
-     * of the screen stays where it is, so addressing a row that does not exist yet writes over
-     * the last one instead. And a line the frame has **shrunk** by has to be erased where it
-     * sits, from the new last line downwards.
-     *
-     * That last region is where this used to be wrong rather than merely wasteful. Rewriting
-     * from $from down leaves the cursor at the last line it *wrote*, and with the change beyond
-     * the new frame's end — a loader vanishing from the bottom, which is every turn — it wrote
-     * none, so the erase counted from one row too low: the first dead line survived and the
-     * sweep ran one row past the frame, scrolling the screen to reach a line that was never ours.
-     *
-     * @param list<string> $lines
+     * @param list<string> $newLines
+     * @return array{0: int, 1: int}
      */
-    private function changedLines(int $from, array $lines, int $width): string
+    private function expandChangedRangeForKittyImages(int $firstChanged, int $lastChanged, array $newLines): array
     {
-        $old = count($this->previousLines);
-        $new = count($lines);
-        $buffer = '';
-        $row = $this->cursorRow;
+        $expandedFirst = $firstChanged;
+        $expandedLast = $lastChanged;
+        foreach ([$this->previousLines, $newLines] as $lines) {
+            foreach ($lines as $index => $line) {
+                if (self::extractKittyImageIds($line) === []) {
+                    continue;
+                }
+                $blockEnd = $index + self::getKittyImageReservedRows($lines, $index) - 1;
+                if ($index >= $firstChanged || ($index <= $lastChanged && $blockEnd >= $firstChanged)) {
+                    $expandedFirst = min($expandedFirst, $index);
+                    $expandedLast = max($expandedLast, $blockEnd);
+                }
+            }
+        }
 
-        for ($index = $from; $index < min($new, $old); $index++) {
-            if ($this->previousLines[$index] === $lines[$index]) {
+        return [$expandedFirst, $expandedLast];
+    }
+
+    private function deleteChangedKittyImages(int $firstChanged, int $lastChanged): string
+    {
+        if ($firstChanged < 0 || $lastChanged < $firstChanged) {
+            return '';
+        }
+
+        $ids = [];
+        $maxLine = min($lastChanged, count($this->previousLines) - 1);
+        for ($index = $firstChanged; $index <= $maxLine; $index++) {
+            foreach (self::extractKittyImageIds($this->previousLines[$index] ?? '') as $id) {
+                $ids[$id] = true;
+            }
+        }
+
+        return self::deleteKittyImages(array_keys($ids));
+    }
+
+    #[\Override]
+    protected function doRender(): void
+    {
+        if ($this->stopped) {
+            return;
+        }
+
+        $width = $this->terminal->columns();
+        $height = $this->terminal->rows();
+        $widthChanged = $this->previousWidth !== 0 && $this->previousWidth !== $width;
+        $heightChanged = $this->previousHeight !== 0 && $this->previousHeight !== $height;
+        $previousBufferLength = $this->previousHeight > 0 ? $this->previousViewportTop + $this->previousHeight : $height;
+        $prevViewportTop = $heightChanged ? max(0, $previousBufferLength - $height) : $this->previousViewportTop;
+        $viewportTop = $prevViewportTop;
+        $hardwareCursorRow = $this->hardwareCursorRow;
+        $computeLineDiff = static function (int $targetRow) use (&$hardwareCursorRow, &$prevViewportTop, &$viewportTop): int {
+            return ($targetRow - $viewportTop) - ($hardwareCursorRow - $prevViewportTop);
+        };
+
+        $newLines = $this->render($width);
+
+        // Found before the line resets, which would otherwise be appended after the marker.
+        $cursorPos = $this->extractCursorPosition($newLines, $height);
+        $newLines = $this->applyLineResets($newLines);
+
+        $fullRender = function (bool $clear) use (&$newLines, $cursorPos, $width, $height): void {
+            $this->fullRedrawCount++;
+            $output = "\x1b[?2026h";
+            if ($clear) {
+                $output .= self::deleteKittyImages(array_keys($this->previousKittyImageIds));
+                $output .= "\x1b[2J\x1b[H\x1b[3J";
+            }
+            $count = count($newLines);
+            for ($index = 0; $index < $count; $index++) {
+                if ($index > 0) {
+                    $output .= "\r\n";
+                }
+                $line = $newLines[$index];
+                $reserved = self::isImageLine($line) ? self::getKittyImageReservedRows($newLines, $index) : 1;
+                if ($reserved > 1 && $reserved <= $height) {
+                    $output .= str_repeat("\r\n", $reserved - 1);
+                    $output .= "\x1b[" . ($reserved - 1) . 'A' . $line . "\x1b[" . ($reserved - 1) . 'B';
+                    $index += $reserved - 1;
+                    continue;
+                }
+                $output .= $line;
+            }
+            $output .= "\x1b[?2026l";
+            $this->terminal->write($output);
+            $this->cursorRow = max(0, $count - 1);
+            $this->hardwareCursorRow = $this->cursorRow;
+            $this->maxLinesRendered = $clear ? $count : max($this->maxLinesRendered, $count);
+            $this->previousViewportTop = max(0, max($height, $count) - $height);
+            $this->positionHardwareCursor($cursorPos, $count);
+            $this->previousLines = $newLines;
+            $this->previousKittyImageIds = self::collectKittyImageIds($newLines);
+            $this->previousWidth = $width;
+            $this->previousHeight = $height;
+        };
+
+        // First render: everything, without clearing (the screen is assumed clean).
+        if ($this->previousLines === [] && !$widthChanged && !$heightChanged) {
+            $fullRender(false);
+
+            return;
+        }
+
+        // A width change re-wraps everything.
+        if ($widthChanged) {
+            $fullRender(true);
+
+            return;
+        }
+
+        // A height change misaligns the visible window, except in Termux, where the software
+        // keyboard changes the height on every toggle and a redraw would replay the history.
+        if ($heightChanged && !self::isTermuxSession()) {
+            $fullRender(true);
+
+            return;
+        }
+
+        if ($this->getClearOnShrink() && count($newLines) < $this->maxLinesRendered) {
+            $fullRender(true);
+
+            return;
+        }
+
+        $firstChanged = -1;
+        $lastChanged = -1;
+        $maxLines = max(count($newLines), count($this->previousLines));
+        for ($index = 0; $index < $maxLines; $index++) {
+            if (($this->previousLines[$index] ?? '') !== ($newLines[$index] ?? '')) {
+                if ($firstChanged === -1) {
+                    $firstChanged = $index;
+                }
+                $lastChanged = $index;
+            }
+        }
+        $appendedLines = count($newLines) > count($this->previousLines);
+        if ($appendedLines) {
+            if ($firstChanged === -1) {
+                $firstChanged = count($this->previousLines);
+            }
+            $lastChanged = count($newLines) - 1;
+        }
+        if ($firstChanged !== -1) {
+            [$firstChanged, $lastChanged] = $this->expandChangedRangeForKittyImages($firstChanged, $lastChanged, $newLines);
+        }
+        $appendStart = $appendedLines && $firstChanged === count($this->previousLines) && $firstChanged > 0;
+
+        // Nothing changed, but the cursor may still have moved.
+        if ($firstChanged === -1) {
+            $this->positionHardwareCursor($cursorPos, count($newLines));
+            $this->previousViewportTop = $prevViewportTop;
+            $this->previousHeight = $height;
+
+            return;
+        }
+
+        // Every change is in deleted lines: nothing to draw, only rows to clear.
+        if ($firstChanged >= count($newLines)) {
+            if (count($this->previousLines) > count($newLines)) {
+                $output = "\x1b[?2026h" . $this->deleteChangedKittyImages($firstChanged, $lastChanged);
+                $targetRow = max(0, count($newLines) - 1);
+                if ($targetRow < $prevViewportTop) {
+                    $fullRender(true);
+
+                    return;
+                }
+                $lineDiff = $computeLineDiff($targetRow);
+                if ($lineDiff > 0) {
+                    $output .= "\x1b[{$lineDiff}B";
+                } elseif ($lineDiff < 0) {
+                    $output .= "\x1b[" . -$lineDiff . 'A';
+                }
+                $output .= "\r";
+                $extraLines = count($this->previousLines) - count($newLines);
+                if ($extraLines > $height) {
+                    $fullRender(true);
+
+                    return;
+                }
+                $clearStartOffset = $newLines === [] ? 0 : 1;
+                if ($extraLines > 0 && $clearStartOffset > 0) {
+                    $output .= "\x1b[{$clearStartOffset}B";
+                }
+                for ($index = 0; $index < $extraLines; $index++) {
+                    $output .= "\r\x1b[2K";
+                    if ($index < $extraLines - 1) {
+                        $output .= "\x1b[1B";
+                    }
+                }
+                $moveBack = max(0, $extraLines - 1 + $clearStartOffset);
+                if ($moveBack > 0) {
+                    $output .= "\x1b[{$moveBack}A";
+                }
+                $this->terminal->write($output . "\x1b[?2026l");
+                $this->cursorRow = $targetRow;
+                $this->hardwareCursorRow = $targetRow;
+            }
+            $this->positionHardwareCursor($cursorPos, count($newLines));
+            $this->previousLines = $newLines;
+            $this->previousKittyImageIds = self::collectKittyImageIds($newLines);
+            $this->previousWidth = $width;
+            $this->previousHeight = $height;
+            $this->previousViewportTop = $prevViewportTop;
+
+            return;
+        }
+
+        // A change above what was visible cannot be reached with the cursor.
+        if ($firstChanged < $prevViewportTop) {
+            $fullRender(true);
+
+            return;
+        }
+
+        $output = "\x1b[?2026h" . $this->deleteChangedKittyImages($firstChanged, $lastChanged);
+        $prevViewportBottom = $prevViewportTop + $height - 1;
+        $moveTargetRow = $appendStart ? $firstChanged - 1 : $firstChanged;
+        if ($moveTargetRow > $prevViewportBottom) {
+            $currentScreenRow = max(0, min($height - 1, $hardwareCursorRow - $prevViewportTop));
+            $moveToBottom = $height - 1 - $currentScreenRow;
+            if ($moveToBottom > 0) {
+                $output .= "\x1b[{$moveToBottom}B";
+            }
+            $scroll = $moveTargetRow - $prevViewportBottom;
+            $output .= str_repeat("\r\n", $scroll);
+            $prevViewportTop += $scroll;
+            $viewportTop += $scroll;
+            $hardwareCursorRow = $moveTargetRow;
+        }
+
+        $lineDiff = $computeLineDiff($moveTargetRow);
+        if ($lineDiff > 0) {
+            $output .= "\x1b[{$lineDiff}B";
+        } elseif ($lineDiff < 0) {
+            $output .= "\x1b[" . -$lineDiff . 'A';
+        }
+        $output .= $appendStart ? "\r\n" : "\r";
+
+        // Only the changed rows, not everything below them: a spinner tick is one line.
+        $renderEnd = min($lastChanged, count($newLines) - 1);
+        for ($index = $firstChanged; $index <= $renderEnd; $index++) {
+            if ($index > $firstChanged) {
+                $output .= "\r\n";
+            }
+            $line = $newLines[$index];
+            $isImage = self::isImageLine($line);
+            $reserved = $isImage ? self::getKittyImageReservedRows($newLines, $index, $renderEnd) : 1;
+            if ($reserved > 1) {
+                $imageStartScreenRow = $index - $viewportTop;
+                if ($imageStartScreenRow < 0 || $imageStartScreenRow + $reserved > $height) {
+                    $fullRender(true);
+
+                    return;
+                }
+                $output .= "\x1b[2K" . str_repeat("\r\n\x1b[2K", $reserved - 1);
+                $output .= "\x1b[" . ($reserved - 1) . 'A' . $line . "\x1b[" . ($reserved - 1) . 'B';
+                $index += $reserved - 1;
                 continue;
             }
 
-            $this->checkWidth($lines, $index, $width);
-
-            // \e[2K per line rather than one \e[J for the rest of the screen: clearing to
-            // the end of the screen makes xterm.js flicker.
-            $buffer .= self::moveTo($row, $index) . "\x1b[2K" . $lines[$index];
-            $row = $index;
-        }
-
-        if ($new > $old) {
-            $buffer .= self::moveTo($row, $old - 1);
-
-            for ($index = $old; $index < $new; $index++) {
-                $this->checkWidth($lines, $index, $width);
-                $buffer .= "\r\n\x1b[2K" . $lines[$index];
+            $output .= "\x1b[2K";
+            if (!$isImage && Width::visible($line) > $width) {
+                $this->stop();
+                $this->checkWidth($newLines, $index, $width);
             }
-
-            $row = $new - 1;
+            $output .= $line;
         }
 
-        if ($old > $new) {
-            // Down with `\e[B`, never `\r\n`: a newline on the terminal's last row **scrolls**,
-            // and the vanished rows are still on the screen, so the cursor can be moved to them.
-            // This is upstream's own sweep — `\r\n\x1b[2K` per vanished line — and what it costs
-            // is the whole screen shifting up by that many rows every time the frame shrinks,
-            // which is the end of every turn: the working loader and its spacer go, and the
-            // footer is left two rows above the bottom with blank rows under it. Measured on a
-            // real pty through a VT emulator; a hand-written emulator that did not scroll on
-            // newline said the old sequence was fine, which is why it stayed for a day.
-            $extra = $old - $new;
-            $buffer .= self::moveTo($row, $new - 1) . str_repeat("\x1b[1B\r\x1b[2K", $extra) . "\x1b[{$extra}A";
-            $row = $new - 1;
+        $finalCursorRow = $renderEnd;
+
+        // The frame shrank: clear what is left below it and come back.
+        if (count($this->previousLines) > count($newLines)) {
+            if ($renderEnd < count($newLines) - 1) {
+                $moveDown = count($newLines) - 1 - $renderEnd;
+                $output .= "\x1b[{$moveDown}B";
+                $finalCursorRow = count($newLines) - 1;
+            }
+            $extraLines = count($this->previousLines) - count($newLines);
+            $output .= str_repeat("\r\n\x1b[2K", $extraLines);
+            $output .= "\x1b[{$extraLines}A";
         }
 
-        $this->cursorRow = $row;
-        $this->cursorColumn = 0;
+        $this->terminal->write($output . "\x1b[?2026l");
 
-        return $buffer . "\r";
-    }
-
-    /**
-     * Get the cursor from one row of the frame to another, at column 0.
-     *
-     * The `\r` is not optional and is not only for the column: it is what clears the pending
-     * wrap a line exactly as wide as the terminal leaves behind.
-     */
-    private static function moveTo(int $from, int $to): string
-    {
-        $move = $to - $from;
-        $vertical = $move > 0 ? "\x1b[{$move}B" : ($move < 0 ? "\x1b[" . -$move . 'A' : '');
-
-        return $vertical . "\r";
-    }
-
-    /**
-     * Record what the screen now holds.
-     *
-     * $width is the width the frame was rendered at, not the terminal's width now: a
-     * resize during the write would otherwise be recorded as already drawn.
-     *
-     * Where the cursor is, is recorded by whatever built the frame — see $cursorColumn.
-     *
-     * @param list<string> $lines
-     */
-    private function commit(array $lines, int $width): void
-    {
-        $this->previousLines = $lines;
+        $this->cursorRow = max(0, count($newLines) - 1);
+        $this->hardwareCursorRow = $finalCursorRow;
+        $this->maxLinesRendered = max($this->maxLinesRendered, count($newLines));
+        $this->previousViewportTop = max($prevViewportTop, $finalCursorRow - $height + 1);
+        $this->positionHardwareCursor($cursorPos, count($newLines));
+        $this->previousLines = $newLines;
+        $this->previousKittyImageIds = self::collectKittyImageIds($newLines);
         $this->previousWidth = $width;
-        $this->previousHeight = $this->terminal->rows();
-        $this->screenIsLost = false;
+        $this->previousHeight = $height;
     }
 
     /**
-     * The first line that differs from the last frame, or null when nothing did.
+     * Put the hardware cursor where the focused component's marker was, for the input method's
+     * candidate window — upstream's `positionHardwareCursor()`.
      *
-     * @param list<string> $lines
+     * @param array{row: int, col: int}|null $cursorPos
      */
-    private function firstDifference(array $lines, int $from = 0): ?int
+    private function positionHardwareCursor(?array $cursorPos, int $totalLines): void
     {
-        $count = max(count($lines), count($this->previousLines));
+        if ($cursorPos === null || $totalLines <= 0) {
+            $this->terminal->hideCursor();
 
-        for ($index = $from; $index < $count; $index++) {
-            if (($this->previousLines[$index] ?? '') !== ($lines[$index] ?? '')) {
-                return $index;
-            }
+            return;
         }
 
-        return null;
-    }
+        $targetRow = max(0, min($cursorPos['row'], $totalLines - 1));
+        $targetCol = max(0, $cursorPos['col']);
+        $rowDelta = $targetRow - $this->hardwareCursorRow;
+        $buffer = $rowDelta > 0 ? "\x1b[{$rowDelta}B" : ($rowDelta < 0 ? "\x1b[" . -$rowDelta . 'A' : '');
+        $buffer .= "\x1b[" . ($targetCol + 1) . 'G';
+        $this->terminal->write($buffer);
 
+        $this->hardwareCursorRow = $targetRow;
+        if ($this->getShowHardwareCursor()) {
+            $this->terminal->showCursor();
+        } else {
+            $this->terminal->hideCursor();
+        }
+    }
 }

@@ -521,7 +521,7 @@ final class EditorTest extends TestCase
     {
         $editor = new Editor();
 
-        $this->assertSame([1, 0], $editor->caret(40));
+        $this->assertSame([1, 0], self::cursorAt($editor, 40));
     }
 
     public function testTheCaretFollowsTypingAcrossTheLine(): void
@@ -529,7 +529,7 @@ final class EditorTest extends TestCase
         $editor = new Editor();
         $editor->setText('hello');
 
-        $this->assertSame([1, 5], $editor->caret(40));
+        $this->assertSame([1, 5], self::cursorAt($editor, 40));
     }
 
     public function testTheCaretIsMeasuredInColumnsNotCharacters(): void
@@ -539,7 +539,7 @@ final class EditorTest extends TestCase
         $editor = new Editor();
         $editor->setText('你好');
 
-        $this->assertSame([1, 4], $editor->caret(40));
+        $this->assertSame([1, 4], self::cursorAt($editor, 40));
     }
 
     public function testTheCaretFollowsAWrappedLineDown(): void
@@ -547,7 +547,7 @@ final class EditorTest extends TestCase
         $editor = new Editor();
         $editor->setText(str_repeat('x', 25));
 
-        $this->assertSame([2, 5], $editor->caret(20));
+        $this->assertSame([2, 5], self::cursorAt($editor, 20));
     }
 
     public function testTheCaretFollowsSeveralLinesDown(): void
@@ -555,7 +555,7 @@ final class EditorTest extends TestCase
         $editor = new Editor();
         $editor->setText("one\ntwo\nthree");
 
-        $this->assertSame([3, 5], $editor->caret(40));
+        $this->assertSame([3, 5], self::cursorAt($editor, 40));
     }
 
     public function testUpFromALongerLineLandsOnACharacterAndNotInsideOne(): void
@@ -610,7 +610,7 @@ final class EditorTest extends TestCase
     {
         $this->editor->setText("line one\nline two");
         $first = $this->editor->render(40);
-        $caret = $this->editor->caret(40);
+        $caret = self::cursorAt($this->editor, 40);
 
         $this->assertNotEmpty($first);
         $this->assertNotNull($caret);
@@ -645,5 +645,27 @@ final class EditorTest extends TestCase
 
         $this->editor->setBorderStatus(null);
         $this->assertSame(str_repeat('─', 40), Ansi::strip($this->editor->render(40)[0]));
+    }
+
+    /**
+     * Where the component puts `TUI::CURSOR_MARKER` while focused — the hardware cursor, which is
+     * where an input method composes.
+     *
+     * @return array{0: int, 1: int}|null
+     */
+    private static function cursorAt(\Pig\Tui\Components\Editor $component, int $width): ?array
+    {
+        $wasFocused = $component->focused;
+        $component->focused = true;
+        $lines = $component->render($width);
+        $component->focused = $wasFocused;
+        foreach ($lines as $row => $line) {
+            $at = strpos($line, \Pig\Tui\TUI::CURSOR_MARKER);
+            if ($at !== false) {
+                return [$row, \Pig\Tui\Width::visible(substr($line, 0, $at))];
+            }
+        }
+
+        return null;
     }
 }

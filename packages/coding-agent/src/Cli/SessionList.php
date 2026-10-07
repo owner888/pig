@@ -7,7 +7,7 @@ namespace Pig\CodingAgent\Cli;
 use Closure;
 use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Theme\Palette;
-use Pig\Tui\Caret;
+use Pig\Tui\Focusable;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Input;
 use Pig\Tui\Components\SelectItem;
@@ -37,8 +37,11 @@ use Pig\Tui\Keys;
  * `SelectList`, which pig already had, where upstream draws its own two-line rows. So a
  * session is one line here and fits ten on screen instead of five.
  */
-final class SessionList implements Caret, Component, InputHandler
+final class SessionList implements Component, Focusable, InputHandler
 {
+    /** Set by the renderer and handed to the search box, which holds the cursor. */
+    public bool $focused = false;
+
     private Input $search;
 
     private SelectList $list;
@@ -114,23 +117,10 @@ final class SessionList implements Caret, Component, InputHandler
         $this->list->invalidate();
     }
 
-    /**
-     * The caret belongs to the search box, which is this component's first line.
-     *
-     * A wrapper that does not forward `caret()` silently does nothing — the interface is
-     * checked on the focused component, so the cursor stays wherever the frame left it and an
-     * input method draws over the bottom of the screen. `CustomEditor` shipped with exactly
-     * this omission, which is why it is worth a sentence here.
-     */
-    #[\Override]
-    public function caret(int $width): ?array
-    {
-        return $this->search->caret($width);
-    }
-
     #[\Override]
     public function render(int $width): array
     {
+        $this->search->focused = $this->focused;
         $lines = [...$this->search->render($width), ''];
 
         if ($this->filtered === []) {

@@ -21,13 +21,13 @@ final class TuiRenderer
      * @param 'regular'|'fullscreen'|string $tuiMode
      * @param Closure(): string $scrollToEndIndicator
      */
-    public static function createInteractiveTui(Terminal $terminal, string $tuiMode, Clipboard $clipboard, Closure $scrollToEndIndicator): TuiBase
+    public static function createInteractiveTui(Terminal $terminal, string $tuiMode, bool $showHardwareCursor, Clipboard $clipboard, Closure $scrollToEndIndicator): TuiBase
     {
         if ($tuiMode !== 'fullscreen') {
-            return new TuiMainScreen($terminal);
+            return new TuiMainScreen($terminal, $showHardwareCursor);
         }
 
-        return new TuiAltScreen($terminal, new TuiAltScreenOptions(
+        return new TuiAltScreen($terminal, $showHardwareCursor, options: new TuiAltScreenOptions(
             wheelScrollLines: 'auto',
             scrollToEndIndicator: $scrollToEndIndicator,
             copySelection: static fn (string $text): bool => $clipboard->write($text),

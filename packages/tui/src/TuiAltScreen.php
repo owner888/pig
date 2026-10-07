@@ -125,9 +125,13 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
     /** @var (Closure(string): (bool|string))|null */
     private readonly ?Closure $copySelection;
 
-    public function __construct(Terminal $terminal, ?TuiAltScreenOptions $options = null)
-    {
-        parent::__construct($terminal);
+    public function __construct(
+        Terminal $terminal,
+        ?bool $showHardwareCursor = null,
+        ?string $logDirectory = null,
+        ?TuiAltScreenOptions $options = null,
+    ) {
+        parent::__construct($terminal, $showHardwareCursor, $logDirectory);
         $options ??= new TuiAltScreenOptions();
         $this->implicitDocument = new class (fn (int $width): array => parent::render($width), fn () => $this->invalidateChildren()) implements Component {
             public function __construct(private readonly Closure $renderChildren, private readonly Closure $invalidateChildren)
@@ -1207,43 +1211,6 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
     }
 
     /**
-     * Where the focused component's caret is on screen — upstream finds `CURSOR_MARKER` in the
-     * painted lines; pig asks the `Caret` of the leaf box that holds the focused component.
-     *
-     * @return array{row: int, col: int}|null
-     */
-    private function cursorPosition(LayoutFrame $layout): ?array
-    {
-        $focused = $this->getFocusedComponent();
-        if (!$focused instanceof Caret) {
-            return null;
-        }
-
-        $visit = static function (LayoutBox $box) use (&$visit, $focused): ?array {
-            if ($box->lines !== null) {
-                $caret = Layout::caretIn($box->component, $focused, $box->rect->width);
-                if ($caret === null) {
-                    return null;
-                }
-                $row = $box->rect->y + $caret[0] - $box->lineOffset;
-                $col = $box->rect->x + $caret[1];
-
-                return $row >= $box->clip->y && $row < $box->clip->y + $box->clip->height ? ['row' => $row, 'col' => $col] : null;
-            }
-            foreach ($box->children as $child) {
-                $found = $visit($child);
-                if ($found !== null) {
-                    return $found;
-                }
-            }
-
-            return null;
-        };
-
-        return $visit($layout->root);
-    }
-
-    /**
      * One frame — upstream's `doRender()`.
      *
      * Every row of the window is addressed absolutely, the frame is exactly the window's height,
@@ -1262,7 +1229,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $width = max(1, $this->terminal->columns());
         $height = max(1, $this->terminal->rows());
         $root = $this->layoutRoot ?? $this->implicitScrollView;
-        $nextLayout = Layout::renderLayoutFrame($root, $width, $height, fn () => $this->requestRender(), $this->getFocusedComponent());
+        $nextLayout = Layout::renderLayoutFrame($root, $width, $height, fn () => $this->requestRender());
         $screen = array_map(static fn (string $line): string => (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $line), $nextLayout->lines);
         $screen = $this->compositeScrollToEndIndicator($screen, $nextLayout, $width);
         if (count($screen) > $height) {
@@ -1270,15 +1237,16 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         }
         $screen = $this->applySelection($screen, $nextLayout);
         $screen = $this->compositeFlashes($screen, $width, $height);
-        $cursorPos = $this->cursorPosition($nextLayout);
+        $cursorPos = $this->extractCursorPosition($screen, $height);
         $screen = array_map(
             static fn (string $line): string => self::isImageLine($line) || Width::visible($line) <= $width ? $line : Width::sliceByColumn($line, 0, $width, true),
-            $screen,
+            $this->applyLineResets($screen),
         );
 
         $fullRedraw = $this->previousScreen === [] || $this->previousWidth !== $width || $this->previousHeight !== $height;
         $buffer = self::BEGIN_SYNCHRONIZED_OUTPUT;
         if ($fullRedraw) {
+            $this->fullRedrawCount++;
             $buffer .= "\x1b[2J";
         }
 
@@ -1291,8 +1259,11 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
 
         if ($cursorPos !== null) {
             $buffer .= "\x1b[" . ($cursorPos['row'] + 1) . ';' . (min($width, $cursorPos['col']) + 1) . 'H';
+            $buffer .= $this->getShowHardwareCursor() ? "\x1b[?25h" : "\x1b[?25l";
+        } else {
+            $buffer .= "\x1b[?25l";
         }
-        $buffer .= "\x1b[?25l" . self::END_SYNCHRONIZED_OUTPUT;
+        $buffer .= self::END_SYNCHRONIZED_OUTPUT;
         $this->terminal->write($buffer);
 
         $frame = [];

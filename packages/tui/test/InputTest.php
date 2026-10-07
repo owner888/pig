@@ -244,7 +244,7 @@ final class InputTest extends TestCase
 
         $this->assertSame(3, $this->input->cursor());
         $this->assertSame(1, Width::visible(substr('你好', 0, $this->input->cursor())) / 2);
-        $this->assertNotNull($this->input->caret(20));
+        $this->assertNotNull(self::cursorAt($this->input, 20));
         $this->type("\x7f");
         $this->assertSame('好', $this->input->value());
     }
@@ -382,18 +382,18 @@ final class InputTest extends TestCase
     {
         // Row 0 always: this component is one line. The column is the prompt's width, which
         // is where an input method has to draw for the composing text to appear in the box.
-        $this->assertSame([0, 2], $this->input->caret(40));
+        $this->assertSame([0, 2], self::cursorAt($this->input, 40));
     }
 
     public function testTheCaretFollowsTheText(): void
     {
         $this->given('hello');
 
-        $this->assertSame([0, 7], $this->input->caret(40));
+        $this->assertSame([0, 7], self::cursorAt($this->input, 40));
 
         $this->type("\x1b[D");
 
-        $this->assertSame([0, 6], $this->input->caret(40));
+        $this->assertSame([0, 6], self::cursorAt($this->input, 40));
     }
 
     public function testTheCaretIsMeasuredInColumnsNotCharacters(): void
@@ -403,14 +403,14 @@ final class InputTest extends TestCase
         // for, one component over.
         $this->given('你好');
 
-        $this->assertSame([0, 6], $this->input->caret(40));
+        $this->assertSame([0, 6], self::cursorAt($this->input, 40));
     }
 
     public function testTheCaretStaysInsideAScrolledWindow(): void
     {
         $this->given('0123456789abcdef');
 
-        [$row, $column] = $this->input->caret(10);
+        [$row, $column] = self::cursorAt($this->input, 10);
 
         $this->assertSame(0, $row);
         $this->assertLessThan(10, $column);
@@ -420,6 +420,28 @@ final class InputTest extends TestCase
     public function testThereIsNoCaretWhenThereIsNoRoomForText(): void
     {
         // The same width at which `render()` gives up and draws the prompt alone.
-        $this->assertNull($this->input->caret(2));
+        $this->assertNull(self::cursorAt($this->input, 2));
+    }
+
+    /**
+     * Where the component puts `TUI::CURSOR_MARKER` while focused — the hardware cursor, which is
+     * where an input method composes.
+     *
+     * @return array{0: int, 1: int}|null
+     */
+    private static function cursorAt(\Pig\Tui\Components\Input $component, int $width): ?array
+    {
+        $wasFocused = $component->focused;
+        $component->focused = true;
+        $lines = $component->render($width);
+        $component->focused = $wasFocused;
+        foreach ($lines as $row => $line) {
+            $at = strpos($line, \Pig\Tui\TUI::CURSOR_MARKER);
+            if ($at !== false) {
+                return [$row, \Pig\Tui\Width::visible(substr($line, 0, $at))];
+            }
+        }
+
+        return null;
     }
 }

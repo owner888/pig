@@ -119,7 +119,7 @@ final class TuiAltScreenTest extends TestCase
     public function testShowsAClickableJumpToEndIndicatorOnTheTranscriptsLastRowWhileScrolledUp(): void
     {
         $terminal = new FakeTerminal(30, 6);
-        $tui = new TuiAltScreen($terminal, new TuiAltScreenOptions(scrollToEndIndicator: static fn (): string => "\x1b[7m ↓ Jump to end \x1b[27m"));
+        $tui = new TuiAltScreen($terminal, options: new TuiAltScreenOptions(scrollToEndIndicator: static fn (): string => "\x1b[7m ↓ Jump to end \x1b[27m"));
         $transcript = new ScrollView(new Text(self::lines(8), 0, 0), follow: 'end', primary: true);
         $tui->setLayoutRoot(new VStack([
             new StackEntry($transcript, basis: 0, grow: 1, minSize: 1),
@@ -149,7 +149,7 @@ final class TuiAltScreenTest extends TestCase
 
     public function testNeverShowsTheJumpToEndIndicatorForAPrimaryScrollViewWithoutFollowEnd(): void
     {
-        $tui = new TuiAltScreen(new FakeTerminal(30, 3), new TuiAltScreenOptions(scrollToEndIndicator: static fn (): string => ' ↓ Jump to end '));
+        $tui = new TuiAltScreen(new FakeTerminal(30, 3), options: new TuiAltScreenOptions(scrollToEndIndicator: static fn (): string => ' ↓ Jump to end '));
         $transcript = new ScrollView(new Text("one\ntwo\nthree\nfour\nfive", 0, 0), primary: true);
         $tui->setLayoutRoot($transcript);
         $this->start($tui);
@@ -280,7 +280,7 @@ final class TuiAltScreenTest extends TestCase
     public function testChainsUnusedWheelDeltaToAnOuterScrollView(): void
     {
         $terminal = new FakeTerminal(20, 4);
-        $tui = new TuiAltScreen($terminal, new TuiAltScreenOptions(wheelScrollLines: 3));
+        $tui = new TuiAltScreen($terminal, options: new TuiAltScreenOptions(wheelScrollLines: 3));
         $inner = new ScrollView(new Text(self::lines(6, 'i'), 0, 0));
         $outer = new ScrollView(new VStack([new StackEntry($inner, basis: 2), new Text(self::lines(5, 'tail'), 0, 0)]), primary: true);
         $tui->setLayoutRoot($outer);
@@ -319,7 +319,7 @@ final class TuiAltScreenTest extends TestCase
     {
         $terminal = new FakeTerminal(20, 4);
         $copied = [];
-        $tui = new TuiAltScreen($terminal, new TuiAltScreenOptions(copySelection: static function (string $text) use (&$copied): bool {
+        $tui = new TuiAltScreen($terminal, options: new TuiAltScreenOptions(copySelection: static function (string $text) use (&$copied): bool {
             $copied[] = $text;
 
             return true;
@@ -341,7 +341,7 @@ final class TuiAltScreenTest extends TestCase
     {
         $terminal = new FakeTerminal(20, 4);
         $copied = [];
-        $tui = new TuiAltScreen($terminal, new TuiAltScreenOptions(copyOnSelect: false, copySelection: static function (string $text) use (&$copied): bool {
+        $tui = new TuiAltScreen($terminal, options: new TuiAltScreenOptions(copyOnSelect: false, copySelection: static function (string $text) use (&$copied): bool {
             $copied[] = $text;
 
             return true;
@@ -364,7 +364,7 @@ final class TuiAltScreenTest extends TestCase
     {
         $terminal = new FakeTerminal(20, 4);
         $copied = [];
-        $tui = new TuiAltScreen($terminal, new TuiAltScreenOptions(copySelection: static function (string $text) use (&$copied): bool {
+        $tui = new TuiAltScreen($terminal, options: new TuiAltScreenOptions(copySelection: static function (string $text) use (&$copied): bool {
             $copied[] = $text;
 
             return true;
@@ -392,7 +392,7 @@ final class TuiAltScreenTest extends TestCase
     public function testFlashesAnErrorWhenTheInjectedCopySelectionHandlerFails(): void
     {
         $terminal = new FakeTerminal(20, 4);
-        $tui = new TuiAltScreen($terminal, new TuiAltScreenOptions(copySelection: static fn (): bool => false));
+        $tui = new TuiAltScreen($terminal, options: new TuiAltScreenOptions(copySelection: static fn (): bool => false));
         $tui->addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
         $this->start($tui);
 
@@ -408,7 +408,7 @@ final class TuiAltScreenTest extends TestCase
     public function testFlashesASpecificErrorReturnedByTheInjectedCopySelectionHandler(): void
     {
         $terminal = new FakeTerminal(80, 4);
-        $tui = new TuiAltScreen($terminal, new TuiAltScreenOptions(copyOnSelect: false, copySelection: static fn (): string => 'Clipboard unavailable: install wl-clipboard'));
+        $tui = new TuiAltScreen($terminal, options: new TuiAltScreenOptions(copyOnSelect: false, copySelection: static fn (): string => 'Clipboard unavailable: install wl-clipboard'));
         $tui->addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
         $this->start($tui);
 
@@ -447,7 +447,7 @@ final class TuiAltScreenTest extends TestCase
         ] as [$line, $needle]) {
             $copied = [];
             $terminal = new FakeTerminal(80, 1);
-            $tui = new TuiAltScreen($terminal, new TuiAltScreenOptions(copySelection: static function (string $text) use (&$copied): bool {
+            $tui = new TuiAltScreen($terminal, options: new TuiAltScreenOptions(copySelection: static function (string $text) use (&$copied): bool {
                 $copied[] = $text;
 
                 return true;
@@ -713,7 +713,7 @@ final class TuiAltScreenTest extends TestCase
     public function testAWideCharacterUnderTheJumpPillDoesNotWidenTheRow(): void
     {
         $terminal = new FakeTerminal(171, 6);
-        $tui = new TuiAltScreen($terminal, new TuiAltScreenOptions(scrollToEndIndicator: static fn (): string => ' ↓ Jump to latest message · Ctrl+End '));
+        $tui = new TuiAltScreen($terminal, options: new TuiAltScreenOptions(scrollToEndIndicator: static fn (): string => ' ↓ Jump to latest message · Ctrl+End '));
         $tui->addChild(new Text(implode("\n", array_fill(0, 20, str_repeat('中', 85))), 0, 0));
         $this->start($tui);
 

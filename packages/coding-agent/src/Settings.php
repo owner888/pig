@@ -282,6 +282,28 @@ final class Settings
         $this->set('terminal.showImages', $show);
     }
 
+    /** Upstream's `getClearOnShrink()`: the setting, then `PIG_CLEAR_ON_SHRINK`/`PI_CLEAR_ON_SHRINK=1`, then off. */
+    public function clearOnShrink(): bool
+    {
+        $value = $this->get('terminal.clearOnShrink');
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        return (getenv('PIG_CLEAR_ON_SHRINK') ?: getenv('PI_CLEAR_ON_SHRINK')) === '1';
+    }
+
+    /** Upstream's `getShowHardwareCursor()`: the setting, then `PIG_HARDWARE_CURSOR`/`PI_HARDWARE_CURSOR=1`, then off. */
+    public function showHardwareCursor(): bool
+    {
+        $value = $this->get('showHardwareCursor');
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        return (getenv('PIG_HARDWARE_CURSOR') ?: getenv('PI_HARDWARE_CURSOR')) === '1';
+    }
+
     public function compactionEnabled(): bool
     {
         return $this->get('compaction.enabled') !== false;

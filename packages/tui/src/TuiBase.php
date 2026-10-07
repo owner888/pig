@@ -13,8 +13,7 @@ use Pig\Tui\Images\TerminalImage;
  * listeners, the cell-size query and when a frame is drawn. *How* a frame is drawn is
  * `doRender()`, which `TuiMainScreen` and `TuiAltScreen` each implement.
  *
- * pig keeps its own `Caret` interface for where the terminal cursor goes rather than upstream's
- * `CURSOR_MARKER`, and has no overlay stack or terminal-color queries yet.
+ * Not ported yet: the overlay stack and terminal-colour queries.
  */
 abstract class TuiBase extends Container implements TUI
 {
@@ -37,19 +36,24 @@ abstract class TuiBase extends Container implements TUI
 
     private bool $renderRequested = false;
 
+    private bool $immediateRenderScheduled = false;
+
     private float $lastRenderAt = 0.0;
 
     private ?string $renderTimer = null;
 
-    /** Whether the pending render came from a resize alone, so a size that did not change draws nothing. */
-    private bool $onlyResizePending = false;
+    private bool $showHardwareCursor = false;
+
+    private bool $clearOnShrink = false;
+
+    protected int $fullRedrawCount = 0;
 
     protected bool $stopped = false;
 
     /** The width the last frame was drawn for. */
     protected int $previousWidth = 0;
 
-    /** The height the last frame was drawn for; a resize that changed neither draws nothing at all. */
+    /** The height the last frame was drawn for. */
     protected int $previousHeight = 0;
 
     /** The terminal was asked how big a cell is and has not answered yet. */
@@ -58,9 +62,16 @@ abstract class TuiBase extends Container implements TUI
     /** Input held back while that answer might still be arriving. */
     private string $cellSizeBuffer = '';
 
-    public function __construct(public readonly Terminal $terminal)
-    {
+    /** @param string|null $logDirectory where crash dumps go; the system temp directory when null */
+    public function __construct(
+        public readonly Terminal $terminal,
+        ?bool $showHardwareCursor = null,
+        protected readonly ?string $logDirectory = null,
+    ) {
         $this->mode = static::MODE;
+        if ($showHardwareCursor !== null) {
+            $this->showHardwareCursor = $showHardwareCursor;
+        }
     }
 
     abstract protected function doRender(): void;
@@ -94,7 +105,57 @@ abstract class TuiBase extends Container implements TUI
     #[\Override]
     public function setFocus(?Component $component): void
     {
+        if ($this->focusedComponent instanceof Focusable) {
+            $this->focusedComponent->focused = false;
+        }
+
         $this->focusedComponent = $component;
+
+        if ($component instanceof Focusable) {
+            $component->focused = true;
+        }
+    }
+
+    /** How many full redraws there have been — for a test to ask whether a frame was one. */
+    public function fullRedraws(): int
+    {
+        return $this->fullRedrawCount;
+    }
+
+    #[\Override]
+    public function getShowHardwareCursor(): bool
+    {
+        return $this->showHardwareCursor;
+    }
+
+    #[\Override]
+    public function setShowHardwareCursor(bool $enabled): void
+    {
+        if ($this->showHardwareCursor === $enabled) {
+            return;
+        }
+
+        $this->showHardwareCursor = $enabled;
+        if (!$enabled && !$this->stopped) {
+            $this->terminal->hideCursor();
+        }
+        $this->requestRender();
+    }
+
+    #[\Override]
+    public function getClearOnShrink(): bool
+    {
+        return $this->clearOnShrink;
+    }
+
+    /**
+     * Whether to redraw everything when content shrinks. When true, rows the content no longer
+     * reaches are cleared; when false (the default) they stay, which redraws less on slow terminals.
+     */
+    #[\Override]
+    public function setClearOnShrink(bool $enabled): void
+    {
+        $this->clearOnShrink = $enabled;
     }
 
     #[\Override]
@@ -107,9 +168,8 @@ abstract class TuiBase extends Container implements TUI
                 $this->handleTerminalInput($data);
             },
             function (): void {
-                // Not forced: force throws away what the screen holds, and then the
-                // renderer cannot tell a resize from a first frame and skips the clear.
-                $this->scheduleRender(onlyResize: true);
+                // Not forced: the renderer compares sizes itself and redraws what a resize needs.
+                $this->requestRender();
             },
         );
         $this->afterTerminalStart();
@@ -207,86 +267,59 @@ abstract class TuiBase extends Container implements TUI
         }
 
         $this->renderRequested = false;
-        $this->onlyResizePending = false;
         $this->cancelRenderTimer();
         $this->lastRenderAt = microtime(true);
         $this->doRender();
     }
 
     /**
-     * Draw on the next turn of the loop.
+     * Draw soon — upstream's `requestRender()`.
      *
-     * Deferred rather than immediate so that a burst of events — a token arriving, a key pressed,
-     * a resize — costs one frame instead of three.
-     *
-     * **`$force` means "the screen is not ours any more"**, and the only callers that can say that
-     * are the ones coming back from a program that owned it: `$VISUAL`, or a suspend. It is *not*
-     * what a resize needs, which is what this used to say: the resize handler asks for a plain
-     * render and the width-changed path clears by itself — see the trap in CLAUDE.md, which is
-     * where that correction came from.
-     *
-     * So it throws away what the screen is believed to hold **and asks for a clear**. Emptying the
-     * record alone is not enough: the renderer reads an empty `previousLines` as the first frame
-     * ever, which writes every line from wherever the cursor is with nothing cleared — and a
-     * full-screen editor restores what it found on the way out, so what is there is pig's own last
-     * frame and the new one lands underneath it.
+     * A plain request is throttled: frames are at most `MIN_RENDER_INTERVAL` apart, so a burst of
+     * requests becomes one frame. **`$force` means "the screen is not ours any more"** — coming
+     * back from `$VISUAL` or a suspend: what the screen is believed to hold is thrown away, so the
+     * next frame redraws everything with a clear, and it is drawn without waiting.
      */
     #[\Override]
     public function requestRender(bool $force = false): void
     {
         if ($force) {
             $this->resetRenderState();
+            $this->requestImmediateRender();
+
+            return;
         }
 
-        $this->scheduleRender(onlyResize: false);
-    }
-
-    private function scheduleRender(bool $onlyResize): void
-    {
         if ($this->renderRequested) {
-            // A content change joining a pending resize-only request makes it a real one.
-            $this->onlyResizePending = $this->onlyResizePending && $onlyResize;
-
             return;
         }
 
         $this->renderRequested = true;
-        $this->onlyResizePending = $onlyResize;
-
-        // Within the interval of the last frame, the next one waits for the rest of it; a
-        // burst of requests in that window becomes one frame. Otherwise it is the next turn.
-        $elapsed = microtime(true) - $this->lastRenderAt;
-
-        if ($elapsed < self::MIN_RENDER_INTERVAL) {
-            $this->renderTimer ??= Loop::get()->delay(self::MIN_RENDER_INTERVAL - $elapsed, function (): void {
-                $this->renderTimer = null;
-                $this->flushRender();
-            });
-
-            return;
-        }
-
-        Loop::get()->defer($this->flushRender(...));
+        Loop::get()->defer($this->scheduleRender(...));
     }
 
-    private function flushRender(): void
+    /** Draw on the next turn, ahead of any throttled frame — keyboard input does not wait for one. */
+    private function requestImmediateRender(): void
     {
-        if (!$this->renderRequested || $this->stopped) {
+        $this->cancelRenderTimer();
+        $this->renderRequested = true;
+        if ($this->immediateRenderScheduled) {
             return;
         }
 
-        $this->renderRequested = false;
-        $onlyResize = $this->onlyResizePending;
-        $this->onlyResizePending = false;
-
-        // A resize that landed on the same cell size — most of the signals a drag delivers —
-        // changes nothing on screen: no render, no frame, no flash.
-        if ($onlyResize && $this->previousWidth === $this->terminal->columns() && $this->previousHeight === $this->terminal->rows()) {
-            return;
-        }
-
-        $this->lastRenderAt = microtime(true);
-        $this->doRender();
+        $this->immediateRenderScheduled = true;
+        Loop::get()->defer(function (): void {
+            $this->immediateRenderScheduled = false;
+            if ($this->stopped || !$this->renderRequested) {
+                return;
+            }
+            // A previously queued scheduleRender() can create a timer before this runs; input
+            // preempts that throttled frame.
+            $this->cancelRenderTimer();
+            $this->renderRequested = false;
+            $this->lastRenderAt = microtime(true);
+            $this->doRender();
+        });
     }
 
     private function cancelRenderTimer(): void
@@ -297,6 +330,27 @@ abstract class TuiBase extends Container implements TUI
 
         Loop::get()->cancel($this->renderTimer);
         $this->renderTimer = null;
+    }
+
+    private function scheduleRender(): void
+    {
+        if ($this->stopped || $this->renderTimer !== null || !$this->renderRequested) {
+            return;
+        }
+
+        $delay = max(0.0, self::MIN_RENDER_INTERVAL - (microtime(true) - $this->lastRenderAt));
+        $this->renderTimer = Loop::get()->delay($delay, function (): void {
+            $this->renderTimer = null;
+            if ($this->stopped || !$this->renderRequested) {
+                return;
+            }
+            $this->renderRequested = false;
+            $this->lastRenderAt = microtime(true);
+            $this->doRender();
+            if ($this->renderRequested) {
+                $this->scheduleRender();
+            }
+        });
     }
 
     /**
@@ -364,7 +418,8 @@ abstract class TuiBase extends Container implements TUI
         // editor it is "copy" and at an empty prompt it is "quit".
         if ($this->focusedComponent instanceof InputHandler) {
             $this->focusedComponent->handleInput($data);
-            $this->requestRender();
+            // Keyboard input is latency-sensitive: not the throttled path.
+            $this->requestImmediateRender();
         }
     }
 
@@ -372,6 +427,47 @@ abstract class TuiBase extends Container implements TUI
     public function renderedWidth(): int
     {
         return $this->previousWidth;
+    }
+
+    /**
+     * Find `CURSOR_MARKER` in the visible part of a frame, strip it, and say where it was —
+     * upstream's `extractCursorPosition()`. Only the bottom `$height` lines are searched.
+     *
+     * @param list<string> $lines
+     * @return array{row: int, col: int}|null
+     */
+    protected function extractCursorPosition(array &$lines, int $height): ?array
+    {
+        $viewportTop = max(0, count($lines) - $height);
+        for ($row = count($lines) - 1; $row >= $viewportTop; $row--) {
+            $markerIndex = strpos($lines[$row], self::CURSOR_MARKER);
+            if ($markerIndex !== false) {
+                $before = substr($lines[$row], 0, $markerIndex);
+                $lines[$row] = $before . substr($lines[$row], $markerIndex + strlen(self::CURSOR_MARKER));
+
+                return ['row' => $row, 'col' => Width::visible($before)];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Close every line's styling and hyperlink at its end, and turn what a terminal draws
+     * differently from `Width::visible()` into what it measures — upstream's `applyLineResets()`.
+     *
+     * @param list<string> $lines
+     * @return list<string>
+     */
+    protected function applyLineResets(array $lines): array
+    {
+        foreach ($lines as $index => $line) {
+            if (!self::isImageLine($line)) {
+                $lines[$index] = Width::normalizeTerminalOutput($line) . Width::SEGMENT_RESET;
+            }
+        }
+
+        return $lines;
     }
 
     /**
@@ -397,7 +493,7 @@ abstract class TuiBase extends Container implements TUI
             return;
         }
 
-        $log = sys_get_temp_dir() . '/pig-render-' . getmypid() . '.log';
+        $log = ($this->logDirectory ?? sys_get_temp_dir()) . '/pig-render-' . getmypid() . '.log';
         $dump = "Line {$index} is {$visible} columns wide\n" . self::widths($lines, $width);
 
         file_put_contents($log, $dump);

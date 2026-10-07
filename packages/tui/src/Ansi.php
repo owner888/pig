@@ -76,7 +76,8 @@ final class Ansi
         }
 
         $stripped = preg_replace(
-            ['/\x1b\[[0-9;]*[' . self::TERMINATORS . ']/', '/\x1b\]8;;[^\x07]*\x07/'],
+            // OSC and APC run to BEL or ST, as in `at()`: hyperlinks, and the renderer's cursor marker.
+            ['/\x1b\[[0-9;]*[' . self::TERMINATORS . ']/', '/\x1b[\]_].*?(?:\x07|\x1b\\\\)/s'],
             '',
             $text,
         );

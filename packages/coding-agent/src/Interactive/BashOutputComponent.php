@@ -28,8 +28,8 @@ use Pig\Tui\Width;
  * 600KB of wrapping to keep twenty lines; and a resumed transcript is nothing but finished
  * commands, whose text will never change again. Measured on a real session with 201 tool
  * results: **one keystroke cost 1.5 seconds**, because every frame re-wrapped every command
- * output in the conversation, three times over — `Container::rowOf()` renders the tree twice
- * more to find the caret's row.
+ * output in the conversation, and the renderer of the day rendered the tree more than once a
+ * frame.
  *
  * Two differences from upstream's `bash-execution.ts`, both about the note:
  *

@@ -9,7 +9,7 @@ use Pig\CodingAgent\Keybindings;
 use Pig\Tui\Ansi;
 use Pig\Tui\Autocomplete\AutocompleteProvider;
 use Pig\Tui\Clipboard\Clipboard;
-use Pig\Tui\Caret;
+use Pig\Tui\Focusable;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Editor;
 use Pig\Tui\Components\EditorTheme;
@@ -30,8 +30,11 @@ use Pig\Tui\Keys;
  *
  * Ported from upstream's `components/custom-editor.ts`.
  */
-final class CustomEditor implements Caret, Component, InputHandler
+final class CustomEditor implements Component, Focusable, InputHandler
 {
+    /** Set by the renderer and handed to the wrapped editor, which is what draws the cursor. */
+    public bool $focused = false;
+
     /** @var array<string, Closure(): void> */
     private array $handlers = [];
 
@@ -195,13 +198,6 @@ final class CustomEditor implements Caret, Component, InputHandler
         );
     }
 
-    /** Forwarded, or the terminal's cursor would never find the editor inside here. */
-    #[\Override]
-    public function caret(int $width): ?array
-    {
-        return $this->editor->caret($width);
-    }
-
     #[\Override]
     public function invalidate(): void
     {
@@ -211,6 +207,9 @@ final class CustomEditor implements Caret, Component, InputHandler
     #[\Override]
     public function render(int $width): array
     {
+        // Upstream's custom editor *is* the editor; this one wraps it, so focus is passed on.
+        $this->editor->focused = $this->focused;
+
         return $this->editor->render($width);
     }
 }
