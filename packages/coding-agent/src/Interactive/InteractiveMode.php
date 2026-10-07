@@ -502,8 +502,29 @@ final class InteractiveMode
 
         foreach ($this->session->messages() as $message) {
             if ($message instanceof UserMessage) {
+                $text = self::textOf($message);
+                $skillBlock = \Pig\CodingAgent\Prompt\SkillBlock::parse($text);
+                if ($skillBlock !== null) {
+                    $expandKey = $this->keybindings->display('app.tools.expand') ?: 'ctrl+o';
+                    $this->chat->addChild(new SkillInvocationMessageComponent(
+                        $skillBlock,
+                        $this->palette,
+                        $this->expanded,
+                        $expandKey,
+                    ));
+                    if ($skillBlock->userMessage !== null) {
+                        $this->chat->addChild(new UserMessageComponent(
+                            $skillBlock->userMessage,
+                            $this->palette,
+                            $this->hooks?->markdownTransformers() ?? [],
+                        ));
+                    }
+
+                    continue;
+                }
+
                 $this->chat->addChild(new UserMessageComponent(
-                    self::textOf($message),
+                    $text,
                     $this->palette,
                     $this->hooks?->markdownTransformers() ?? [],
                 ));
@@ -732,6 +753,7 @@ final class InteractiveMode
                 || $child instanceof CompactionComponent
                 || $child instanceof BranchSummaryComponent
                 || $child instanceof HookMessageComponent
+                || $child instanceof SkillInvocationMessageComponent
             ) {
                 $child->setExpanded($this->expanded);
             }
@@ -4414,11 +4436,30 @@ final class InteractiveMode
     private function onMessageStart(MessageStartEvent $event): void
     {
         if ($event->message instanceof UserMessage) {
-            $this->chat->addChild(new UserMessageComponent(
-                self::textOf($event->message),
-                $this->palette,
-                $this->hooks?->markdownTransformers() ?? [],
-            ));
+            $text = self::textOf($event->message);
+            $skillBlock = \Pig\CodingAgent\Prompt\SkillBlock::parse($text);
+            if ($skillBlock !== null) {
+                $expandKey = $this->keybindings->display('app.tools.expand') ?: 'ctrl+o';
+                $this->chat->addChild(new SkillInvocationMessageComponent(
+                    $skillBlock,
+                    $this->palette,
+                    $this->expanded,
+                    $expandKey,
+                ));
+                if ($skillBlock->userMessage !== null) {
+                    $this->chat->addChild(new UserMessageComponent(
+                        $skillBlock->userMessage,
+                        $this->palette,
+                        $this->hooks?->markdownTransformers() ?? [],
+                    ));
+                }
+            } else {
+                $this->chat->addChild(new UserMessageComponent(
+                    $text,
+                    $this->palette,
+                    $this->hooks?->markdownTransformers() ?? [],
+                ));
+            }
             $this->editor->setText('');
             $this->showQueue();
 

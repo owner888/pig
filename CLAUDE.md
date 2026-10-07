@@ -72,6 +72,7 @@ the developer asked for it, it is ported and listed here:
 | `!!command` runs without joining the conversation | `AgentSession::executeBash(remember: false)` | `!!` at 0.87; the anchor has `!` only |
 | Ctrl+G opens the prompt in `$VISUAL`, without stopping the event loop | `InteractiveMode::editPromptExternally()`, `Process::interactive()` | `openExternalEditor()` in `interactive-mode.ts`, which blocks |
 | Fullscreen ChatViewport with fixed bottom dock & scroll-to-end indicator | `Pig\CodingAgent\Interactive\ChatViewport`, `Pig\Tui\Components\ScrollView` | `chat-viewport.ts` + `tui-alt-screen.ts` at 0.85+ |
+| Skill invocation collapsible message component | `Pig\CodingAgent\Interactive\SkillInvocationMessageComponent`, `Pig\CodingAgent\Prompt\SkillBlock` | `skill-invocation-message.ts` |
 
 The anchor's banner is a column of thirteen keys, which is taller than most of the
 conversations it sits above; HEAD moved the list behind `ctrl+o` and put a one-line
