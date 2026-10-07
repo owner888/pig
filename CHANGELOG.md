@@ -66,6 +66,9 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Tool Execution Component Execution Timer (`Elapsed` / `Took`)**:
   - Ported upstream pi's duration formatter and timer from `core/tools/renderers/bash.ts` into `ToolExecutionComponent`.
   - Renders real-time `Elapsed X.Xs` / `Xm Ys` during bash command execution, and clean muted `Took X.Xs` / `Xm Ys` upon completion.
+- **Web UI Language Switcher Redesign**:
+  - Replaced the static header button label `"中 / EN"` with an internationalized `"🌐 语言"` (in Chinese) / `"🌐 Language"` (in English) prefixed with the global icon.
+  - Aligns with pig's full multi-language architecture, providing clear and elegant visual language indicators matching the theme and other action buttons.
 
 ### Fixed
 
