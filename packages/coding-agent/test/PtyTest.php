@@ -111,6 +111,21 @@ final class PtyTest extends TestCase
         });
     }
 
+    public function testPtyManagerInputAndResizeGracefullyIgnoreUnknownOrExitedTerminals(): void
+    {
+        Async::run(function (): void {
+            $mgr = new PtyManager();
+
+            // Calling input or resize on a non-existent terminal id must not trigger Undefined array key warning
+            $mgr->input('term-nonexistent', "data\n");
+            $mgr->resize('term-nonexistent', 120, 40);
+
+            $this->assertNull($mgr->get('term-nonexistent'));
+
+            $mgr->dispose();
+        });
+    }
+
     public function testPtyManagerEnforcesCapacityLimit(): void
     {
         Async::run(function (): void {

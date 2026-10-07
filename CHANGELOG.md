@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.4] - 2026-10-07
+
+### Fixed
+
+- Fixed `PHP Warning: Undefined array key` in `PtyManager::input()` and `PtyManager::resize()`:
+  - Accessing `$this->terminals[$id]?->...` triggered PHP undefined array key warnings when frontend xterm.js resize listeners or lingering keystrokes arrived after a terminal session had exited and been unset.
+  - Replaced with null-coalescing `$this->terminals[$id] ?? null` access to safely ignore input and resize operations on terminated or unknown terminal sessions without leaking warnings.
+
 ## [0.4.3] - 2026-10-07
 
 ### Changed

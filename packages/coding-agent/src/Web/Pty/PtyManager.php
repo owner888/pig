@@ -98,12 +98,12 @@ final class PtyManager
 
     public function input(string $id, string $data): void
     {
-        $this->terminals[$id]?->input($data);
+        ($this->terminals[$id] ?? null)?->input($data);
     }
 
     public function resize(string $id, int $cols, int $rows): void
     {
-        $this->terminals[$id]?->resize($cols, $rows);
+        ($this->terminals[$id] ?? null)?->resize($cols, $rows);
     }
 
     public function kill(string $id): void

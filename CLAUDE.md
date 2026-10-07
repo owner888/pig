@@ -11028,6 +11028,18 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 5. `SessionEntries::decode()` 仅对需要时间戳的非 `message` 条目执行 `millis()`。
 6. 实测 `pig -c` 在真实 71MB、2.8 万行超大会话下的首帧启动耗时从 2275ms 缩减至 **489ms**，不仅完全追平甚至在部分轮次超越了 `pi -c`（440-540ms）！
 
+### `PtyManager::input()` / `resize()` 在已退出的终端 ID 上触发 Undefined array key Warning
+
+**现象**：
+当 Web 终端已退出或标签页关闭后，前端 xterm.js 窗口由于 resize 事件监听器或快速连击滞后发送的 `terminal_resize` / `terminal_input` 请求在服务端触发：
+`PHP Warning: Undefined array key "term-..." in PtyManager.php on line 106`。
+
+**原因**：
+PHP 的空安全调用操作符 `$this->terminals[$id]?->resize()` 仅在左侧结果为 `null` 或对象时安全，如果 `$id` 在散列表数组中不存在，PHP 在计算表达式左侧 `$this->terminals[$id]` 时会首先产生未定义键警告。
+
+**对策**：
+改用 `($this->terminals[$id] ?? null)?->input($data)` 与 `($this->terminals[$id] ?? null)?->resize($cols, $rows)`，使用 null 合并运算符（`?? null`）安全访问数组元素，对已退出或未找到的终端静默忽略，彻底杜绝 Warning 泄露。
+
 ## Version floor: PHP >= 8.3
 
 `Fiber` arrived in 8.1 and the whole async runtime rests on it, so 8.1 is the absolute floor;
