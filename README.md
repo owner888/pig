@@ -14,7 +14,7 @@ A complete, high-performance PHP port of [pi](https://github.com/earendil-works/
 - **Sub-500ms Fast Startup (`pig -c`)**: Optimized O(1) session tree traversal and lightweight mtime header discovery; resumes massive 70MB+ sessions in under 0.5s.
 - **Three Interaction Modes**:
   - **Terminal TUI**: Differential rendering ANSI interface with live spinners, visual diff views, keybindings, and IME-safe caret tracking.
-  - **Persistent Web UI (`pig web start -d`)**: Daemonized multi-tab browser interface backed by a managed RPC session pool (`SessionPool`) and native full-duplex WebSocket streaming.
+  - **Persistent Web UI & PTY Workbench (`pig web start -d` / `/web`)**: Daemonized multi-tab browser interface with embedded xterm.js PTY terminal drawer, SSH node workbench, SFTP remote file explorer, and full-duplex WebSocket streaming.
   - **CLI & Automation**: Print mode (`-p`), JSON event streaming (`--mode json`), and long-lived JSON-RPC socket mode (`--mode rpc`).
 - **Comprehensive Built-in Extensions**:
   - `pig-antigravity`: Multi-account Google Antigravity quota management, 429 auto-failover, `/antigravity.usage` dashboard, and `generate_image` tool.
@@ -92,7 +92,7 @@ pig
   - Press **Enter** while the model is answering: **Steer** (interrupts right after current tool).
   - Press **Alt+Up**: Restore all queued messages back to the editor.
   - Press **Escape**: Interrupt the active turn or cancel retries.
-  - Press **Ctrl+G**: Edit complex prompts in your external editor (`$VISUAL` or `$EDITOR`).
+  - Press **Ctrl+G**: Edit complex prompts in your external editor (supports `"externalEditor": "vim"` in `settings.json`, `$VISUAL` or `$EDITOR`, or auto-fallback to system-available editors).
 - **Context & Session Commands**:
   - `/name <new-name>`: View or change the active session title (reflected in footer and Web UI).
   - `/label <name>`: Bookmark the current point in the session tree.
@@ -107,9 +107,9 @@ pig
 `pig` includes a native web chat interface matching `pi-web` with workspace management, multi-tab execution, inline session rename/delete, and real-time streaming:
 
 ```bash
-# Foreground ephemeral server (stops when terminal exits)
+# Foreground ephemeral server (starts server and opens your default browser)
 pig --mode web
-# or type /web from inside any interactive terminal session
+# or type /web from inside any interactive terminal session to start and auto-launch browser
 
 # Persistent background daemon (recommended)
 pig web start -d              # Start daemon on 127.0.0.1:8080 (or specify --port / --host)
@@ -119,6 +119,9 @@ pig web stop                  # Stop daemon gracefully
 ```
 
 Open `http://localhost:8080` in your browser or mobile phone:
+- **Interactive Local PTY Terminals**: Press <code>Ctrl+`</code> or <code>Cmd+`</code> (or click the terminal icon) to slide out a full multi-tab terminal drawer powered by `xterm.js` and a native Unix PTY engine, with full support for `vim`, `nvim`, `htop`, `tmux`, and `nano`.
+- **SSH Node Workbench & SFTP File Explorer**: Click `🖥️ Nodes` to manage server inventory, verify SHA-256 host key fingerprints, import from `~/.ssh/config`, open remote interactive SSH terminals, and view/edit remote files via SFTP (up to 512 KiB).
+- **Auto Browser Launch**: Running `/web` inside an interactive TUI session starts the server and automatically opens your default system browser.
 - **Multiplexed Multi-Tab Execution**: Switch between workspaces and tabs without interrupting active runs.
 - **Native Bilingual Multi-Language Support (中 / EN)**: Click the header `[中 / EN]` button for instant zero-refresh language toggling, auto-adapting to browser language.
 - **Sidebar Session Actions**: Hover (or tap on mobile) to rename (`✏️`) or delete (`🗑️`) sessions safely.
