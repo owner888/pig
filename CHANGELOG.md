@@ -43,6 +43,52 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.0] - 2026-10-07
+
+### New Features
+
+- **Interactive Local PTY Terminals & Web Terminal Drawer (`PtyProcess`, `PtyManager`, `WebTerminal.js`)**:
+  - Native Unix pseudo-terminal execution using PHP's `proc_open` with `['pty']` descriptor on macOS/Linux with zero external C-extensions.
+  - Non-blocking I/O integrated into `Pig\Async\Loop`, 16ms output micro-batching to prevent WebSocket frame storms, and slave PTY device detection (`lsof` on Darwin, `/proc/$pid/fd/0` on Linux) with window resizing via `stty` + `SIGWINCH`.
+  - Frontend integration with `xterm.js` and `FitAddon` multi-tab terminal drawer (accessible via `Ctrl+\`` / `Cmd+\`` or the top navigation terminal icon), with 200KB scrollback buffering and full support for interactive TUI tools (`vim`, `nvim`, `nano`, `htop`, `tmux`, `less`).
+- **SSH Node Workbench & SFTP Remote File Explorer/Editor (`NodeWorkbench.js`, `NodeManager`, `NodeProfile`)**:
+  - Persistent node inventory in `~/.pig/agent/nodes.json` and credentials in `~/.pig/agent/nodes-secrets.json` (chmod 0600).
+  - SHA-256 host key fingerprint detection (`ssh-keyscan` + `ssh-keygen -lf`) with verification and trust prompts.
+  - Automatic OpenSSH `~/.ssh/config` host discovery and one-click import.
+  - Remote interactive SSH terminal streaming via PTY (`ssh -tt`) and SFTP remote directory listing, navigation, and file reading/writing (capped at 512 KiB).
+- **Multi-Session Tab Multiplexing Architecture & Web Daemon**:
+  - Multiplexed multi-session tabs over a single physical WebSocket connection with per-tab chat scroll areas, background streaming indicators, and state recovery on reload.
+  - Isolated `pig --mode rpc` child processes per `cwd::sessionFile` with 60s idle reaping and zero cross-session interference.
+  - Native zero-dependency daemon management via `pig web start|stop|status|restart [-d]` and in-session `/web restart`, `/web status`, `/web stop` controls.
+- **Telegram-style Language Packs & Client-Side i18n Engine**:
+  - Full bilingual client-side `I18N` dictionary with 101 symmetric keys (defaulting to `zh-CN`), instant zero-refresh language modal (`#lang-btn`), Telegram-style JSON import/export, and `$pig->registerLocale()` on `ExtensionApi` with `/api/locales` aggregation.
+
+### Added
+
+- Added `externalEditor` setting and intelligent fallback for `Ctrl+G` external prompt editing (aligned with upstream pi `getExternalEditorCommand`): precedence follows `settings.externalEditor` > `$VISUAL` > `$EDITOR` > platform fallback (`notepad` on Windows; `nano` / `vim` / `vi` on POSIX).
+- Added `ExtensionApi` Phase 2 parity: EventBus, lifecycle hooks, tool loadout, context/session control, UI capabilities, and cross-handler state sharing via `$ctx->set()`, `$ctx->get()`, and `$ctx->has()`.
+- Added provider traffic hooks (`before_provider_request`, `after_provider_response`, `before_retry`) and dynamic provider registration (`registerProvider`), cleanly decoupling Google Antigravity into a standalone pure PHP extension.
+- Added session title telemetry and speed meter integration in `FooterComponent` (`pwd (branch) • <session-name>`), `session_info` JSONL persistence, and `/name` slash command.
+- Added model selection persistence control: session switches default to `persistAsDefault: false` (matching upstream pi), and `Ctrl+S` (`app.models.save`) explicitly saves the chosen model as global default.
+
+### Changed
+
+- Enhanced `SessionManager::open()` and `SessionManager::describe()` to use streaming line-by-line reading (`fopen` + `fgets`), reducing memory consumption on 70MB+ session files from >150MB to <10MB and preventing 128MB OOM crashes.
+- Optimized session tree backtrace (`SessionManager::pathTo()`) by replacing O(N) `array_unshift` with O(1) append + single `array_reverse`, speeding up 28,000-node tree traversal from 718ms to 3ms (230x speedup).
+- Optimized `SessionManager::latestPathFor()` with lightweight first-line sniffing, reducing `pig -c` session resume latency from 2275ms to 489ms.
+- Optimized LRU cache eviction in `Width::visible()` from O(N) `array_shift` to O(1) hash eviction (`unset`), speeding up cache updates by 5.0x with capacity expanded to 2048.
+- Aligned `TextWrap::tokenize()` with upstream pi's `cjkBreakRegex` for clean hyphenation and natural wrapping in mixed Chinese/English sentences.
+- Updated `Chars::isPunctuation()` with Unicode punctuation matching (`^[\p{P}\p{S}]\z/u`) to recognize CJK punctuation as word boundaries for `Ctrl+W` / `Alt+Backspace`.
+
+### Fixed
+
+- Fixed background fibers and subprocesses continuing to run on `/quit` while working: `AgentSession::dispose()` now cleanly aborts in-flight LLM streams, retries, compactions, and bash commands.
+- Fixed Broken pipe and SSL zero-write loops on non-blocking OpenSSL transport failures: expanded `Retry::WORDS` regex to catch native SSL, handshake, and connection errors, and encapsulated `fwrite`/`fread` in warning-capturing error handlers.
+- Fixed background process (`&`) pipe inheritance deadlock: added process state polling in `Run::wait()` to exit gracefully once the parent shell process terminates.
+- Fixed silent LLM turn failures in Web mode: serialized `lastError` in `AgentEndEvent` and enhanced client-side error rendering with automatic input restoration.
+- Fixed long quota reset errors displaying raw provider text: normalized to pi-style action guidance messages.
+- Fixed top-level symbol redeclaration crashes on `/reload` and guarded extensions with tokenized symbol checks.
+
 ## [0.3.65] - 2026-10-06
 
 ### Added
