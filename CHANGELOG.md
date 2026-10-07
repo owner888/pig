@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.1] - 2026-10-07
+
+### Added
+
+- Added automatic browser launch on in-session `/web` command:
+  - Running `/web` or `/web [port]` in the interactive TUI starts the web interface and automatically opens the user's default system browser at `http://127.0.0.1:<port>`.
+  - Re-running `/web` while the server is already running opens the browser at the existing server URL.
+  - Background daemon and status commands (`/web start`, `/web stop`, `/web status`, `/web restart`) operate strictly in the terminal without opening unwanted browser windows.
+
 ## [0.4.0] - 2026-10-07
 
 ### New Features

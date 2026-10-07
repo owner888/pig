@@ -3063,6 +3063,7 @@ final class InteractiveMode
         if ($this->webServer !== null && $this->webServer->isRunning()) {
             $url = "http://{$this->webServer->host}:{$this->webServer->port}";
             $this->say("Web UI is already running at {$url}");
+            self::openInBrowser($url);
 
             return;
         }
@@ -3122,6 +3123,7 @@ final class InteractiveMode
         $url = "http://127.0.0.1:{$port}";
         $this->say('Web UI started at ' . $this->palette->fg('accent', $url));
         $this->say($this->palette->fg('dim', 'Runs while this session is open. To keep it running in background: pig web start -d'));
+        self::openInBrowser($url);
     }
 
     /** @return list<string> */

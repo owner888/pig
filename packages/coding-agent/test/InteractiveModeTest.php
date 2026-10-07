@@ -4150,6 +4150,52 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('Web UI server stopped.', $this->screen());
     }
 
+    public function testSlashWebOpensBrowserWhenOnlineButSubcommandsDoNot(): void
+    {
+        $bin = $this->cwd . '-web-bin';
+        mkdir($bin, 0700, true);
+        $opener = match (PHP_OS_FAMILY) {
+            'Darwin' => 'open',
+            'Windows' => self::markTestSkipped('a stand-in for `cmd /c start` is not a shell script'),
+            default => 'xdg-open',
+        };
+        $marker = $bin . '/opened';
+        file_put_contents($bin . '/' . $opener, "#!/bin/sh\necho \"\$1\" >> " . escapeshellarg($marker) . "\n");
+        chmod($bin . '/' . $opener, 0700);
+        $path = (string) getenv('PATH');
+        putenv('PATH=' . $bin . ':' . $path);
+
+        try {
+            $this->start();
+
+            // 1. /web status should NOT open browser
+            putenv('PIG_OFFLINE');
+            $this->type('/web status');
+            $this->type(self::ENTER);
+            self::turnTheLoop(2);
+            $this->assertFileDoesNotExist($marker, '/web status does not open browser');
+
+            // 2. /web should open browser
+            $this->type('/web 28220');
+            $this->type(self::ENTER);
+            self::turnTheLoop(2);
+            $this->assertFileExists($marker, '/web opens the browser');
+            $this->assertStringContainsString('http://127.0.0.1:28220', (string) file_get_contents($marker));
+
+            unlink($marker);
+
+            // 3. /web stop should NOT open browser
+            $this->type('/web stop');
+            $this->type(self::ENTER);
+            self::turnTheLoop(2);
+            $this->assertFileDoesNotExist($marker, '/web stop does not open browser');
+        } finally {
+            putenv('PATH=' . $path);
+            putenv('PIG_OFFLINE=1');
+            self::remove($bin);
+        }
+    }
+
     public function testSlashWebStatusAndRestartCommand(): void
     {
         $this->start();
