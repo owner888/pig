@@ -179,6 +179,13 @@ export class WebTerminal {
         this.fitActiveTab();
       }
     });
+
+    this.viewportEl.addEventListener("click", () => {
+      const tab = this.tabs.find((t) => t.id === this.activeTabId);
+      if (tab && tab.term) {
+        tab.term.focus();
+      }
+    });
   }
 
   initNetwork() {
@@ -220,7 +227,7 @@ export class WebTerminal {
 
     const container = document.createElement("div");
     container.className = "web-term-xterm-instance";
-    container.style.display = "none";
+    container.style.display = "block";
     this.viewportEl.appendChild(container);
 
     const term = new Terminal({

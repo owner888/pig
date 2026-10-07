@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.7] - 2026-10-07
+
+### Fixed
+
+- **Fixed Vim and interactive full-screen TUI applications in Web PTY Terminals**:
+  - Added `COLORFGBG=15;0` to the PTY environment so macOS and Linux Vim correctly recognize dark backgrounds, rendering clear white text and bright tildes instead of invisible black-on-black text.
+  - Centralized `PtyManager` in `HttpServer` with dynamic terminal-to-connection routing, ensuring active PTY processes and Vim sessions survive WebSocket reconnects rather than being killed when a connection drops.
+  - Added container click-to-focus listeners in `WebTerminal.js` and `NodeWorkbench.js` so clicking anywhere in the terminal drawer immediately focuses xterm.js input.
+  - Initialized terminal instances with visible display before fitting so `FitAddon` measures real pixel dimensions (`cols` and `rows`) rather than defaulting to 80x24.
+
 ## [0.4.6] - 2026-10-07
 
 ### Changed

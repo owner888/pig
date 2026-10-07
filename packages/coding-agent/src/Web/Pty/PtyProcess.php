@@ -67,6 +67,7 @@ final class PtyProcess
             'TERM' => 'xterm-256color',
             'COLORTERM' => 'truecolor',
             'LANG' => 'en_US.UTF-8',
+            'COLORFGBG' => '15;0',
         ]);
 
         $workingDir = is_dir($this->cwd) ? $this->cwd : (getenv('HOME') ?: '/');

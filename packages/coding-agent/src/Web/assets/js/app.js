@@ -2150,6 +2150,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
         }
       }
     });
+    window.webTerminal = webTerminal;
 
     const nodeWorkbench = new NodeWorkbench();
     document.getElementById("nodes-btn")?.addEventListener("click", () => nodeWorkbench.open());

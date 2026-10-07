@@ -76,8 +76,10 @@ final class HttpServer
     /** @var array<int, string> a stable id per socket, for the key a new conversation gets */
     private array $clientIds = [];
 
-    /** @var array<int, PtyManager> */
-    private array $ptyManagers = [];
+    private ?PtyManager $ptyManager = null;
+
+    /** @var array<string, int> terminalId => connectionId */
+    private array $terminalClient = [];
 
     private ?string $heartbeatTimer = null;
     private const float PING_INTERVAL = 25.0;
@@ -298,10 +300,9 @@ final class HttpServer
         $this->wsClients = [];
         $this->clientIds = [];
 
-        foreach ($this->ptyManagers as $pm) {
-            $pm->dispose();
-        }
-        $this->ptyManagers = [];
+        $this->ptyManager?->dispose();
+        $this->ptyManager = null;
+        $this->terminalClient = [];
 
         $this->pool->shutdown();
     }
@@ -309,19 +310,16 @@ final class HttpServer
     private function handleClose(int $connectionId): void
     {
         $this->pool->detach($connectionId);
-        if (isset($this->ptyManagers[$connectionId])) {
-            $this->ptyManagers[$connectionId]->dispose();
-            unset($this->ptyManagers[$connectionId]);
-        }
         unset($this->connections[$connectionId], $this->wsClients[$connectionId], $this->clientIds[$connectionId]);
     }
 
-    private function ptyManager(int $connectionId): PtyManager
+    private function ptyManager(): PtyManager
     {
-        if (!isset($this->ptyManagers[$connectionId])) {
-            $this->ptyManagers[$connectionId] = new PtyManager(
-                onOutput: function (string $terminalId, string $data) use ($connectionId): void {
-                    $conn = $this->wsClients[$connectionId] ?? null;
+        if ($this->ptyManager === null) {
+            $this->ptyManager = new PtyManager(
+                onOutput: function (string $terminalId, string $data): void {
+                    $connId = $this->terminalClient[$terminalId] ?? null;
+                    $conn = $connId !== null ? ($this->wsClients[$connId] ?? null) : null;
                     if ($conn !== null && !$conn->isClosed()) {
                         $conn->send([
                             'type' => 'terminal_output',
@@ -330,8 +328,9 @@ final class HttpServer
                         ]);
                     }
                 },
-                onExit: function (string $terminalId, ?int $exitCode) use ($connectionId): void {
-                    $conn = $this->wsClients[$connectionId] ?? null;
+                onExit: function (string $terminalId, ?int $exitCode): void {
+                    $connId = $this->terminalClient[$terminalId] ?? null;
+                    $conn = $connId !== null ? ($this->wsClients[$connId] ?? null) : null;
                     if ($conn !== null && !$conn->isClosed()) {
                         $conn->send([
                             'type' => 'terminal_exit',
@@ -339,11 +338,12 @@ final class HttpServer
                             'exitCode' => $exitCode,
                         ]);
                     }
+                    unset($this->terminalClient[$terminalId]);
                 },
             );
         }
 
-        return $this->ptyManagers[$connectionId];
+        return $this->ptyManager;
     }
 
     private function armHeartbeat(): void
@@ -837,11 +837,16 @@ final class HttpServer
         }
 
         if (str_starts_with($type, 'terminal_')) {
-            $pty = $this->ptyManager($connectionId);
+            $pty = $this->ptyManager();
+            $targetTermId = (string) ($data['terminalId'] ?? $data['id'] ?? '');
+            if ($targetTermId !== '') {
+                $this->terminalClient[$targetTermId] = $connectionId;
+            }
 
             match ($type) {
-                'terminal_create' => (function () use ($conn, $pty, $data): void {
+                'terminal_create' => (function () use ($conn, $pty, $data, $connectionId): void {
                     $id = (string) ($data['terminalId'] ?? $data['id'] ?? bin2hex(random_bytes(6)));
+                    $this->terminalClient[$id] = $connectionId;
                     $cwd = (string) ($data['cwd'] ?? $this->cwd);
                     $cols = (int) ($data['cols'] ?? 80);
                     $rows = (int) ($data['rows'] ?? 24);
@@ -1013,7 +1018,8 @@ final class HttpServer
 
                     $sshCmd = $this->nodeManager->buildSshCommand($node, interactive: true);
                     $termId = (string) ($data['terminalId'] ?? 'ssh-' . bin2hex(random_bytes(4)));
-                    $pty = $this->ptyManager($connectionId);
+                    $this->terminalClient[$termId] = $connectionId;
+                    $pty = $this->ptyManager();
                     $cols = (int) ($p['cols'] ?? 80);
                     $rows = (int) ($p['rows'] ?? 24);
                     $cmdStr = implode(' ', array_map('escapeshellarg', $sshCmd));

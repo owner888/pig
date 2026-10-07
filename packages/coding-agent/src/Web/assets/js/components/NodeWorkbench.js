@@ -226,6 +226,14 @@ export class NodeWorkbench {
         this.browseRemoteDir(this.sftpPathInput.value.trim());
       }
     });
+
+    this.terminalInstancesEl.addEventListener("click", () => {
+      const terms = this.remoteTerminals.get(this.selectedNodeId) || [];
+      const active = terms.find((t) => t.container.style.display === "block") || terms[0];
+      if (active && active.term) {
+        active.term.focus();
+      }
+    });
   }
 
   initNetwork() {
@@ -446,7 +454,7 @@ export class NodeWorkbench {
     const termId = "ssh-" + Math.random().toString(36).slice(2, 9);
     const container = document.createElement("div");
     container.className = "node-xterm-instance";
-    container.style.display = "none";
+    container.style.display = "block";
     this.terminalInstancesEl.appendChild(container);
 
     const term = new Terminal({
