@@ -21,6 +21,7 @@ export class SharedNetwork {
     this.reconnectTimer = null;
     this.reconnectDelay = 1000;
     this.closed = false;
+    this.messageListeners = new Set();
 
     // Callbacks provided by app.js / tabs
     this.getTabs = () => [];
@@ -41,6 +42,11 @@ export class SharedNetwork {
     if (showStatus) this.showStatus = showStatus;
     if (hideStatus) this.hideStatus = hideStatus;
     if (onReachable) this.onReachable = onReachable;
+  }
+
+  addMessageListener(fn) {
+    this.messageListeners.add(fn);
+    return () => this.messageListeners.delete(fn);
   }
 
   connect() {
@@ -80,6 +86,15 @@ export class SharedNetwork {
         return;
       }
       if (m.type === "pong") return;
+
+      for (const listener of this.messageListeners) {
+        try {
+          listener(m);
+        } catch (err) {
+          console.error("Message listener error:", err);
+        }
+      }
+
       const tabs = this.getTabs();
       if (m.tabId) {
         const target = tabs.find((t) => t.id === m.tabId);

@@ -14,6 +14,7 @@ import { EmptyState } from "./components/EmptyState.js";
 import { openImageLightbox } from "./components/ImageLightbox.js";
 import { SlashAutocomplete } from "./components/SlashAutocomplete.js";
 import { WebTerminal } from "./components/WebTerminal.js";
+import { NodeWorkbench } from "./components/NodeWorkbench.js";
 
     const chatArea = document.getElementById("chat-area");
     const promptInput = document.getElementById("prompt-input");
@@ -2148,6 +2149,13 @@ import { WebTerminal } from "./components/WebTerminal.js";
           renderTabs();
         }
       }
+    });
+
+    const nodeWorkbench = new NodeWorkbench();
+    document.getElementById("nodes-btn")?.addEventListener("click", () => nodeWorkbench.open());
+    document.getElementById("more-nodes-btn")?.addEventListener("click", () => {
+      moreMenuDropdown.style.display = "none";
+      nodeWorkbench.open();
     });
 
     document.getElementById("terminal-btn")?.addEventListener("click", () => webTerminal.toggle());

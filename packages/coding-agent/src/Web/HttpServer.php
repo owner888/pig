@@ -15,7 +15,9 @@ use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Rpc\RpcClient;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Web\Node\NodeManager;
 use Pig\CodingAgent\Web\Protocols\Websocket;
+use Pig\CodingAgent\Web\Pty\PtyManager;
 use Pig\CodingAgent\Logger;
 use Throwable;
 
@@ -74,6 +76,9 @@ final class HttpServer
     /** @var array<int, string> a stable id per socket, for the key a new conversation gets */
     private array $clientIds = [];
 
+    /** @var array<int, PtyManager> */
+    private array $ptyManagers = [];
+
     private ?string $heartbeatTimer = null;
     private const float PING_INTERVAL = 25.0;
 
@@ -94,6 +99,7 @@ final class HttpServer
     private bool $isRunning = false;
     private readonly Auth $auth;
     private readonly SessionPool $pool;
+    private readonly NodeManager $nodeManager;
 
     /**
      * @param string $cwd where a new conversation opens when the page names no directory
@@ -110,6 +116,7 @@ final class HttpServer
         float $idleTtl = SessionPool::IDLE_TTL,
     ) {
         $this->auth = $auth ?? Auth::discover();
+        $this->nodeManager = new NodeManager();
         $this->pool = new SessionPool(
             spawn: $spawn ?? static function (string $cwd, ?string $sessionFile): RpcClient {
                 $sessionArg = $sessionFile !== null ? SessionManager::find($cwd, $sessionFile) : null;
@@ -291,13 +298,52 @@ final class HttpServer
         $this->wsClients = [];
         $this->clientIds = [];
 
+        foreach ($this->ptyManagers as $pm) {
+            $pm->dispose();
+        }
+        $this->ptyManagers = [];
+
         $this->pool->shutdown();
     }
 
     private function handleClose(int $connectionId): void
     {
         $this->pool->detach($connectionId);
+        if (isset($this->ptyManagers[$connectionId])) {
+            $this->ptyManagers[$connectionId]->dispose();
+            unset($this->ptyManagers[$connectionId]);
+        }
         unset($this->connections[$connectionId], $this->wsClients[$connectionId], $this->clientIds[$connectionId]);
+    }
+
+    private function ptyManager(int $connectionId): PtyManager
+    {
+        if (!isset($this->ptyManagers[$connectionId])) {
+            $this->ptyManagers[$connectionId] = new PtyManager(
+                onOutput: function (string $terminalId, string $data) use ($connectionId): void {
+                    $conn = $this->wsClients[$connectionId] ?? null;
+                    if ($conn !== null && !$conn->isClosed()) {
+                        $conn->send([
+                            'type' => 'terminal_output',
+                            'terminalId' => $terminalId,
+                            'data' => $data,
+                        ]);
+                    }
+                },
+                onExit: function (string $terminalId, ?int $exitCode) use ($connectionId): void {
+                    $conn = $this->wsClients[$connectionId] ?? null;
+                    if ($conn !== null && !$conn->isClosed()) {
+                        $conn->send([
+                            'type' => 'terminal_exit',
+                            'terminalId' => $terminalId,
+                            'exitCode' => $exitCode,
+                        ]);
+                    }
+                },
+            );
+        }
+
+        return $this->ptyManagers[$connectionId];
     }
 
     private function armHeartbeat(): void
@@ -790,6 +836,301 @@ final class HttpServer
             return;
         }
 
+        if (str_starts_with($type, 'terminal_')) {
+            $pty = $this->ptyManager($connectionId);
+
+            match ($type) {
+                'terminal_create' => (function () use ($conn, $pty, $data): void {
+                    $id = (string) ($data['terminalId'] ?? $data['id'] ?? bin2hex(random_bytes(6)));
+                    $cwd = (string) ($data['cwd'] ?? $this->cwd);
+                    $cols = (int) ($data['cols'] ?? 80);
+                    $rows = (int) ($data['rows'] ?? 24);
+                    $command = isset($data['command']) && is_string($data['command']) && $data['command'] !== ''
+                        ? $data['command']
+                        : null;
+
+                    try {
+                        $proc = $pty->create($id, $cwd, $cols, $rows, $command);
+                    } catch (Throwable $e) {
+                        $conn->send([
+                            'type' => 'terminal_exit',
+                            'terminalId' => $id,
+                            'exitCode' => 1,
+                            'error' => $e->getMessage(),
+                        ]);
+                        return;
+                    }
+
+                    $conn->send([
+                        'type' => 'terminal_list',
+                        'terminals' => $pty->list(),
+                    ]);
+
+                    if ($proc->scrollback() !== '') {
+                        $conn->send([
+                            'type' => 'terminal_output',
+                            'terminalId' => $id,
+                            'data' => $proc->scrollback(),
+                        ]);
+                    }
+                })(),
+                'terminal_input' => $pty->input((string) ($data['terminalId'] ?? ''), (string) ($data['data'] ?? '')),
+                'terminal_resize' => $pty->resize(
+                    (string) ($data['terminalId'] ?? ''),
+                    (int) ($data['cols'] ?? 80),
+                    (int) ($data['rows'] ?? 24),
+                ),
+                'terminal_kill' => (function () use ($conn, $pty, $data): void {
+                    $id = (string) ($data['terminalId'] ?? '');
+                    $pty->kill($id);
+                    $conn->send([
+                        'type' => 'terminal_list',
+                        'terminals' => $pty->list(),
+                    ]);
+                })(),
+                'terminal_list' => $conn->send([
+                    'type' => 'terminal_list',
+                    'terminals' => $pty->list(),
+                ]),
+                default => null,
+            };
+
+            return;
+        }
+
+        if ($type === 'node_request') {
+            $action = (string) ($data['action'] ?? '');
+            $requestId = (string) ($data['requestId'] ?? '');
+            $nodeId = isset($data['nodeId']) && is_string($data['nodeId']) ? $data['nodeId'] : null;
+            $p = isset($data['payload']) && is_array($data['payload']) ? $data['payload'] : [];
+
+            match ($action) {
+                'state' => $conn->send([
+                    'type' => 'node_event',
+                    'event' => 'state',
+                    'requestId' => $requestId,
+                    'data' => [
+                        'nodes' => $this->nodeManager->listNodes(),
+                        'sources' => $this->nodeManager->detectSshConfig(),
+                    ],
+                ]),
+                'save' => (function () use ($conn, $requestId, $p): void {
+                    $secret = isset($p['secret']) && is_string($p['secret']) ? $p['secret'] : null;
+                    $node = $this->nodeManager->saveNode($p, $secret);
+                    $conn->send([
+                        'type' => 'node_event',
+                        'event' => 'result',
+                        'requestId' => $requestId,
+                        'action' => 'save',
+                        'data' => ['id' => $node->id],
+                    ]);
+                    $this->broadcastNodeState();
+                })(),
+                'delete' => (function () use ($conn, $requestId, $nodeId): void {
+                    if ($nodeId !== null) {
+                        $this->nodeManager->deleteNode($nodeId);
+                    }
+                    $conn->send([
+                        'type' => 'node_event',
+                        'event' => 'result',
+                        'requestId' => $requestId,
+                        'action' => 'delete',
+                        'data' => ['success' => true],
+                    ]);
+                    $this->broadcastNodeState();
+                })(),
+                'connect' => (function () use ($conn, $requestId, $nodeId): void {
+                    $node = $nodeId ? $this->nodeManager->getNode($nodeId) : null;
+                    if ($node === null) {
+                        $conn->send(['type' => 'node_event', 'event' => 'failure', 'requestId' => $requestId, 'message' => 'Node not found']);
+                        return;
+                    }
+
+                    $fp = $this->nodeManager->scanFingerprint($node->host, $node->port);
+                    if ($node->fingerprint === null && $fp !== null) {
+                        $conn->send([
+                            'type' => 'node_event',
+                            'event' => 'fingerprint_prompt',
+                            'requestId' => $requestId,
+                            'nodeId' => $node->id,
+                            'data' => ['fingerprint' => $fp],
+                        ]);
+                        return;
+                    }
+
+                    if ($node->fingerprint !== null && $fp !== null && $node->fingerprint !== $fp) {
+                        $conn->send([
+                            'type' => 'node_event',
+                            'event' => 'failure',
+                            'requestId' => $requestId,
+                            'message' => 'Host key changed! Potential security mismatch.',
+                        ]);
+                        return;
+                    }
+
+                    $conn->send([
+                        'type' => 'node_event',
+                        'event' => 'result',
+                        'requestId' => $requestId,
+                        'action' => 'connect',
+                        'nodeId' => $node->id,
+                        'data' => ['status' => 'connected', 'nodeId' => $node->id],
+                    ]);
+                })(),
+                'trust' => (function () use ($conn, $requestId, $nodeId, $p): void {
+                    $fp = (string) ($p['fingerprint'] ?? '');
+                    if ($nodeId && $fp) {
+                        $this->nodeManager->trustFingerprint($nodeId, $fp);
+                    }
+                    $conn->send([
+                        'type' => 'node_event',
+                        'event' => 'result',
+                        'requestId' => $requestId,
+                        'action' => 'trust',
+                        'data' => ['status' => 'trusted', 'nodeId' => $nodeId],
+                    ]);
+                    $this->broadcastNodeState();
+                })(),
+                'forget_host_key' => (function () use ($conn, $requestId, $nodeId): void {
+                    if ($nodeId) {
+                        $this->nodeManager->forgetFingerprint($nodeId);
+                    }
+                    $conn->send([
+                        'type' => 'node_event',
+                        'event' => 'result',
+                        'requestId' => $requestId,
+                        'action' => 'forget_host_key',
+                        'data' => ['success' => true],
+                    ]);
+                    $this->broadcastNodeState();
+                })(),
+                'terminal_open' => (function () use ($conn, $connectionId, $requestId, $nodeId, $data, $p): void {
+                    $node = $nodeId ? $this->nodeManager->getNode($nodeId) : null;
+                    if ($node === null) {
+                        $conn->send(['type' => 'node_event', 'event' => 'failure', 'requestId' => $requestId, 'message' => 'Node not found']);
+                        return;
+                    }
+
+                    $sshCmd = $this->nodeManager->buildSshCommand($node, interactive: true);
+                    $termId = (string) ($data['terminalId'] ?? 'ssh-' . bin2hex(random_bytes(4)));
+                    $pty = $this->ptyManager($connectionId);
+                    $cols = (int) ($p['cols'] ?? 80);
+                    $rows = (int) ($p['rows'] ?? 24);
+                    $cmdStr = implode(' ', array_map('escapeshellarg', $sshCmd));
+                    $pty->create($termId, $this->cwd, $cols, $rows, $cmdStr);
+
+                    $conn->send([
+                        'type' => 'node_event',
+                        'event' => 'result',
+                        'requestId' => $requestId,
+                        'action' => 'terminal_open',
+                        'terminalId' => $termId,
+                        'nodeId' => $node->id,
+                        'data' => ['terminalId' => $termId],
+                    ]);
+                })(),
+                'list' => (function () use ($conn, $requestId, $nodeId, $p): void {
+                    $node = $nodeId ? $this->nodeManager->getNode($nodeId) : null;
+                    if ($node === null) {
+                        $conn->send(['type' => 'node_event', 'event' => 'failure', 'requestId' => $requestId, 'message' => 'Node not found']);
+                        return;
+                    }
+
+                    $path = (string) ($p['path'] ?? $node->defaultDir);
+                    Async::spawn(function () use ($conn, $requestId, $node, $path): void {
+                        try {
+                            $entries = $this->nodeManager->listRemoteDir($node, $path);
+                            $conn->send([
+                                'type' => 'node_event',
+                                'event' => 'result',
+                                'requestId' => $requestId,
+                                'action' => 'list',
+                                'nodeId' => $node->id,
+                                'data' => ['path' => $path, 'entries' => $entries],
+                            ]);
+                        } catch (Throwable $e) {
+                            $conn->send([
+                                'type' => 'node_event',
+                                'event' => 'failure',
+                                'requestId' => $requestId,
+                                'action' => 'list',
+                                'message' => $e->getMessage(),
+                            ]);
+                        }
+                    });
+                })(),
+                'read' => (function () use ($conn, $requestId, $nodeId, $p): void {
+                    $node = $nodeId ? $this->nodeManager->getNode($nodeId) : null;
+                    if ($node === null) {
+                        $conn->send(['type' => 'node_event', 'event' => 'failure', 'requestId' => $requestId, 'message' => 'Node not found']);
+                        return;
+                    }
+
+                    $path = (string) ($p['path'] ?? '');
+                    Async::spawn(function () use ($conn, $requestId, $node, $path): void {
+                        try {
+                            $text = $this->nodeManager->readRemoteFile($node, $path);
+                            $conn->send([
+                                'type' => 'node_event',
+                                'event' => 'result',
+                                'requestId' => $requestId,
+                                'action' => 'read',
+                                'nodeId' => $node->id,
+                                'data' => ['path' => $path, 'text' => $text],
+                            ]);
+                        } catch (Throwable $e) {
+                            $conn->send([
+                                'type' => 'node_event',
+                                'event' => 'failure',
+                                'requestId' => $requestId,
+                                'action' => 'read',
+                                'message' => $e->getMessage(),
+                            ]);
+                        }
+                    });
+                })(),
+                'write' => (function () use ($conn, $requestId, $nodeId, $p): void {
+                    $node = $nodeId ? $this->nodeManager->getNode($nodeId) : null;
+                    if ($node === null) {
+                        $conn->send(['type' => 'node_event', 'event' => 'failure', 'requestId' => $requestId, 'message' => 'Node not found']);
+                        return;
+                    }
+
+                    $path = (string) ($p['path'] ?? '');
+                    $text = (string) ($p['text'] ?? '');
+                    Async::spawn(function () use ($conn, $requestId, $node, $path, $text): void {
+                        try {
+                            $this->nodeManager->writeRemoteFile($node, $path, $text);
+                            $conn->send([
+                                'type' => 'node_event',
+                                'event' => 'result',
+                                'requestId' => $requestId,
+                                'action' => 'write',
+                                'nodeId' => $node->id,
+                                'data' => ['path' => $path, 'success' => true],
+                            ]);
+                        } catch (Throwable $e) {
+                            $conn->send([
+                                'type' => 'node_event',
+                                'event' => 'failure',
+                                'requestId' => $requestId,
+                                'action' => 'write',
+                                'message' => $e->getMessage(),
+                            ]);
+                        }
+                    });
+                })(),
+                default => $conn->send([
+                    'type' => 'node_event',
+                    'event' => 'failure',
+                    'requestId' => $requestId,
+                    'message' => "Unknown node action '{$action}'",
+                ]),
+            };
+
+            return;
+        }
+
         if ($type === 'rpc_command') {
             $tabId = is_string($data['tabId'] ?? null) && $data['tabId'] !== '' ? $data['tabId'] : null;
             $managed = $this->pool->boundTo($connectionId, $tabId);
@@ -858,6 +1199,24 @@ final class HttpServer
             foreach (array_keys($tabIds) as $tabId) {
                 $line = $tabId === 'default' ? $base : [...$base, 'tabId' => $tabId];
                 $client->send($line);
+            }
+        }
+    }
+
+    private function broadcastNodeState(): void
+    {
+        $payload = [
+            'type' => 'node_event',
+            'event' => 'state',
+            'data' => [
+                'nodes' => $this->nodeManager->listNodes(),
+                'sources' => $this->nodeManager->detectSshConfig(),
+            ],
+        ];
+
+        foreach ($this->wsClients as $client) {
+            if (!$client->isClosed()) {
+                $client->send($payload);
             }
         }
     }

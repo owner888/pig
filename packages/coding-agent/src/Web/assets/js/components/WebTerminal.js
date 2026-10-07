@@ -1,64 +1,113 @@
-import { escapeHtml } from "../utils.js";
-import { t, currentLocale } from "../i18n.js";
+import { network } from "../network.js";
+import { D as Terminal, o as FitAddon } from "../vendor/xterm.js";
 
-/** Lightweight ANSI escape sequence to styled HTML converter */
-function ansiToHtml(str) {
-  if (!str) return "";
-  const ansiColors = {
-    "30": "#64748b", "31": "#ef4444", "32": "#22c55e", "33": "#eab308",
-    "34": "#3b82f6", "35": "#a855f7", "36": "#06b6d4", "37": "#f8fafc",
-    "90": "#94a3b8", "91": "#f87171", "92": "#4ade80", "93": "#facc15",
-    "94": "#60a5fa", "95": "#c084fc", "96": "#22d3ee", "97": "#ffffff"
+/** Build xterm color scheme matching pig's active UI theme */
+function getTermTheme() {
+  const theme = document.documentElement.getAttribute("data-theme") || "dark";
+  if (theme === "light") {
+    return {
+      background: "#ffffff",
+      foreground: "#1e293b",
+      cursor: "#0284c7",
+      cursorAccent: "#ffffff",
+      selectionBackground: "rgba(2, 132, 199, 0.3)",
+      black: "#1e293b",
+      red: "#e11d48",
+      green: "#16a34a",
+      yellow: "#ca8a04",
+      blue: "#2563eb",
+      magenta: "#9333ea",
+      cyan: "#0891b2",
+      white: "#f8fafc",
+      brightBlack: "#64748b",
+      brightRed: "#f43f5e",
+      brightGreen: "#22c55e",
+      brightYellow: "#eab308",
+      brightBlue: "#3b82f6",
+      brightMagenta: "#a855f7",
+      brightCyan: "#06b6d4",
+      brightWhite: "#ffffff",
+    };
+  }
+
+  if (theme === "labra") {
+    return {
+      background: "#121714",
+      foreground: "#e2e6e3",
+      cursor: "#ff66cc",
+      cursorAccent: "#121714",
+      selectionBackground: "rgba(255, 102, 204, 0.35)",
+      black: "#1a1e1b",
+      red: "#f87171",
+      green: "#4ade80",
+      yellow: "#facc15",
+      blue: "#60a5fa",
+      magenta: "#ff66cc",
+      cyan: "#22d3ee",
+      white: "#e2e6e3",
+      brightBlack: "#4b5563",
+      brightRed: "#ef4444",
+      brightGreen: "#22c55e",
+      brightYellow: "#eab308",
+      brightBlue: "#3b82f6",
+      brightMagenta: "#f472b6",
+      brightCyan: "#06b6d4",
+      brightWhite: "#ffffff",
+    };
+  }
+
+  // Dark default
+  return {
+    background: "#070a12",
+    foreground: "#e2e8f0",
+    cursor: "#38bdf8",
+    cursorAccent: "#070a12",
+    selectionBackground: "rgba(56, 189, 248, 0.3)",
+    black: "#0f172a",
+    red: "#ef4444",
+    green: "#22c55e",
+    yellow: "#eab308",
+    blue: "#3b82f6",
+    magenta: "#a855f7",
+    cyan: "#06b6d4",
+    white: "#f8fafc",
+    brightBlack: "#64748b",
+    brightRed: "#f87171",
+    brightGreen: "#4ade80",
+    brightYellow: "#facc15",
+    brightBlue: "#60a5fa",
+    brightMagenta: "#c084fc",
+    brightCyan: "#22d3ee",
+    brightWhite: "#ffffff",
   };
-
-  let clean = escapeHtml(str);
-  // Replace standard color codes
-  clean = clean.replace(/\x1b\[([0-9;]+)m/g, (match, codes) => {
-    const parts = codes.split(";");
-    if (parts.includes("0")) return '</span>';
-    let style = "";
-    if (parts.includes("1")) style += "font-weight:bold;";
-    for (const code of parts) {
-      if (ansiColors[code]) style += `color:${ansiColors[code]};`;
-    }
-    return style ? `<span style="${style}">` : "";
-  });
-
-  // Strip other ANSI control sequences
-  clean = clean.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
-  return clean;
 }
 
 /**
  * WebTerminal Component
  *
- * Full-featured lightweight browser terminal drawer with:
- * - Dynamic cwd awareness defaulting to active tab's workspace
- * - Fast ANSI color output rendering (git status, ls, tests, diffs)
- * - Command history navigation via Up/Down arrow keys
- * - Built-in cd directory tracking
- * - Maximize/minimize drawer controls
+ * Full-featured interactive PTY pseudo-terminal powered by xterm.js:
+ * - Real terminal emulation (supports vim, htop, less, interactive git, ssh)
+ * - Multi-tab terminal sessions (create, close, switch tabs)
+ * - 16ms micro-batching non-blocking streaming
+ * - Window sizing and auto-fit on drawer resize / maximize
+ * - Theme-synchronized terminal palettes (Dark, Labra, Light)
+ * - Native clipboard copy / paste
  */
 export class WebTerminal {
   constructor({ getActiveCwd, onCwdChanged }) {
     this.getActiveCwd = getActiveCwd;
     this.onCwdChanged = onCwdChanged;
     this.cwd = getActiveCwd() || "";
-    this.user = "user";
-    this.hostname = "pig";
-    this.home = "/";
 
-    this.history = [];
-    this.historyIndex = -1;
-    this.tempInput = "";
-    this.isRunning = false;
-    this.isMaximized = false;
     this.isOpen = false;
-    this.isComposing = false;
-    this.compositionEndTime = 0;
+    this.isMaximized = false;
+    this.tabs = [];
+    this.activeTabId = null;
+    this.tabCounter = 1;
 
     this.initElement();
-    this.fetchInfo();
+    this.initNetwork();
+    this.observeTheme();
   }
 
   initElement() {
@@ -75,7 +124,10 @@ export class WebTerminal {
               <line x1="12" y1="19" x2="20" y2="19"></line>
             </svg>
           </span>
-          <span class="web-term-title">Web Terminal</span>
+          <div class="web-term-tabs-container">
+            <div class="web-term-tabs-list" id="web-term-tabs-list"></div>
+            <button class="web-term-add-tab-btn" id="web-term-add-tab-btn" title="New Terminal Tab">+</button>
+          </div>
           <span class="web-term-cwd" title="Click to copy path">~</span>
         </div>
         <div class="web-term-header-right">
@@ -86,23 +138,13 @@ export class WebTerminal {
           <button class="web-term-btn web-term-close-btn" title="Close (Esc)">✕</button>
         </div>
       </div>
-      <div class="web-term-viewport">
-        <div class="web-term-output"></div>
-        <div class="web-term-prompt-line">
-          <span class="web-term-prompt-prefix">
-            <span class="term-user">user@pig</span>:<span class="term-path">~</span><span class="term-dollar">$</span>
-          </span>
-          <input type="text" class="web-term-input" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
-          <span class="web-term-loader" style="display:none;">⏳</span>
-        </div>
-      </div>
+      <div class="web-term-viewport" id="web-term-viewport"></div>
     `;
 
-    this.outputEl = this.element.querySelector(".web-term-output");
-    this.inputEl = this.element.querySelector(".web-term-input");
-    this.promptPrefix = this.element.querySelector(".web-term-prompt-prefix");
+    this.tabsListEl = this.element.querySelector("#web-term-tabs-list");
+    this.addTabBtn = this.element.querySelector("#web-term-add-tab-btn");
+    this.viewportEl = this.element.querySelector("#web-term-viewport");
     this.cwdBadge = this.element.querySelector(".web-term-cwd");
-    this.loaderEl = this.element.querySelector(".web-term-loader");
 
     this.bindEvents();
     document.body.appendChild(this.element);
@@ -110,322 +152,264 @@ export class WebTerminal {
 
   bindEvents() {
     this.element.querySelector(".web-term-close-btn").addEventListener("click", () => this.close());
-    this.element.querySelector(".web-term-clear-btn").addEventListener("click", () => this.clear());
+    this.element.querySelector(".web-term-clear-btn").addEventListener("click", () => this.clearActive());
     this.element.querySelector(".web-term-max-btn").addEventListener("click", () => this.toggleMaximize());
+    this.addTabBtn.addEventListener("click", () => this.createTab());
 
     this.cwdBadge.addEventListener("click", () => {
-      navigator.clipboard.writeText(this.cwd).then(() => {
+      const activeCwd = this.getActiveCwd() || this.cwd;
+      navigator.clipboard.writeText(activeCwd).then(() => {
         const orig = this.cwdBadge.textContent;
         this.cwdBadge.textContent = "✓ Copied";
-        setTimeout(() => this.updatePrompt(), 1200);
+        setTimeout(() => this.updateCwdBadge(), 1200);
       });
     });
 
-    this.element.querySelectorAll(".web-term-quick-btn").forEach(btn => {
+    this.element.querySelectorAll(".web-term-quick-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         const cmd = btn.getAttribute("data-cmd");
         if (cmd) {
-          this.inputEl.value = cmd;
-          this.executeCommand(cmd);
+          this.sendInput(cmd + "\r");
         }
       });
     });
 
-    this.inputEl.addEventListener("compositionstart", () => {
-      this.isComposing = true;
-    });
-    this.inputEl.addEventListener("compositionend", () => {
-      this.isComposing = false;
-      this.compositionEndTime = Date.now();
-    });
-
-    this.inputEl.addEventListener("keydown", (e) => {
-      // Prevent Chinese/IME composition Enter from submitting prematurely
-      if (e.isComposing || this.isComposing || e.keyCode === 229 || (Date.now() - this.compositionEndTime < 60)) {
-        return;
+    window.addEventListener("resize", () => {
+      if (this.isOpen) {
+        this.fitActiveTab();
       }
+    });
+  }
 
-      if (e.key === "Enter") {
-        e.preventDefault();
-        const cmd = this.inputEl.value.trim();
-        if (cmd) {
-          this.executeCommand(cmd);
+  initNetwork() {
+    network.addMessageListener((msg) => {
+      if (!msg || typeof msg !== "object") return;
+
+      if (msg.type === "terminal_output") {
+        const tab = this.tabs.find((t) => t.id === msg.terminalId);
+        if (tab && tab.term) {
+          tab.term.write(msg.data);
         }
-      } else if (e.key === "Tab") {
-        e.preventDefault();
-        e.stopPropagation();
-        this.handleTabCompletion();
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        this.navigateHistory(-1);
-      } else if (e.key === "ArrowDown") {
-        e.preventDefault();
-        this.navigateHistory(1);
-      } else if (e.key === "Escape") {
-        this.close();
-      } else if (e.key === "l" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        this.clear();
+      } else if (msg.type === "terminal_exit") {
+        const tab = this.tabs.find((t) => t.id === msg.terminalId);
+        if (tab) {
+          tab.exitCode = msg.exitCode;
+          tab.term?.write(`\r\n\x1b[90m[Process exited with code ${msg.exitCode ?? 0}]\x1b[0m\r\n`);
+          this.renderTabs();
+        }
       }
-    });
-
-    // Keep focus inside terminal viewport when clicking anywhere in terminal
-    this.element.querySelector(".web-term-viewport").addEventListener("click", () => {
-      this.inputEl.focus();
     });
   }
 
-  async fetchInfo() {
-    try {
-      const activeCwd = this.getActiveCwd();
-      const res = await fetch(`/api/terminal/info?cwd=${encodeURIComponent(activeCwd || "")}`);
-      if (res.ok) {
-        const data = await res.json();
-        this.user = data.user || this.user;
-        this.hostname = data.hostname || this.hostname;
-        this.cwd = data.cwd || this.cwd;
-        this.home = data.home || this.home;
-        this.updatePrompt();
-      }
-    } catch (e) {}
-  }
-
-  formatPath(p, isCompact = false) {
-    if (!p) return "~";
-    let formatted = p;
-    if (this.home && p.startsWith(this.home)) {
-      formatted = "~" + p.slice(this.home.length);
-    }
-    // On small mobile screens or long paths, abbreviate middle path segments
-    if (isCompact && formatted.length > 20) {
-      const parts = formatted.split("/").filter(Boolean);
-      if (parts.length > 1) {
-        return (formatted.startsWith("~") ? "~/.../" : ".../") + parts[parts.length - 1];
-      }
-    }
-    return formatted;
-  }
-
-  renderPromptPrefixHtml(shortPath) {
-    return `<span class="term-user-host"><span class="term-user">${escapeHtml(this.user)}</span><span class="term-host">@${escapeHtml(this.hostname)}</span>:</span><span class="term-path" title="${escapeHtml(this.cwd)}">${escapeHtml(shortPath)}</span><span class="term-dollar">$</span>`;
-  }
-
-  updatePrompt() {
-    const isMobile = window.innerWidth <= 640;
-    const short = this.formatPath(this.cwd, isMobile);
-    this.cwdBadge.textContent = this.formatPath(this.cwd, false);
-    this.cwdBadge.title = this.cwd;
-    this.promptPrefix.innerHTML = this.renderPromptPrefixHtml(short);
-  }
-
-  navigateHistory(delta) {
-    if (this.history.length === 0) return;
-
-    if (this.historyIndex === -1) {
-      this.tempInput = this.inputEl.value;
-    }
-
-    let newIndex = this.historyIndex + delta;
-    if (newIndex < -1) newIndex = -1;
-    if (newIndex >= this.history.length) newIndex = this.history.length - 1;
-
-    this.historyIndex = newIndex;
-    if (this.historyIndex === -1) {
-      this.inputEl.value = this.tempInput;
-    } else {
-      this.inputEl.value = this.history[this.history.length - 1 - this.historyIndex] || "";
-    }
-  }
-
-  async executeCommand(cmd) {
-    if (this.isRunning) return;
-
-    // Add to history
-    this.history.push(cmd);
-    this.historyIndex = -1;
-    this.tempInput = "";
-
-    const isMobile = window.innerWidth <= 640;
-    const shortPath = this.formatPath(this.cwd, isMobile);
-    const lineRecord = document.createElement("div");
-    lineRecord.className = "term-history-entry";
-    lineRecord.innerHTML = `
-      <div class="term-command-line">
-        <span class="web-term-prompt-prefix">${this.renderPromptPrefixHtml(shortPath)}</span>
-        <span class="term-command-text">${escapeHtml(cmd)}</span>
-      </div>
-      <div class="term-command-output"><span class="term-running-spinner">⏳ Running...</span></div>
-    `;
-
-    this.outputEl.appendChild(lineRecord);
-    this.inputEl.value = "";
-    this.isRunning = true;
-    this.loaderEl.style.display = "inline-block";
-    this.scrollToBottom();
-
-    const outputContainer = lineRecord.querySelector(".term-command-output");
-
-    try {
-      const res = await fetch("/api/terminal/exec", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: cmd, cwd: this.cwd }),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        outputContainer.innerHTML = `<span style="color:#ef4444;">Error: ${escapeHtml(data.error || "Command failed")}</span>`;
-      } else {
-        let outHtml = "";
-        if (data.stdout) outHtml += ansiToHtml(data.stdout);
-        if (data.stderr) {
-          outHtml += `<span style="color:#f87171;">${ansiToHtml(data.stderr)}</span>`;
+  observeTheme() {
+    const observer = new MutationObserver(() => {
+      const newTheme = getTermTheme();
+      for (const t of this.tabs) {
+        if (t.term) {
+          t.term.options.theme = newTheme;
         }
+      }
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  }
 
-        if (data.exitCode !== 0) {
-          outHtml += `<div class="term-exit-pill" style="color:#ef4444; font-size:11px; margin-top:4px;">✖ exited with code ${data.exitCode}</div>`;
-        }
+  createTab(command = null, name = null) {
+    const id = "term-" + Math.random().toString(36).slice(2, 9);
+    const tabName = name || `Term ${this.tabCounter++}`;
+    const targetCwd = this.getActiveCwd() || this.cwd || "/";
 
-        outputContainer.innerHTML = outHtml || `<span style="color:#64748b; font-style:italic;">(no output)</span>`;
+    const container = document.createElement("div");
+    container.className = "web-term-xterm-instance";
+    container.style.display = "none";
+    this.viewportEl.appendChild(container);
 
-        if (data.cwd && data.cwd !== this.cwd) {
-          this.cwd = data.cwd;
-          this.updatePrompt();
-          if (typeof this.onCwdChanged === "function") {
-            this.onCwdChanged(this.cwd);
+    const term = new Terminal({
+      theme: getTermTheme(),
+      fontFamily: '"SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace',
+      fontSize: 13,
+      cursorBlink: true,
+      scrollback: 8000,
+      allowProposedApi: true,
+    });
+
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.open(container);
+
+    // Native copy / paste binding
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") return true;
+      const key = event.key?.toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && key === "v") {
+        return false;
+      }
+      if (event.ctrlKey && !event.shiftKey && !event.altKey && key === "c") {
+        if (term.hasSelection()) {
+          const ta = term.textarea;
+          if (ta) {
+            ta.value = term.getSelection();
+            ta.select();
           }
+          return false;
         }
       }
-    } catch (err) {
-      outputContainer.innerHTML = `<span style="color:#ef4444;">Network error: ${escapeHtml(err.message)}</span>`;
-    } finally {
-      this.isRunning = false;
-      this.loaderEl.style.display = "none";
-      this.scrollToBottom();
-      this.inputEl.focus();
-    }
-  }
+      return true;
+    });
 
-  async handleTabCompletion() {
-    const rawVal = this.inputEl.value;
-    if (!rawVal.trim()) return;
+    term.onData((data) => {
+      network.send({
+        type: "terminal_input",
+        terminalId: id,
+        data,
+      });
+    });
 
-    try {
-      const res = await fetch(`/api/terminal/complete?line=${encodeURIComponent(rawVal)}&cwd=${encodeURIComponent(this.cwd || "")}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      if (!data.success || !data.completions || data.completions.length === 0) {
-        return;
-      }
+    const tab = {
+      id,
+      name: tabName,
+      cwd: targetCwd,
+      container,
+      term,
+      fit,
+      exitCode: null,
+    };
 
-      const { prefix, completions, commonPrefix } = data;
+    this.tabs.push(tab);
+    this.renderTabs();
+    this.switchTab(id);
 
-      // Case 1: Single unique completion
-      if (completions.length === 1) {
-        const full = completions[0];
-        const isDir = full.endsWith("/");
-        const replacement = full + (isDir ? "" : " ");
-        this.replaceCurrentToken(rawVal, prefix, replacement);
-        return;
-      }
-
-      // Case 2: Multiple completions
-      // If common prefix is longer than what user already typed, complete up to common prefix
-      if (commonPrefix && commonPrefix.length > prefix.length) {
-        this.replaceCurrentToken(rawVal, prefix, commonPrefix);
-      }
-
-      // Render candidates list in terminal viewport like real bash
-      this.renderCompletionsList(completions);
-    } catch (e) {}
-  }
-
-  replaceCurrentToken(rawLine, prefix, replacement) {
-    if (prefix === "") {
-      this.inputEl.value = rawLine + replacement;
-    } else {
-      const lastIdx = rawLine.lastIndexOf(prefix);
-      if (lastIdx !== -1) {
-        this.inputEl.value = rawLine.slice(0, lastIdx) + replacement + rawLine.slice(lastIdx + prefix.length);
-      } else {
-        this.inputEl.value = rawLine + replacement;
-      }
-    }
-    this.inputEl.focus();
-    const len = this.inputEl.value.length;
-    this.inputEl.selectionStart = this.inputEl.selectionEnd = len;
-  }
-
-  renderCompletionsList(completions) {
-    const lineRecord = document.createElement("div");
-    lineRecord.className = "term-history-entry term-completions-entry";
-
-    const isMobile = window.innerWidth <= 640;
-    const shortPath = this.formatPath(this.cwd, isMobile);
-
-    const cols = completions.map(item => {
-      const isDir = item.endsWith("/");
-      const color = isDir ? "#38bdf8; font-weight:600;" : "#f8fafc;";
-      return `<span class="term-completion-item" style="color:${color}">${escapeHtml(item)}</span>`;
-    }).join("");
-
-    lineRecord.innerHTML = `
-      <div class="term-command-line">
-        <span class="web-term-prompt-prefix">${this.renderPromptPrefixHtml(shortPath)}</span>
-        <span class="term-command-text">${escapeHtml(this.inputEl.value)}</span>
-      </div>
-      <div class="term-completions-grid">${cols}</div>
-    `;
-
-    this.outputEl.appendChild(lineRecord);
-    this.scrollToBottom();
-  }
-
-  clear() {
-    this.outputEl.innerHTML = "";
-    this.inputEl.focus();
-  }
-
-  toggleMaximize() {
-    this.isMaximized = !this.isMaximized;
-    this.element.classList.toggle("maximized", this.isMaximized);
-    const maxBtn = this.element.querySelector(".web-term-max-btn");
-    maxBtn.textContent = this.isMaximized ? "🗗" : "⛶";
-    this.scrollToBottom();
-    this.inputEl.focus();
-  }
-
-  scrollToBottom() {
-    const viewport = this.element.querySelector(".web-term-viewport");
-    if (viewport) {
-      viewport.scrollTop = viewport.scrollHeight;
-    }
-  }
-
-  open() {
-    const activeCwd = this.getActiveCwd();
-    if (activeCwd && activeCwd !== this.cwd) {
-      this.cwd = activeCwd;
-      this.updatePrompt();
-    }
-
-    this.element.style.display = "flex";
-    this.isOpen = true;
+    // Initial spawn on backend
     requestAnimationFrame(() => {
-      this.element.classList.add("visible");
-      this.inputEl.focus();
-      this.scrollToBottom();
+      try {
+        fit.fit();
+      } catch (e) {}
+
+      network.send({
+        type: "terminal_create",
+        terminalId: id,
+        cwd: targetCwd,
+        cols: term.cols || 80,
+        rows: term.rows || 24,
+        command: command || undefined,
+      });
+    });
+
+    return tab;
+  }
+
+  switchTab(id) {
+    const tab = this.tabs.find((t) => t.id === id);
+    if (!tab) return;
+
+    this.activeTabId = id;
+
+    for (const t of this.tabs) {
+      if (t.id === id) {
+        t.container.style.display = "block";
+      } else {
+        t.container.style.display = "none";
+      }
+    }
+
+    this.renderTabs();
+
+    requestAnimationFrame(() => {
+      try {
+        tab.fit.fit();
+        network.send({
+          type: "terminal_resize",
+          terminalId: tab.id,
+          cols: tab.term.cols,
+          rows: tab.term.rows,
+        });
+      } catch (e) {}
+      tab.term.focus();
     });
   }
 
-  close() {
-    this.element.classList.remove("visible");
-    setTimeout(() => {
-      if (!this.element.classList.contains("visible")) {
-        this.element.style.display = "none";
-        this.isOpen = false;
+  closeTab(id, e) {
+    if (e) {
+      e.stopPropagation();
+    }
+
+    const index = this.tabs.findIndex((t) => t.id === id);
+    if (index === -1) return;
+
+    const tab = this.tabs[index];
+    network.send({ type: "terminal_kill", terminalId: id });
+
+    tab.term.dispose();
+    tab.container.remove();
+    this.tabs.splice(index, 1);
+
+    if (this.activeTabId === id) {
+      const nextTab = this.tabs[index] || this.tabs[index - 1] || null;
+      if (nextTab) {
+        this.switchTab(nextTab.id);
+      } else {
+        this.activeTabId = null;
+        this.close();
       }
-    }, 200);
+    } else {
+      this.renderTabs();
+    }
+  }
+
+  renderTabs() {
+    this.tabsListEl.innerHTML = "";
+
+    for (const t of this.tabs) {
+      const tabEl = document.createElement("div");
+      tabEl.className = "web-term-tab" + (t.id === this.activeTabId ? " active" : "");
+      tabEl.innerHTML = `
+        <span class="web-term-tab-name">${t.name}</span>
+        ${t.exitCode !== null ? `<span class="web-term-tab-status">[exit]</span>` : ""}
+        <button class="web-term-tab-close" title="Close">×</button>
+      `;
+
+      tabEl.addEventListener("click", () => this.switchTab(t.id));
+      tabEl.querySelector(".web-term-tab-close").addEventListener("click", (e) => this.closeTab(t.id, e));
+
+      this.tabsListEl.appendChild(tabEl);
+    }
+  }
+
+  fitActiveTab() {
+    const tab = this.tabs.find((t) => t.id === this.activeTabId);
+    if (tab && tab.fit && tab.term) {
+      try {
+        tab.fit.fit();
+        network.send({
+          type: "terminal_resize",
+          terminalId: tab.id,
+          cols: tab.term.cols,
+          rows: tab.term.rows,
+        });
+      } catch (e) {}
+    }
+  }
+
+  clearActive() {
+    const tab = this.tabs.find((t) => t.id === this.activeTabId);
+    if (tab && tab.term) {
+      tab.term.clear();
+      this.sendInput("\x0c"); // Ctrl+L
+    }
+  }
+
+  sendInput(data) {
+    if (!this.activeTabId) return;
+    network.send({
+      type: "terminal_input",
+      terminalId: this.activeTabId,
+      data,
+    });
+  }
+
+  updateCwdBadge() {
+    const targetCwd = this.getActiveCwd() || this.cwd || "~";
+    this.cwdBadge.textContent = targetCwd.length > 36 ? "..." + targetCwd.slice(-33) : targetCwd;
+    this.cwdBadge.title = targetCwd;
   }
 
   toggle() {
@@ -434,5 +418,44 @@ export class WebTerminal {
     } else {
       this.open();
     }
+  }
+
+  open() {
+    this.element.style.display = "flex";
+    requestAnimationFrame(() => {
+      this.element.classList.add("visible");
+      this.isOpen = true;
+      this.updateCwdBadge();
+
+      if (this.tabs.length === 0) {
+        this.createTab();
+      } else {
+        this.fitActiveTab();
+        const tab = this.tabs.find((t) => t.id === this.activeTabId);
+        if (tab && tab.term) {
+          tab.term.focus();
+        }
+      }
+    });
+  }
+
+  close() {
+    this.element.classList.remove("visible");
+    this.isOpen = false;
+    setTimeout(() => {
+      if (!this.isOpen) {
+        this.element.style.display = "none";
+      }
+    }, 220);
+  }
+
+  toggleMaximize() {
+    this.isMaximized = !this.isMaximized;
+    this.element.classList.toggle("maximized", this.isMaximized);
+    const maxBtn = this.element.querySelector(".web-term-max-btn");
+    if (maxBtn) {
+      maxBtn.textContent = this.isMaximized ? "🗗" : "⛶";
+    }
+    setTimeout(() => this.fitActiveTab(), 220);
   }
 }

@@ -3308,7 +3308,11 @@ connection with `tabId` tagging, per-tab chat scroll areas, background streaming
 **④ Telegram-style language pack import/export and ExtensionApi locale registration** (`v0.3.26`–`v0.3.30`):
 full bilingual client-side `I18N` dictionary with 101 symmetric keys (defaulting to `zh-CN`), instant zero-refresh language modal (`#lang-btn`),
 Telegram-style JSON import/export, `$pig->registerLocale()` on `ExtensionApi` with `/api/locales` aggregation, and in-session
-interactive `/web restart`, `/web status`, and `/web stop` controls.
+interactive `/web restart`, `/web status`, and `/web stop` controls;
+**⑤ Interactive Local PTY Terminals, SSH Node Workbench, and SFTP File Explorer (aligned with `youweichen/pi-web-ui` / `omp-web-ui`)**:
+- `Pig\CodingAgent\Web\Pty\PtyProcess` & `PtyManager`: Native `proc_open` with `['pty']` descriptor on macOS/Linux, 16ms output micro-batching via `Loop::delay()`, slave PTY device detection (`lsof` on Darwin, `/proc/$pid/fd/0` on Linux) with window size updating via `stty` + `SIGWINCH`, and 200KB scrollback buffering.
+- `Pig\CodingAgent\Web\Node\NodeProfile` & `NodeManager`: SSH node inventory in `~/.pig/agent/nodes.json`, secret persistence in `~/.pig/agent/nodes-secrets.json` (chmod 0600), SHA-256 host key fingerprint detection (`ssh-keyscan` + `ssh-keygen -lf`), OpenSSH `~/.ssh/config` discovery, remote PTY terminal streaming (`ssh -tt`), and SFTP remote directory listing/reading/writing (capped at 512 KiB).
+- Frontend: Embedded `xterm.js` + `FitAddon` multi-tab terminal drawer in `WebTerminal.js`, and comprehensive `NodeWorkbench.js` modal with remote terminal tabs and SFTP file explorer/editor.
 
 `PrintMode` is the smallest of the three because `RpcMode` did the work: `RpcEvents` already
 encodes the events, and wiring hooks and custom tools with no UI is already something that

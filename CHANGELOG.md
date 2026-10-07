@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.64] - 2026-10-06
+
+### New Features
+
+- Ported Interactive Local PTY Terminals, SSH Node Workbench, and SFTP File Explorer (aligned with `youweichen/pi-web-ui` / `omp-web-ui`):
+  - **Local PTY Terminal Engine (`PtyProcess` & `PtyManager`)**: Native pseudo-terminal execution using PHP's `proc_open` with `['pty']` descriptor on macOS/Linux with zero external C-extensions. Non-blocking I/O integrated into `Pig\Async\Loop`, 16ms output micro-batching to prevent WebSocket frame storms, slave PTY device detection with window resizing via `stty` + `SIGWINCH`, and 200KB scrollback buffering.
+  - **SSH Node Workbench (`NodeProfile` & `NodeManager`)**: Persistent inventory in `~/.pig/agent/nodes.json` and credentials in `~/.pig/agent/nodes-secrets.json` (chmod 0600), SHA-256 host key fingerprint detection (`ssh-keyscan` + `ssh-keygen -lf`) with verification and trust prompts, OpenSSH `~/.ssh/config` discovery, remote PTY terminal streaming (`ssh -tt`), and SFTP remote directory listing/reading/writing (capped at 512 KiB).
+  - **Web UI Integration**: Embedded `xterm.js` and `FitAddon` multi-tab terminal drawer (`WebTerminal.js`), `#nodes-btn` in header and mobile drawer, full-featured `NodeWorkbench.js` modal with remote terminal tabs and SFTP file explorer/editor, and bilingual i18n support.
+
 ## [0.3.63] - 2026-10-06
 
 ### Fixed
