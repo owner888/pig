@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\ImageContent;
@@ -17,7 +18,6 @@ use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Export\MarkdownHtml;
-use Pig\CodingAgent\Theme\Palette;
 use Pig\Agent\AgentError;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\SessionManager;
@@ -26,6 +26,7 @@ use Pig\CodingAgent\Session\CompactionSummary;
 /** A conversation as one HTML file, with no JavaScript in it. */
 final class HtmlExportTest extends TestCase
 {
+    use GlobalThemeFixture;
     use \Pig\Test\AssertsThrows;
 
     private string $tempHome = '';
@@ -33,6 +34,7 @@ final class HtmlExportTest extends TestCase
     #[\Override]
     protected function setUp(): void
     {
+        $this->setUpGlobalTheme();
         $this->tempHome = sys_get_temp_dir() . '/pig-export-home-' . bin2hex(random_bytes(4));
         putenv("PIG_HOME={$this->tempHome}");
     }
@@ -40,6 +42,7 @@ final class HtmlExportTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
+        $this->tearDownGlobalTheme();
         putenv('PIG_HOME');
         if (is_dir($this->tempHome)) {
             self::remove($this->tempHome);
@@ -291,9 +294,9 @@ final class HtmlExportTest extends TestCase
         // The stylesheet had six syntax colours written out by hand, belonging to neither
         // theme — so a light export coloured keywords pale blue on white, and a dark one did
         // not match the terminal the person had just been reading.
-        $this->assertStringContainsString(Palette::dark(false)->hex('syntaxKeyword'), $dark);
-        $this->assertStringContainsString(Palette::light(false)->hex('syntaxKeyword'), $light);
-        $this->assertStringNotContainsString('#81a2be', $dark, 'a colour from neither palette');
+        $this->assertStringContainsString(Themes::getResolvedThemeColors('dark')['syntaxKeyword'], $dark);
+        $this->assertStringContainsString(Themes::getResolvedThemeColors('light')['syntaxKeyword'], $light);
+        $this->assertStringNotContainsString('#81a2be', $dark, 'a colour from neither theme');
     }
 
     public function testATightListStaysTight(): void

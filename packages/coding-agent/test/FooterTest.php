@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentOptions;
 use Pig\Agent\ThinkingLevel;
@@ -23,26 +24,25 @@ use Pig\CodingAgent\Interactive\FooterComponent;
 use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Theme\Palette;
 use Pig\Test\WithoutProviderKeys;
 use Pig\Tui\Ansi;
 
 /** The two dim lines under everything: where you are, and what this has cost. */
 final class FooterTest extends TestCase
 {
+    use GlobalThemeFixture;
     use WithoutProviderKeys;
 
     private const int WIDTH = 76;
 
-    private Palette $palette;
 
     private string $cwd;
 
     #[\Override]
     protected function setUp(): void
     {
+        $this->setUpGlobalTheme();
         Loop::reset();
-        $this->palette = Palette::dark(true);
         $this->cwd = sys_get_temp_dir() . '/pig-footer-' . bin2hex(random_bytes(4));
         mkdir($this->cwd, 0o755, true);
     }
@@ -50,6 +50,7 @@ final class FooterTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
+        $this->tearDownGlobalTheme();
         foreach (['/.git/HEAD', '/.git', ''] as $part) {
             $path = $this->cwd . $part;
 
@@ -95,13 +96,13 @@ final class FooterTest extends TestCase
     {
         return array_map(
             Ansi::strip(...),
-            (new FooterComponent($session, $this->palette, $this->cwd))->render(self::WIDTH),
+            (new FooterComponent($session, $this->cwd))->render(self::WIDTH),
         );
     }
 
     private function raw(AgentSession $session): string
     {
-        return implode("\n", (new FooterComponent($session, $this->palette, $this->cwd))->render(self::WIDTH));
+        return implode("\n", (new FooterComponent($session, $this->cwd))->render(self::WIDTH));
     }
 
     // ---- where you are -----------------------------------------------------------------
@@ -134,7 +135,7 @@ final class FooterTest extends TestCase
         mkdir($this->cwd . '/.git', 0o755, true);
         file_put_contents($this->cwd . '/.git/HEAD', "ref: refs/heads/main\n");
 
-        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer = new FooterComponent($this->session(), $this->cwd);
         $this->assertStringContainsString('(main)', Ansi::strip($footer->render(self::WIDTH)[0]));
 
         file_put_contents($this->cwd . '/.git/HEAD', "ref: refs/heads/other\n");
@@ -151,7 +152,7 @@ final class FooterTest extends TestCase
         $session = $this->session();
         $session->setSessionName('仿写更新日志规则模板');
 
-        $footer = new FooterComponent($session, $this->palette, $this->cwd);
+        $footer = new FooterComponent($session, $this->cwd);
         $topLine = Ansi::strip($footer->render(160)[0]);
 
         $this->assertStringContainsString('(main) • 仿写更新日志规则模板', $topLine);
@@ -170,7 +171,7 @@ final class FooterTest extends TestCase
         $session = $this->session();
         $session->setSessionName('仿写更新日志规则模板');
 
-        $footer = new FooterComponent($session, $this->palette, $this->cwd);
+        $footer = new FooterComponent($session, $this->cwd);
         $footer->setStatus('token-speed', '⚡ 90.8 tok/s · TTFT 8ms');
 
         $lines = array_map(Ansi::strip(...), $footer->render(160));
@@ -193,7 +194,7 @@ final class FooterTest extends TestCase
     public function testATooLongPathIsCutFromTheMiddle(): void
     {
         // The end of a path says more than its middle does.
-        $footer = new FooterComponent($this->session(), $this->palette, '/' . str_repeat('directory/', 20) . 'here');
+        $footer = new FooterComponent($this->session(), '/' . str_repeat('directory/', 20) . 'here');
         $line = Ansi::strip($footer->render(40)[0]);
 
         $this->assertStringContainsString('...', $line);
@@ -206,7 +207,7 @@ final class FooterTest extends TestCase
     public function testAPathInAWideScriptIsCutByColumnsNotCharacters(): void
     {
         // Two columns per character, so cutting by length overflows the line.
-        $footer = new FooterComponent($this->session(), $this->palette, '/' . str_repeat('目录/', 20) . 'here');
+        $footer = new FooterComponent($this->session(), '/' . str_repeat('目录/', 20) . 'here');
 
         $this->assertLessThanOrEqual(40, mb_strwidth(Ansi::strip($footer->render(40)[0])));
     }
@@ -275,7 +276,7 @@ final class FooterTest extends TestCase
 
         $settings = Settings::inMemory();
 
-        $footer = new FooterComponent($session, $this->palette, $this->cwd, $settings);
+        $footer = new FooterComponent($session, $this->cwd, $settings);
         $this->assertStringContainsString('25.0%/200k (auto)', Ansi::strip($footer->render(self::WIDTH)[1]));
 
         $settings->setCompactionEnabled(false);
@@ -300,7 +301,7 @@ final class FooterTest extends TestCase
         $auth = Auth::inMemory();
         $auth->setCredentials(Provider::Anthropic, new Credentials('r', 'a', 0));
 
-        $footer = new FooterComponent($session, $this->palette, $this->cwd, null, $auth);
+        $footer = new FooterComponent($session, $this->cwd, null, $auth);
 
         $this->assertStringContainsString('$0.750 (sub)', Ansi::strip($footer->render(self::WIDTH)[1]));
     }
@@ -310,7 +311,7 @@ final class FooterTest extends TestCase
         $auth = Auth::inMemory();
         $auth->setCredentials(Provider::Anthropic, new Credentials('r', 'a', 0));
 
-        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd, null, $auth);
+        $footer = new FooterComponent($this->session(), $this->cwd, null, $auth);
 
         // Upstream's condition is "cost or subscription", not "cost": the interesting fact on a
         // fresh screen is that this one is not being billed.
@@ -325,7 +326,7 @@ final class FooterTest extends TestCase
         $auth = Auth::inMemory();
         $auth->setApiKey('anthropic', 'sk-test');
 
-        $footer = new FooterComponent($session, $this->palette, $this->cwd, null, $auth);
+        $footer = new FooterComponent($session, $this->cwd, null, $auth);
 
         $this->assertStringNotContainsString('(sub)', Ansi::strip($footer->render(self::WIDTH)[1]));
     }
@@ -334,17 +335,15 @@ final class FooterTest extends TestCase
     {
         $quiet = $this->session();
         $this->spent($quiet, new Usage(20_000, 0, 0, 0));
-        $this->assertStringNotContainsString("\e[38;2;234;127;129m", $this->raw($quiet));
+        $this->assertStringNotContainsString(Themes::theme()->getFgAnsi('error'), $this->raw($quiet));
 
         $warm = $this->session();
         $this->spent($warm, new Usage(150_000, 0, 0, 0));
-        // dark warning is #cd9a22 (205, 154, 34)
-        $this->assertStringContainsString("\e[38;2;205;154;34m", $this->raw($warm));
+        $this->assertStringContainsString(Themes::theme()->getFgAnsi('warning'), $this->raw($warm));
 
         $full = $this->session();
         $this->spent($full, new Usage(195_000, 0, 0, 0));
-        // dark error is #ea7f81 (234, 127, 129)
-        $this->assertStringContainsString("\e[38;2;234;127;129m", $this->raw($full));
+        $this->assertStringContainsString(Themes::theme()->getFgAnsi('error'), $this->raw($full));
     }
 
     public function testTheCostIsShownToATenthOfACent(): void
@@ -420,7 +419,7 @@ final class FooterTest extends TestCase
 
         // Wide enough for `claude-test` but not for `(anthropic) claude-test`. Narrower than
         // this and the right-hand side goes entirely, which is a different branch.
-        $line = Ansi::strip((new FooterComponent($session, $this->palette, $this->cwd))->render(81)[1]);
+        $line = Ansi::strip((new FooterComponent($session, $this->cwd))->render(81)[1]);
 
         $this->assertStringNotContainsString('(anthropic', $line);
         $this->assertStringEndsWith('claude-test', $line);
@@ -438,7 +437,7 @@ final class FooterTest extends TestCase
             $auth->setRuntimeApiKey('anthropic', 'k');
 
             $session = $this->session();
-            $footer = new FooterComponent($session, $this->palette, $this->cwd, null, $auth);
+            $footer = new FooterComponent($session, $this->cwd, null, $auth);
             $this->spent($session, new Usage(100, 100));
 
             $this->assertStringNotContainsString('(anthropic)', Ansi::strip($footer->render(self::WIDTH)[1]));
@@ -467,14 +466,14 @@ final class FooterTest extends TestCase
 
     public function testThereAreTwoLinesUntilSomethingHasStatusToReport(): void
     {
-        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer = new FooterComponent($this->session(), $this->cwd);
 
         $this->assertCount(2, $footer->render(self::WIDTH));
     }
 
     public function testAStatusAddsAThirdLine(): void
     {
-        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer = new FooterComponent($this->session(), $this->cwd);
         $footer->setStatus('watcher', '3 files changed');
 
         $lines = array_map(Ansi::strip(...), $footer->render(self::WIDTH));
@@ -486,7 +485,7 @@ final class FooterTest extends TestCase
     /** Keyed, so a hook that updates its line replaces it rather than adding another. */
     public function testTheSameKeyReplacesRatherThanRepeats(): void
     {
-        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer = new FooterComponent($this->session(), $this->cwd);
         $footer->setStatus('watcher', '3 files changed');
         $footer->setStatus('watcher', '4 files changed');
 
@@ -498,7 +497,7 @@ final class FooterTest extends TestCase
 
     public function testTwoKeysShareTheLine(): void
     {
-        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer = new FooterComponent($this->session(), $this->cwd);
         $footer->setStatus('watcher', 'watching');
         $footer->setStatus('deploy', 'idle');
 
@@ -507,7 +506,7 @@ final class FooterTest extends TestCase
 
     public function testClearingTheLastStatusTakesTheLineAway(): void
     {
-        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer = new FooterComponent($this->session(), $this->cwd);
         $footer->setStatus('watcher', 'watching');
         $footer->setStatus('watcher', null);
 
@@ -516,7 +515,7 @@ final class FooterTest extends TestCase
 
     public function testAnEmptyStatusClearsItTheSameWay(): void
     {
-        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer = new FooterComponent($this->session(), $this->cwd);
         $footer->setStatus('watcher', 'watching');
         $footer->setStatus('watcher', '   ');
 
@@ -526,7 +525,7 @@ final class FooterTest extends TestCase
     /** Two lines here would push the editor off the bottom of a fixed layout. */
     public function testNewlinesAreFlattenedRatherThanDrawn(): void
     {
-        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer = new FooterComponent($this->session(), $this->cwd);
         $footer->setStatus('noisy', "first\nsecond\tthird");
 
         $lines = array_map(Ansi::strip(...), $footer->render(self::WIDTH));
@@ -537,7 +536,7 @@ final class FooterTest extends TestCase
 
     public function testALongStatusIsCutToTheWidth(): void
     {
-        $footer = new FooterComponent($this->session(), $this->palette, $this->cwd);
+        $footer = new FooterComponent($this->session(), $this->cwd);
         $footer->setStatus('long', str_repeat('status ', 40));
 
         foreach ($footer->render(self::WIDTH) as $line) {
@@ -551,7 +550,7 @@ final class FooterTest extends TestCase
         $this->spent($session, new Usage(999_999, 999_999, 999_999, 999_999, 0, new Cost(total: 123.456)));
 
         foreach ([20, 40, 76] as $width) {
-            $footer = new FooterComponent($session, $this->palette, $this->cwd);
+            $footer = new FooterComponent($session, $this->cwd);
 
             foreach ($footer->render($width) as $line) {
                 $this->assertLessThanOrEqual($width, mb_strwidth(Ansi::strip($line)), "at {$width}");
@@ -570,7 +569,7 @@ final class FooterTest extends TestCase
         $session = $this->session();
         $this->spent($session, new Usage(999_999, 999_999, 999_999, 999_999, 0, new Cost(total: 123.456)));
 
-        $footer = new FooterComponent($session, $this->palette, $this->cwd);
+        $footer = new FooterComponent($session, $this->cwd);
         $footer->setStatus('long', str_repeat('构建中', 60));
 
         // Every width, because where the cut lands moves one byte at a time and only some of
@@ -599,7 +598,7 @@ final class FooterTest extends TestCase
         // Wide enough that there is room left for the name after the counts, and then one
         // column at a time through it: the cut only lands inside a character at some of them.
         for ($width = 58; $width <= 96; $width++) {
-            foreach ((new FooterComponent($session, $this->palette, $this->cwd))->render($width) as $line) {
+            foreach ((new FooterComponent($session, $this->cwd))->render($width) as $line) {
                 $plain = Ansi::strip($line);
 
                 $this->assertTrue(mb_check_encoding($line, 'UTF-8'), "at width {$width}");

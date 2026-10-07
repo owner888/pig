@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\StopReason;
@@ -18,7 +19,6 @@ use Pig\CodingAgent\Interactive\CompactionComponent;
 use Pig\CodingAgent\Interactive\UserMessageComponent;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
-use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Container;
@@ -26,14 +26,21 @@ use Pig\Tui\Container;
 /** The two halves of the conversation, as they appear in the scrollback. */
 final class MessageComponentsTest extends TestCase
 {
+    use GlobalThemeFixture;
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        $this->tearDownGlobalTheme();
+    }
+
     private const int WIDTH = 60;
 
-    private Palette $palette;
 
     #[\Override]
     protected function setUp(): void
     {
-        $this->palette = Palette::dark(true);
+        $this->setUpGlobalTheme();
     }
 
     /** @param list<string> $lines */
@@ -54,25 +61,24 @@ final class MessageComponentsTest extends TestCase
 
     public function testAUserMessageCarriesItsBackgroundToTheEdge(): void
     {
-        $lines = (new UserMessageComponent('hello', $this->palette))->render(self::WIDTH);
+        $lines = (new UserMessageComponent('hello'))->render(self::WIDTH);
 
         // A background that stops where the text stops leaves a ragged block, which is
         // the one thing marking where one exchange ended in the scrollback.
         // The theme's own `userMessageBg`, not a hex written into the test: this asserted
-        // `#343541` and went red the day the palette was aligned with upstream's (`#213b49`),
+        // `#343541` and went red the day the colours were aligned with upstream's,
         // which is a test of the colour table and not of the component.
-        $bg = ltrim($this->palette->hex('userMessageBg'), '#');
-        [$r, $g, $b] = array_map(hexdec(...), str_split($bg, 2));
+        $escape = Themes::theme()->getBgAnsi('userMessageBg');
 
         foreach (array_slice($lines, 1) as $line) {
-            $this->assertStringContainsString("\e[48;2;{$r};{$g};{$b}m", $line);
+            $this->assertStringContainsString($escape, $line);
             $this->assertSame(self::WIDTH, mb_strwidth(Ansi::strip($line)));
         }
     }
 
     public function testMarkdownInAUserMessageIsStillRendered(): void
     {
-        $lines = (new UserMessageComponent('some **bold** text', $this->palette))->render(self::WIDTH);
+        $lines = (new UserMessageComponent('some **bold** text'))->render(self::WIDTH);
 
         $this->assertStringContainsString("\e[1m", implode('', $lines));
         $this->assertStringContainsString('some bold text', $this->text($lines));
@@ -83,7 +89,7 @@ final class MessageComponentsTest extends TestCase
     public function testACompactionIsDrawnAsAPiStyleBlock(): void
     {
         $summary = new CompactionSummary('what changed', tokensBefore: 256653, replaced: 42);
-        $component = new CompactionComponent($summary, $this->palette);
+        $component = new CompactionComponent($summary);
         $lines = $component->render(self::WIDTH);
         $text = $this->text($lines);
 
@@ -96,7 +102,7 @@ final class MessageComponentsTest extends TestCase
     public function testExpandingACompactionKeepsTheSummaryInsideTheBlock(): void
     {
         $summary = new CompactionSummary('**important** summary', tokensBefore: 1200, replaced: 3);
-        $component = new CompactionComponent($summary, $this->palette, expanded: true);
+        $component = new CompactionComponent($summary, expanded: true);
         $lines = $component->render(self::WIDTH);
         $text = $this->text($lines);
 
@@ -109,7 +115,7 @@ final class MessageComponentsTest extends TestCase
     public function testABranchSummaryUsesTheSameBlockShape(): void
     {
         $summary = new BranchSummary('handover notes');
-        $lines = (new BranchSummaryComponent($summary, $this->palette))->render(self::WIDTH);
+        $lines = (new BranchSummaryComponent($summary))->render(self::WIDTH);
         $text = $this->text($lines);
 
         $this->assertStringContainsString('[branch summary]', $text);
@@ -121,9 +127,7 @@ final class MessageComponentsTest extends TestCase
     /** @param list<string> $lines */
     private function assertBlockBackground(array $lines, string $colour): void
     {
-        $bg = ltrim($this->palette->hex($colour), '#');
-        [$r, $g, $b] = array_map(hexdec(...), str_split($bg, 2));
-        $escape = "\e[48;2;{$r};{$g};{$b}m";
+        $escape = Themes::theme()->getBgAnsi($colour);
 
         $painted = array_values(array_filter($lines, static fn (string $line): bool => str_contains($line, $escape)));
         $this->assertNotSame([], $painted, 'no line carried the block background');
@@ -142,7 +146,7 @@ final class MessageComponentsTest extends TestCase
             new TextContent('Found it.'),
         ]);
 
-        $text = $this->text((new AssistantMessageComponent($this->palette, $message))->render(self::WIDTH));
+        $text = $this->text((new AssistantMessageComponent($message))->render(self::WIDTH));
 
         $this->assertLessThan(strpos($text, 'Found it.'), strpos($text, 'let me look'));
     }
@@ -150,7 +154,7 @@ final class MessageComponentsTest extends TestCase
     public function testThinkingCanBeCollapsedToALabel(): void
     {
         $message = $this->assistant([new ThinkingContent('a long private train of thought')]);
-        $component = new AssistantMessageComponent($this->palette, $message, true);
+        $component = new AssistantMessageComponent($message, true);
 
         $text = $this->text($component->render(self::WIDTH));
 
@@ -164,7 +168,7 @@ final class MessageComponentsTest extends TestCase
         // theirs, and a blank line above the first one is a hole where text never came.
         $message = $this->assistant([new ToolCall('1', 'read', [])]);
 
-        $this->assertSame([], (new AssistantMessageComponent($this->palette, $message))->render(self::WIDTH));
+        $this->assertSame([], (new AssistantMessageComponent($message))->render(self::WIDTH));
     }
 
     public function testAnAbortedTurnSaysSo(): void
@@ -172,7 +176,7 @@ final class MessageComponentsTest extends TestCase
         $message = $this->assistant([new TextContent('I was saying')], StopReason::Aborted);
 
         $this->assertStringContainsString('Operation aborted', $this->text(
-            (new AssistantMessageComponent($this->palette, $message))->render(self::WIDTH),
+            (new AssistantMessageComponent($message))->render(self::WIDTH),
         ));
     }
 
@@ -181,7 +185,7 @@ final class MessageComponentsTest extends TestCase
         $message = $this->assistant([], StopReason::Error, 'overloaded_error');
 
         $this->assertStringContainsString('Error: overloaded_error', $this->text(
-            (new AssistantMessageComponent($this->palette, $message))->render(self::WIDTH),
+            (new AssistantMessageComponent($message))->render(self::WIDTH),
         ));
     }
 
@@ -192,7 +196,7 @@ final class MessageComponentsTest extends TestCase
         $message = $this->assistant([new TextContent('trying'), new ToolCall('1', 'bash', [])], StopReason::Aborted);
 
         $this->assertStringNotContainsString('Aborted', $this->text(
-            (new AssistantMessageComponent($this->palette, $message))->render(self::WIDTH),
+            (new AssistantMessageComponent($message))->render(self::WIDTH),
         ));
     }
 
@@ -200,7 +204,7 @@ final class MessageComponentsTest extends TestCase
     {
         // A streamed message arrives complete every time, with the last block longer
         // than before — appending would print the whole answer once per token.
-        $component = new AssistantMessageComponent($this->palette);
+        $component = new AssistantMessageComponent();
         $component->update($this->assistant([new TextContent('Par')]));
         $component->update($this->assistant([new TextContent('Partial')]));
 
@@ -217,7 +221,7 @@ final class MessageComponentsTest extends TestCase
         // out again, which `Markdown`'s cache exists to avoid and a component thrown away
         // between frames can never reach: 19.6ms a delta against 0.1ms, measured over a
         // 1,600-line answer whose first two blocks had settled.
-        $component = new AssistantMessageComponent($this->palette);
+        $component = new AssistantMessageComponent();
         $settled = new TextContent('the first thing it said');
 
         $component->update($this->assistant([$settled, new TextContent('and now it is s')]));
@@ -236,7 +240,7 @@ final class MessageComponentsTest extends TestCase
         // Reuse is by position, so the thing that makes it safe is that a slot only ever
         // holds one kind: a thinking block drawn in italics is not a message drawn plain,
         // and a spacer appearing between them shifts every slot below by one.
-        $component = new AssistantMessageComponent($this->palette);
+        $component = new AssistantMessageComponent();
 
         $component->update($this->assistant([new TextContent('said')]));
         $before = self::blocks($component);
@@ -258,7 +262,7 @@ final class MessageComponentsTest extends TestCase
         // ever *read* up to what this update filled — but `update()` is a public method and
         // a shorter message is a legal thing to hand it, and what it would otherwise draw is
         // the tail of the message before it.
-        $component = new AssistantMessageComponent($this->palette);
+        $component = new AssistantMessageComponent();
 
         $component->update($this->assistant([new TextContent('first'), new TextContent('second')]));
         $component->update($this->assistant([new TextContent('first')]));
@@ -289,7 +293,7 @@ final class MessageComponentsTest extends TestCase
     {
         $message = $this->assistant([new TextContent("  \n  ")]);
 
-        $this->assertSame([], (new AssistantMessageComponent($this->palette, $message))->render(self::WIDTH));
+        $this->assertSame([], (new AssistantMessageComponent($message))->render(self::WIDTH));
     }
 
     public function testInlineThinkingTagsAreExtractedAndRenderedAsThinkingBlocks(): void
@@ -298,7 +302,7 @@ final class MessageComponentsTest extends TestCase
         $message = $this->assistant([new TextContent($raw)]);
 
         // 1. When thinking is visible: tags are stripped, thinking content is rendered in italic thinkingText style
-        $component = new AssistantMessageComponent($this->palette, $message, hideThinking: false);
+        $component = new AssistantMessageComponent($message, hideThinking: false);
         $rendered = implode("\n", $component->render(self::WIDTH));
 
         $this->assertStringNotContainsString('<thinking>', $rendered);
@@ -309,7 +313,7 @@ final class MessageComponentsTest extends TestCase
         $this->assertStringContainsString("\e[3m", $rendered);
 
         // 2. When thinking is hidden: the inline thinking collapses into Thinking... label
-        $hiddenComponent = new AssistantMessageComponent($this->palette, $message, hideThinking: true);
+        $hiddenComponent = new AssistantMessageComponent($message, hideThinking: true);
         $hiddenRendered = Ansi::strip(implode("\n", $hiddenComponent->render(self::WIDTH)));
 
         $this->assertStringContainsString('Thinking...', $hiddenRendered);
@@ -320,16 +324,16 @@ final class MessageComponentsTest extends TestCase
     public function testUserAndAssistantMessagesAreOsc133PromptZones(): void
     {
         // Upstream's marks: `TuiAltScreen` jumps between prompts by the `A`, and terminals do too.
-        $user = (new UserMessageComponent('hello', $this->palette))->render(self::WIDTH);
+        $user = (new UserMessageComponent('hello'))->render(self::WIDTH);
         $this->assertStringStartsWith("\x1b]133;A\x07", $user[0]);
         $this->assertStringStartsWith("\x1b]133;B\x07\x1b]133;C\x07", $user[count($user) - 1]);
 
         $said = $this->assistant([new TextContent('hi')]);
-        $assistant = (new AssistantMessageComponent($this->palette, $said))->render(self::WIDTH);
+        $assistant = (new AssistantMessageComponent($said))->render(self::WIDTH);
         $this->assertStringStartsWith("\x1b]133;A\x07", $assistant[0]);
 
         $calling = $this->assistant([new TextContent('hi'), new ToolCall('1', 'read', [])], StopReason::ToolUse);
-        $withTools = (new AssistantMessageComponent($this->palette, $calling))->render(self::WIDTH);
+        $withTools = (new AssistantMessageComponent($calling))->render(self::WIDTH);
         $this->assertStringNotContainsString("\x1b]133;", implode('', $withTools), 'a message that calls tools is not a prompt zone');
     }
 }

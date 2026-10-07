@@ -13,7 +13,7 @@ use Pig\Ai\Utils\Utf8;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\Theme\Highlight;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\EditDiff;
 use Pig\CodingAgent\Tools\Paths;
 use Pig\CodingAgent\Tools\Shell;
@@ -129,7 +129,6 @@ final class ToolExecutionComponent extends Container
     public function __construct(
         private readonly string $tool,
         private array $arguments,
-        private readonly Palette $palette,
         private readonly ?CustomTool $custom = null,
         private readonly ?Closure $onError = null,
         // Trailing, and they stay trailing: everything before them is passed positionally
@@ -144,11 +143,11 @@ final class ToolExecutionComponent extends Container
     ) {
         $this->addChild(new Spacer(1));
 
-        $this->box = new Box(1, 1, $palette->of('toolPendingBg'));
-        $this->body = new Text('', 1, 1, $palette->of('toolPendingBg'));
+        $this->box = new Box(1, 1, static fn (string $text): string => Themes::theme()->bg('toolPendingBg', $text));
+        $this->body = new Text('', 1, 1, static fn (string $text): string => Themes::theme()->bg('toolPendingBg', $text));
         $this->bash = new BashOutputComponent(
             $bashLines,
-            fn (int $dropped): string => $palette->fg('toolOutput', "... ({$dropped} earlier lines)"),
+            fn (int $dropped): string => Themes::theme()->fg('toolOutput', "... ({$dropped} earlier lines)"),
         );
 
         // bash is the one tool whose output has to be cut at render width rather than by
@@ -231,6 +230,14 @@ final class ToolExecutionComponent extends Container
         $this->updateResult(new AgentToolResult([new TextContent($message)]), true);
     }
 
+    /** Redrawn so a theme change reaches the text drawn into it, as upstream's `invalidate()` does. */
+    #[\Override]
+    public function invalidate(): void
+    {
+        parent::invalidate();
+        $this->draw();
+    }
+
     public function setExpanded(bool $expanded): void
     {
         $this->expanded = $expanded;
@@ -241,11 +248,12 @@ final class ToolExecutionComponent extends Container
     {
         $this->drawImages();
 
-        $background = $this->palette->of(match (true) {
+        $backgroundToken = match (true) {
             $this->partial => 'toolPendingBg',
             $this->failed => 'toolErrorBg',
             default => 'toolSuccessBg',
-        });
+        };
+        $background = static fn (string $text): string => Themes::theme()->bg($backgroundToken, $text);
 
         if ($this->drawsItself()) {
             $this->box->setBackground($background);
@@ -288,7 +296,7 @@ final class ToolExecutionComponent extends Container
                 // alike — and the result still says an image came back rather than
                 // pretending none did.
                 $this->images->addChild(new Text(
-                    $this->palette->fg('toolOutput', TerminalImage::imageFallback(
+                    Themes::theme()->fg('toolOutput', TerminalImage::imageFallback(
                         $block->mimeType,
                         TerminalImage::getImageDimensions($block->data, $block->mimeType),
                     )),
@@ -302,7 +310,7 @@ final class ToolExecutionComponent extends Container
             $this->images->addChild(new Image(
                 $block->data,
                 $block->mimeType,
-                new ImageTheme(fn (string $text): string => $this->palette->fg('toolOutput', $text)),
+                new ImageTheme(fn (string $text): string => Themes::theme()->fg('toolOutput', $text)),
             ));
         }
     }
@@ -349,11 +357,11 @@ final class ToolExecutionComponent extends Container
         $renderCall = $this->toolRenderers['renderCall'] ?? $this->custom?->renderCall;
         $heading = $renderCall === null ? null : $this->drawnBy(
             'renderCall',
-            fn (): mixed => $renderCall($this->arguments, $this->palette),
+            fn (): mixed => $renderCall($this->arguments, Themes::theme()),
         );
 
         $this->box->addChild($heading ?? new Text(
-            $this->palette->fg('toolTitle', Style::bold($this->custom?->label ?? $this->tool)),
+            Themes::theme()->fg('toolTitle', Style::bold($this->custom?->label ?? $this->tool)),
             0,
             0,
         ));
@@ -368,7 +376,7 @@ final class ToolExecutionComponent extends Container
             fn (): mixed => $renderResult(
                 $this->result,
                 new RenderOptions($this->expanded, $this->partial),
-                $this->palette,
+                Themes::theme(),
             ),
         );
 
@@ -385,7 +393,7 @@ final class ToolExecutionComponent extends Container
 
         if ($output !== '') {
             $this->box->addChild(new Spacer(1));
-            $this->box->addChild(new Text($this->palette->fg('toolOutput', $output), 0, 0));
+            $this->box->addChild(new Text(Themes::theme()->fg('toolOutput', $output), 0, 0));
         }
     }
 
@@ -438,16 +446,16 @@ final class ToolExecutionComponent extends Container
     private function drawBash(): void
     {
         $command = (string) ($this->arguments['command'] ?? '');
-        $shown = $command === '' ? $this->palette->fg('toolOutput', '...') : $command;
+        $shown = $command === '' ? Themes::theme()->fg('toolOutput', '...') : $command;
 
-        $this->box->addChild(new Text($this->palette->fg('toolTitle', Style::bold('$ ' . $shown)), 0, 0));
+        $this->box->addChild(new Text(Themes::theme()->fg('toolTitle', Style::bold('$ ' . $shown)), 0, 0));
 
         $output = trim($this->output());
 
         if ($output !== '') {
             $this->bash->setRows($this->expanded ? PHP_INT_MAX : $this->bashLines);
             $this->bash->setText(implode("\n", array_map(
-                fn (string $line): string => $this->palette->fg('toolOutput', self::tabs($line)),
+                fn (string $line): string => Themes::theme()->fg('toolOutput', self::tabs($line)),
                 explode("\n", $output),
             )));
 
@@ -486,21 +494,21 @@ final class ToolExecutionComponent extends Container
         $parts = [];
 
         if (($details['cancelled'] ?? false) === true) {
-            $parts[] = $this->palette->fg('warning', '(cancelled)');
+            $parts[] = Themes::theme()->fg('warning', '(cancelled)');
         } elseif (is_int($details['exitCode'] ?? null) && $details['exitCode'] !== 0) {
-            $parts[] = $this->palette->fg('error', "(exit {$details['exitCode']})");
+            $parts[] = Themes::theme()->fg('error', "(exit {$details['exitCode']})");
         }
 
         $path = $details['fullOutputPath'] ?? null;
 
         if ($path !== null && is_string($path) && ($details['truncation'] ?? null) !== null) {
-            $parts[] = $this->palette->fg('warning', "Output truncated. Full output: {$path}");
+            $parts[] = Themes::theme()->fg('warning', "Output truncated. Full output: {$path}");
         }
 
         if ($this->startedAt !== null) {
             $label = $this->partial ? 'Elapsed' : 'Took';
             $duration = self::formatDuration(($this->endedAt ?? microtime(true)) - $this->startedAt);
-            $parts[] = $this->palette->fg('muted', "{$label} {$duration}");
+            $parts[] = Themes::theme()->fg('muted', "{$label} {$duration}");
         }
 
         if ($parts !== []) {
@@ -553,7 +561,7 @@ final class ToolExecutionComponent extends Container
         if ($offset !== null || $limit !== null) {
             $start = (int) ($offset ?? 1);
             $end = $limit === null ? '' : '-' . ($start + (int) $limit - 1);
-            $text .= $this->palette->fg('warning', ":{$start}{$end}");
+            $text .= Themes::theme()->fg('warning', ":{$start}{$end}");
         }
 
         return $this->result === null ? $text : $text . "\n\n" . $this->source($this->output(), $path);
@@ -580,12 +588,12 @@ final class ToolExecutionComponent extends Container
         $line = $details['firstChangedLine'] ?? $this->previewLine;
 
         $text = $this->heading('edit') . ' ' . $this->target($path)
-            . ($line === null ? '' : $this->palette->fg('warning', ":{$line}"));
+            . ($line === null ? '' : Themes::theme()->fg('warning', ":{$line}"));
 
         if ($this->failed) {
             $said = $this->output();
 
-            return $said === '' ? $text : $text . "\n\n" . $this->palette->fg('error', $said);
+            return $said === '' ? $text : $text . "\n\n" . Themes::theme()->fg('error', $said);
         }
 
         // Once the tool has run, its own diff: it was built from the file it actually wrote,
@@ -596,17 +604,17 @@ final class ToolExecutionComponent extends Container
         $diff = (string) ($details['diff'] ?? $this->previewDiff);
 
         if ($diff === '' && $this->previewError !== null) {
-            return $text . "\n\n" . $this->palette->fg('error', $this->previewError);
+            return $text . "\n\n" . Themes::theme()->fg('error', $this->previewError);
         }
 
-        return $diff === '' ? $text : $text . "\n\n" . DiffView::render($diff, $this->palette);
+        return $diff === '' ? $text : $text . "\n\n" . DiffView::render($diff);
     }
 
     private function find(): string
     {
         $pattern = (string) ($this->arguments['pattern'] ?? '');
-        $heading = $this->heading('find') . ' ' . $this->palette->fg('accent', $pattern)
-            . $this->palette->fg('toolOutput', ' in ' . $this->path('.'));
+        $heading = $this->heading('find') . ' ' . Themes::theme()->fg('accent', $pattern)
+            . Themes::theme()->fg('toolOutput', ' in ' . $this->path('.'));
 
         return $this->withOutput($heading . $this->limit(), self::LIST_LINES);
     }
@@ -616,16 +624,16 @@ final class ToolExecutionComponent extends Container
         $pattern = (string) ($this->arguments['pattern'] ?? '');
         $glob = $this->arguments['glob'] ?? null;
 
-        $heading = $this->heading('grep') . ' ' . $this->palette->fg('accent', "/{$pattern}/")
-            . $this->palette->fg('toolOutput', ' in ' . $this->path('.'))
-            . ($glob === null ? '' : $this->palette->fg('toolOutput', " ({$glob})"));
+        $heading = $this->heading('grep') . ' ' . Themes::theme()->fg('accent', "/{$pattern}/")
+            . Themes::theme()->fg('toolOutput', ' in ' . $this->path('.'))
+            . ($glob === null ? '' : Themes::theme()->fg('toolOutput', " ({$glob})"));
 
         return $this->withOutput($heading . $this->limit(), self::MATCH_LINES);
     }
 
     private function listing(string $name, string $path, int $lines): string
     {
-        $heading = $this->heading($name) . ' ' . $this->palette->fg('accent', $path);
+        $heading = $this->heading($name) . ' ' . Themes::theme()->fg('accent', $path);
 
         return $this->withOutput($heading . $this->limit(), $lines);
     }
@@ -637,7 +645,7 @@ final class ToolExecutionComponent extends Container
         $arguments = json_encode($this->arguments, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
         if (is_string($arguments) && $arguments !== '{}') {
-            $text .= "\n\n" . $this->palette->fg('toolOutput', $arguments);
+            $text .= "\n\n" . Themes::theme()->fg('toolOutput', $arguments);
         }
 
         return $this->withOutput($text, self::LIST_LINES);
@@ -647,22 +655,22 @@ final class ToolExecutionComponent extends Container
 
     private function heading(string $name): string
     {
-        return $this->palette->fg('toolTitle', Style::bold($name));
+        return Themes::theme()->fg('toolTitle', Style::bold($name));
     }
 
     /** A path, or a placeholder while the model is still writing one. */
     private function target(string $path): string
     {
         return $path === ''
-            ? $this->palette->fg('toolOutput', '...')
-            : $this->palette->fg('accent', $path);
+            ? Themes::theme()->fg('toolOutput', '...')
+            : Themes::theme()->fg('accent', $path);
     }
 
     private function limit(): string
     {
         $limit = $this->arguments['limit'] ?? null;
 
-        return $limit === null ? '' : $this->palette->fg('toolOutput', " (limit {$limit})");
+        return $limit === null ? '' : Themes::theme()->fg('toolOutput', " (limit {$limit})");
     }
 
     private function withOutput(string $heading, int $lines): string
@@ -677,7 +685,7 @@ final class ToolExecutionComponent extends Container
             return $heading;
         }
 
-        $painted = $this->failed ? $this->palette->of('error') : $this->palette->of('toolOutput');
+        $painted = $this->failed ? static fn (string $text): string => Themes::theme()->fg('error', $text) : static fn (string $text): string => Themes::theme()->fg('toolOutput', $text);
 
         return $heading . "\n\n" . $this->cut(
             array_map(static fn (string $line): string => $painted(self::tabs($line)), explode("\n", $output)),
@@ -694,8 +702,8 @@ final class ToolExecutionComponent extends Container
         $language = Highlight::languageFromPath($path);
 
         $lines = $language === null
-            ? array_map(fn (string $line): string => $this->palette->fg('toolOutput', self::tabs($line)), explode("\n", $content))
-            : Highlight::lines(self::tabs($content), $language, $this->palette->highlightTheme());
+            ? array_map(fn (string $line): string => Themes::theme()->fg('toolOutput', self::tabs($line)), explode("\n", $content))
+            : Themes::highlightCode(self::tabs($content), $language);
 
         return $this->cut($lines, self::FILE_LINES, $total);
     }
@@ -722,8 +730,8 @@ final class ToolExecutionComponent extends Container
         $counted = $total ? "{$rest} more lines, " . count($lines) . ' total' : "{$rest} more lines";
 
         return implode("\n", array_slice($lines, 0, $keep))
-            . $this->palette->fg('toolOutput', "\n... ({$counted})")
-            . ($notice === null ? '' : "\n" . $this->palette->fg('warning', "[{$notice}]"));
+            . Themes::theme()->fg('toolOutput', "\n... ({$counted})")
+            . ($notice === null ? '' : "\n" . Themes::theme()->fg('warning', "[{$notice}]"));
     }
 
     /**

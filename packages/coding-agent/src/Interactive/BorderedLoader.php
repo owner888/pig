@@ -6,7 +6,7 @@ namespace Pig\CodingAgent\Interactive;
 
 use Closure;
 use Pig\Async\AbortSignal;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Components\CancellableLoader;
 use Pig\Tui\Components\Rule;
 use Pig\Tui\Components\Spacer;
@@ -32,18 +32,18 @@ final class BorderedLoader extends Container implements InputHandler
 {
     private readonly CancellableLoader $loader;
 
-    public function __construct(TUI $tui, Palette $palette, string $message = 'Working...')
+    public function __construct(TUI $tui, string $message = 'Working...')
     {
         // `border`, not `borderMuted`: upstream's choice, and the right one — these rules are
         // the edge of something that has taken the screen, not the quiet frame around the prompt.
-        $rule = $palette->of('border');
+        $rule = static fn (string $text): string => Themes::theme()->fg('border', $text);
 
-        $this->loader = new CancellableLoader($tui, $palette->of('accent'), $palette->of('muted'), $message);
+        $this->loader = new CancellableLoader($tui, static fn (string $text): string => Themes::theme()->fg('accent', $text), static fn (string $text): string => Themes::theme()->fg('muted', $text), $message);
 
         $this->addChild(new Rule($rule));
         $this->addChild($this->loader);
         $this->addChild(new Spacer(1));
-        $this->addChild(new Text($palette->fg('muted', 'esc cancel'), 1, 0));
+        $this->addChild(new Text(Themes::theme()->fg('muted', 'esc cancel'), 1, 0));
         $this->addChild(new Spacer(1));
         $this->addChild(new Rule($rule));
     }

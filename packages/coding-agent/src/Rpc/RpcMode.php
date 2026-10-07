@@ -23,7 +23,6 @@ use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionCodec;
 use Pig\CodingAgent\Settings;
-use Pig\CodingAgent\Theme\Palette;
 use Throwable;
 
 /**
@@ -101,11 +100,7 @@ final class RpcMode
     ) {
         $this->in = $in ?? STDIN;
         $this->out = $out ?? STDOUT;
-        // A palette with truecolor off rather than autodetected: there is no terminal here to
-        // detect anything about, and the host renders. It is here because `HookUi` promises
-        // one, so a hook written for the terminal can still ask for a colour and get an
-        // answer instead of a crash.
-        $this->ui = new RpcUi($this->send(...), Palette::dark(false));
+        $this->ui = new RpcUi($this->send(...));
     }
 
     /**

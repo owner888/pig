@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test\Extensions;
 
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Test\GlobalThemeFixture;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\ImageContent;
@@ -23,6 +24,8 @@ use Pig\Codemode\ToolSearch;
 
 final class McpExtensionTest extends TestCase
 {
+    use GlobalThemeFixture;
+
     private string $root;
 
     private string $home;
@@ -32,6 +35,7 @@ final class McpExtensionTest extends TestCase
     #[\Override]
     protected function setUp(): void
     {
+        $this->setUpGlobalTheme();
         Loop::reset();
         \Pig\Codemode\Registry::reset();
         $this->root = sys_get_temp_dir() . '/pig-mcp-ext-' . bin2hex(random_bytes(4));
@@ -53,6 +57,7 @@ final class McpExtensionTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
+        $this->tearDownGlobalTheme();
         putenv('PIG_HOME');
     }
 
@@ -1003,12 +1008,11 @@ final class McpExtensionTest extends TestCase
      */
     private function terminal(): array
     {
-        $palette = \Pig\CodingAgent\Theme\Palette::dark(true);
         $terminal = new \Pig\Tui\Test\FakeTerminal(100, 30);
         $tui = new \Pig\Tui\TuiMainScreen($terminal);
         $chat = new \Pig\Tui\Container();
         $overlay = new \Pig\Tui\Container();
-        $editor = new \Pig\CodingAgent\Interactive\CustomEditor(new \Pig\Tui\Components\Editor($palette->editorTheme()));
+        $editor = new \Pig\CodingAgent\Interactive\CustomEditor(new \Pig\Tui\Components\Editor(\Pig\CodingAgent\Theme\Themes::getEditorTheme()));
         $tui->addChild($chat);
         $tui->addChild($overlay);
         $tui->addChild($editor);
@@ -1021,10 +1025,8 @@ final class McpExtensionTest extends TestCase
             $editor,
             new \Pig\CodingAgent\Interactive\FooterComponent(
                 new \Pig\CodingAgent\Session\AgentSession(new \Pig\Agent\Agent(new \Pig\Agent\AgentOptions()), sys_get_temp_dir()),
-                $palette,
                 sys_get_temp_dir(),
             ),
-            static fn (): \Pig\CodingAgent\Theme\Palette => $palette,
         );
         $tui->start();
 

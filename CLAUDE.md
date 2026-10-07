@@ -365,31 +365,21 @@ the queue of messages someone typed while the agent was working, the thinking le
 session has cost, persistence, compaction, tree navigation and the hook events. Each of the
 rest can arrive on its own when something needs it.
 
-`Theme\Palette` is upstream's `theme.ts` down to what it is for: three built-in themes as
-tables (`dark`, `light`, and `labra` — aligned with `HANCORE-linux/omarchy-labra-theme` cyberpunk dark olive & hot pink),
-and the bridges that turn them into `pig/tui`'s `MarkdownTheme`, `EditorTheme` and
-`SelectListTheme`. A component asks for `accent` or `toolOutput` and never for cyan, so an
-unknown name throws where the component is wired rather than rendering colourless later.
-**Custom themes from JSON are 100% aligned with upstream pi**: `Palette::customThemes()` automatically
-discovers user theme files from `~/.pig/agent/themes/*.json`, `~/.pi/agent/themes/*.json`, and
-`<cwd>/.pig/themes/*.json`. Missing color tokens inherit safely from `dark` defaults.
-The `/theme [name]` command cycles themes without arguments, accepts explicit names (`/theme labra`, `/theme dark`),
-and `/settings` dynamically reflects all installed themes. Web UI (`pig --mode web`) natively provides
-instant theme toggling (`Dark`, `Labra`, `Light`) with `localStorage` persistence.
+主题照 upstream 的 `theme.ts` / `theme-json.ts` / `system-theme.ts` / `theme-controller.ts` 移植（开发者要求 100% 对齐，旧的 `Theme\Palette` 已删除，不留别名）：`Theme\Themes` 是 `theme.ts` 的模块函数和全局主题（`Themes::theme()` 对应 upstream 的 `theme` 代理），`Theme\Theme` 是 upstream 的 `Theme` 类，颜色运算在 `Pig\Tui\Colors` / `Pig\Tui\Oklab`（`colors.ts` / `oklab.ts`）。内置主题 `dark.json` / `light.json` 与 upstream 逐字相同（OKHSL 写法），`labra.json` 是 pig 额外保留的内置主题。没有主题设置时用 upstream 的 `system` 主题：终端报告颜色前是灰阶，`InteractiveThemeController` 用 `TUI::queryTerminalColors()` 拿到颜色后生成，DEC 2031 深浅色切换时自动跟随（设置为 `light/dark` 一对时在两者之间切换）。
 
-Audited against `theme.ts` difference by difference, and it is the one area so far where that
-found nothing to fix — worth recording, because "nothing was wrong" is only worth anything with
-the evidence attached. `Colour::to256()` was run against upstream's `rgbTo256` over **all
-16,777,216 colours**, a byte per colour on each side, files compared: zero differences. Both
-colour tables were resolved through their `vars` and compared name by name: every one of pig's 49
-holds upstream's hex, in both themes. What differs is two names — `syntaxOperator` and
-`syntaxPunctuation`, which `Highlight` has no category for and paints as `plain` — and three
-places where pig is stricter or narrower with the reason written beside each: `Colour::rgb()`
-rejects a hex digit that is not one where `parseInt` would read what it can, `Grammar::fromPath()`
-answers on the extension where upstream takes the last dotted piece of the whole name (so
-`Makefile` and `Dockerfile` are rows there and nothing here, which draws the same until one of
-them gets a grammar), and the extension table maps into thirteen grammars rather than forty
-languages, which is the `cli-highlight` trade stated above.
+**避坑规则**：组件在绘制时取 `Themes::theme()->fg(...)`，不要把 `Theme` 实例存起来，否则切主题后不变；会把颜色烘进字符串的组件要在 `invalidate()` 里重建（upstream 同样），切主题时控制器 `invalidate` 整个 UI。`Theme::fg()` 给背景色 token 会抛错，背景用 `bg()`。`InteractiveMode` 装了 `ThemeJson::validateThemeJson` 校验器：缺 token 的自定义主题会被拒绝并报原因（不再用 dark 补齐）。自定义主题目录是 pig 的四个（`~/.pig/agent/themes`、`~/.pi/agent/themes`、项目信任后的 `<cwd>/.pig/themes`、`<cwd>/.pi/themes`），先找文件名再找文件里的 `name`；读不了的主题记在 `Themes::getCustomThemeErrors()` 并在列出主题时说出来。语法高亮仍用 pig 的 `Highlight`/`Grammar`（`Themes::highlightCode()`）。`/theme` 不带参数打开选择器（移动即预览，Esc 还原），`/theme <name>` 直接切换并保存。Web UI（`pig --mode web`）自带 `Dark`/`Labra`/`Light` 切换并用 `localStorage` 记住。
+
+| 旧 | 新 |
+|---|---|
+| `Theme\Palette`、`PaletteTest` | 删除；`Theme\Themes` + `Theme\Theme` |
+| `$palette->fg/bg('x', $t)`、`$palette->of('x')` | `Themes::theme()->fg/bg('x', $t)`（绘制时取）；闭包 `static fn ($t) => Themes::theme()->fg('x', $t)` |
+| `$palette->hex('x')` | `Themes::getResolvedThemeColors($name)['x']` |
+| `markdownTheme()/selectListTheme()/editorTheme()/settingsListTheme()` | `Themes::getMarkdownTheme()/getSelectListTheme()/getEditorTheme()/getSettingsListTheme()` |
+| `highlightTheme()` + `Highlight::lines` | `Themes::highlightCode($code, $lang)` |
+| `thinkingBorder($l)`、bash 模式边框、`isTruecolor()` | `Themes::theme()->getThinkingBorderColor($l)`、`getBashModeBorderColor()`、`getColorMode() === 'truecolor'` |
+| `Palette::named/dark/light/labra`、`names()`、`customThemes()` | `Themes::setTheme()/initTheme()/getThemeByName()`、`setCustomThemesCwd()` + `getAvailableThemes()`、`getAvailableThemesWithPaths()` |
+| `HookUi::palette()`、`FooterComponent::setPalette()` | `HookUi::theme()`；页脚直接读全局主题 |
+| `InteractiveMode::useTheme()/$palette`，构造参数 `(session, palette, cwd, version, theme, …)` | `$themeController`（`InteractiveThemeController`），`(session, cwd, version, ?themeSetting, …)` |
 
 `!command` runs a shell command and puts the result in the conversation, as a
 `Session\BashExecution` — an app message, not an LLM one. `CodingAgent` supplies the
@@ -3272,8 +3262,8 @@ worth knowing, because only one of them applies here: pi-web does not import pi 
 is a process boundary by construction); pi carries process-level state that two sessions in one
 process would fight over (`process.on('SIGINT')`, a module-level theme, jiti's module cache); and a
 crashed extension takes down one tab rather than seven. **pig has the third reason and not the
-first two** — `HttpServer` constructs `AgentSession` directly, theme is `Palette::named()` on
-demand, extensions are `require`d closures — so same-process multi-agent over the shared `Loop` is
+first two** — `HttpServer` constructs `AgentSession` directly, theme is the module-level `Themes::theme()` (upstream's module-level theme, the same
+shared-state reason), extensions are `require`d closures — so same-process multi-agent over the shared `Loop` is
 *possible* here in a way it is not there. It is still not what was chosen, and the reason is the
 seam: the pieces for pi-web's shape already exist and the pieces for same-process do not.
 
@@ -5968,10 +5958,9 @@ dark one: pale blue keywords and mauve numbers, at a contrast nobody would pick.
 it is milder and still wrong — an export that does not match the terminal the person had just been
 reading.
 
-The colours were right there. `Palette` holds all 49 per theme and resolves them through its
-`vars`; it just had no way to hand one over as anything but an escape sequence, because every
-consumer until now was a terminal. `Palette::hex()` is that way, and `style()` generates the seven
-rules from `SYNTAX`, which is the one place that has to know what `Highlight`'s class names mean.
+The colours were right there: `Themes::getResolvedThemeColors()` hands every token of a theme over
+as hex (upstream's export path), and `style()` generates the seven rules from `SYNTAX`, which is
+the one place that has to know what `Highlight`'s class names mean.
 
 The two *page* palettes stay written out, and that is not the same decision: a document needs a
 card, a border and a rule that no terminal theme has an opinion about. What is shared is what both

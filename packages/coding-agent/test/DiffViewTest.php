@@ -5,20 +5,26 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Interactive\DiffView;
-use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\EditDiff;
 use Pig\Tui\Ansi;
 
 /** An edit drawn as a diff, with the words that changed picked out. */
 final class DiffViewTest extends TestCase
 {
-    private Palette $palette;
+    use GlobalThemeFixture;
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        $this->tearDownGlobalTheme();
+    }
 
     #[\Override]
     protected function setUp(): void
     {
-        $this->palette = Palette::dark(true);
+        $this->setUpGlobalTheme();
     }
 
     /** @return list<string> */
@@ -26,7 +32,7 @@ final class DiffViewTest extends TestCase
     {
         [$diff] = EditDiff::render($old, $new);
 
-        return explode("\n", DiffView::render($diff, $this->palette));
+        return explode("\n", DiffView::render($diff));
     }
 
     /** The part of a line that is inverted, if any. */
@@ -41,10 +47,9 @@ final class DiffViewTest extends TestCase
         $plain = array_map(Ansi::strip(...), $lines);
 
         $this->assertSame([' 1 keep', '-2 old', '+2 new', ' 3 '], $plain);
-        // dark's toolDiffRemoved is red (#ea7f81 = 234, 127, 129), toolDiffAdded green (#68b78d = 104, 183, 141), context muted (#9da5a9 = 157, 165, 169).
-        $this->assertStringContainsString("\e[38;2;234;127;129m", $lines[1]);
-        $this->assertStringContainsString("\e[38;2;104;183;141m", $lines[2]);
-        $this->assertStringContainsString("\e[38;2;157;165;169m", $lines[0]);
+        $this->assertStringContainsString(Themes::theme()->getFgAnsi('toolDiffRemoved'), $lines[1]);
+        $this->assertStringContainsString(Themes::theme()->getFgAnsi('toolDiffAdded'), $lines[2]);
+        $this->assertStringContainsString(Themes::theme()->getFgAnsi('toolDiffContext'), $lines[0]);
     }
 
     public function testOneLineForOneLineMarksTheWordsThatChanged(): void
@@ -140,14 +145,14 @@ final class DiffViewTest extends TestCase
     public function testALineThatIsNotPartOfADiffIsLeftAsContext(): void
     {
         // EditDiff writes a bare `...` row where it skipped unchanged lines.
-        $rendered = DiffView::render(" 1 kept\n ... \n", $this->palette);
+        $rendered = DiffView::render(" 1 kept\n ... \n");
 
         $this->assertStringContainsString('...', Ansi::strip($rendered));
     }
 
     public function testAnEmptyDiffRendersToNothingVisible(): void
     {
-        $this->assertSame('', Ansi::strip(DiffView::render('', $this->palette)));
+        $this->assertSame('', Ansi::strip(DiffView::render('')));
     }
 
     /**
@@ -169,7 +174,7 @@ final class DiffViewTest extends TestCase
         // tool *output* being involved. Anything downstream of here measures with
         // `Graphemes::split()`, which answers false on malformed UTF-8 and throws.
         [$diff] = EditDiff::render("keep\n{$bad}old\n", "keep\n{$bad}new\n");
-        $rendered = DiffView::render($diff, $this->palette);
+        $rendered = DiffView::render($diff);
 
         $this->assertTrue(mb_check_encoding($rendered, 'UTF-8'));
         $this->assertStringContainsString('keep', Ansi::strip($rendered));
@@ -181,7 +186,7 @@ final class DiffViewTest extends TestCase
         // columns — so the line passes every width check and the terminal drops a row anyway,
         // putting each later cursor move one row low.
         [$diff] = EditDiff::render("head\n\x0cpage\ntail\n", "head\n\x0cPAGE\x00\ntail\n");
-        $rendered = DiffView::render($diff, $this->palette);
+        $rendered = DiffView::render($diff);
 
         $this->assertStringNotContainsString("\x0c", $rendered);
         $this->assertStringNotContainsString("\x00", $rendered);

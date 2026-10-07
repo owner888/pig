@@ -6,14 +6,27 @@ namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Interactive\CommandHudComponent;
-use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Width;
 
 final class CommandHudComponentTest extends TestCase
 {
+    use GlobalThemeFixture;
+
+    #[\Override]
+    protected function setUp(): void
+    {
+        $this->setUpGlobalTheme();
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        $this->tearDownGlobalTheme();
+    }
+
     public function testRenderFitsVariousWidthsWithoutOverflow(): void
     {
-        $hud = new CommandHudComponent(Palette::named('dark'));
+        $hud = new CommandHudComponent();
 
         foreach ([30, 50, 80, 120] as $width) {
             $lines = $hud->render($width);
@@ -28,7 +41,7 @@ final class CommandHudComponentTest extends TestCase
 
     public function testContainsCoreShortcuts(): void
     {
-        $hud = new CommandHudComponent(Palette::named('dark'));
+        $hud = new CommandHudComponent();
         $lines = implode("\n", $hud->render(80));
 
         $this->assertStringContainsString('⌘ + Enter', $lines);

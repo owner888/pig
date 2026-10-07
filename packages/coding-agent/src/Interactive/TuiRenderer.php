@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Interactive;
 
 use Closure;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Clipboard\Clipboard;
 use Pig\Tui\Component;
 use Pig\Tui\OverlayHandle;
@@ -29,7 +29,6 @@ final class TuiRenderer
      *
      * @param 'regular'|'fullscreen'|string $tuiMode
      * @param Closure(): string $scrollToEndIndicator
-     * @param Closure(): Palette $palette the current one; `/theme` replaces it while the renderer lives
      * @param Closure(string): void $openUrl
      * @param int|'auto' $fullscreenWheelScrollLines
      */
@@ -39,7 +38,6 @@ final class TuiRenderer
         bool $showHardwareCursor,
         Clipboard $clipboard,
         Closure $scrollToEndIndicator,
-        Closure $palette,
         Closure $openUrl,
         bool $fullscreenCopyOnSelect = true,
         int|string $fullscreenWheelScrollLines = 'auto',
@@ -48,7 +46,7 @@ final class TuiRenderer
             return new TuiMainScreen($terminal, $showHardwareCursor);
         }
 
-        $styleSearchMatch = static fn (string $text): string => $palette()->bg('searchMatchBg', $palette()->fg('searchMatchText', $text));
+        $styleSearchMatch = static fn (string $text): string => Themes::theme()->bg('searchMatchBg', Themes::theme()->fg('searchMatchText', $text));
 
         return new TuiAltScreen($terminal, $showHardwareCursor, options: new TuiAltScreenOptions(
             wheelScrollLines: $fullscreenWheelScrollLines,

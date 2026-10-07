@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Interactive;
 
 use Pig\CodingAgent\Session\BranchSummary;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Components\Box;
 use Pig\Tui\Components\DefaultTextStyle;
 use Pig\Tui\Components\Markdown;
@@ -37,18 +37,17 @@ final class BranchSummaryComponent extends Container
 
     public function __construct(
         private readonly BranchSummary $summary,
-        private readonly Palette $palette,
         bool $expanded = false,
     ) {
-        $this->box = new Box(1, 1, $palette->of('customMessageBg'));
-        $this->label = new Text($palette->fg('customMessageLabel', '[branch summary]'), 0, 0);
+        $this->box = new Box(1, 1, static fn (string $text): string => Themes::theme()->bg('customMessageBg', $text));
+        $this->label = new Text('', 0, 0);
         $this->detail = new Text('', 0, 0);
         $this->body = new Markdown(
             $summary->summary,
             0,
             0,
-            $palette->markdownTheme(),
-            new DefaultTextStyle(colour: $palette->of('muted')),
+            Themes::getMarkdownTheme(),
+            new DefaultTextStyle(colour: static fn (string $text): string => Themes::theme()->fg('muted', $text)),
         );
 
         $this->addChild(new Spacer(1));
@@ -56,9 +55,19 @@ final class BranchSummaryComponent extends Container
         $this->setExpanded($expanded);
     }
 
+    /** Rebuilt so a theme change reaches the label and the summary line, as upstream's components rebuild on `invalidate()`. */
+    #[\Override]
+    public function invalidate(): void
+    {
+        parent::invalidate();
+        $this->body->invalidate();
+        $this->setExpanded($this->expanded);
+    }
+
     public function setExpanded(bool $expanded): void
     {
         $this->expanded = $expanded;
+        $this->label->setText(Themes::theme()->fg('customMessageLabel', '[branch summary]'));
         $this->detail->setText($this->line());
 
         $this->box->clear();
@@ -82,6 +91,6 @@ final class BranchSummaryComponent extends Container
             $line .= ' (ctrl+o to expand)';
         }
 
-        return $this->palette->fg('muted', $line);
+        return Themes::theme()->fg('muted', $line);
     }
 }

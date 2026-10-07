@@ -9,7 +9,6 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\Cli\SessionChoice;
 use Pig\CodingAgent\Cli\SessionPicker;
 use Pig\CodingAgent\Session\SessionInfo;
-use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Test\FakeTerminal;
 
 /**
@@ -22,6 +21,14 @@ use Pig\Tui\Test\FakeTerminal;
  */
 final class SessionPickerTest extends TestCase
 {
+    use GlobalThemeFixture;
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        $this->tearDownGlobalTheme();
+    }
+
     private const string ESC = "\e";
 
     private const string ENTER = "\r";
@@ -33,6 +40,7 @@ final class SessionPickerTest extends TestCase
     #[\Override]
     protected function setUp(): void
     {
+        $this->setUpGlobalTheme();
         Loop::reset();
     }
 
@@ -51,7 +59,7 @@ final class SessionPickerTest extends TestCase
             $terminal->queue($key);
         }
 
-        return SessionPicker::ask($sessions, Palette::dark(true), $terminal);
+        return SessionPicker::ask($sessions, $terminal);
     }
 
     private static function session(
@@ -129,7 +137,7 @@ final class SessionPickerTest extends TestCase
     public function testNoSessionsIsAnsweredWithoutDrawingAnything(): void
     {
         // Not a screen saying "nothing here" that somebody has to dismiss.
-        $choice = SessionPicker::ask([], Palette::dark(true));
+        $choice = SessionPicker::ask([]);
 
         $this->assertNull($choice->path);
         $this->assertFalse($choice->quit);

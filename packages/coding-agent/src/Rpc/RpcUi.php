@@ -7,7 +7,8 @@ namespace Pig\CodingAgent\Rpc;
 use Closure;
 use Pig\Async\Deferred;
 use Pig\CodingAgent\Hooks\HookUi;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Theme;
+use Pig\CodingAgent\Theme\Themes;
 
 /**
  * `HookUi` over the wire: the question goes out as a line of JSON, the answer comes back as
@@ -49,7 +50,6 @@ final class RpcUi implements HookUi
     /** @param Closure(array<string, mixed>): void $send one JSON line out */
     public function __construct(
         private readonly Closure $send,
-        private readonly Palette $palette,
     ) {
         $this->epoch = bin2hex(random_bytes(4));
     }
@@ -158,10 +158,11 @@ final class RpcUi implements HookUi
         return '';
     }
 
+    /** The global theme, as upstream's RPC UI context answers; the host does the rendering. */
     #[\Override]
-    public function palette(): Palette
+    public function theme(): Theme
     {
-        return $this->palette;
+        return Themes::theme();
     }
 
     #[\Override]
@@ -230,17 +231,13 @@ final class RpcUi implements HookUi
     #[\Override]
     public function getAllThemes(): array
     {
-        return Palette::names();
+        return Themes::getAvailableThemes();
     }
 
     #[\Override]
-    public function getTheme(string $name): ?Palette
+    public function getTheme(string $name): ?Theme
     {
-        try {
-            return Palette::named($name);
-        } catch (\Throwable) {
-            return null;
-        }
+        return Themes::getThemeByName($name);
     }
 
     #[\Override]

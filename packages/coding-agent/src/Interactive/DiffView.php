@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Interactive;
 
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\Shell;
 use Pig\Tui\Style;
 
@@ -13,7 +13,7 @@ use Pig\Tui\Style;
  *
  * `Tools\EditDiff` produces the diff; this paints it. Split that way because the tool
  * has to produce the same text whether or not anyone is watching, and because the colours
- * belong to the palette rather than to the tool.
+ * belong to the theme rather than to the tool.
  *
  * Which makes this the diff's display boundary, and therefore where the bytes are made safe:
  * a diff is built from a *file's* own bytes, so `edit` is the one tool that can hand the
@@ -31,7 +31,7 @@ final class DiffView
     /**
      * @param string $diff as `EditDiff::render()` produces it
      */
-    public static function render(string $diff, Palette $palette): string
+    public static function render(string $diff): string
     {
         $lines = explode("\n", Shell::sanitize($diff));
         $output = [];
@@ -41,7 +41,7 @@ final class DiffView
             $parsed = self::parse($lines[$at]);
 
             if ($parsed === null) {
-                $output[] = $palette->fg('toolDiffContext', $lines[$at]);
+                $output[] = Themes::theme()->fg('toolDiffContext', $lines[$at]);
                 $at++;
 
                 continue;
@@ -50,20 +50,20 @@ final class DiffView
             [$prefix, $number, $content] = $parsed;
 
             if ($prefix === '+') {
-                $output[] = $palette->fg('toolDiffAdded', '+' . $number . ' ' . self::tabs($content));
+                $output[] = Themes::theme()->fg('toolDiffAdded', '+' . $number . ' ' . self::tabs($content));
                 $at++;
 
                 continue;
             }
 
             if ($prefix !== '-') {
-                $output[] = $palette->fg('toolDiffContext', ' ' . $number . ' ' . self::tabs($content));
+                $output[] = Themes::theme()->fg('toolDiffContext', ' ' . $number . ' ' . self::tabs($content));
                 $at++;
 
                 continue;
             }
 
-            $at = self::change($lines, $at, $palette, $output);
+            $at = self::change($lines, $at, $output);
         }
 
         return implode("\n", $output);
@@ -76,7 +76,7 @@ final class DiffView
      * @param list<string> $output written into
      * @return int where to carry on from
      */
-    private static function change(array $lines, int $at, Palette $palette, array &$output): int
+    private static function change(array $lines, int $at, array &$output): int
     {
         $removed = [];
         $added = [];
@@ -97,18 +97,18 @@ final class DiffView
         if (count($removed) === 1 && count($added) === 1) {
             [$was, $now] = self::words(self::tabs($removed[0][1]), self::tabs($added[0][1]));
 
-            $output[] = $palette->fg('toolDiffRemoved', '-' . $removed[0][0] . ' ' . $was);
-            $output[] = $palette->fg('toolDiffAdded', '+' . $added[0][0] . ' ' . $now);
+            $output[] = Themes::theme()->fg('toolDiffRemoved', '-' . $removed[0][0] . ' ' . $was);
+            $output[] = Themes::theme()->fg('toolDiffAdded', '+' . $added[0][0] . ' ' . $now);
 
             return $at;
         }
 
         foreach ($removed as [$number, $content]) {
-            $output[] = $palette->fg('toolDiffRemoved', '-' . $number . ' ' . self::tabs($content));
+            $output[] = Themes::theme()->fg('toolDiffRemoved', '-' . $number . ' ' . self::tabs($content));
         }
 
         foreach ($added as [$number, $content]) {
-            $output[] = $palette->fg('toolDiffAdded', '+' . $number . ' ' . self::tabs($content));
+            $output[] = Themes::theme()->fg('toolDiffAdded', '+' . $number . ' ' . self::tabs($content));
         }
 
         return $at;

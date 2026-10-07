@@ -51,7 +51,7 @@ use Pig\CodingAgent\Migrations;
 use Pig\CodingAgent\PrintMode;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\CodingAgent\Timings;
 use Pig\CodingAgent\Version;
@@ -156,7 +156,8 @@ if (isset($options['help'])) {
       --no-proxy        ignore all of that and connect directly
       -v, --version     print the version, and stop
       -h, --help        this
-      --theme <name>    dark or light (default: dark)
+      --theme <name>    a theme name, or a light/dark pair like `light/dark`
+                        (default: the `theme` setting, else `system`)
       --thinking <l>    off, minimal, low, medium, high, xhigh
       --tools <list>    which tools the model gets, comma-separated; names or patterns
                         with `*`: `--tools read,codemode,'mcp__gh__*'`
@@ -241,7 +242,7 @@ if ($arguments->needsAMessage() && $messages === [] && $fileArgs === []) {
 // Whether this project's own `.pig/` may be loaded at all — asked **before** the settings, because
 // `.pig/settings.json` is one of the things being asked about. A project with nothing to gate is
 // trusted without a question; a saved answer wins; otherwise the terminal asks, and a mode with
-// no terminal answers no. The prompt's palette comes from the person's own settings alone, since
+// no terminal answers no. The prompt's theme comes from the person's own settings alone, since
 // the project's are exactly what is not yet allowed in.
 // `--list-models` and `--export` print and exit without loading anything of the project's, so
 // they are not asked either.
@@ -249,9 +250,13 @@ $startsASession = !isset($options['list-models']) && !isset($options['export']);
 $projectTrusted = ProjectTrust::resolve($cwd, $interactive && $startsASession
     ? static function (array $choices) use ($cwd, $options): ?Pig\CodingAgent\TrustChoice {
         $own = Settings::load($cwd, projectTrusted: false);
-        $theme = $options['theme'] ?? (getenv('PIG_THEME') ?: ($own->theme() ?? 'dark'));
+        $themeSetting = $options['theme'] ?? (getenv('PIG_THEME') ?: $own->theme());
+        $themeError = Themes::initTheme(Themes::resolveThemeSetting($themeSetting, Themes::getTerminalTheme()));
+        if ($themeError !== null) {
+            fwrite(STDERR, Style::yellow("Theme: {$themeError} Using the system theme.\n"));
+        }
 
-        return TrustPrompt::ask($cwd, $choices, Palette::named(in_array($theme, Palette::names(), true) ? $theme : 'dark'));
+        return TrustPrompt::ask($cwd, $choices);
     }
     : null);
 Timings::mark('trust');
@@ -259,6 +264,12 @@ Timings::mark('trust');
 // The order everywhere below: what was typed, then the environment, then what was chosen
 // last time, then the built-in default.
 $settings = isset($options['no-save']) ? Settings::inMemory() : Settings::load($cwd, projectTrusted: $projectTrusted);
+// The project's `.pig/themes` and `.pi/themes` are the project's resources, so they wait for trust
+// like its settings do.
+Themes::setCustomThemesCwd($projectTrusted ? $cwd : null);
+// What `--theme` or `PIG_THEME` said, else the `theme` setting: a theme name or a light/dark pair.
+// Null is upstream's default, the system theme.
+$themeSetting = $options['theme'] ?? (getenv('PIG_THEME') ?: $settings->theme());
 
 foreach ($settings->problems() as $problem) {
     fwrite(STDERR, Style::yellow("settings: {$problem}\n"));
@@ -396,7 +407,7 @@ if (isset($options['export'])) {
             $options['export'],
             $arguments->messages[0] ?? null,
             $cwd,
-            $options['theme'] ?? ($settings->theme() ?? 'dark'),
+            Themes::resolveThemeSetting($themeSetting, Themes::getTerminalTheme()) ?? Themes::SYSTEM_THEME_NAME,
         );
 
         echo "Exported to: {$written}\n";
@@ -409,12 +420,30 @@ if (isset($options['export'])) {
     exit(0);
 }
 
-$theme = $options['theme'] ?? (getenv('PIG_THEME') ?: ($settings->theme() ?? 'dark'));
+// A theme named on the command line or in the environment that matches nothing is one line on the
+// shell, before anything has been loaded. One in the settings is reported by the interactive mode's
+// theme controller instead, which falls back to the system theme as upstream's does.
+if (isset($options['theme']) || (getenv('PIG_THEME') ?: '') !== '') {
+    $available = Themes::getAvailableThemes();
+    $named = Themes::parseAutoThemeSetting($themeSetting);
+    foreach ($named === null ? [$themeSetting] : [$named['lightTheme'], $named['darkTheme']] as $wanted) {
+        if (!in_array($wanted, $available, true)) {
+            fwrite(STDERR, Style::red("No theme called '{$wanted}'. Available themes: " . implode(', ', $available) . ".\n"));
+            foreach (Themes::getCustomThemeErrors() as $problem) {
+                fwrite(STDERR, Style::yellow("Skipped theme {$problem}\n"));
+            }
 
-if (!in_array($theme, Palette::names(), true)) {
-    fwrite(STDERR, Style::red("No theme called '{$theme}'. There is " . implode(' and ', Palette::names()) . ".\n"));
+            exit(1);
+        }
+    }
+}
 
-    exit(1);
+// Upstream's `initTheme()` in `main()`, for every mode: the session picker draws before the
+// interactive mode exists, and a hook asking `ui->theme()` in print mode gets an answer. The
+// interactive mode's theme controller takes over from here.
+$themeError = Themes::initTheme(Themes::resolveThemeSetting($themeSetting, Themes::getTerminalTheme()));
+if ($themeError !== null && !$interactive) {
+    fwrite(STDERR, Style::yellow("Theme: {$themeError} Using the system theme.\n"));
 }
 
 // Which built-in tools the model gets. Checked here rather than inside the assembly for the same
@@ -510,7 +539,7 @@ if ($resumePath === '' && !isset($options['no-save'])) {
     // their mind still wanted pig, and refusing to start would only make them type the command
     // again. Ctrl+C is the other thing, and it is the caller's to do: the list has already put
     // the terminal back, so this is an ordinary end to the program and not a signal.
-    $choice = SessionPicker::ask($sessions, Palette::named($theme));
+    $choice = SessionPicker::ask($sessions);
 
     if ($choice->quit) {
         exit(0);
@@ -657,10 +686,11 @@ if ($mode === 'rpc') {
 
     $running = new InteractiveMode(
         $session,
-        Palette::named($theme),
         $cwd,
         VERSION,
-        $theme,
+        // Only an explicit `--theme` or `PIG_THEME`, which overrides the setting without saving it;
+        // otherwise the controller reads the setting.
+        $options['theme'] ?? (getenv('PIG_THEME') ?: null),
         contextFiles: $contextFiles,
         skills: $skills,
         fileCommands: $fileCommands,

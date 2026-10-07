@@ -10,7 +10,7 @@ use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\ThinkingContent;
 use Pig\Ai\ToolCall;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Component;
 use Pig\Tui\Components\DefaultTextStyle;
 use Pig\Tui\Components\Markdown;
@@ -68,11 +68,13 @@ final class AssistantMessageComponent extends Container
 
     private ?string $hiddenThinkingLabel = null;
 
+    /** What `update()` was last given, so `invalidate()` can rebuild it in the current theme. */
+    private ?AssistantMessage $lastMessage = null;
+
     /**
      * @param list<Closure(string, array{role: string, isStreaming: bool}): string> $transformers
      */
     public function __construct(
-        private readonly Palette $palette,
         ?AssistantMessage $message = null,
         private bool $hideThinking = false,
         private readonly array $transformers = [],
@@ -113,8 +115,23 @@ final class AssistantMessageComponent extends Container
         $this->hiddenThinkingLabel = $label;
     }
 
+    /**
+     * Rebuilt from the last message, as upstream's `invalidate()` does: the labels and errors here are
+     * drawn in the theme that was current when they were built.
+     */
+    #[\Override]
+    public function invalidate(): void
+    {
+        parent::invalidate();
+        if ($this->lastMessage !== null) {
+            $this->built = [];
+            $this->update($this->lastMessage);
+        }
+    }
+
     public function update(AssistantMessage $message): void
     {
+        $this->lastMessage = $message;
         $this->slot = 0;
         $this->hasToolCalls = false;
         foreach ($message->content as $block) {
@@ -152,7 +169,7 @@ final class AssistantMessageComponent extends Container
                         continue;
                     }
 
-                    $said = $this->keep('said', fn (): Component => new Markdown('', 1, 0, $this->palette->markdownTheme()));
+                    $said = $this->keep('said', fn (): Component => new Markdown('', 1, 0, Themes::getMarkdownTheme()));
 
                     if ($said instanceof Markdown) {
                         $said->setText($partText);
@@ -197,7 +214,7 @@ final class AssistantMessageComponent extends Container
     {
         if ($this->hideThinking) {
             $txt = $this->hiddenThinkingLabel ?? 'Thinking...';
-            $label = $this->palette->fg('thinkingText', "\e[3m{$txt}\e[23m");
+            $label = Themes::theme()->fg('thinkingText', "\e[3m{$txt}\e[23m");
             $this->keep('thought-label', static fn (): Component => new Text($label, 1, 0));
 
             if ($textAfter) {
@@ -211,8 +228,8 @@ final class AssistantMessageComponent extends Container
             '',
             1,
             0,
-            $this->palette->markdownTheme(),
-            new DefaultTextStyle(colour: $this->palette->of('thinkingText'), italic: true),
+            Themes::getMarkdownTheme(),
+            new DefaultTextStyle(colour: static fn (string $text): string => Themes::theme()->fg('thinkingText', $text), italic: true),
         ));
 
         if ($thought instanceof Markdown) {
@@ -243,7 +260,7 @@ final class AssistantMessageComponent extends Container
                 $abortMessage = $message->errorMessage !== null && $message->errorMessage !== '' && $message->errorMessage !== 'Request was aborted'
                     ? $message->errorMessage
                     : 'Operation aborted';
-                $aborted->setText($this->palette->fg('error', "\n" . $abortMessage));
+                $aborted->setText(Themes::theme()->fg('error', "\n" . $abortMessage));
             }
 
             return;
@@ -254,7 +271,7 @@ final class AssistantMessageComponent extends Container
             $error = $this->keep('error', static fn (): Component => new Text('', 1, 0));
 
             if ($error instanceof Text) {
-                $error->setText($this->palette->fg('error', 'Error: ' . ($message->errorMessage ?? 'Unknown error')));
+                $error->setText(Themes::theme()->fg('error', 'Error: ' . ($message->errorMessage ?? 'Unknown error')));
             }
         }
     }

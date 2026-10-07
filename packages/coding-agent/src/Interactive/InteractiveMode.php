@@ -92,7 +92,9 @@ use Pig\CodingAgent\Session\SessionInfo;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Session\TreeJump;
 use Pig\CodingAgent\Settings;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\InteractiveThemeController;
+use Pig\CodingAgent\Theme\ThemeJson;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\ExternalTool;
 use Pig\Tui\Autocomplete\CombinedAutocompleteProvider;
 use Pig\Tui\Autocomplete\AutocompleteItem;
@@ -226,8 +228,8 @@ final class InteractiveMode
 
     private bool $running = false;
 
-    /** Which of the two built-in themes is on, so /theme knows what to switch to. */
-    private string $theme = 'dark';
+    /** Upstream's `themeController`: applies the theme setting and keeps it in sync with the terminal. */
+    private readonly InteractiveThemeController $themeController;
 
     /** @var list<ContextFile> what the system prompt was given, so it can be shown */
     private array $contextFiles = [];
@@ -287,10 +289,11 @@ final class InteractiveMode
      */
     public function __construct(
         private readonly AgentSession $session,
-        private Palette $palette,
         private readonly string $cwd,
         private readonly string $version,
-        string $theme = 'dark',
+        // A theme setting that overrides the saved one for this run (`--theme`), or null to read
+        // the settings. Upstream's controller takes the same thing as `initialThemeSetting`.
+        ?string $themeSetting = null,
         ?Terminal $terminal = null,
         array $contextFiles = [],
         array $skills = [],
@@ -315,7 +318,6 @@ final class InteractiveMode
     ) {
         // Upstream's constructor does the same: the TUI reads `tui.*` keys from the registry.
         TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
-        $this->theme = $theme;
         $this->contextFiles = $contextFiles;
         $this->skills = $skills;
         $this->fileCommands = $fileCommands;
@@ -343,6 +345,16 @@ final class InteractiveMode
         $this->renderer = $this->createRenderer($terminal ?? new ProcessTerminal(), $this->tuiMode, $this->settings->showHardwareCursor());
         $this->renderer->setClearOnShrink($this->settings->clearOnShrink());
         $this->tui = TuiRenderer::createInteractiveTuiReference(fn (): TuiBase => $this->renderer);
+        // Upstream installs the theme JSON validator in its interactive mode, so a custom theme that
+        // is missing tokens is rejected with the reason instead of drawing in half its colours.
+        Themes::setThemeJsonValidator(ThemeJson::validateThemeJson(...));
+        $this->themeController = new InteractiveThemeController(
+            $this->tui,
+            fn (): Settings => $this->settings,
+            fn (string $message) => $this->sayError($message),
+            fn () => $this->onThemeChanged(),
+            $themeSetting,
+        );
         $this->chat = new Container();
         $this->pending = new Container();
         $this->status = new Container();
@@ -351,13 +363,11 @@ final class InteractiveMode
         $this->widgetsBelow = new Container();
         $this->customHeader = new Container();
         $this->customFooter = new Container();
-        $this->editor = new CustomEditor(new Editor($palette->editorTheme()), $this->keybindings);
+        $this->editor = new CustomEditor(new Editor(Themes::getEditorTheme()), $this->keybindings);
         // `$this->settings` rather than the argument: with none given it is the in-memory one
         // that `/settings` writes to, and the footer has to read what that screen changes.
-        $this->footer = new FooterComponent($session, $palette, $cwd, $this->settings, $auth);
+        $this->footer = new FooterComponent($session, $cwd, $this->settings, $auth);
 
-        // The palette as a closure: `/theme` replaces it, and a dialog opened afterwards
-        // should be drawn in the colour that is on now.
         $this->ui = new TerminalUi(
             $this->tui,
             $this->chat,
@@ -366,7 +376,6 @@ final class InteractiveMode
             $this->overlay,
             $this->editor,
             $this->footer,
-            fn (): Palette => $this->palette,
             // The same `$VISUAL` hand-off Ctrl+G at the prompt uses, so the key means one
             // thing in both places and there is one piece of code to get right.
             fn (string $text): ?string => $this->externalEditor($text),
@@ -400,14 +409,7 @@ final class InteractiveMode
             },
             getToolsExpanded: fn (): bool => $this->expanded,
             setToolsExpanded: fn (bool $expanded) => $this->setToolsExpanded($expanded),
-            onTheme: function (string $name): bool {
-                if (!in_array($name, Palette::names($this->cwd), true)) {
-                    return false;
-                }
-                $this->useTheme($name);
-                return true;
-            },
-            cwd: $this->cwd,
+            onTheme: fn (string $name): bool => $this->useTheme($name),
         );
 
         // What a handler's `$ctx->mode()` answers, and what `$ctx->shutdown()` does here: quit,
@@ -500,6 +502,14 @@ final class InteractiveMode
         $this->sayToolProblems($this->customTools?->notify('start') ?? []);
         $this->tui->start();
 
+        // Upstream's `applyFromSettings()` once the terminal is up, since the colour query's replies
+        // arrive as input. Everything above was drawn in the theme the controller started with (the
+        // system theme renders grayscale until the terminal reports its colours); when they arrive,
+        // `onChanged` repaints what this class baked and the controller invalidates the rest. Upstream
+        // builds its header after `waitForTerminalColors()` instead; this is not always running in a
+        // coroutine (tests call it directly), so the banner is rebuilt by `onThemeChanged()` instead.
+        $this->themeController->applyFromSettings();
+
         // After the screen is up, so the first answer streams into a transcript that is
         // already being drawn rather than appearing all at once when it finishes. In a fiber
         // because each one is a whole turn, and the loop has to keep running underneath
@@ -532,14 +542,12 @@ final class InteractiveMode
                     $expandKey = $this->keybindings->display('app.tools.expand') ?: 'ctrl+o';
                     $this->chat->addChild(new SkillInvocationMessageComponent(
                         $skillBlock,
-                        $this->palette,
                         $this->expanded,
                         $expandKey,
                     ));
                     if ($skillBlock->userMessage !== null) {
                         $this->chat->addChild(new UserMessageComponent(
                             $skillBlock->userMessage,
-                            $this->palette,
                             $this->hooks?->markdownTransformers() ?? [],
                         ));
                     }
@@ -549,7 +557,6 @@ final class InteractiveMode
 
                 $this->chat->addChild(new UserMessageComponent(
                     $text,
-                    $this->palette,
                     $this->hooks?->markdownTransformers() ?? [],
                 ));
 
@@ -569,20 +576,19 @@ final class InteractiveMode
             }
 
             if ($message instanceof CompactionSummary) {
-                $this->chat->addChild(new CompactionComponent($message, $this->palette, $this->expanded));
+                $this->chat->addChild(new CompactionComponent($message, $this->expanded));
 
                 continue;
             }
 
             if ($message instanceof BranchSummary) {
-                $this->chat->addChild(new BranchSummaryComponent($message, $this->palette, $this->expanded));
+                $this->chat->addChild(new BranchSummaryComponent($message, $this->expanded));
 
                 continue;
             }
 
             if ($message instanceof AssistantMessage) {
                 $this->chat->addChild(new AssistantMessageComponent(
-                    $this->palette,
                     $message,
                     $this->hideThinking,
                     $this->hooks?->markdownTransformers() ?? [],
@@ -619,7 +625,7 @@ final class InteractiveMode
                     $comp = ($entryRenderers[$entry->customType])(
                         $entry,
                         new \Pig\CodingAgent\CustomTools\RenderOptions($this->expanded, false),
-                        $this->palette,
+                        Themes::theme(),
                     );
                     if ($comp instanceof \Pig\Tui\Component) {
                         $this->chat->addChild($comp);
@@ -634,7 +640,6 @@ final class InteractiveMode
         $shown = new ToolExecutionComponent(
             'bash',
             ['command' => $execution->command],
-            $this->palette,
             bashLines: ToolExecutionComponent::TYPED_BASH_LINES,
             showImages: $this->showImages,
             toolRenderers: $this->toolRenderers('bash'),
@@ -718,6 +723,10 @@ final class InteractiveMode
         }
 
         $this->session->dispose();
+
+        // Before the terminal is handed back: turning colour-scheme reports off is a write to it.
+        $this->themeController->dispose();
+        Themes::stopThemeWatcher();
 
         // Stopped here and not only in run()'s finally: whoever calls this wants the
         // terminal back — raw mode off, cursor shown — whether or not the loop is what
@@ -827,8 +836,8 @@ final class InteractiveMode
             widgetsAbove: $widgetsAboveSlot,
             widgetsBelow: $this->widgetsBelow,
             scrollbar: $this->settings->fullscreenScrollbar(),
-            scrollbarTrackStyle: fn (string $text): string => $this->palette->fg('scrollbarTrack', $text),
-            scrollbarThumbStyle: fn (string $text): string => $this->palette->fg('scrollbarThumb', $text),
+            scrollbarTrackStyle: fn (string $text): string => Themes::theme()->fg('scrollbarTrack', $text),
+            scrollbarThumbStyle: fn (string $text): string => Themes::theme()->fg('scrollbarThumb', $text),
         );
 
         $this->mountedComponents = [$document, $this->pending, $statusSlot, $widgetsAboveSlot, $this->editor, $this->widgetsBelow, $footerSlot];
@@ -856,8 +865,6 @@ final class InteractiveMode
             $showHardwareCursor,
             $this->clipboard,
             $this->scrollToEndIndicator(...),
-            // Read at each call: `/theme` replaces the palette after the renderer exists.
-            fn (): Palette => $this->palette,
             self::openInBrowser(...),
             $this->settings->fullscreenCopyOnSelect(),
             $this->settings->fullscreenWheelScrollLines(),
@@ -913,6 +920,7 @@ final class InteractiveMode
         }
         $nextUi->start();
         $this->ui->rebindTerminalInputListeners();
+        $this->themeController->rebindTui();
 
         return true;
     }
@@ -935,7 +943,7 @@ final class InteractiveMode
         $shortcut = $this->keybindings->display('tui.altScreen.bottom') ?: 'Ctrl+End';
         $label = " ↓ Jump to latest message" . ($shortcut !== '' ? " · {$shortcut}" : '') . ' ';
 
-        return $this->palette->bg('selectedBg', $this->palette->fg('text', $label));
+        return Themes::theme()->bg('selectedBg', Themes::theme()->fg('text', $label));
     }
 
     /**
@@ -950,8 +958,8 @@ final class InteractiveMode
     {
         [$topLogo, $bottomLogo] = PigLogo::lines();
 
-        $versionStr = Style::bold($this->palette->fg('accent', 'pig')) . $this->palette->fg('dim', " v{$this->version}");
-        $summaryStr = $this->palette->fg('muted', implode(' · ', self::SUMMARY));
+        $versionStr = Style::bold(Themes::theme()->fg('accent', 'pig')) . Themes::theme()->fg('dim', " v{$this->version}");
+        $summaryStr = Themes::theme()->fg('muted', implode(' · ', self::SUMMARY));
 
         $lines = [
             "{$topLogo} {$versionStr}",
@@ -959,10 +967,10 @@ final class InteractiveMode
             $summaryStr,
         ];
 
-        $onboarding = $this->palette->fg('dim', 'Pig can explain its own features and look up its docs. Ask it how to use or extend Pig.');
+        $onboarding = Themes::theme()->fg('dim', 'Pig can explain its own features and look up its docs. Ask it how to use or extend Pig.');
 
         if (!$this->expanded) {
-            $lines[] = $this->palette->fg('dim', 'Press ctrl+o to show full startup help and loaded resources.');
+            $lines[] = Themes::theme()->fg('dim', 'Press ctrl+o to show full startup help and loaded resources.');
             $lines[] = '';
             $lines[] = $onboarding;
 
@@ -1003,26 +1011,26 @@ final class InteractiveMode
                 $this->contextFiles,
             );
 
-            $sections[] = $this->palette->fg('mdHeading', '[Context]') . "\n"
-                . $this->palette->fg('muted', '  ' . implode(', ', array_unique($names)));
+            $sections[] = Themes::theme()->fg('mdHeading', '[Context]') . "\n"
+                . Themes::theme()->fg('muted', '  ' . implode(', ', array_unique($names)));
         }
 
         if ($this->skills !== []) {
             $names = array_map(static fn (Skill $skill): string => $skill->name, $this->skills);
 
-            $sections[] = $this->palette->fg('mdHeading', '[Skills]') . "\n"
-                . $this->palette->fg('muted', '  ' . implode(', ', $names));
+            $sections[] = Themes::theme()->fg('mdHeading', '[Skills]') . "\n"
+                . Themes::theme()->fg('muted', '  ' . implode(', ', $names));
         }
 
         $extensions = $this->discoveredExtensions();
         if ($extensions !== []) {
-            $sections[] = $this->palette->fg('mdHeading', '[Extensions]') . "\n"
-                . $this->palette->fg('muted', '  ' . implode(', ', $extensions));
+            $sections[] = Themes::theme()->fg('mdHeading', '[Extensions]') . "\n"
+                . Themes::theme()->fg('muted', '  ' . implode(', ', $extensions));
         }
 
         if ($this->customTools !== null && !$this->customTools->isEmpty()) {
-            $sections[] = $this->palette->fg('mdHeading', '[Tools]') . "\n"
-                . $this->palette->fg('muted', '  ' . implode(', ', $this->customTools->names()));
+            $sections[] = Themes::theme()->fg('mdHeading', '[Tools]') . "\n"
+                . Themes::theme()->fg('muted', '  ' . implode(', ', $this->customTools->names()));
         }
 
         return implode("\n\n", $sections);
@@ -1723,7 +1731,6 @@ final class InteractiveMode
         $shown = new ToolExecutionComponent(
             'bash',
             ['command' => $command],
-            $this->palette,
             bashLines: ToolExecutionComponent::TYPED_BASH_LINES,
             showImages: $this->showImages,
             toolRenderers: $this->toolRenderers('bash'),
@@ -1790,13 +1797,13 @@ final class InteractiveMode
     private function borderColour(): Closure
     {
         return $this->bashMode
-            ? $this->palette->of('bashMode')
-            : $this->palette->thinkingBorder($this->session->thinkingLevel());
+            ? Themes::theme()->getBashModeBorderColor()
+            : Themes::theme()->getThinkingBorderColor($this->session->thinkingLevel());
     }
 
     private function paintBorder(): void
     {
-        $this->editor->setTheme(new EditorTheme($this->borderColour(), $this->palette->selectListTheme()));
+        $this->editor->setTheme(new EditorTheme($this->borderColour(), Themes::getSelectListTheme()));
         $this->tui->requestRender();
     }
 
@@ -1832,7 +1839,7 @@ final class InteractiveMode
             // fit comes back as an error from the provider, and by then the person
             // has already waited for it.
             if ($this->session->shouldCompact()) {
-                $this->say($this->palette->fg('muted', 'Context is nearly full — summarising first.'));
+                $this->say(Themes::theme()->fg('muted', 'Context is nearly full — summarising first.'));
                 $this->compact(reason: 'threshold');
             }
 
@@ -1889,7 +1896,7 @@ final class InteractiveMode
 
         // The transcript above is left where it is: it is what was said, and the summary
         // is a note about it, not a replacement for anyone's memory of reading it.
-        $this->chat->addChild(new CompactionComponent($summary, $this->palette, $this->expanded));
+        $this->chat->addChild(new CompactionComponent($summary, $this->expanded));
         $this->footer->invalidate();
         $this->tui->requestRender();
     }
@@ -1915,7 +1922,7 @@ final class InteractiveMode
         ['web', 'Browser UI server & daemon (/web [start|stop|status|restart] [port])'],
         ['login', 'Sign in with a subscription or an account instead of an API key'],
         ['logout', 'Forget a sign-in'],
-        ['theme', 'Switch themes (dark, light, labra, or custom) (/theme [name])'],
+        ['theme', 'Switch themes: a picker that previews, or /theme <name>'],
         ['settings', 'Change what is switchable, and see what it is set to'],
         ['changelog', 'What changed, release by release'],
         ['reload', 'Reload extensions, skills, commands, tools, and context files'],
@@ -2076,15 +2083,15 @@ final class InteractiveMode
         $lines = [];
 
         foreach ($this->hooks->paths() as $path) {
-            $lines[] = $this->palette->fg('muted', $path);
+            $lines[] = Themes::theme()->fg('muted', $path);
         }
 
         if ($this->hookCommands !== []) {
             $lines[] = '';
 
             foreach ($this->hookCommands as $name => $command) {
-                $lines[] = $this->palette->fg('dim', Width::pad('/' . $name, 12))
-                    . $this->palette->fg('muted', $command->description);
+                $lines[] = Themes::theme()->fg('dim', Width::pad('/' . $name, 12))
+                    . Themes::theme()->fg('muted', $command->description);
             }
         }
 
@@ -2111,8 +2118,8 @@ final class InteractiveMode
         foreach ($this->session->state()->tools as $tool) {
             $name = $tool->definition()->name;
 
-            $lines[] = $this->palette->fg('dim', Width::pad($name, 14))
-                . $this->palette->fg('muted', $tool->label() . ' · ' . ($custom[$name] ?? 'built-in'));
+            $lines[] = Themes::theme()->fg('dim', Width::pad($name, 14))
+                . Themes::theme()->fg('muted', $tool->label() . ' · ' . ($custom[$name] ?? 'built-in'));
         }
 
         return $lines === [] ? 'This session has no tools at all.' : implode("\n", $lines);
@@ -2122,7 +2129,7 @@ final class InteractiveMode
     {
         $report = Doctor::inspect($this->session, $this->auth);
 
-        return Doctor::renderTui($report, $this->palette);
+        return Doctor::renderTui($report);
     }
 
     /**
@@ -2145,7 +2152,7 @@ final class InteractiveMode
             $items[] = new SelectItem((string) $index, $choice->label);
         }
 
-        $picker = new SelectList($items, count($items), $this->palette->selectListTheme());
+        $picker = new SelectList($items, count($items), Themes::getSelectListTheme());
         $picker->setSelectHandler(function (SelectItem $item) use ($choices): void {
             $this->closePicker();
             $choice = $choices[(int) $item->value];
@@ -2169,7 +2176,7 @@ final class InteractiveMode
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text($this->palette->fg('muted', "Trust {$this->cwd}? — this session: {$now}, {$was}"), 1, 0));
+        $this->overlay->addChild(new Text(Themes::theme()->fg('muted', "Trust {$this->cwd}? — this session: {$now}, {$was}"), 1, 0));
         $this->overlay->addChild($picker);
 
         $this->tui->setFocus($picker);
@@ -2217,14 +2224,14 @@ final class InteractiveMode
             $serverUrl = BugReport::upload($hint, $report);
             $url = BugReport::issueUrl($hint, $report);
 
-            $msg = $this->palette->fg('accent', '✓ Bug report written to ') . $path . "\n"
-                . $this->palette->fg('dim', 'It is on the clipboard too.');
+            $msg = Themes::theme()->fg('accent', '✓ Bug report written to ') . $path . "\n"
+                . Themes::theme()->fg('dim', 'It is on the clipboard too.');
 
             if ($serverUrl !== null) {
-                $msg .= "\n" . $this->palette->fg('accent', '✓ Uploaded to server: ') . $serverUrl;
+                $msg .= "\n" . Themes::theme()->fg('accent', '✓ Uploaded to server: ') . $serverUrl;
             }
 
-            $msg .= "\n" . $this->palette->fg('dim', 'GitHub issue URL (prefilled): ') . $this->palette->fg('accent', $url);
+            $msg .= "\n" . Themes::theme()->fg('dim', 'GitHub issue URL (prefilled): ') . Themes::theme()->fg('accent', $url);
             $this->say($msg);
 
             $this->tui->requestRender();
@@ -2294,7 +2301,6 @@ final class InteractiveMode
             $written = HtmlExport::write(
                 $store,
                 $path === '' ? HtmlExport::defaultPath($store, $this->cwd) : $path,
-                $this->theme,
             );
         } catch (Throwable $error) {
             $this->sayError($error->getMessage());
@@ -2325,8 +2331,8 @@ final class InteractiveMode
             }
             file_put_contents($savePath, $prMarkdown);
 
-            $this->say($this->palette->fg('accent', '✓ PR Description generated and copied to clipboard!'));
-            $this->say($this->palette->fg('dim', "Saved to: {$savePath}\n\n") . $prMarkdown);
+            $this->say(Themes::theme()->fg('accent', '✓ PR Description generated and copied to clipboard!'));
+            $this->say(Themes::theme()->fg('dim', "Saved to: {$savePath}\n\n") . $prMarkdown);
             $this->tui->requestRender();
         } catch (Throwable $e) {
             $this->sayError('Failed to generate PR description: ' . $e->getMessage());
@@ -2431,9 +2437,9 @@ final class InteractiveMode
         $lines = [];
 
         foreach ($this->skills as $skill) {
-            $lines[] = $this->palette->fg('dim', Width::pad($skill->name, 24))
-                . $this->palette->fg('muted', $skill->description);
-            $lines[] = $this->palette->fg('dim', str_repeat(' ', 24) . $skill->source . ' · ' . $skill->path);
+            $lines[] = Themes::theme()->fg('dim', Width::pad($skill->name, 24))
+                . Themes::theme()->fg('muted', $skill->description);
+            $lines[] = Themes::theme()->fg('dim', str_repeat(' ', 24) . $skill->source . ' · ' . $skill->path);
         }
 
         return implode("\n", $lines);
@@ -2476,14 +2482,14 @@ final class InteractiveMode
 
         foreach ($tables as $table) {
             foreach ($table as $key => $does) {
-                $rows[] = $this->palette->fg('dim', Width::pad($key, $column)) . $this->palette->fg('muted', $does);
+                $rows[] = Themes::theme()->fg('dim', Width::pad($key, $column)) . Themes::theme()->fg('muted', $does);
             }
 
             $rows[] = '';
         }
 
         foreach (self::COMMANDS as [$name, $does]) {
-            $rows[] = $this->palette->fg('dim', Width::pad('/' . $name, $column)) . $this->palette->fg('muted', $does);
+            $rows[] = Themes::theme()->fg('dim', Width::pad('/' . $name, $column)) . Themes::theme()->fg('muted', $does);
         }
 
         return implode("\n", $rows);
@@ -2536,7 +2542,7 @@ final class InteractiveMode
     {
         $stats = $this->session->stats();
 
-        return $this->palette->fg('muted', sprintf(
+        return Themes::theme()->fg('muted', sprintf(
             '%d messages · %d tool calls · %s tokens · $%s',
             $stats->totalMessages,
             $stats->toolCalls,
@@ -2571,7 +2577,7 @@ final class InteractiveMode
         // A plain `SelectList` was here first and it is the wrong list for this one thing: a
         // project with thirty conversations gives eight rows of openings and the arrow keys,
         // and what anybody remembers three days later is a phrase from the middle.
-        $picker = new SessionList($sessions, $this->palette, 8);
+        $picker = new SessionList($sessions, 8);
 
         $picker->setSelectHandler(function (string $path) use ($sessions): void {
             foreach ($sessions as $info) {
@@ -2594,7 +2600,7 @@ final class InteractiveMode
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
         $this->overlay->addChild(new Text(
-            $this->palette->fg('muted', 'Pick a session — type to search, enter to open, esc to cancel'),
+            Themes::theme()->fg('muted', 'Pick a session — type to search, enter to open, esc to cancel'),
             1,
             0,
         ));
@@ -2680,7 +2686,7 @@ final class InteractiveMode
     }
 
     /**
-     * Argument completions for `/theme`: available built-in themes.
+     * Argument completions for `/theme`: every theme `Themes::getAvailableThemes()` lists.
      *
      * @return list<AutocompleteItem>
      */
@@ -2689,18 +2695,12 @@ final class InteractiveMode
         $wanted = mb_strtolower(trim($typed));
         $items = [];
 
-        foreach (Palette::names() as $name) {
-            if ($wanted !== '' && !str_starts_with($name, $wanted)) {
+        foreach (Themes::getAvailableThemes() as $name) {
+            if ($wanted !== '' && !str_starts_with(mb_strtolower($name), $wanted)) {
                 continue;
             }
 
-            $desc = match ($name) {
-                'dark' => 'Default dark theme with ANSI 256/TrueColor support',
-                'light' => 'Clean light terminal theme',
-                default => null,
-            };
-
-            $items[] = new AutocompleteItem($name, $name, $desc);
+            $items[] = new AutocompleteItem($name, $name, self::themeDescription($name));
         }
 
         return $items;
@@ -2969,7 +2969,7 @@ final class InteractiveMode
             $this->sayWarning($w);
         }
 
-        $this->say($this->palette->fg('accent', 'Reloaded extensions, skills, commands, tools, and context files.'));
+        $this->say(Themes::theme()->fg('accent', 'Reloaded extensions, skills, commands, tools, and context files.'));
         $this->tui->requestRender();
     }
     private static function modelSearchText(Model $model): string
@@ -3022,7 +3022,7 @@ final class InteractiveMode
             );
         }
 
-        $picker = new SelectList($items, 8, $this->palette->selectListTheme());
+        $picker = new SelectList($items, 8, Themes::getSelectListTheme());
         $picker->setSelectHandler(function (SelectItem $item) use ($models): void {
             $this->closePicker();
             $this->useModel($models[(int) $item->value], persistAsDefault: false);
@@ -3035,7 +3035,7 @@ final class InteractiveMode
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text($this->palette->fg('muted', 'Pick a model — enter to switch, ctrl+s to set as default, esc to cancel'), 1, 0));
+        $this->overlay->addChild(new Text(Themes::theme()->fg('muted', 'Pick a model — enter to switch, ctrl+s to set as default, esc to cancel'), 1, 0));
         $this->overlay->addChild($picker);
 
         $this->tui->setFocus($picker);
@@ -3132,7 +3132,7 @@ final class InteractiveMode
         // `tree()`, not `branch()`. The branch is the path being talked on; a conversation that went
         // back has another one beside it, still in the file with its parents intact, and listing
         // only the current path made it unreachable — `goTo()` needs an id and nothing showed one.
-        $picker = new TreeList($tree, $store->leaf(), 12, $this->palette);
+        $picker = new TreeList($tree, $store->leaf(), 12);
         $picker->setSelectHandler(function (string $id): void {
             $this->closePicker();
 
@@ -3164,7 +3164,7 @@ final class InteractiveMode
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
         $this->overlay->addChild(new Text(
-            $this->palette->fg('muted', 'Go back to — enter to pick, ctrl+o to filter, l to name, type to search, esc to cancel'),
+            Themes::theme()->fg('muted', 'Go back to — enter to pick, ctrl+o to filter, l to name, type to search, esc to cancel'),
             1,
             0,
         ));
@@ -3227,7 +3227,7 @@ final class InteractiveMode
         if ($action === 'status') {
             if ($this->webServer !== null && $this->webServer->isRunning()) {
                 $url = "http://{$this->webServer->host}:{$this->webServer->port}";
-                $this->say('Web UI foreground server: ' . $this->palette->fg('accent', 'running') . " at {$url}");
+                $this->say('Web UI foreground server: ' . Themes::theme()->fg('accent', 'running') . " at {$url}");
             }
 
             [, $daemonOut] = Process::run([...$this->resolvePigBinary(), 'web', 'status']);
@@ -3333,8 +3333,8 @@ final class InteractiveMode
         }
 
         $url = "http://127.0.0.1:{$port}";
-        $this->say('Web UI started at ' . $this->palette->fg('accent', $url));
-        $this->say($this->palette->fg('dim', 'Runs while this session is open. To keep it running in background: pig web start -d'));
+        $this->say('Web UI started at ' . Themes::theme()->fg('accent', $url));
+        $this->say(Themes::theme()->fg('dim', 'Runs while this session is open. To keep it running in background: pig web start -d'));
         self::openInBrowser($url);
     }
 
@@ -3378,7 +3378,7 @@ final class InteractiveMode
             return;
         }
 
-        $this->chat->addChild(new DiffView($diff, $this->palette));
+        $this->chat->addChild(new Text(DiffView::render($diff), 1, 0));
         $this->tui->requestRender();
     }
 
@@ -3487,7 +3487,7 @@ final class InteractiveMode
             return;
         }
 
-        $this->say($this->palette->fg('accent', '✓ Committed: ') . $this->palette->fg('dim', trim($commitOut)));
+        $this->say(Themes::theme()->fg('accent', '✓ Committed: ') . Themes::theme()->fg('dim', trim($commitOut)));
         $this->footer->invalidate();
         $this->tui->requestRender();
     }
@@ -3532,7 +3532,7 @@ final class InteractiveMode
 
         $this->say($name === ''
             ? 'Name cleared.'
-            : 'Named this point ' . $this->palette->fg('accent', $name) . '.');
+            : 'Named this point ' . Themes::theme()->fg('accent', $name) . '.');
     }
 
     /**
@@ -3581,7 +3581,7 @@ final class InteractiveMode
         $this->say('Went back — anything you say now starts a new branch');
 
         if ($jump->summary !== null) {
-            $this->chat->addChild(new BranchSummaryComponent($jump->summary, $this->palette, $this->expanded));
+            $this->chat->addChild(new BranchSummaryComponent($jump->summary, $this->expanded));
         }
 
         // Back in the prompt, to be asked differently — which is what going back to something you
@@ -3667,7 +3667,7 @@ final class InteractiveMode
             $kind = $provider->isSubscription() ? 'subscription' : 'account';
             $items[] = new SelectItem(
                 (string) (count($providers) - 1),
-                $available ? $provider->label() : $this->palette->fg('dim', $provider->label()),
+                $available ? $provider->label() : Themes::theme()->fg('dim', $provider->label()),
                 $signedIn ? "{$kind} configured" : ($available ? 'not configured' : 'not ported yet'),
             );
         }
@@ -3678,7 +3678,7 @@ final class InteractiveMode
             return;
         }
 
-        $picker = new SelectList($items, 8, $this->palette->selectListTheme());
+        $picker = new SelectList($items, 8, Themes::getSelectListTheme());
         $picker->setSelectHandler(function (SelectItem $item) use ($providers, $signingIn): void {
             $this->closePicker();
             $provider = $providers[(int) $item->value];
@@ -3689,7 +3689,7 @@ final class InteractiveMode
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text($this->palette->fg(
+        $this->overlay->addChild(new Text(Themes::theme()->fg(
             'muted',
             $signingIn ? 'Sign in with — enter to choose, esc to cancel' : 'Forget which sign-in — enter to choose, esc to cancel',
         ), 1, 0));
@@ -3939,7 +3939,7 @@ final class InteractiveMode
         }
 
         $this->commandHudOpen = true;
-        $this->overlay->addChild(new CommandHudComponent($this->palette));
+        $this->overlay->addChild(new CommandHudComponent());
         $this->tui->requestRender();
     }
 
@@ -3992,7 +3992,7 @@ final class InteractiveMode
         if ($now !== null && $now !== $was) {
             // Worth a line: the model changing under someone without being told is how a
             // surprising answer becomes a puzzle.
-            $this->say($this->palette->fg('muted', "This conversation was on {$now} — switched back to it."));
+            $this->say(Themes::theme()->fg('muted', "This conversation was on {$now} — switched back to it."));
         }
 
         $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
@@ -4008,7 +4008,7 @@ final class InteractiveMode
     private function sayHi(): void
     {
         $this->armin?->dispose();
-        $this->armin = new ArminComponent($this->tui, $this->palette);
+        $this->armin = new ArminComponent($this->tui);
 
         $this->chat->addChild(new Spacer(1));
         $this->chat->addChild($this->armin);
@@ -4043,10 +4043,10 @@ final class InteractiveMode
     private function sayChangelog(string $markdown): void
     {
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Rule($this->palette->of('border')));
-        $this->chat->addChild(new Text($this->palette->fg('accent', Style::bold('What\'s New')), 1, 0));
-        $this->chat->addChild(new Markdown($markdown, 1, 1, $this->palette->markdownTheme()));
-        $this->chat->addChild(new Rule($this->palette->of('border')));
+        $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('border', $text)));
+        $this->chat->addChild(new Text(Themes::theme()->fg('accent', Style::bold('What\'s New')), 1, 0));
+        $this->chat->addChild(new Markdown($markdown, 1, 1, Themes::getMarkdownTheme()));
+        $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('border', $text)));
         $this->tui->requestRender();
     }
 
@@ -4071,16 +4071,16 @@ final class InteractiveMode
     public function sayNewVersion(string $version): void
     {
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Rule($this->palette->of('warning')));
+        $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('warning', $text)));
         $this->chat->addChild(new Text(
-            $this->palette->fg('warning', Style::bold('Update Available')) . "\n\n"
-            . $this->palette->fg('muted', "New version {$version} is available. Run ")
-            . $this->palette->fg('accent', UpdateCheck::COMMAND) . "\n"
-            . $this->palette->fg('muted', 'Changelog: https://pigagent.dev/changelog'),
+            Themes::theme()->fg('warning', Style::bold('Update Available')) . "\n\n"
+            . Themes::theme()->fg('muted', "New version {$version} is available. Run ")
+            . Themes::theme()->fg('accent', UpdateCheck::COMMAND) . "\n"
+            . Themes::theme()->fg('muted', 'Changelog: https://pigagent.dev/changelog'),
             1,
             0,
         ));
-        $this->chat->addChild(new Rule($this->palette->of('warning')));
+        $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('warning', $text)));
         $this->tui->requestRender();
     }
 
@@ -4098,84 +4098,107 @@ final class InteractiveMode
         $packageLines = implode("\n", array_map(static fn (string $pkg): string => "- {$pkg}", $packages));
 
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Rule($this->palette->of('warning')));
+        $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('warning', $text)));
         $this->chat->addChild(new Text(
-            $this->palette->fg('warning', Style::bold('Package Updates Available')) . "\n\n"
-            . $this->palette->fg('muted', 'Package updates are available. Run ')
-            . $this->palette->fg('accent', 'pig update --extensions') . "\n\n"
-            . $this->palette->fg('muted', "Packages:\n")
+            Themes::theme()->fg('warning', Style::bold('Package Updates Available')) . "\n\n"
+            . Themes::theme()->fg('muted', 'Package updates are available. Run ')
+            . Themes::theme()->fg('accent', 'pig update --extensions') . "\n\n"
+            . Themes::theme()->fg('muted', "Packages:\n")
             . $packageLines,
             1,
             0,
         ));
-        $this->chat->addChild(new Rule($this->palette->of('warning')));
+        $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('warning', $text)));
         $this->tui->requestRender();
     }
 
+    /**
+     * `/theme <name>` switches to a theme and saves it; `/theme` alone opens the picker.
+     */
     private function handleThemeCommand(string $arg = ''): void
     {
-        $names = Palette::names($this->cwd);
+        if ($arg === '') {
+            $this->showThemeSelector();
 
-        if ($arg !== '') {
-            if (in_array($arg, $names, true)) {
-                $this->useTheme($arg);
-                return;
-            }
-
-            $this->sayError("No theme called '{$arg}'. Available themes: " . implode(', ', $names) . '.');
             return;
         }
 
-        // Without arguments: cycle through available themes in order
-        $currentIndex = array_search($this->theme, $names, true);
-        $nextIndex = ($currentIndex !== false && $currentIndex + 1 < count($names)) ? $currentIndex + 1 : 0;
-        $this->useTheme($names[$nextIndex]);
+        $names = $this->availableThemes();
+        if (!in_array($arg, $names, true)) {
+            $this->sayError("No theme called '{$arg}'. Available themes: " . implode(', ', $names) . '.');
+
+            return;
+        }
+
+        $this->useTheme($arg);
     }
 
+    /**
+     * Upstream's theme selector: moving through the list previews each theme (`preview()`), enter
+     * keeps the one under the cursor, and escape puts back the theme that was on.
+     */
     private function showThemeSelector(): void
     {
-        $names = Palette::names($this->cwd);
+        $names = $this->availableThemes();
+        $current = $this->themeController->getThemeSelection();
         $items = [];
         $selectedIndex = 0;
 
         foreach ($names as $index => $name) {
-            $isCurrent = $name === $this->theme;
+            $isCurrent = $name === $current;
             if ($isCurrent) {
                 $selectedIndex = $index;
             }
-            $desc = match ($name) {
-                'dark' => 'Default dark theme (violet accent, balanced contrast)',
-                'light' => 'Clean light theme (violet accent for bright environments)',
-                'labra' => 'Cyberpunk dark olive & hot pink theme (from omarchy-labra)',
-                default => 'Custom theme',
-            };
-            $items[] = new SelectItem(
-                $name,
-                $name . ($isCurrent ? ' ·' : ''),
-                $desc,
-                $name,
-            );
+            $items[] = new SelectItem($name, $name . ($isCurrent ? ' ·' : ''), self::themeDescription($name));
         }
 
-        $picker = new SelectList($items, 8, $this->palette->selectListTheme());
+        $picker = new SelectList($items, 8, Themes::getSelectListTheme());
         $picker->setSelectedIndex($selectedIndex);
+        $picker->setSelectionChangeHandler(function (SelectItem $item): void {
+            $this->themeController->preview($item->value);
+        });
         $picker->setSelectHandler(function (SelectItem $item): void {
             $this->closePicker();
             $this->useTheme($item->value);
         });
-        $picker->setCancelHandler($this->closePicker(...));
+        $picker->setCancelHandler(function () use ($current): void {
+            $this->closePicker();
+            $this->themeController->preview($current ?? Themes::SYSTEM_THEME_NAME);
+        });
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text($this->palette->fg('muted', 'Pick a theme — enter to switch, esc to cancel'), 1, 0));
+        $this->overlay->addChild(new Text(Themes::theme()->fg('muted', 'Pick a theme — enter to switch, esc to cancel'), 1, 0));
         $this->overlay->addChild($picker);
         $this->tui->setFocus($picker);
         $this->tui->requestRender();
     }
 
-    private function switchTheme(): void
+    /**
+     * `Themes::getAvailableThemes()`, with the custom theme files it had to skip said in the transcript:
+     * upstream's resource loader reports those, and pig has no loader for themes.
+     *
+     * @return list<string>
+     */
+    private function availableThemes(): array
     {
-        $this->handleThemeCommand('');
+        $names = Themes::getAvailableThemes();
+        foreach (Themes::getCustomThemeErrors() as $problem) {
+            $this->sayWarning("Skipped theme {$problem}");
+        }
+
+        return $names;
+    }
+
+    private static function themeDescription(string $name): string
+    {
+        return match ($name) {
+            Themes::SYSTEM_THEME_NAME => "Generated from the terminal's own colours",
+            'dark' => 'Default dark theme',
+            'light' => 'Default light theme',
+            'labra' => 'Cyberpunk dark olive & hot pink theme (from omarchy-labra)',
+            default => 'Custom theme',
+        };
     }
 
     /**
@@ -4199,9 +4222,9 @@ final class InteractiveMode
             new SettingItem(
                 'theme',
                 'Theme',
-                $this->theme,
-                'Already-drawn output keeps the colours it was drawn with.',
-                values: Palette::names($this->cwd),
+                $this->themeController->getThemeSelection() ?? Themes::SYSTEM_THEME_NAME,
+                'The colours pig is drawn in. system follows the terminal.',
+                values: $this->availableThemes(),
             ),
         ];
 
@@ -4294,7 +4317,7 @@ final class InteractiveMode
             values: ['auto', ...array_map('strval', $wheelValues)],
         );
 
-        $list = new SettingsList($rows, 8, $this->palette->settingsListTheme());
+        $list = new SettingsList($rows, 8, Themes::getSettingsListTheme());
         $list->setChangeHandler(function (string $id, string $value) use ($list): void {
             if ($id === 'tuiMode') {
                 $this->useTuiMode($value, $list);
@@ -4302,18 +4325,13 @@ final class InteractiveMode
                 return;
             }
             $this->applySetting($id, $value);
-
-            // The theme is the one that changes how this very screen is painted, and the
-            // list holds the old palette's closures. Redrawing it from here would mean
-            // rebuilding it mid-keystroke, so the new colours arrive the next time it is
-            // opened — which is what `/theme` already says about the transcript.
             $list->setValue($id, $value);
         });
         $list->setCloseHandler($this->closePicker(...));
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text($this->palette->fg('muted', 'Settings — enter to change, esc when done'), 1, 0));
+        $this->overlay->addChild(new Text(Themes::theme()->fg('muted', 'Settings — enter to change, esc when done'), 1, 0));
         $this->overlay->addChild($list);
 
         $this->tui->setFocus($list);
@@ -4351,7 +4369,7 @@ final class InteractiveMode
             }
         }
 
-        $list = new SelectList($items, count($items), $this->palette->selectListTheme());
+        $list = new SelectList($items, count($items), Themes::getSelectListTheme());
         $list->setSelectedIndex($at);
         $list->setSelectHandler(static function (SelectItem $item) use ($done): void {
             $done($item->value);
@@ -4362,8 +4380,8 @@ final class InteractiveMode
 
         return new SettingsSubmenu(
             $list,
-            $this->palette->fg('accent', 'Thinking'),
-            $this->palette->fg('muted', '  Enter to select · Esc to go back'),
+            Themes::theme()->fg('accent', 'Thinking'),
+            Themes::theme()->fg('muted', '  Enter to select · Esc to go back'),
         );
     }
 
@@ -4444,37 +4462,35 @@ final class InteractiveMode
         $this->paintBorder();
     }
 
-    /** Split out of `switchTheme()` so `/settings` can name a theme rather than toggle. */
-    private function useTheme(string $wanted): void
+    /**
+     * Switch to a theme by name and save it — the picker, `/theme <name>`, the `/settings` row and an
+     * extension's `setTheme()`. Upstream's `themeController.setThemeName()` with the settings write.
+     * A theme that does not load is reported and not saved; the controller has fallen back to the
+     * system theme, as upstream's does.
+     */
+    private function useTheme(string $wanted): bool
     {
-        $this->theme = $wanted;
-        $this->palette = Palette::named($wanted, cwd: $this->cwd);
-        $this->settings->setTheme($wanted);
+        $result = $this->themeController->setThemeName($wanted);
+        if (!$result['success']) {
+            $this->sayError("Failed to load theme \"{$wanted}\": {$result['error']}\nFell back to the system theme.");
 
-        // Update banner text and colors
-        if ($this->banner !== null) {
-            $this->banner->setText($this->banner());
+            return false;
         }
+        $this->settings->setTheme($wanted);
+        $this->say("Theme: {$wanted}");
 
-        // Replay chat history so existing messages and tool blocks update to new theme
-        $this->chat->clear();
-        $this->replay();
+        return true;
+    }
 
-        // Update footer and editor with new palette
-        $this->footer->setPalette($this->palette);
+    /**
+     * The controller's `onChanged`: the theme was replaced. The components re-read the theme when the
+     * controller invalidates them; what is left is what this class baked itself — the banner and the
+     * editor's border.
+     */
+    private function onThemeChanged(): void
+    {
+        $this->banner?->setText($this->banner());
         $this->paintBorder();
-
-        $available = implode(', ', Palette::names($this->cwd));
-        $this->say("Theme: {$wanted} — already-drawn output keeps its colours (Available themes: {$available})");
-
-        // **Not forced**, which it was: nothing has overwritten this screen, so there is a previous
-        // frame to diff against and the lines whose colours changed are the only ones to rewrite.
-        // Forcing empties what the screen is believed to hold, and the renderer reads that as
-        // "first frame ever" — every line written with no clear, from wherever the cursor is, which
-        // is the bottom of the frame already there. The trap in CLAUDE.md about the forced render,
-        // third caller. `force` is for after something else owned the screen: coming back from
-        // `$VISUAL`, or from a suspend.
-        $this->tui->requestRender();
     }
 
     // ---- what the agent is doing ----------------------------------------------------------
@@ -4531,8 +4547,8 @@ final class InteractiveMode
 
         $this->working = new Loader(
             $this->tui,
-            $this->palette->of('accent'),
-            $this->palette->of('muted'),
+            static fn (string $text): string => Themes::theme()->fg('accent', $text),
+            static fn (string $text): string => Themes::theme()->fg('muted', $text),
             $message,
         );
 
@@ -4564,21 +4580,18 @@ final class InteractiveMode
                 $expandKey = $this->keybindings->display('app.tools.expand') ?: 'ctrl+o';
                 $this->chat->addChild(new SkillInvocationMessageComponent(
                     $skillBlock,
-                    $this->palette,
                     $this->expanded,
                     $expandKey,
                 ));
                 if ($skillBlock->userMessage !== null) {
                     $this->chat->addChild(new UserMessageComponent(
                         $skillBlock->userMessage,
-                        $this->palette,
                         $this->hooks?->markdownTransformers() ?? [],
                     ));
                 }
             } else {
                 $this->chat->addChild(new UserMessageComponent(
                     $text,
-                    $this->palette,
                     $this->hooks?->markdownTransformers() ?? [],
                 ));
             }
@@ -4590,7 +4603,6 @@ final class InteractiveMode
 
         if ($event->message instanceof AssistantMessage) {
             $this->streaming = new AssistantMessageComponent(
-                $this->palette,
                 $event->message,
                 $this->hideThinking,
                 $this->hooks?->markdownTransformers() ?? [],
@@ -4768,7 +4780,7 @@ final class InteractiveMode
         $this->hideLoader();
 
         if ($event->summary !== null) {
-            $this->chat->addChild(new CompactionComponent($event->summary, $this->palette, $this->expanded));
+            $this->chat->addChild(new CompactionComponent($event->summary, $this->expanded));
 
             return;
         }
@@ -4797,7 +4809,7 @@ final class InteractiveMode
 
         if ($renderer !== null) {
             try {
-                $drawn = $renderer($message, new RenderOptions($this->expanded), $this->palette);
+                $drawn = $renderer($message, new RenderOptions($this->expanded), Themes::theme());
             } catch (Throwable $problem) {
                 $this->sayWarning("The renderer for '{$message->customType}' failed: {$problem->getMessage()}");
                 $drawn = null;
@@ -4817,7 +4829,7 @@ final class InteractiveMode
             }
         }
 
-        $this->chat->addChild(new HookMessageComponent($message, $this->palette));
+        $this->chat->addChild(new HookMessageComponent($message));
     }
 
     /** @param array<string, mixed> $arguments */
@@ -4840,7 +4852,6 @@ final class InteractiveMode
         $tool = new ToolExecutionComponent(
             $name,
             $arguments,
-            $this->palette,
             $custom,
             function (string $problem) use ($name): void {
                 $this->sayWarning("tool {$name}: {$problem}");
@@ -4879,22 +4890,22 @@ final class InteractiveMode
         $this->pending->addChild(new Spacer(1));
 
         foreach ($steering as $message) {
-            $this->pending->addChild(new TruncatedText($this->palette->fg('dim', "Steering: {$message}"), 1, 0));
+            $this->pending->addChild(new TruncatedText(Themes::theme()->fg('dim', "Steering: {$message}"), 1, 0));
         }
 
         foreach ($followUp as $message) {
-            $this->pending->addChild(new TruncatedText($this->palette->fg('dim', "Follow-up: {$message}"), 1, 0));
+            $this->pending->addChild(new TruncatedText(Themes::theme()->fg('dim', "Follow-up: {$message}"), 1, 0));
         }
 
         $key = $this->keybindings->display('app.message.dequeue');
-        $this->pending->addChild(new TruncatedText($this->palette->fg('dim', "↳ {$key} to edit all queued messages"), 1, 0));
+        $this->pending->addChild(new TruncatedText(Themes::theme()->fg('dim', "↳ {$key} to edit all queued messages"), 1, 0));
     }
 
     /** A note in the transcript — what a key did, or why something did not happen. */
     private function say(string $message): void
     {
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Text($this->palette->fg('dim', $message), 1, 0));
+        $this->chat->addChild(new Text(Themes::theme()->fg('dim', $message), 1, 0));
         $this->tui->requestRender();
     }
 
@@ -4909,7 +4920,7 @@ final class InteractiveMode
     private function sayError(string $message): void
     {
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Text($this->palette->fg('error', "Error: {$message}"), 1, 0));
+        $this->chat->addChild(new Text(Themes::theme()->fg('error', "Error: {$message}"), 1, 0));
         $this->tui->requestRender();
     }
 
@@ -4945,7 +4956,7 @@ final class InteractiveMode
     private function sayWarning(string $message): void
     {
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Text($this->palette->fg('warning', "Warning: {$message}"), 1, 0));
+        $this->chat->addChild(new Text(Themes::theme()->fg('warning', "Warning: {$message}"), 1, 0));
         $this->tui->requestRender();
     }
 

@@ -203,6 +203,16 @@ final class TerminalImage
         return self::$cachedCapabilities;
     }
 
+    /**
+     * Upstream's `getTerminalColorMode()`: how many colors theme escapes may use.
+     *
+     * @return 'truecolor'|'256color' upstream's `TerminalColorMode` (see `Colors`)
+     */
+    public static function getTerminalColorMode(?TerminalCapabilities $capabilities = null): string
+    {
+        return ($capabilities ?? self::getCapabilities())->trueColor ? 'truecolor' : '256color';
+    }
+
     public static function resetCapabilitiesCache(): void
     {
         self::$cachedCapabilities = null;

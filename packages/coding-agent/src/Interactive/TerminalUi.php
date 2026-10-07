@@ -9,7 +9,8 @@ use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\CodingAgent\Hooks\HookUi;
 use Pig\CodingAgent\Keybindings;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Theme;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Components\Editor;
 use Pig\Tui\Components\Input;
 use Pig\Tui\Components\SelectItem;
@@ -28,8 +29,8 @@ use Throwable;
  * Upstream builds this as an object literal closing over the interactive mode's
  * internals. Here it takes them: the screen to focus, the two containers it draws into (the
  * transcript, and the overlay that every focused component shares), the editor it can read
- * and write, and a closure for the current palette — a closure because `/theme` replaces it
- * and a dialog opened afterwards should be the new colour.
+ * and write. Colours come from the global theme (`Themes::theme()`), read when each thing is drawn,
+ * so a dialog opened after a theme change is drawn in the new one.
  *
  * **How blocking works.** A hook's handler runs inside the agent's fiber. `select()`
  * draws a list, gives it focus, and awaits a `Deferred`; the fiber suspends there and the
@@ -100,7 +101,6 @@ final class TerminalUi implements HookUi
     }
 
     /**
-     * @param Closure(): Palette          $palette        the current one, not the one at startup
      * @param Closure(string): ?string|null $externalEditor `$VISUAL` on some text, for Ctrl+G
      *        inside the dialog; null when the host cannot hand the terminal over
      */
@@ -113,7 +113,6 @@ final class TerminalUi implements HookUi
         private readonly Container $overlay,
         private readonly CustomEditor $editor,
         private readonly FooterComponent $footer,
-        private readonly Closure $palette,
         private readonly ?Closure $externalEditor = null,
         private readonly Keybindings $keybindings = new Keybindings(),
         private readonly ?Container $widgetsAbove = null,
@@ -126,7 +125,6 @@ final class TerminalUi implements HookUi
         private readonly ?Closure $getToolsExpanded = null,
         private readonly ?Closure $setToolsExpanded = null,
         private readonly ?Closure $onTheme = null,
-        private readonly ?string $cwd = null,
     ) {
     }
 
@@ -141,7 +139,7 @@ final class TerminalUi implements HookUi
 
         $items = array_map(static fn (string $option): SelectItem => new SelectItem($option), $options);
 
-        return $this->ask($title, new SelectList($items, 8, $this->palette()->selectListTheme()));
+        return $this->ask($title, new SelectList($items, 8, Themes::getSelectListTheme()));
     }
 
     /**
@@ -161,7 +159,7 @@ final class TerminalUi implements HookUi
         // mostly answered yes, so Enter alone does that. Escape is still the no, so the safe
         // direction has not moved — it is one key further from the cursor.
         $items = [new SelectItem('yes', 'Yes'), new SelectItem('no', 'No')];
-        $list = new SelectList($items, 2, $this->palette()->selectListTheme());
+        $list = new SelectList($items, 2, Themes::getSelectListTheme());
 
         return $this->ask(
             trim($message) === '' ? $title : $title . ' — ' . $message,
@@ -232,7 +230,7 @@ final class TerminalUi implements HookUi
 
         $this->busy = true;
         $answer = new Deferred();
-        $field = new CustomEditor(new Editor($this->palette()->editorTheme()), $this->keybindings);
+        $field = new CustomEditor(new Editor(Themes::getEditorTheme()), $this->keybindings);
         $field->setText($prefill);
 
         $field->setSubmitHandler(function (string $value) use ($answer): void {
@@ -310,7 +308,7 @@ final class TerminalUi implements HookUi
         };
 
         try {
-            $component = $factory($this->tui, $this->palette(), $done);
+            $component = $factory($this->tui, $this->theme(), $done);
         } catch (Throwable $error) {
             // The dialog never opened, so the turn is not parked — but `busy` was set and
             // has to come back off, or nothing could ever ask anything again.
@@ -333,8 +331,6 @@ final class TerminalUi implements HookUi
     #[\Override]
     public function notify(string $message, string $level = 'info'): void
     {
-        $palette = $this->palette();
-
         [$colour, $prefix] = match ($level) {
             'error' => ['error', 'Error: '],
             'warning' => ['warning', 'Warning: '],
@@ -342,7 +338,7 @@ final class TerminalUi implements HookUi
         };
 
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Text($palette->fg($colour, $prefix . $message), 1, 0));
+        $this->chat->addChild(new Text(Themes::theme()->fg($colour, $prefix . $message), 1, 0));
         $this->tui->requestRender();
     }
 
@@ -367,9 +363,9 @@ final class TerminalUi implements HookUi
     }
 
     #[\Override]
-    public function palette(): Palette
+    public function theme(): Theme
     {
-        return ($this->palette)();
+        return Themes::theme();
     }
 
     #[\Override]
@@ -454,7 +450,7 @@ final class TerminalUi implements HookUi
             if (is_array($content)) {
                 $target->addChild(new Text(implode("\n", $content), 0, 0));
             } elseif ($content instanceof Closure) {
-                $comp = $content($this->tui, $this->palette());
+                $comp = $content($this->tui, $this->theme());
                 if ($comp instanceof Component) {
                     $target->addChild($comp);
                 }
@@ -467,7 +463,7 @@ final class TerminalUi implements HookUi
     {
         $this->customHeader?->clear();
         if ($factory !== null) {
-            $comp = $factory($this->tui, $this->palette());
+            $comp = $factory($this->tui, $this->theme());
             if ($comp instanceof Component) {
                 $this->customHeader?->addChild($comp);
             }
@@ -480,7 +476,7 @@ final class TerminalUi implements HookUi
     {
         $this->customFooter?->clear();
         if ($factory !== null) {
-            $comp = $factory($this->tui, $this->palette());
+            $comp = $factory($this->tui, $this->theme());
             if ($comp instanceof Component) {
                 $this->customFooter?->addChild($comp);
             }
@@ -491,17 +487,13 @@ final class TerminalUi implements HookUi
     #[\Override]
     public function getAllThemes(): array
     {
-        return Palette::names($this->cwd);
+        return Themes::getAvailableThemes();
     }
 
     #[\Override]
-    public function getTheme(string $name): ?Palette
+    public function getTheme(string $name): ?Theme
     {
-        try {
-            return Palette::named($name, cwd: $this->cwd);
-        } catch (Throwable) {
-            return null;
-        }
+        return Themes::getThemeByName($name);
     }
 
     #[\Override]
@@ -588,13 +580,13 @@ final class TerminalUi implements HookUi
         // An empty title draws nothing rather than a blank line: `custom()` has none, and
         // a hook that wanted one drew it itself.
         if ($title !== '') {
-            $this->overlay->addChild(new Text($this->palette()->fg('muted', $title), 1, 0));
+            $this->overlay->addChild(new Text(Themes::theme()->fg('muted', $title), 1, 0));
         }
 
         $this->overlay->addChild($component);
 
         if ($hint !== '') {
-            $this->overlay->addChild(new Text($this->palette()->fg('dim', $hint), 1, 0));
+            $this->overlay->addChild(new Text(Themes::theme()->fg('dim', $hint), 1, 0));
         }
 
         $this->tui->setFocus($component);

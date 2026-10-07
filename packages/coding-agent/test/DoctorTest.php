@@ -12,10 +12,23 @@ use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Doctor\Doctor;
 use Pig\CodingAgent\Doctor\DoctorReport;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Theme\Palette;
 
 final class DoctorTest extends TestCase
 {
+    use GlobalThemeFixture;
+
+    #[\Override]
+    protected function setUp(): void
+    {
+        $this->setUpGlobalTheme();
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        $this->tearDownGlobalTheme();
+    }
+
     private function session(): AgentSession
     {
         $agent = new Agent(new AgentOptions(apiKey: 'test-key'));
@@ -66,8 +79,7 @@ final class DoctorTest extends TestCase
         $auth = Auth::inMemory();
         $report = Doctor::inspect($session, $auth);
 
-        $palette = Palette::dark(true);
-        $output = Doctor::renderTui($report, $palette);
+        $output = Doctor::renderTui($report);
 
         $this->assertStringContainsString('[1. PHP Runtime & Extensions]', $output);
         $this->assertStringContainsString('[2. External Binaries & Tooling]', $output);

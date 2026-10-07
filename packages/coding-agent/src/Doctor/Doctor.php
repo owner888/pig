@@ -7,7 +7,7 @@ namespace Pig\CodingAgent\Doctor;
 use Pig\Ai\Http\HttpClient;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\ExternalTool;
 use Pig\Tui\Env;
 use Pig\Tui\Process;
@@ -151,74 +151,74 @@ final class Doctor
         );
     }
 
-    public static function renderTui(DoctorReport $report, Palette $palette): string
+    public static function renderTui(DoctorReport $report): string
     {
-        $tick = $palette->fg('success', '✓');
-        $cross = $palette->fg('error', '✗');
-        $warn = $palette->fg('warning', '!');
+        $tick = Themes::theme()->fg('success', '✓');
+        $cross = Themes::theme()->fg('error', '✗');
+        $warn = Themes::theme()->fg('warning', '!');
 
         $lines = [];
 
         // 1. PHP Runtime
-        $lines[] = $palette->fg('accent', Style::bold('[1. PHP Runtime & Extensions]'));
+        $lines[] = Themes::theme()->fg('accent', Style::bold('[1. PHP Runtime & Extensions]'));
         $phpMark = $report->php['ok'] ? $tick : $cross;
-        $lines[] = "  {$phpMark} PHP {$report->php['version']} " . ($report->php['ok'] ? $palette->fg('dim', '(>= 8.3 required)') : $palette->fg('error', '(PHP >= 8.3 required)'));
+        $lines[] = "  {$phpMark} PHP {$report->php['version']} " . ($report->php['ok'] ? Themes::theme()->fg('dim', '(>= 8.3 required)') : Themes::theme()->fg('error', '(PHP >= 8.3 required)'));
 
         foreach ($report->php['extensions'] as $ext => $loaded) {
             $m = $loaded ? $tick : $cross;
-            $note = $loaded ? $palette->fg('dim', 'loaded') : $palette->fg('error', 'missing');
+            $note = $loaded ? Themes::theme()->fg('dim', 'loaded') : Themes::theme()->fg('error', 'missing');
             $lines[] = "  {$m} {$ext} {$note}";
         }
 
         $lines[] = '';
 
         // 2. Binaries
-        $lines[] = $palette->fg('accent', Style::bold('[2. External Binaries & Tooling]'));
+        $lines[] = Themes::theme()->fg('accent', Style::bold('[2. External Binaries & Tooling]'));
         $sttyMark = $report->binaries['stty'] !== null ? $tick : $cross;
-        $lines[] = "  {$sttyMark} stty: " . ($report->binaries['stty'] ?? $palette->fg('error', 'missing (required for TUI)'));
+        $lines[] = "  {$sttyMark} stty: " . ($report->binaries['stty'] ?? Themes::theme()->fg('error', 'missing (required for TUI)'));
 
         $gitMark = $report->binaries['git'] !== null ? $tick : $warn;
-        $lines[] = "  {$gitMark} git: " . ($report->binaries['git'] ?? $palette->fg('warning', 'not in PATH'));
+        $lines[] = "  {$gitMark} git: " . ($report->binaries['git'] ?? Themes::theme()->fg('warning', 'not in PATH'));
 
         $fdMark = $report->binaries['fd'] !== null ? $tick : $warn;
-        $lines[] = "  {$fdMark} fd: " . ($report->binaries['fd'] ?? $palette->fg('warning', 'missing (will auto-download on use)'));
+        $lines[] = "  {$fdMark} fd: " . ($report->binaries['fd'] ?? Themes::theme()->fg('warning', 'missing (will auto-download on use)'));
 
         $rgMark = $report->binaries['rg'] !== null ? $tick : $warn;
-        $lines[] = "  {$rgMark} ripgrep: " . ($report->binaries['rg'] ?? $palette->fg('warning', 'missing (will auto-download on use)'));
+        $lines[] = "  {$rgMark} ripgrep: " . ($report->binaries['rg'] ?? Themes::theme()->fg('warning', 'missing (will auto-download on use)'));
 
         $clipTextMark = $report->binaries['clipboardText'] !== null ? $tick : $warn;
-        $lines[] = "  {$clipTextMark} text clipboard: " . ($report->binaries['clipboardText'] ?? $palette->fg('warning', 'none detected'));
+        $lines[] = "  {$clipTextMark} text clipboard: " . ($report->binaries['clipboardText'] ?? Themes::theme()->fg('warning', 'none detected'));
 
         $clipImgMark = $report->binaries['clipboardImage'] !== null ? $tick : $warn;
-        $lines[] = "  {$clipImgMark} image clipboard: " . ($report->binaries['clipboardImage'] ?? $palette->fg('warning', 'none detected'));
+        $lines[] = "  {$clipImgMark} image clipboard: " . ($report->binaries['clipboardImage'] ?? Themes::theme()->fg('warning', 'none detected'));
 
         $lines[] = '';
 
         // 3. Authentication & Providers
-        $lines[] = $palette->fg('accent', Style::bold('[3. Model Providers & Credentials]'));
+        $lines[] = Themes::theme()->fg('accent', Style::bold('[3. Model Providers & Credentials]'));
         $authMark = $report->auth['readable'] ? $tick : $warn;
-        $authPathStr = $report->auth['path'] ? $palette->fg('dim', $report->auth['path']) : $palette->fg('warning', 'in-memory / no file');
+        $authPathStr = $report->auth['path'] ? Themes::theme()->fg('dim', $report->auth['path']) : Themes::theme()->fg('warning', 'in-memory / no file');
         $lines[] = "  {$authMark} auth file: {$authPathStr}";
 
         if ($report->auth['providers'] === []) {
             $lines[] = "  {$warn} No authorized providers configured. Run /login or set API keys.";
         } else {
             foreach ($report->auth['providers'] as $p) {
-                $star = $p['active'] ? $palette->fg('accent', '*') : ' ';
-                $lines[] = "  {$tick} {$star} {$p['provider']} [{$p['type']}]: " . $palette->fg('dim', $p['detail']);
+                $star = $p['active'] ? Themes::theme()->fg('accent', '*') : ' ';
+                $lines[] = "  {$tick} {$star} {$p['provider']} [{$p['type']}]: " . Themes::theme()->fg('dim', $p['detail']);
             }
         }
 
         if ($report->auth['antigravityAccounts'] > 0) {
-            $lines[] = "    " . $palette->fg('dim', "Antigravity linked accounts: {$report->auth['antigravityAccounts']} (auto-failover ready)");
+            $lines[] = "    " . Themes::theme()->fg('dim', "Antigravity linked accounts: {$report->auth['antigravityAccounts']} (auto-failover ready)");
         }
 
         $lines[] = '';
 
         // 4. Network & Proxy
-        $lines[] = $palette->fg('accent', Style::bold('[4. Network & Proxy]'));
+        $lines[] = Themes::theme()->fg('accent', Style::bold('[4. Network & Proxy]'));
         if ($report->proxy['enabled']) {
-            $lines[] = "  {$tick} Proxy active: " . $palette->fg('accent', (string) $report->proxy['url']);
+            $lines[] = "  {$tick} Proxy active: " . Themes::theme()->fg('accent', (string) $report->proxy['url']);
         } else {
             $lines[] = "  {$tick} Direct connection (no proxy configured)";
         }
@@ -226,20 +226,20 @@ final class Doctor
         $lines[] = '';
 
         // 5. Active Session
-        $lines[] = $palette->fg('accent', Style::bold('[5. Active Session State]'));
+        $lines[] = Themes::theme()->fg('accent', Style::bold('[5. Active Session State]'));
         $branchInfo = $report->session['gitBranch'] !== null
-            ? $report->session['gitBranch'] . ($report->session['gitDirty'] ? $palette->fg('warning', ' *') : '')
+            ? $report->session['gitBranch'] . ($report->session['gitDirty'] ? Themes::theme()->fg('warning', ' *') : '')
             : 'not a git repo';
 
-        $lines[] = "  Directory: " . $palette->fg('dim', $report->session['cwd']) . " ({$branchInfo})";
-        $lines[] = "  Model:     " . $palette->fg('accent', "({$report->session['provider']}) {$report->session['model']} • {$report->session['thinkingLevel']}");
+        $lines[] = "  Directory: " . Themes::theme()->fg('dim', $report->session['cwd']) . " ({$branchInfo})";
+        $lines[] = "  Model:     " . Themes::theme()->fg('accent', "({$report->session['provider']}) {$report->session['model']} • {$report->session['thinkingLevel']}");
 
         $fileSizeStr = $report->session['sessionSize'] !== null
             ? sprintf(' (%.1f KB, %d messages)', $report->session['sessionSize'] / 1024, $report->session['messageCount'])
             : " ({$report->session['messageCount']} messages)";
 
         $sessionFile = $report->session['sessionFile'] ? basename($report->session['sessionFile']) : 'unsaved';
-        $lines[] = "  Session:   " . $palette->fg('dim', $sessionFile . $fileSizeStr);
+        $lines[] = "  Session:   " . Themes::theme()->fg('dim', $sessionFile . $fileSizeStr);
 
         return implode("\n", $lines);
     }

@@ -7,7 +7,7 @@ namespace Pig\CodingAgent\Cli;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\ProjectTrust;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\TrustChoice;
 use Pig\Tui\Components\SelectItem;
 use Pig\Tui\Components\SelectList;
@@ -34,7 +34,7 @@ final class TrustPrompt
     /**
      * @param list<TrustChoice> $choices
      */
-    public static function ask(string $cwd, array $choices, Palette $palette, ?Terminal $terminal = null): ?TrustChoice
+    public static function ask(string $cwd, array $choices, ?Terminal $terminal = null): ?TrustChoice
     {
         $tui = new TuiMainScreen($terminal ?? new ProcessTerminal());
         $chosen = null;
@@ -47,7 +47,7 @@ final class TrustPrompt
             $items[] = new SelectItem((string) $index, $choice->label);
         }
 
-        $list = new SelectList($items, count($items), $palette->selectListTheme());
+        $list = new SelectList($items, count($items), Themes::getSelectListTheme());
 
         $list->setSelectHandler(static function (SelectItem $item) use (&$chosen, $choices): void {
             $chosen = $choices[(int) $item->value];
@@ -61,13 +61,13 @@ final class TrustPrompt
         $tui->addChild(new Spacer(1));
 
         foreach (explode("\n", ProjectTrust::prompt($cwd)) as $line) {
-            $tui->addChild(new Text($line === '' ? '' : $palette->fg('warning', $line), 1, 0));
+            $tui->addChild(new Text($line === '' ? '' : Themes::theme()->fg('warning', $line), 1, 0));
         }
 
         $tui->addChild(new Spacer(1));
         $tui->addChild($list);
         $tui->addChild(new Spacer(1));
-        $tui->addChild(new Text($palette->fg('muted', 'enter to choose · esc for this session only, untrusted'), 1, 0));
+        $tui->addChild(new Text(Themes::theme()->fg('muted', 'enter to choose · esc for this session only, untrusted'), 1, 0));
         $tui->setFocus($list);
 
         Async::run(static function () use ($tui): void {

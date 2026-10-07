@@ -19,7 +19,6 @@ use Pig\CodingAgent\Interactive\TreeList;
 use Pig\CodingAgent\Session\CustomEntry;
 use Pig\CodingAgent\Session\Label;
 use Pig\CodingAgent\Session\ModelChange;
-use Pig\CodingAgent\Theme\Palette;
 
 /**
  * The tree `/tree` draws, and the keys that move around it.
@@ -30,6 +29,20 @@ use Pig\CodingAgent\Theme\Palette;
  */
 final class TreeListTest extends TestCase
 {
+    use GlobalThemeFixture;
+
+    #[\Override]
+    protected function setUp(): void
+    {
+        $this->setUpGlobalTheme();
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        $this->tearDownGlobalTheme();
+    }
+
     private const string UP = "\e[A";
     private const string DOWN = "\e[B";
     private const string LEFT = "\e[D";
@@ -62,7 +75,7 @@ final class TreeListTest extends TestCase
     /** @param list<array<string, mixed>> $tree */
     private static function list(array $tree, ?string $leaf, int $maxVisible = 20): TreeList
     {
-        return new TreeList($tree, $leaf, $maxVisible, Palette::dark(false));
+        return new TreeList($tree, $leaf, $maxVisible);
     }
 
     private static function plain(TreeList $list, int $width = 120): string

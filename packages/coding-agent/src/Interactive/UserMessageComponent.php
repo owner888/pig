@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Interactive;
 
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\Shell;
 use Pig\Tui\Components\DefaultTextStyle;
 use Pig\Tui\Components\Markdown;
@@ -35,7 +35,7 @@ final class UserMessageComponent extends Container
     /**
      * @param list<Closure(string, array{role: string, isStreaming: bool}): string> $transformers
      */
-    public function __construct(string $text, Palette $palette, array $transformers = [])
+    public function __construct(string $text, array $transformers = [])
     {
         foreach ($transformers as $transformer) {
             $text = $transformer($text, ['role' => 'user', 'isStreaming' => false]);
@@ -46,10 +46,10 @@ final class UserMessageComponent extends Container
             Shell::sanitize($text),
             1,
             1,
-            $palette->markdownTheme(),
+            Themes::getMarkdownTheme(),
             new DefaultTextStyle(
-                colour: $palette->of('userMessageText'),
-                background: $palette->of('userMessageBg'),
+                colour: static fn (string $text): string => Themes::theme()->fg('userMessageText', $text),
+                background: static fn (string $text): string => Themes::theme()->bg('userMessageBg', $text),
             ),
         ));
     }

@@ -19,7 +19,7 @@ use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionManager;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 
 /**
  * A conversation as one HTML file that opens anywhere.
@@ -51,7 +51,7 @@ final class HtmlExport
      *
      * @throws AgentError when there is nothing to export, or it cannot be written
      */
-    public static function write(SessionManager $session, string $path, string $theme = 'dark'): string
+    public static function write(SessionManager $session, string $path, ?string $theme = null): string
     {
         $messages = $session->messages();
 
@@ -88,7 +88,7 @@ final class HtmlExport
         string $session,
         ?string $path = null,
         string $directory = '.',
-        string $theme = 'dark',
+        ?string $theme = null,
     ): string {
         if (!is_file($session)) {
             throw new AgentError("No session file at {$session}");
@@ -111,8 +111,10 @@ final class HtmlExport
      * The whole document.
      *
      * @param list<mixed> $messages
+     * @param string|null $theme the theme whose colours the page takes; null for the current one, as upstream's
+     *        `getResolvedThemeColors()` takes it
      */
-    public static function render(array $messages, string $cwd, string $theme = 'dark'): string
+    public static function render(array $messages, string $cwd, ?string $theme = null): string
     {
         $title = 'pig — ' . self::opening($messages);
         $body = '';
@@ -123,7 +125,7 @@ final class HtmlExport
         }
 
         return '<!DOCTYPE html>' . "\n"
-            . '<html lang="en" data-theme="' . MarkdownHtml::escape($theme) . '">' . "\n"
+            . '<html lang="en" data-theme="' . (Themes::isLightTheme($theme) ? 'light' : 'dark') . '">' . "\n"
             . "<head>\n"
             . '<meta charset="utf-8">' . "\n"
             . '<meta name="viewport" content="width=device-width, initial-scale=1">' . "\n"
@@ -377,33 +379,36 @@ final class HtmlExport
     }
 
     /**
-     * The stylesheet.
-     *
-     * Written out rather than kept in a file beside the class: an export is one file by
-     * definition, and a template that has to be found at run time is one more thing that
-     * can be missing from an installation.
-     */
-    /**
      * The stylesheet, with the theme's own colours in it.
      *
-     * The two page palettes are written out because the export is a document and not a
-     * terminal — a card needs a border and a shadow that no terminal theme has an opinion
-     * about. **The syntax colours are not**: those are the theme's, and they used to be six
-     * hand-written hex values belonging to neither of pig's two palettes. What that cost is
-     * visible the moment somebody on the light theme exports anything with code in it — pale
-     * blue keywords and mauve numbers on white — and on the dark theme it meant an export that
-     * did not match the terminal the person had just been reading.
+     * The page layout is pig's, written out because the export is a document and not a terminal — a
+     * card needs a border and a shadow that no terminal theme has an opinion about. The colours that
+     * are the theme's come from it as upstream's export takes them: the syntax colours from
+     * `Themes::getResolvedThemeColors()`, light or dark from `isLightTheme()`, and the page and card
+     * backgrounds from the theme's `export` section (`getThemeExportColors()`) when it has one.
      *
      * `Highlight` writes `<span class="hl-keyword">` for the terminal's sake as well, so the
      * class names are the seam and this is the one place that has to know what they mean.
      */
-    private static function style(string $theme): string
+    private static function style(?string $theme): string
     {
-        $palette = Palette::named(in_array($theme, Palette::names(), true) ? $theme : 'dark', false);
+        $colors = Themes::getResolvedThemeColors($theme);
         $syntax = '';
 
         foreach (self::SYNTAX as $class => $colour) {
-            $syntax .= "        .hl-{$class} { color: " . $palette->hex($colour) . "; }\n";
+            $syntax .= "        .hl-{$class} { color: " . $colors[$colour] . "; }\n";
+        }
+
+        $exportColors = Themes::getThemeExportColors($theme);
+        $overrides = '';
+        foreach (['pageBg' => '--bg', 'cardBg' => '--card'] as $key => $variable) {
+            $value = $exportColors[$key] ?? null;
+            if ($value !== null) {
+                $overrides .= "{$variable}: {$value}; ";
+            }
+        }
+        if ($overrides !== '') {
+            $syntax .= '        :root, [data-theme="light"] { ' . $overrides . "}\n";
         }
 
         return <<<'CSS'
@@ -445,7 +450,7 @@ final class HtmlExport
     }
 
     /**
-     * The highlighter's class names, and which palette colour each one is.
+     * The highlighter's class names, and which theme colour each one is.
      *
      * `Highlight` paints `syntaxOperator` and `syntaxPunctuation` as plain text — it has no
      * category for either — so neither has a class here, which is the same shortfall stated in

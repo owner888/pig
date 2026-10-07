@@ -22,8 +22,9 @@ use Pig\CodingAgent\Hooks\NoUi;
 use Pig\CodingAgent\Interactive\CustomEditor;
 use Pig\CodingAgent\Interactive\FooterComponent;
 use Pig\CodingAgent\Interactive\TerminalUi;
+use Pig\CodingAgent\Theme\Theme;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Session\AgentSession;
-use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Interactive\BorderedLoader;
 use Pig\Tui\Ansi;
 use Pig\Tui\Components\Editor;
@@ -46,6 +47,8 @@ use Pig\Tui\TuiError;
  */
 final class HookUiTest extends TestCase
 {
+    use GlobalThemeFixture;
+
     private FakeTerminal $terminal;
 
     private TuiMainScreen $tui;
@@ -58,18 +61,17 @@ final class HookUiTest extends TestCase
 
     private TerminalUi $ui;
 
-    private Palette $palette;
 
     #[\Override]
     protected function setUp(): void
     {
+        $this->setUpGlobalTheme();
         Loop::reset();
-        $this->palette = Palette::dark(true);
         $this->terminal = new FakeTerminal(80, 24);
         $this->tui = new TuiMainScreen($this->terminal);
         $this->chat = new Container();
         $this->overlay = new Container();
-        $this->editor = new CustomEditor(new Editor($this->palette->editorTheme()));
+        $this->editor = new CustomEditor(new Editor(Themes::getEditorTheme()));
 
         $this->tui->addChild($this->chat);
         $this->tui->addChild($this->overlay);
@@ -85,10 +87,8 @@ final class HookUiTest extends TestCase
             // what the UI writes into it, and `FooterTest` covers how that renders.
             new FooterComponent(
                 new AgentSession(new Agent(new AgentOptions()), sys_get_temp_dir()),
-                $this->palette,
                 sys_get_temp_dir(),
             ),
-            fn (): Palette => $this->palette,
         );
 
         // Started, because until it is the terminal does not route what is typed — and
@@ -99,6 +99,7 @@ final class HookUiTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
+        $this->tearDownGlobalTheme();
         $this->tui->stop();
     }
 
@@ -189,10 +190,8 @@ final class HookUiTest extends TestCase
             $this->editor,
             new FooterComponent(
                 new AgentSession(new Agent(new AgentOptions()), sys_get_temp_dir()),
-                $this->palette,
                 sys_get_temp_dir(),
             ),
-            fn (): Palette => $this->palette,
             static fn (string $text): string => $text,
         );
 
@@ -536,11 +535,11 @@ final class HookUiTest extends TestCase
         $answer = null;
 
         Async::spawn(function () use (&$answer): void {
-            $answer = $this->ui->custom(function (TUI $tui, Palette $palette, callable $done) {
+            $answer = $this->ui->custom(function (TUI $tui, Theme $theme, callable $done) {
                 $list = new SelectList(
                     [new SelectItem('7', 'seven'), new SelectItem('8', 'eight')],
                     4,
-                    $palette->selectListTheme(),
+                    Themes::getSelectListTheme(),
                 );
 
                 $list->setSelectHandler(static fn (SelectItem $item) => $done((int) $item->value));
@@ -564,8 +563,8 @@ final class HookUiTest extends TestCase
     public function testACustomDialogIsTakenDownWhenItIsDone(): void
     {
         Async::spawn(function (): void {
-            $this->ui->custom(function (TUI $tui, Palette $palette, callable $done) {
-                $list = new SelectList([new SelectItem('a', 'only')], 2, $palette->selectListTheme());
+            $this->ui->custom(function (TUI $tui, Theme $theme, callable $done) {
+                $list = new SelectList([new SelectItem('a', 'only')], 2, Themes::getSelectListTheme());
                 $list->setSelectHandler(static fn () => $done('a'));
 
                 return $list;
@@ -588,8 +587,8 @@ final class HookUiTest extends TestCase
         $answer = 'not asked yet';
 
         Async::spawn(function () use (&$answer): void {
-            $answer = $this->ui->custom(function (TUI $tui, Palette $palette, callable $done) {
-                $list = new SelectList([new SelectItem('a', 'only')], 2, $palette->selectListTheme());
+            $answer = $this->ui->custom(function (TUI $tui, Theme $theme, callable $done) {
+                $list = new SelectList([new SelectItem('a', 'only')], 2, Themes::getSelectListTheme());
                 $list->setSelectHandler(static function () use ($done): void {
                     $done('first');
                     $done('second');
@@ -801,13 +800,14 @@ final class HookUiTest extends TestCase
         $this->assertSame('a prompt someone else wrote', $this->editor->text());
     }
 
-    public function testThePaletteIsTheOneOnNow(): void
+    public function testTheThemeIsTheOneOnNow(): void
     {
-        $this->assertSame($this->palette, $this->ui->palette());
+        $this->assertSame(Themes::theme(), $this->ui->theme());
 
-        $this->palette = Palette::named('light', true);
+        Themes::setTheme('light');
 
-        $this->assertSame($this->palette, $this->ui->palette());
+        $this->assertSame(Themes::theme(), $this->ui->theme());
+        $this->assertSame('light', $this->ui->theme()->name);
     }
 
     // ---- no terminal -------------------------------------------------------------------
@@ -819,7 +819,7 @@ final class HookUiTest extends TestCase
         $this->assertNull($ui->select('Which one?', ['a']));
         $this->assertNull($ui->input('Anything?'));
         $this->assertSame('', $ui->getEditorText());
-        $this->assertInstanceOf(Palette::class, $ui->palette());
+        $this->assertSame(Themes::theme(), $ui->theme());
     }
 
     /** A guard nobody can answer has not been answered yes. */
@@ -920,10 +920,8 @@ final class HookUiTest extends TestCase
             $this->editor,
             new FooterComponent(
                 new AgentSession(new Agent(new AgentOptions()), sys_get_temp_dir()),
-                $this->palette,
                 sys_get_temp_dir(),
             ),
-            fn (): Palette => $this->palette,
             $externalEditor,
         );
     }
@@ -948,7 +946,7 @@ final class HookUiTest extends TestCase
 
     public function testABorderedLoaderDrawsItsRulesAroundTheSpinner(): void
     {
-        $loader = new BorderedLoader($this->tui, $this->palette, 'Fetching the thing…');
+        $loader = new BorderedLoader($this->tui, 'Fetching the thing…');
 
         try {
             $lines = array_map(Ansi::strip(...), $loader->render(30));
@@ -967,7 +965,7 @@ final class HookUiTest extends TestCase
 
     public function testEscapeOnABorderedLoaderAbortsWhatItIsWaitingOn(): void
     {
-        $loader = new BorderedLoader($this->tui, $this->palette, 'Waiting…');
+        $loader = new BorderedLoader($this->tui, 'Waiting…');
 
         try {
             $signal = $loader->signal();
@@ -986,7 +984,7 @@ final class HookUiTest extends TestCase
 
     public function testARunningBorderedLoaderNeverLetsTheLoopSettleAndADisposedOneDoes(): void
     {
-        $loader = new BorderedLoader($this->tui, $this->palette, 'Waiting…');
+        $loader = new BorderedLoader($this->tui, 'Waiting…');
 
         // The spinner reschedules itself, so there is always another timer pending — the loop
         // can be ticked forever and never run out of work. A loader nobody disposed of is a

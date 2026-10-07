@@ -8,18 +8,20 @@ use PHPUnit\Framework\TestCase;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Cli\TrustPrompt;
 use Pig\CodingAgent\ProjectTrust;
-use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\TrustChoice;
 use Pig\Tui\Ansi;
 use Pig\Tui\Test\FakeTerminal;
 
 final class TrustPromptTest extends TestCase
 {
+    use GlobalThemeFixture;
+
     private string $cwd;
 
     #[\Override]
     protected function setUp(): void
     {
+        $this->setUpGlobalTheme();
         Loop::reset();
         $this->cwd = sys_get_temp_dir() . '/pig-trustprompt-' . bin2hex(random_bytes(4));
         mkdir($this->cwd . '/extensions/acme', 0o755, true);
@@ -29,6 +31,7 @@ final class TrustPromptTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
+        $this->tearDownGlobalTheme();
         unlink($this->cwd . '/extensions/acme/index.php');
         rmdir($this->cwd . '/extensions/acme');
         rmdir($this->cwd . '/extensions');
@@ -45,7 +48,7 @@ final class TrustPromptTest extends TestCase
         }
 
         $cwd = $this->cwd;
-        $chosen = TrustPrompt::ask($cwd, ProjectTrust::choices($cwd), Palette::dark(true), $terminal);
+        $chosen = TrustPrompt::ask($cwd, ProjectTrust::choices($cwd), $terminal);
 
         return [$chosen, Ansi::strip($terminal->output())];
     }

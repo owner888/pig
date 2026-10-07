@@ -10,7 +10,7 @@ use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\Session\HookMessage;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Theme;
 use Pig\Tui\Process;
 
 /**
@@ -218,7 +218,7 @@ class HookApi
      * Draw this hook's own messages your own way.
      *
      * The renderer is handed the message, whether the transcript is expanded, and the
-     * palette, and returns a `Pig\Tui\Component` — or null for "draw it normally", which
+     * theme, and returns a `Pig\Tui\Component` — or null for "draw it normally", which
      * is not a failure. Same shape as a custom tool's `renderResult`, and the same reason:
      * a message whose content is a table should not be squeezed through formatting meant
      * for prose.
@@ -226,7 +226,7 @@ class HookApi
      * One per type, last registration wins, because two renderers for one message is a
      * question with no answer.
      *
-     * @param callable(HookMessage, RenderOptions, Palette): mixed $renderer
+     * @param callable(HookMessage, RenderOptions, Theme): mixed $renderer
      */
     public function registerMessageRenderer(string $customType, callable $renderer): void
     {
@@ -243,7 +243,7 @@ class HookApi
      * Draw this hook's custom session entries in the transcript.
      * Upstream's `registerEntryRenderer`. Custom entries do not participate in LLM context.
      *
-     * @param callable(CustomEntry, RenderOptions, Palette): mixed $renderer
+     * @param callable(CustomEntry, RenderOptions, Theme): mixed $renderer
      */
     public function registerEntryRenderer(string $customType, callable $renderer): void
     {

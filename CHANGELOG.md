@@ -43,6 +43,27 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.14] - 2026-10-08
+
+### New Features
+
+- **Full Upstream Pi Theme Architecture & Color Space Alignment (`Theme`, `Themes`, `SystemTheme`, `Oklab`, `Colors`)**:
+  - Replaced legacy static palette with upstream pi's modular theme engine (`Theme`, `Themes`, `ThemeInfo`, `ThemeJson`, `ThemeStyle`).
+  - Added full perceptual color space conversions (`Oklab`, `OklchChannels`, `OkhslChannels`, `RgbColorValue`, `IndexedColor`) with perceptual lightness blending and color mixing.
+  - Ported system theme dynamic terminal background detection (`SystemTheme`, `SystemThemeColors`) adapting UI accents to dark and light terminal backgrounds automatically.
+
+### Added
+
+- **Bundled Themes & Dynamic Theme Controller (`InteractiveThemeController`)**:
+  - Bundled upstream's standard `dark.json`, `light.json`, and `labra.json` theme files with strict JSON schema validation (`theme-schema.json`).
+  - Implemented `InteractiveThemeController` managing theme previews, settings persistence, and live TUI color updates on the fly.
+  - Added comprehensive test suites (`ColorsTest`, `ThemeTest`, `ThemeJsonTest`, `SystemThemeTest`, `ThemeControllerTest`).
+
+### Changed
+
+- **Standardized UI Component Styling**:
+  - Refactored all interactive TUI components and tools (`AssistantMessageComponent`, `UserMessageComponent`, `ToolExecutionComponent`, `FooterComponent`, `TerminalUi`, `HtmlExport`, `McpManagerView`) to consume structured `Theme` styling tokens.
+
 ## [0.4.13] - 2026-10-08
 
 ### New Features

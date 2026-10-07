@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Hooks;
 
 use Closure;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Theme;
 
 /**
  * Asking the person something, from inside a hook or a custom tool.
@@ -21,8 +21,7 @@ use Pig\CodingAgent\Theme\Palette;
  * walks away leaves the turn parked — which is why every one of these can be cancelled,
  * and why `Input` grew an escape handler to make that true.
  *
- * Ported whole from upstream's `HookUIContext`; `theme` is `palette()`, pig's name for the
- * same thing.
+ * Ported whole from upstream's `HookUIContext`; upstream's `theme` getter is `theme()`.
  */
 interface HookUi
 {
@@ -67,11 +66,11 @@ interface HookUi
      *
      * The escape hatch, for a hook that wants a progress bar, a diff, a two-column picker
      * — anything the four above are the wrong shape for. `$factory` is given the screen,
-     * the palette, and a `done()` to call with the answer; it returns the component to show.
+     * the current theme, and a `done()` to call with the answer; it returns the component to show.
      *
      * ```php
-     * $count = $ctx->ui->custom(function ($tui, $palette, $done) {
-     *     $list = new SelectList([...], 8, $palette->selectListTheme());
+     * $count = $ctx->ui->custom(function ($tui, $theme, $done) {
+     *     $list = new SelectList([...], 8, Themes::getSelectListTheme());
      *     $list->setSelectHandler(fn ($item) => $done((int) $item->value));
      *     $list->setCancelHandler(fn () => $done(null));
      *
@@ -84,7 +83,7 @@ interface HookUi
      * killed. Whatever is returned must have a path to `done()` for a person who has
      * changed their mind — usually escape, which is what every other dialog here uses.
      *
-     * @param Closure(\Pig\Tui\TUI, Palette, Closure(mixed): void): \Pig\Tui\Component $factory
+     * @param Closure(\Pig\Tui\TUI, Theme, Closure(mixed): void): \Pig\Tui\Component $factory
      * @return mixed whatever was passed to `done()`, or null when there is no UI
      */
     public function custom(Closure $factory): mixed;
@@ -106,8 +105,8 @@ interface HookUi
     /** What is in the prompt editor now. */
     public function getEditorText(): string;
 
-    /** The colours this session is drawn in, for styling a status line. */
-    public function palette(): Palette;
+    /** The theme this session is drawn in, for styling a status line. Upstream's `theme` getter. */
+    public function theme(): Theme;
 
     /** Put text at the editor caret, as if pasted. Upstream's `pasteToEditor()`. */
     public function pasteToEditor(string $text): void;
@@ -134,7 +133,7 @@ interface HookUi
      * Add or update an extension widget above or below the prompt. Upstream's `setWidget()`.
      *
      * @param string $key unique widget identifier
-     * @param list<string>|Closure(\Pig\Tui\TUI, Palette): \Pig\Tui\Component|null $content null removes it
+     * @param list<string>|Closure(\Pig\Tui\TUI, Theme): \Pig\Tui\Component|null $content null removes it
      * @param array{placement?: 'above'|'below'} $options
      */
     public function setWidget(string $key, array|Closure|null $content, array $options = []): void;
@@ -149,7 +148,7 @@ interface HookUi
     public function getAllThemes(): array;
 
     /** Find a theme by name. Upstream's `getTheme()`. */
-    public function getTheme(string $name): ?Palette;
+    public function getTheme(string $name): ?Theme;
 
     /** Switch the active theme. Upstream's `setTheme()`. Returns true on success. */
     public function setTheme(string $name): bool;

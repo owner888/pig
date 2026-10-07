@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Interactive;
 
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Component;
 use Pig\Tui\Width;
 
@@ -30,7 +30,7 @@ final class CommandHudComponent implements Component
         ['Alt + Up', 'Restore queued messages back into editor'],
     ];
 
-    public function __construct(private readonly Palette $palette)
+    public function __construct()
     {
     }
 
@@ -46,14 +46,14 @@ final class CommandHudComponent implements Component
         $innerWidth = max(16, min(76, $safeWidth - 4));
 
         $title = $innerWidth < 36 ? ' ⌘ Shortcuts ' : ' ⌘ Shortcuts (Release ⌘ to close) ';
-        $borderCol = fn (string $text): string => $this->palette->fg('border', $text);
-        $keyCol = fn (string $text): string => $this->palette->fg('accent', $text);
-        $descCol = fn (string $text): string => $this->palette->fg('muted', $text);
+        $borderCol = fn (string $text): string => Themes::theme()->fg('border', $text);
+        $keyCol = fn (string $text): string => Themes::theme()->fg('accent', $text);
+        $descCol = fn (string $text): string => Themes::theme()->fg('muted', $text);
 
         $lines = [];
         $ruleLen = max(0, $innerWidth - Width::visible($title) - 1);
         $rule = str_repeat('─', $ruleLen);
-        $lines[] = $borderCol(' ┌─') . $this->palette->fg('accent', $title) . $borderCol($rule . '┐');
+        $lines[] = $borderCol(' ┌─') . Themes::theme()->fg('accent', $title) . $borderCol($rule . '┐');
 
         $colWidth = 14;
         foreach (self::SHORTCUTS as [$key, $desc]) {

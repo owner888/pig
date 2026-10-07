@@ -17,8 +17,8 @@ use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\RenderOptions;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Theme\Highlight;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Theme;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Components\Text;
 use PigCodemode\CodemodeDescription;
 
@@ -435,26 +435,26 @@ return static function (ExtensionApi $pi): void {
     $callPreviewCount = 8;
     $outputPreviewLines = 5;
 
-    $renderCall = static function (array $args, Palette $palette) use ($codePreviewLines): Text {
+    $renderCall = static function (array $args, Theme $theme) use ($codePreviewLines): Text {
         $code = $args['code'] ?? null;
-        $text = $palette->fg('toolTitle', \Pig\Tui\Style::bold('codemode'));
+        $text = $theme->fg('toolTitle', \Pig\Tui\Style::bold('codemode'));
 
         if ($code !== null && !is_string($code)) {
-            $text .= ' ' . $palette->fg('error', '[invalid arg]');
+            $text .= ' ' . $theme->fg('error', '[invalid arg]');
         } elseif (is_string($code) && trim($code) !== '') {
-            $lines = Highlight::lines(str_replace("\t", '    ', rtrim(str_replace("\r", '', $code))), 'php', $palette->highlightTheme());
+            $lines = Themes::highlightCode(str_replace("\t", '    ', rtrim(str_replace("\r", '', $code))), 'php');
             $shown = array_slice($lines, 0, $codePreviewLines);
             $text .= "\n" . implode("\n", $shown);
 
             if (count($shown) < count($lines)) {
-                $text .= "\n" . $palette->fg('muted', '... (' . (count($lines) - count($shown)) . ' more lines, ctrl+o to expand)');
+                $text .= "\n" . $theme->fg('muted', '... (' . (count($lines) - count($shown)) . ' more lines, ctrl+o to expand)');
             }
         }
 
         return new Text($text, 0, 0);
     };
 
-    $renderResult = static function (AgentToolResult $result, RenderOptions $options, Palette $palette) use ($callPreviewCount, $outputPreviewLines): Text {
+    $renderResult = static function (AgentToolResult $result, RenderOptions $options, Theme $theme) use ($callPreviewCount, $outputPreviewLines): Text {
         $sections = [];
         $calls = is_array($result->details['calls'] ?? null) ? $result->details['calls'] : [];
 
@@ -464,27 +464,27 @@ return static function (ExtensionApi $pi): void {
 
             foreach ($shown as $call) {
                 $icon = match ($call['status']) {
-                    'running' => $palette->fg('warning', '…'),
-                    'ok' => $palette->fg('success', '✓'),
-                    'error' => $palette->fg('error', '✗'),
-                    default => $palette->fg('muted', '⊘'),
+                    'running' => $theme->fg('warning', '…'),
+                    'ok' => $theme->fg('success', '✓'),
+                    'error' => $theme->fg('error', '✗'),
+                    default => $theme->fg('muted', '⊘'),
                 };
                 $args = !$options->expanded && strlen($call['args']) > 80 ? substr($call['args'], 0, 77) . '...' : $call['args'];
-                $line = "{$icon} " . $palette->fg('toolTitle', $call['name']) . ($args !== '' ? ' ' . $palette->fg('muted', $args) : '');
+                $line = "{$icon} " . $theme->fg('toolTitle', $call['name']) . ($args !== '' ? ' ' . $theme->fg('muted', $args) : '');
 
                 if (isset($call['durationMs'])) {
-                    $line .= ' ' . $palette->fg('dim', $call['durationMs'] < 1000 ? round($call['durationMs']) . 'ms' : number_format($call['durationMs'] / 1000, 1) . 's');
+                    $line .= ' ' . $theme->fg('dim', $call['durationMs'] < 1000 ? round($call['durationMs']) . 'ms' : number_format($call['durationMs'] / 1000, 1) . 's');
                 }
 
                 if ($options->expanded && isset($call['error'])) {
-                    $line .= "\n    " . $palette->fg('error', str_replace("\n", "\n    ", $call['error']));
+                    $line .= "\n    " . $theme->fg('error', str_replace("\n", "\n    ", $call['error']));
                 }
 
                 $lines[] = $line;
             }
 
             if (count($shown) < count($calls)) {
-                array_unshift($lines, $palette->fg('muted', '... (' . (count($calls) - count($shown)) . ' earlier calls, ctrl+o to expand)'));
+                array_unshift($lines, $theme->fg('muted', '... (' . (count($calls) - count($shown)) . ' earlier calls, ctrl+o to expand)'));
             }
 
             $sections[] = implode("\n", $lines);
@@ -508,10 +508,10 @@ return static function (ExtensionApi $pi): void {
                 $lines = explode("\n", str_replace("\t", '    ', $output));
                 $shown = $options->expanded ? $lines : array_slice($lines, 0, $outputPreviewLines);
                 $colour = str_starts_with($output, 'Script error:') ? 'error' : 'toolOutput';
-                $section = implode("\n", array_map(static fn (string $l): string => $palette->fg($colour, $l), $shown));
+                $section = implode("\n", array_map(static fn (string $l): string => $theme->fg($colour, $l), $shown));
 
                 if (count($shown) < count($lines)) {
-                    $section .= "\n" . $palette->fg('muted', '... (' . (count($lines) - count($shown)) . ' more lines, ctrl+o to expand)');
+                    $section .= "\n" . $theme->fg('muted', '... (' . (count($lines) - count($shown)) . ' more lines, ctrl+o to expand)');
                 }
 
                 $sections[] = $section;

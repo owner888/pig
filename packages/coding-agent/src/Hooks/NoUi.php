@@ -5,7 +5,8 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Hooks;
 
 use Closure;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Theme;
+use Pig\CodingAgent\Theme\Themes;
 
 /**
  * The UI when there isn't one.
@@ -22,10 +23,6 @@ use Pig\CodingAgent\Theme\Palette;
  */
 final readonly class NoUi implements HookUi
 {
-    public function __construct(private ?Palette $palette = null)
-    {
-    }
-
     #[\Override]
     public function select(string $title, array $options): ?string
     {
@@ -78,14 +75,11 @@ final readonly class NoUi implements HookUi
         return '';
     }
 
-    /**
-     * The dark palette, because something has to be returned and a hook styling a status
-     * line it will never show should not have to check for null first.
-     */
+    /** The global theme, as upstream's `noOpUIContext` answers: a hook styling a status line it will never show does not have to check for null first. */
     #[\Override]
-    public function palette(): Palette
+    public function theme(): Theme
     {
-        return $this->palette ?? Palette::dark();
+        return Themes::theme();
     }
 
     #[\Override]
@@ -142,17 +136,13 @@ final readonly class NoUi implements HookUi
     #[\Override]
     public function getAllThemes(): array
     {
-        return ['dark', 'light', 'labra'];
+        return [];
     }
 
     #[\Override]
-    public function getTheme(string $name): ?Palette
+    public function getTheme(string $name): ?Theme
     {
-        try {
-            return Palette::named($name);
-        } catch (\Throwable) {
-            return null;
-        }
+        return null;
     }
 
     #[\Override]

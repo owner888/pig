@@ -6,11 +6,12 @@ namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Theme\Theme;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\Interactive\ToolExecutionComponent;
-use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\EditDiff;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\RenderOptions;
@@ -24,9 +25,10 @@ use RuntimeException;
 /** One tool call drawn as it happens: heading, state, and output cut to size. */
 final class ToolExecutionTest extends TestCase
 {
+    use GlobalThemeFixture;
+
     private const int WIDTH = 76;
 
-    private Palette $palette;
 
     /** @var list<string> scratch directories made by `project()` */
     private array $scratch = [];
@@ -34,12 +36,13 @@ final class ToolExecutionTest extends TestCase
     #[\Override]
     protected function setUp(): void
     {
-        $this->palette = Palette::dark(true);
+        $this->setUpGlobalTheme();
     }
 
     #[\Override]
     protected function tearDown(): void
     {
+        $this->tearDownGlobalTheme();
         foreach ($this->scratch as $directory) {
             foreach (glob($directory . '/*') ?: [] as $file) {
                 unlink($file);
@@ -65,7 +68,7 @@ final class ToolExecutionTest extends TestCase
     /** @param array<string, mixed> $arguments */
     private function tool(string $name, array $arguments = []): ToolExecutionComponent
     {
-        return new ToolExecutionComponent($name, $arguments, $this->palette);
+        return new ToolExecutionComponent($name, $arguments);
     }
 
     private function text(ToolExecutionComponent $tool): string
@@ -120,7 +123,7 @@ final class ToolExecutionTest extends TestCase
 
     public function testWithPicturesTurnedOffAnImageIsNamedInstead(): void
     {
-        $tool = new ToolExecutionComponent('screenshot', [], $this->palette, showImages: false);
+        $tool = new ToolExecutionComponent('screenshot', [], showImages: false);
         $tool->updateResult(new AgentToolResult([
             new TextContent('captured the window'),
             new ImageContent(self::PNG, 'image/png'),
@@ -166,9 +169,9 @@ final class ToolExecutionTest extends TestCase
     {
         // The state has to be readable without reading anything, because that is what
         // someone scrolling past a hundred tool calls is doing.
-        $pendingBg = "\e[48;2;52;56;58m";
-        $successBg = "\e[48;2;37;65;49m";
-        $errorBg = "\e[48;2;91;40;42m";
+        $pendingBg = Themes::theme()->getBgAnsi('toolPendingBg');
+        $successBg = Themes::theme()->getBgAnsi('toolSuccessBg');
+        $errorBg = Themes::theme()->getBgAnsi('toolErrorBg');
 
         $tool = $this->tool('ls', ['path' => '.']);
         $this->assertStringContainsString($pendingBg, $this->raw($tool));
@@ -185,7 +188,7 @@ final class ToolExecutionTest extends TestCase
         $tool = $this->tool('bash', ['command' => 'sleep 1']);
         $tool->updateResult($this->said('halfway'), false, true);
 
-        $this->assertStringContainsString("\e[48;2;52;56;58m", $this->raw($tool));
+        $this->assertStringContainsString(Themes::theme()->getBgAnsi('toolPendingBg'), $this->raw($tool));
     }
 
     // ---- the heading -------------------------------------------------------------------
@@ -337,7 +340,7 @@ final class ToolExecutionTest extends TestCase
         $tool->updateResult($this->said("<?php\nreturn 1;\n"));
 
         // dark's syntaxKeyword.
-        $this->assertStringContainsString("\e[38;2;105;173;208mreturn", $this->raw($tool));
+        $this->assertStringContainsString(Themes::theme()->getFgAnsi('syntaxKeyword') . 'return', $this->raw($tool));
     }
 
     public function testAFileWithNoKnownLanguageIsShownPlain(): void
@@ -345,7 +348,7 @@ final class ToolExecutionTest extends TestCase
         $tool = $this->tool('read', ['path' => 'notes.txt']);
         $tool->updateResult($this->said("return 1;\n"));
 
-        $this->assertStringNotContainsString("\e[38;2;105;173;208m", $this->raw($tool));
+        $this->assertStringNotContainsString(Themes::theme()->getFgAnsi('syntaxKeyword'), $this->raw($tool));
         $this->assertStringContainsString('return 1;', $this->text($tool));
     }
 
@@ -517,7 +520,7 @@ final class ToolExecutionTest extends TestCase
     /** @param array<string, mixed> $arguments */
     private function editing(string $directory, array $arguments): ToolExecutionComponent
     {
-        return new ToolExecutionComponent('edit', $arguments, $this->palette, cwd: $directory);
+        return new ToolExecutionComponent('edit', $arguments, cwd: $directory);
     }
 
     public function testAnEditIsShownAsADiffBeforeItHappens(): void
@@ -652,7 +655,6 @@ final class ToolExecutionTest extends TestCase
         $typed = new ToolExecutionComponent(
             'bash',
             ['command' => 'make test'],
-            $this->palette,
             bashLines: ToolExecutionComponent::TYPED_BASH_LINES,
         );
         $typed->updateResult($this->said($output));
@@ -676,7 +678,7 @@ final class ToolExecutionTest extends TestCase
     public function testARenderCallReplacesTheHeading(): void
     {
         $tool = $this->custom(
-            renderCall: static fn (array $arguments, Palette $palette): Component => new Text(
+            renderCall: static fn (array $arguments, Theme $theme): Component => new Text(
                 'counting ' . ($arguments['path'] ?? '?'),
                 0,
                 0,
@@ -830,7 +832,7 @@ final class ToolExecutionTest extends TestCase
         $tool = $this->custom(renderCall: static fn (): Component => new Text('mine', 0, 0));
         $tool->fail('it broke');
 
-        $this->assertStringContainsString("\e[48;2;91;40;42m", $this->raw($tool));
+        $this->assertStringContainsString(Themes::theme()->getBgAnsi('toolErrorBg'), $this->raw($tool));
     }
 
     private function custom(
@@ -851,7 +853,6 @@ final class ToolExecutionTest extends TestCase
         return new ToolExecutionComponent(
             'wc',
             ['path' => 'notes.md'],
-            $this->palette,
             $declaration,
             $onError,
         );
@@ -865,7 +866,7 @@ final class ToolExecutionTest extends TestCase
         $tool->fail('Operation aborted');
 
         $this->assertStringContainsString('Operation aborted', $this->text($tool));
-        $this->assertStringContainsString("\e[48;2;91;40;42m", $this->raw($tool));
+        $this->assertStringContainsString(Themes::theme()->getBgAnsi('toolErrorBg'), $this->raw($tool));
     }
 
     public function testBashShowsElapsedWhileRunningAndTookWhenComplete(): void
@@ -874,7 +875,6 @@ final class ToolExecutionTest extends TestCase
         $tool = new ToolExecutionComponent(
             'bash',
             ['command' => 'php test/lint.php'],
-            $this->palette,
             startedAt: $now - 53.14,
         );
 

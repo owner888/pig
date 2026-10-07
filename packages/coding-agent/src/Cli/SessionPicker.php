@@ -7,7 +7,7 @@ namespace Pig\CodingAgent\Cli;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Session\SessionInfo;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Components\SelectItem;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
@@ -45,7 +45,7 @@ final class SessionPicker
      *
      * @param list<SessionInfo> $sessions newest first, as `SessionManager::listFor()` gives them
      */
-    public static function ask(array $sessions, Palette $palette, ?Terminal $terminal = null): SessionChoice
+    public static function ask(array $sessions, ?Terminal $terminal = null): SessionChoice
     {
         if ($sessions === []) {
             return new SessionChoice();
@@ -55,7 +55,7 @@ final class SessionPicker
         $chosen = null;
         $quit = false;
 
-        $list = new SessionList($sessions, $palette, self::VISIBLE);
+        $list = new SessionList($sessions, self::VISIBLE);
 
         // Both handlers stop the *loop* and nothing else. Stopping the terminal here as
         // well would stop it twice — once from the handler and once on the way out — and
@@ -78,7 +78,7 @@ final class SessionPicker
 
         $tui->addChild(new Spacer(1));
         $tui->addChild(new Text(
-            $palette->fg('muted', 'Pick a session — type to search, enter to open, esc to start a new one'),
+            Themes::theme()->fg('muted', 'Pick a session — type to search, enter to open, esc to start a new one'),
             1,
             0,
         ));

@@ -59,10 +59,10 @@ final readonly class CustomTool
      * @param Closure(CustomToolSessionEvent, \Pig\CodingAgent\Hooks\HookContext): void|null $onSession
      *        called on `/new`, `/resume`, `/tree` and on the way out — for rebuilding
      *        state from the conversation, or letting go of something that was held
-     * @param Closure(array<string, mixed>, \Pig\CodingAgent\Theme\Palette): \Pig\Tui\Component|null $renderCall
+     * @param Closure(array<string, mixed>, \Pig\CodingAgent\Theme\Theme): \Pig\Tui\Component|null $renderCall
      *        the heading line, in place of the tool's name — given the arguments, which are
      *        still arriving and may be half a JSON object
-     * @param Closure(\Pig\Agent\AgentToolResult, RenderOptions, \Pig\CodingAgent\Theme\Palette): \Pig\Tui\Component|null $renderResult
+     * @param Closure(\Pig\Agent\AgentToolResult, RenderOptions, \Pig\CodingAgent\Theme\Theme): \Pig\Tui\Component|null $renderResult
      *        what came back, in place of its text
      * @param string|null $promptSnippet one line for the system prompt's "Available tools" list —
      *        upstream's `promptSnippet`. Without one the tool reaches the model as a definition only,

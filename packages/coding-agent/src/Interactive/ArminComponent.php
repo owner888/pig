@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Interactive;
 
 use Pig\Async\Loop;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Component;
 use Pig\Tui\TUI;
 
@@ -85,7 +85,6 @@ final class ArminComponent implements Component
      */
     public function __construct(
         private readonly TUI $tui,
-        private readonly Palette $palette,
         ?string $effect = null,
     ) {
         $this->effect = $effect !== null && in_array($effect, self::EFFECTS, true)
@@ -123,7 +122,7 @@ final class ArminComponent implements Component
 
             // Padded so every line is the full width: a line that is sometimes padded and
             // sometimes not differs from itself, and the renderer redraws it for nothing.
-            $lines[] = ' ' . $this->palette->fg('accent', $clipped) . str_repeat(' ', $pad);
+            $lines[] = ' ' . Themes::theme()->fg('accent', $clipped) . str_repeat(' ', $pad);
         }
 
         $this->cachedLines = $lines;

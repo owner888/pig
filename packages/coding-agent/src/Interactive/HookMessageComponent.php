@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Interactive;
 
 use Pig\CodingAgent\Session\HookMessage;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\Shell;
 use Pig\Tui\Components\Box;
 use Pig\Tui\Components\DefaultTextStyle;
@@ -43,16 +43,17 @@ final class HookMessageComponent extends Container
 
     private readonly string $text;
 
+    private bool $expanded = false;
+
     public function __construct(
         private readonly HookMessage $message,
-        private readonly Palette $palette,
         bool $expanded = false,
     ) {
         // A hook's message is usually output it just captured, so it is no more pig's own
         // words than a tool's result is — and this was the one of the three that had no
         // guard at all: one stray byte from a build log threw out of `render()`.
         $this->text = Shell::sanitize($message->toText());
-        $this->box = new Box(1, 1, $palette->of('customMessageBg'));
+        $this->box = new Box(1, 1, static fn (string $text): string => Themes::theme()->bg('customMessageBg', $text));
         $this->heading = new Text('', 0, 0);
 
         $this->addChild(new Spacer(1));
@@ -60,14 +61,23 @@ final class HookMessageComponent extends Container
         $this->setExpanded($expanded);
     }
 
+    /** Rebuilt so a theme change reaches the heading, as upstream's components rebuild on `invalidate()`. */
+    #[\Override]
+    public function invalidate(): void
+    {
+        parent::invalidate();
+        $this->setExpanded($this->expanded);
+    }
+
     public function setExpanded(bool $expanded): void
     {
+        $this->expanded = $expanded;
         $lines = explode("\n", $this->text);
         $cut = !$expanded && count($lines) > self::PREVIEW_LINES;
 
         $this->heading->setText(
-            $this->palette->fg('customMessageLabel', "[{$this->message->customType}]")
-            . ($cut ? $this->palette->fg('muted', ' (ctrl+o to expand)') : ''),
+            Themes::theme()->fg('customMessageLabel', "[{$this->message->customType}]")
+            . ($cut ? Themes::theme()->fg('muted', ' (ctrl+o to expand)') : ''),
         );
 
         $this->box->clear();
@@ -90,8 +100,8 @@ final class HookMessageComponent extends Container
             $shown,
             0,
             0,
-            $this->palette->markdownTheme(),
-            new DefaultTextStyle(colour: $this->palette->of('muted')),
+            Themes::getMarkdownTheme(),
+            new DefaultTextStyle(colour: static fn (string $text): string => Themes::theme()->fg('muted', $text)),
         ));
     }
 }

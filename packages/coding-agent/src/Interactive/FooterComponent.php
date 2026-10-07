@@ -12,7 +12,7 @@ use Pig\Ai\StopReason;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Settings;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Ansi;
 use Pig\Tui\Component;
 use Pig\Tui\Env;
@@ -69,17 +69,10 @@ final class FooterComponent implements Component
      */
     public function __construct(
         private readonly AgentSession $session,
-        private Palette $palette,
         private readonly string $cwd,
         private readonly ?Settings $settings = null,
         private readonly ?Auth $auth = null,
     ) {
-    }
-
-    public function setPalette(Palette $palette): void
-    {
-        $this->palette = $palette;
-        $this->invalidate();
     }
 
     #[\Override]
@@ -113,7 +106,7 @@ final class FooterComponent implements Component
     public function render(int $width): array
     {
         $lines = [
-            $this->palette->fg('dim', $this->where($width)),
+            Themes::theme()->fg('dim', $this->where($width)),
             $this->status($width),
         ];
 
@@ -313,13 +306,13 @@ final class FooterComponent implements Component
         if ($leftWidth + 2 + $rightWidth <= $width) {
             $gap = str_repeat(' ', $width - $leftWidth - $rightWidth);
 
-            return $this->palette->fg('dim', $left) . $this->palette->fg('dim', $gap . $right);
+            return Themes::theme()->fg('dim', $left) . Themes::theme()->fg('dim', $gap . $right);
         }
 
         $room = $width - $leftWidth - 2;
 
         if ($room <= 3) {
-            return $this->palette->fg('dim', $left);
+            return Themes::theme()->fg('dim', $left);
         }
 
         // Cut and measured in columns. `substr()` here was two bugs rather than one: it could
@@ -329,7 +322,7 @@ final class FooterComponent implements Component
         $cut = Width::truncate(Ansi::strip($right), $room, '');
         $gap = str_repeat(' ', max(0, $width - $leftWidth - Width::visible($cut)));
 
-        return $this->palette->fg('dim', $left) . $this->palette->fg('dim', $gap . $cut);
+        return Themes::theme()->fg('dim', $left) . Themes::theme()->fg('dim', $gap . $cut);
     }
 
     /**
@@ -365,8 +358,8 @@ final class FooterComponent implements Component
         $display = number_format($percent, 1) . '%/' . self::tokens($window) . $auto;
 
         return match (true) {
-            $percent > self::ALARM_AT => $this->palette->fg('error', $display),
-            $percent > self::WARN_AT => $this->palette->fg('warning', $display),
+            $percent > self::ALARM_AT => Themes::theme()->fg('error', $display),
+            $percent > self::WARN_AT => Themes::theme()->fg('warning', $display),
             default => $display,
         };
     }

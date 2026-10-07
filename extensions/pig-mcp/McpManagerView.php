@@ -7,7 +7,8 @@ namespace PigMcp;
 use Closure;
 use Pig\Async\AbortSignal;
 use Pig\Async\Deferred;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Theme;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Components\Input;
 use Pig\Tui\Components\Rule;
 use Pig\Tui\Components\SelectItem;
@@ -42,9 +43,9 @@ final class McpManagerView extends Container implements InputHandler
 
     public function __construct(
         private readonly TUI $tui,
-        private readonly Palette $palette,
+        private readonly Theme $theme,
     ) {
-        $this->frame('MCP servers', [new Text($palette->fg('muted', 'Loading…'), 1, 1)]);
+        $this->frame('MCP servers', [new Text($this->theme->fg('muted', 'Loading…'), 1, 1)]);
     }
 
     /**
@@ -79,18 +80,18 @@ final class McpManagerView extends Container implements InputHandler
             $body = [];
 
             if (($menu['details'] ?? null) !== null) {
-                $body[] = new Text($this->palette->fg('muted', $menu['details']), 1, 0);
+                $body[] = new Text($this->theme->fg('muted', $menu['details']), 1, 0);
             }
 
             if (($menu['error'] ?? null) !== null) {
-                $body[] = new Text($this->palette->fg('error', $menu['error']), 1, 0);
+                $body[] = new Text($this->theme->fg('error', $menu['error']), 1, 0);
             }
 
             $body[] = new Spacer(1);
             $footer = "enter {$menu['confirmLabel']} • esc {$menu['cancelLabel']}";
 
             if ($menu['items'] === []) {
-                $body[] = new Text($this->palette->fg('muted', $menu['empty'] ?? 'Nothing to show.'), 1, 0);
+                $body[] = new Text($this->theme->fg('muted', $menu['empty'] ?? 'Nothing to show.'), 1, 0);
                 $this->show($this->frame($menu['title'], $body, "esc {$menu['cancelLabel']}"), static function (string $data) use ($finish): void {
                     if (Keys::isEscape($data)) {
                         $finish(null);
@@ -100,7 +101,7 @@ final class McpManagerView extends Container implements InputHandler
                 return;
             }
 
-            $list = new SelectList($menu['items'], min(count($menu['items']), self::MAX_VISIBLE_ITEMS), $this->palette->selectListTheme());
+            $list = new SelectList($menu['items'], min(count($menu['items']), self::MAX_VISIBLE_ITEMS), Themes::getSelectListTheme());
 
             foreach ($menu['items'] as $index => $item) {
                 if ($item->value === $wanted) {
@@ -136,7 +137,7 @@ final class McpManagerView extends Container implements InputHandler
     /** A read-only screen: a title and a sentence, while something happens. */
     public function status(string $title, string $message): void
     {
-        $this->show($this->frame($title, [new Spacer(1), new Text($this->palette->fg('muted', $message), 1, 0)]), null);
+        $this->show($this->frame($title, [new Spacer(1), new Text($this->theme->fg('muted', $message), 1, 0)]), null);
     }
 
     /**
@@ -170,10 +171,10 @@ final class McpManagerView extends Container implements InputHandler
         $input = new Input();
         $body = [
             new Spacer(1),
-            new Text($this->palette->fg('muted', 'Approve access in your browser. If it did not open, visit:'), 1, 0),
-            new Text($this->palette->fg('accent', $authorizationUrl), 1, 0),
+            new Text($this->theme->fg('muted', 'Approve access in your browser. If it did not open, visit:'), 1, 0),
+            new Text($this->theme->fg('accent', $authorizationUrl), 1, 0),
             new Spacer(1),
-            new Text($this->palette->fg('muted', 'If the browser runs on another machine, paste the URL it was redirected to:'), 1, 0),
+            new Text($this->theme->fg('muted', 'If the browser runs on another machine, paste the URL it was redirected to:'), 1, 0),
             $input,
         ];
 
@@ -223,12 +224,12 @@ final class McpManagerView extends Container implements InputHandler
     /** @param list<\Pig\Tui\Component> $body */
     private function frame(string $title, array $body, ?string $footer = null): array
     {
-        $rule = $this->palette->of('accent');
-        $children = [new Rule($rule), new Text($this->palette->fg('accent', \Pig\Tui\Style::bold($title)), 1, 0), ...$body];
+        $rule = fn (string $text): string => $this->theme->fg('accent', $text);
+        $children = [new Rule($rule), new Text($this->theme->fg('accent', \Pig\Tui\Style::bold($title)), 1, 0), ...$body];
 
         if ($footer !== null) {
             $children[] = new Spacer(1);
-            $children[] = new Text($this->palette->fg('dim', $footer), 1, 0);
+            $children[] = new Text($this->theme->fg('dim', $footer), 1, 0);
         }
 
         $children[] = new Rule($rule);

@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Test;
 
 use Closure;
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentOptions;
 use Pig\Agent\QueueMode;
@@ -56,7 +57,6 @@ use Throwable;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
-use Pig\CodingAgent\Theme\Palette;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Test\ProbeModels;
 use Pig\Test\WithoutProviderKeys;
@@ -77,6 +77,7 @@ use RuntimeException;
  */
 final class InteractiveModeTest extends TestCase
 {
+    use GlobalThemeFixture;
     use ProbeModels;
     use WithoutProviderKeys;
 
@@ -117,6 +118,7 @@ final class InteractiveModeTest extends TestCase
     #[\Override]
     protected function setUp(): void
     {
+        $this->setUpGlobalTheme();
         Loop::reset();
         // `/login` says the URL and then opens it; with this unset, every run of this file opened
         // the developer's real browser on Anthropic's authorize page. The tests read the screen.
@@ -142,6 +144,7 @@ final class InteractiveModeTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
+        $this->tearDownGlobalTheme();
         $this->mode->stop();
         putenv('PIG_HOME');
         putenv('PIG_OFFLINE');
@@ -251,7 +254,6 @@ final class InteractiveModeTest extends TestCase
         }
         $this->mode = new InteractiveMode(
             $this->session,
-            Palette::dark(true),
             $this->cwd,
             '0.0.0',
             'dark',
@@ -669,8 +671,14 @@ final class InteractiveModeTest extends TestCase
         $this->start();
         $this->settle();
 
-        $this->terminal->clearWrites();
+        // `/theme` opens the picker: system, dark (on), labra, light.
         $this->type('/theme');
+        $this->type(self::ENTER);
+        $this->type(self::DOWN);
+        $this->type(self::DOWN);
+        $this->settle();
+
+        $this->terminal->clearWrites();
         $this->type(self::ENTER);
         $this->settle();
 
@@ -713,7 +721,27 @@ final class InteractiveModeTest extends TestCase
 
         $written = $this->terminal->output();
         $this->assertStringContainsString("No theme called 'unknown-theme'", Ansi::strip($written));
-        $this->assertStringContainsString('Available themes: dark, light, labra', Ansi::strip($written));
+        $this->assertStringContainsString('Available themes: system, dark, labra', Ansi::strip($written));
+    }
+
+    public function testThePickerPreviewsEachThemeAndEscapePutsTheOldOneBack(): void
+    {
+        $this->start();
+        $this->settle();
+
+        $this->type('/theme');
+        $this->type(self::ENTER);
+        $this->type(self::DOWN);
+        $this->settle();
+
+        $this->assertSame('labra', Themes::theme()->name, 'moving onto a theme previews it');
+        $this->assertNull($this->settings->theme(), 'a preview is not saved');
+
+        $this->type(self::ESCAPE);
+        $this->settle();
+
+        $this->assertSame('dark', Themes::theme()->name);
+        $this->assertNull($this->settings->theme());
     }
 
     public function testEveryKeyTheEditorAnswersToIsNamedSomewhere(): void
@@ -1442,7 +1470,7 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
 
         // dark's toolErrorBg.
-        $this->assertStringContainsString(\Pig\CodingAgent\Theme\Colour::background(Palette::dark(true)->hex('toolErrorBg'), true), implode('', $this->mode->screen()->render(80)));
+        $this->assertStringContainsString(Themes::theme()->getBgAnsi('toolErrorBg'), implode('', $this->mode->screen()->render(80)));
         $this->assertSame(3, $this->session->messages()[0]->exitCode);
     }
 
@@ -1747,7 +1775,11 @@ final class InteractiveModeTest extends TestCase
     {
         $this->start();
 
+        // The picker lists system, dark (on), labra, light.
         $this->type('/theme');
+        $this->type(self::ENTER);
+        $this->type(self::DOWN);
+        $this->type(self::DOWN);
         $this->type(self::ENTER);
 
         // `/theme` that resets every run is a setting nobody uses twice.
@@ -3871,10 +3903,12 @@ final class InteractiveModeTest extends TestCase
         $this->start();
         $this->openSettings();
 
-        // Theme is the first row.
+        // Theme is the first row; its values are `Themes::getAvailableThemes()`, so the one after
+        // dark is labra.
         $this->type(self::ENTER);
 
-        $this->assertSame('light', $this->settings->theme());
+        $this->assertSame('labra', $this->settings->theme());
+        $this->assertSame('labra', Themes::theme()->name);
     }
 
     public function testTurningOffAutoCompactIsRemembered(): void
@@ -4074,7 +4108,7 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
         $this->settle();
 
-        // The top border with working status and bottom border both carry the thinkingMedium color (RGB: 97;133;204, #6185cc)
+        // The top border with working status and bottom border both carry the thinkingMedium color.
         $raw = $this->terminal->output();
         $this->assertStringContainsString("[38;2;97;133;204m", $raw);
 

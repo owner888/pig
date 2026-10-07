@@ -8,7 +8,6 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Interactive\ArminComponent;
-use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
 use Pig\Tui\Test\FakeTerminal;
 use Pig\Tui\TUI;
@@ -22,18 +21,27 @@ use Pig\Tui\Width;
  */
 final class ArminTest extends TestCase
 {
+    use GlobalThemeFixture;
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        $this->tearDownGlobalTheme();
+    }
+
     private TuiMainScreen $tui;
 
     #[\Override]
     protected function setUp(): void
     {
+        $this->setUpGlobalTheme();
         Loop::reset();
         $this->tui = new TuiMainScreen(new FakeTerminal(80, 24));
     }
 
     private function armin(?string $effect = null): ArminComponent
     {
-        return new ArminComponent($this->tui, Palette::dark(true), $effect);
+        return new ArminComponent($this->tui, $effect);
     }
 
     /**

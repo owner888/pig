@@ -6,7 +6,8 @@ namespace Pig\CodingAgent\Test\Extensions;
 
 use Closure;
 use Pig\CodingAgent\Hooks\HookUi;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Theme;
+use Pig\CodingAgent\Theme\Themes;
 
 /** A `HookUi` that answers nothing and writes down what it was told. */
 final class NoticingUi implements HookUi
@@ -89,9 +90,9 @@ final class NoticingUi implements HookUi
     }
 
     #[\Override]
-    public function palette(): Palette
+    public function theme(): Theme
     {
-        return Palette::dark(true);
+        return Themes::theme();
     }
 
     #[\Override]
@@ -152,9 +153,9 @@ final class NoticingUi implements HookUi
     }
 
     #[\Override]
-    public function getTheme(string $name): ?Palette
+    public function getTheme(string $name): ?Theme
     {
-        return Palette::dark(true);
+        return Themes::getThemeByName($name);
     }
 
     #[\Override]

@@ -7,17 +7,22 @@ namespace Pig\CodingAgent\Test;
 use PHPUnit\Framework\TestCase;
 use Pig\CodingAgent\Interactive\SkillInvocationMessageComponent;
 use Pig\CodingAgent\Prompt\SkillBlock;
-use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
 
 final class SkillInvocationMessageTest extends TestCase
 {
-    private Palette $palette;
+    use GlobalThemeFixture;
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        $this->tearDownGlobalTheme();
+    }
 
     #[\Override]
     protected function setUp(): void
     {
-        $this->palette = Palette::dark(true);
+        $this->setUpGlobalTheme();
     }
 
     public function testParseSkillBlockExtractsAttributesAndContent(): void
@@ -44,7 +49,7 @@ final class SkillInvocationMessageTest extends TestCase
     public function testComponentRendersCollapsedAndExpandedStates(): void
     {
         $block = new SkillBlock('test-skill', '/path', 'Instructions here.');
-        $component = new SkillInvocationMessageComponent($block, $this->palette, expanded: false);
+        $component = new SkillInvocationMessageComponent($block, expanded: false);
 
         // Collapsed mode: shows single line [skill] name (ctrl+o to expand)
         $collapsed = Ansi::strip(implode("\n", $component->render(60)));

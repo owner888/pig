@@ -20,7 +20,7 @@ use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\Label;
 use Pig\CodingAgent\Session\ModelChange;
 use Pig\CodingAgent\Session\ThinkingLevelChange;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\Shell;
 use Pig\Tui\Component;
 use Pig\Tui\InputHandler;
@@ -113,7 +113,6 @@ final class TreeList implements Component, InputHandler
         array $tree,
         private readonly ?string $leaf,
         private readonly int $maxVisible,
-        private readonly Palette $palette,
     ) {
         $this->manyRoots = count($tree) > 1;
         $this->flat = $this->flatten($tree);
@@ -476,8 +475,8 @@ final class TreeList implements Component, InputHandler
         if ($this->visible === []) {
             return [
                 $this->searchLine($width),
-                $this->palette->fg('muted', '  Nothing matches'),
-                $this->palette->fg('muted', '  (0/0)' . $this->filterLabel()),
+                Themes::theme()->fg('muted', '  Nothing matches'),
+                Themes::theme()->fg('muted', '  (0/0)' . $this->filterLabel()),
             ];
         }
 
@@ -490,7 +489,7 @@ final class TreeList implements Component, InputHandler
             $lines[] = $this->row($this->flat[$this->visible[$position]], $position === $this->selected, $width);
         }
 
-        $lines[] = $this->palette->fg(
+        $lines[] = Themes::theme()->fg(
             'muted',
             sprintf('  (%d/%d)%s', $this->selected + 1, $total, $this->filterLabel()),
         );
@@ -510,8 +509,8 @@ final class TreeList implements Component, InputHandler
      */
     private function searchLine(int $width): string
     {
-        $line = '  ' . $this->palette->fg('muted', 'Search:')
-            . ($this->search === '' ? '' : ' ' . $this->palette->fg('accent', $this->search));
+        $line = '  ' . Themes::theme()->fg('muted', 'Search:')
+            . ($this->search === '' ? '' : ' ' . Themes::theme()->fg('accent', $this->search));
 
         // Cut like every other line here: a query longer than the terminal is wide would wrap and
         // push a row off the bottom of the list on each keystroke.
@@ -523,13 +522,13 @@ final class TreeList implements Component, InputHandler
      */
     private function row(array $row, bool $isSelected, int $width): string
     {
-        $cursor = $isSelected ? $this->palette->fg('accent', '› ') : '  ';
-        $marker = isset($this->active[$row['id']]) ? $this->palette->fg('accent', '• ') : '';
-        $label = $row['label'] === null ? '' : $this->palette->fg('warning', "[{$row['label']}] ");
+        $cursor = $isSelected ? Themes::theme()->fg('accent', '› ') : '  ';
+        $marker = isset($this->active[$row['id']]) ? Themes::theme()->fg('accent', '• ') : '';
+        $label = $row['label'] === null ? '' : Themes::theme()->fg('warning', "[{$row['label']}] ");
         $text = $this->describe($row['message']);
-        $line = $cursor . $this->palette->fg('dim', $this->prefix($row)) . $marker . $label . $text;
+        $line = $cursor . Themes::theme()->fg('dim', $this->prefix($row)) . $marker . $label . $text;
 
-        return Width::truncate($isSelected ? $this->palette->bg('selectedBg', $line) : $line, $width, '');
+        return Width::truncate($isSelected ? Themes::theme()->bg('selectedBg', $line) : $line, $width, '');
     }
 
     /**
@@ -578,39 +577,39 @@ final class TreeList implements Component, InputHandler
     private function describe(mixed $message): string
     {
         return match (true) {
-            $message instanceof UserMessage => $this->palette->fg('accent', 'user: ')
+            $message instanceof UserMessage => Themes::theme()->fg('accent', 'user: ')
                 . self::oneLine(self::textOf($message->content)),
-            $message instanceof AssistantMessage => $this->palette->fg('success', 'assistant: ')
+            $message instanceof AssistantMessage => Themes::theme()->fg('success', 'assistant: ')
                 . $this->assistant($message),
-            $message instanceof ToolResultMessage => $this->palette->fg(
+            $message instanceof ToolResultMessage => Themes::theme()->fg(
                 'muted',
                 $this->calls[$message->toolCallId] ?? "[{$message->toolName}]",
             ),
-            $message instanceof BashExecution => $this->palette->fg(
+            $message instanceof BashExecution => Themes::theme()->fg(
                 'dim',
                 '[bash]: ' . self::oneLine($message->command),
             ),
-            $message instanceof HookMessage => $this->palette->fg('customMessageLabel', '[hook]: ')
+            $message instanceof HookMessage => Themes::theme()->fg('customMessageLabel', '[hook]: ')
                 . self::oneLine(self::textOf($message->content)),
-            $message instanceof CompactionSummary => $this->palette->fg(
+            $message instanceof CompactionSummary => Themes::theme()->fg(
                 'borderAccent',
                 sprintf('[compaction: %dk tokens]', (int) round($message->tokensBefore / 1000)),
             ),
-            $message instanceof BranchSummary => $this->palette->fg('warning', '[branch summary]: ')
+            $message instanceof BranchSummary => Themes::theme()->fg('warning', '[branch summary]: ')
                 . self::oneLine($message->summary),
-            $message instanceof ModelChange => $this->palette->fg(
+            $message instanceof ModelChange => Themes::theme()->fg(
                 'dim',
                 "[model: {$message->provider}/{$message->modelId}]",
             ),
-            $message instanceof ThinkingLevelChange => $this->palette->fg('dim', "[thinking: {$message->level}]"),
+            $message instanceof ThinkingLevelChange => Themes::theme()->fg('dim', "[thinking: {$message->level}]"),
             // A cleared name is a `Label` entry with no label — nothing is deleted from a session
             // file — and `[label: ]` is a row that reads like a rendering fault. Upstream's word.
-            $message instanceof Label => $this->palette->fg(
+            $message instanceof Label => Themes::theme()->fg(
                 'dim',
                 '[label: ' . ($message->label ?? '(cleared)') . ']',
             ),
-            $message instanceof CustomEntry => $this->palette->fg('dim', "[{$message->customType}]"),
-            default => $this->palette->fg('dim', '[' . get_debug_type($message) . ']'),
+            $message instanceof CustomEntry => Themes::theme()->fg('dim', "[{$message->customType}]"),
+            default => Themes::theme()->fg('dim', '[' . get_debug_type($message) . ']'),
         };
     }
 
@@ -623,14 +622,14 @@ final class TreeList implements Component, InputHandler
         }
 
         if ($message->stopReason === StopReason::Aborted) {
-            return $this->palette->fg('muted', '(stopped)');
+            return Themes::theme()->fg('muted', '(stopped)');
         }
 
         if ($message->errorMessage !== null) {
-            return $this->palette->fg('error', self::oneLine(mb_substr($message->errorMessage, 0, 80)));
+            return Themes::theme()->fg('error', self::oneLine(mb_substr($message->errorMessage, 0, 80)));
         }
 
-        return $this->palette->fg('muted', '(no text)');
+        return Themes::theme()->fg('muted', '(no text)');
     }
 
     /**

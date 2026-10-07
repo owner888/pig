@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Test;
 use Closure;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentOptions;
 use Pig\Ai\Api;
@@ -27,7 +28,6 @@ use Pig\Async\Loop;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Interactive\HookMessageComponent;
-use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookRunner;
@@ -49,6 +49,7 @@ use RuntimeException;
  */
 final class HookMessagesTest extends TestCase
 {
+    use GlobalThemeFixture;
     use AssertsThrows;
 
     private string $cwd;
@@ -61,6 +62,7 @@ final class HookMessagesTest extends TestCase
     #[\Override]
     protected function setUp(): void
     {
+        $this->setUpGlobalTheme();
         Loop::reset();
         $this->cwd = sys_get_temp_dir() . '/pig-hookmsg-' . bin2hex(random_bytes(4));
         mkdir($this->cwd, 0o755, true);
@@ -70,6 +72,7 @@ final class HookMessagesTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
+        $this->tearDownGlobalTheme();
         putenv('PIG_HOME');
         self::remove($this->cwd);
         self::remove($this->cwd . '-home');
@@ -585,14 +588,12 @@ final class HookMessagesTest extends TestCase
         // not the edge one — and ctrl+o folded every tool call around it while this one stayed
         // open for ever, because the expand mechanism was wired to three classes and not four.
         $text = implode("\n", array_map(static fn (int $i): string => "line {$i}", range(1, 20)));
-        $component = new HookMessageComponent(new HookMessage('build', [new TextContent($text)]), Palette::named('dark'));
+        $component = new HookMessageComponent(new HookMessage('build', [new TextContent($text)]));
 
         $collapsedLines = $component->render(60);
         $collapsed = implode("\n", array_map(Ansi::strip(...), $collapsedLines));
 
-        $bg = ltrim(Palette::named('dark')->hex('customMessageBg'), '#');
-        [$r, $g, $b] = array_map(hexdec(...), str_split($bg, 2));
-        $this->assertStringContainsString("\e[48;2;{$r};{$g};{$b}m", implode('', $collapsedLines));
+        $this->assertStringContainsString(Themes::theme()->getBgAnsi('customMessageBg'), implode('', $collapsedLines));
         $this->assertStringContainsString('[build]', $collapsed);
         $this->assertStringContainsString('line 5', $collapsed);
         $this->assertStringNotContainsString('line 6', $collapsed);
@@ -611,7 +612,6 @@ final class HookMessagesTest extends TestCase
     {
         $component = new HookMessageComponent(
             new HookMessage('build', [new TextContent("one\ntwo")]),
-            Palette::named('dark'),
         );
 
         $drawn = implode("\n", array_map(Ansi::strip(...), $component->render(60)));
@@ -628,7 +628,6 @@ final class HookMessagesTest extends TestCase
         // all: `\x80` threw out of `render()`, and `\x0c` reached the terminal and dropped a row.
         $component = new HookMessageComponent(
             new HookMessage('build', [new TextContent("make said\n\x80stray\x0clatin-1\x07done")]),
-            Palette::named('dark'),
         );
 
         $frame = implode("\n", $component->render(60));

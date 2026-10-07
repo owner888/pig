@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test\Extensions;
 
 use PHPUnit\Framework\TestCase;
+use Pig\CodingAgent\Test\GlobalThemeFixture;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentOptions;
 use Pig\Agent\AgentToolResult;
@@ -52,6 +53,7 @@ use RuntimeException;
 
 final class ExtensionContextTest extends TestCase
 {
+    use GlobalThemeFixture;
     use AssertsThrows;
 
     private string $home = '';
@@ -59,6 +61,7 @@ final class ExtensionContextTest extends TestCase
     #[\Override]
     protected function setUp(): void
     {
+        $this->setUpGlobalTheme();
         Loop::reset();
         $this->home = sys_get_temp_dir() . '/pig-ext-ctx-test-' . bin2hex(random_bytes(4));
         mkdir($this->home, 0700, true);
@@ -68,6 +71,7 @@ final class ExtensionContextTest extends TestCase
     #[\Override]
     protected function tearDown(): void
     {
+        $this->tearDownGlobalTheme();
         putenv('PIG_HOME');
         Loop::reset();
     }
@@ -508,13 +512,12 @@ PHP);
         $transformers = $runner->markdownTransformers();
         $this->assertCount(1, $transformers);
 
-        $palette = \Pig\CodingAgent\Theme\Palette::dark();
-        $userComp = new \Pig\CodingAgent\Interactive\UserMessageComponent('hello user', $palette, $transformers);
+        $userComp = new \Pig\CodingAgent\Interactive\UserMessageComponent('hello user', $transformers);
         $userRender = implode("\n", $userComp->render(80));
         $this->assertStringContainsString('[user] HELLO USER', $userRender);
 
         $asstMsg = new AssistantMessage([new TextContent('hello assistant')], Api::AnthropicMessages, 'anthropic', 'test', new Usage(), StopReason::Stop);
-        $asstComp = new \Pig\CodingAgent\Interactive\AssistantMessageComponent($palette, $asstMsg, false, $transformers);
+        $asstComp = new \Pig\CodingAgent\Interactive\AssistantMessageComponent($asstMsg, false, $transformers);
         $asstRender = implode("\n", $asstComp->render(80));
         $this->assertStringContainsString('[assistant] HELLO ASSISTANT', $asstRender);
     }
@@ -575,7 +578,7 @@ PHP);
         $chat = new \Pig\Tui\Container();
         $overlay = new \Pig\Tui\Container();
         $editor = new \Pig\CodingAgent\Interactive\CustomEditor(new \Pig\Tui\Components\Editor());
-        $footer = new \Pig\CodingAgent\Interactive\FooterComponent($this->createSession([]), \Pig\CodingAgent\Theme\Palette::dark(), '/work');
+        $footer = new \Pig\CodingAgent\Interactive\FooterComponent($this->createSession([]), '/work');
 
         $workingMsg = null;
         $workingVis = null;
@@ -583,13 +586,11 @@ PHP);
 
         $ui = new \Pig\CodingAgent\Interactive\TerminalUi(
             $tui, $chat, $overlay, $editor, $footer,
-            fn () => \Pig\CodingAgent\Theme\Palette::dark(),
             onWorkingMessage: function (?string $m) use (&$workingMsg): void { $workingMsg = $m; },
             onWorkingVisible: function (bool $v) use (&$workingVis): void { $workingVis = $v; },
             getToolsExpanded: function () use (&$expanded): bool { return $expanded; },
             setToolsExpanded: function (bool $v) use (&$expanded): void { $expanded = $v; },
             onTheme: fn (string $t): bool => $t === 'dark',
-            cwd: sys_get_temp_dir(),
         );
 
         // pasteToEditor
@@ -630,11 +631,10 @@ PHP);
         $customHeader = new \Pig\Tui\Container();
         $customFooter = new \Pig\Tui\Container();
         $editor = new \Pig\CodingAgent\Interactive\CustomEditor(new \Pig\Tui\Components\Editor());
-        $footer = new \Pig\CodingAgent\Interactive\FooterComponent($this->createSession([]), \Pig\CodingAgent\Theme\Palette::dark(), '/work');
+        $footer = new \Pig\CodingAgent\Interactive\FooterComponent($this->createSession([]), '/work');
 
         $ui = new \Pig\CodingAgent\Interactive\TerminalUi(
             $tui, $chat, $overlay, $editor, $footer,
-            fn () => \Pig\CodingAgent\Theme\Palette::dark(),
             widgetsAbove: $widgetsAbove,
             widgetsBelow: $widgetsBelow,
             customHeader: $customHeader,
@@ -674,7 +674,7 @@ PHP);
         $editor = new \Pig\CodingAgent\Interactive\CustomEditor(new \Pig\Tui\Components\Editor());
         $chat = new \Pig\Tui\Container();
         $overlay = new \Pig\Tui\Container();
-        $footer = new \Pig\CodingAgent\Interactive\FooterComponent($this->createSession([]), \Pig\CodingAgent\Theme\Palette::dark(), '/work');
+        $footer = new \Pig\CodingAgent\Interactive\FooterComponent($this->createSession([]), '/work');
 
         $tui->setFocus($editor);
         $tui->start();
@@ -682,7 +682,6 @@ PHP);
         $intercepted = [];
         $ui = new \Pig\CodingAgent\Interactive\TerminalUi(
             $tui, $chat, $overlay, $editor, $footer,
-            fn () => \Pig\CodingAgent\Theme\Palette::dark(),
         );
 
         $off = $ui->onTerminalInput(static function (string $data) use (&$intercepted) {

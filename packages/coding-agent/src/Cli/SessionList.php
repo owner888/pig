@@ -6,7 +6,7 @@ namespace Pig\CodingAgent\Cli;
 
 use Closure;
 use Pig\CodingAgent\Session\SessionInfo;
-use Pig\CodingAgent\Theme\Palette;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Focusable;
 use Pig\Tui\Component;
 use Pig\Tui\Components\Input;
@@ -61,7 +61,6 @@ final class SessionList implements Component, Focusable, InputHandler
     /** @param list<SessionInfo> $sessions newest first, as `SessionManager::listFor()` gives them */
     public function __construct(
         private readonly array $sessions,
-        private readonly Palette $palette,
         private readonly int $visible = 10,
     ) {
         $this->search = new Input();
@@ -126,7 +125,7 @@ final class SessionList implements Component, Focusable, InputHandler
         if ($this->filtered === []) {
             // Upstream's wording. "No sessions found" while the list behind it is plainly not
             // empty is the one thing that says the search is doing something.
-            $lines[] = $this->palette->fg('muted', '  No sessions found');
+            $lines[] = Themes::theme()->fg('muted', '  No sessions found');
 
             return $lines;
         }
@@ -189,7 +188,7 @@ final class SessionList implements Component, Focusable, InputHandler
      */
     private function rowsFor(array $sessions, int $selected): SelectList
     {
-        $list = new SelectList(SessionPicker::items($sessions), $this->visible, $this->palette->selectListTheme());
+        $list = new SelectList(SessionPicker::items($sessions), $this->visible, Themes::getSelectListTheme());
 
         // Clamped by `setSelectedIndex()` itself, which is what makes narrowing the search
         // from the bottom of a long list land somewhere sensible rather than back at the top.

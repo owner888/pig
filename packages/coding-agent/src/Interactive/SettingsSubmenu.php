@@ -24,8 +24,8 @@ use Pig\Tui\InputHandler;
  * the same reason it is there rather than in its own package: it is a shape the settings
  * screen needs, not a component anybody else has asked for.
  *
- * The title and the hint arrive already painted, because the caller is the one holding a
- * palette — this is arrangement, not a second place that knows which theme is on.
+ * The title and the hint arrive already painted, because the caller is the one that paints
+ * them — this is arrangement, not a second place that knows which theme is on.
  */
 final class SettingsSubmenu extends Container implements InputHandler
 {
