@@ -291,4 +291,29 @@ final class MessageComponentsTest extends TestCase
 
         $this->assertSame([], (new AssistantMessageComponent($this->palette, $message))->render(self::WIDTH));
     }
+
+    public function testInlineThinkingTagsAreExtractedAndRenderedAsThinkingBlocks(): void
+    {
+        $raw = "<thinking> Syncing CHANGELOG.md to smart-book\n\nI'm copying the updated file.\n</thinking>\n\nHere is the final output.";
+        $message = $this->assistant([new TextContent($raw)]);
+
+        // 1. When thinking is visible: tags are stripped, thinking content is rendered in italic thinkingText style
+        $component = new AssistantMessageComponent($this->palette, $message, hideThinking: false);
+        $rendered = implode("\n", $component->render(self::WIDTH));
+
+        $this->assertStringNotContainsString('<thinking>', $rendered);
+        $this->assertStringNotContainsString('</thinking>', $rendered);
+        $this->assertStringContainsString('Syncing CHANGELOG.md to smart-book', Ansi::strip($rendered));
+        $this->assertStringContainsString('Here is the final output.', Ansi::strip($rendered));
+        // Thinking color check (\e[3m for italic)
+        $this->assertStringContainsString("\e[3m", $rendered);
+
+        // 2. When thinking is hidden: the inline thinking collapses into Thinking... label
+        $hiddenComponent = new AssistantMessageComponent($this->palette, $message, hideThinking: true);
+        $hiddenRendered = Ansi::strip(implode("\n", $hiddenComponent->render(self::WIDTH)));
+
+        $this->assertStringContainsString('Thinking...', $hiddenRendered);
+        $this->assertStringNotContainsString('Syncing CHANGELOG.md', $hiddenRendered);
+        $this->assertStringContainsString('Here is the final output.', $hiddenRendered);
+    }
 }

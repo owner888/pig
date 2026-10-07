@@ -108,10 +108,25 @@ final class AssistantMessageComponent extends Container
                     $saidText = $transformer($saidText, ['role' => 'assistant', 'isStreaming' => $isStreaming]);
                 }
 
-                $said = $this->keep('said', fn (): Component => new Markdown('', 1, 0, $this->palette->markdownTheme()));
+                $parts = self::extractInlineThinking($saidText);
+                foreach ($parts as $partIndex => $part) {
+                    $partText = trim($part['text']);
+                    if ($partText === '') {
+                        continue;
+                    }
 
-                if ($said instanceof Markdown) {
-                    $said->setText($saidText);
+                    if ($part['type'] === 'thinking') {
+                        $hasTextAfter = $partIndex < count($parts) - 1 || self::hasTextAfter($message, $index);
+                        $this->thinking($partText, $hasTextAfter);
+
+                        continue;
+                    }
+
+                    $said = $this->keep('said', fn (): Component => new Markdown('', 1, 0, $this->palette->markdownTheme()));
+
+                    if ($said instanceof Markdown) {
+                        $said->setText($partText);
+                    }
                 }
 
                 continue;
@@ -244,5 +259,71 @@ final class AssistantMessageComponent extends Container
         }
 
         return false;
+    }
+
+    /**
+     * Separate embedded <thinking>...</thinking> pseudo-tags in text into thinking parts.
+     *
+     * Models that mimic literal thinking tags or streaming pseudo-tags in text are cleanly
+     * separated so the thought process renders in the dedicated thinking style rather than
+     * printing raw HTML-like tags.
+     *
+     * @return list<array{type: 'text'|'thinking', text: string}>
+     */
+    public static function extractInlineThinking(string $text): array
+    {
+        if (!str_contains($text, '<thinking>')) {
+            return [['type' => 'text', 'text' => $text]];
+        }
+
+        $parts = [];
+        $pattern = '/<thinking>(.*?)<\/thinking>/s';
+        $lastOffset = 0;
+
+        if (preg_match_all($pattern, $text, $matches, PREG_OFFSET_CAPTURE)) {
+            foreach ($matches[0] as $i => $fullMatch) {
+                $matchStr = $fullMatch[0];
+                $matchOffset = $fullMatch[1];
+                $thinkingContent = trim($matches[1][$i][0]);
+
+                if ($matchOffset > $lastOffset) {
+                    $prefix = trim(substr($text, $lastOffset, $matchOffset - $lastOffset));
+                    if ($prefix !== '') {
+                        $parts[] = ['type' => 'text', 'text' => $prefix];
+                    }
+                }
+
+                if ($thinkingContent !== '') {
+                    $parts[] = ['type' => 'thinking', 'text' => $thinkingContent];
+                }
+
+                $lastOffset = $matchOffset + strlen($matchStr);
+            }
+
+            if ($lastOffset < strlen($text)) {
+                $suffix = trim(substr($text, $lastOffset));
+                if ($suffix !== '') {
+                    $parts[] = ['type' => 'text', 'text' => $suffix];
+                }
+            }
+
+            return $parts !== [] ? $parts : [['type' => 'text', 'text' => $text]];
+        }
+
+        // Unclosed <thinking> tag during streaming
+        if (preg_match('/<thinking>([\s\S]*)$/', $text, $m, PREG_OFFSET_CAPTURE)) {
+            $prefix = trim(substr($text, 0, $m[0][1]));
+            if ($prefix !== '') {
+                $parts[] = ['type' => 'text', 'text' => $prefix];
+            }
+            $streamThinking = trim($m[1][0]);
+            if ($streamThinking !== '') {
+                $parts[] = ['type' => 'thinking', 'text' => $streamThinking];
+            }
+
+            return $parts !== [] ? $parts : [['type' => 'text', 'text' => $text]];
+        }
+
+        return [['type' => 'text', 'text' => $text]];
     }
 }

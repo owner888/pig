@@ -11071,8 +11071,9 @@ PHP 的空安全调用操作符 `$this->terminals[$id]?->resize()` 仅在左侧�
 1. 在 `Pig\Tui\Components\ScrollView` 中实现视口滚动计算、自动跟随、行切片（`renderViewport`）与浮动指示条合成（`composite`）。
 2. 在 `Pig\Tui\Width` 中实现 ANSI 样式感知的 `sliceByColumn` 与 `composite` 方法。
 3. 在 `Pig\CodingAgent\Interactive\ChatViewport` 中实现双段式布局组合与 `Caret` 绝对行号映射（`$lastTranscriptHeight + $inDock`），保证输入法光标精准锁定在底部输入框内。
-4. 在 `InteractiveMode` 中接入 `ChatViewport`，默认在真实终端启用全屏 AltScreen 缓冲，并绑定 `PageUp`, `PageDown`, `Ctrl+Home`, `Ctrl+End` 及鼠标滚轮事件；按下 `Ctrl+End` 或提交新消息时一键恢复贴底跟随。
-5. 全量单元测试覆盖 `ScrollViewTest`、`ChatViewportTest` 及 `InteractiveModeTest` 中的滚动与指示条交互。
+4. 在 `InteractiveMode` 中接入 `ChatViewport`，默认在真实终端启用全屏 AltScreen 缓冲，并绑定 `PageUp`, `PageDown`, `Ctrl+Home`, `Ctrl+End` 及鼠标滚轮事件；按下 `Ctrl+End`、点击浮条或提交新消息时一键恢复贴底跟随。
+5. 在 `AssistantMessageComponent` 中增加正文内 `<thinking>...</thinking>` 的智能提取与样式分流（`extractInlineThinking`），将模型在正文中泄露的思考过程自动转为弱化浅灰斜体的专用 Thinking 块，彻底消除裸露的 HTML-like 标签。
+6. 全量单元测试覆盖 `ScrollViewTest`、`ChatViewportTest`、`MessageComponentsTest` 及 `InteractiveModeTest`。
 
 ## Version floor: PHP >= 8.3
 
