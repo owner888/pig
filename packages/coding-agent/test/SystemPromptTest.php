@@ -126,7 +126,7 @@ final class SystemPromptTest extends ToolTestCase
 
     public function testWithBashAndNoSearchToolsBashIsWhatToSearchWith(): void
     {
-        $this->assertStringContainsString('Use bash for file operations', $this->prompt(['read', 'bash', 'edit']));
+        $this->assertStringContainsString('Use bash for file operations like ls, rg, find', $this->prompt(['read', 'bash', 'edit']));
     }
 
     public function testWithSearchToolsTheyArePreferredOverBash(): void
