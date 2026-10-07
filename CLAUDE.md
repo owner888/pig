@@ -71,6 +71,7 @@ the developer asked for it, it is ported and listed here:
 | A 4-cell half-block startup mascot logo icon (custom pink piglet) | `Pig\CodingAgent\Interactive\PigLogo`, `InteractiveMode::banner()` | `pi-logo.ts` at 0.99.1 |
 | `!!command` runs without joining the conversation | `AgentSession::executeBash(remember: false)` | `!!` at 0.87; the anchor has `!` only |
 | Ctrl+G opens the prompt in `$VISUAL`, without stopping the event loop | `InteractiveMode::editPromptExternally()`, `Process::interactive()` | `openExternalEditor()` in `interactive-mode.ts`, which blocks |
+| Fullscreen ChatViewport with fixed bottom dock & scroll-to-end indicator | `Pig\CodingAgent\Interactive\ChatViewport`, `Pig\Tui\Components\ScrollView` | `chat-viewport.ts` + `tui-alt-screen.ts` at 0.85+ |
 
 The anchor's banner is a column of thirteen keys, which is taller than most of the
 conversations it sits above; HEAD moved the list behind `ctrl+o` and put a one-line
@@ -11039,6 +11040,39 @@ PHP 的空安全调用操作符 `$this->terminals[$id]?->resize()` 仅在左侧�
 
 **对策**：
 改用 `($this->terminals[$id] ?? null)?->input($data)` 与 `($this->terminals[$id] ?? null)?->resize($cols, $rows)`，使用 null 合并运算符（`?? null`）安全访问数组元素，对已退出或未找到的终端静默忽略，彻底杜绝 Warning 泄露。
+
+### Bash 耗时计时器（Elapsed / Took）与 `test/lint.php` 批处理加速
+
+**现象**：
+1. 在 TUI 运行长耗时命令（如用户 `!command` 或模型调用 `bash` 工具）时，bash 块内缺少执行耗时显示，无法获知具体耗时了多久（例如 `Elapsed 30.3s`、`Took 53.1s`）。
+2. 执行 `php test/lint.php` 耗时高达 53.1 秒，严重拖慢提交前检查与本地流转。
+
+**原因**：
+1. 对照上游 pi `packages/coding-agent/src/core/tools/renderers/bash.ts`，pi 官方在 bash 渲染器中记录了 `startedAt` 与 `endedAt`，运行中动态显示 `Elapsed ${formatDuration}`，完成后显示 `Took ${formatDuration}`；pig 的 `ToolExecutionComponent` 此前未对齐该耗时计时器。
+2. `test/lint.php` 此前在 `foreach ($files as $file)` 中对 637 个文件逐一调用 `exec(PHP_BINARY . ' -l ' . $file)` 串行启动了 637 个独立的 PHP 子进程，进程启动开销导致耗时达 53 秒。
+
+**对策**：
+1. 在 `ToolExecutionComponent` 与 `InteractiveMode` 中对齐 upstream pi 的耗时格式化器 `formatDuration()`（秒保留一位小数 `30.3s`、分秒 `3m 42s`、时分秒 `1h 15m 30s`），并在 bash 结果中渲染 muted 样式的 `Elapsed <duration>`（运行中）与 `Took <duration>`（完成后）。
+2. 在 `InteractiveMode::executeBash` 中加入 500ms 刷新调度，保证即使无标准输出的命令也能平滑跳动显示当前经过时间。
+3. `test/lint.php` 改用 `array_chunk($files, 100)` 批量分块执行 `php -l`，如有语法错误自动回退到逐文件定位；全量 lint 耗时由 **53.1s 暴降至 0.9s（提速 59 倍）**。
+
+### 全屏固定底部 Dock 与滚动视口（ChatViewport & ScrollView）
+
+**现象**：
+此前 TUI 交互模式采用单屏流式追加渲染，随着对话轮次增加，历史消息将输入框和 Footer 整体推向终端屏幕外，用户查看历史内容时底部输入框和状态行会一同滑出屏幕。而 upstream pi 在全屏模式下，底部的输入框、工作指示器与状态栏始终牢牢吸附固定在终端底部，并且向上滚动历史时，能在视口最后一行正中浮现药丸胶囊 `↓ Jump to latest message · Ctrl+End`。
+
+**原因**：
+对照 upstream pi 0.85+（`packages/tui/src/tui-alt-screen.ts` 和 `packages/coding-agent/src/modes/interactive/chat-viewport.ts`），pi 将整屏划分为两部分：
+1. 底部 Dock（`pending`, `status`, `overlay`, `editor`, `footer`）测量高度并严格停靠在最下方几行；
+2. 剩余高度全额分配给 `ScrollView` 视口，负责滚动裁剪渲染历史 transcript；
+3. 默认开启贴底跟随（`followEnd`）；当用户向上翻页（`PageUp` / `Shift+Up` / 鼠标滚轮）时脱离跟随，在视口底部正中合成渲染 `↓ Jump to latest message · Ctrl+End`；按下 `Ctrl+End`（`tui.altScreen.bottom`）或滚回最底立即恢复跟随并隐藏胶囊。
+
+**对策**：
+1. 在 `Pig\Tui\Components\ScrollView` 中实现视口滚动计算、自动跟随、行切片（`renderViewport`）与浮动指示条合成（`composite`）。
+2. 在 `Pig\Tui\Width` 中实现 ANSI 样式感知的 `sliceByColumn` 与 `composite` 方法。
+3. 在 `Pig\CodingAgent\Interactive\ChatViewport` 中实现双段式布局组合与 `Caret` 绝对行号映射（`$lastTranscriptHeight + $inDock`），保证输入法光标精准锁定在底部输入框内。
+4. 在 `InteractiveMode` 中接入 `ChatViewport`，默认在真实终端启用全屏 AltScreen 缓冲，并绑定 `PageUp`, `PageDown`, `Ctrl+Home`, `Ctrl+End` 及鼠标滚轮事件；按下 `Ctrl+End` 或提交新消息时一键恢复贴底跟随。
+5. 全量单元测试覆盖 `ScrollViewTest`、`ChatViewportTest` 及 `InteractiveModeTest` 中的滚动与指示条交互。
 
 ## Version floor: PHP >= 8.3
 

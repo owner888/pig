@@ -237,4 +237,78 @@ final class Width
     {
         self::$cache = [];
     }
+
+    /**
+     * Extract a range of visible columns from an ANSI line.
+     */
+    public static function sliceByColumn(string $line, int $startCol, ?int $length = null): string
+    {
+        if ($length !== null && $length <= 0) {
+            return '';
+        }
+
+        $endCol = $length === null ? PHP_INT_MAX : $startCol + $length;
+        $result = '';
+        $currentCol = 0;
+        $pendingAnsi = '';
+
+        foreach (Ansi::segment($line) as [$isCode, $value]) {
+            if ($isCode) {
+                if ($currentCol >= $startCol && $currentCol < $endCol) {
+                    $result .= $pendingAnsi . $value;
+                    $pendingAnsi = '';
+                } elseif ($currentCol < $startCol) {
+                    $pendingAnsi .= $value;
+                }
+                continue;
+            }
+
+            foreach (Graphemes::split($value) as $segment) {
+                $w = self::grapheme($segment);
+                if ($currentCol >= $startCol && $currentCol < $endCol) {
+                    if ($pendingAnsi !== '') {
+                        $result .= $pendingAnsi;
+                        $pendingAnsi = '';
+                    }
+                    $result .= $segment;
+                }
+                $currentCol += $w;
+                if ($currentCol >= $endCol) {
+                    break;
+                }
+            }
+
+            if ($currentCol >= $endCol) {
+                break;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Composite an overlay string into a line at a specific column.
+     */
+    public static function composite(
+        string $baseLine,
+        string $overlay,
+        int $startCol,
+        int $overlayWidth,
+        int $totalWidth,
+    ): string {
+        $before = self::sliceByColumn($baseLine, 0, $startCol);
+        $beforeWidth = self::visible($before);
+        $beforePad = max(0, $startCol - $beforeWidth);
+
+        $afterCol = $startCol + $overlayWidth;
+        $after = '';
+        $baseWidth = self::visible($baseLine);
+        if ($baseWidth > $afterCol) {
+            $after = self::sliceByColumn($baseLine, $afterCol, max(0, $totalWidth - $afterCol));
+        }
+
+        $res = $before . str_repeat(' ', $beforePad) . "\x1b[0m" . $overlay . "\x1b[0m" . $after;
+
+        return self::pad($res, $totalWidth);
+    }
 }

@@ -131,7 +131,7 @@ import { applyTheme, currentTheme } from "./theme.js";
         "token_expired": "令牌已过期",
         "token_left_m": "令牌剩余 {m} 分钟",
         "token_left_h": "令牌剩余 {h} 小时",
-        "switch_lang": "中 / EN",
+        "switch_lang": "语言",
         "switch_lang_title": "语言与语言包设置",
         "tab_new_session": "新会话",
         "in_memory": "（内存暂存）",
@@ -306,7 +306,7 @@ import { applyTheme, currentTheme } from "./theme.js";
         "token_expired": "token expired",
         "token_left_m": "token {m}m left",
         "token_left_h": "token {h}h left",
-        "switch_lang": "中 / EN",
+        "switch_lang": "Language",
         "switch_lang_title": "Language & Language Pack Settings",
         "tab_new_session": "new session",
         "in_memory": "(in-memory)",
@@ -435,14 +435,7 @@ import { applyTheme, currentTheme } from "./theme.js";
       // 3. Update lang switch button
       const langBtn = document.getElementById("lang-btn");
       if (langBtn) {
-        if (currentLocale === "zh-CN") {
-          langBtn.textContent = "中 / EN";
-        } else if (currentLocale === "en") {
-          langBtn.textContent = "EN / 中";
-        } else {
-          const customName = customLocales[currentLocale]?.label || extensionLocales[currentLocale]?.label || currentLocale.toUpperCase();
-          langBtn.textContent = `${customName.slice(0, 3).toUpperCase()} / 中`;
-        }
+        langBtn.textContent = `🌐 ${t("switch_lang")}`;
         langBtn.title = t("switch_lang_title");
       }
 

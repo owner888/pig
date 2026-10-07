@@ -6,6 +6,7 @@ namespace Pig\Tui\Test;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Pig\Tui\Ansi;
 use Pig\Tui\Graphemes;
 use Pig\Tui\Width;
 
@@ -206,5 +207,24 @@ final class WidthTest extends TestCase
 
         $this->assertSame(5, Width::visible($padded));
         $this->assertSame("\e[32mhi\e[0m   ", $padded);
+    }
+
+    public function testSliceByColumnExtractsVisibleColumnRange(): void
+    {
+        $text = "hello \e[31mworld\e[0m!";
+        $this->assertSame('world!', Ansi::strip(Width::sliceByColumn($text, 6)));
+        $this->assertSame('wor', Ansi::strip(Width::sliceByColumn($text, 6, 3)));
+
+        $cjk = "你好\e[32m世界\e[0m";
+        $this->assertSame('世界', Ansi::strip(Width::sliceByColumn($cjk, 4)));
+    }
+
+    public function testCompositeOverlaysTextAtColumn(): void
+    {
+        $base = "--------------------";
+        $overlay = "[JUMP]";
+        $composited = Width::composite($base, $overlay, 7, 6, 20);
+        $this->assertSame("-------[JUMP]-------", Ansi::strip($composited));
+        $this->assertSame(20, Width::visible($composited));
     }
 }

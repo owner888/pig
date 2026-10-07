@@ -4247,4 +4247,49 @@ final class InteractiveModeTest extends TestCase
         $this->assertIsString($fallback);
         $this->assertTrue(in_array($fallback, ['notepad', 'nano', 'vim', 'vi'], true));
     }
+
+    public function testFullscreenViewportPinsDockAndShowsJumpToBottomIndicatorWhenScrolledUp(): void
+    {
+        putenv('PIG_TUI_MODE=fullscreen');
+        try {
+            $this->start(array_fill(0, 10, "an answer with several lines of output\nsecond line\nthird line"));
+
+            // Send a few messages to exceed viewport height (24 rows terminal)
+            for ($i = 1; $i <= 8; $i++) {
+                $this->type("user question {$i}");
+                $this->type(self::ENTER);
+                $this->settle();
+            }
+
+            // Scroll up using PageUp sequence
+            $this->type("\x1b[5~");
+            $this->settle();
+
+            $screen = $this->screen();
+            $this->assertStringContainsString('Jump to latest message · Ctrl+End', $screen);
+
+            // Test mouse click on the indicator label:
+            // The indicator is centered on the bottom row of transcript.
+            // Click SGR code: button 0 (left click) on column 35, row 19 (1-based: x=36, y=20)
+            $rect = $this->mode->viewport()?->indicatorRect();
+            $this->assertNotNull($rect);
+            $clickX = $rect['column'] + 5 + 1; // 1-based
+            $clickY = $rect['row'] + 1;
+            $this->type("\x1b[<0;{$clickX};{$clickY}M");
+            $this->settle();
+            $this->assertStringNotContainsString('Jump to latest message', $this->screen());
+
+            // Scroll up again
+            $this->type("\x1b[5~");
+            $this->settle();
+            $this->assertStringContainsString('Jump to latest message', $this->screen());
+
+            // Test bare End key (MacBook Fn + -> sends \x1b[F or \x1b[4~)
+            $this->type("\x1b[F");
+            $this->settle();
+            $this->assertStringNotContainsString('Jump to latest message', $this->screen());
+        } finally {
+            putenv('PIG_TUI_MODE');
+        }
+    }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 /** php -l over every source and test file. */
 
+$start = microtime(true);
 $root = dirname(__DIR__);
 $files = [];
 
@@ -53,17 +54,24 @@ $tooNew = [
     'fpow', 'request_parse_body', 'http_get_last_response_headers',
 ];
 
-foreach ($files as $file) {
-    exec(escapeshellcmd(PHP_BINARY) . ' -l ' . escapeshellarg($file) . ' 2>&1', $output, $status);
+// Batch syntax linting in chunks of 100 files instead of 637 individual exec() subprocesses.
+foreach (array_chunk($files, 100) as $chunk) {
+    exec(escapeshellcmd(PHP_BINARY) . ' -l ' . implode(' ', array_map(escapeshellarg(...), $chunk)) . ' 2>&1', $output, $status);
 
     if ($status !== 0) {
-        $failed++;
-        echo "\033[31m✗\033[0m " . substr($file, strlen($root) + 1) . "\n";
-        echo '  ' . implode("\n  ", $output) . "\n";
+        foreach ($chunk as $file) {
+            $singleOutput = [];
+            exec(escapeshellcmd(PHP_BINARY) . ' -l ' . escapeshellarg($file) . ' 2>&1', $singleOutput, $singleStatus);
+            if ($singleStatus !== 0) {
+                $failed++;
+                echo "\033[31m✗\033[0m " . substr($file, strlen($root) + 1) . "\n";
+                echo '  ' . implode("\n  ", $singleOutput) . "\n";
+            }
+        }
     }
+}
 
-    $output = [];
-
+foreach ($files as $file) {
     $source = (string) file_get_contents($file);
 
     foreach ($tooNew as $function) {
@@ -588,10 +596,11 @@ function next_token(array $tokens, int $i, int $n = 1): ?PhpToken
 }
 
 printf(
-    "%s%d files linted, %d with syntax errors\033[0m\n",
+    "%s%d files linted, %d with syntax errors\033[0m (took %.1fs)\n",
     $failed === 0 ? "\033[32m" : "\033[31m",
     count($files),
     $failed,
+    microtime(true) - $start,
 );
 
 exit($failed === 0 ? 0 : 1);

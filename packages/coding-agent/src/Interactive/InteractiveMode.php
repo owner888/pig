@@ -47,6 +47,7 @@ use Pig\CodingAgent\Cli\SessionList;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Export\MarkdownExport;
+use Pig\Tui\Keys;
 use Pig\CodingAgent\CustomTools\CustomToolApi;
 use Pig\CodingAgent\CustomTools\CustomToolLoader;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
@@ -255,6 +256,10 @@ final class InteractiveMode
     /** @var list<string> */
     private array $builtInTools = [];
 
+    private ?ChatViewport $viewport = null;
+
+    private string $tuiMode = 'fullscreen';
+
     /**
      * @param list<string>                $initialMessages said before the first keystroke, in order
      * @param list<\Pig\Ai\ImageContent> $initialImages   attachments for the first of them
@@ -300,10 +305,20 @@ final class InteractiveMode
         $this->showImages = $this->settings->showImages();
         $this->clipboard = $clipboard ?? new SystemClipboard();
 
+        $envMode = getenv('PIG_TUI_MODE') ?: getenv('PI_TUI_MODE');
+        if ($envMode !== false && $envMode !== '') {
+            $this->tuiMode = $envMode;
+        } elseif ($terminal !== null && !$terminal instanceof ProcessTerminal) {
+            $this->tuiMode = 'regular';
+        } else {
+            $this->tuiMode = $this->settings->tuiMode();
+        }
+
         // Injected so a test can drive this without a terminal, the same way the editor
         // takes its clipboard: everything below here is arrangement, and arrangement is
         // exactly what is worth testing.
         $this->tui = new Tui($terminal ?? new ProcessTerminal());
+        $this->tui->setAltScreen($this->tuiMode === 'fullscreen');
         $this->chat = new Container();
         $this->pending = new Container();
         $this->status = new Container();
@@ -609,6 +624,12 @@ final class InteractiveMode
         return $this->tui;
     }
 
+    /** @internal for tests */
+    public function viewport(): ?ChatViewport
+    {
+        return $this->viewport;
+    }
+
     /** The command to resume this session, if it was persisted to disk. */
     public function resumeCommand(): ?string
     {
@@ -723,6 +744,40 @@ final class InteractiveMode
     {
         $this->banner = new Text($this->banner(), 1, 0);
 
+        if ($this->tuiMode === 'fullscreen') {
+            $document = new Container();
+            $document->addChild($this->customHeader);
+            $document->addChild(new Spacer(1));
+            $document->addChild($this->banner);
+            $document->addChild(new Spacer(1));
+            $document->addChild($this->chat);
+
+            $this->viewport = new ChatViewport(
+                $document,
+                $this->pending,
+                $this->status,
+                $this->overlay,
+                $this->widgetsAbove,
+                $this->editor,
+                $this->widgetsBelow,
+                $this->footer,
+            );
+            $this->viewport->dock()->addChild($this->customFooter);
+
+            $this->tui->setViewportRenderer(function (int $width, int $height): array {
+                return $this->viewport->renderViewport(
+                    $width,
+                    $height,
+                    fn (): string => $this->scrollToEndIndicator(),
+                );
+            });
+
+            $this->tui->addChild($this->viewport);
+            $this->tui->setFocus($this->editor);
+
+            return;
+        }
+
         $this->tui->addChild($this->customHeader);
         $this->tui->addChild(new Spacer(1));
         $this->tui->addChild($this->banner);
@@ -740,6 +795,14 @@ final class InteractiveMode
         $this->tui->addChild($this->footer);
         $this->tui->addChild($this->customFooter);
         $this->tui->setFocus($this->editor);
+    }
+
+    private function scrollToEndIndicator(): string
+    {
+        $shortcut = $this->keybindings->display('tui.altScreen.bottom') ?: 'Ctrl+End';
+        $label = " ↓ Jump to latest message" . ($shortcut !== '' ? " · {$shortcut}" : '') . ' ';
+
+        return $this->palette->bg('selectedBg', $this->palette->fg('text', $label));
     }
 
     /**
@@ -1008,6 +1071,85 @@ final class InteractiveMode
                 $spec['description'],
             );
         }
+
+        $this->tui->onInput(function (string $data): bool|array|null {
+            if ($this->viewport === null) {
+                return null;
+            }
+
+            // SGR mouse protocol handling (\x1b[<button;x;y[Mm])
+            if (preg_match('/^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/', $data, $m) === 1) {
+                $button = (int) $m[1];
+                $col = (int) $m[2] - 1; // 1-based to 0-based
+                $row = (int) $m[3] - 1;
+                $release = $m[4] === 'm';
+
+                // Wheel up (\x1b[<64;...M)
+                if ($button === 64) {
+                    $this->viewport->transcript()->scrollBy(-3);
+                    $this->tui->requestRender();
+
+                    return ['consume' => true];
+                }
+
+                // Wheel down (\x1b[<65;...M)
+                if ($button === 65) {
+                    $this->viewport->transcript()->scrollBy(3);
+                    $this->tui->requestRender();
+
+                    return ['consume' => true];
+                }
+
+                // Left click press (button 0, non-motion, press)
+                if (!$release && ($button & 3) === 0 && ($button & 32) === 0) {
+                    $rect = $this->viewport->indicatorRect();
+                    if ($rect !== null && $row === $rect['row'] && $col >= $rect['column'] && $col < $rect['column'] + $rect['width']) {
+                        $this->viewport->transcript()->scrollToBottom();
+                        $this->tui->requestRender();
+
+                        return ['consume' => true];
+                    }
+                }
+
+                return ['consume' => true];
+            }
+
+            // Scroll viewport to bottom (Ctrl+End, or bare End / Cmd+Down when scrolled up away from bottom)
+            if (Keys::matchesName($data, 'ctrl+end') || (!$this->viewport->transcript()->isFollowingEnd() && Keys::isEnd($data))) {
+                $this->viewport->transcript()->scrollToBottom();
+                $this->tui->requestRender();
+
+                return ['consume' => true];
+            }
+
+            // Scroll viewport to top (Ctrl+Home, or bare Home when scrolled up away from bottom)
+            if (Keys::matchesName($data, 'ctrl+home') || (!$this->viewport->transcript()->isFollowingEnd() && Keys::isHome($data))) {
+                $this->viewport->transcript()->scrollToTop();
+                $this->tui->requestRender();
+
+                return ['consume' => true];
+            }
+
+            // PageUp / Shift+Up
+            if (Keys::isPageUp($data) || Keys::matchesName($data, 'shift+up')) {
+                $delta = max(1, $this->viewport->transcript()->viewportHeight() - 4);
+                $this->viewport->transcript()->scrollBy(-$delta);
+                $this->tui->requestRender();
+
+                return ['consume' => true];
+            }
+
+            // PageDown / Shift+Down
+            if (Keys::isPageDown($data) || Keys::matchesName($data, 'shift+down')) {
+                $delta = max(1, $this->viewport->transcript()->viewportHeight() - 4);
+                $this->viewport->transcript()->scrollBy($delta);
+                $this->tui->requestRender();
+
+                return ['consume' => true];
+            }
+
+            return null;
+        });
     }
 
     /**
@@ -1516,6 +1658,8 @@ final class InteractiveMode
             return;
         }
 
+        $this->viewport?->transcript()->scrollToBottom();
+
         if ($this->session->isBashRunning()) {
             $this->sayWarning('A command is already running. Press esc to stop it.');
 
@@ -1529,12 +1673,22 @@ final class InteractiveMode
             bashLines: ToolExecutionComponent::TYPED_BASH_LINES,
             showImages: $this->showImages,
             toolRenderers: $this->toolRenderers('bash'),
+            startedAt: microtime(true),
         );
         $shown->setExpanded($this->expanded);
         $this->chat->addChild($shown);
         $this->tui->requestRender();
 
         Async::spawn(function () use ($command, $remember, $shown): void {
+            $running = true;
+            $tick = function () use (&$running, &$tick): void {
+                if ($running) {
+                    $this->tui->requestRender();
+                    Loop::get()->delay(0.5, $tick);
+                }
+            };
+            Loop::get()->delay(0.5, $tick);
+
             try {
                 $execution = $this->session->executeBash(
                     $command,
@@ -1569,6 +1723,8 @@ final class InteractiveMode
                 }
             } catch (Throwable $error) {
                 $shown->fail($error->getMessage());
+            } finally {
+                $running = false;
             }
 
             $this->footer->invalidate();
@@ -1599,6 +1755,8 @@ final class InteractiveMode
      */
     private function send(string $text, array $images = []): void
     {
+        $this->viewport?->transcript()->scrollToBottom();
+
         Async::spawn(function () use ($text, $images): void {
             $this->sendAndWait($text, $images);
         });
@@ -4527,6 +4685,7 @@ final class InteractiveMode
             showImages: $this->showImages,
             cwd: $this->cwd,
             toolRenderers: $this->toolRenderers($name, $custom),
+            startedAt: microtime(true),
         );
         $tool->setExpanded($this->expanded);
         $this->chat->addChild($tool);

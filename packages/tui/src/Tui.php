@@ -99,8 +99,28 @@ class Tui extends Container
     /** @var Closure(): void|null */
     private ?Closure $onDebug = null;
 
+    /** @var (Closure(int $width, int $height): list<string>)|null */
+    private ?Closure $viewportRenderer = null;
+
+    private bool $altScreen = false;
+
     public function __construct(public readonly Terminal $terminal)
     {
+    }
+
+    public function setViewportRenderer(?Closure $renderer): void
+    {
+        $this->viewportRenderer = $renderer;
+    }
+
+    public function setAltScreen(bool $enabled): void
+    {
+        $this->altScreen = $enabled;
+    }
+
+    public function isAltScreen(): bool
+    {
+        return $this->altScreen;
     }
 
     public function setFocus(?Component $component): void
@@ -126,6 +146,10 @@ class Tui extends Container
                 $this->requestRender(resize: true);
             },
         );
+
+        if ($this->altScreen) {
+            $this->terminal->write("\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+        }
 
         $this->terminal->hideCursor();
         $this->askForCellSize();
@@ -202,6 +226,10 @@ class Tui extends Container
 
     public function stop(): void
     {
+        if ($this->altScreen) {
+            $this->terminal->write("\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l");
+        }
+
         $this->terminal->showCursor();
         $this->terminal->stop();
     }
@@ -339,6 +367,16 @@ class Tui extends Container
             $this->focused->handleInput($data);
             $this->requestRender();
         }
+    }
+
+    #[\Override]
+    public function render(int $width): array
+    {
+        if ($this->viewportRenderer !== null) {
+            return ($this->viewportRenderer)($width, $this->terminal->rows());
+        }
+
+        return parent::render($width);
     }
 
     private function draw(): void

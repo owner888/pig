@@ -867,4 +867,29 @@ final class ToolExecutionTest extends TestCase
         $this->assertStringContainsString('Operation aborted', $this->text($tool));
         $this->assertStringContainsString("\e[48;2;91;40;42m", $this->raw($tool));
     }
+
+    public function testBashShowsElapsedWhileRunningAndTookWhenComplete(): void
+    {
+        $now = microtime(true);
+        $tool = new ToolExecutionComponent(
+            'bash',
+            ['command' => 'php test/lint.php'],
+            $this->palette,
+            startedAt: $now - 53.14,
+        );
+
+        // While running (partial result)
+        $tool->updateResult(new AgentToolResult([new TextContent("running...")]), false, true);
+        $this->assertStringContainsString('Elapsed 53.1s', $this->text($tool));
+
+        // When completed
+        $tool->updateResult(new AgentToolResult([new TextContent("637 files linted")]), false, false);
+        $this->assertStringContainsString('Took 53.1s', $this->text($tool));
+
+        // Format duration helper
+        $this->assertSame('0.5s', ToolExecutionComponent::formatDuration(0.5));
+        $this->assertSame('53.1s', ToolExecutionComponent::formatDuration(53.1));
+        $this->assertSame('3m 42s', ToolExecutionComponent::formatDuration(222.0));
+        $this->assertSame('1h 15m 30s', ToolExecutionComponent::formatDuration(4530.0));
+    }
 }

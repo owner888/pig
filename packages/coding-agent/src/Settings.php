@@ -90,6 +90,18 @@ final class Settings
 
     // ---- the ones something reads ------------------------------------------------------
 
+    public function tuiMode(): string
+    {
+        $mode = $this->get('tui.mode') ?? $this->get('tuiMode');
+
+        return $mode === 'regular' ? 'regular' : 'fullscreen';
+    }
+
+    public function setTuiMode(string $mode): void
+    {
+        $this->set('tui.mode', $mode === 'regular' ? 'regular' : 'fullscreen');
+    }
+
     public function theme(): ?string
     {
         $theme = $this->get('theme');

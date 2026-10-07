@@ -49,6 +49,10 @@ final class Keybindings
         'app.editor.external' => ['ctrl+g'],
         'app.message.followUp' => ['command+enter', 'alt+enter'],
         'app.message.dequeue' => ['alt+up'],
+        'tui.altScreen.top' => ['ctrl+home'],
+        'tui.altScreen.bottom' => ['ctrl+end'],
+        'tui.altScreen.pageUp' => ['pageup'],
+        'tui.altScreen.pageDown' => ['pagedown'],
     ];
 
     /** @var array<string, list<string>> action => keys */

@@ -43,6 +43,38 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.5] - 2026-10-07
+
+### New Features
+
+- **Fullscreen Chat Viewport with Fixed Bottom Dock & Scroll-to-End Indicator (`ChatViewport`, `ScrollView`, `TuiAltScreen`)**:
+  - Aligned with upstream pi 0.85+ ~ 1.0 architecture: splits the terminal into an upper scrollable transcript viewport and a fixed bottom dock containing `Pending Queue`, `Status`, `Overlay`, `Editor`, and `Footer`.
+  - Bottom dock remains firmly pinned to the bottom of the terminal window, preventing the editor prompt and telemetry status lines from drifting off-screen during long conversations.
+  - Smart follow-end behavior: automatically scrolls to latest output; when scrolled up via `PageUp`, `Shift+Up`, or mouse wheel, detaches from the end and displays a centered floating indicator pill: ` ↓ Jump to latest message · Ctrl+End `.
+  - Seamless jump-to-bottom: supports clicking the floating indicator with mouse left-click, pressing `Ctrl+End` (or `End` / `Fn + →` on MacBook keyboard without Mission Control conflicts), or scrolling back to the bottom to instantly resume end-following and dismiss the pill.
+
+### Added
+
+- Added `tui.mode` configuration setting in `Settings.php` (default: `fullscreen`, with `regular` fallback support).
+- Added `tui.altScreen.top` (`ctrl+home`), `tui.altScreen.bottom` (`ctrl+end`), `tui.altScreen.pageUp` (`pageup`), and `tui.altScreen.pageDown` (`pagedown`) keybindings in `Keybindings.php`.
+
+### Changed
+
+- **System Prompt File Operations Alignment**:
+  - Corrected guideline in `SystemPrompt.php` from `Use bash for file operations like ls, grep, find` to `Use bash for file operations like ls, rg, find`, 100% matching upstream pi's guideline.
+  - Guides LLMs like Gemini to prioritize fast parallel `rg` over slow unindexed POSIX `grep -rn` across large build caches and binary directories.
+- **Tool Execution Component Execution Timer (`Elapsed` / `Took`)**:
+  - Ported upstream pi's duration formatter and timer from `core/tools/renderers/bash.ts` into `ToolExecutionComponent`.
+  - Renders real-time `Elapsed X.Xs` / `Xm Ys` during bash command execution, and clean muted `Took X.Xs` / `Xm Ys` upon completion.
+
+### Fixed
+
+- **59x Speedup for `test/lint.php` via Chunked Batch Execution**:
+  - Refactored `php -l` execution from serial per-file `exec()` subprocess launches (637 individual process starts) to chunked batches (`array_chunk($files, 100)`).
+  - Execution time dropped from **53.1s to 0.8s** while preserving granular syntax error reporting and failure line locations.
+- **SGR Mouse Protocol Click Parsing**:
+  - Implemented SGR mouse sequence decoding (`\x1b[<button;x;y[Mm]`) in `InteractiveMode`, enabling direct mouse left-click navigation on the `↓ Jump to latest message` indicator.
+
 ## [0.4.4] - 2026-10-07
 
 ### Fixed

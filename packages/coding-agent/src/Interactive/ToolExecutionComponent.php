@@ -112,6 +112,8 @@ final class ToolExecutionComponent extends Container
 
     private ?string $previewError = null;
 
+    private ?float $endedAt = null;
+
     /**
      * @param array<string, mixed>          $arguments still arriving, so any of them may be missing
      * @param CustomTool|null               $custom    the declaration, when this is a tool
@@ -139,6 +141,7 @@ final class ToolExecutionComponent extends Container
         private readonly ?string $cwd = null,
         /** @var array{renderCall?: Closure, renderResult?: Closure}|null */
         private readonly ?array $toolRenderers = null,
+        private ?float $startedAt = null,
     ) {
         $this->addChild(new Spacer(1));
 
@@ -216,12 +219,16 @@ final class ToolExecutionComponent extends Container
         $this->result = $result;
         $this->failed = $failed;
         $this->partial = $partial;
+        if (!$partial || $failed) {
+            $this->endedAt ??= microtime(true);
+        }
         $this->draw();
     }
 
     /** What a tool that never finished shows — an abort, or a failed turn. */
     public function fail(string $message): void
     {
+        $this->endedAt ??= microtime(true);
         $this->updateResult(new AgentToolResult([new TextContent($message)]), true);
     }
 
@@ -491,9 +498,34 @@ final class ToolExecutionComponent extends Container
             $parts[] = $this->palette->fg('warning', "Output truncated. Full output: {$path}");
         }
 
+        if ($this->startedAt !== null) {
+            $label = $this->partial ? 'Elapsed' : 'Took';
+            $duration = self::formatDuration(($this->endedAt ?? microtime(true)) - $this->startedAt);
+            $parts[] = $this->palette->fg('muted', "{$label} {$duration}");
+        }
+
         if ($parts !== []) {
             $this->box->addChild(new Text(implode("\n", $parts), 0, 0));
         }
+    }
+
+    public static function formatDuration(float $seconds): string
+    {
+        if ($seconds < 60) {
+            return sprintf('%.1fs', $seconds);
+        }
+
+        $totalSeconds = (int) floor($seconds);
+        $minutes = (int) floor($totalSeconds / 60);
+        $remainder = $totalSeconds % 60;
+        if ($minutes < 60) {
+            return "{$minutes}m {$remainder}s";
+        }
+
+        $hours = (int) floor($minutes / 60);
+        $remainderMinutes = $minutes % 60;
+
+        return "{$hours}h {$remainderMinutes}m {$remainder}s";
     }
 
     // ---- everything else -------------------------------------------------------------
