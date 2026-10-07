@@ -135,7 +135,7 @@ final class SystemPrompt
         }
 
         if ($has('bash') && !$has('grep') && !$has('find') && !$has('ls')) {
-            $guidelines[] = 'Use bash for file operations like ls, grep, find';
+            $guidelines[] = 'Use bash for file operations like ls, rg, find';
         } elseif ($has('bash') && ($has('grep') || $has('find') || $has('ls'))) {
             $guidelines[] = 'Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore)';
         }
