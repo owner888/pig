@@ -2765,13 +2765,17 @@ final class InteractiveMode
         $picker = new SelectList($items, 8, $this->palette->selectListTheme());
         $picker->setSelectHandler(function (SelectItem $item) use ($models): void {
             $this->closePicker();
-            $this->useModel($models[(int) $item->value]);
+            $this->useModel($models[(int) $item->value], persistAsDefault: false);
+        });
+        $picker->setSaveDefaultHandler(function (SelectItem $item) use ($models): void {
+            $this->closePicker();
+            $this->useModel($models[(int) $item->value], persistAsDefault: true);
         });
         $picker->setCancelHandler($this->closePicker(...));
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text($this->palette->fg('muted', 'Pick a model — enter to switch, esc to cancel'), 1, 0));
+        $this->overlay->addChild(new Text($this->palette->fg('muted', 'Pick a model — enter to switch, ctrl+s to set as default, esc to cancel'), 1, 0));
         $this->overlay->addChild($picker);
 
         $this->tui->setFocus($picker);
@@ -2799,13 +2803,13 @@ final class InteractiveMode
         $this->useModel($choice->model, $choice->thinking);
     }
 
-    private function useModel(Model $model, ?ThinkingLevel $thinking = null): void
+    private function useModel(Model $model, ?ThinkingLevel $thinking = null, bool $persistAsDefault = false): void
     {
         // `setModel()` refuses a model there is no key for. The lists above are filtered, so this
         // is the case they cannot cover: a `models.json` provider whose key variable is empty, or
         // a sign-out in another window between drawing the picker and choosing from it.
         try {
-            $this->session->setModel($model, $thinking);
+            $this->session->setModel($model, $thinking, persistAsDefault: $persistAsDefault);
         } catch (Throwable $error) {
             $this->sayError($error->getMessage());
 
@@ -2819,9 +2823,13 @@ final class InteractiveMode
 
         // The level is said too, because switching models can change it under you — and
         // finding that out from a bill is worse than reading it here.
-        $this->say($level === ThinkingLevel::Off
-            ? "Model: {$model->id}"
-            : "Model: {$model->id} · thinking {$level->value}");
+        $this->say($persistAsDefault
+            ? ($level === ThinkingLevel::Off
+                ? "Default model: {$model->provider}/{$model->id}"
+                : "Default model: {$model->provider}/{$model->id} · thinking {$level->value}")
+            : ($level === ThinkingLevel::Off
+                ? "Model: {$model->id}"
+                : "Model: {$model->id} · thinking {$level->value}"));
     }
 
     /** Prices are per million tokens, and the cheap ones are cents. */
@@ -4057,7 +4065,7 @@ final class InteractiveMode
     {
         match ($id) {
             'theme' => $this->useTheme($value),
-            'thinking' => $this->useThinkingLevel($value),
+            'thinking' => $this->useThinkingLevel($value, persistAsDefault: true),
             'hideThinking' => $this->useHideThinking($value === 'hidden'),
             'showImages' => $this->useShowImages($value === 'drawn'),
             // Takes effect on the next queued message, which is the only time it is read —
@@ -4071,7 +4079,7 @@ final class InteractiveMode
         };
     }
 
-    private function useThinkingLevel(string $value): void
+    private function useThinkingLevel(string $value, bool $persistAsDefault = false): void
     {
         $level = ThinkingLevel::tryFrom($value);
 
@@ -4079,8 +4087,9 @@ final class InteractiveMode
             return;
         }
 
-        $this->session->setThinkingLevel($level);
+        $this->session->setThinkingLevel($level, persistAsDefault: $persistAsDefault);
         $this->footer->invalidate();
+        $this->paintBorder();
     }
 
     /** Split out of `switchTheme()` so `/settings` can name a theme rather than toggle. */

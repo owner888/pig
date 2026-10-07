@@ -732,27 +732,26 @@ final class RpcModeTest extends TestCase
         $this->assertStringContainsString('anthropic/zzp-only', $response['error']);
     }
 
-    public function testAModelAHostChoosesIsRememberedForNextTime(): void
+    public function testAModelAHostChoosesChangesSessionAndLeavesSettingsUntouched(): void
     {
         $settings = Settings::inMemory();
         $this->start(settings: $settings);
 
         $this->data(['type' => 'set_model', 'modelId' => 'claude-sonnet-4-5']);
 
-        // `/model haiku` in the terminal was remembered and `set_model` over RPC was forgotten,
-        // because the settings write sat in the terminal rather than in `setModel()`. Upstream
-        // writes it from the session, where both modes get it.
-        $this->assertSame('claude-sonnet-4-5', $settings->defaultModel());
+        $this->assertSame('claude-sonnet-4-5', $this->session->model()?->id);
+        $this->assertNull($settings->defaultModel());
     }
 
-    public function testAThinkingLevelAHostChoosesIsRememberedToo(): void
+    public function testAThinkingLevelAHostChoosesChangesSessionAndLeavesSettingsUntouched(): void
     {
         $settings = Settings::inMemory();
         $this->start(reasoning: true, settings: $settings);
 
         $this->assertTrue($this->response(['type' => 'set_thinking_level', 'level' => 'high'])['success']);
 
-        $this->assertSame(ThinkingLevel::High, $settings->defaultThinkingLevel());
+        $this->assertSame(ThinkingLevel::High, $this->session->thinkingLevel());
+        $this->assertNull($settings->defaultThinkingLevel());
     }
 
     public function testCycleModelMovesAlongTheListAndBackAgain(): void

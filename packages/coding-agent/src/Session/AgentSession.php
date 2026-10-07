@@ -923,7 +923,7 @@ final class AgentSession
 
         // A scope entry's own level, and the current one outside a scope — where ctrl+p means
         // "the same question of a different model" and re-choosing the level is not part of it.
-        $this->setModel($next, $scope["{$next->provider}/{$next->id}"]->thinking ?? null);
+        $this->setModel($next, $scope["{$next->provider}/{$next->id}"]->thinking ?? null, persistAsDefault: false);
 
         return new ModelChoice($next, $this->thinkingLevel());
     }
@@ -936,7 +936,7 @@ final class AgentSession
      * model would have no idea why. Dropped silently to what the model can do, because
      * they asked for the model, not for the level.
      */
-    public function setModel(Model $model, ?ThinkingLevel $thinking = null, bool $persistAsDefault = true): void
+    public function setModel(Model $model, ?ThinkingLevel $thinking = null, bool $persistAsDefault = false): void
     {
         // Upstream's first two lines, and they were missing: switching to a model this machine
         // has no key for used to succeed, be written into the session file as the model this
@@ -2405,7 +2405,7 @@ final class AgentSession
         return $this->agent->state->thinkingLevel;
     }
 
-    public function setThinkingLevel(ThinkingLevel $level, bool $persistAsDefault = true): void
+    public function setThinkingLevel(ThinkingLevel $level, bool $persistAsDefault = false): void
     {
         $previous = $this->thinkingLevel();
         $changed = $previous !== $level;
@@ -2442,7 +2442,7 @@ final class AgentSession
         // A level the model does not offer — xhigh on a model without it — is not a
         // position in this list, so the cycle starts over rather than guessing one.
         $next = $at === false ? $levels[0] : $levels[($at + 1) % count($levels)];
-        $this->setThinkingLevel($next);
+        $this->setThinkingLevel($next, persistAsDefault: false);
 
         return $next;
     }

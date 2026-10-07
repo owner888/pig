@@ -130,6 +130,11 @@ final class Keys
         return self::isCtrl($data, 'p');
     }
 
+    public static function isCtrlS(string $data): bool
+    {
+        return self::isCtrl($data, 's');
+    }
+
     public static function isCtrlT(string $data): bool
     {
         return self::isCtrl($data, 't');

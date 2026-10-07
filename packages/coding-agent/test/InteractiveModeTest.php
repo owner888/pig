@@ -1773,24 +1773,50 @@ final class InteractiveModeTest extends TestCase
         $this->assertFalse($this->settings->hideThinking());
     }
 
-    public function testSwitchingModelIsRemembered(): void
+    public function testSwitchingModelChangesSessionAndLeavesSettingsUntouched(): void
     {
         $this->start();
 
         $this->type('/model haiku:high');
         $this->type(self::ENTER);
 
-        $this->assertSame('claude-haiku-4-5', $this->settings->defaultModel());
-        $this->assertSame(ThinkingLevel::High, $this->settings->defaultThinkingLevel());
+        // Switches for the current session
+        $this->assertSame('claude-haiku-4-5', $this->session->model()?->id);
+        $this->assertSame(ThinkingLevel::High, $this->session->thinkingLevel());
+
+        // Does NOT overwrite global settings.json (matching upstream pi)
+        $this->assertNull($this->settings->defaultModel());
+        $this->assertNull($this->settings->defaultThinkingLevel());
     }
 
-    public function testCyclingTheThinkingLevelIsRemembered(): void
+    public function testSettingModelAsDefaultWithCtrlSSavesToSettings(): void
+    {
+        $this->start();
+
+        $this->type('/model');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // Ctrl+S is ASCII 19 (\x13): saves the selected model as persistent default
+        $this->type("\x13");
+        $this->settle();
+
+        // Saved to settings
+        $this->assertNotNull($this->settings->defaultModel());
+        $this->assertStringContainsString('Default model:', $this->screen());
+    }
+
+    public function testCyclingTheThinkingLevelChangesSessionAndLeavesSettingsUntouched(): void
     {
         $this->start(reasoning: true);
 
         $this->type("\e[Z");
 
-        $this->assertSame(ThinkingLevel::Minimal, $this->settings->defaultThinkingLevel());
+        // Changes level on current session
+        $this->assertSame(ThinkingLevel::Minimal, $this->session->thinkingLevel());
+
+        // Does NOT overwrite global settings.json
+        $this->assertNull($this->settings->defaultThinkingLevel());
     }
 
     // ---- commands kept as files ---------------------------------------------------------------

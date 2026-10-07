@@ -8116,20 +8116,25 @@ One quirk kept on purpose: a current model that is not in the list counts as bei
 so ctrl+p from there lands on the *second* model. That is upstream's `indexOf` returning -1, and
 `--model` pinned to a provider whose key has since gone is how somebody gets there.
 
-### The terminal remembered the model for next time and a host did not
+### Switching models in a session must not clobber the user's default model in settings.json
 
-Same shape as the four before it, on two fields at once. Upstream's `AgentSession.setModel()` and
-`setThinkingLevel()` each write the choice to the settings manager; pig's wrote only the session
-file, and `InteractiveMode` added the settings line in three places of its own —
-`useModel()`, `cycleThinking()`, `useThinkingLevel()`. RPC's `set_model`, `set_thinking_level` and
-`cycle_thinking_level` had no such line, so a host's choice was forgotten by the next run while the
-same choice made in the terminal was remembered.
+The entry that used to be here claimed upstream always writes `setModel()` to `settingsManager`.
+That was false: upstream's `agent-session.ts` guards with `if (options.persist)` and `persist`
+defaults to **false**. In pig, `$persistAsDefault` defaulted to `true`, so every `/model <name>`
+command, every `Ctrl+P` cycle, and every `Enter` on the model picker silently rewrote `defaultModel`
+and `defaultProvider` in `~/.pig/agent/settings.json`.
 
-Both writes are in `AgentSession` now, which is where `setQueueMode()` already put its own — *"this
-is the class that holds both the agent and the settings"* — and the three lines in the terminal are
-gone. `RpcModeTest` asserts the two new cases; the harness had to start passing its `Settings` into
-the `AgentSession` it builds, as `CodingAgent::session()` does, because it had been handing it only
-to `RpcMode` and no test had needed otherwise.
+What that cost: somebody with a configured default (e.g. `antigravity/gemini-3.8-flash • medium`)
+who switched to `google/gemini-3.8-flash` for one session had their settings file clobbered with
+`google`, and next time they opened a new session (`pig`), it reopened on `google` instead of
+restoring their default. pi never touches `settings.json` on a session switch: the change is
+recorded in the session log (`model_change`) so that conversation remembers it, while a fresh
+session always opens on the configured default.
+
+`setModel()` and `setThinkingLevel()` now default `$persistAsDefault` to `false`. Switching via
+`/model <name>`, `Enter` in the picker, or keyboard cycling (`Ctrl+P`, `Shift+Tab`) modifies only
+the active session. The model picker supports `Ctrl+S` (`app.models.save`) to explicitly set the
+chosen model as the persistent default, and `/settings` continues to persist changes.
 
 ### Going back to a question kept the question
 

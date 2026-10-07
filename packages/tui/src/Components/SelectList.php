@@ -37,6 +37,9 @@ final class SelectList implements Component, InputHandler
     private ?Closure $onCancel = null;
 
     /** @var Closure(SelectItem): void|null */
+    private ?Closure $onSaveDefault = null;
+
+    /** @var Closure(SelectItem): void|null */
     private ?Closure $onSelectionChange = null;
 
     /** Width below which descriptions are dropped: two columns need room to be two columns. */
@@ -123,6 +126,17 @@ final class SelectList implements Component, InputHandler
     public function setCancelHandler(?Closure $handler): void
     {
         $this->onCancel = $handler;
+    }
+
+    /**
+     * Called when Ctrl+S is pressed on an item, to set it as a persistent default.
+     * Upstream's `onSelectAsDefault`.
+     *
+     * @param Closure(SelectItem): void|null $handler
+     */
+    public function setSaveDefaultHandler(?Closure $handler): void
+    {
+        $this->onSaveDefault = $handler;
     }
 
     /** @param Closure(SelectItem): void|null $handler */
@@ -216,6 +230,7 @@ final class SelectList implements Component, InputHandler
             Keys::isArrowUp($data) => $this->moveTo($this->selected === 0 ? $last : $this->selected - 1),
             Keys::isArrowDown($data) => $this->moveTo($this->selected === $last ? 0 : $this->selected + 1),
             Keys::isEnter($data) => $this->choose(),
+            Keys::isCtrlS($data) && $this->onSaveDefault !== null => $this->saveDefault(),
             Keys::isEscape($data) || Keys::isCtrlC($data) => $this->cancel(),
             Keys::isBackspace($data) => $this->backspace(),
             self::isPrintable($data) => $this->setFilter($this->query . $data),
@@ -266,6 +281,15 @@ final class SelectList implements Component, InputHandler
 
         if ($item !== null && $this->onSelect !== null) {
             ($this->onSelect)($item);
+        }
+    }
+
+    private function saveDefault(): void
+    {
+        $item = $this->selectedItem();
+
+        if ($item !== null && $this->onSaveDefault !== null) {
+            ($this->onSaveDefault)($item);
         }
     }
 

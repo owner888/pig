@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.62] - 2026-10-06
+
+### Fixed
+
+- Fixed model and thinking level switches in a session clobbering the user's persistent default model: `setModel()` and `setThinkingLevel()` previously defaulted `persistAsDefault` to `true`, so typing `/model <name>`, selecting a model with Enter, or cycling with `Ctrl+P`/`Shift+Tab` silently overwrote `defaultModel` and `defaultProvider` in `~/.pig/agent/settings.json`, causing the next new session to open on the switched provider instead of restoring the configured default. Session switches now default to `persistAsDefault: false` (matching upstream pi). The model picker supports `Ctrl+S` (`app.models.save`) to explicitly set the selected model as the persistent default, and `/settings` continues to persist changes.
+
 ## [0.3.61] - 2026-10-06
 
 ### Fixed
