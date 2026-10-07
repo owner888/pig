@@ -339,13 +339,13 @@ final class InteractiveMode
             onWorkingMessage: function (?string $message): void {
                 $this->customWorkingMessage = $message;
                 if ($this->working !== null) {
-                    $this->working->setText($message ?? 'Working... (esc to interrupt)');
+                    $this->working->setText($message ?? 'Working...');
                     $this->tui->requestRender();
                 }
             },
             onWorkingVisible: function (bool $visible): void {
                 if ($visible) {
-                    $this->showLoader($this->customWorkingMessage ?? 'Working... (esc to interrupt)', timer: true);
+                    $this->showLoader($this->customWorkingMessage ?? 'Working...', timer: true);
                 } else {
                     $this->hideLoader();
                 }
@@ -4205,7 +4205,7 @@ final class InteractiveMode
 
     private function onStart(): void
     {
-        $this->showLoader('Working... (esc to interrupt)', timer: true);
+        $this->showLoader('Working...', timer: true);
     }
 
     /**
@@ -4219,7 +4219,7 @@ final class InteractiveMode
      */
     private function showLoader(string $message, bool $timer = false): Loader
     {
-        if ($this->customWorkingMessage !== null && $message === 'Working... (esc to interrupt)') {
+        if ($this->customWorkingMessage !== null && $message === 'Working...') {
             $message = $this->customWorkingMessage;
         }
 

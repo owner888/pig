@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.3] - 2026-10-07
+
+### Changed
+
+- Streamlined TUI working status indicator by removing redundant `(esc to interrupt)` hint:
+  - Aligned with upstream pi's minimal `defaultWorkingMessage = "Working"` and project UI minimalism principles.
+  - Eliminates visual noise in the editor's top border: cleanly renders `⠋ Working...` initially, and `⠋ Working... · 16s` (or `· 1m15s`) as time elapses.
+
 ## [0.4.2] - 2026-10-07
 
 ### Added

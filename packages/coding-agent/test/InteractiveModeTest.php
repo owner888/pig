@@ -4049,7 +4049,7 @@ final class InteractiveModeTest extends TestCase
         $border = array_values(array_filter($lines, static fn (string $line): bool => str_contains($line, 'Working...')));
 
         $this->assertCount(1, $border, 'the loader is on exactly one line');
-        $this->assertMatchesRegularExpression('/^\x{2500}\x{2500} \S Working\.\.\. \(esc to interrupt\) \x{2500}+$/u', $border[0]);
+        $this->assertMatchesRegularExpression('/^\x{2500}\x{2500} \S Working\.\.\.(?: · \d+s)? \x{2500}+$/u', $border[0]);
 
         // And that line *is* the prompt's top rule: the editor row sits right under it and the
         // bottom rule under that, where a loader of its own would have put a blank and a rule

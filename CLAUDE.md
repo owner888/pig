@@ -643,8 +643,8 @@ purpose and the trap below says why in full: the overlay holds whatever has the 
 the thing that gave it the focus ever clears it.
 
 **The loaders are not in `$status` any more — they are in the prompt's top border**, which is
-where pi draws them (`CustomEditor.renderTopBorder()` with `embedWorkingStatus`): `── ⠋ Working...
-(esc to interrupt) ─────`. Working, retry, both compactions and the branch summary all go through
+where pi draws them (`CustomEditor.renderTopBorder()` with `embedWorkingStatus`): `── ⠋ Working... ─────`
+(with dynamic elapsed time `· 16s` while running). Working, retry, both compactions and the branch summary all go through
 `InteractiveMode::showLoader()`/`hideLoader()`, which hand the `Loader` to
 `CustomEditor::setWorkingStatus()` → `Editor::setBorderStatus()`; the editor asks the closure on
 every frame, so the spinner ticks without the editor knowing one is there, and it is painted in
