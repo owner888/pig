@@ -345,7 +345,7 @@ final class InteractiveMode
             },
             onWorkingVisible: function (bool $visible): void {
                 if ($visible) {
-                    $this->showLoader($this->customWorkingMessage ?? 'Working... (esc to interrupt)');
+                    $this->showLoader($this->customWorkingMessage ?? 'Working... (esc to interrupt)', timer: true);
                 } else {
                     $this->hideLoader();
                 }
@@ -1646,7 +1646,7 @@ final class InteractiveMode
             return;
         }
 
-        $this->showLoader('Summarising the conversation... (esc to cancel)');
+        $this->showLoader('Summarising the conversation... (esc to cancel)', timer: true);
 
         $this->compaction = new AbortController();
         $signal = $this->compaction->signal;
@@ -3393,7 +3393,7 @@ final class InteractiveMode
         $controller = new AbortController();
         $this->compaction = $controller;
 
-        $this->showLoader('Summarising the branch... (esc to stop)');
+        $this->showLoader('Summarising the branch... (esc to stop)', timer: true);
 
         try {
             return $this->session->goTo($entryId, summarise: true, signal: $controller->signal);
@@ -4205,7 +4205,7 @@ final class InteractiveMode
 
     private function onStart(): void
     {
-        $this->showLoader('Working... (esc to interrupt)');
+        $this->showLoader('Working... (esc to interrupt)', timer: true);
     }
 
     /**
@@ -4217,7 +4217,7 @@ final class InteractiveMode
      * which grew the frame by two rows at the start of every turn and shrank it at the end; the
      * border is already there. `$status` stays for anything that is not a loader.
      */
-    private function showLoader(string $message): Loader
+    private function showLoader(string $message, bool $timer = false): Loader
     {
         if ($this->customWorkingMessage !== null && $message === 'Working... (esc to interrupt)') {
             $message = $this->customWorkingMessage;
@@ -4233,6 +4233,10 @@ final class InteractiveMode
             $this->palette->of('muted'),
             $message,
         );
+
+        if ($timer) {
+            $this->working->withTimer();
+        }
 
         $this->editor->setWorkingStatus($this->working, fn (string $text): string => $this->borderColour()($text));
         $this->tui->requestRender();
@@ -4434,7 +4438,7 @@ final class InteractiveMode
         // next Enter sends it.
         $this->editor->disableSubmit(true);
 
-        $this->showLoader('Context is full — summarising, then trying again. (esc to cancel)');
+        $this->showLoader('Context is full — summarising, then trying again. (esc to cancel)', timer: true);
     }
 
     private function onOverflowHandled(AutoCompactionEndEvent $event): void

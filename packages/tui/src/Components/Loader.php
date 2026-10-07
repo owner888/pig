@@ -31,6 +31,10 @@ class Loader extends Text
 
     private bool $running = false;
 
+    private bool $withTimer = false;
+
+    private ?float $startedAt = null;
+
     /**
      * @param Closure(string): string $spinnerStyle
      * @param Closure(string): string $messageStyle
@@ -78,15 +82,42 @@ class Loader extends Text
         return $this->running;
     }
 
+    public function withTimer(bool $withTimer = true, ?float $startedAt = null): self
+    {
+        $this->withTimer = $withTimer;
+        $this->startedAt = $withTimer ? ($startedAt ?? microtime(true)) : null;
+        $this->update();
+
+        return $this;
+    }
+
     /**
      * The spinner and its message as one line, for `Editor::setBorderStatus()`.
      *
      * Upstream's `StatusIndicator.renderInBorder()`: the same text `render()` draws, without
      * the blank line above and the padding round it, because the border supplies both.
+     * When timer is enabled, formats elapsed duration: e.g. "Working... · 16s (esc to interrupt)".
      */
     public function inBorder(): string
     {
-        return ($this->spinnerStyle)(self::FRAMES[$this->frame]) . ' ' . ($this->messageStyle)($this->message);
+        $msg = $this->message;
+
+        if ($this->withTimer && $this->startedAt !== null) {
+            $elapsedSec = max(0, (int) (microtime(true) - $this->startedAt));
+            if ($elapsedSec >= 1) {
+                $timeStr = $elapsedSec >= 60
+                    ? sprintf('%dm%02ds', intdiv($elapsedSec, 60), $elapsedSec % 60)
+                    : "{$elapsedSec}s";
+
+                if (preg_match('/^(.*?)\s*(\([^\)]+\))$/', $msg, $m)) {
+                    $msg = "{$m[1]} · {$timeStr} {$m[2]}";
+                } else {
+                    $msg = "{$msg} · {$timeStr}";
+                }
+            }
+        }
+
+        return ($this->spinnerStyle)(self::FRAMES[$this->frame]) . ' ' . ($this->messageStyle)($msg);
     }
 
     public function setMessage(string $message): void

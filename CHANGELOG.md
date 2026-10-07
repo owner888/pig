@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.2] - 2026-10-07
+
+### Added
+
+- Added dynamic elapsed timer to TUI working, compaction, and branch summary status indicators:
+  - `Loader::withTimer()` automatically calculates and formats elapsed duration in the top border: `⠋ Working... · 16s (esc to interrupt)` (or `· 1m15s` after 60s).
+  - Provides clear real-time feedback that long-running operations (deep model reasoning, large codebase searches, slow network API calls, and context compactions) are actively executing rather than frozen.
+  - Enabled during turns (`Working...`), manual `/compact`, tree branch summarization, and auto-compaction, while preserving retry countdowns untouched.
+
 ## [0.4.1] - 2026-10-07
 
 ### Added

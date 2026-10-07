@@ -442,6 +442,37 @@ final class ComponentsTest extends TestCase
         $this->assertFalse($loader->isRunning());
     }
 
+    public function testLoaderWithTimerFormatsElapsedDuration(): void
+    {
+        $tui = new Tui(new FakeTerminal());
+        $loader = new Loader($tui, Style::cyan(...), Style::dim(...), 'Working... (esc to interrupt)');
+
+        // Without timer
+        $this->assertStringContainsString('Working... (esc to interrupt)', Ansi::strip($loader->inBorder()));
+        $this->assertStringNotContainsString('·', Ansi::strip($loader->inBorder()));
+
+        // Under 1s elapsed
+        $now = microtime(true);
+        $loader->withTimer(true, $now - 0.2);
+        $this->assertStringContainsString('Working... (esc to interrupt)', Ansi::strip($loader->inBorder()));
+        $this->assertStringNotContainsString('·', Ansi::strip($loader->inBorder()));
+
+        // 16s elapsed
+        $loader->withTimer(true, $now - 16.0);
+        $this->assertStringContainsString('Working... · 16s (esc to interrupt)', Ansi::strip($loader->inBorder()));
+
+        // 75s elapsed (1m15s)
+        $loader->withTimer(true, $now - 75.0);
+        $this->assertStringContainsString('Working... · 1m15s (esc to interrupt)', Ansi::strip($loader->inBorder()));
+
+        // Message without parentheses
+        $loader->setMessage('Thinking...');
+        $loader->withTimer(true, $now - 5.0);
+        $this->assertStringContainsString('Thinking... · 5s', Ansi::strip($loader->inBorder()));
+
+        $loader->stop();
+    }
+
     public function testEscapeAbortsACancellableLoader(): void
     {
         $tui = new Tui(new FakeTerminal());
