@@ -371,6 +371,12 @@ rest can arrive on its own when something needs it.
 
 **烘进颜色的文字用 `ThemedText`**（upstream `components/themed-text.ts`）：`new ThemedText(fn () => Themes::theme()->fg('dim', $msg), 1, 0)`，`invalidate()` 后下次绘制用当前主题重建；数据要在建组件前取好快照。`say()`/`sayError()`/`sayWarning()`、横幅（`ExpandableText`，ctrl+o 用 `setExpanded()`）、各命令输出都走它。直接 `new Text(Themes::theme()->fg(...))` 切主题后颜色不变——`system` 主题在终端回报颜色前是灰阶，这种文字会一直是灰的。
 
+**扩展的主题接口照 upstream `ExtensionUIContext`**：`getAllThemes()` 返回 `list<ThemeInfo>`（`->name`、`->path`），`getTheme($name): ?Theme`，`setTheme(string|Theme): array{success, error?}`；`NoUi` 回 `UI not available`，`RpcUi` 回 `Theme switching not supported in RPC mode`（不再转发给宿主）。扩展组件不要存 `custom()` 给的 `Theme`，绘制时读 `Themes::theme()`（upstream 的 `theme` 是代理）。
+
+**启动信息的布局照 upstream**：`headerContainer`（内置头部 `ExpandableText`）之后是 `loadedResourcesContainer`，由 `showLoadedResources()` 每段一个 `ExpandableText`（Context、Skills、Prompts、Extensions，pig 多一段 Tools），问题用 `[Skill conflicts]`/`[Extension issues]` 的 `ThemedText` 块；ctrl+o 展开收起全部，`/reload` 重建。
+
+**`Markdown::invalidate()` 必须清掉缓存的默认样式转义**：行内 span（`**粗体**`、`` `代码` ``）之后恢复默认样式用的转义是算一次存起来的，只清行缓存不清它，切主题后粗体后面的文字还是旧颜色（用户消息、压缩/分支摘要正文都中招）。
+
 **鼠标**：`Box`、`Editor`、`SelectList`、`SettingsList` 照 upstream 有 `handleMouse()`。包装组件（如 `CustomEditor` 包着 `Editor`）必须实现 `MouseHandler` 并转发，否则点击输入框什么都不做；`Mouse::dispatchMouseEvent()` 会把焦点给到包装组件本身。
 
 | 旧 | 新 |

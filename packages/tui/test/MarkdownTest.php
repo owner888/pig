@@ -431,6 +431,30 @@ final class MarkdownTest extends TestCase
         $this->assertStringNotContainsString("\x1b[0m", $line);
     }
 
+    public function testInvalidateSamplesTheDefaultStyleAgain(): void
+    {
+        // The closure reads its colour when called, as the coding agent's theme closures do; a
+        // theme change is a different answer from the same closure, followed by `invalidate()`.
+        $colour = '31';
+        $markdown = new Markdown(
+            'plain **bold** plain',
+            paddingX: 0,
+            defaultStyle: new DefaultTextStyle(colour: static function (string $s) use (&$colour): string {
+                return "\x1b[{$colour}m{$s}\x1b[39m";
+            }),
+        );
+        $this->assertStringContainsString("\x1b[31m", $markdown->render(40)[0]);
+
+        $colour = '32';
+        $markdown->invalidate();
+        $line = $markdown->render(40)[0];
+
+        // The text after the bold span is reopened with the sampled prefix, which is where the old
+        // colour survived.
+        $this->assertStringContainsString("\x1b[32m", $line);
+        $this->assertStringNotContainsString("\x1b[31m", $line);
+    }
+
     public function testTheBackgroundReachesTheEndOfTheLine(): void
     {
         $markdown = new Markdown(

@@ -9,7 +9,7 @@ use Closure;
 /**
  * A `ThemedText` with a collapsed and an expanded form, switched by ctrl+o — upstream's `ExpandableText`
  * (a private class in `interactive-mode.ts`, whose `BuiltInHeader` subclass is the header). Here it is
- * the banner, which in pig carries the loaded-resource sections too.
+ * the header and each loaded-resources section, as upstream's `showLoadedResources()` builds them.
  *
  * Upstream keeps the flag in a `state` object because TypeScript cannot touch `this` before `super()`;
  * PHP can hand the parent a closure over `$this`, so the flag is a plain property.

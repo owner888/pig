@@ -99,6 +99,10 @@ final class Markdown implements Component
         $this->cachedLines = null;
         $this->cachedText = null;
         $this->cachedWidth = null;
+        // The default style's opening escapes are sampled from its closures, which read the theme
+        // when called — so a theme change has to sample them again, or text after an inline span
+        // goes back to the old theme's colour.
+        $this->stylePrefix = null;
     }
 
     #[\Override]

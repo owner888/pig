@@ -7,7 +7,7 @@ namespace PigMcp;
 use Closure;
 use Pig\Async\AbortSignal;
 use Pig\Async\Deferred;
-use Pig\CodingAgent\Theme\Theme;
+use Pig\CodingAgent\Interactive\ThemedText;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Components\Input;
 use Pig\Tui\Components\Rule;
@@ -41,11 +41,13 @@ final class McpManagerView extends Container implements InputHandler
 
     private ?Input $inputTarget = null;
 
-    public function __construct(
-        private readonly TUI $tui,
-        private readonly Theme $theme,
-    ) {
-        $this->frame('MCP servers', [new Text($this->theme->fg('muted', 'Loading…'), 1, 1)]);
+    /**
+     * Every coloured line is a `ThemedText` built from `Themes::theme()` (upstream's `theme` proxy),
+     * rebuilt on the `invalidate()` a theme change sends, so the view takes no theme of its own.
+     */
+    public function __construct(private readonly TUI $tui)
+    {
+        $this->show($this->frame('MCP servers', [new ThemedText(static fn (): string => Themes::theme()->fg('muted', 'Loading…'), 1, 1)]), null);
     }
 
     /**
@@ -80,18 +82,18 @@ final class McpManagerView extends Container implements InputHandler
             $body = [];
 
             if (($menu['details'] ?? null) !== null) {
-                $body[] = new Text($this->theme->fg('muted', $menu['details']), 1, 0);
+                $body[] = new ThemedText(static fn (): string => Themes::theme()->fg('muted', $menu['details']), 1, 0);
             }
 
             if (($menu['error'] ?? null) !== null) {
-                $body[] = new Text($this->theme->fg('error', $menu['error']), 1, 0);
+                $body[] = new ThemedText(static fn (): string => Themes::theme()->fg('error', $menu['error']), 1, 0);
             }
 
             $body[] = new Spacer(1);
             $footer = "enter {$menu['confirmLabel']} • esc {$menu['cancelLabel']}";
 
             if ($menu['items'] === []) {
-                $body[] = new Text($this->theme->fg('muted', $menu['empty'] ?? 'Nothing to show.'), 1, 0);
+                $body[] = new ThemedText(static fn (): string => Themes::theme()->fg('muted', $menu['empty'] ?? 'Nothing to show.'), 1, 0);
                 $this->show($this->frame($menu['title'], $body, "esc {$menu['cancelLabel']}"), static function (string $data) use ($finish): void {
                     if (Keys::isEscape($data)) {
                         $finish(null);
@@ -137,7 +139,7 @@ final class McpManagerView extends Container implements InputHandler
     /** A read-only screen: a title and a sentence, while something happens. */
     public function status(string $title, string $message): void
     {
-        $this->show($this->frame($title, [new Spacer(1), new Text($this->theme->fg('muted', $message), 1, 0)]), null);
+        $this->show($this->frame($title, [new Spacer(1), new ThemedText(static fn (): string => Themes::theme()->fg('muted', $message), 1, 0)]), null);
     }
 
     /**
@@ -171,10 +173,10 @@ final class McpManagerView extends Container implements InputHandler
         $input = new Input();
         $body = [
             new Spacer(1),
-            new Text($this->theme->fg('muted', 'Approve access in your browser. If it did not open, visit:'), 1, 0),
-            new Text($this->theme->fg('accent', $authorizationUrl), 1, 0),
+            new ThemedText(static fn (): string => Themes::theme()->fg('muted', 'Approve access in your browser. If it did not open, visit:'), 1, 0),
+            new ThemedText(static fn (): string => Themes::theme()->fg('accent', $authorizationUrl), 1, 0),
             new Spacer(1),
-            new Text($this->theme->fg('muted', 'If the browser runs on another machine, paste the URL it was redirected to:'), 1, 0),
+            new ThemedText(static fn (): string => Themes::theme()->fg('muted', 'If the browser runs on another machine, paste the URL it was redirected to:'), 1, 0),
             $input,
         ];
 
@@ -224,12 +226,12 @@ final class McpManagerView extends Container implements InputHandler
     /** @param list<\Pig\Tui\Component> $body */
     private function frame(string $title, array $body, ?string $footer = null): array
     {
-        $rule = fn (string $text): string => $this->theme->fg('accent', $text);
-        $children = [new Rule($rule), new Text($this->theme->fg('accent', \Pig\Tui\Style::bold($title)), 1, 0), ...$body];
+        $rule = static fn (string $text): string => Themes::theme()->fg('accent', $text);
+        $children = [new Rule($rule), new ThemedText(static fn (): string => Themes::theme()->fg('accent', \Pig\Tui\Style::bold($title)), 1, 0), ...$body];
 
         if ($footer !== null) {
             $children[] = new Spacer(1);
-            $children[] = new Text($this->theme->fg('dim', $footer), 1, 0);
+            $children[] = new ThemedText(static fn (): string => Themes::theme()->fg('dim', $footer), 1, 0);
         }
 
         $children[] = new Rule($rule);

@@ -590,7 +590,9 @@ PHP);
             onWorkingVisible: function (bool $v) use (&$workingVis): void { $workingVis = $v; },
             getToolsExpanded: function () use (&$expanded): bool { return $expanded; },
             setToolsExpanded: function (bool $v) use (&$expanded): void { $expanded = $v; },
-            onTheme: fn (string $t): bool => $t === 'dark',
+            setTheme: fn (string|\Pig\CodingAgent\Theme\Theme $t): array => $t === 'dark'
+                ? ['success' => true]
+                : ['success' => false, 'error' => "Theme not found: {$t}"],
         );
 
         // pasteToEditor
@@ -614,10 +616,13 @@ PHP);
         $this->assertTrue($ui->getToolsExpanded());
 
         // themes
-        $this->assertContains('dark', $ui->getAllThemes());
+        $this->assertContains('dark', array_map(
+            static fn (\Pig\CodingAgent\Theme\ThemeInfo $info): string => $info->name,
+            $ui->getAllThemes(),
+        ));
         $this->assertNotNull($ui->getTheme('dark'));
-        $this->assertTrue($ui->setTheme('dark'));
-        $this->assertFalse($ui->setTheme('invalid_theme_name'));
+        $this->assertSame(['success' => true], $ui->setTheme('dark'));
+        $this->assertFalse($ui->setTheme('invalid_theme_name')['success']);
     }
 
     public function testTerminalUiWidgetsAndHeaderFooter(): void

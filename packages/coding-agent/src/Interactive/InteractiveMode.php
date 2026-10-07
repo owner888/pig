@@ -58,6 +58,7 @@ use Pig\CodingAgent\CustomTools\ToolProblem;
 use Pig\CodingAgent\Extensions\ExtensionDiscovery;
 use Pig\Ai\Extension\ProviderRegistry;
 use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Extensions\ExtensionError;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
@@ -72,6 +73,7 @@ use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\Skill;
+use Pig\CodingAgent\Prompt\SkillWarning;
 use Pig\CodingAgent\Prompt\Skills;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Tools\ToolInstaller;
@@ -93,6 +95,7 @@ use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Session\TreeJump;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\InteractiveThemeController;
+use Pig\CodingAgent\Theme\Theme;
 use Pig\CodingAgent\Theme\ThemeJson;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\CodingAgent\Tools\ExternalTool;
@@ -252,7 +255,26 @@ final class InteractiveMode
     /** What was chosen last time, and where the choices made here are remembered. */
     private readonly Settings $settings;
 
-    private ?ExpandableText $banner = null;
+    /** Upstream's `builtInHeader`: logo, version and key hints, with the full key list behind ctrl+o. */
+    private ?ExpandableText $builtInHeader = null;
+
+    /** Upstream's `loadedResourcesContainer`: one section per kind of loaded resource, under the header. */
+    private readonly Container $loadedResourcesContainer;
+
+    /**
+     * What the last `/reload` found wrong with the skills, for upstream's `[Skill conflicts]` block.
+     * Startup's go to standard error before the screen exists (see `CodingAgent`), so this starts empty.
+     *
+     * @var list<array{type: 'error'|'warning', message: string, path: string}>
+     */
+    private array $skillDiagnostics = [];
+
+    /**
+     * Likewise for hooks, extensions and custom tools, for upstream's `[Extension issues]` block.
+     *
+     * @var list<array{type: 'error'|'warning', message: string, path: string}>
+     */
+    private array $extensionDiagnostics = [];
 
     /** Set while a sign-in is waiting on a browser, so escape can end it. */
     private ?AbortController $signingIn = null;
@@ -361,6 +383,7 @@ final class InteractiveMode
         $this->widgetsAbove = new Container();
         $this->widgetsBelow = new Container();
         $this->customHeader = new Container();
+        $this->loadedResourcesContainer = new Container();
         $this->customFooter = new Container();
         $this->editor = new CustomEditor(new Editor(Themes::getEditorTheme()), $this->keybindings);
         // `$this->settings` rather than the argument: with none given it is the in-memory one
@@ -408,7 +431,19 @@ final class InteractiveMode
             },
             getToolsExpanded: fn (): bool => $this->expanded,
             setToolsExpanded: fn (bool $expanded) => $this->setToolsExpanded($expanded),
-            onTheme: fn (string $name): bool => $this->useTheme($name),
+            setTheme: function (string|Theme $themeOrName): array {
+                if ($themeOrName instanceof Theme) {
+                    return $this->themeController->setThemeInstance($themeOrName);
+                }
+                $result = $this->themeController->setThemeName($themeOrName);
+                if ($result['success']) {
+                    if ($this->settings->theme() !== $themeOrName) {
+                        $this->settings->setTheme($themeOrName);
+                    }
+                }
+
+                return $result;
+            },
         );
 
         // What a handler's `$ctx->mode()` answers, and what `$ctx->shutdown()` does here: quit,
@@ -782,7 +817,12 @@ final class InteractiveMode
     public function setToolsExpanded(bool $expanded): void
     {
         $this->expanded = $expanded;
-        $this->banner?->setExpanded($this->expanded);
+        $this->builtInHeader?->setExpanded($this->expanded);
+        foreach ($this->loadedResourcesContainer->children() as $child) {
+            if ($child instanceof ExpandableText) {
+                $child->setExpanded($this->expanded);
+            }
+        }
 
         foreach ($this->chat->children() as $child) {
             if ($child instanceof ToolExecutionComponent
@@ -800,25 +840,31 @@ final class InteractiveMode
 
     private function layout(): void
     {
-        // Upstream's `BuiltInHeader`: built on demand, so it follows theme changes. It reads what
-        // is loaded and the key bindings, which change only on `/reload`, and that invalidates it.
-        $this->banner = new ExpandableText(
-            fn (): string => $this->banner(expanded: false),
-            fn (): string => $this->banner(expanded: true),
+        // Upstream's `BuiltInHeader`: built on demand, so it follows theme changes. It reads the
+        // key bindings, which change only on `/reload`, and that invalidates it.
+        $this->builtInHeader = new ExpandableText(
+            fn (): string => $this->builtInHeaderText(expanded: false),
+            fn (): string => $this->builtInHeaderText(expanded: true),
             $this->expanded,
             1,
             0,
         );
+        $headerContainer = new Container();
+        $headerContainer->addChild(new Spacer(1));
+        $headerContainer->addChild($this->builtInHeader);
+        $headerContainer->addChild(new Spacer(1));
 
         // One component tree for both renderers, as upstream keeps it: regular mode mounts these
         // in order, fullscreen mounts the same ones and draws the `ChatViewport` laid over them.
+        // Upstream's `headerContainer`, `loadedResourcesContainer` and `chatContainer`, with pig's
+        // extension header (upstream swaps it in for the built-in one) above them.
         $document = new Container();
         $document->addChild($this->customHeader);
-        $document->addChild(new Spacer(1));
-        $document->addChild($this->banner);
-        $document->addChild(new Spacer(1));
+        $document->addChild($headerContainer);
+        $document->addChild($this->loadedResourcesContainer);
         $document->addChild($this->chat);
         $this->documentContainer = $document;
+        $this->showLoadedResources(force: false, showDiagnosticsWhenQuiet: true);
 
         // Upstream's dock slots: status, widgets above (with the spacer over the editor), editor,
         // widgets below, footer. pig's in-dock dialogs ride with the status — below what is
@@ -954,14 +1000,14 @@ final class InteractiveMode
     }
 
     /**
-     * The three lines at the top, followed by compact loaded sections,
-     * and the full list behind ctrl+o.
+     * The three lines at the top, and the full list behind ctrl+o. Upstream's `BuiltInHeader` text;
+     * what was loaded is drawn under it by `showLoadedResources()`, one section each.
      *
      * One line of keys rather than a column of thirteen, which is what upstream settled
      * on: the list was taller than most of the conversations it sat above. The rest is
      * still there, one key away, for the session where someone needs it.
      */
-    private function banner(bool $expanded): string
+    private function builtInHeaderText(bool $expanded): string
     {
         [$topLogo, $bottomLogo] = PigLogo::lines();
 
@@ -977,20 +1023,13 @@ final class InteractiveMode
         $onboarding = Themes::theme()->fg('dim', 'Pig can explain its own features and look up its docs. Ask it how to use or extend Pig.');
 
         if (!$expanded) {
-            $lines[] = Themes::theme()->fg('dim', 'Press ctrl+o to show full startup help and loaded resources.');
-            $lines[] = '';
-            $lines[] = $onboarding;
-
-            $loaded = $this->loaded(compact: true);
-            if ($loaded !== '') {
-                $lines[] = '';
-                $lines[] = $loaded;
-            }
-
-            return implode("\n", $lines);
+            return implode("\n", [
+                ...$lines,
+                Themes::theme()->fg('dim', 'Press ctrl+o to show full startup help and loaded resources.'),
+                '',
+                $onboarding,
+            ]);
         }
-
-        $loaded = $this->loaded(compact: false);
 
         return implode("\n", [
             ...$lines,
@@ -998,49 +1037,121 @@ final class InteractiveMode
             ($this->keysAndCommands())(),
             '',
             $onboarding,
-            ...($loaded === '' ? [] : ['', $loaded]),
         ]);
     }
 
     /**
-     * What was loaded into this session, as sections.
+     * Upstream's `showLoadedResources()`: what was loaded into this session, one `ExpandableText`
+     * per section under the header, then a warning block per kind of resource that had problems.
+     * Idempotent — it clears the container first — so `/reload` calls it again to rebuild.
      *
-     * In compact mode (collapsed banner), displays compact lists under [Context], [Skills],
-     * and [Extensions]. In expanded mode (ctrl+o), displays full scope or detail.
+     * Collapsed, the sections are compact lists; ctrl+o expands them with the header.
      */
-    private function loaded(bool $compact = false): string
+    private function showLoadedResources(bool $force = false, bool $showDiagnosticsWhenQuiet = false): void
     {
-        $sections = [];
+        // Resource rendering is idempotent; chat clears no longer clear this separate container.
+        $this->loadedResourcesContainer->clear();
 
-        if ($this->contextFiles !== []) {
-            $names = array_map(
-                fn (ContextFile $file): string => $compact ? basename($file->path) : $this->formatDisplayPath($file->path),
-                $this->contextFiles,
+        $showListing = $force || $this->shouldShowStartupDetails();
+        $showDiagnostics = $showListing || $showDiagnosticsWhenQuiet;
+
+        $sectionHeader = static fn (string $name): string => Themes::theme()->fg('mdHeading', "[{$name}]");
+        // Bodies are built on demand so the listing follows theme changes.
+        $addLoadedSection = function (string $name, Closure $collapsedBody, ?Closure $expandedBody = null) use ($sectionHeader): void {
+            $expandedBody ??= $collapsedBody;
+            $section = new ExpandableText(
+                static fn (): string => $sectionHeader($name) . "\n" . $collapsedBody(),
+                static fn (): string => $sectionHeader($name) . "\n" . $expandedBody(),
+                $this->expanded,
+                0,
+                0,
             );
+            $this->loadedResourcesContainer->addChild($section);
+            $this->loadedResourcesContainer->addChild(new Spacer(1));
+        };
 
-            $sections[] = Themes::theme()->fg('mdHeading', '[Context]') . "\n"
-                . Themes::theme()->fg('muted', '  ' . implode(', ', array_unique($names)));
+        if ($showListing) {
+            $contextFiles = $this->contextFiles;
+            if ($contextFiles !== []) {
+                $this->loadedResourcesContainer->addChild(new Spacer(1));
+                $contextList = fn (bool $compact): string => Themes::theme()->fg('muted', '  ' . implode(', ', array_unique(array_map(
+                    fn (ContextFile $file): string => $compact ? basename($file->path) : $this->formatDisplayPath($file->path),
+                    $contextFiles,
+                ))));
+                $addLoadedSection('Context', static fn (): string => $contextList(true), static fn (): string => $contextList(false));
+            }
+
+            $skillNames = array_map(static fn (Skill $skill): string => $skill->name, $this->skills);
+            if ($skillNames !== []) {
+                $addLoadedSection('Skills', static fn (): string => Themes::theme()->fg('muted', '  ' . implode(', ', $skillNames)));
+            }
+
+            $templateNames = array_map(static fn (FileCommand $command): string => "/{$command->name}", $this->fileCommands);
+            if ($templateNames !== []) {
+                sort($templateNames);
+                $addLoadedSection('Prompts', static fn (): string => Themes::theme()->fg('dim', '  ' . implode(', ', $templateNames)));
+            }
+
+            $extensions = $this->discoveredExtensions();
+            if ($extensions !== []) {
+                $addLoadedSection('Extensions', static fn (): string => Themes::theme()->fg('muted', '  ' . implode(', ', $extensions)));
+            }
+
+            // pig's own: custom tools are loaded from their own folders, which upstream has no
+            // equivalent of — its tools come from extensions.
+            if ($this->customTools !== null && !$this->customTools->isEmpty()) {
+                $toolNames = $this->customTools->names();
+                $addLoadedSection('Tools', static fn (): string => Themes::theme()->fg('muted', '  ' . implode(', ', $toolNames)));
+            }
         }
 
-        if ($this->skills !== []) {
-            $names = array_map(static fn (Skill $skill): string => $skill->name, $this->skills);
+        if ($showDiagnostics) {
+            $skillDiagnostics = $this->skillDiagnostics;
+            if ($skillDiagnostics !== []) {
+                $warningLines = fn (): string => $this->formatDiagnostics($skillDiagnostics);
+                $this->loadedResourcesContainer->addChild(
+                    new ThemedText(static fn (): string => Themes::theme()->fg('warning', '[Skill conflicts]') . "\n" . $warningLines(), 0, 0),
+                );
+                $this->loadedResourcesContainer->addChild(new Spacer(1));
+            }
 
-            $sections[] = Themes::theme()->fg('mdHeading', '[Skills]') . "\n"
-                . Themes::theme()->fg('muted', '  ' . implode(', ', $names));
+            $extensionDiagnostics = $this->extensionDiagnostics;
+            if ($extensionDiagnostics !== []) {
+                $warningLines = fn (): string => $this->formatDiagnostics($extensionDiagnostics);
+                $this->loadedResourcesContainer->addChild(
+                    new ThemedText(static fn (): string => Themes::theme()->fg('warning', '[Extension issues]') . "\n" . $warningLines(), 0, 0),
+                );
+                $this->loadedResourcesContainer->addChild(new Spacer(1));
+            }
+        }
+    }
+
+    /**
+     * Upstream's `shouldShowStartupDetails()`. pig has no `quietStartup` setting and no `--verbose`,
+     * so this is upstream's answer with the setting at `false`: the listing always shows.
+     */
+    private function shouldShowStartupDetails(): bool
+    {
+        return true;
+    }
+
+    /**
+     * Upstream's `formatDiagnostics()`, for the diagnostics pig has: each with its path. pig's
+     * loaders report no name collisions, so upstream's grouped `"name" collision:` form has nothing
+     * to draw.
+     *
+     * @param list<array{type: 'error'|'warning', message: string, path: string}> $diagnostics
+     */
+    private function formatDiagnostics(array $diagnostics): string
+    {
+        $lines = [];
+        foreach ($diagnostics as $d) {
+            $color = $d['type'] === 'error' ? 'error' : 'warning';
+            $lines[] = Themes::theme()->fg($color, '  ' . $this->formatDisplayPath($d['path']));
+            $lines[] = Themes::theme()->fg($color, "    {$d['message']}");
         }
 
-        $extensions = $this->discoveredExtensions();
-        if ($extensions !== []) {
-            $sections[] = Themes::theme()->fg('mdHeading', '[Extensions]') . "\n"
-                . Themes::theme()->fg('muted', '  ' . implode(', ', $extensions));
-        }
-
-        if ($this->customTools !== null && !$this->customTools->isEmpty()) {
-            $sections[] = Themes::theme()->fg('mdHeading', '[Tools]') . "\n"
-                . Themes::theme()->fg('muted', '  ' . implode(', ', $this->customTools->names()));
-        }
-
-        return implode("\n\n", $sections);
+        return implode("\n", $lines);
     }
 
     /**
@@ -2991,20 +3102,23 @@ final class InteractiveMode
 
         $customTools->onChange(static fn () => $loadout->apply());
 
-        // 8. Rebind autocomplete on editor and update banner
+        // 8. Rebind autocomplete on editor, and redraw the header and what was loaded — upstream's
+        // `showLoadedResources()` after a reload, which draws the problems as its warning blocks.
         $this->bindEditor();
-        $this->banner?->invalidate();
-
-        // 9. Report warnings if any
-        $allWarnings = [
-            ...$contextWarnings,
-            ...array_map(static fn ($w): string => "skill {$w->path}: {$w->message}", $skillWarnings),
-            ...array_map(static fn ($p): string => "hook {$p->toText()}", $hookProblems),
-            ...array_map(static fn ($p): string => "extension {$p->toText()}", $extensionProblems),
-            ...array_map(static fn ($p): string => "tool {$p->toText()}", $toolProblems),
+        $this->builtInHeader?->setExpanded($this->expanded);
+        $this->skillDiagnostics = array_map(
+            static fn (SkillWarning $w): array => ['type' => 'warning', 'message' => $w->message, 'path' => $w->path],
+            $skillWarnings,
+        );
+        $this->extensionDiagnostics = [
+            ...array_map(static fn (HookError $p): array => ['type' => 'error', 'message' => "{$p->event}: {$p->error}", 'path' => $p->hookPath], $hookProblems),
+            ...array_map(static fn (ExtensionError $p): array => ['type' => 'error', 'message' => "{$p->stage}: {$p->message}", 'path' => $p->path], $extensionProblems),
+            ...array_map(static fn (ToolProblem $p): array => ['type' => 'error', 'message' => $p->error, 'path' => $p->path], $toolProblems),
         ];
+        $this->showLoadedResources(force: false, showDiagnosticsWhenQuiet: true);
 
-        foreach ($allWarnings as $w) {
+        // 9. Context files have no block upstream; their problems are said as warnings.
+        foreach ($contextWarnings as $w) {
             $this->sayWarning($w);
         }
 

@@ -972,7 +972,7 @@ return static function (ExtensionApi $pi): void {
                 }
 
                 $ctx->ui->custom(static function (\Pig\Tui\TUI $tui, \Pig\CodingAgent\Theme\Theme $theme, \Closure $done) use ($manage, $ctx): McpManagerView {
-                    $view = new McpManagerView($tui, $theme);
+                    $view = new McpManagerView($tui);
 
                     Async::spawn(static function () use ($manage, $view, $done, $ctx): void {
                         try {

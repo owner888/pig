@@ -146,9 +146,9 @@ final readonly class NoUi implements HookUi
     }
 
     #[\Override]
-    public function setTheme(string $name): bool
+    public function setTheme(string|Theme $theme): array
     {
-        return false;
+        return ['success' => false, 'error' => 'UI not available'];
     }
 
     #[\Override]

@@ -892,4 +892,28 @@ final class ToolExecutionTest extends TestCase
         $this->assertSame('3m 42s', ToolExecutionComponent::formatDuration(222.0));
         $this->assertSame('1h 15m 30s', ToolExecutionComponent::formatDuration(4530.0));
     }
+
+    public function testABashCallRecoloursOnAThemeChange(): void
+    {
+        // The command's output sits in `BashOutputComponent`'s cache and the status line in a `Text`
+        // built by `draw()`; a theme change reaches both only through `invalidate()`.
+        Themes::initTheme('dark');
+        $tool = new ToolExecutionComponent('bash', ['command' => 'make']);
+        $tool->updateResult(new AgentToolResult([new TextContent("built\nlinked")], ['exitCode' => 3]), true);
+        $tokens = ['toolTitle', 'toolOutput', 'error'];
+        $dark = array_map(static fn (string $token): string => Themes::theme()->getFgAnsi($token), $tokens);
+        $darkBg = Themes::theme()->getBgAnsi('toolErrorBg');
+        $this->assertStringContainsString($darkBg, implode("\n", $tool->render(self::WIDTH)));
+
+        Themes::initTheme('light');
+        $tool->invalidate();
+        $after = implode("\n", $tool->render(self::WIDTH));
+
+        foreach ($tokens as $index => $token) {
+            $this->assertStringContainsString(Themes::theme()->getFgAnsi($token), $after, "{$token} in the new theme");
+            $this->assertStringNotContainsString($dark[$index], $after, "{$token} left in the old theme");
+        }
+        $this->assertStringContainsString(Themes::theme()->getBgAnsi('toolErrorBg'), $after);
+        $this->assertStringNotContainsString($darkBg, $after);
+    }
 }

@@ -336,4 +336,58 @@ final class MessageComponentsTest extends TestCase
         $withTools = (new AssistantMessageComponent($calling))->render(self::WIDTH);
         $this->assertStringNotContainsString("\x1b]133;", implode('', $withTools), 'a message that calls tools is not a prompt zone');
     }
+
+    // ---- a theme change -------------------------------------------------------------------
+
+    /**
+     * Render in dark, switch to light, invalidate as the TUI does on a theme change, render again:
+     * every token named must be drawn in light's escape and none in dark's.
+     *
+     * @param list<string> $tokens foreground tokens the component draws in
+     */
+    private function assertRecolours(\Pig\Tui\Component $component, array $tokens): void
+    {
+        Themes::initTheme('dark');
+        $dark = array_map(static fn (string $token): string => Themes::theme()->getFgAnsi($token), $tokens);
+        $before = implode("\n", $component->render(self::WIDTH));
+        foreach ($dark as $escape) {
+            $this->assertStringContainsString($escape, $before);
+        }
+
+        Themes::initTheme('light');
+        $component->invalidate();
+        $after = implode("\n", $component->render(self::WIDTH));
+        foreach ($tokens as $index => $token) {
+            $this->assertStringContainsString(Themes::theme()->getFgAnsi($token), $after, "{$token} in the new theme");
+            $this->assertStringNotContainsString($dark[$index], $after, "{$token} left in the old theme");
+        }
+    }
+
+    public function testAUserMessageRecoloursOnAThemeChange(): void
+    {
+        // Text after an inline span is reopened with the default style's sampled escape, which is
+        // where the old colour survived.
+        Themes::initTheme('dark');
+        $this->assertRecolours(new UserMessageComponent('plain **bold** plain'), ['userMessageText']);
+    }
+
+    public function testAnAssistantMessageRecoloursOnAThemeChange(): void
+    {
+        Themes::initTheme('dark');
+        $message = $this->assistant([new ThinkingContent('a **thought** here'), new TextContent('said')], StopReason::Error, 'boom');
+        $this->assertRecolours(new AssistantMessageComponent($message), ['thinkingText', 'error']);
+    }
+
+    public function testAnExpandedCompactionRecoloursOnAThemeChange(): void
+    {
+        Themes::initTheme('dark');
+        $summary = new CompactionSummary('what **changed** here', tokensBefore: 1200, replaced: 3);
+        $this->assertRecolours(new CompactionComponent($summary, expanded: true), ['customMessageLabel', 'muted']);
+    }
+
+    public function testAnExpandedBranchSummaryRecoloursOnAThemeChange(): void
+    {
+        Themes::initTheme('dark');
+        $this->assertRecolours(new BranchSummaryComponent(new BranchSummary('handover **notes** here'), expanded: true), ['customMessageLabel', 'muted']);
+    }
 }

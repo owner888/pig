@@ -149,7 +149,7 @@ final class NoticingUi implements HookUi
     #[\Override]
     public function getAllThemes(): array
     {
-        return ['dark', 'light', 'labra'];
+        return Themes::getAvailableThemesWithPaths();
     }
 
     #[\Override]
@@ -159,9 +159,9 @@ final class NoticingUi implements HookUi
     }
 
     #[\Override]
-    public function setTheme(string $name): bool
+    public function setTheme(string|Theme $theme): array
     {
-        return true;
+        return ['success' => true];
     }
 
     #[\Override]

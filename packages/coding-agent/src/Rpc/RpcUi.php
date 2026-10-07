@@ -231,21 +231,20 @@ final class RpcUi implements HookUi
     #[\Override]
     public function getAllThemes(): array
     {
-        return Themes::getAvailableThemes();
+        return [];
     }
 
     #[\Override]
     public function getTheme(string $name): ?Theme
     {
-        return Themes::getThemeByName($name);
+        return null;
     }
 
     #[\Override]
-    public function setTheme(string $name): bool
+    public function setTheme(string|Theme $theme): array
     {
-        $this->tell(['method' => 'set_theme', 'theme' => $name]);
-
-        return true;
+        // Theme switching not supported in RPC mode
+        return ['success' => false, 'error' => 'Theme switching not supported in RPC mode'];
     }
 
     #[\Override]

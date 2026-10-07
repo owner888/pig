@@ -43,6 +43,26 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.16] - 2026-10-08
+
+### New Features
+
+- **Upstream Pi Standard Resource Loading Layout & Issue Diagnostics (`showLoadedResources()`)**:
+  - Aligned startup resource display into dedicated `loadedResourcesContainer` under `builtInHeader`, rendering modular collapsible sections for `[Context]`, `[Skills]`, `[Prompts]`, `[Extensions]`, and `[Tools]`.
+  - Added structured diagnostic warning blocks for `[Skill conflicts]` and `[Extension issues]` rendering file paths and error details when conflicts occur.
+
+### Added
+
+- **Extension UI Theme Management Parity**:
+  - Aligned `HookUi::setTheme()` returning structured `array{success: bool, error?: string}` and accepting either a theme name string or a `Theme` instance.
+  - Aligned `HookUi::getAllThemes()` returning rich `list<ThemeInfo>` with path metadata.
+  - Added `McpManagerViewTest` verifying MCP server authorization URL and action rendering.
+
+### Fixed
+
+- **Fixed Markdown Theme Invalidation Escape Prefix Caching**:
+  - Reset `$this->stylePrefix` on `Markdown::invalidate()` so dynamic theme switching accurately re-samples text style prefixes without leaking stale palette escape sequences across inline spans.
+
 ## [0.4.15] - 2026-10-08
 
 ### Added

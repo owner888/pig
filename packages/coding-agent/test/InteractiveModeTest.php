@@ -1056,6 +1056,22 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringNotContainsString('No command called', $this->screenText());
     }
 
+    public function testReloadDrawsAnExtensionThatWouldNotLoadAsUpstreamsExtensionIssuesBlock(): void
+    {
+        mkdir($this->home . '/extensions', 0o755, true);
+        file_put_contents($this->home . '/extensions/broken.php', "<?php\nreturn 42;\n");
+
+        $this->start();
+        $this->type('/reload');
+        $this->type(self::ENTER);
+
+        // Upstream's `showLoadedResources()` after a reload: the problem is a block under the
+        // loaded sections, headed `[Extension issues]`, with the file on its own line.
+        $screen = $this->screenText();
+        $this->assertStringContainsString('[Extension issues]', $screen);
+        $this->assertStringContainsString('broken.php', $screen);
+    }
+
     public function testReloadCommandWarnsWhenStreaming(): void
     {
         $this->start(['done']);

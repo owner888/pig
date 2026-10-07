@@ -20,6 +20,7 @@ use Pig\Tui\Components\Text;
 use Pig\Tui\Component;
 use Pig\Tui\Container;
 use Pig\Tui\TUI;
+use LogicException;
 use Pig\Tui\TuiError;
 use Throwable;
 
@@ -124,7 +125,7 @@ final class TerminalUi implements HookUi
         private readonly ?Closure $onHiddenThinkingLabel = null,
         private readonly ?Closure $getToolsExpanded = null,
         private readonly ?Closure $setToolsExpanded = null,
-        private readonly ?Closure $onTheme = null,
+        private readonly ?Closure $setTheme = null,
     ) {
     }
 
@@ -488,7 +489,7 @@ final class TerminalUi implements HookUi
     #[\Override]
     public function getAllThemes(): array
     {
-        return Themes::getAvailableThemes();
+        return Themes::getAvailableThemesWithPaths();
     }
 
     #[\Override]
@@ -498,9 +499,13 @@ final class TerminalUi implements HookUi
     }
 
     #[\Override]
-    public function setTheme(string $name): bool
+    public function setTheme(string|Theme $theme): array
     {
-        return $this->onTheme !== null ? ($this->onTheme)($name) : false;
+        if ($this->setTheme === null) {
+            throw new LogicException('TerminalUi was built without a setTheme handler');
+        }
+
+        return ($this->setTheme)($theme);
     }
 
     #[\Override]

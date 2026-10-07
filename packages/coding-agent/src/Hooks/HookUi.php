@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Hooks;
 
 use Closure;
 use Pig\CodingAgent\Theme\Theme;
+use Pig\CodingAgent\Theme\ThemeInfo;
 
 /**
  * Asking the person something, from inside a hook or a custom tool.
@@ -144,14 +145,22 @@ interface HookUi
     /** Set a custom footer component. Null removes it. Upstream's `setFooter()`. */
     public function setFooter(?Closure $factory): void;
 
-    /** All installed theme names. Upstream's `getAllThemes()`. @return list<string> */
+    /**
+     * All available themes with their names and file paths. Upstream's `getAllThemes()`.
+     *
+     * @return list<ThemeInfo>
+     */
     public function getAllThemes(): array;
 
-    /** Find a theme by name. Upstream's `getTheme()`. */
+    /** Load a theme by name without switching to it. Null if not found. Upstream's `getTheme()`. */
     public function getTheme(string $name): ?Theme;
 
-    /** Switch the active theme. Upstream's `setTheme()`. Returns true on success. */
-    public function setTheme(string $name): bool;
+    /**
+     * Set the current theme by name or Theme object. Upstream's `setTheme()`.
+     *
+     * @return array{success: bool, error?: string}
+     */
+    public function setTheme(string|Theme $theme): array;
 
     /**
      * Intercept raw terminal input before components see it. Upstream's `onTerminalInput()`.
