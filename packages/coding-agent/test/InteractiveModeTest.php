@@ -744,6 +744,41 @@ final class InteractiveModeTest extends TestCase
         $this->assertNull($this->settings->theme());
     }
 
+    public function testASwitchedThemeRecoloursTheBannerAndTheChatsLinesWithoutReplayingThem(): void
+    {
+        // Upstream's `ThemedText`: the banner and a `say()` line are built when drawn, so the
+        // controller's invalidation recolours them in place — nothing rebuilds the chat.
+        $this->start();
+        $this->type('/name before the switch');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $chat = (new \ReflectionProperty($this->mode, 'chat'))->getValue($this->mode);
+        $before = $chat->children();
+        $line = fn (string $needle): string => array_values(array_filter(
+            $this->mode->screen()->render(80),
+            static fn (string $row): bool => str_contains(Ansi::strip($row), $needle),
+        ))[0] ?? '';
+
+        $dark = Themes::theme();
+        $this->assertStringContainsString($dark->getFgAnsi('dim'), $line('Session name set: before the switch'));
+        $this->assertStringContainsString($dark->getFgAnsi('accent'), $line('pig v'));
+
+        $this->type('/theme light');
+        $this->type(self::ENTER);
+        $this->settle();
+
+        $light = Themes::theme();
+        $this->assertSame('light', $light->name);
+        $said = $line('Session name set: before the switch');
+        $this->assertStringContainsString($light->getFgAnsi('dim'), $said);
+        $this->assertStringNotContainsString($dark->getFgAnsi('dim'), $said);
+        $banner = $line('pig v');
+        $this->assertStringContainsString($light->getFgAnsi('accent'), $banner);
+        $this->assertStringNotContainsString($dark->getFgAnsi('accent'), $banner);
+        $this->assertSame($before, array_slice($chat->children(), 0, count($before)), 'the same components, recoloured');
+    }
+
     public function testEveryKeyTheEditorAnswersToIsNamedSomewhere(): void
     {
         // `Editor` answers to all of these and pig named none of them: the application keys were
@@ -4419,6 +4454,39 @@ final class InteractiveModeTest extends TestCase
             $written = $this->terminal->output();
             $this->assertStringContainsString("\x1b[?1049l", $written);
             $this->assertStringNotContainsString('an answer not to print', $written);
+        } finally {
+            putenv('PIG_TUI_MODE');
+        }
+    }
+
+    public function testAClickInTheFullscreenPromptMovesTheCursorThere(): void
+    {
+        // Upstream's custom editor is an `Editor` and inherits its `handleMouse()`; pig's wraps
+        // one and forwards. Press and release on one cell is the click that places the cursor.
+        putenv('PIG_TUI_MODE=fullscreen');
+        try {
+            $this->start();
+            $tui = $this->mode->screen();
+            $this->assertInstanceOf(TuiAltScreen::class, $tui);
+            $this->type('hello');
+            $this->settle();
+
+            $row = null;
+            $column = null;
+            foreach ($tui->getScreenLines() as $index => $line) {
+                $at = mb_strpos(Ansi::strip($line), 'hello');
+                if ($at !== false) {
+                    [$row, $column] = [$index, $at];
+                }
+            }
+            $this->assertNotNull($row, 'the prompt is on screen');
+            $sgr = ';' . ($column + 2) . ';' . ($row + 1);
+            $this->type("\x1b[<0{$sgr}M\x1b[<0{$sgr}m");
+            $this->settle();
+            $this->type('X');
+            $this->settle();
+
+            $this->assertSame('hXello', $this->editorText());
         } finally {
             putenv('PIG_TUI_MODE');
         }

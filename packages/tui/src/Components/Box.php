@@ -6,6 +6,11 @@ namespace Pig\Tui\Components;
 
 use Closure;
 use Pig\Tui\Component;
+use Pig\Tui\Mouse;
+use Pig\Tui\MouseHandler;
+use Pig\Tui\TuiMouseDispatchResult;
+use Pig\Tui\TuiMouseEvent;
+use Pig\Tui\TuiMouseEventResult;
 use Pig\Tui\Width;
 
 /**
@@ -15,7 +20,7 @@ use Pig\Tui\Width;
  * agent UI uses it for: one background per kind of message, so the eye can tell what the
  * user said from what the model said without reading either.
  */
-final class Box implements Component
+final class Box implements Component, MouseHandler
 {
     /** @var list<Component> */
     private array $children = [];
@@ -28,6 +33,9 @@ final class Box implements Component
     private ?int $cachedWidth = null;
 
     private ?string $cachedBackground = null;
+
+    /** @var array{width: int, children: list<array{component: Component, height: int}>}|null where each child landed in the last render, for mouse routing */
+    private ?array $mouseLayout = null;
 
     /** @param Closure(string): string|null $background */
     public function __construct(
@@ -88,6 +96,31 @@ final class Box implements Component
         $this->cachedBackground = null;
     }
 
+    /** Forward to the child under the pointer, inside the padding — upstream's `Box.handleMouse()`. */
+    #[\Override]
+    public function handleMouse(TuiMouseEvent $event): TuiMouseEventResult|TuiMouseDispatchResult|null
+    {
+        $contentWidth = max(1, $event->width - $this->paddingX * 2);
+        $contentY = $event->y - $this->paddingY;
+        $contentX = $event->x - $this->paddingX;
+        if ($contentY < 0 || $contentX < 0 || $contentX >= $contentWidth) {
+            return null;
+        }
+
+        $mouseChildren = $this->mouseLayout !== null && $this->mouseLayout['width'] === $contentWidth
+            ? $this->mouseLayout['children']
+            : array_map(static fn (Component $child): array => ['component' => $child, 'height' => count($child->render($contentWidth))], $this->children);
+        $childY = 0;
+        foreach ($mouseChildren as ['component' => $child, 'height' => $childHeight]) {
+            if ($contentY >= $childY && $contentY < $childY + $childHeight) {
+                return Mouse::dispatchMouseEvent($child, $event->at($contentX, $contentY - $childY, $contentWidth, $childHeight));
+            }
+            $childY += $childHeight;
+        }
+
+        return null;
+    }
+
     #[\Override]
     public function render(int $width): array
     {
@@ -98,12 +131,16 @@ final class Box implements Component
         $contentWidth = max(1, $width - $this->paddingX * 2);
         $margin = str_repeat(' ', $this->paddingX);
         $content = [];
+        $mouseChildren = [];
 
         foreach ($this->children as $child) {
-            foreach ($child->render($contentWidth) as $line) {
+            $childLines = $child->render($contentWidth);
+            $mouseChildren[] = ['component' => $child, 'height' => count($childLines)];
+            foreach ($childLines as $line) {
                 $content[] = $margin . $line;
             }
         }
+        $this->mouseLayout = ['width' => $contentWidth, 'children' => $mouseChildren];
 
         if ($content === []) {
             return [];

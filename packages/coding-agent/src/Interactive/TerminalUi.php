@@ -338,7 +338,8 @@ final class TerminalUi implements HookUi
         };
 
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Text(Themes::theme()->fg($colour, $prefix . $message), 1, 0));
+        // Upstream's `showExtensionNotify()` goes to `showError()`/`showWarning()`/`showStatus()`, each a `ThemedText`.
+        $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg($colour, $prefix . $message), 1, 0));
         $this->tui->requestRender();
     }
 
@@ -580,13 +581,13 @@ final class TerminalUi implements HookUi
         // An empty title draws nothing rather than a blank line: `custom()` has none, and
         // a hook that wanted one drew it itself.
         if ($title !== '') {
-            $this->overlay->addChild(new Text(Themes::theme()->fg('muted', $title), 1, 0));
+            $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('muted', $title), 1, 0));
         }
 
         $this->overlay->addChild($component);
 
         if ($hint !== '') {
-            $this->overlay->addChild(new Text(Themes::theme()->fg('dim', $hint), 1, 0));
+            $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('dim', $hint), 1, 0));
         }
 
         $this->tui->setFocus($component);

@@ -9,6 +9,10 @@ use Pig\Tui\Component;
 use Pig\Tui\Fuzzy;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
+use Pig\Tui\MouseHandler;
+use Pig\Tui\TuiMouseDispatchResult;
+use Pig\Tui\TuiMouseEvent;
+use Pig\Tui\TuiMouseEventResult;
 use Pig\Tui\Width;
 
 /**
@@ -17,7 +21,7 @@ use Pig\Tui\Width;
  * The selection wraps at both ends, which matters more than it sounds: a command palette
  * with forty entries is faster to reach the last of by pressing Up once.
  */
-final class SelectList implements Component, InputHandler
+final class SelectList implements Component, InputHandler, MouseHandler
 {
     /** @var list<SelectItem> */
     private array $items;
@@ -26,6 +30,9 @@ final class SelectList implements Component, InputHandler
     private array $filtered;
 
     private int $selected = 0;
+
+    /** The row a primary press landed on, which the click that follows it activates. */
+    private ?int $mousePressedIndex = null;
 
     /** What has been typed into the list, which is also whether to draw the search line. */
     private string $query = '';
@@ -168,9 +175,7 @@ final class SelectList implements Component, InputHandler
         }
 
         $total = count($this->filtered);
-        // Keep the selection near the middle of the window, without scrolling past the end.
-        $start = max(0, min($this->selected - intdiv($this->maxVisible, 2), $total - $this->maxVisible));
-        $end = min($start + $this->maxVisible, $total);
+        [$start, $end] = $this->visibleRange();
 
         $lines = [];
 
@@ -184,6 +189,73 @@ final class SelectList implements Component, InputHandler
         }
 
         return [...$search, ...$lines];
+    }
+
+    /**
+     * The wheel moves the selection; a primary press selects the row under it and the click that
+     * follows activates it — upstream's `handleMouse()`.
+     *
+     * One addition: rows are counted below the search line, which upstream's list does not have.
+     */
+    #[\Override]
+    public function handleMouse(TuiMouseEvent $event): TuiMouseEventResult|TuiMouseDispatchResult|null
+    {
+        if ($this->filtered === []) {
+            return null;
+        }
+        if ($event->type === 'wheel' && $event->wheelDelta !== null && $event->wheelDelta !== 0) {
+            $delta = $event->wheelDelta < 0 ? -1 : 1;
+            $previousIndex = $this->selected;
+            $this->selected = max(0, min(count($this->filtered) - 1, $this->selected + $delta));
+            if ($this->selected !== $previousIndex) {
+                $this->notifySelectionChange();
+            }
+
+            return new TuiMouseEventResult(handled: true, render: $this->selected !== $previousIndex);
+        }
+        // Hover must not change selection: the visible range is centered on it.
+        if ($event->button !== 'left' || ($event->type !== 'press' && $event->type !== 'click')) {
+            return null;
+        }
+        [$start, $end] = $this->visibleRange();
+        $itemIndex = $start + $event->y - ($this->query === '' ? 0 : 1);
+        if ($itemIndex < $start || $itemIndex >= $end) {
+            return null;
+        }
+
+        if ($event->type === 'press') {
+            $this->mousePressedIndex = $itemIndex;
+            if ($this->selected !== $itemIndex) {
+                $this->selected = $itemIndex;
+                $this->notifySelectionChange();
+            }
+
+            return new TuiMouseEventResult(handled: true, focus: true);
+        }
+
+        $clickedIndex = $this->mousePressedIndex ?? $itemIndex;
+        $this->mousePressedIndex = null;
+        $changed = $this->selected !== $clickedIndex;
+        $this->selected = $clickedIndex;
+        if ($changed) {
+            $this->notifySelectionChange();
+        }
+        $this->choose();
+
+        return new TuiMouseEventResult(handled: true);
+    }
+
+    /**
+     * The window of rows drawn: the selection kept near the middle, without scrolling past the end.
+     *
+     * @return array{0: int, 1: int} start inclusive, end exclusive
+     */
+    private function visibleRange(): array
+    {
+        $total = count($this->filtered);
+        $start = max(0, min($this->selected - intdiv($this->maxVisible, 2), $total - $this->maxVisible));
+
+        return [$start, min($start + $this->maxVisible, $total)];
     }
 
     private function row(SelectItem $item, bool $isSelected, int $width): string
@@ -268,6 +340,11 @@ final class SelectList implements Component, InputHandler
     private function moveTo(int $index): void
     {
         $this->selected = max(0, $index);
+        $this->notifySelectionChange();
+    }
+
+    private function notifySelectionChange(): void
+    {
         $item = $this->selectedItem();
 
         if ($item !== null && $this->onSelectionChange !== null) {

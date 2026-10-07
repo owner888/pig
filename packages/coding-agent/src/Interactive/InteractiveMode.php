@@ -112,7 +112,6 @@ use Pig\Tui\Components\SelectList;
 use Pig\Tui\Components\SettingItem;
 use Pig\Tui\Components\SettingsList;
 use Pig\Tui\Components\Spacer;
-use Pig\Tui\Components\Text;
 use Pig\Tui\Components\TruncatedText;
 use Pig\Tui\Container;
 use Pig\Tui\Process;
@@ -253,7 +252,7 @@ final class InteractiveMode
     /** What was chosen last time, and where the choices made here are remembered. */
     private readonly Settings $settings;
 
-    private ?Text $banner = null;
+    private ?ExpandableText $banner = null;
 
     /** Set while a sign-in is waiting on a browser, so escape can end it. */
     private ?AbortController $signingIn = null;
@@ -352,7 +351,7 @@ final class InteractiveMode
             $this->tui,
             fn (): Settings => $this->settings,
             fn (string $message) => $this->sayError($message),
-            fn () => $this->onThemeChanged(),
+            fn () => $this->paintBorder(),
             $themeSetting,
         );
         $this->chat = new Container();
@@ -505,9 +504,9 @@ final class InteractiveMode
         // Upstream's `applyFromSettings()` once the terminal is up, since the colour query's replies
         // arrive as input. Everything above was drawn in the theme the controller started with (the
         // system theme renders grayscale until the terminal reports its colours); when they arrive,
-        // `onChanged` repaints what this class baked and the controller invalidates the rest. Upstream
-        // builds its header after `waitForTerminalColors()` instead; this is not always running in a
-        // coroutine (tests call it directly), so the banner is rebuilt by `onThemeChanged()` instead.
+        // the controller invalidates every component, and the banner and the chat's lines, being
+        // `ThemedText`, rebuild in the new colours. `onChanged` repaints the editor's border, as
+        // upstream's `updateEditorBorderColor()`.
         $this->themeController->applyFromSettings();
 
         // After the screen is up, so the first answer streams into a transcript that is
@@ -783,7 +782,7 @@ final class InteractiveMode
     public function setToolsExpanded(bool $expanded): void
     {
         $this->expanded = $expanded;
-        $this->banner?->setText($this->banner());
+        $this->banner?->setExpanded($this->expanded);
 
         foreach ($this->chat->children() as $child) {
             if ($child instanceof ToolExecutionComponent
@@ -801,7 +800,15 @@ final class InteractiveMode
 
     private function layout(): void
     {
-        $this->banner = new Text($this->banner(), 1, 0);
+        // Upstream's `BuiltInHeader`: built on demand, so it follows theme changes. It reads what
+        // is loaded and the key bindings, which change only on `/reload`, and that invalidates it.
+        $this->banner = new ExpandableText(
+            fn (): string => $this->banner(expanded: false),
+            fn (): string => $this->banner(expanded: true),
+            $this->expanded,
+            1,
+            0,
+        );
 
         // One component tree for both renderers, as upstream keeps it: regular mode mounts these
         // in order, fullscreen mounts the same ones and draws the `ChatViewport` laid over them.
@@ -954,7 +961,7 @@ final class InteractiveMode
      * on: the list was taller than most of the conversations it sat above. The rest is
      * still there, one key away, for the session where someone needs it.
      */
-    private function banner(): string
+    private function banner(bool $expanded): string
     {
         [$topLogo, $bottomLogo] = PigLogo::lines();
 
@@ -969,7 +976,7 @@ final class InteractiveMode
 
         $onboarding = Themes::theme()->fg('dim', 'Pig can explain its own features and look up its docs. Ask it how to use or extend Pig.');
 
-        if (!$this->expanded) {
+        if (!$expanded) {
             $lines[] = Themes::theme()->fg('dim', 'Press ctrl+o to show full startup help and loaded resources.');
             $lines[] = '';
             $lines[] = $onboarding;
@@ -988,7 +995,7 @@ final class InteractiveMode
         return implode("\n", [
             ...$lines,
             '',
-            $this->keysAndCommands(),
+            ($this->keysAndCommands())(),
             '',
             $onboarding,
             ...($loaded === '' ? [] : ['', $loaded]),
@@ -1839,7 +1846,7 @@ final class InteractiveMode
             // fit comes back as an error from the provider, and by then the person
             // has already waited for it.
             if ($this->session->shouldCompact()) {
-                $this->say(Themes::theme()->fg('muted', 'Context is nearly full — summarising first.'));
+                $this->sayThemed(static fn (): string => Themes::theme()->fg('muted', 'Context is nearly full — summarising first.'));
                 $this->compact(reason: 'threshold');
             }
 
@@ -2073,29 +2080,39 @@ final class InteractiveMode
         $this->send($text);
     }
 
-    /** What hooks loaded, where from, and what each one is listening for. */
-    private function hookList(): string
+    /**
+     * What hooks loaded, where from, and what each one is listening for.
+     *
+     * @return Closure(): string built from a snapshot, so a theme change recolours it without a
+     *                           `/reload` since changing what it lists
+     */
+    private function hookList(): Closure
     {
         if ($this->hooks === null || $this->hooks->isEmpty()) {
-            return 'No hooks loaded. A .php file in ~/.pig/agent/hooks or .pig/hooks that returns a callable is one.';
+            return static fn (): string => 'No hooks loaded. A .php file in ~/.pig/agent/hooks or .pig/hooks that returns a callable is one.';
         }
 
-        $lines = [];
+        $paths = $this->hooks->paths();
+        $commands = array_map(static fn (RegisteredCommand $command): string => $command->description, $this->hookCommands);
 
-        foreach ($this->hooks->paths() as $path) {
-            $lines[] = Themes::theme()->fg('muted', $path);
-        }
+        return static function () use ($paths, $commands): string {
+            $lines = [];
 
-        if ($this->hookCommands !== []) {
-            $lines[] = '';
-
-            foreach ($this->hookCommands as $name => $command) {
-                $lines[] = Themes::theme()->fg('dim', Width::pad('/' . $name, 12))
-                    . Themes::theme()->fg('muted', $command->description);
+            foreach ($paths as $path) {
+                $lines[] = Themes::theme()->fg('muted', $path);
             }
-        }
 
-        return implode("\n", $lines);
+            if ($commands !== []) {
+                $lines[] = '';
+
+                foreach ($commands as $name => $description) {
+                    $lines[] = Themes::theme()->fg('dim', Width::pad('/' . $name, 12))
+                        . Themes::theme()->fg('muted', $description);
+                }
+            }
+
+            return implode("\n", $lines);
+        };
     }
 
     /**
@@ -2105,7 +2122,7 @@ final class InteractiveMode
      * model was actually given — a tool that failed to load is missing here, which is the
      * answer someone typing this is after.
      */
-    private function toolList(): string
+    private function toolList(): Closure
     {
         $custom = [];
 
@@ -2113,23 +2130,32 @@ final class InteractiveMode
             $custom[$one->tool->name] = $one->path;
         }
 
-        $lines = [];
+        /** @var array<string, string> $tools name => what is shown after it */
+        $tools = [];
 
         foreach ($this->session->state()->tools as $tool) {
             $name = $tool->definition()->name;
-
-            $lines[] = Themes::theme()->fg('dim', Width::pad($name, 14))
-                . Themes::theme()->fg('muted', $tool->label() . ' · ' . ($custom[$name] ?? 'built-in'));
+            $tools[$name] = $tool->label() . ' · ' . ($custom[$name] ?? 'built-in');
         }
 
-        return $lines === [] ? 'This session has no tools at all.' : implode("\n", $lines);
+        return static function () use ($tools): string {
+            $lines = [];
+
+            foreach ($tools as $name => $detail) {
+                $lines[] = Themes::theme()->fg('dim', Width::pad($name, 14))
+                    . Themes::theme()->fg('muted', $detail);
+            }
+
+            return $lines === [] ? 'This session has no tools at all.' : implode("\n", $lines);
+        };
     }
 
-    private function doctorReport(): string
+    /** @return Closure(): string the report taken now, drawn in whichever theme is on */
+    private function doctorReport(): Closure
     {
         $report = Doctor::inspect($this->session, $this->auth);
 
-        return Doctor::renderTui($report);
+        return static fn (): string => Doctor::renderTui($report);
     }
 
     /**
@@ -2176,7 +2202,8 @@ final class InteractiveMode
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text(Themes::theme()->fg('muted', "Trust {$this->cwd}? — this session: {$now}, {$was}"), 1, 0));
+        $cwd = $this->cwd;
+        $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('muted', "Trust {$cwd}? — this session: {$now}, {$was}"), 1, 0));
         $this->overlay->addChild($picker);
 
         $this->tui->setFocus($picker);
@@ -2224,15 +2251,16 @@ final class InteractiveMode
             $serverUrl = BugReport::upload($hint, $report);
             $url = BugReport::issueUrl($hint, $report);
 
-            $msg = Themes::theme()->fg('accent', '✓ Bug report written to ') . $path . "\n"
-                . Themes::theme()->fg('dim', 'It is on the clipboard too.');
+            $this->sayThemed(static function () use ($path, $serverUrl, $url): string {
+                $msg = Themes::theme()->fg('accent', '✓ Bug report written to ') . $path . "\n"
+                    . Themes::theme()->fg('dim', 'It is on the clipboard too.');
 
-            if ($serverUrl !== null) {
-                $msg .= "\n" . Themes::theme()->fg('accent', '✓ Uploaded to server: ') . $serverUrl;
-            }
+                if ($serverUrl !== null) {
+                    $msg .= "\n" . Themes::theme()->fg('accent', '✓ Uploaded to server: ') . $serverUrl;
+                }
 
-            $msg .= "\n" . Themes::theme()->fg('dim', 'GitHub issue URL (prefilled): ') . Themes::theme()->fg('accent', $url);
-            $this->say($msg);
+                return $msg . "\n" . Themes::theme()->fg('dim', 'GitHub issue URL (prefilled): ') . Themes::theme()->fg('accent', $url);
+            });
 
             $this->tui->requestRender();
         });
@@ -2331,8 +2359,8 @@ final class InteractiveMode
             }
             file_put_contents($savePath, $prMarkdown);
 
-            $this->say(Themes::theme()->fg('accent', '✓ PR Description generated and copied to clipboard!'));
-            $this->say(Themes::theme()->fg('dim', "Saved to: {$savePath}\n\n") . $prMarkdown);
+            $this->sayThemed(static fn (): string => Themes::theme()->fg('accent', '✓ PR Description generated and copied to clipboard!'));
+            $this->sayThemed(static fn (): string => Themes::theme()->fg('dim', "Saved to: {$savePath}\n\n") . $prMarkdown);
             $this->tui->requestRender();
         } catch (Throwable $e) {
             $this->sayError('Failed to generate PR description: ' . $e->getMessage());
@@ -2426,23 +2454,28 @@ final class InteractiveMode
      * won is not obvious — a `~/.claude` skill shadowed by a project one looks like the
      * project one simply not working.
      */
-    private function skillList(): string
+    private function skillList(): Closure
     {
         if ($this->skills === []) {
-            return 'No skills found. A skill is a folder with a SKILL.md in '
+            return static fn (): string => 'No skills found. A skill is a folder with a SKILL.md in '
                 . '~/.pig/agent/skills, .pig/skills, ~/.claude/skills, .claude/skills, ~/.codex/skills, '
                 . '~/.pi/agent/skills or .pi/skills.';
         }
 
-        $lines = [];
+        // `/reload` replaces the list rather than changing these, so holding the array is the snapshot.
+        $skills = $this->skills;
 
-        foreach ($this->skills as $skill) {
-            $lines[] = Themes::theme()->fg('dim', Width::pad($skill->name, 24))
-                . Themes::theme()->fg('muted', $skill->description);
-            $lines[] = Themes::theme()->fg('dim', str_repeat(' ', 24) . $skill->source . ' · ' . $skill->path);
-        }
+        return static function () use ($skills): string {
+            $lines = [];
 
-        return implode("\n", $lines);
+            foreach ($skills as $skill) {
+                $lines[] = Themes::theme()->fg('dim', Width::pad($skill->name, 24))
+                    . Themes::theme()->fg('muted', $skill->description);
+                $lines[] = Themes::theme()->fg('dim', str_repeat(' ', 24) . $skill->source . ' · ' . $skill->path);
+            }
+
+            return implode("\n", $lines);
+        };
     }
 
     /**
@@ -2453,7 +2486,7 @@ final class InteractiveMode
      * they could and would have disagreed about the column, which is the thing that moved when
      * the editing keys arrived with labels wider than the old hardcoded twelve.
      */
-    private function keysAndCommands(): string
+    private function keysAndCommands(): Closure
     {
         $keys = $this->keys();
         $shortcuts = [];
@@ -2473,29 +2506,33 @@ final class InteractiveMode
         // `--list-models`' columns, and measured with `Width` for the same reason.
         $column = max(array_map(Width::visible(...), $labels)) + 2;
 
-        $rows = [];
-
         $tables = [$keys, self::EDITING_KEYS];
         if ($shortcuts !== []) {
             $tables[] = $shortcuts;
         }
 
-        foreach ($tables as $table) {
-            foreach ($table as $key => $does) {
-                $rows[] = Themes::theme()->fg('dim', Width::pad($key, $column)) . Themes::theme()->fg('muted', $does);
+        // Everything above is a snapshot of the bindings; the colours are applied when it is drawn.
+        return static function () use ($tables, $column): string {
+            $rows = [];
+
+            foreach ($tables as $table) {
+                foreach ($table as $key => $does) {
+                    $rows[] = Themes::theme()->fg('dim', Width::pad($key, $column)) . Themes::theme()->fg('muted', $does);
+                }
+
+                $rows[] = '';
             }
 
-            $rows[] = '';
-        }
+            foreach (self::COMMANDS as [$name, $does]) {
+                $rows[] = Themes::theme()->fg('dim', Width::pad('/' . $name, $column)) . Themes::theme()->fg('muted', $does);
+            }
 
-        foreach (self::COMMANDS as [$name, $does]) {
-            $rows[] = Themes::theme()->fg('dim', Width::pad('/' . $name, $column)) . Themes::theme()->fg('muted', $does);
-        }
-
-        return implode("\n", $rows);
+            return implode("\n", $rows);
+        };
     }
 
-    private function commandHelp(): string
+    /** @return Closure(): string */
+    private function commandHelp(): Closure
     {
         return $this->keysAndCommands();
     }
@@ -2538,17 +2575,19 @@ final class InteractiveMode
         $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
     }
 
-    private function sessionSummary(): string
+    /** @return Closure(): string the stats taken now, as upstream's `/session` snapshots them */
+    private function sessionSummary(): Closure
     {
         $stats = $this->session->stats();
-
-        return Themes::theme()->fg('muted', sprintf(
+        $summary = sprintf(
             '%d messages · %d tool calls · %s tokens · $%s',
             $stats->totalMessages,
             $stats->toolCalls,
             number_format($stats->totalTokens()),
             number_format($stats->cost, 4),
-        ));
+        );
+
+        return static fn (): string => Themes::theme()->fg('muted', $summary);
     }
 
     /**
@@ -2599,8 +2638,8 @@ final class InteractiveMode
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text(
-            Themes::theme()->fg('muted', 'Pick a session — type to search, enter to open, esc to cancel'),
+        $this->overlay->addChild(new ThemedText(
+            static fn (): string => Themes::theme()->fg('muted', 'Pick a session — type to search, enter to open, esc to cancel'),
             1,
             0,
         ));
@@ -2954,7 +2993,7 @@ final class InteractiveMode
 
         // 8. Rebind autocomplete on editor and update banner
         $this->bindEditor();
-        $this->banner?->setText($this->banner());
+        $this->banner?->invalidate();
 
         // 9. Report warnings if any
         $allWarnings = [
@@ -2969,7 +3008,7 @@ final class InteractiveMode
             $this->sayWarning($w);
         }
 
-        $this->say(Themes::theme()->fg('accent', 'Reloaded extensions, skills, commands, tools, and context files.'));
+        $this->sayThemed(static fn (): string => Themes::theme()->fg('accent', 'Reloaded extensions, skills, commands, tools, and context files.'));
         $this->tui->requestRender();
     }
     private static function modelSearchText(Model $model): string
@@ -3035,7 +3074,7 @@ final class InteractiveMode
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text(Themes::theme()->fg('muted', 'Pick a model — enter to switch, ctrl+s to set as default, esc to cancel'), 1, 0));
+        $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('muted', 'Pick a model — enter to switch, ctrl+s to set as default, esc to cancel'), 1, 0));
         $this->overlay->addChild($picker);
 
         $this->tui->setFocus($picker);
@@ -3163,8 +3202,8 @@ final class InteractiveMode
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text(
-            Themes::theme()->fg('muted', 'Go back to — enter to pick, ctrl+o to filter, l to name, type to search, esc to cancel'),
+        $this->overlay->addChild(new ThemedText(
+            static fn (): string => Themes::theme()->fg('muted', 'Go back to — enter to pick, ctrl+o to filter, l to name, type to search, esc to cancel'),
             1,
             0,
         ));
@@ -3227,7 +3266,7 @@ final class InteractiveMode
         if ($action === 'status') {
             if ($this->webServer !== null && $this->webServer->isRunning()) {
                 $url = "http://{$this->webServer->host}:{$this->webServer->port}";
-                $this->say('Web UI foreground server: ' . Themes::theme()->fg('accent', 'running') . " at {$url}");
+                $this->sayThemed(static fn (): string => Themes::theme()->fg('dim', 'Web UI foreground server: ') . Themes::theme()->fg('accent', 'running') . Themes::theme()->fg('dim', " at {$url}"));
             }
 
             [, $daemonOut] = Process::run([...$this->resolvePigBinary(), 'web', 'status']);
@@ -3333,8 +3372,8 @@ final class InteractiveMode
         }
 
         $url = "http://127.0.0.1:{$port}";
-        $this->say('Web UI started at ' . Themes::theme()->fg('accent', $url));
-        $this->say(Themes::theme()->fg('dim', 'Runs while this session is open. To keep it running in background: pig web start -d'));
+        $this->sayThemed(static fn (): string => Themes::theme()->fg('dim', 'Web UI started at ') . Themes::theme()->fg('accent', $url));
+        $this->sayThemed(static fn (): string => Themes::theme()->fg('dim', 'Runs while this session is open. To keep it running in background: pig web start -d'));
         self::openInBrowser($url);
     }
 
@@ -3378,7 +3417,7 @@ final class InteractiveMode
             return;
         }
 
-        $this->chat->addChild(new Text(DiffView::render($diff), 1, 0));
+        $this->chat->addChild(new ThemedText(static fn (): string => DiffView::render($diff), 1, 0));
         $this->tui->requestRender();
     }
 
@@ -3487,7 +3526,8 @@ final class InteractiveMode
             return;
         }
 
-        $this->say(Themes::theme()->fg('accent', '✓ Committed: ') . Themes::theme()->fg('dim', trim($commitOut)));
+        $committed = trim($commitOut);
+        $this->sayThemed(static fn (): string => Themes::theme()->fg('accent', '✓ Committed: ') . Themes::theme()->fg('dim', $committed));
         $this->footer->invalidate();
         $this->tui->requestRender();
     }
@@ -3530,9 +3570,9 @@ final class InteractiveMode
             return;
         }
 
-        $this->say($name === ''
-            ? 'Name cleared.'
-            : 'Named this point ' . Themes::theme()->fg('accent', $name) . '.');
+        $this->sayThemed(static fn (): string => $name === ''
+            ? Themes::theme()->fg('dim', 'Name cleared.')
+            : Themes::theme()->fg('dim', 'Named this point ') . Themes::theme()->fg('accent', $name) . Themes::theme()->fg('dim', '.'));
     }
 
     /**
@@ -3689,7 +3729,7 @@ final class InteractiveMode
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text(Themes::theme()->fg(
+        $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg(
             'muted',
             $signingIn ? 'Sign in with — enter to choose, esc to cancel' : 'Forget which sign-in — enter to choose, esc to cancel',
         ), 1, 0));
@@ -3992,7 +4032,7 @@ final class InteractiveMode
         if ($now !== null && $now !== $was) {
             // Worth a line: the model changing under someone without being told is how a
             // surprising answer becomes a puzzle.
-            $this->say(Themes::theme()->fg('muted', "This conversation was on {$now} — switched back to it."));
+            $this->sayThemed(static fn (): string => Themes::theme()->fg('muted', "This conversation was on {$now} — switched back to it."));
         }
 
         $this->sayToolProblems($this->customTools?->notify('switch', $previous) ?? []);
@@ -4044,7 +4084,7 @@ final class InteractiveMode
     {
         $this->chat->addChild(new Spacer(1));
         $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('border', $text)));
-        $this->chat->addChild(new Text(Themes::theme()->fg('accent', Style::bold('What\'s New')), 1, 0));
+        $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('accent', Style::bold('What\'s New')), 1, 0));
         $this->chat->addChild(new Markdown($markdown, 1, 1, Themes::getMarkdownTheme()));
         $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('border', $text)));
         $this->tui->requestRender();
@@ -4072,11 +4112,11 @@ final class InteractiveMode
     {
         $this->chat->addChild(new Spacer(1));
         $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('warning', $text)));
-        $this->chat->addChild(new Text(
-            Themes::theme()->fg('warning', Style::bold('Update Available')) . "\n\n"
-            . Themes::theme()->fg('muted', "New version {$version} is available. Run ")
-            . Themes::theme()->fg('accent', UpdateCheck::COMMAND) . "\n"
-            . Themes::theme()->fg('muted', 'Changelog: https://pigagent.dev/changelog'),
+        $this->chat->addChild(new ThemedText(
+            static fn (): string => Themes::theme()->fg('warning', Style::bold('Update Available')) . "\n\n"
+                . Themes::theme()->fg('muted', "New version {$version} is available. Run ")
+                . Themes::theme()->fg('accent', UpdateCheck::COMMAND) . "\n"
+                . Themes::theme()->fg('muted', 'Changelog: https://pigagent.dev/changelog'),
             1,
             0,
         ));
@@ -4099,12 +4139,12 @@ final class InteractiveMode
 
         $this->chat->addChild(new Spacer(1));
         $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('warning', $text)));
-        $this->chat->addChild(new Text(
-            Themes::theme()->fg('warning', Style::bold('Package Updates Available')) . "\n\n"
-            . Themes::theme()->fg('muted', 'Package updates are available. Run ')
-            . Themes::theme()->fg('accent', 'pig update --extensions') . "\n\n"
-            . Themes::theme()->fg('muted', "Packages:\n")
-            . $packageLines,
+        $this->chat->addChild(new ThemedText(
+            static fn (): string => Themes::theme()->fg('warning', Style::bold('Package Updates Available')) . "\n\n"
+                . Themes::theme()->fg('muted', 'Package updates are available. Run ')
+                . Themes::theme()->fg('accent', 'pig update --extensions') . "\n\n"
+                . Themes::theme()->fg('muted', "Packages:\n")
+                . $packageLines,
             1,
             0,
         ));
@@ -4168,7 +4208,7 @@ final class InteractiveMode
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text(Themes::theme()->fg('muted', 'Pick a theme — enter to switch, esc to cancel'), 1, 0));
+        $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('muted', 'Pick a theme — enter to switch, esc to cancel'), 1, 0));
         $this->overlay->addChild($picker);
         $this->tui->setFocus($picker);
         $this->tui->requestRender();
@@ -4331,7 +4371,7 @@ final class InteractiveMode
 
         $this->overlay->clear();
         $this->overlay->addChild(new Spacer(1));
-        $this->overlay->addChild(new Text(Themes::theme()->fg('muted', 'Settings — enter to change, esc when done'), 1, 0));
+        $this->overlay->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('muted', 'Settings — enter to change, esc when done'), 1, 0));
         $this->overlay->addChild($list);
 
         $this->tui->setFocus($list);
@@ -4480,17 +4520,6 @@ final class InteractiveMode
         $this->say("Theme: {$wanted}");
 
         return true;
-    }
-
-    /**
-     * The controller's `onChanged`: the theme was replaced. The components re-read the theme when the
-     * controller invalidates them; what is left is what this class baked itself — the banner and the
-     * editor's border.
-     */
-    private function onThemeChanged(): void
-    {
-        $this->banner?->setText($this->banner());
-        $this->paintBorder();
     }
 
     // ---- what the agent is doing ----------------------------------------------------------
@@ -4901,11 +4930,32 @@ final class InteractiveMode
         $this->pending->addChild(new TruncatedText(Themes::theme()->fg('dim', "↳ {$key} to edit all queued messages"), 1, 0));
     }
 
-    /** A note in the transcript — what a key did, or why something did not happen. */
-    private function say(string $message): void
+    /**
+     * A note in the transcript — what a key did, or why something did not happen.
+     *
+     * A closure is a builder for the message, for the notes that colour parts of themselves: it is
+     * called again on a theme change, so it builds from a snapshot (see `ThemedText`).
+     *
+     * @param string|Closure(): string $message
+     */
+    private function say(string|Closure $message): void
+    {
+        $this->sayThemed(static fn (): string => Themes::theme()->fg('dim', is_string($message) ? $message : $message()));
+    }
+
+    /**
+     * A note in the transcript that picks its own colours: upstream's
+     * `chatContainer.addChild(new ThemedText(...))`, which several of its commands write inline.
+     *
+     * A builder rather than a string, so the line follows a theme change; see `ThemedText` for what
+     * the builder may read.
+     *
+     * @param Closure(): string $build
+     */
+    private function sayThemed(Closure $build): void
     {
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Text(Themes::theme()->fg('dim', $message), 1, 0));
+        $this->chat->addChild(new ThemedText($build, 1, 0));
         $this->tui->requestRender();
     }
 
@@ -4920,7 +4970,7 @@ final class InteractiveMode
     private function sayError(string $message): void
     {
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Text(Themes::theme()->fg('error', "Error: {$message}"), 1, 0));
+        $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('error', "Error: {$message}"), 1, 0));
         $this->tui->requestRender();
     }
 
@@ -4956,7 +5006,7 @@ final class InteractiveMode
     private function sayWarning(string $message): void
     {
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Text(Themes::theme()->fg('warning', "Warning: {$message}"), 1, 0));
+        $this->chat->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('warning', "Warning: {$message}"), 1, 0));
         $this->tui->requestRender();
     }
 

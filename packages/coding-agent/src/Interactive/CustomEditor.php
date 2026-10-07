@@ -16,6 +16,10 @@ use Pig\Tui\Components\EditorTheme;
 use Pig\Tui\Components\Loader;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
+use Pig\Tui\MouseHandler;
+use Pig\Tui\TuiMouseDispatchResult;
+use Pig\Tui\TuiMouseEvent;
+use Pig\Tui\TuiMouseEventResult;
 
 /**
  * The editor, plus the keys the application wants for itself.
@@ -30,7 +34,7 @@ use Pig\Tui\Keys;
  *
  * Ported from upstream's `components/custom-editor.ts`.
  */
-final class CustomEditor implements Component, Focusable, InputHandler
+final class CustomEditor implements Component, Focusable, InputHandler, MouseHandler
 {
     /** Set by the renderer and handed to the wrapped editor, which is what draws the cursor. */
     public bool $focused = false;
@@ -211,5 +215,17 @@ final class CustomEditor implements Component, Focusable, InputHandler
         $this->editor->focused = $this->focused;
 
         return $this->editor->render($width);
+    }
+
+    /**
+     * Upstream's custom editor inherits `Editor::handleMouse()`; this one wraps the editor and
+     * draws exactly its rows, so the event goes to it unchanged. A focus result names this
+     * wrapper (`Mouse::dispatchMouseEvent()` targets the component it was given), which is the
+     * one the TUI routes keys to.
+     */
+    #[\Override]
+    public function handleMouse(TuiMouseEvent $event): TuiMouseEventResult|TuiMouseDispatchResult|null
+    {
+        return $this->editor->handleMouse($event);
     }
 }

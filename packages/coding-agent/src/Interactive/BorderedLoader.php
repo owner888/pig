@@ -10,7 +10,6 @@ use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Components\CancellableLoader;
 use Pig\Tui\Components\Rule;
 use Pig\Tui\Components\Spacer;
-use Pig\Tui\Components\Text;
 use Pig\Tui\Container;
 use Pig\Tui\InputHandler;
 use Pig\Tui\TUI;
@@ -43,7 +42,7 @@ final class BorderedLoader extends Container implements InputHandler
         $this->addChild(new Rule($rule));
         $this->addChild($this->loader);
         $this->addChild(new Spacer(1));
-        $this->addChild(new Text(Themes::theme()->fg('muted', 'esc cancel'), 1, 0));
+        $this->addChild(new ThemedText(static fn (): string => Themes::theme()->fg('muted', 'esc cancel'), 1, 0));
         $this->addChild(new Spacer(1));
         $this->addChild(new Rule($rule));
     }

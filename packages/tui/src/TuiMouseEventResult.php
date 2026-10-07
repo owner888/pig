@@ -20,4 +20,10 @@ final readonly class TuiMouseEventResult
         public ?bool $render = null,
     ) {
     }
+
+    /** The same answer, also taking keyboard focus — upstream spreads `{...result, focus: true}`. */
+    public function withFocus(): self
+    {
+        return new self($this->handled, $this->capture, true, $this->render);
+    }
 }

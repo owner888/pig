@@ -17,7 +17,11 @@ use Pig\Tui\Graphemes;
 use Pig\Tui\Focusable;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
+use Pig\Tui\MouseHandler;
 use Pig\Tui\TUI;
+use Pig\Tui\TuiMouseDispatchResult;
+use Pig\Tui\TuiMouseEvent;
+use Pig\Tui\TuiMouseEventResult;
 use Pig\Tui\Width;
 
 /**
@@ -34,7 +38,7 @@ use Pig\Tui\Width;
  * line, up and down move between visual ones, because that is what the cursor looks like
  * it is doing.
  */
-final class Editor implements Component, Focusable, InputHandler
+final class Editor implements Component, Focusable, InputHandler, MouseHandler
 {
     /** Set by the renderer; while true the cursor carries `TUI::CURSOR_MARKER` for the input method. */
     public bool $focused = false;
@@ -68,6 +72,10 @@ final class Editor implements Component, Focusable, InputHandler
      * arrive before the first render, so this starts at something rather than nothing.
      */
     private int $lastWidth = 80;
+
+    /** Text rows and suggestion rows in the last frame, for mouse hit-testing — upstream's render geometry. */
+    private int $renderedVisibleLineCount = 1;
+    private int $renderedAutocompleteHeight = 0;
 
     private ?AutocompleteProvider $provider = null;
 
@@ -276,17 +284,94 @@ final class Editor implements Component, Focusable, InputHandler
         $rule = ($this->theme->border)(str_repeat('─', $width));
         $lines = [$this->topBorder($width, $rule)];
 
-        foreach ($this->layout($width) as $layoutLine) {
+        $layoutLines = $this->layout($width);
+        $this->renderedVisibleLineCount = count($layoutLines);
+
+        foreach ($layoutLines as $layoutLine) {
             $lines[] = $this->draw($layoutLine, $width);
         }
 
         $lines[] = $rule;
 
-        foreach ($this->suggestionList?->render($width) ?? [] as $suggestion) {
+        $suggestions = $this->suggestionList?->render($width) ?? [];
+        $this->renderedAutocompleteHeight = count($suggestions);
+
+        foreach ($suggestions as $suggestion) {
             $lines[] = $suggestion;
         }
 
         return $lines;
+    }
+
+    /**
+     * Suggestion rows go to the list; a click on a text row puts the cursor under it — upstream's
+     * `handleMouse()`.
+     *
+     * Upstream's padding and scroll offset are both zero here, because pig's editor has neither:
+     * it draws every row at the full width.
+     */
+    #[\Override]
+    public function handleMouse(TuiMouseEvent $event): TuiMouseEventResult|TuiMouseDispatchResult|null
+    {
+        $autocompleteStartRow = $this->renderedVisibleLineCount + 2;
+        if (
+            $this->suggestionList !== null
+            && $event->y >= $autocompleteStartRow
+            && $event->y < $autocompleteStartRow + $this->renderedAutocompleteHeight
+        ) {
+            $result = $this->suggestionList->handleMouse($event->at($event->x, $event->y - $autocompleteStartRow, $event->width, $this->renderedAutocompleteHeight));
+
+            return $result?->withFocus();
+        }
+
+        // Leave press/drag/release unhandled so the renderer's screen-level text
+        // selection can run over the editor rows (drag to select, release to copy).
+        // The renderer synthesizes a click when press and release land on the same
+        // cell without movement, which is the gesture that positions the cursor.
+        if ($event->type !== 'click' || $event->button !== 'left') {
+            return null;
+        }
+        if ($event->y <= 0 || $event->y > $this->renderedVisibleLineCount) {
+            return new TuiMouseEventResult(handled: true, focus: true);
+        }
+
+        $visualLines = $this->visualLines($this->lastWidth);
+        $visualLineIndex = $event->y - 1;
+        $visualLine = $visualLines[$visualLineIndex] ?? null;
+        if ($visualLine === null) {
+            return new TuiMouseEventResult(handled: true, focus: true);
+        }
+        $logicalLine = $this->lines[$visualLine->logicalLine] ?? '';
+        $chunk = substr($logicalLine, $visualLine->startCol, $visualLine->length);
+        $targetColumn = max(0, $event->x);
+        $visibleColumn = 0;
+        $targetIndex = strlen($chunk);
+        $lastGraphemeIndex = 0;
+        $offset = 0;
+        foreach (Graphemes::split($chunk) as $grapheme) {
+            $nextColumn = $visibleColumn + Width::visible($grapheme);
+            $lastGraphemeIndex = $offset;
+            if ($targetColumn < $nextColumn) {
+                $targetIndex = $offset;
+                break;
+            }
+            $visibleColumn = $nextColumn;
+            $offset += strlen($grapheme);
+        }
+        $isLastSegment = $visualLineIndex === count($visualLines) - 1
+            || ($visualLines[$visualLineIndex + 1] ?? null)?->logicalLine !== $visualLine->logicalLine;
+        if (!$isLastSegment && $targetIndex === strlen($chunk) && $chunk !== '') {
+            $targetIndex = $lastGraphemeIndex;
+        }
+
+        $this->cursorLine = $visualLine->logicalLine;
+        $this->cursorCol = $visualLine->startCol + $targetIndex;
+        $this->historyIndex = -1;
+        if ($this->suggestionList !== null) {
+            $this->refreshSuggestions();
+        }
+
+        return new TuiMouseEventResult(handled: true, focus: true);
     }
 
     /** One row, with the cursor painted into it and the rest padded out. */

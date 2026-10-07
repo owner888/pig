@@ -21,4 +21,10 @@ final readonly class TuiMouseDispatchResult
     {
         return new self($this->target, $this->capture, $this->focus, $this->render, $focusTarget);
     }
+
+    /** The same result, also taking keyboard focus — upstream spreads `{...result, focus: true}`. */
+    public function withFocus(): self
+    {
+        return new self($this->target, $this->capture, true, $this->render, $this->focusTarget);
+    }
 }

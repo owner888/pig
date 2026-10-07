@@ -369,6 +369,10 @@ rest can arrive on its own when something needs it.
 
 **避坑规则**：组件在绘制时取 `Themes::theme()->fg(...)`，不要把 `Theme` 实例存起来，否则切主题后不变；会把颜色烘进字符串的组件要在 `invalidate()` 里重建（upstream 同样），切主题时控制器 `invalidate` 整个 UI。`Theme::fg()` 给背景色 token 会抛错，背景用 `bg()`。`InteractiveMode` 装了 `ThemeJson::validateThemeJson` 校验器：缺 token 的自定义主题会被拒绝并报原因（不再用 dark 补齐）。自定义主题目录是 pig 的四个（`~/.pig/agent/themes`、`~/.pi/agent/themes`、项目信任后的 `<cwd>/.pig/themes`、`<cwd>/.pi/themes`），先找文件名再找文件里的 `name`；读不了的主题记在 `Themes::getCustomThemeErrors()` 并在列出主题时说出来。语法高亮仍用 pig 的 `Highlight`/`Grammar`（`Themes::highlightCode()`）。`/theme` 不带参数打开选择器（移动即预览，Esc 还原），`/theme <name>` 直接切换并保存。Web UI（`pig --mode web`）自带 `Dark`/`Labra`/`Light` 切换并用 `localStorage` 记住。
 
+**烘进颜色的文字用 `ThemedText`**（upstream `components/themed-text.ts`）：`new ThemedText(fn () => Themes::theme()->fg('dim', $msg), 1, 0)`，`invalidate()` 后下次绘制用当前主题重建；数据要在建组件前取好快照。`say()`/`sayError()`/`sayWarning()`、横幅（`ExpandableText`，ctrl+o 用 `setExpanded()`）、各命令输出都走它。直接 `new Text(Themes::theme()->fg(...))` 切主题后颜色不变——`system` 主题在终端回报颜色前是灰阶，这种文字会一直是灰的。
+
+**鼠标**：`Box`、`Editor`、`SelectList`、`SettingsList` 照 upstream 有 `handleMouse()`。包装组件（如 `CustomEditor` 包着 `Editor`）必须实现 `MouseHandler` 并转发，否则点击输入框什么都不做；`Mouse::dispatchMouseEvent()` 会把焦点给到包装组件本身。
+
 | 旧 | 新 |
 |---|---|
 | `Theme\Palette`、`PaletteTest` | 删除；`Theme\Themes` + `Theme\Theme` |

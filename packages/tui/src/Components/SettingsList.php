@@ -8,6 +8,10 @@ use Closure;
 use Pig\Tui\Component;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
+use Pig\Tui\MouseHandler;
+use Pig\Tui\TuiMouseDispatchResult;
+use Pig\Tui\TuiMouseEvent;
+use Pig\Tui\TuiMouseEventResult;
 use Pig\Tui\TextWrap;
 use Pig\Tui\Width;
 
@@ -27,7 +31,7 @@ use Pig\Tui\Width;
  *
  * Ported from upstream's `tui/components/settings-list.ts`.
  */
-final class SettingsList implements Component, InputHandler
+final class SettingsList implements Component, InputHandler, MouseHandler
 {
     /** @var list<SettingItem> */
     private array $items;
@@ -43,6 +47,9 @@ final class SettingsList implements Component, InputHandler
     private array $current = [];
 
     private int $selected = 0;
+
+    /** The row a primary press landed on, which the click that follows it activates. */
+    private ?int $mousePressedIndex = null;
 
     private ?Component $submenu = null;
 
@@ -112,6 +119,18 @@ final class SettingsList implements Component, InputHandler
         $this->onClose = $handler;
     }
 
+    /** Move the selection to the row with this id; an id no row has leaves it where it is. */
+    public function selectItem(string $id): void
+    {
+        foreach ($this->items as $index => $item) {
+            if ($item->id === $id) {
+                $this->selected = $index;
+
+                return;
+            }
+        }
+    }
+
     #[\Override]
     public function invalidate(): void
     {
@@ -133,8 +152,7 @@ final class SettingsList implements Component, InputHandler
         }
 
         $total = count($this->items);
-        $start = max(0, min($this->selected - intdiv($this->maxVisible, 2), $total - $this->maxVisible));
-        $end = min($start + $this->maxVisible, $total);
+        [$start, $end] = $this->visibleRange();
 
         $labelWidth = $this->labelWidth($width);
         $lines = [];
@@ -164,6 +182,68 @@ final class SettingsList implements Component, InputHandler
         // cancelled, and had quietly dropped the first — a key that works and is not on the
         // list is the Ctrl+G rule from the other side.
         return [...$lines, ...$this->hint('Enter or Space to change · Esc when done', $width)];
+    }
+
+    /**
+     * An open submenu takes the event; otherwise the wheel moves the selection, a primary press
+     * selects the row under it and the click that follows changes it — upstream's `handleMouse()`.
+     *
+     * Upstream's search-line rows are not here, because pig's list has no search.
+     */
+    #[\Override]
+    public function handleMouse(TuiMouseEvent $event): TuiMouseEventResult|TuiMouseDispatchResult|null
+    {
+        if ($this->submenu !== null) {
+            $result = $this->submenu instanceof MouseHandler ? $this->submenu->handleMouse($event) : null;
+
+            return $result?->withFocus();
+        }
+
+        if ($this->items === []) {
+            return null;
+        }
+        if ($event->type === 'wheel' && $event->wheelDelta !== null && $event->wheelDelta !== 0) {
+            $delta = $event->wheelDelta < 0 ? -1 : 1;
+            $previousIndex = $this->selected;
+            $this->selected = max(0, min(count($this->items) - 1, $this->selected + $delta));
+
+            return new TuiMouseEventResult(handled: true, render: $this->selected !== $previousIndex);
+        }
+        // Hover must not change selection: the visible range is centered on it.
+        if ($event->button !== 'left' || ($event->type !== 'press' && $event->type !== 'click')) {
+            return null;
+        }
+
+        [$start, $end] = $this->visibleRange();
+        $itemIndex = $start + $event->y;
+        if ($itemIndex < $start || $itemIndex >= $end) {
+            return null;
+        }
+        if ($event->type === 'press') {
+            $this->mousePressedIndex = $itemIndex;
+            $this->selected = $itemIndex;
+
+            return new TuiMouseEventResult(handled: true, focus: true);
+        }
+
+        $this->selected = $this->mousePressedIndex ?? $itemIndex;
+        $this->mousePressedIndex = null;
+        $this->activate();
+
+        return new TuiMouseEventResult(handled: true);
+    }
+
+    /**
+     * The window of rows drawn: the selection kept near the middle, without scrolling past the end.
+     *
+     * @return array{0: int, 1: int} start inclusive, end exclusive
+     */
+    private function visibleRange(): array
+    {
+        $total = count($this->items);
+        $start = max(0, min($this->selected - intdiv($this->maxVisible, 2), $total - $this->maxVisible));
+
+        return [$start, min($start + $this->maxVisible, $total)];
     }
 
     /**

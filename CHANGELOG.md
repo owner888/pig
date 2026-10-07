@@ -43,6 +43,21 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.15] - 2026-10-08
+
+### Added
+
+- **Interactive Dynamic Text Components (`ThemedText`, `ExpandableText`)**:
+  - Ported upstream pi's `ThemedText` for lazy theme-evaluated text rendering that dynamically repaints when the active palette shifts without manual string reconstruction.
+  - Ported `ExpandableText` providing built-in collapsed/expanded toggling for startup banners and header announcements.
+  - Added dedicated unit tests in `ThemedTextTest.php`.
+
+### Changed
+
+- **Interactive Component Mouse Handling Parity**:
+  - Aligned mouse click and wheel dispatching across interactive widgets (`Editor`, `SelectList`, `SettingsList`, `Box`, `BorderedLoader`, `CustomEditor`), allowing clicking to focus and select rows directly via mouse input.
+  - Enhanced `TuiMouseDispatchResult` and `TuiMouseEventResult` supporting target delegation and custom focus routing.
+
 ## [0.4.14] - 2026-10-08
 
 ### New Features
