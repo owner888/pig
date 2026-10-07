@@ -9,6 +9,9 @@ use Pig\Async\Loop;
 use Pig\Tui\Components\AltScreenFlashContainer;
 use Pig\Tui\Components\AltScreenSearchComponent;
 use Pig\Tui\Components\ScrollView;
+use Pig\Tui\Images\ImageProtocol;
+use Pig\Tui\Images\TerminalCapabilities;
+use Pig\Tui\Images\TerminalImage;
 
 /**
  * The fullscreen renderer — upstream's `TuiAltScreen` in `tui-alt-screen.ts`.
@@ -19,7 +22,9 @@ use Pig\Tui\Components\ScrollView;
  * scrollbar, text selection and copy, and the jump-to-latest click are handled here rather than
  * by the terminal.
  *
- * Not ported yet: Kitty and iTerm2 image placement.
+ * Kitty images are uploaded once and re-placed with placement-only commands while they stay in
+ * the cache; iTerm2 images are switched off while the alternate screen is up, because they cannot
+ * be cleared or cropped.
  */
 class TuiAltScreen extends TuiBase implements ViewportTUI
 {
@@ -43,6 +48,9 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
     private const float DOUBLE_CLICK_INTERVAL = 0.5;
     private const float COPY_ERROR_FLASH_DURATION = 5.0;
     private const float SELECTION_AUTO_SCROLL_INTERVAL = 0.05;
+    private const int MAX_CACHED_OFFSCREEN_KITTY_IMAGES = 16;
+    private const int MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES = 32 * 1024 * 1024;
+    private const int MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024;
 
     /**
      * Regular mode delegates double-click selection to the terminal emulator. Fullscreen owns mouse
@@ -73,6 +81,19 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
 
     /** Upstream's `altScreenActive`: stop() may run twice, and the second must not print the document again. */
     private bool $altScreenActive = false;
+
+    private ?ImageProtocol $imageProtocol = null;
+
+    /** The capabilities to restore on stop, when images were switched off for iTerm2. */
+    private ?TerminalCapabilities $savedCapabilities = null;
+
+    /**
+     * Upstream's `CachedKittyImage` map: images whose data the terminal holds, least recently
+     * visible first.
+     *
+     * @var array<int, array{transmissionGeneration: int, transmissionBytes: int, estimatedDecodedBytes: int}>
+     */
+    private array $uploadedKittyImages = [];
 
     /**
      * A point a selection starts or ends at: a row of a scroll view's content when `scrollView` is
@@ -602,7 +623,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
 
         foreach ($rangesByRow as $row => $ranges) {
             $line = $screen[$row] ?? '';
-            if (self::isImageLine($line)) {
+            if (TerminalImage::isImageLine($line)) {
                 continue;
             }
             $lineWidth = Width::visible($line);
@@ -645,6 +666,14 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $this->stopScrollbarDrag();
         $this->flashes->dispose();
         $this->altScreenActive = true;
+        $capabilities = TerminalImage::getCapabilities();
+        $this->imageProtocol = $capabilities->images;
+        $this->uploadedKittyImages = [];
+        if ($capabilities->images === ImageProtocol::ITerm2) {
+            $this->savedCapabilities = $capabilities;
+            TerminalImage::setCapabilities(new TerminalCapabilities(null, $capabilities->trueColor, $capabilities->hyperlinks));
+            $this->invalidate();
+        }
         $this->selectionAnchor = null;
         $this->selectionFocus = null;
         $this->selectionGranularity = 'character';
@@ -685,8 +714,9 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         }
 
         $this->terminal->write(
-            self::BEGIN_SYNCHRONIZED_OUTPUT . ($this->mouseEnabled ? self::DISABLE_MOUSE : '') . self::ENABLE_AUTOWRAP . self::END_SYNCHRONIZED_OUTPUT,
+            self::BEGIN_SYNCHRONIZED_OUTPUT . $this->deleteKittyImages() . ($this->mouseEnabled ? self::DISABLE_MOUSE : '') . self::ENABLE_AUTOWRAP . self::END_SYNCHRONIZED_OUTPUT,
         );
+        $this->uploadedKittyImages = [];
     }
 
     /**
@@ -703,24 +733,99 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
 
         if ($options->preserveScreen) {
             $this->terminal->write(self::BEGIN_SYNCHRONIZED_OUTPUT . self::EXIT_ALT_SCREEN . "\x1b[?25h" . self::END_SYNCHRONIZED_OUTPUT);
-
-            return;
-        }
-
-        $width = max(1, $this->terminal->columns());
-        $buffer = self::BEGIN_SYNCHRONIZED_OUTPUT . self::EXIT_ALT_SCREEN . self::DISABLE_AUTOWRAP;
-        $document = array_map(
-            static fn (string $line): string => str_replace(TUI::CURSOR_MARKER, '', (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $line)),
-            $this->render($width),
-        );
-        foreach ($this->applyLineResets($document) as $row => $line) {
-            if (!self::isImageLine($line) && Width::visible($line) > $width) {
-                $line = Width::sliceByColumn($line, 0, $width, true);
+        } else {
+            $width = max(1, $this->terminal->columns());
+            $buffer = self::BEGIN_SYNCHRONIZED_OUTPUT . self::EXIT_ALT_SCREEN . self::DISABLE_AUTOWRAP;
+            $document = array_map(
+                static fn (string $line): string => str_replace(TUI::CURSOR_MARKER, '', (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $line)),
+                $this->render($width),
+            );
+            foreach ($this->applyLineResets($document) as $row => $line) {
+                if (!TerminalImage::isImageLine($line) && Width::visible($line) > $width) {
+                    $line = Width::sliceByColumn($line, 0, $width, true);
+                }
+                $buffer .= ($row > 0 ? "\r\n" : '') . "\r\x1b[2K" . $line;
             }
-            $buffer .= ($row > 0 ? "\r\n" : '') . "\r\x1b[2K" . $line;
+            $buffer .= "\x1b[0m" . self::ENABLE_AUTOWRAP . "\r\n\x1b[?25h" . self::END_SYNCHRONIZED_OUTPUT;
+            $this->terminal->write($buffer);
         }
-        $buffer .= "\x1b[0m" . self::ENABLE_AUTOWRAP . "\r\n\x1b[?25h" . self::END_SYNCHRONIZED_OUTPUT;
-        $this->terminal->write($buffer);
+        if ($this->savedCapabilities !== null) {
+            TerminalImage::setCapabilities($this->savedCapabilities);
+            $this->savedCapabilities = null;
+        }
+    }
+
+    private function deleteKittyImages(): string
+    {
+        return $this->imageProtocol === ImageProtocol::Kitty ? TerminalImage::deleteAllKittyImages() : '';
+    }
+
+    /**
+     * Swap the transmission of every Kitty image the terminal already holds for a placement-only
+     * command, record what is now uploaded, and delete the least recently visible offscreen
+     * images once the cache is over its limits.
+     *
+     * @param list<string> $screen
+     * @return array{lines: list<string>, evictedImageDeletion: string}
+     */
+    private function prepareKittyScreen(array $screen): array
+    {
+        $visibleImageIds = [];
+        $lines = [];
+        foreach ($screen as $line) {
+            $placement = TerminalImage::getKittyImagePlacement($line);
+            if ($placement === null) {
+                $lines[] = $line;
+
+                continue;
+            }
+            $visibleImageIds[$placement->imageId] = true;
+
+            $cachedImage = $this->uploadedKittyImages[$placement->imageId] ?? null;
+            unset($this->uploadedKittyImages[$placement->imageId]);
+            $this->uploadedKittyImages[$placement->imageId] = [
+                'transmissionGeneration' => $placement->transmissionGeneration,
+                'transmissionBytes' => $placement->transmissionBytes,
+                'estimatedDecodedBytes' => $placement->estimatedDecodedBytes,
+            ];
+
+            $lines[] = ($cachedImage['transmissionGeneration'] ?? null) === $placement->transmissionGeneration
+                ? $placement->replacementLine
+                : $line;
+        }
+
+        $cachedOffscreenImageCount = 0;
+        $cachedOffscreenTransmissionBytes = 0;
+        $cachedOffscreenDecodedBytes = 0;
+        foreach ($this->uploadedKittyImages as $imageId => $cachedImage) {
+            if (isset($visibleImageIds[$imageId])) {
+                continue;
+            }
+            $cachedOffscreenImageCount += 1;
+            $cachedOffscreenTransmissionBytes += $cachedImage['transmissionBytes'];
+            $cachedOffscreenDecodedBytes += $cachedImage['estimatedDecodedBytes'];
+        }
+
+        $evictedImageDeletion = '';
+        foreach ($this->uploadedKittyImages as $imageId => $cachedImage) {
+            if (
+                $cachedOffscreenImageCount <= self::MAX_CACHED_OFFSCREEN_KITTY_IMAGES
+                && $cachedOffscreenTransmissionBytes <= self::MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES
+                && $cachedOffscreenDecodedBytes <= self::MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES
+            ) {
+                break;
+            }
+            if (isset($visibleImageIds[$imageId])) {
+                continue;
+            }
+            $evictedImageDeletion .= TerminalImage::deleteKittyImage($imageId);
+            unset($this->uploadedKittyImages[$imageId]);
+            $cachedOffscreenImageCount -= 1;
+            $cachedOffscreenTransmissionBytes -= $cachedImage['transmissionBytes'];
+            $cachedOffscreenDecodedBytes -= $cachedImage['estimatedDecodedBytes'];
+        }
+
+        return ['lines' => $lines, 'evictedImageDeletion' => $evictedImageDeletion];
     }
 
     /** @return list<Component> */
@@ -1870,7 +1975,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         }
 
         foreach ($screen as $row => $line) {
-            if ($row < $minRow || $row > $maxRow || $row < $screenSelection['start']['row'] || $row > $screenSelection['end']['row'] || self::isImageLine($line)) {
+            if ($row < $minRow || $row > $maxRow || $row < $screenSelection['start']['row'] || $row > $screenSelection['end']['row'] || TerminalImage::isImageLine($line)) {
                 continue;
             }
 
@@ -1908,7 +2013,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         }
 
         $row = $clip->y + $clip->height - 1;
-        if ($row >= count($screen) || self::isImageLine($screen[$row] ?? '')) {
+        if ($row >= count($screen) || TerminalImage::isImageLine($screen[$row] ?? '')) {
             return $screen;
         }
 
@@ -1989,22 +2094,94 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $screen = $this->compositeFlashes($screen, $width, $height);
         $cursorPos = $this->extractCursorPosition($screen, $height);
         $screen = array_map(
-            static fn (string $line): string => self::isImageLine($line) || Width::visible($line) <= $width ? $line : Width::sliceByColumn($line, 0, $width, true),
+            static fn (string $line): string => TerminalImage::isImageLine($line) || Width::visible($line) <= $width ? $line : Width::sliceByColumn($line, 0, $width, true),
             $this->applyLineResets($screen),
         );
 
         $fullRedraw = $this->previousScreen === [] || $this->previousWidth !== $width || $this->previousHeight !== $height;
+        $changedRows = [];
+        foreach ($screen as $row => $line) {
+            $changedRows[$row] = $line !== ($this->previousScreen[$row] ?? null);
+        }
+        $imageAnchorsNeedRedraw = false;
+        foreach ($screen as $row => $line) {
+            if ($changedRows[$row] && (TerminalImage::isImageLine($line) || TerminalImage::isImageLine($this->previousScreen[$row] ?? ''))) {
+                $imageAnchorsNeedRedraw = true;
+                break;
+            }
+        }
+        $isWezTerm = Env::isSet('WEZTERM_PANE') || strtolower((string) getenv('TERM_PROGRAM')) === 'wezterm';
+        $imageCellsNeedRedraw = false;
+        if (!$imageAnchorsNeedRedraw && $isWezTerm && $this->imageProtocol === ImageProtocol::Kitty && in_array(true, $changedRows, true)) {
+            foreach ($screen as $row => $line) {
+                $placementRows = TerminalImage::getKittyImagePlacementRows($line);
+                if ($placementRows === null) {
+                    continue;
+                }
+                for ($coveredRow = $row; $coveredRow < $row + $placementRows; $coveredRow++) {
+                    if ($changedRows[$coveredRow] ?? false) {
+                        $imageCellsNeedRedraw = true;
+                        break 2;
+                    }
+                }
+            }
+        }
+        $imagesNeedRedraw = $imageAnchorsNeedRedraw || $imageCellsNeedRedraw;
+        $redrawImages = $fullRedraw || $imagesNeedRedraw;
+        $hadUploadedKittyImages = $this->uploadedKittyImages !== [];
+        $preparedKittyScreen = $redrawImages && $this->imageProtocol === ImageProtocol::Kitty
+            ? $this->prepareKittyScreen($screen)
+            : ['lines' => $screen, 'evictedImageDeletion' => ''];
+        $preparedLines = $preparedKittyScreen['lines'];
+
         $buffer = self::BEGIN_SYNCHRONIZED_OUTPUT;
         if ($fullRedraw) {
             $this->fullRedrawCount++;
-            $buffer .= "\x1b[2J";
-        }
-
-        for ($row = 0; $row < $height; $row++) {
-            if (!$fullRedraw && ($screen[$row] ?? '') === ($this->previousScreen[$row] ?? null)) {
-                continue;
+            $clearImages = $this->imageProtocol === ImageProtocol::Kitty && $hadUploadedKittyImages
+                ? TerminalImage::deleteAllKittyPlacements()
+                : $this->deleteKittyImages();
+            $buffer .= $clearImages . "\x1b[2J";
+        } elseif ($imagesNeedRedraw) {
+            if ($this->imageProtocol === ImageProtocol::ITerm2) {
+                $buffer .= "\x1b[2J";
+            } elseif ($this->imageProtocol === ImageProtocol::Kitty) {
+                $buffer .= TerminalImage::deleteAllKittyPlacements();
             }
-            $buffer .= "\x1b[" . ($row + 1) . ";1H\x1b[2K" . ($screen[$row] ?? '');
+        }
+        $buffer .= $preparedKittyScreen['evictedImageDeletion'];
+
+        $unchanged = fn (int $row): bool => !$fullRedraw && !$imagesNeedRedraw && ($screen[$row] ?? '') === ($this->previousScreen[$row] ?? null);
+        // WezTerm erases intersecting Kitty image cells when a later row write touches a covered row.
+        // Draw image placements after every clear and text write so nothing later intersects them; preserve
+        // the existing interleaved output for text-only frames and every other terminal.
+        $drawKittyImagesLast = $redrawImages && $this->imageProtocol === ImageProtocol::Kitty && $isWezTerm
+            && array_filter($screen, TerminalImage::isImageLine(...)) !== [];
+        if ($drawKittyImagesLast) {
+            for ($row = 0; $row < $height; $row++) {
+                if ($unchanged($row)) {
+                    continue;
+                }
+                $buffer .= "\x1b[" . ($row + 1) . ";1H\x1b[2K";
+            }
+            for ($row = 0; $row < $height; $row++) {
+                if ($unchanged($row) || TerminalImage::isImageLine($preparedLines[$row] ?? '')) {
+                    continue;
+                }
+                $buffer .= "\x1b[" . ($row + 1) . ';1H' . ($preparedLines[$row] ?? '');
+            }
+            for ($row = 0; $row < $height; $row++) {
+                if ($unchanged($row) || !TerminalImage::isImageLine($preparedLines[$row] ?? '')) {
+                    continue;
+                }
+                $buffer .= "\x1b[" . ($row + 1) . ';1H' . ($preparedLines[$row] ?? '');
+            }
+        } else {
+            for ($row = 0; $row < $height; $row++) {
+                if ($unchanged($row)) {
+                    continue;
+                }
+                $buffer .= "\x1b[" . ($row + 1) . ";1H\x1b[2K" . ($preparedLines[$row] ?? '');
+            }
         }
 
         if ($cursorPos !== null) {

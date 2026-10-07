@@ -25,7 +25,6 @@ use Pig\Tui\Components\ImageTheme;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
 use Pig\Tui\Container;
-use Pig\Tui\Images\ImageDimensions;
 use Pig\Tui\Images\TerminalImage;
 use Pig\Tui\Style;
 use Throwable;
@@ -289,9 +288,9 @@ final class ToolExecutionComponent extends Container
                 // alike — and the result still says an image came back rather than
                 // pretending none did.
                 $this->images->addChild(new Text(
-                    $this->palette->fg('toolOutput', TerminalImage::fallback(
+                    $this->palette->fg('toolOutput', TerminalImage::imageFallback(
                         $block->mimeType,
-                        ImageDimensions::of($block->data, $block->mimeType),
+                        TerminalImage::getImageDimensions($block->data, $block->mimeType),
                     )),
                     1,
                     0,

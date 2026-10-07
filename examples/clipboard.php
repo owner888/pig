@@ -22,7 +22,7 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use Pig\Tui\Clipboard\ClipboardFile;
 use Pig\Tui\Clipboard\SystemClipboard;
-use Pig\Tui\Images\ImageDimensions;
+use Pig\Tui\Images\TerminalImage;
 use Pig\Tui\Style;
 
 $clipboard = new SystemClipboard();
@@ -30,7 +30,7 @@ $image = $clipboard->image();
 
 if ($image !== null) {
     $path = ClipboardFile::write($image);
-    $size = ImageDimensions::of(base64_encode($image->bytes), $image->mimeType);
+    $size = TerminalImage::getImageDimensions(base64_encode($image->bytes), $image->mimeType);
     $pixels = $size === null ? 'size unknown' : "{$size->widthPx}x{$size->heightPx}";
 
     echo Style::green('image on the clipboard'), ': ', $image->mimeType, ', ',

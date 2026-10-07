@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Pig\Tui;
 
 use Closure;
+use Pig\Async\Future;
+use Pig\Async\Deferred;
 use Pig\Async\Loop;
 use Pig\Tui\Images\TerminalImage;
 
@@ -30,6 +32,49 @@ abstract class TuiBase extends Container implements TUI
     public ?Closure $onDebug = null;
 
     private ?Component $focusedComponent = null;
+
+    private const int TERMINAL_PALETTE_SIZE = 16;
+
+    /** OSC 10 and 11 plus OSC 4 for every palette color. */
+    private const int TERMINAL_COLOR_REPLY_COUNT = 2 + self::TERMINAL_PALETTE_SIZE;
+
+    /**
+     * Default colors, palette colors 0-15, and a trailing primary device attributes (DA1) request.
+     * Every terminal answers DA1 and terminals answer in order, so the DA1 reply marks the end of
+     * the color replies, including for terminals that ignore the color queries.
+     */
+    private const string TERMINAL_COLOR_QUERY = "\x1b]10;?\x07\x1b]11;?\x07"
+        . "\x1b]4;0;?\x07\x1b]4;1;?\x07\x1b]4;2;?\x07\x1b]4;3;?\x07\x1b]4;4;?\x07\x1b]4;5;?\x07\x1b]4;6;?\x07\x1b]4;7;?\x07"
+        . "\x1b]4;8;?\x07\x1b]4;9;?\x07\x1b]4;10;?\x07\x1b]4;11;?\x07\x1b]4;12;?\x07\x1b]4;13;?\x07\x1b]4;14;?\x07\x1b]4;15;?\x07"
+        . "\x1b[c";
+
+    private const string DEVICE_ATTRIBUTES_RESPONSE_PATTERN = '/^\x1b\[\?[\d;]*c$/';
+
+    /**
+     * Every colour reply, DA1 reply and colour-scheme report inside one read. Upstream's input is
+     * split into single sequences before `handleTerminalInput()`; pig's reads are not, so these are
+     * picked out of whatever arrived, in order.
+     */
+    private const string TERMINAL_COLOR_REPLY = '/\x1b\](?:1[01]|4;\d{1,3});[^\x07\x1b]*(?:\x07|\x1b\\\\)|\x1b\[\?[\d;]*c|(?:\x1b\[\?997;[12]n)+/';
+
+    /** The start of a colour or DA1 reply cut off at the end of a read. */
+    private const string PARTIAL_TERMINAL_COLOR_REPLY = '/(?:\x1b\](?:1[01]?|4(?:;\d{0,3})?)?(?:;[^\x07\x1b]*)?|\x1b\[\?[\d;]*)$/';
+
+    /**
+     * Color queries waiting for their DA1 reply, oldest first. Terminals answer in order, so color
+     * replies belong to the first one.
+     *
+     * @var list<PendingTerminalColorQuery>
+     */
+    private array $pendingTerminalColorQueries = [];
+
+    /** @var array<int, Closure(string): void> */
+    private array $terminalColorSchemeListeners = [];
+
+    private bool $terminalColorSchemeNotificationsEnabled = false;
+
+    /** A colour reply split across reads, kept until the rest arrives. */
+    private string $terminalColorReplyBuffer = '';
 
     private int $focusOrderCounter = 0;
 
@@ -759,6 +804,9 @@ abstract class TuiBase extends Container implements TUI
         );
         $this->afterTerminalStart();
         $this->terminal->hideCursor();
+        if ($this->terminalColorSchemeNotificationsEnabled) {
+            $this->terminal->write("\x1b[?2031h");
+        }
         $this->queryCellSize();
         $this->requestRender();
     }
@@ -772,7 +820,7 @@ abstract class TuiBase extends Container implements TUI
      */
     private function queryCellSize(): void
     {
-        if (!TerminalImage::capabilities()->drawsImages()) {
+        if (TerminalImage::getCapabilities()->images === null) {
             return;
         }
 
@@ -795,13 +843,177 @@ abstract class TuiBase extends Container implements TUI
      * letter. One press of an arrow key at exactly the wrong moment either way, and handing
      * the bytes over is the half that cannot type something nobody pressed.
      */
+    /** Upstream's `onTerminalColorSchemeChange()`: called with `'dark'` or `'light'` on each DEC 2031 report. */
+    #[\Override]
+    public function onTerminalColorSchemeChange(Closure $listener): Closure
+    {
+        $this->terminalColorSchemeListeners[spl_object_id($listener)] = $listener;
+
+        return function () use ($listener): void {
+            unset($this->terminalColorSchemeListeners[spl_object_id($listener)]);
+        };
+    }
+
+    #[\Override]
+    public function setTerminalColorSchemeNotifications(bool $enabled): void
+    {
+        if ($this->terminalColorSchemeNotificationsEnabled === $enabled) {
+            return;
+        }
+        $this->terminalColorSchemeNotificationsEnabled = $enabled;
+        if (!$this->stopped) {
+            $this->terminal->write($enabled ? "\x1b[?2031h" : "\x1b[?2031l");
+        }
+    }
+
+    /**
+     * Query the terminal's theme colors — upstream's `queryTerminalColors()`: the default
+     * foreground (OSC 10), the default background (OSC 11), and ANSI colors 0-15 (OSC 4), followed
+     * by a DA1 request that marks the end of the replies. Completes when the DA1 reply or all color
+     * replies arrive, or when the timeout expires. Colors the terminal did not report are null; the
+     * palette is only set when all 16 arrived.
+     *
+     * @param int $timeoutMs for terminals that do not answer DA1 either
+     * @param (Closure(TerminalColors): void)|null $onLateReply receives the replies if the query completes after the timeout
+     *
+     * @return Future<TerminalColors>
+     */
+    #[\Override]
+    public function queryTerminalColors(int $timeoutMs, ?Closure $onLateReply = null): Future
+    {
+        $deferred = new Deferred();
+        $query = new PendingTerminalColorQuery();
+        $query->palette = array_fill(0, self::TERMINAL_PALETTE_SIZE, null);
+        $query->deliver = static function (TerminalColors $colors) use ($deferred): void {
+            $deferred->complete($colors);
+        };
+        // Complete with the replies so far, and keep collecting late replies for `onLateReply`.
+        $query->timer = Loop::get()->delay($timeoutMs / 1000, function () use ($query, $deferred, $onLateReply): void {
+            $query->timer = null;
+            $query->deliver = $onLateReply;
+            if (!$deferred->isComplete()) {
+                $deferred->complete($this->terminalColorQueryResult($query));
+            }
+        });
+        $this->pendingTerminalColorQueries[] = $query;
+        $this->terminal->write(self::TERMINAL_COLOR_QUERY);
+
+        return $deferred->future;
+    }
+
+    /**
+     * Upstream's `consumeTerminalColorResponse()` and `consumeTerminalColorSchemeReport()`, applied to
+     * every reply in the read; what is not theirs is handed back.
+     */
+    private function consumeTerminalColorReplies(string $data): string
+    {
+        if ($this->terminalColorReplyBuffer !== '') {
+            $data = $this->terminalColorReplyBuffer . $data;
+            $this->terminalColorReplyBuffer = '';
+        }
+        if (!str_contains($data, "\x1b") || str_contains($data, "\x1b[200~")) {
+            return $data;
+        }
+
+        $rest = preg_replace_callback(
+            self::TERMINAL_COLOR_REPLY,
+            fn (array $match): string => $this->consumeTerminalColorResponse($match[0]) || $this->consumeTerminalColorSchemeReport($match[0]) ? '' : $match[0],
+            $data,
+        );
+        if ($rest === null) {
+            throw new TuiError('Splitting terminal colour replies failed: ' . preg_last_error_msg());
+        }
+
+        if ($this->pendingTerminalColorQueries !== [] && preg_match(self::PARTIAL_TERMINAL_COLOR_REPLY, $rest, $partial) === 1 && strlen($partial[0]) >= 2) {
+            $this->terminalColorReplyBuffer = $partial[0];
+            $rest = substr($rest, 0, -strlen($partial[0]));
+        }
+
+        return $rest;
+    }
+
+    private function consumeTerminalColorResponse(string $data): bool
+    {
+        $query = $this->pendingTerminalColorQueries[0] ?? null;
+        if ($query === null) {
+            return false;
+        }
+        if (preg_match(self::DEVICE_ATTRIBUTES_RESPONSE_PATTERN, $data) === 1) {
+            array_shift($this->pendingTerminalColorQueries);
+            $this->completeTerminalColorQuery($query);
+
+            return true;
+        }
+
+        $response = TerminalColors::parseOscColorResponse($data);
+        if ($response === null) {
+            return false;
+        }
+        ['target' => $target, 'rgb' => $rgb] = $response;
+        $key = (string) $target;
+        if ($query->deliver === null || isset($query->replied[$key])) {
+            return true;
+        }
+        $query->replied[$key] = true;
+        if ($target === 'foreground') {
+            $query->foreground = $rgb;
+        } elseif ($target === 'background') {
+            $query->background = $rgb;
+        } elseif ($target < self::TERMINAL_PALETTE_SIZE) {
+            $query->palette[$target] = $rgb;
+        }
+        if (count($query->replied) === self::TERMINAL_COLOR_REPLY_COUNT) {
+            $this->completeTerminalColorQuery($query);
+        }
+
+        return true;
+    }
+
+    private function terminalColorQueryResult(PendingTerminalColorQuery $query): TerminalColors
+    {
+        $complete = !in_array(null, $query->palette, true);
+
+        return new TerminalColors(
+            $query->foreground,
+            $query->background,
+            $complete ? array_values(array_filter($query->palette, static fn (?RgbColor $color): bool => $color !== null)) : null,
+        );
+    }
+
+    private function completeTerminalColorQuery(PendingTerminalColorQuery $query): void
+    {
+        $deliver = $query->deliver;
+        $query->deliver = null;
+        if ($query->timer !== null) {
+            Loop::get()->cancel($query->timer);
+            $query->timer = null;
+        }
+        if ($deliver !== null) {
+            $deliver($this->terminalColorQueryResult($query));
+        }
+    }
+
+    private function consumeTerminalColorSchemeReport(string $data): bool
+    {
+        $scheme = TerminalColors::parseTerminalColorSchemeReport($data);
+        if ($scheme === null) {
+            return false;
+        }
+
+        foreach ($this->terminalColorSchemeListeners as $listener) {
+            $listener($scheme);
+        }
+
+        return true;
+    }
+
     private function takeCellSizeReply(string $data): string
     {
         $this->cellSizeBuffer .= $data;
         $size = TerminalImage::parseCellSizeReply($this->cellSizeBuffer);
 
         if ($size !== null) {
-            TerminalImage::setCellSize($size);
+            TerminalImage::setCellDimensions($size);
             $this->awaitingCellSize = false;
             $rest = (string) preg_replace('/\x1b\[6;\d+;\d+t/', '', $this->cellSizeBuffer, 1);
             $this->cellSizeBuffer = '';
@@ -837,6 +1049,9 @@ abstract class TuiBase extends Container implements TUI
         $options ??= new TuiStopOptions();
         $this->stopped = true;
         $this->cancelRenderTimer();
+        if ($this->terminalColorSchemeNotificationsEnabled) {
+            $this->terminal->write("\x1b[?2031l");
+        }
         $this->beforeTerminalStop($options);
         $this->terminal->showCursor();
         $this->terminal->stop();
@@ -969,6 +1184,11 @@ abstract class TuiBase extends Container implements TUI
 
     private function handleTerminalInput(string $data): void
     {
+        $data = $this->consumeTerminalColorReplies($data);
+        if ($data === '') {
+            return;
+        }
+
         foreach ($this->inputListeners as $listener) {
             $res = $listener($data);
 
@@ -1074,7 +1294,7 @@ abstract class TuiBase extends Container implements TUI
     protected function applyLineResets(array $lines): array
     {
         foreach ($lines as $index => $line) {
-            if (!self::isImageLine($line)) {
+            if (!TerminalImage::isImageLine($line)) {
                 $lines[$index] = Width::normalizeTerminalOutput($line) . Width::SEGMENT_RESET;
             }
         }
@@ -1095,7 +1315,7 @@ abstract class TuiBase extends Container implements TUI
     {
         $line = $lines[$index];
 
-        if (self::isImageLine($line)) {
+        if (TerminalImage::isImageLine($line)) {
             return;
         }
 
@@ -1146,11 +1366,5 @@ abstract class TuiBase extends Container implements TUI
         }
 
         return implode("\n", $dump) . "\n";
-    }
-
-    /** Image protocols put their payload inline, where a column count means nothing — upstream's `isImageLine()`. */
-    public static function isImageLine(string $line): bool
-    {
-        return str_contains($line, "\x1b_G") || str_contains($line, "\x1b]1337;File=");
     }
 }

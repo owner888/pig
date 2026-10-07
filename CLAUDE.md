@@ -11021,6 +11021,26 @@ $before = Width::sliceByColumn($line, 0, $start, true);
 TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 ```
 
+### 图片模块照 upstream 的 `terminal-image.ts` 改名（无别名）
+
+| 旧 | 新 |
+|---|---|
+| `Images\Capabilities`（`::detect()`、`->drawsImages()`） | `Images\TerminalCapabilities`；`TerminalImage::detectCapabilities()`；`->images !== null` |
+| `Images\CellSize` / `Images\ImageSize` | `Images\CellDimensions` / `Images\ImageDimensions`（值对象） |
+| `ImageDimensions::of/png/jpeg/gif/webp`（解析器） | `TerminalImage::getImageDimensions/getPngDimensions/getJpegDimensions/getGifDimensions/getWebpDimensions` |
+| `TerminalImage::capabilities()` / `cellSize()` / `setCellSize()` / `reset()` | `getCapabilities()` / `getCellDimensions()` / `setCellDimensions()` / `setCapabilities()` + `resetCapabilitiesCache()` |
+| `TerminalImage::kitty()` / `iterm2()` / `render()` / `fallback()` / `rows()` | `encodeKitty()` / `encodeITerm2()` / `renderImage()` / `imageFallback()` / `calculateImageRows()` |
+| `TuiBase::isImageLine()`、`Markdown` 里私有的 `isImageLine()` | `TerminalImage::isImageLine()` |
+| `new Image($b64, $mime, ?theme, maxWidthCells, filename, size)`、`ImageTheme->fallback` | `new Image($b64, $mime, ImageTheme, ImageOptions, ?ImageDimensions)`、`ImageTheme->fallbackColor` |
+
+**避坑规则**：全屏下 Kitty 图片只上传一次，之后用 `getKittyImagePlacement()` 换成只放置的命令（`a=p`），离屏缓存按张数/传输字节/解码字节三道上限淘汰；iTerm2 在全屏期间关掉图片（`setCapabilities` 置空，停止时恢复）。能力探测的环境变量先 `PIG_*` 再 `PI_*`，用 helper 判断，不能用 `?:`——`PIG_HYPERLINKS=0` 在 PHP 里是假值会掉到 `PI_`。测试改了全局能力就在 `tearDown()` 里 `resetCapabilitiesCache()`。
+
+### 终端颜色查询：成批读入里挑回复
+
+**结构**：`TuiBase::queryTerminalColors()`（返回 `Future<TerminalColors>`）、`onTerminalColorSchemeChange()`、`setTerminalColorSchemeNotifications()`（DEC 2031）照 upstream `tui.ts`；解析在 `TerminalColors::parseOscColorResponse()` / `parseTerminalColorSchemeReport()`（`terminal-colors.ts`）。
+
+**避坑规则**：upstream 的输入已按序列切好，pig 的一次 read 里可能夹着 18 个颜色回复 + DA1 + 按键，`consumeTerminalColorReplies()` 在监听器之前按顺序挑出来，剩下的照常分发；有查询挂着时，read 末尾半截的 `\e]…`/`\e[?…` 留到下一次拼上。没有查询挂着时 OSC 回复和 DA1 是普通输入（upstream 同样）。
+
 ### 运行中切换 TUI 模式：组件拿的是转发引用，`instanceof` 只能问 `$renderer`
 
 **结构**：照 upstream 的 `switchTuiMode()`，`/settings` 里改 TUI mode 时同一棵组件树（document、pending、status 槽、widgetsAbove 槽、editor、widgetsBelow、footer 槽）从旧渲染器卸下、挂到新渲染器上；fullscreen 另外 `setLayoutRoot(ChatViewport)`。退出时 `fullscreenExitOutput=transcript` 也是切到 regular 再 `renderNow()` 打出对话，`resume-hint` 只离开备用屏。

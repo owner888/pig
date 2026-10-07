@@ -7,6 +7,7 @@ namespace Pig\Tui;
 use Closure;
 use Pig\Tui\Components\ScrollView;
 use Pig\Tui\Components\Stack;
+use Pig\Tui\Images\TerminalImage;
 
 /**
  * The fullscreen layout engine — upstream's `layout.ts`.
@@ -291,7 +292,7 @@ final class Layout
 
     private static function replaceScrollbarCell(string $line, int $column, int $totalWidth, string $replacement, bool $preserveTargetBackground): string
     {
-        if (TuiBase::isImageLine($line)) {
+        if (TerminalImage::isImageLine($line)) {
             return $line;
         }
 
@@ -351,8 +352,16 @@ final class Layout
                     continue;
                 }
                 $line = (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $sourceLine);
+                $imageMetadata = TerminalImage::getKittyImageMetadata($line);
+                if ($imageMetadata !== null) {
+                    $clipBottom = min(count($screen), $box->clip->y + $box->clip->height);
+                    $visibleRows = min($imageMetadata->rows, $clipBottom - $row);
+                    if ($visibleRows < $imageMetadata->rows) {
+                        $line = TerminalImage::cropKittyImageLine($line, 0, $visibleRows);
+                    }
+                }
                 // Fast path: a full-width box painting onto an untouched row uses the line as it is.
-                if ($box->rect->x === 0 && $box->rect->width >= $totalWidth && (TuiBase::isImageLine($line) || $screen[$row] === '')) {
+                if ($box->rect->x === 0 && $box->rect->width >= $totalWidth && (TerminalImage::isImageLine($line) || $screen[$row] === '')) {
                     $screen[$row] = $line;
                 } else {
                     $screen[$row] = Width::composite($screen[$row], $line, $box->rect->x, $box->rect->width, $totalWidth);
@@ -362,6 +371,29 @@ final class Layout
 
         foreach ($box->children as $child) {
             self::paintBox($child, $screen, $totalWidth);
+        }
+
+        // A Kitty image whose first line is scrolled above the view: paint the visible part of it,
+        // cropped, on the view's first row.
+        if ($box->scrollView !== null && $box->scrollContentLines !== null && $box->scrollView->scrollTop() > 0 && $box->rect->height > 0) {
+            for ($imageRow = $box->scrollView->scrollTop() - 1; $imageRow >= 0; $imageRow--) {
+                $imageLine = $box->scrollContentLines[$imageRow] ?? '';
+                $metadata = TerminalImage::getKittyImageMetadata($imageLine);
+                if ($metadata !== null) {
+                    $hiddenRows = $box->scrollView->scrollTop() - $imageRow;
+                    if ($hiddenRows < $metadata->rows) {
+                        $visibleRows = min($box->rect->height, $metadata->rows - $hiddenRows);
+                        $cropped = TerminalImage::cropKittyImageLine($imageLine, $hiddenRows, $visibleRows);
+                        if ($box->rect->x === 0 && $box->rect->width >= $totalWidth) {
+                            $screen[$box->rect->y] = $cropped;
+                        }
+                    }
+                    break;
+                }
+                if ($imageLine !== '') {
+                    break;
+                }
+            }
         }
 
         self::paintScrollbar($box, $screen, $totalWidth);

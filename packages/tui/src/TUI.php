@@ -62,4 +62,18 @@ interface TUI extends Component
 
     /** @param Closure(string): (bool|array{consume?: bool, data?: string}|null) $listener */
     public function removeInputListener(Closure $listener): void;
+
+    /**
+     * @param Closure('dark'|'light'): void $listener
+     * @return Closure(): void call it to stop listening
+     */
+    public function onTerminalColorSchemeChange(Closure $listener): Closure;
+
+    public function setTerminalColorSchemeNotifications(bool $enabled): void;
+
+    /**
+     * @param (Closure(TerminalColors): void)|null $onLateReply
+     * @return \Pig\Async\Future<TerminalColors>
+     */
+    public function queryTerminalColors(int $timeoutMs, ?Closure $onLateReply = null): \Pig\Async\Future;
 }

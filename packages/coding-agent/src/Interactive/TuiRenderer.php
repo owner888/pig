@@ -223,6 +223,24 @@ final class TuiRenderer
             {
                 $this->tui()->removeInputListener($listener);
             }
+
+            #[\Override]
+            public function onTerminalColorSchemeChange(Closure $listener): Closure
+            {
+                return $this->tui()->onTerminalColorSchemeChange($listener);
+            }
+
+            #[\Override]
+            public function setTerminalColorSchemeNotifications(bool $enabled): void
+            {
+                $this->tui()->setTerminalColorSchemeNotifications($enabled);
+            }
+
+            #[\Override]
+            public function queryTerminalColors(int $timeoutMs, ?Closure $onLateReply = null): \Pig\Async\Future
+            {
+                return $this->tui()->queryTerminalColors($timeoutMs, $onLateReply);
+            }
         };
     }
 }

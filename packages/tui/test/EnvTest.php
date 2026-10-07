@@ -12,7 +12,7 @@ use Pig\Tui\Env;
 /**
  * The environment, read the way JavaScript reads it.
  *
- * `CapabilitiesTest` covers the four readers this rule was found in; what is here is the rule
+ * `TerminalImageTest` covers the four readers this rule was found in; what is here is the rule
  * itself, `home()`, and the four that were still reading it the wrong way.
  */
 final class EnvTest extends TestCase

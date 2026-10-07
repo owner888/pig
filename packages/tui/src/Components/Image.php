@@ -4,34 +4,41 @@ declare(strict_types=1);
 
 namespace Pig\Tui\Components;
 
+use Closure;
 use Pig\Tui\Component;
 use Pig\Tui\Images\ImageDimensions;
-use Pig\Tui\Images\ImageSize;
+use Pig\Tui\Images\ImageProtocol;
+use Pig\Tui\Images\ImageRenderOptions;
 use Pig\Tui\Images\TerminalImage;
+use Pig\Tui\Width;
 
 /**
- * A picture, on terminals that can draw one.
+ * A picture, on terminals that can draw one — upstream's `Image` in `components/image.ts`.
  *
- * The trick is the shape of what `render()` returns. The image sequence puts the picture
- * at the cursor and the picture grows *downwards* from there, but the renderer works by
- * comparing lines and has to know how many rows this occupies. So it returns that many
- * lines: the first few empty, and the last one a cursor-up followed by the image. By the
- * time the terminal draws the picture the cursor is back at the top of the block, and the
- * picture fills exactly the rows the renderer already accounted for.
+ * `render()` returns one line per row the picture occupies, so the renderer accounts for its
+ * height. Kitty: the sequence on the first line with `C=1` (no cursor movement) and empty lines
+ * after it. iTerm2: empty lines first and, on the last, a cursor-up back to the top of the block
+ * followed by the sequence.
  */
 final class Image implements Component
 {
-    /** What to assume when the header could not be read: a 4:3 picture of no known size. */
-    private const int FALLBACK_WIDTH_PX = 800;
-    private const int FALLBACK_HEIGHT_PX = 600;
+    /** @var (Closure(string, string): ?string)|null */
+    private static ?Closure $imageTranscoder = null;
 
-    /** Widest a picture is drawn, and the margin left beside it. */
-    private const int DEFAULT_MAX_CELLS = 60;
-    private const int SIDE_MARGIN = 2;
+    /**
+     * Backstop for callers that recreate Image instances. Keyed by source data, least recently
+     * used first.
+     *
+     * @var array<array-key, ?string>
+     */
+    private static array $pngCache = [];
 
-    private readonly ImageSize $size;
+    private readonly ImageDimensions $dimensions;
 
-    private readonly ImageTheme $theme;
+    private ?int $imageId;
+
+    /** Converted PNG data for Kitty. Failures are not stored so a later transcoder can retry. */
+    private ?string $pngData = null;
 
     /** @var list<string>|null */
     private ?array $cachedLines = null;
@@ -39,22 +46,52 @@ final class Image implements Component
     private ?int $cachedWidth = null;
 
     public function __construct(
-        private readonly string $base64,
+        private readonly string $base64Data,
         private readonly string $mimeType,
-        ?ImageTheme $theme = null,
-        private readonly int $maxWidthCells = self::DEFAULT_MAX_CELLS,
-        private readonly ?string $filename = null,
-        ?ImageSize $size = null,
+        private readonly ImageTheme $theme,
+        private readonly ImageOptions $options = new ImageOptions(),
+        ?ImageDimensions $dimensions = null,
     ) {
-        $this->theme = $theme ?? ImageTheme::default();
-        $this->size = $size
-            ?? ImageDimensions::of($base64, $mimeType)
-            ?? new ImageSize(self::FALLBACK_WIDTH_PX, self::FALLBACK_HEIGHT_PX);
+        $this->dimensions = $dimensions
+            ?? TerminalImage::getImageDimensions($base64Data, $mimeType)
+            ?? new ImageDimensions(800, 600);
+        $this->imageId = $options->imageId;
     }
 
-    public function size(): ImageSize
+    /**
+     * Register the converter used for non-PNG images on Kitty-protocol terminals, which only
+     * accept PNG. Without one, such images render as text fallbacks. Called synchronously during
+     * rendering; it converts base64 image data to base64 PNG data, or returns null if it cannot.
+     *
+     * @param (Closure(string, string): ?string)|null $transcoder
+     */
+    public static function setImageTranscoder(?Closure $transcoder): void
     {
-        return $this->size;
+        self::$imageTranscoder = $transcoder;
+        self::$pngCache = [];
+    }
+
+    private static function toPng(string $base64Data, string $mimeType): ?string
+    {
+        if (self::$imageTranscoder === null) {
+            return null;
+        }
+        $png = array_key_exists($base64Data, self::$pngCache)
+            ? self::$pngCache[$base64Data]
+            : (self::$imageTranscoder)($base64Data, $mimeType);
+        unset(self::$pngCache[$base64Data]);
+        self::$pngCache[$base64Data] = $png;
+        if (count(self::$pngCache) > 32) {
+            unset(self::$pngCache[array_key_first(self::$pngCache)]);
+        }
+
+        return $png;
+    }
+
+    /** Get the Kitty image ID used by this image (if any). */
+    public function getImageId(): ?int
+    {
+        return $this->imageId;
     }
 
     #[\Override]
@@ -71,26 +108,62 @@ final class Image implements Component
             return $this->cachedLines;
         }
 
-        $this->cachedWidth = $width;
-        $this->cachedLines = $this->lines(max(1, min($width - self::SIDE_MARGIN, $this->maxWidthCells)));
+        $maxWidth = max(1, min($width - 2, $this->options->maxWidthCells ?? 60));
+        $cellDimensions = TerminalImage::getCellDimensions();
+        $defaultMaxHeight = max(1, (int) ceil(($maxWidth * $cellDimensions->widthPx) / max(1, $cellDimensions->heightPx)));
+        $maxHeight = $this->options->maxHeightCells ?? $defaultMaxHeight;
 
-        return $this->cachedLines;
-    }
+        $caps = TerminalImage::getCapabilities();
+        $data = $this->base64Data;
+        $dimensions = $this->dimensions;
+        if ($caps->images === ImageProtocol::Kitty && $this->mimeType !== 'image/png') {
+            $this->pngData ??= self::toPng($this->base64Data, $this->mimeType);
+            $data = $this->pngData;
+            // Conversion may apply EXIF rotation, so prefer the PNG's own dimensions.
+            if ($data !== null && $data !== '') {
+                $dimensions = TerminalImage::getPngDimensions($data) ?? $dimensions;
+            }
+        }
+        $result = null;
 
-    /** @return list<string> */
-    private function lines(int $cells): array
-    {
-        $drawn = TerminalImage::render($this->base64, $this->size, $cells);
-
-        if ($drawn === null) {
-            return [($this->theme->fallback)(
-                TerminalImage::fallback($this->mimeType, $this->size, $this->filename),
-            )];
+        if ($caps->images !== null && $data !== null && $data !== '') {
+            if ($caps->images === ImageProtocol::Kitty && $this->imageId === null) {
+                $this->imageId = TerminalImage::allocateImageId();
+            }
+            $result = TerminalImage::renderImage($data, $dimensions, new ImageRenderOptions(
+                maxWidthCells: $maxWidth,
+                maxHeightCells: $maxHeight,
+                imageId: $this->imageId,
+                moveCursor: false,
+            ));
         }
 
-        [$sequence, $rows] = $drawn;
-        $lines = array_fill(0, $rows - 1, '');
-        $lines[] = ($rows > 1 ? "\x1b[" . ($rows - 1) . 'A' : '') . $sequence;
+        if ($result !== null) {
+            // Store the image ID for later cleanup
+            if ($result->imageId !== null) {
+                $this->imageId = $result->imageId;
+            }
+
+            if ($caps->images === ImageProtocol::Kitty) {
+                // For Kitty: C=1 prevents cursor movement.
+                // Return `rows` lines so TUI accounts for image height.
+                $lines = [$result->sequence, ...array_fill(0, $result->rows - 1, '')];
+            } else {
+                // Return `rows` lines so TUI accounts for image height.
+                // First (rows-1) lines are empty and cleared before the image is drawn.
+                // Last line: move cursor back up, draw the image, then move back down
+                // so TUI cursor accounting stays inside the scroll area.
+                $rowOffset = $result->rows - 1;
+                $moveUp = $rowOffset > 0 ? "\x1b[{$rowOffset}A" : '';
+                $lines = [...array_fill(0, $rowOffset, ''), $moveUp . $result->sequence];
+            }
+        } else {
+            $fallback = TerminalImage::imageFallback($this->mimeType, $this->dimensions, $this->options->filename);
+            $lines = [Width::truncate(($this->theme->fallbackColor)($fallback), $width)];
+        }
+
+        $this->cachedLines = $lines;
+        $this->cachedWidth = $width;
 
         return $lines;
     }

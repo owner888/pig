@@ -8,8 +8,10 @@ use PHPUnit\Framework\TestCase;
 use Pig\Async\Loop;
 use Pig\Test\AssertsThrows;
 use Pig\Tui\Components\Image;
-use Pig\Tui\Images\Capabilities;
+use Pig\Tui\Components\ImageTheme;
+use Pig\Tui\Images\CellDimensions;
 use Pig\Tui\Images\ImageProtocol;
+use Pig\Tui\Images\TerminalCapabilities;
 use Pig\Tui\Images\TerminalImage;
 use Pig\Tui\Keys;
 use Pig\Tui\TuiBase;
@@ -30,6 +32,13 @@ final class TuiTest extends TestCase
         Loop::reset();
         $this->terminal = new FakeTerminal(columns: 20, rows: 5);
         $this->tui = new TuiMainScreen($this->terminal);
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        TerminalImage::resetCapabilitiesCache();
+        TerminalImage::setCellDimensions(new CellDimensions(9, 18));
     }
 
     /** Rendering is deferred, so a test has to let the loop run before looking. */
@@ -389,7 +398,7 @@ final class TuiTest extends TestCase
         // next render — which empties previousLines, which the renderer reads as "first frame
         // ever" and writes with no clear, starting wherever the cursor already was. Nothing
         // here holds a picture, so the answer changes nothing and nothing should be drawn.
-        TerminalImage::reset(new Capabilities(ImageProtocol::Kitty, true, true));
+        TerminalImage::setCapabilities(new TerminalCapabilities(ImageProtocol::Kitty, true, true));
 
         $this->tui->addChild(new TextComponent("one\ntwo\nthree"));
         $this->tui->start();
@@ -399,10 +408,8 @@ final class TuiTest extends TestCase
         $this->terminal->type("\x1b[6;18;9t");
         Loop::get()->tick();
 
-        $this->assertSame(9, TerminalImage::cellSize()->widthPx, 'the reply was still read');
+        $this->assertSame(9, TerminalImage::getCellDimensions()->widthPx, 'the reply was still read');
         $this->assertSame('', $this->terminal->output(), 'the frame was drawn a second time');
-
-        TerminalImage::reset();
     }
 
     public function testThePictureIsRedrawnWhenTheCellSizeArrives(): void
@@ -410,7 +417,7 @@ final class TuiTest extends TestCase
         // The other half: a plain render still has to reach the images, or asking the
         // question was pointless. A tall picture at a different cell size is a different
         // number of rows, so the lines holding it change and only those are rewritten.
-        TerminalImage::reset(new Capabilities(ImageProtocol::Kitty, true, true));
+        TerminalImage::setCapabilities(new TerminalCapabilities(ImageProtocol::Kitty, true, true));
 
         // A 20×400 PNG: tall enough that the cell height decides how many rows it takes.
         // The terminal is tall enough to hold it, or the change would sit above the window
@@ -419,7 +426,7 @@ final class TuiTest extends TestCase
         $terminal = new FakeTerminal(columns: 20, rows: 200);
         $tui = new TuiMainScreen($terminal);
         $tui->addChild(new TextComponent('header'));
-        $tui->addChild(new Image($png, 'image/png'));
+        $tui->addChild(new Image($png, 'image/png', new ImageTheme(static fn (string $text): string => $text)));
         $tui->start();
         Loop::get()->tick();
 
@@ -433,7 +440,5 @@ final class TuiTest extends TestCase
 
         $this->assertNotSame('', $output, 'the picture was never remeasured');
         $this->assertStringNotContainsString('header', $output, 'the unchanged line above was rewritten too');
-
-        TerminalImage::reset();
     }
 }

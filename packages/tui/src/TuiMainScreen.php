@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\Tui;
 
+use Pig\Tui\Images\TerminalImage;
+
 /**
  * The regular-mode renderer — upstream's `TuiMainScreen` in `tui-main-screen.ts`.
  *
@@ -60,7 +62,7 @@ class TuiMainScreen extends TuiBase
     /** @param array{previousLines: list<string>, previousWidth: int, previousHeight: int, cursorRow: int, hardwareCursorRow: int, maxLinesRendered: int, previousViewportTop: int} $state */
     public function restoreRenderState(array $state): void
     {
-        $this->previousLines = array_map(static fn (string $line): string => self::isImageLine($line) ? '' : $line, $state['previousLines']);
+        $this->previousLines = array_map(static fn (string $line): string => TerminalImage::isImageLine($line) ? '' : $line, $state['previousLines']);
         $this->previousKittyImageIds = [];
         $this->previousWidth = $state['previousWidth'];
         $this->previousHeight = $state['previousHeight'];
@@ -151,11 +153,6 @@ class TuiMainScreen extends TuiBase
         return (string) getenv('TERMUX_VERSION') !== '';
     }
 
-    private static function deleteKittyImage(int $imageId): string
-    {
-        return "\x1b_Ga=d,d=I,i={$imageId},q=2\x1b\\";
-    }
-
     /**
      * @param list<string> $lines
      * @return array<int, true>
@@ -177,7 +174,7 @@ class TuiMainScreen extends TuiBase
     {
         $buffer = '';
         foreach ($ids as $id) {
-            $buffer .= self::deleteKittyImage($id);
+            $buffer .= TerminalImage::deleteKittyImage($id);
         }
 
         return $buffer;
@@ -196,7 +193,7 @@ class TuiMainScreen extends TuiBase
         $reservedRows = 1;
         while ($reservedRows < $maxRows) {
             $line = $lines[$index + $reservedRows] ?? '';
-            if (self::isImageLine($line) || Width::visible($line) > 0) {
+            if (TerminalImage::isImageLine($line) || Width::visible($line) > 0) {
                 break;
             }
             $reservedRows++;
@@ -287,7 +284,7 @@ class TuiMainScreen extends TuiBase
                     $output .= "\r\n";
                 }
                 $line = $newLines[$index];
-                $reserved = self::isImageLine($line) ? self::getKittyImageReservedRows($newLines, $index) : 1;
+                $reserved = TerminalImage::isImageLine($line) ? self::getKittyImageReservedRows($newLines, $index) : 1;
                 if ($reserved > 1 && $reserved <= $height) {
                     $output .= str_repeat("\r\n", $reserved - 1);
                     $output .= "\x1b[" . ($reserved - 1) . 'A' . $line . "\x1b[" . ($reserved - 1) . 'B';
@@ -458,7 +455,7 @@ class TuiMainScreen extends TuiBase
                 $output .= "\r\n";
             }
             $line = $newLines[$index];
-            $isImage = self::isImageLine($line);
+            $isImage = TerminalImage::isImageLine($line);
             $reserved = $isImage ? self::getKittyImageReservedRows($newLines, $index, $renderEnd) : 1;
             if ($reserved > 1) {
                 $imageStartScreenRow = $index - $viewportTop;

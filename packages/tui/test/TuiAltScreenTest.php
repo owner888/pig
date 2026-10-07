@@ -10,6 +10,9 @@ use Pig\Async\Loop;
 use Pig\Tui\Ansi;
 use Pig\Tui\Component;
 use Pig\Tui\Components\HStack;
+use Pig\Tui\Components\Image;
+use Pig\Tui\Components\ImageOptions;
+use Pig\Tui\Components\ImageTheme;
 use Pig\Tui\Components\MouseRegion;
 use Pig\Tui\Components\ScrollView;
 use Pig\Tui\Components\SelectItem;
@@ -18,6 +21,11 @@ use Pig\Tui\Components\SelectListTheme;
 use Pig\Tui\Components\StackEntry;
 use Pig\Tui\Components\Text;
 use Pig\Tui\Components\VStack;
+use Pig\Tui\Images\ImageDimensions;
+use Pig\Tui\Images\ImageProtocol;
+use Pig\Tui\Images\KittyImageMetadata;
+use Pig\Tui\Images\TerminalCapabilities;
+use Pig\Tui\Images\TerminalImage;
 use Pig\Tui\Keybindings;
 use Pig\Tui\KeybindingsManager;
 use Pig\Tui\MouseHandler;
@@ -32,22 +40,12 @@ use Pig\Tui\Width;
 /**
  * Upstream's `tui-alt-screen.test.ts`: the viewport, the jump indicator, wheel routing, the
  * scrollbar, the `tui.altScreen.*` keys, OSC 133 prompt jumps, overlays, component mouse dispatch,
- * OSC 8 link clicks, selection and copy, flashes, and leaving. The transcript search cases are in
+ * OSC 8 link clicks, selection and copy, flashes, Kitty and iTerm2 images, and leaving. The
+ * transcript search cases are in
  * `TuiAltScreenSearchTest`.
  *
  * Upstream reads the screen back through a headless xterm; this reads the renderer's own
  * `getScreenLines()`, which is the frame it wrote.
- *
- * Not ported, because the alternate screen has no image support in pig yet:
- *
- * - "does not emit Kitty graphics commands or OSC 133 zones in iTerm2"
- * - "clears stale iTerm2 image placements when they leave the viewport"
- * - "crops a Kitty image whose first line is above the viewport"
- * - "redraws WezTerm Kitty images after writes to covered rows"
- * - "reuses moved Kitty images without dropping HStack siblings"
- * - "retains recently offscreen Kitty images for placement-only reuse"
- * - "evicts the least recently visible Kitty image when the cache is full"
- * - "evicts offscreen Kitty images when decoded raster memory exceeds the cache quota"
  *
  * Ported in part: the right-click paste case only checks the platform pig runs on
  * (`PHP_OS_FAMILY` cannot be faked), and the specific copy error case does not check the flash
@@ -60,11 +58,16 @@ final class TuiAltScreenTest extends TestCase
     /** @var list<TuiAltScreen> */
     private array $started = [];
 
+    private string|false $weztermPane = false;
+
     #[\Override]
     protected function setUp(): void
     {
         Loop::reset();
         Keybindings::reset();
+        // The environment this runs in must not decide which image protocol the tests see.
+        TerminalImage::setCapabilities(new TerminalCapabilities(null, false, false));
+        $this->weztermPane = getenv('WEZTERM_PANE');
     }
 
     #[\Override]
@@ -74,6 +77,8 @@ final class TuiAltScreenTest extends TestCase
             $tui->stop();
         }
         Keybindings::reset();
+        TerminalImage::resetCapabilitiesCache();
+        putenv($this->weztermPane === false ? 'WEZTERM_PANE' : "WEZTERM_PANE={$this->weztermPane}");
     }
 
     private function start(TuiAltScreen $tui): void
@@ -1080,6 +1085,197 @@ final class TuiAltScreenTest extends TestCase
         $this->assertTrue($tui->isFollowingOutput());
     }
 
+    public function testDoesNotEmitKittyGraphicsCommandsOrOsc133ZonesInITerm2(): void
+    {
+        TerminalImage::setCapabilities(new TerminalCapabilities(ImageProtocol::ITerm2, true, true));
+        $terminal = new FakeTerminal(20, 3);
+        $tui = new TuiAltScreen($terminal);
+        $tui->addChild(self::linesComponent(static fn (): array => ["\x1b]133;B\x07\x1b]133;C\x07\x1b]133;A\x07content"]));
+        $tui->addChild(new Image('AAAA', 'image/png', self::theme(), new ImageOptions(filename: 'example.png'), new ImageDimensions(10, 10)));
+        $this->start($tui);
+        $tui->stop();
+
+        $this->assertFalse(self::wrote($terminal, "\x1b_G"));
+        $this->assertFalse(self::wrote($terminal, "\x1b]133;"));
+        $this->assertFalse(self::wrote($terminal, "\x1b]1337;File="));
+        $this->assertTrue(self::wrote($terminal, '[Image:'));
+    }
+
+    public function testClearsStaleITerm2ImagePlacementsWhenTheyLeaveTheViewport(): void
+    {
+        TerminalImage::setCapabilities(new TerminalCapabilities(ImageProtocol::ITerm2, true, true));
+        $terminal = new FakeTerminal(20, 3);
+        $tui = new TuiAltScreen($terminal);
+        $imageLine = "\x1b]1337;File=inline=1;width=2;height=auto:AAAA\x07";
+        $tui->addChild(self::linesComponent(static fn (): array => [$imageLine, '', '', 'after', 'more', 'end']));
+        $this->start($tui);
+        $tui->scrollToTop();
+        self::settle();
+        $eventCount = count($terminal->events);
+
+        $tui->scrollBy(1);
+        self::settle();
+
+        $this->assertStringContainsString("\x1b[2J", self::writesSince($terminal, $eventCount));
+    }
+
+    public function testCropsAKittyImageWhoseFirstLineIsAboveTheViewport(): void
+    {
+        $terminal = new FakeTerminal(20, 3);
+        $tui = new TuiAltScreen($terminal);
+        $imageId = 123;
+        $imageLine = TerminalImage::encodeKitty('AAAA', columns: 2, rows: 3, imageId: $imageId, moveCursor: false);
+        TerminalImage::registerKittyImageMetadata(new KittyImageMetadata($imageId, 2, 3, 100, 100));
+        $tui->addChild(self::linesComponent(static fn (): array => ['before', $imageLine, '', '', 'after', 'end']));
+        $this->start($tui);
+
+        $this->assertSame(3, $tui->viewportTop());
+        $found = false;
+        foreach ($terminal->events as $event) {
+            if ($event[0] === 'write' && str_contains($event[1], 'i=123') && str_contains($event[1], 'y=66,h=34,r=1')) {
+                $found = true;
+            }
+        }
+        $this->assertTrue($found);
+    }
+
+    public function testRedrawsWezTermKittyImagesAfterWritesToCoveredRows(): void
+    {
+        // Regression test for #10319: a scrollbar update below an unchanged image anchor erased its cells.
+        putenv('WEZTERM_PANE=1');
+        TerminalImage::setCapabilities(new TerminalCapabilities(ImageProtocol::Kitty, true, true));
+        $terminal = new FakeTerminal(20, 4);
+        $imageId = 10319;
+        $imageLine = TerminalImage::encodeKitty('AAAA', columns: 2, rows: 3, imageId: $imageId, moveCursor: false);
+        TerminalImage::registerKittyImageMetadata(new KittyImageMetadata($imageId, 2, 3, 100, 100));
+        $coveredLine = '';
+        $tui = new TuiAltScreen($terminal);
+        $tui->setLayoutRoot(self::linesComponent(static function () use ($imageLine, &$coveredLine): array {
+            return [$imageLine, $coveredLine, '', 'after'];
+        }));
+        $this->start($tui);
+        $eventCount = count($terminal->events);
+
+        $coveredLine = 'changed';
+        $tui->requestRender();
+        self::settle();
+        $redrawWrites = self::writesSince($terminal, $eventCount);
+        $placementIndex = strpos($redrawWrites, "\x1b_Ga=p,q=2");
+
+        $this->assertStringContainsString("\x1b_Ga=d,d=a,q=2\x1b\\", $redrawWrites);
+        $this->assertNotFalse($placementIndex);
+        $this->assertGreaterThan(strpos($redrawWrites, 'changed'), $placementIndex);
+        $this->assertStringNotContainsString("\x1b_Ga=T", $redrawWrites);
+    }
+
+    public function testReusesMovedKittyImagesWithoutDroppingHStackSiblings(): void
+    {
+        TerminalImage::setCapabilities(new TerminalCapabilities(ImageProtocol::Kitty, true, true));
+        $terminal = new FakeTerminal(20, 6);
+        $tui = new TuiAltScreen($terminal);
+        $label = new Text('left', 0, 0);
+        $image = new Image(str_repeat('A', 8192), 'image/png', self::theme(), new ImageOptions(), new ImageDimensions(100, 100));
+        $header = new Text('header', 0, 0);
+        $row = new HStack([
+            new StackEntry($label, basis: 10),
+            new StackEntry($image, basis: 10),
+        ]);
+        $tui->setLayoutRoot(new VStack([
+            new StackEntry($header, basis: 'auto'),
+            new StackEntry($row, basis: 4),
+        ]));
+        $this->start($tui);
+        $this->assertTrue(self::wrote($terminal, "\x1b_Ga=T"));
+
+        $eventCount = count($terminal->events);
+        $label->setText('changed');
+        $header->setText("header\nsecond");
+        $tui->requestRender();
+        self::settle();
+        $redrawWrites = self::writesSince($terminal, $eventCount);
+        $placementIndex = strpos($redrawWrites, "\x1b_Ga=p,q=2");
+
+        $this->assertStringContainsString("\x1b_Ga=d,d=a,q=2\x1b\\", $redrawWrites);
+        $this->assertNotFalse($placementIndex);
+        $this->assertGreaterThan(strpos($redrawWrites, 'changed'), $placementIndex);
+        $this->assertStringNotContainsString("\x1b_Ga=T", $redrawWrites);
+        $this->assertLessThan(2000, strlen($redrawWrites), 'expected placement-only redraw, got ' . strlen($redrawWrites) . ' bytes');
+        $this->assertContains('changed', self::viewport($tui));
+    }
+
+    public function testRetainsRecentlyOffscreenKittyImagesForPlacementOnlyReuse(): void
+    {
+        TerminalImage::setCapabilities(new TerminalCapabilities(ImageProtocol::Kitty, true, true));
+        $terminal = new FakeTerminal(20, 1);
+        $tui = new TuiAltScreen($terminal);
+        $imageId = 321;
+        $imageLine = TerminalImage::encodeKitty('AAAA', columns: 2, rows: 1, imageId: $imageId, moveCursor: false);
+        TerminalImage::registerKittyImageMetadata(new KittyImageMetadata($imageId, 2, 1, 100, 50));
+        $tui->setLayoutRoot(new ScrollView(self::linesComponent(static fn (): array => [$imageLine, 'after']), primary: true));
+        $this->start($tui);
+        $this->assertTrue(self::wrote($terminal, "\x1b_Ga=T"));
+
+        $eventCount = count($terminal->events);
+        $tui->scrollBy(1);
+        self::settle();
+        $tui->scrollBy(-1);
+        self::settle();
+        $reentryWrites = self::writesSince($terminal, $eventCount);
+
+        $this->assertStringContainsString("\x1b_Ga=p,q=2", $reentryWrites);
+        $this->assertStringNotContainsString("\x1b_Ga=T", $reentryWrites);
+        $this->assertStringNotContainsString("\x1b_Ga=d,d=I,i={$imageId},q=2\x1b\\", $reentryWrites);
+    }
+
+    public function testEvictsTheLeastRecentlyVisibleKittyImageWhenTheCacheIsFull(): void
+    {
+        TerminalImage::setCapabilities(new TerminalCapabilities(ImageProtocol::Kitty, true, true));
+        $terminal = new FakeTerminal(20, 1);
+        $tui = new TuiAltScreen($terminal);
+        $firstImageId = 500;
+        $imageLines = [];
+        for ($index = 0; $index < 18; $index++) {
+            $imageId = $firstImageId + $index;
+            TerminalImage::registerKittyImageMetadata(new KittyImageMetadata($imageId, 2, 1, 100, 50));
+            $imageLines[] = TerminalImage::encodeKitty('AAAA', columns: 2, rows: 1, imageId: $imageId, moveCursor: false);
+        }
+        $tui->setLayoutRoot(new ScrollView(self::linesComponent(static fn (): array => $imageLines), primary: true));
+        $this->start($tui);
+        for ($index = 1; $index < count($imageLines); $index++) {
+            $tui->scrollBy(1);
+            self::settle();
+        }
+        $this->assertTrue(self::wrote($terminal, "\x1b_Ga=d,d=I,i={$firstImageId},q=2\x1b\\"));
+
+        $eventCount = count($terminal->events);
+        $tui->scrollToTop();
+        self::settle();
+
+        $this->assertStringContainsString("\x1b_Ga=T", self::writesSince($terminal, $eventCount));
+    }
+
+    public function testEvictsOffscreenKittyImagesWhenDecodedRasterMemoryExceedsTheCacheQuota(): void
+    {
+        TerminalImage::setCapabilities(new TerminalCapabilities(ImageProtocol::Kitty, true, true));
+        $terminal = new FakeTerminal(20, 1);
+        $tui = new TuiAltScreen($terminal);
+        $firstImageId = 600;
+        $imageLines = [];
+        for ($index = 0; $index < 4; $index++) {
+            $imageId = $firstImageId + $index;
+            TerminalImage::registerKittyImageMetadata(new KittyImageMetadata($imageId, 2, 1, 3840, 2160));
+            $imageLines[] = TerminalImage::encodeKitty('AAAA', columns: 2, rows: 1, imageId: $imageId, moveCursor: false);
+        }
+        $tui->setLayoutRoot(new ScrollView(self::linesComponent(static fn (): array => $imageLines), primary: true));
+        $this->start($tui);
+        for ($index = 1; $index < count($imageLines); $index++) {
+            $tui->scrollBy(1);
+            self::settle();
+        }
+
+        $this->assertTrue(self::wrote($terminal, "\x1b_Ga=d,d=I,i={$firstImageId},q=2\x1b\\"));
+    }
+
     public function testOpensAnOsc8HyperlinkWithSpecificOrGenericReleaseCodesButNotOnDrag(): void
     {
         $terminal = new FakeTerminal(20, 3);
@@ -1091,7 +1287,7 @@ final class TuiAltScreenTest extends TestCase
         $belUrl = 'https://example.com/bel';
         $emojiUrl = 'https://example.com/emoji';
         $tui->addChild(new Text(
-            self::hyperlink('link', $url) . "\n\x1b]8;;{$belUrl}\x07link\x1b]8;;\x07\n" . self::hyperlink('🙂', $emojiUrl),
+            TerminalImage::hyperlink('link', $url) . "\n\x1b]8;;{$belUrl}\x07link\x1b]8;;\x07\n" . TerminalImage::hyperlink('🙂', $emojiUrl),
             0,
             0,
         ));
@@ -1289,10 +1485,43 @@ final class TuiAltScreenTest extends TestCase
         $this->assertSame([], $unfocused->inputs);
     }
 
-    /** Upstream's `hyperlink()` from `terminal-image.ts`: an OSC 8 link with ST terminators. */
-    private static function hyperlink(string $text, string $url): string
+    /** Upstream's object-literal components: `{ render: () => [...], invalidate: () => {} }`. */
+    private static function linesComponent(Closure $render): Component
     {
-        return "\x1b]8;;{$url}\x1b\\{$text}\x1b]8;;\x1b\\";
+        return new class ($render) implements Component {
+            public function __construct(private readonly Closure $render)
+            {
+            }
+
+            #[\Override]
+            public function render(int $width): array
+            {
+                return ($this->render)();
+            }
+
+            #[\Override]
+            public function invalidate(): void
+            {
+            }
+        };
+    }
+
+    /** Everything written since event `$from`, joined. */
+    private static function writesSince(FakeTerminal $terminal, int $from): string
+    {
+        $writes = '';
+        foreach (array_slice($terminal->events, $from) as $event) {
+            if ($event[0] === 'write') {
+                $writes .= $event[1];
+            }
+        }
+
+        return $writes;
+    }
+
+    private static function theme(): ImageTheme
+    {
+        return new ImageTheme(static fn (string $value): string => $value);
     }
 
     /** @return list<string> the last frame, styling stripped, trailing blanks kept */

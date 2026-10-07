@@ -43,6 +43,27 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.13] - 2026-10-08
+
+### New Features
+
+- **Terminal Image Protocols & Kitty Graphics Architecture Parity (`TerminalImage`, `KittyImagePlacement`, `KittyImageMetadata`)**:
+  - Fully ported upstream pi's Kitty image graphics protocol with image placement tracking, placement row extraction, off-screen cache eviction, and WezTerm z-order redraw handling.
+  - Implemented `TerminalCapabilities` detection and override system (`KITTY_WINDOW_ID`, `GHOSTTY_RESOURCES_DIR`, `WEZTERM_PANE`, `ITERM_SESSION_ID`) with iTerm2 and Kitty protocol negotiation.
+  - Added dynamic terminal color palette negotiation (`TerminalColors`, `PendingTerminalColorQuery`) via OSC 4/10/11 color reporting.
+
+### Added
+
+- **Image Dimension & Cell Ratio Calculations (`CellDimensions`, `ImageCellSize`, `ImageRenderOptions`)**:
+  - Implemented accurate aspect-ratio-preserving cell rows and columns calculation against terminal cell pixel sizes.
+  - Added dedicated test suites `TerminalColorsTest` and `TerminalImageTest`.
+
+### Changed
+
+- **Standardized Terminal Capability & Color Models**:
+  - Replaced legacy `Images\Capabilities` and `Images\CellSize` with `TerminalCapabilities` and `CellDimensions`.
+  - Updated `Image` and `Markdown` components to consume structured `ImageOptions` and `ImageRenderResult`.
+
 ## [0.4.12] - 2026-10-07
 
 ### New Features

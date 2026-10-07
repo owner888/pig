@@ -6,6 +6,7 @@ namespace Pig\Tui\Components;
 
 use Pig\Tui\Ansi;
 use Pig\Tui\Component;
+use Pig\Tui\Images\TerminalImage;
 use Pig\Tui\Markdown\Blank;
 use Pig\Tui\Markdown\Blockquote;
 use Pig\Tui\Markdown\BlockToken;
@@ -136,7 +137,7 @@ final class Markdown implements Component
         foreach ($drawn as $line) {
             // Image protocols (Kitty / iTerm2) put tens of kilobytes inline;
             // skip wrapping and padding them to avoid huge CPU overhead and broken sequences.
-            if (self::isImageLine($line)) {
+            if (TerminalImage::isImageLine($line)) {
                 $lines[] = $line;
 
                 continue;
@@ -165,11 +166,6 @@ final class Markdown implements Component
         }
 
         return $line . str_repeat(' ', max(0, $width - Width::visible($line)));
-    }
-
-    private static function isImageLine(string $line): bool
-    {
-        return str_contains($line, "\x1b_G") || str_contains($line, "\x1b]1337;File=");
     }
 
     /**

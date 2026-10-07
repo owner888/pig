@@ -8,15 +8,20 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Async\Loop;
 use Pig\Tui\Components\Image;
-use Pig\Tui\Images\Capabilities;
-use Pig\Tui\Images\CellSize;
+use Pig\Tui\Components\ImageOptions;
+use Pig\Tui\Components\ImageTheme;
+use Pig\Tui\Images\CellDimensions;
 use Pig\Tui\Images\ImageDimensions;
 use Pig\Tui\Images\ImageProtocol;
-use Pig\Tui\Images\ImageSize;
+use Pig\Tui\Images\TerminalCapabilities;
 use Pig\Tui\Images\TerminalImage;
-use Pig\Tui\TUI;
 use Pig\Tui\TuiMainScreen;
 
+/**
+ * pig's own image cases: the header readers, the guards pig keeps over upstream, and the
+ * cell-size query that pig's unsplit input has to sift for. Upstream's `terminal-image.test.ts`
+ * is `TerminalImageTest`.
+ */
 final class ImageTest extends TestCase
 {
     #[\Override]
@@ -24,18 +29,25 @@ final class ImageTest extends TestCase
     {
         Loop::reset();
         // The environment this runs in must not decide what the tests see.
-        TerminalImage::reset(new Capabilities(null, false, true));
+        TerminalImage::setCapabilities(new TerminalCapabilities(null, false, false));
+        TerminalImage::setCellDimensions(new CellDimensions(9, 18));
     }
 
     #[\Override]
     protected function tearDown(): void
     {
-        TerminalImage::reset();
+        TerminalImage::resetCapabilitiesCache();
+        TerminalImage::setCellDimensions(new CellDimensions(9, 18));
     }
 
     private function drawsWith(?ImageProtocol $protocol): void
     {
-        TerminalImage::reset(new Capabilities($protocol, true, true));
+        TerminalImage::setCapabilities(new TerminalCapabilities($protocol, true, true));
+    }
+
+    private static function image(string $base64, string $mimeType, ImageOptions $options = new ImageOptions()): Image
+    {
+        return new Image($base64, $mimeType, new ImageTheme(static fn (string $text): string => $text), $options);
     }
 
     // ---- reading headers -----------------------------------------------------------
@@ -78,7 +90,7 @@ final class ImageTest extends TestCase
 
     public function testPngHeader(): void
     {
-        $size = ImageDimensions::of(self::png(320, 240), 'image/png');
+        $size = TerminalImage::getImageDimensions(self::png(320, 240), 'image/png');
 
         $this->assertSame(320, $size?->widthPx);
         $this->assertSame(240, $size?->heightPx);
@@ -86,7 +98,7 @@ final class ImageTest extends TestCase
 
     public function testGifHeader(): void
     {
-        $size = ImageDimensions::of(self::gif(64, 48), 'image/gif');
+        $size = TerminalImage::getImageDimensions(self::gif(64, 48), 'image/gif');
 
         $this->assertSame(64, $size?->widthPx);
         $this->assertSame(48, $size?->heightPx);
@@ -94,7 +106,7 @@ final class ImageTest extends TestCase
 
     public function testJpegHeaderIsFoundAfterSkippingSegments(): void
     {
-        $size = ImageDimensions::of(self::jpeg(800, 600), 'image/jpeg');
+        $size = TerminalImage::getImageDimensions(self::jpeg(800, 600), 'image/jpeg');
 
         // The frame header puts height before width, unlike everything else here.
         $this->assertSame(800, $size?->widthPx);
@@ -103,11 +115,11 @@ final class ImageTest extends TestCase
 
     public function testWebpInItsTwoCommonShapes(): void
     {
-        $lossy = ImageDimensions::of(self::webpLossy(200, 100), 'image/webp');
+        $lossy = TerminalImage::getImageDimensions(self::webpLossy(200, 100), 'image/webp');
         $this->assertSame(200, $lossy?->widthPx);
         $this->assertSame(100, $lossy?->heightPx);
 
-        $extended = ImageDimensions::of(self::webpExtended(1024, 768), 'image/webp');
+        $extended = TerminalImage::getImageDimensions(self::webpExtended(1024, 768), 'image/webp');
         $this->assertSame(1024, $extended?->widthPx);
         $this->assertSame(768, $extended?->heightPx);
     }
@@ -121,13 +133,29 @@ final class ImageTest extends TestCase
             ['!!!not base64!!!', 'image/png', 'not base64'],
             [self::png(), 'image/tiff', 'a format with no reader here'],
             [base64_encode("\xff\xd8\xff\xd9"), 'image/jpeg', 'a JPEG with no frame header'],
+            [base64_encode("\xc7IF87a\x01\x00\x01\x00"), 'image/gif', 'one byte off a GIF signature'],
         ];
     }
 
     #[DataProvider('misses')]
     public function testAnUnreadableHeaderIsAMissNotACrash(string $base64, string $mime, string $why): void
     {
-        $this->assertNull(ImageDimensions::of($base64, $mime), $why);
+        $this->assertNull(TerminalImage::getImageDimensions($base64, $mime), $why);
+    }
+
+    public function testAHeaderSayingZeroIsNotASize(): void
+    {
+        // A zero cannot be scaled to a width, and what it produced was a picture 0 wide and 20480
+        // tall asking the renderer for 150,000 lines. The bytes come from outside: a model's
+        // image, a hook's screenshot, a custom tool. So a header that says zero is read as no
+        // header at all, and the component falls back to the size it assumes for one it could
+        // not read.
+        $this->assertNull(TerminalImage::getPngDimensions(self::png(0, 20480)));
+        $this->assertNull(TerminalImage::getPngDimensions(self::png(0, 0)));
+        $this->assertNull(TerminalImage::getPngDimensions(self::png(100, 0)));
+        $this->assertNotNull(TerminalImage::getPngDimensions(self::png(1, 1)));
+
+        $this->assertSame(['[Image: [image/png] 800x600]'], self::image(self::png(0, 20480), 'image/png')->render(80));
     }
 
     // ---- sizing --------------------------------------------------------------------
@@ -136,15 +164,23 @@ final class ImageTest extends TestCase
     {
         // 40 cells of 9px is 360px wide; a 720×360 image halves to 180px tall, which is
         // ten rows of 18px.
-        $rows = TerminalImage::rows(new ImageSize(720, 360), 40, new CellSize(9, 18));
-
-        $this->assertSame(10, $rows);
+        $this->assertSame(10, TerminalImage::calculateImageRows(new ImageDimensions(720, 360), 40, new CellDimensions(9, 18)));
     }
 
     public function testATinyImageStillGetsARow(): void
     {
         // Zero rows would put the renderer's idea of the cursor out by one for good.
-        $this->assertSame(1, TerminalImage::rows(new ImageSize(1000, 1), 10, new CellSize(9, 18)));
+        $this->assertSame(1, TerminalImage::calculateImageRows(new ImageDimensions(1000, 1), 10, new CellDimensions(9, 18)));
+    }
+
+    public function testACellSizeOfZeroIsNotDividedBy(): void
+    {
+        // Upstream clamps the image's size to a pixel and divides by the cell size as given. A
+        // cell size of zero is something `parseCellSizeReply()` refuses but a caller can
+        // construct, and dividing by it is a `DivisionByZeroError` out of a render.
+        $this->assertSame(40, TerminalImage::calculateImageRows(new ImageDimensions(0, 0), 80, new CellDimensions(9, 18)));
+        $this->assertGreaterThan(0, TerminalImage::calculateImageRows(new ImageDimensions(10, 10), 80, new CellDimensions(9, 0)));
+        $this->assertGreaterThan(0, TerminalImage::calculateImageRows(new ImageDimensions(10, 10), 80, new CellDimensions(0, 18)));
     }
 
     public function testTheCellSizeReplyIsRead(): void
@@ -163,14 +199,12 @@ final class ImageTest extends TestCase
 
     public function testAShortKittyPayloadIsOneSequence(): void
     {
-        $sequence = TerminalImage::kitty('AAAA', columns: 20, rows: 5);
-
-        $this->assertSame("\x1b_Ga=T,f=100,q=2,c=20,r=5;AAAA\x1b\\", $sequence);
+        $this->assertSame("\x1b_Ga=T,f=100,q=2,c=20,r=5;AAAA\x1b\\", TerminalImage::encodeKitty('AAAA', columns: 20, rows: 5));
     }
 
     public function testALongKittyPayloadIsChunkedWithContinuationFlags(): void
     {
-        $sequence = TerminalImage::kitty(str_repeat('A', 9000));
+        $sequence = TerminalImage::encodeKitty(str_repeat('A', 9000));
 
         // Three pieces: the first carries the parameters, the last says the data ended.
         $this->assertSame(3, substr_count($sequence, "\x1b_G"));
@@ -179,161 +213,66 @@ final class ImageTest extends TestCase
         $this->assertSame(1, substr_count($sequence, 'm=0'));
     }
 
-    public function testKittyAsksTheTerminalNotToReply(): void
-    {
-        // Without q=2 the acknowledgement arrives as keystrokes.
-        $this->assertStringContainsString('q=2', TerminalImage::kitty('AAAA'));
-    }
-
-    public function testITerm2Encoding(): void
-    {
-        $sequence = TerminalImage::iterm2('AAAA', width: 40, height: 'auto', name: 'cat.png');
-
-        $this->assertStringStartsWith("\x1b]1337;File=inline=1;width=40;height=auto;", $sequence);
-        $this->assertStringContainsString('name=' . base64_encode('cat.png'), $sequence);
-        $this->assertStringEndsWith(":AAAA\x07", $sequence);
-    }
-
-    public function testITerm2CanBeToldNotToKeepTheAspectRatio(): void
-    {
-        $this->assertStringContainsString(
-            'preserveAspectRatio=0',
-            TerminalImage::iterm2('AAAA', preserveAspectRatio: false),
-        );
-    }
-
     public function testASizeThatIsNotASizeIsLeftOutRatherThanSentAsOne(): void
     {
-        // JavaScript's `if (options.columns)` skips 0, and `!== null` did not — so a caller asking
-        // for no columns got `c=0`, and one asking for a negative number got `c=-5`: a kitty
-        // parameter that is not a size at all. Left out instead, which is what the protocol reads
-        // as "draw it at its natural size".
-        $this->assertSame("\x1b_Ga=T,f=100,q=2;AAAA\x1b\\", TerminalImage::kitty('AAAA', 0, 0, 0));
-        $this->assertSame("\x1b_Ga=T,f=100,q=2;AAAA\x1b\\", TerminalImage::kitty('AAAA', -5, -1, -2));
-        $this->assertSame("\x1b_Ga=T,f=100,q=2,c=1,r=1,i=1;AAAA\x1b\\", TerminalImage::kitty('AAAA', 1, 1, 1));
+        // JavaScript's `if (options.columns)` skips 0 but lets a negative through as `c=-5`: a
+        // kitty parameter that is not a size at all. Left out instead, which the protocol reads as
+        // "draw it at its natural size".
+        $this->assertSame("\x1b_Ga=T,f=100,q=2;AAAA\x1b\\", TerminalImage::encodeKitty('AAAA', 0, 0, 0));
+        $this->assertSame("\x1b_Ga=T,f=100,q=2;AAAA\x1b\\", TerminalImage::encodeKitty('AAAA', -5, -1, -2));
+        $this->assertSame("\x1b_Ga=T,f=100,q=2,c=1,r=1,i=1;AAAA\x1b\\", TerminalImage::encodeKitty('AAAA', 1, 1, 1));
+    }
+
+    public function testITerm2EncodingCarriesTheNameAndTheAspectRatioFlag(): void
+    {
+        $sequence = TerminalImage::encodeITerm2('AAAA', width: 40, height: 'auto', name: 'cat.png', preserveAspectRatio: false);
+
+        $this->assertSame(
+            "\x1b]1337;File=inline=1;size=3;width=40;height=auto;name=" . base64_encode('cat.png') . ';preserveAspectRatio=0:AAAA' . "\x07",
+            $sequence,
+        );
     }
 
     public function testAnEmptyNameIsNotAName(): void
     {
         // `name=` with nothing after it is a base64 field holding nothing, which iTerm2 has no
-        // reading for. Upstream's `if (options.name)` skips it and `!== null` did not.
-        $this->assertStringNotContainsString('name=', TerminalImage::iterm2('AAAA', name: ''));
-        $this->assertStringContainsString('name=' . base64_encode('a'), TerminalImage::iterm2('AAAA', name: 'a'));
+        // reading for. Upstream's `if (options.name)` skips it.
+        $this->assertStringNotContainsString('name=', TerminalImage::encodeITerm2('AAAA', name: ''));
+        $this->assertStringContainsString('name=' . base64_encode('a'), TerminalImage::encodeITerm2('AAAA', name: 'a'));
     }
 
     public function testAnEmptyFilenameDoesNotLeaveASpaceWhereANameWouldBe(): void
     {
-        // Same shape, on the line somebody actually reads: `[Image:  [image/png]]`, with two
-        // spaces, is a label that looks like the name went missing rather than never existing.
-        $this->assertSame('[Image: [image/png]]', TerminalImage::fallback('image/png', null, ''));
-        $this->assertSame('[Image: cat.png [image/png]]', TerminalImage::fallback('image/png', null, 'cat.png'));
+        $this->assertSame('[Image: [image/png]]', TerminalImage::imageFallback('image/png', null, ''));
+        $this->assertSame('[Image: cat.png [image/png]]', TerminalImage::imageFallback('image/png', null, 'cat.png'));
     }
 
-    public function testAHeaderSayingZeroIsNotASize(): void
+    public function testAHugeMimeTypeOrFilenameIsNotPrintedWhole(): void
     {
-        // A zero cannot be scaled to a width, and what it produced was a picture 0 wide and 20480
-        // tall asking the renderer for 150,000 lines — every frame, for as long as that tool result
-        // was on screen. The bytes come from outside: a model's image, a hook's screenshot, a
-        // custom tool. So a header that says zero is read as no header at all, and the component
-        // falls back to the size it assumes for one it could not read.
-        $this->assertNull(ImageDimensions::png(self::png(0, 20480)));
-        $this->assertNull(ImageDimensions::png(self::png(0, 0)));
-        $this->assertNull(ImageDimensions::png(self::png(100, 0)));
-        $this->assertNotNull(ImageDimensions::png(self::png(1, 1)));
-
-        $image = new Image(self::png(0, 20480), 'image/png');
-
-        $this->assertSame(800, $image->size()->widthPx);
-        $this->assertLessThan(60, count($image->render(80)));
-    }
-
-    public function testRowsStillAnswersForASizeACallerMadeUpItself(): void
-    {
-        // `rows()` is public and takes an `ImageSize` rather than reading one, so the divisors are
-        // guarded here as well: dividing by zero is a `DivisionByZeroError` out of a render, and a
-        // cell size of zero is something `parseCellSizeReply()` refuses but a caller can construct.
-        $this->assertSame(1, TerminalImage::rows(new ImageSize(0, 0), 80, new CellSize(9, 18)));
-        $this->assertGreaterThan(0, TerminalImage::rows(new ImageSize(10, 10), 80, new CellSize(9, 0)));
-    }
-
-    public function testRenderPicksTheProtocolTheTerminalSpeaks(): void
-    {
-        $this->drawsWith(ImageProtocol::Kitty);
-        $this->assertStringStartsWith("\x1b_G", TerminalImage::render('AAAA', new ImageSize(10, 10))[0]);
-
-        $this->drawsWith(ImageProtocol::ITerm2);
-        $this->assertStringStartsWith("\x1b]1337;", TerminalImage::render('AAAA', new ImageSize(10, 10))[0]);
-
-        $this->drawsWith(null);
-        $this->assertNull(TerminalImage::render('AAAA', new ImageSize(10, 10)));
+        // Raw base64 passed where a mime type or a filename belongs would otherwise be printed
+        // into the transcript in full.
+        $this->assertSame('[Image: [image]]', TerminalImage::imageFallback(str_repeat('A', 100)));
+        $this->assertSame('[Image: [image/png;base64,' . str_repeat('A', 15) . ']]', TerminalImage::imageFallback('data:image/png;base64,' . str_repeat('A', 100)));
+        $this->assertSame(
+            '[Image: ' . str_repeat('b', 60) . '... [image/png]]',
+            TerminalImage::imageFallback('image/png', null, 'dir/' . str_repeat('a', 250) . '/' . str_repeat('b', 100)),
+        );
     }
 
     // ---- the component -------------------------------------------------------------
 
     public function testWithoutImageSupportTheComponentSaysWhatItWouldHaveDrawn(): void
     {
-        $image = new Image(self::png(320, 240), 'image/png', filename: 'cat.png');
+        $lines = self::image(self::png(320, 240), 'image/png', new ImageOptions(filename: 'cat.png'))->render(40);
 
-        $lines = $image->render(40);
-
-        $this->assertCount(1, $lines);
-        $this->assertStringContainsString('cat.png', $lines[0]);
-        $this->assertStringContainsString('320x240', $lines[0]);
-    }
-
-    public function testAnUnreadableHeaderFallsBackToAnAssumedSize(): void
-    {
-        $image = new Image(base64_encode('rubbish'), 'image/png');
-
-        $this->assertSame(800, $image->size()->widthPx);
-        $this->assertSame(600, $image->size()->heightPx);
-    }
-
-    public function testTheComponentReturnsOneLinePerRowItWillOccupy(): void
-    {
-        $this->drawsWith(ImageProtocol::Kitty);
-        TerminalImage::setCellSize(new CellSize(10, 20));
-
-        // 30 cells of 10px is 300px; a 300×400 image is 400px tall, which is 20 rows.
-        $image = new Image(self::png(300, 400), 'image/png', maxWidthCells: 30);
-        $lines = $image->render(40);
-
-        $this->assertCount(20, $lines);
-
-        foreach (array_slice($lines, 0, -1) as $line) {
-            $this->assertSame('', $line);
-        }
-    }
-
-    public function testTheLastLineMovesTheCursorBackUpBeforeDrawing(): void
-    {
-        $this->drawsWith(ImageProtocol::Kitty);
-        TerminalImage::setCellSize(new CellSize(10, 20));
-
-        $lines = (new Image(self::png(300, 400), 'image/png', maxWidthCells: 30))->render(40);
-        $last = $lines[count($lines) - 1];
-
-        // The picture grows downwards from the cursor, so the cursor goes back to the top
-        // of the block first and the picture fills exactly the rows already accounted for.
-        $this->assertStringStartsWith("\x1b[19A\x1b_G", $last);
-    }
-
-    public function testAOneRowImageNeedsNoCursorMove(): void
-    {
-        $this->drawsWith(ImageProtocol::Kitty);
-        TerminalImage::setCellSize(new CellSize(10, 20));
-
-        $lines = (new Image(self::png(1000, 1), 'image/png', maxWidthCells: 10))->render(40);
-
-        $this->assertCount(1, $lines);
-        $this->assertStringStartsWith("\x1b_G", $lines[0]);
+        $this->assertSame(['[Image: cat.png [image/png] 320x240]'], $lines);
     }
 
     public function testTheImageIsNeverWiderThanTheTerminalAllows(): void
     {
         $this->drawsWith(ImageProtocol::ITerm2);
 
-        $lines = (new Image(self::png(1000, 1000), 'image/png', maxWidthCells: 60))->render(20);
+        $lines = self::image(self::png(1000, 1000), 'image/png', new ImageOptions(maxWidthCells: 60))->render(20);
 
         // Twenty columns less the margin, not the sixty it was allowed.
         $this->assertStringContainsString('width=18;', implode('', $lines));
@@ -344,7 +283,7 @@ final class ImageTest extends TestCase
         $this->drawsWith(ImageProtocol::Kitty);
         $terminal = new FakeTerminal(columns: 20, rows: 10);
         $tui = new TuiMainScreen($terminal);
-        $tui->addChild(new Image(self::png(300, 400), 'image/png', maxWidthCells: 10));
+        $tui->addChild(self::image(self::png(300, 400), 'image/png', new ImageOptions(maxWidthCells: 10)));
         $tui->start();
 
         // An image line is tens of kilobytes long and zero columns wide; measuring it
@@ -354,7 +293,7 @@ final class ImageTest extends TestCase
         $this->assertStringContainsString("\x1b_G", $terminal->output());
     }
 
-    // ---- capabilities --------------------------------------------------------------
+    // ---- the cell-size query -------------------------------------------------------
 
     public function testTheCellSizeQueryOnlyGoesOutWhenItCouldBeUseful(): void
     {
@@ -382,7 +321,7 @@ final class ImageTest extends TestCase
 
         $terminal->type("\x1b[6;20;10ta");
 
-        $this->assertSame(10, TerminalImage::cellSize()->widthPx);
+        $this->assertSame(10, TerminalImage::getCellDimensions()->widthPx);
         // The reply is consumed; what the user typed alongside it is not.
         $this->assertSame(['a'], $typed->typed);
     }

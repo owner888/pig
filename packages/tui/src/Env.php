@@ -21,7 +21,7 @@ final class Env
      * reads these variables through JavaScript's truthiness, where `''` is falsy, and therefore
      * ignores them.
      *
-     * What that cost where it was first found, in `Images\Capabilities`: a bare
+     * What that cost where it was first found, in `Images\TerminalImage::detectCapabilities()`: a bare
      * `export ITERM_SESSION_ID`, a `docker run -e ITERM_SESSION_ID`, or an ssh or tmux
      * environment forwarding the name without a value made pig send iTerm2 image sequences to a
      * terminal that cannot draw them — which is not a missing picture, it is tens of kilobytes of
