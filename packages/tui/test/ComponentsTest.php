@@ -465,10 +465,15 @@ final class ComponentsTest extends TestCase
         $loader->withTimer(true, $now - 75.0);
         $this->assertStringContainsString('Working... · 1m15s', Ansi::strip($loader->inBorder()));
 
-        // Message with parentheses (e.g. compaction)
-        $loader->setMessage('Summarising... (esc to cancel)');
+        // Message without extra parenthesis
+        $loader->setMessage('Summarising the conversation...');
         $loader->withTimer(true, $now - 5.0);
-        $this->assertStringContainsString('Summarising... · 5s (esc to cancel)', Ansi::strip($loader->inBorder()));
+        $this->assertStringContainsString('Summarising the conversation... · 5s', Ansi::strip($loader->inBorder()));
+
+        // Message with optional parentheses still preserves them cleanly
+        $loader->setMessage('Retrying (1/3)');
+        $loader->withTimer(true, $now - 5.0);
+        $this->assertStringContainsString('Retrying · 5s (1/3)', Ansi::strip($loader->inBorder()));
 
         $loader->stop();
     }

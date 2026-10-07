@@ -96,7 +96,7 @@ class Loader extends Text
      *
      * Upstream's `StatusIndicator.renderInBorder()`: the same text `render()` draws, without
      * the blank line above and the padding round it, because the border supplies both.
-     * When timer is enabled, formats elapsed duration: e.g. "Working... · 16s (esc to interrupt)".
+     * When timer is enabled, formats elapsed duration: e.g. "Working... · 16s".
      */
     public function inBorder(): string
     {

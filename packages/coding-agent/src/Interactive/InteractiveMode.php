@@ -1826,7 +1826,7 @@ final class InteractiveMode
             return;
         }
 
-        $this->showLoader('Summarising the conversation... (esc to cancel)', timer: true);
+        $this->showLoader('Summarising the conversation...', timer: true);
 
         $this->compaction = new AbortController();
         $signal = $this->compaction->signal;
@@ -3573,7 +3573,7 @@ final class InteractiveMode
         $controller = new AbortController();
         $this->compaction = $controller;
 
-        $this->showLoader('Summarising the branch... (esc to stop)', timer: true);
+        $this->showLoader('Summarising the branch...', timer: true);
 
         try {
             return $this->session->goTo($entryId, summarise: true, signal: $controller->signal);
@@ -4637,7 +4637,7 @@ final class InteractiveMode
         // next Enter sends it.
         $this->editor->disableSubmit(true);
 
-        $this->showLoader('Context is full — summarising, then trying again. (esc to cancel)', timer: true);
+        $this->showLoader('Context is full — summarising, then trying again.', timer: true);
     }
 
     private function onOverflowHandled(AutoCompactionEndEvent $event): void
