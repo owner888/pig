@@ -6,7 +6,7 @@ namespace Pig\Tui\Components;
 
 use Closure;
 use Pig\Async\Loop;
-use Pig\Tui\Tui;
+use Pig\Tui\TUI;
 
 /**
  * A spinner with a message beside it.
@@ -40,7 +40,7 @@ class Loader extends Text
      * @param Closure(string): string $messageStyle
      */
     public function __construct(
-        private readonly Tui $tui,
+        private readonly TUI $tui,
         private readonly Closure $spinnerStyle,
         private readonly Closure $messageStyle,
         private string $message = 'Loading...',

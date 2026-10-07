@@ -14,7 +14,8 @@ use Pig\Tui\Images\ImageDimensions;
 use Pig\Tui\Images\ImageProtocol;
 use Pig\Tui\Images\ImageSize;
 use Pig\Tui\Images\TerminalImage;
-use Pig\Tui\Tui;
+use Pig\Tui\TUI;
+use Pig\Tui\TuiMainScreen;
 
 final class ImageTest extends TestCase
 {
@@ -342,7 +343,7 @@ final class ImageTest extends TestCase
     {
         $this->drawsWith(ImageProtocol::Kitty);
         $terminal = new FakeTerminal(columns: 20, rows: 10);
-        $tui = new Tui($terminal);
+        $tui = new TuiMainScreen($terminal);
         $tui->addChild(new Image(self::png(300, 400), 'image/png', maxWidthCells: 10));
         $tui->start();
 
@@ -359,13 +360,13 @@ final class ImageTest extends TestCase
     {
         $this->drawsWith(null);
         $plain = new FakeTerminal();
-        (new Tui($plain))->start();
+        (new TuiMainScreen($plain))->start();
         $this->assertStringNotContainsString("\x1b[16t", $plain->output());
 
         Loop::reset();
         $this->drawsWith(ImageProtocol::Kitty);
         $graphical = new FakeTerminal();
-        (new Tui($graphical))->start();
+        (new TuiMainScreen($graphical))->start();
         $this->assertStringContainsString("\x1b[16t", $graphical->output());
     }
 
@@ -373,7 +374,7 @@ final class ImageTest extends TestCase
     {
         $this->drawsWith(ImageProtocol::Kitty);
         $terminal = new FakeTerminal();
-        $tui = new Tui($terminal);
+        $tui = new TuiMainScreen($terminal);
         $typed = new TextComponent('x');
         $tui->addChild($typed);
         $tui->start();
@@ -390,7 +391,7 @@ final class ImageTest extends TestCase
     {
         $this->drawsWith(ImageProtocol::Kitty);
         $terminal = new FakeTerminal();
-        $tui = new Tui($terminal);
+        $tui = new TuiMainScreen($terminal);
         $typed = new TextComponent('x');
         $tui->addChild($typed);
         $tui->start();

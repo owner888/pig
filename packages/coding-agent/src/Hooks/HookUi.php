@@ -84,7 +84,7 @@ interface HookUi
      * killed. Whatever is returned must have a path to `done()` for a person who has
      * changed their mind — usually escape, which is what every other dialog here uses.
      *
-     * @param Closure(\Pig\Tui\Tui, Palette, Closure(mixed): void): \Pig\Tui\Component $factory
+     * @param Closure(\Pig\Tui\TUI, Palette, Closure(mixed): void): \Pig\Tui\Component $factory
      * @return mixed whatever was passed to `done()`, or null when there is no UI
      */
     public function custom(Closure $factory): mixed;
@@ -134,7 +134,7 @@ interface HookUi
      * Add or update an extension widget above or below the prompt. Upstream's `setWidget()`.
      *
      * @param string $key unique widget identifier
-     * @param list<string>|Closure(\Pig\Tui\Tui, Palette): \Pig\Tui\Component|null $content null removes it
+     * @param list<string>|Closure(\Pig\Tui\TUI, Palette): \Pig\Tui\Component|null $content null removes it
      * @param array{placement?: 'above'|'below'} $options
      */
     public function setWidget(string $key, array|Closure|null $content, array $options = []): void;

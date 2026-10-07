@@ -571,7 +571,7 @@ PHP);
     public function testTerminalUiPasteTitleAndWorkingControls(): void
     {
         $term = new \Pig\Tui\Test\FakeTerminal();
-        $tui = new \Pig\Tui\Tui($term);
+        $tui = new \Pig\Tui\TuiMainScreen($term);
         $chat = new \Pig\Tui\Container();
         $overlay = new \Pig\Tui\Container();
         $editor = new \Pig\CodingAgent\Interactive\CustomEditor(new \Pig\Tui\Components\Editor());
@@ -622,7 +622,7 @@ PHP);
     public function testTerminalUiWidgetsAndHeaderFooter(): void
     {
         $term = new \Pig\Tui\Test\FakeTerminal();
-        $tui = new \Pig\Tui\Tui($term);
+        $tui = new \Pig\Tui\TuiMainScreen($term);
         $chat = new \Pig\Tui\Container();
         $overlay = new \Pig\Tui\Container();
         $widgetsAbove = new \Pig\Tui\Container();
@@ -670,7 +670,7 @@ PHP);
     public function testTerminalUiOnTerminalInputCanInterceptRawInput(): void
     {
         $term = new \Pig\Tui\Test\FakeTerminal();
-        $tui = new \Pig\Tui\Tui($term);
+        $tui = new \Pig\Tui\TuiMainScreen($term);
         $editor = new \Pig\CodingAgent\Interactive\CustomEditor(new \Pig\Tui\Components\Editor());
         $chat = new \Pig\Tui\Container();
         $overlay = new \Pig\Tui\Container();

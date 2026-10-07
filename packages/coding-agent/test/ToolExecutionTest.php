@@ -466,7 +466,7 @@ final class ToolExecutionTest extends TestCase
     /**
      * A control character in a tool's output moves the real cursor and measures as nothing.
      *
-     * Which is the failure `Tui::checkWidth()` exists to prevent, arriving by the one route it
+     * Which is the failure `TuiBase::checkWidth()` exists to prevent, arriving by the one route it
      * cannot see: `\p{Cc}` is zero columns wide, so the line passes every width check and the
      * terminal then acts on it — a form feed or a vertical tab drops a row, so every later
      * cursor move is one row low, and a backspace leaves the padding measuring a column that
@@ -594,7 +594,7 @@ final class ToolExecutionTest extends TestCase
 
     public function testTheEarlierLinesNoteFitsANarrowTerminal(): void
     {
-        // Every line a component hands back has to fit, because `Tui::checkWidth()` throws on
+        // Every line a component hands back has to fit, because `TuiBase::checkWidth()` throws on
         // one that does not. `... (35 earlier lines)` is 22 columns and was never cut to the
         // width, so a narrow pane took the session down as soon as any output was truncated.
         $tool = $this->tool('bash', ['command' => 'make']);

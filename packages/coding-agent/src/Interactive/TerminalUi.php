@@ -18,7 +18,7 @@ use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
 use Pig\Tui\Component;
 use Pig\Tui\Container;
-use Pig\Tui\Tui;
+use Pig\Tui\TUI;
 use Pig\Tui\TuiError;
 use Throwable;
 
@@ -105,7 +105,7 @@ final class TerminalUi implements HookUi
     private array $widgets = [];
 
     public function __construct(
-        private readonly Tui $tui,
+        private readonly TUI $tui,
         private readonly Container $chat,
         private readonly Container $overlay,
         private readonly CustomEditor $editor,
@@ -510,7 +510,7 @@ final class TerminalUi implements HookUi
     #[\Override]
     public function onTerminalInput(callable $handler): Closure
     {
-        return $this->tui->onInput(Closure::fromCallable($handler));
+        return $this->tui->addInputListener(Closure::fromCallable($handler));
     }
 
     /**

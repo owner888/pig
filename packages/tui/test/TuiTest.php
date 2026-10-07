@@ -12,7 +12,8 @@ use Pig\Tui\Images\Capabilities;
 use Pig\Tui\Images\ImageProtocol;
 use Pig\Tui\Images\TerminalImage;
 use Pig\Tui\Keys;
-use Pig\Tui\Tui;
+use Pig\Tui\TuiBase;
+use Pig\Tui\TuiMainScreen;
 use Pig\Tui\TuiError;
 
 final class TuiTest extends TestCase
@@ -21,14 +22,14 @@ final class TuiTest extends TestCase
 
     private FakeTerminal $terminal;
 
-    private Tui $tui;
+    private TuiMainScreen $tui;
 
     #[\Override]
     protected function setUp(): void
     {
         Loop::reset();
         $this->terminal = new FakeTerminal(columns: 20, rows: 5);
-        $this->tui = new Tui($this->terminal);
+        $this->tui = new TuiMainScreen($this->terminal);
     }
 
     /** Rendering is deferred, so a test has to let the loop run before looking. */
@@ -270,7 +271,7 @@ final class TuiTest extends TestCase
         $output = $this->frame();
 
         $this->assertStringContainsString("\x1b[3J", $output, 'drawn once the interval is over');
-        $this->assertGreaterThan(Tui::MIN_RENDER_INTERVAL * 0.5, microtime(true) - $start, 'and not before');
+        $this->assertGreaterThan(TuiBase::MIN_RENDER_INTERVAL * 0.5, microtime(true) - $start, 'and not before');
     }
 
     public function testAChangeAboveTheWindowIsNotDrawnWhileItStaysAbove(): void
@@ -310,7 +311,7 @@ final class TuiTest extends TestCase
         // comparison finds it still differing and it is drawn then — a full redraw, since the
         // scrollback copy is wrong by now and is what upstream clears here too.
         $terminal = new FakeTerminal(columns: 20, rows: 8);
-        $tui = new Tui($terminal);
+        $tui = new TuiMainScreen($terminal);
         $component = new TextComponent(implode("\n", array_map(static fn (int $n): string => "line {$n}", range(0, 9))));
         $tui->addChild($component);
         $tui->start();
@@ -379,9 +380,9 @@ final class TuiTest extends TestCase
         $focused = new TextComponent('focused');
         $seen = 0;
         $this->tui->addChild($focused);
-        $this->tui->setDebugHandler(static function () use (&$seen): void {
+        $this->tui->onDebug = static function () use (&$seen): void {
             $seen++;
-        });
+        };
         $this->tui->start();
         $this->tui->setFocus($focused);
 
@@ -590,7 +591,7 @@ final class TuiTest extends TestCase
         // and a full clearing redraw would be the right answer rather than a differential one.
         $png = base64_encode("\x89PNG\r\n\x1a\n" . pack('N', 13) . 'IHDR' . pack('NN', 20, 400) . "\x08\x06\x00\x00\x00");
         $terminal = new FakeTerminal(columns: 20, rows: 200);
-        $tui = new Tui($terminal);
+        $tui = new TuiMainScreen($terminal);
         $tui->addChild(new TextComponent('header'));
         $tui->addChild(new Image($png, 'image/png'));
         $tui->start();

@@ -340,7 +340,7 @@ final class SettingsListTest extends TestCase
     }
 
     /**
-     * Every line has to fit, because `Tui::checkWidth()` throws on one that does not —
+     * Every line has to fit, because `TuiBase::checkWidth()` throws on one that does not —
      * a too-wide line wraps, so the throw is deliberate and the component's job is to fit.
      */
     public function testNoLineIsWiderThanTheTerminal(): void

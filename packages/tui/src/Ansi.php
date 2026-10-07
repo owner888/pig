@@ -24,7 +24,31 @@ final class Ansi
      */
     public static function at(string $text, int $pos): ?array
     {
-        if ($pos >= strlen($text) || $text[$pos] !== "\x1b" || ($text[$pos + 1] ?? '') !== '[') {
+        if ($pos >= strlen($text) || $text[$pos] !== "\x1b") {
+            return null;
+        }
+
+        $next = $text[$pos + 1] ?? '';
+
+        // OSC (hyperlinks, titles) and APC sequences run to BEL or ST — upstream's
+        // `ansiCodeLength()`. Without this a `\e]8;;\a` hyperlink close was four printable
+        // columns to every column-slicing function, and an overlay composited after one landed
+        // that far left.
+        if ($next === ']' || $next === '_') {
+            $length = strlen($text);
+            for ($j = $pos + 2; $j < $length; $j++) {
+                if ($text[$j] === "\x07") {
+                    return [substr($text, $pos, $j + 1 - $pos), $j + 1 - $pos];
+                }
+                if ($text[$j] === "\x1b" && ($text[$j + 1] ?? '') === '\\') {
+                    return [substr($text, $pos, $j + 2 - $pos), $j + 2 - $pos];
+                }
+            }
+
+            return null;
+        }
+
+        if ($next !== '[') {
             return null;
         }
 

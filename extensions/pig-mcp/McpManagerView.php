@@ -17,7 +17,7 @@ use Pig\Tui\Components\Text;
 use Pig\Tui\Container;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
-use Pig\Tui\Tui;
+use Pig\Tui\TUI;
 use Pig\Tui\Width;
 
 /**
@@ -41,7 +41,7 @@ final class McpManagerView extends Container implements InputHandler
     private ?Input $inputTarget = null;
 
     public function __construct(
-        private readonly Tui $tui,
+        private readonly TUI $tui,
         private readonly Palette $palette,
     ) {
         $this->frame('MCP servers', [new Text($palette->fg('muted', 'Loading…'), 1, 1)]);

@@ -174,6 +174,12 @@ final class AnsiTracker
         return $codes === [] ? '' : "\x1b[" . implode(';', $codes) . 'm';
     }
 
+    /** The active background alone, as one sequence — upstream's `getActiveBackgroundCode()`. */
+    public function activeBackgroundCode(): string
+    {
+        return $this->background === null ? '' : "\x1b[{$this->background}m";
+    }
+
     public function hasActiveCodes(): bool
     {
         return $this->activeCodes() !== '';

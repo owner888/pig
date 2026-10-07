@@ -11,7 +11,8 @@ use Pig\CodingAgent\Interactive\ArminComponent;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Ansi;
 use Pig\Tui\Test\FakeTerminal;
-use Pig\Tui\Tui;
+use Pig\Tui\TUI;
+use Pig\Tui\TuiMainScreen;
 use Pig\Tui\Width;
 
 /**
@@ -21,13 +22,13 @@ use Pig\Tui\Width;
  */
 final class ArminTest extends TestCase
 {
-    private Tui $tui;
+    private TuiMainScreen $tui;
 
     #[\Override]
     protected function setUp(): void
     {
         Loop::reset();
-        $this->tui = new Tui(new FakeTerminal(80, 24));
+        $this->tui = new TuiMainScreen(new FakeTerminal(80, 24));
     }
 
     private function armin(?string $effect = null): ArminComponent

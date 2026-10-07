@@ -7,7 +7,7 @@ namespace Pig\CodingAgent\Interactive;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Theme\Palette;
 use Pig\Tui\Component;
-use Pig\Tui\Tui;
+use Pig\Tui\TUI;
 
 /**
  * Armin says hi. An easter egg: 31×36 pixels of XBM art, animated in by one of seven effects.
@@ -84,7 +84,7 @@ final class ArminComponent implements Component
      *        because seven effects cannot be tested by starting this seven times and hoping.
      */
     public function __construct(
-        private readonly Tui $tui,
+        private readonly TUI $tui,
         private readonly Palette $palette,
         ?string $effect = null,
     ) {

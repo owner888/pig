@@ -32,7 +32,8 @@ use Pig\Tui\Components\SelectList;
 use Pig\Tui\Components\Text;
 use Pig\Tui\Container;
 use Pig\Tui\Test\FakeTerminal;
-use Pig\Tui\Tui;
+use Pig\Tui\TUI;
+use Pig\Tui\TuiMainScreen;
 use Pig\Tui\TuiError;
 
 /**
@@ -47,7 +48,7 @@ final class HookUiTest extends TestCase
 {
     private FakeTerminal $terminal;
 
-    private Tui $tui;
+    private TuiMainScreen $tui;
 
     private Container $chat;
 
@@ -65,7 +66,7 @@ final class HookUiTest extends TestCase
         Loop::reset();
         $this->palette = Palette::dark(true);
         $this->terminal = new FakeTerminal(80, 24);
-        $this->tui = new Tui($this->terminal);
+        $this->tui = new TuiMainScreen($this->terminal);
         $this->chat = new Container();
         $this->overlay = new Container();
         $this->editor = new CustomEditor(new Editor($this->palette->editorTheme()));
@@ -535,7 +536,7 @@ final class HookUiTest extends TestCase
         $answer = null;
 
         Async::spawn(function () use (&$answer): void {
-            $answer = $this->ui->custom(function (Tui $tui, Palette $palette, callable $done) {
+            $answer = $this->ui->custom(function (TUI $tui, Palette $palette, callable $done) {
                 $list = new SelectList(
                     [new SelectItem('7', 'seven'), new SelectItem('8', 'eight')],
                     4,
@@ -563,7 +564,7 @@ final class HookUiTest extends TestCase
     public function testACustomDialogIsTakenDownWhenItIsDone(): void
     {
         Async::spawn(function (): void {
-            $this->ui->custom(function (Tui $tui, Palette $palette, callable $done) {
+            $this->ui->custom(function (TUI $tui, Palette $palette, callable $done) {
                 $list = new SelectList([new SelectItem('a', 'only')], 2, $palette->selectListTheme());
                 $list->setSelectHandler(static fn () => $done('a'));
 
@@ -587,7 +588,7 @@ final class HookUiTest extends TestCase
         $answer = 'not asked yet';
 
         Async::spawn(function () use (&$answer): void {
-            $answer = $this->ui->custom(function (Tui $tui, Palette $palette, callable $done) {
+            $answer = $this->ui->custom(function (TUI $tui, Palette $palette, callable $done) {
                 $list = new SelectList([new SelectItem('a', 'only')], 2, $palette->selectListTheme());
                 $list->setSelectHandler(static function () use ($done): void {
                     $done('first');

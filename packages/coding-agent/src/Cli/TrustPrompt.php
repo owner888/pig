@@ -15,13 +15,13 @@ use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
 use Pig\Tui\ProcessTerminal;
 use Pig\Tui\Terminal;
-use Pig\Tui\Tui;
+use Pig\Tui\TuiMainScreen;
 
 /**
  * "Trust this project?", asked before anything of the project's is loaded.
  *
  * The same shape as `SessionPicker` and for the same reason: it runs before the mode exists, on a
- * `Tui` started and stopped inside the call, because the answer decides what `CodingAgent::session()`
+ * A `TuiMainScreen` started and stopped inside the call, because the answer decides what `CodingAgent::session()`
  * is allowed to `require` — so it cannot be asked from inside the session it gates. Upstream asks
  * through its extension UI context during bootstrap; pig has no screen yet at that point and this
  * is the one.
@@ -36,7 +36,7 @@ final class TrustPrompt
      */
     public static function ask(string $cwd, array $choices, Palette $palette, ?Terminal $terminal = null): ?TrustChoice
     {
-        $tui = new Tui($terminal ?? new ProcessTerminal());
+        $tui = new TuiMainScreen($terminal ?? new ProcessTerminal());
         $chosen = null;
 
         $items = [];

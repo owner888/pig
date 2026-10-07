@@ -15,7 +15,7 @@ namespace Pig\Tui;
  * come up over the footer and the text being composed is nowhere near the box it is
  * going into.
  *
- * So a focused component says where its caret is, and `Tui` puts the terminal's cursor
+ * So a focused component says where its caret is, and the renderer puts the terminal's cursor
  * there at the end of every frame.
  */
 interface Caret

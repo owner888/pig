@@ -19,7 +19,8 @@ use Pig\Tui\Components\Text;
 use Pig\Tui\Components\TruncatedText;
 use Pig\Tui\Keys;
 use Pig\Tui\Style;
-use Pig\Tui\Tui;
+use Pig\Tui\TUI;
+use Pig\Tui\TuiMainScreen;
 use Pig\Tui\Width;
 
 final class ComponentsTest extends TestCase
@@ -413,7 +414,7 @@ final class ComponentsTest extends TestCase
 
     public function testTheLoaderAnimatesOnTheEventLoop(): void
     {
-        $tui = new Tui(new FakeTerminal());
+        $tui = new TuiMainScreen(new FakeTerminal());
         $loader = new Loader($tui, Style::cyan(...), Style::dim(...), 'Thinking');
 
         $first = $loader->render(40);
@@ -429,7 +430,7 @@ final class ComponentsTest extends TestCase
 
     public function testAStoppedLoaderLetsTheLoopGoIdle(): void
     {
-        $tui = new Tui(new FakeTerminal());
+        $tui = new TuiMainScreen(new FakeTerminal());
         $loader = new Loader($tui, Style::cyan(...), Style::dim(...));
 
         // A pending timer is work, so a loader nobody stopped never lets the program end.
@@ -444,7 +445,7 @@ final class ComponentsTest extends TestCase
 
     public function testLoaderWithTimerFormatsElapsedDuration(): void
     {
-        $tui = new Tui(new FakeTerminal());
+        $tui = new TuiMainScreen(new FakeTerminal());
         $loader = new Loader($tui, Style::cyan(...), Style::dim(...), 'Working...');
 
         // Without timer
@@ -480,7 +481,7 @@ final class ComponentsTest extends TestCase
 
     public function testEscapeAbortsACancellableLoader(): void
     {
-        $tui = new Tui(new FakeTerminal());
+        $tui = new TuiMainScreen(new FakeTerminal());
         $loader = new CancellableLoader($tui, Style::cyan(...), Style::dim(...));
         $called = 0;
         $loader->setAbortHandler(static function () use (&$called): void {
@@ -501,7 +502,7 @@ final class ComponentsTest extends TestCase
 
     public function testOtherKeysDoNotAbortTheLoader(): void
     {
-        $tui = new Tui(new FakeTerminal());
+        $tui = new TuiMainScreen(new FakeTerminal());
         $loader = new CancellableLoader($tui, Style::cyan(...), Style::dim(...));
 
         $loader->handleInput('x');

@@ -164,7 +164,7 @@ final class BashOutputComponent implements Component
 
         if ($this->note !== null) {
             // Cut to the width, not wrapped: `... (35 earlier lines)` is 22 columns and every
-            // line handed to the renderer has to fit — `Tui::checkWidth()` throws on one that
+            // line handed to the renderer has to fit — `TuiBase::checkWidth()` throws on one that
             // does not, so a note nobody cut took the session down on a pane narrower than
             // itself. Truncated rather than wrapped for the same reason a scroll count is:
             // half of a count on a second row says nothing.

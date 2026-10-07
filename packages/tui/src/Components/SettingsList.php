@@ -173,7 +173,7 @@ final class SettingsList implements Component, InputHandler
      * column off the screen — and **clamped to the terminal**, which upstream does not do.
      * Upstream caps it at 30 and then writes the label out in full anyway, so a row is as
      * wide as it likes; here a line wider than the terminal is not cosmetic, because
-     * `Tui::checkWidth()` throws on one rather than letting it wrap and corrupt every cursor
+     * `TuiBase::checkWidth()` throws on one rather than letting it wrap and corrupt every cursor
      * move below it. Reproduced before it was fixed: `/settings` on a terminal 32 columns or
      * narrower took the session down from inside `render()`.
      */

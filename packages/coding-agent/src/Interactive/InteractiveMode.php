@@ -116,7 +116,8 @@ use Pig\Tui\Process;
 use Pig\Tui\ProcessTerminal;
 use Pig\Tui\Style;
 use Pig\Tui\Terminal;
-use Pig\Tui\Tui;
+use Pig\Tui\TuiAltScreen;
+use Pig\Tui\TuiBase;
 use Pig\Tui\Width;
 use Throwable;
 
@@ -138,7 +139,7 @@ final class InteractiveMode
     /** Two presses inside this many seconds mean the second one. */
     private const float DOUBLE_PRESS = 0.5;
 
-    private readonly Tui $tui;
+    private readonly TuiBase $tui;
 
     private readonly Container $chat;
 
@@ -317,8 +318,7 @@ final class InteractiveMode
         // Injected so a test can drive this without a terminal, the same way the editor
         // takes its clipboard: everything below here is arrangement, and arrangement is
         // exactly what is worth testing.
-        $this->tui = new Tui($terminal ?? new ProcessTerminal());
-        $this->tui->setAltScreen($this->tuiMode === 'fullscreen');
+        $this->tui = TuiRenderer::createInteractiveTui($terminal ?? new ProcessTerminal(), $this->tuiMode, $this->clipboard, $this->scrollToEndIndicator(...));
         $this->chat = new Container();
         $this->pending = new Container();
         $this->status = new Container();
@@ -640,7 +640,7 @@ final class InteractiveMode
     }
 
     /** @internal for tests, which drive the terminal rather than the loop */
-    public function screen(): Tui
+    public function screen(): TuiBase
     {
         return $this->tui;
     }
@@ -698,17 +698,9 @@ final class InteractiveMode
         // Stopped here and not only in run()'s finally: whoever calls this wants the
         // terminal back — raw mode off, cursor shown — whether or not the loop is what
         // they are waiting on.
-        if ($this->tuiMode === 'fullscreen' && $this->viewport !== null) {
-            $width = $this->tui->terminal->columns();
-            $dumpLines = $this->viewport->transcript()->render($width);
-            $this->tui->stop();
-            if ($dumpLines !== []) {
-                $out = implode("\n", $dumpLines) . "\n";
-                fwrite(STDOUT, $out);
-            }
-        } else {
-            $this->tui->stop();
-        }
+        // In fullscreen the renderer prints the conversation back into the normal screen on its
+        // way out (`TuiAltScreen::afterTerminalStop()`), as upstream's does.
+        $this->tui->stop();
         Loop::get()->stop();
     }
 
@@ -776,7 +768,7 @@ final class InteractiveMode
     {
         $this->banner = new Text($this->banner(), 1, 0);
 
-        if ($this->tuiMode === 'fullscreen') {
+        if ($this->tui instanceof TuiAltScreen) {
             $document = new Container();
             $document->addChild($this->customHeader);
             $document->addChild(new Spacer(1));
@@ -784,31 +776,36 @@ final class InteractiveMode
             $document->addChild(new Spacer(1));
             $document->addChild($this->chat);
 
-            $this->viewport = new ChatViewport(
-                $document,
-                $this->pending,
-                $this->status,
-                $this->overlay,
-                $this->widgetsAbove,
-                $this->editor,
-                $this->widgetsBelow,
-                $this->footer,
+            // Upstream's dock slots: status, widgets above (with the spacer over the editor),
+            // editor, widgets below, footer. pig's in-dock dialogs ride with the status and its
+            // extension footer with the footer, in the order the regular layout draws them.
+            $statusSlot = new Container();
+            $statusSlot->addChild($this->status);
+            $statusSlot->addChild($this->overlay);
+            $widgetsAboveSlot = new Container();
+            $widgetsAboveSlot->addChild($this->widgetsAbove);
+            $widgetsAboveSlot->addChild(new Spacer(1));
+            $footerSlot = new Container();
+            $footerSlot->addChild($this->footer);
+            $footerSlot->addChild($this->customFooter);
+
+            $this->viewport = ChatViewport::create(
+                document: $document,
+                pendingMessages: $this->pending,
+                status: $statusSlot,
+                editor: $this->editor,
+                footer: $footerSlot,
+                widgetsAbove: $widgetsAboveSlot,
+                widgetsBelow: $this->widgetsBelow,
+                scrollbarTrackStyle: fn (string $text): string => $this->palette->fg('dim', $text),
+                scrollbarThumbStyle: fn (string $text): string => $this->palette->fg('muted', $text),
             );
-            $this->viewport->dock()->addChild($this->customFooter);
 
-            $this->tui->setViewportRenderer(function (int $width, int $height): array {
-                return $this->viewport->renderViewport(
-                    $width,
-                    $height,
-                    fn (): string => $this->scrollToEndIndicator(),
-                );
-            });
-
-            $this->tui->addChild($this->viewport);
-            // Wheel, selection and the jump-to-latest click are the renderer's, as upstream's
-            // `TuiAltScreen` owns them; it needs to know which view they move and copy from.
-            $this->tui->setPrimaryScrollView($this->viewport->transcript());
-            $this->tui->setCopySelection(fn (string $text): bool => $this->clipboard->write($text));
+            // Mounted for invalidation and mouse routing; the layout root is what is drawn.
+            foreach ([$document, $this->pending, $statusSlot, $widgetsAboveSlot, $this->editor, $this->widgetsBelow, $footerSlot] as $component) {
+                $this->tui->addChild($component);
+            }
+            $this->tui->setLayoutRoot($this->viewport->root);
             $this->tui->setFocus($this->editor);
 
             return;
@@ -1048,11 +1045,11 @@ final class InteractiveMode
 
     private function bindKeys(): void
     {
-        // `Tui` has intercepted shift+ctrl+d since it was ported — the predicate, the field and the
+        // The renderer has intercepted shift+ctrl+d since it was ported — the predicate, the field and the
         // setter were all there — and nothing ever called the setter, so the one key that works
         // whatever holds the focus did nothing. The same shape as ctrl+p: machinery wired at one
         // end. Not on the editor, because the point of it is that the editor may not be listening.
-        $this->tui->setDebugHandler($this->writeDebugLog(...));
+        $this->tui->onDebug = $this->writeDebugLog(...);
 
         // Bound by *action*, upstream's names: which key each one is on is `Keybindings`'
         // business, and the editor claims whatever keys the bindings say — so a `keybindings.json`
@@ -1108,43 +1105,34 @@ final class InteractiveMode
             );
         }
 
-        $this->tui->onInput(function (string $data): bool|array|null {
+        $this->tui->addInputListener(function (string $data): bool|array|null {
             if ($this->viewport === null) {
                 return null;
             }
 
-            // Scroll viewport to bottom (Ctrl+End, or bare End / Cmd+Down when scrolled up away from bottom)
-            if (Keys::matchesName($data, 'ctrl+end') || (!$this->viewport->transcript()->isFollowingEnd() && Keys::isEnd($data))) {
-                $this->viewport->transcript()->scrollToBottom();
-                $this->tui->requestRender();
-
-                return ['consume' => true];
+            // Upstream's `tui.altScreen.*` keys, which `TuiAltScreen` checks before the editor.
+            $tui = $this->tui;
+            if (!$tui instanceof TuiAltScreen) {
+                return null;
             }
 
-            // Scroll viewport to top (Ctrl+Home, or bare Home when scrolled up away from bottom)
-            if (Keys::matchesName($data, 'ctrl+home') || (!$this->viewport->transcript()->isFollowingEnd() && Keys::isHome($data))) {
-                $this->viewport->transcript()->scrollToStart();
-                $this->tui->requestRender();
+            switch ($this->keybindings->actionFor($data)) {
+                case 'tui.altScreen.top':
+                    $tui->scrollToTop();
 
-                return ['consume' => true];
-            }
+                    return ['consume' => true];
+                case 'tui.altScreen.bottom':
+                    $tui->scrollToBottom();
 
-            // PageUp / Shift+Up
-            if (Keys::isPageUp($data) || Keys::matchesName($data, 'shift+up')) {
-                $delta = max(1, $this->viewport->transcript()->viewportHeight() - 4);
-                $this->viewport->transcript()->scrollBy(-$delta);
-                $this->tui->requestRender();
+                    return ['consume' => true];
+                case 'tui.altScreen.pageUp':
+                    $tui->scrollPage(-1);
 
-                return ['consume' => true];
-            }
+                    return ['consume' => true];
+                case 'tui.altScreen.pageDown':
+                    $tui->scrollPage(1);
 
-            // PageDown / Shift+Down
-            if (Keys::isPageDown($data) || Keys::matchesName($data, 'shift+down')) {
-                $delta = max(1, $this->viewport->transcript()->viewportHeight() - 4);
-                $this->viewport->transcript()->scrollBy($delta);
-                $this->tui->requestRender();
-
-                return ['consume' => true];
+                    return ['consume' => true];
             }
 
             return null;
@@ -1657,7 +1645,7 @@ final class InteractiveMode
             return;
         }
 
-        $this->viewport?->transcript()->scrollToBottom();
+        $this->viewport?->transcript->scrollToEnd();
 
         if ($this->session->isBashRunning()) {
             $this->sayWarning('A command is already running. Press esc to stop it.');
@@ -1754,7 +1742,7 @@ final class InteractiveMode
      */
     private function send(string $text, array $images = []): void
     {
-        $this->viewport?->transcript()->scrollToBottom();
+        $this->viewport?->transcript->scrollToEnd();
 
         Async::spawn(function () use ($text, $images): void {
             $this->sendAndWait($text, $images);
@@ -2288,7 +2276,7 @@ final class InteractiveMode
      * Write down what is on the screen and what was said, for somebody to look at later.
      *
      * Upstream's `/debug`, on upstream's key, and the reason to port it rather than leave it is
-     * that **pig already has every other end of it**: `Tui::frame()` is the dump `checkWidth()`
+     * that **pig already has every other end of it**: `TuiBase::frame()` is the dump `checkWidth()`
      * writes when a line is too wide, and every width bug in CLAUDE.md was found by reading
      * exactly that — from outside the repository, with a probe written for the occasion, because
      * from inside a real session there was no way to ask.

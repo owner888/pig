@@ -13,7 +13,7 @@ use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
 use Pig\Tui\ProcessTerminal;
 use Pig\Tui\Terminal;
-use Pig\Tui\Tui;
+use Pig\Tui\TuiMainScreen;
 
 /**
  * Which earlier conversation, asked before anything else starts.
@@ -22,7 +22,7 @@ use Pig\Tui\Tui;
  * memorised — sessions are named after a random id under a flattened project path — so what
  * actually happened was `Could not read the session at `, with nothing after the "at".
  *
- * A screen of its own, and then it is gone: it runs before the mode is built, on a `Tui` that
+ * A screen of its own, and then it is gone: it runs before the mode is built, on a `TuiMainScreen` that
  * is started and stopped inside this call, so whatever is chosen is handed back as an ordinary
  * return value and the session is opened by the same code that opens a `--resume <path>`.
  *
@@ -51,7 +51,7 @@ final class SessionPicker
             return new SessionChoice();
         }
 
-        $tui = new Tui($terminal ?? new ProcessTerminal());
+        $tui = new TuiMainScreen($terminal ?? new ProcessTerminal());
         $chosen = null;
         $quit = false;
 

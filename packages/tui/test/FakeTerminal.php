@@ -23,6 +23,9 @@ final class FakeTerminal implements Terminal
 
     public bool $started = false;
 
+    /** @var list<array{0: 'start'|'stop'|'write', 1?: string}> starts, stops and writes in the order they happened */
+    public array $events = [];
+
     private ?Closure $onInput = null;
 
     private ?Closure $onResize = null;
@@ -38,6 +41,7 @@ final class FakeTerminal implements Terminal
     public function start(Closure $onInput, Closure $onResize): void
     {
         $this->started = true;
+        $this->events[] = ['start'];
         $this->onInput = $onInput;
         $this->onResize = $onResize;
 
@@ -75,6 +79,7 @@ final class FakeTerminal implements Terminal
     public function stop(): void
     {
         $this->started = false;
+        $this->events[] = ['stop'];
         $this->onInput = null;
         $this->onResize = null;
     }
@@ -106,6 +111,7 @@ final class FakeTerminal implements Terminal
     #[\Override]
     public function write(string $data): void
     {
+        $this->events[] = ['write', $data];
         $this->writes[] = $data;
     }
 

@@ -116,7 +116,7 @@ final class Shell
      *   UTF-8 — so one stray byte threw out of `render()`, inside the loop's own input callback, and
      *   took the session with it. `!cat` of a binary file reaches this, so does an `edit` to a
      *   latin-1 file, so does a hook that sends a build log.
-     * - **Every other control character out.** This is the `Tui::checkWidth()` failure arriving by
+     * - **Every other control character out.** This is the `TuiBase::checkWidth()` failure arriving by
      *   the one route that check cannot see: `\p{Cc}` is **zero columns wide**, so a line carrying a
      *   form feed measures exactly right, passes, and is written to a terminal that then drops a row
      *   — putting every later cursor move one row low, which is the silent screen corruption the

@@ -239,9 +239,12 @@ final class Width
     }
 
     /**
-     * Extract a range of visible columns from an ANSI line.
+     * Extract a range of visible columns from an ANSI line — upstream's `sliceByColumn()`.
+     *
+     * `$strict` drops a wide grapheme that would straddle the end of the range instead of
+     * letting it spill one column past it; anything composited next to the slice needs that.
      */
-    public static function sliceByColumn(string $line, int $startCol, ?int $length = null): string
+    public static function sliceByColumn(string $line, int $startCol, ?int $length = null, bool $strict = false): string
     {
         if ($length !== null && $length <= 0) {
             return '';
@@ -265,7 +268,9 @@ final class Width
 
             foreach (Graphemes::split($value) as $segment) {
                 $w = self::grapheme($segment);
-                if ($currentCol >= $startCol && $currentCol < $endCol) {
+                $inRange = $currentCol >= $startCol && $currentCol < $endCol;
+                $fits = !$strict || $currentCol + $w <= $endCol;
+                if ($inRange && $fits) {
                     if ($pendingAnsi !== '') {
                         $result .= $pendingAnsi;
                         $pendingAnsi = '';
@@ -284,6 +289,72 @@ final class Width
         }
 
         return $result;
+    }
+
+    /**
+     * The "before" and "after" parts of a line around an overlay, in one pass — upstream's
+     * `extractSegments()`. A grapheme that would cross `$beforeEnd` is left out of "before", and
+     * "after" opens with whatever styling was active where it starts.
+     *
+     * @return array{before: string, beforeWidth: int, after: string, afterWidth: int}
+     */
+    public static function extractSegments(string $line, int $beforeEnd, int $afterStart, int $afterLen, bool $strictAfter = false): array
+    {
+        $before = '';
+        $beforeWidth = 0;
+        $after = '';
+        $afterWidth = 0;
+        $currentCol = 0;
+        $pendingAnsiBefore = '';
+        $afterStarted = false;
+        $afterEnd = $afterStart + $afterLen;
+        $tracker = new AnsiTracker();
+        $done = static fn (int $col): bool => $afterLen <= 0 ? $col >= $beforeEnd : $col >= $afterEnd;
+
+        foreach (Ansi::segment($line) as [$isCode, $value]) {
+            if ($isCode) {
+                $tracker->process($value);
+                if ($currentCol < $beforeEnd) {
+                    $pendingAnsiBefore .= $value;
+                } elseif ($currentCol >= $afterStart && $currentCol < $afterEnd && $afterStarted) {
+                    $after .= $value;
+                }
+                continue;
+            }
+
+            foreach (Graphemes::split($value) as $segment) {
+                $w = self::grapheme($segment);
+
+                if ($currentCol < $beforeEnd && $currentCol + $w <= $beforeEnd) {
+                    if ($pendingAnsiBefore !== '') {
+                        $before .= $pendingAnsiBefore;
+                        $pendingAnsiBefore = '';
+                    }
+                    $before .= $segment;
+                    $beforeWidth += $w;
+                } elseif ($currentCol >= $afterStart && $currentCol < $afterEnd) {
+                    if (!$strictAfter || $currentCol + $w <= $afterEnd) {
+                        if (!$afterStarted) {
+                            $after .= $tracker->activeCodes();
+                            $afterStarted = true;
+                        }
+                        $after .= $segment;
+                        $afterWidth += $w;
+                    }
+                }
+
+                $currentCol += $w;
+                if ($done($currentCol)) {
+                    break;
+                }
+            }
+
+            if ($done($currentCol)) {
+                break;
+            }
+        }
+
+        return ['before' => $before, 'beforeWidth' => $beforeWidth, 'after' => $after, 'afterWidth' => $afterWidth];
     }
 
     /**
@@ -313,8 +384,23 @@ final class Width
         return null;
     }
 
+    /** The background colour active at the end of `$text`, as one sequence — upstream's `getActiveBackgroundAnsi()`. */
+    public static function activeBackgroundAnsi(string $text): string
+    {
+        $tracker = new AnsiTracker();
+        $tracker->processText($text);
+
+        return $tracker->activeBackgroundCode();
+    }
+
+    /** Closes an overlay's styling and any hyperlink it opened — upstream's `SEGMENT_RESET`. */
+    private const string SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
+
     /**
-     * Composite an overlay string into a line at a specific column.
+     * Composite an overlay string into a line at a specific column — upstream's
+     * `compositeTuiLine()`. The result is never wider than `$totalWidth`: a wide grapheme that
+     * straddles either edge of the overlay is dropped and the gap padded, rather than kept and
+     * pushing the line a column over (which `TuiBase::checkWidth()` turns into a crash).
      */
     public static function composite(
         string $baseLine,
@@ -323,19 +409,25 @@ final class Width
         int $overlayWidth,
         int $totalWidth,
     ): string {
-        $before = self::sliceByColumn($baseLine, 0, $startCol);
-        $beforeWidth = self::visible($before);
-        $beforePad = max(0, $startCol - $beforeWidth);
+        $afterStart = $startCol + $overlayWidth;
+        $base = self::extractSegments($baseLine, $startCol, $afterStart, $totalWidth - $afterStart, true);
+        $overlayText = self::sliceByColumn($overlay, 0, $overlayWidth, true);
+        $overlayTextWidth = self::visible($overlayText);
+        $beforePad = max(0, $startCol - $base['beforeWidth']);
+        $overlayPad = max(0, $overlayWidth - $overlayTextWidth);
+        $actualBeforeWidth = max($startCol, $base['beforeWidth']);
+        $actualOverlayWidth = max($overlayWidth, $overlayTextWidth);
+        $afterTarget = max(0, $totalWidth - $actualBeforeWidth - $actualOverlayWidth);
+        $afterPad = max(0, $afterTarget - $base['afterWidth']);
+        $result = $base['before']
+            . str_repeat(' ', $beforePad)
+            . self::SEGMENT_RESET
+            . $overlayText
+            . str_repeat(' ', $overlayPad)
+            . self::SEGMENT_RESET
+            . $base['after']
+            . str_repeat(' ', $afterPad);
 
-        $afterCol = $startCol + $overlayWidth;
-        $after = '';
-        $baseWidth = self::visible($baseLine);
-        if ($baseWidth > $afterCol) {
-            $after = self::sliceByColumn($baseLine, $afterCol, max(0, $totalWidth - $afterCol));
-        }
-
-        $res = $before . str_repeat(' ', $beforePad) . "\x1b[0m" . $overlay . "\x1b[0m" . $after;
-
-        return self::pad($res, $totalWidth);
+        return self::visible($result) <= $totalWidth ? $result : self::sliceByColumn($result, 0, $totalWidth, true);
     }
 }

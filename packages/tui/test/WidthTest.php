@@ -227,4 +227,20 @@ final class WidthTest extends TestCase
         $this->assertSame("-------[JUMP]-------", Ansi::strip($composited));
         $this->assertSame(20, Width::visible($composited));
     }
+
+    /** The jump-to-latest pill over CJK text crashed pig: a wide char straddling its left edge made the row one column too wide. */
+    public function testCompositeNeverWidensALineWhenAWideCharStraddlesTheOverlayEdge(): void
+    {
+        $base = Width::pad(str_repeat('中', 85), 171);
+        $composited = Width::composite($base, '[JUMP]', 67, 6, 171);
+
+        $this->assertSame(171, Width::visible($composited));
+        $this->assertStringContainsString('[JUMP]', Ansi::strip($composited));
+    }
+
+    public function testStrictSliceDropsAWideCharCrossingTheEnd(): void
+    {
+        $this->assertSame('中', Width::sliceByColumn('中文', 0, 3, true));
+        $this->assertSame('中文', Width::sliceByColumn('中文', 0, 3));
+    }
 }

@@ -9,7 +9,7 @@ use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
-use Pig\Tui\Tui;
+use Pig\Tui\TUI;
 
 /**
  * A spinner that Escape can call off.
@@ -30,7 +30,7 @@ final class CancellableLoader extends Loader implements InputHandler
      * @param Closure(string): string $messageStyle
      */
     public function __construct(
-        Tui $tui,
+        TUI $tui,
         Closure $spinnerStyle,
         Closure $messageStyle,
         string $message = 'Working...',

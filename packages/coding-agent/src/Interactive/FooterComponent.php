@@ -324,7 +324,7 @@ final class FooterComponent implements Component
 
         // Cut and measured in columns. `substr()` here was two bugs rather than one: it could
         // end inside a character, and `strlen()` then sized the gap in bytes — so a model whose
-        // name is not ASCII made this line *wider* than the terminal, which `Tui::checkWidth()`
+        // name is not ASCII made this line *wider* than the terminal, which `TuiBase::checkWidth()`
         // refuses to draw at all. The `max(0, …)` is for the same arithmetic going the other way.
         $cut = Width::truncate(Ansi::strip($right), $room, '');
         $gap = str_repeat(' ', max(0, $width - $leftWidth - Width::visible($cut)));

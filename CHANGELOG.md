@@ -43,6 +43,27 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.9] - 2026-10-07
+
+### New Features
+
+- **Full Upstream Pi 0.85+ ~ 1.0 TUI Architecture Alignment (`TuiAltScreen`, `TuiMainScreen`, `Layout`, `VStack`, `HStack`)**:
+  - Fully ported upstream pi's modular TUI rendering engine: decomposed monolithic TUI into `TuiBase`, `TuiMainScreen` (regular mode), and `TuiAltScreen` (fullscreen viewport mode).
+  - Ported flexbox-style layout engine (`Layout`, `VStack`, `HStack`, `LayoutFrame`, `LayoutRect`, `ScrollLayoutNode`, `StackLayoutNode`) enabling precise coordinate layout, flex-grow/shrink constraints, and robust bounds clipping.
+  - Implemented `ViewportTUI` interface and `TuiRenderer` proxy with dynamic mode switching (`switchTuiMode`) between fullscreen and regular without restarting the session.
+
+### Added
+
+- **Scrollbar Geometries & Viewport Hit-Testing**:
+  - Added `ScrollbarGeometry` with support for track/thumb drag-and-drop, track click-to-jump, and hover tracking.
+  - Added full test suites `LayoutTest`, `WheelScrollAcceleratorTest`, and comprehensive `TuiAltScreenTest` covering all lifecycle events.
+
+### Fixed
+
+- **Fixed Fullscreen Viewport Dock Separation & Clean Terminal Restoration**:
+  - Decoupled `ChatViewport` into flex-dock layout with `VStack`, ensuring editor prompt, status bar, and footer remain permanently locked at the terminal bottom without being displaced during scrolling.
+  - Preserved terminal state and clean mouse unbinding upon exit (`DISABLE_MOUSE`, `ENABLE_AUTOWRAP`, `EXIT_ALT_SCREEN`).
+
 ## [0.4.8] - 2026-10-07
 
 ### Added

@@ -3357,7 +3357,7 @@ so a flag that demands the path is a flag nobody can use from memory.
 
 Three things about it:
 
-- **It runs before the mode exists**, on a `Tui` it starts and stops inside the call, so what
+- **It runs before the mode exists**, on a `TuiMainScreen` it starts and stops inside the call, so what
   comes back is an ordinary return value and the session is opened by the same code that
   opens a `--resume <path>`.
 - **Escape means "start a new one", not "stop".** Someone who opened the list and changed
@@ -3945,7 +3945,7 @@ review        strlen= 6  columns= 6   padded to 24: 24 columns  aligned
 ```
 
 `strlen` is never *smaller* than the column count, so the padding always falls **short** and the
-column after it starts early — which means this cannot trip `Tui::checkWidth()` and nothing ever
+column after it starts early — which means this cannot trip `TuiBase::checkWidth()` and nothing ever
 failed. It just reads as a table pig cannot draw. Where it shows: `/skills` (a skill's name is a
 folder name, and a folder can be called 代码审查), `/hooks` and `/help` (a hook registers its own
 command name), and `--list-models`, whose provider and model names come out of a hand-written
@@ -4001,7 +4001,7 @@ Pig\Tui\TuiError — Rendered line 8 is 33 columns wide, terminal is 32
 
 Line 8 is the hint, `  Enter to change · Esc when done`, which `SettingsList` returned at its full
 length however narrow the screen was. Upstream does the same and gets away with it, because there a
-too-wide line merely wraps; **`Tui::checkWidth()` throws instead**, deliberately — a wrapped line
+too-wide line merely wraps; **`TuiBase::checkWidth()` throws instead**, deliberately — a wrapped line
 puts every cursor move below it one row low, and silent screen corruption with no visible cause is
 worse than a loud stop. That choice is what turns a cosmetic overflow in a ported component into a
 crash, and `render()` runs inside the loop's own callback, so there is nothing above it to catch.
@@ -4578,7 +4578,7 @@ Regression test: `StreamProxyTest::testAToolResultThatIsNotUtf8StillReachesTheGa
 
 ### A control character in tool output measures as nothing and moves the real cursor
 
-`Tui::checkWidth()` throws on a line wider than the terminal, because a wrapped line puts every
+`TuiBase::checkWidth()` throws on a line wider than the terminal, because a wrapped line puts every
 later cursor move one row low and silent screen corruption is worse than a loud stop. **This is that
 same failure arriving by the one route the check cannot see**: `\p{Cc}` is *zero columns wide*, so a
 line carrying a form feed measures exactly right, passes, and is written to a terminal that then
@@ -4684,7 +4684,7 @@ directions, so both need correcting.** Flooring is the one everybody writes; the
 that bites, because it only fires on the inputs where one column dwarfs the others — which is why a
 three-prose-column table was fine and a table with a path and two tick marks was not.
 
-It stayed invisible because the symptom is not an error: `Tui::checkWidth()` never fires, since
+It stayed invisible because the symptom is not an error: `TuiBase::checkWidth()` never fires, since
 `lines()` wraps every rendered line before padding it. A line that is too wide is therefore *wrapped*
 rather than refused, and a wrapped table border does not look like a width bug, it looks like the
 renderer cannot draw tables. The test asserts the user-visible invariant instead — the top border is
@@ -4894,7 +4894,7 @@ about every key it named and wrong about which key the bytes were.
 ### Erasing vanished rows with `\r\n` scrolled the screen, one row per vanished line
 
 Reported with a screenshot: blank rows under the footer, there from the moment a turn starts and
-staying. `Tui::changedLines()` erased the rows a shrinking frame leaves behind with upstream's
+staying. `TuiMainScreen::changedLines()` erased the rows a shrinking frame leaves behind with upstream's
 sweep — `\r\n\x1b[2K` per vanished line, then `\e[nA` back up — and **a newline on the terminal's
 last row scrolls**. The working loader and its spacer go at the end of every turn, so every turn
 shifted the screen up two rows and the cursor arithmetic (which is relative) stayed right about a
@@ -5001,7 +5001,7 @@ suspended`. So `FutureState` never invokes callbacks synchronously — every one
 
 ### Forcing a render on resize skips the clear it needs
 
-`Tui::requestRender(force: true)` empties `previousLines`, and `draw()` reads an empty
+`TuiBase::requestRender(force: true)` empties `previousLines`, and `TuiMainScreen::doRender()` reads an empty
 `previousLines` as "first frame ever" — which writes the new lines with no clear at all. A resize
 needs the opposite: the previous frame must be remembered so the width change is *noticed*, and
 then the screen and the scrollback are cleared before redrawing. So the resize handler calls
@@ -5016,7 +5016,7 @@ written down that force is for "callers who know the screen was overwritten by s
 nobody went and read the other one: `takeCellSizeReply()` forced the render after the terminal
 answered `CSI 16 t`. So on **every terminal that draws pictures** — which is every terminal that
 answers that query, and the only kind pig asks — the startup screen came out twice: frame one drew,
-the reply arrived as input a moment later, force emptied `previousLines`, and `draw()` wrote the
+the reply arrived as input a moment later, force emptied `previousLines`, and `doRender()` wrote the
 whole frame again with no clear from wherever the cursor already was, which is the last line of
 frame one. Upstream asks for a plain render there, for the same reason the resize handler does.
 
@@ -5039,7 +5039,7 @@ what a resize needs and is what the docblock claimed.** That meaning wants a cle
 record does not give one: the renderer reads an empty `previousLines` as the first frame ever and
 writes from wherever the cursor is with nothing cleared. A full-screen editor restores what it found
 on the way out, so what is there is pig's own last frame and the new one lands underneath it — the
-same doubling, arriving by the one door nobody had checked. `Tui::$screenIsLost` is the second fact
+same doubling, arriving by the one door nobody had checked. `TuiMainScreen::$screenIsLost` is the second fact
 that an empty record cannot carry: the very first frame has an empty record too, and clearing *there*
 would wipe whatever the shell had printed before pig started. Both halves have a test
 (`TuiTest::testAForcedRenderClearsTheScreenItNoLongerOwns` and
@@ -5061,7 +5061,7 @@ empty, and the last one `\e[<rows-1>A` followed by the image sequence. By the ti
 terminal draws, the cursor is back at the top of the block and the picture fills exactly the
 rows already accounted for.
 
-`Tui::checkWidth()` skips any line holding `\e_G` or `\e]1337;File=`: an image line is tens
+`TuiBase::checkWidth()` skips any line holding `\e_G` or `\e]1337;File=`: an image line is tens
 of kilobytes long and zero columns wide, and measuring it would fail the width check.
 
 ### The terminal's reply to a query arrives as keystrokes
@@ -5375,7 +5375,7 @@ until someone typed Chinese: macOS draws the composing text and the candidate li
 terminal's cursor, so the pinyin appeared over the footer, three lines below the box it
 was going into.
 
-So `Tui` moves the cursor to the focused component's caret at the end of every frame. A
+So `TuiMainScreen` moves the cursor to the focused component's caret at the end of every frame. A
 component opts in by implementing `Caret` — a small separate interface, like
 `InputHandler` — and reports the caret in its own coordinates; `Container::rowOf()` turns
 that into a row in the frame. The cursor stays hidden; only its position matters.
@@ -5758,7 +5758,7 @@ Regression tests: `ComponentsTest::testEachStyleClosesOnlyWhatItOpened` and
 
 ### A style must not be left open at the end of a line
 
-`Tui` compares frames line by line, so a line is the unit that has to be self-contained:
+`TuiMainScreen` compares frames line by line, so a line is the unit that has to be self-contained:
 a colour opened on one line and closed on the next means the second line carries a style
 it never asked for, and a differential redraw of only the first line leaves the rest of
 the screen tinted.
@@ -8972,7 +8972,7 @@ Left out of `main.ts` with reasons, so the flag list is not compared twice:
 
 `Editor::$disableSubmit` is honoured, `CustomEditor::disableSubmit()` is public, and **nothing in
 pig ever called either** — the third piece of dormant machinery found in one read, after
-`setDebugHandler()` and ctrl+p before it. Upstream has exactly one use for it, and it is the one
+`onDebug` and ctrl+p before it. Upstream has exactly one use for it, and it is the one
 window where a message can neither be sent nor queued: a conversation being summarised out from
 under it.
 
@@ -9063,19 +9063,19 @@ Two things fell out of adding it, both about the column:
 
 ### `/debug` was three-quarters ported and did nothing
 
-`Tui` has had `setDebugHandler()`, the `$onDebug` field and a shift+ctrl+d intercept in
-`handleInput()` since it was ported, `Keys::isShiftCtrlD()` answers, and **nothing in the repository
+The renderer has had the `onDebug` callback and a shift+ctrl+d intercept in
+`handleTerminalInput()` since it was ported, `Keys::isShiftCtrlD()` answers, and **nothing in the repository
 ever called the setter.** So the one key that works whatever holds the focus — which is the whole
 point of a key that captures the screen — did nothing at all. The same shape as ctrl+p taken off the
 editor and bound to nothing, one package over.
 
 What it was missing is upstream's `handleDebugCommand()`, and the argument for porting it rather
-than deleting the hook is that **pig already has the interesting end**: `Tui::checkWidth()` writes
+than deleting the hook is that **pig already has the interesting end**: `TuiBase::checkWidth()` writes
 `[n] (w=N) <line>` for every line of the frame when one is too wide to draw, and *every width bug in
 this file was found by reading exactly that* — `str_pad` lining up an ASCII-only column,
 `BashOutputComponent`'s 22-column note, the frame drawn twice over itself. Each time it had to be
 got at with a probe written outside the repository, because from inside a real session there was no
-way to ask. `Tui::frame()` is that dump on demand, shared with `checkWidth()` — the same question
+way to ask. `TuiBase::frame()` is that dump on demand, shared with `checkWidth()` — the same question
 before a fault and after one.
 
 Four decisions in it:
@@ -11059,22 +11059,14 @@ PHP 的空安全调用操作符 `$this->terminals[$id]?->resize()` 仅在左侧�
 
 ### 全屏固定底部 Dock 与滚动视口（ChatViewport & ScrollView）
 
-**现象**：
-此前 TUI 交互模式采用单屏流式追加渲染，随着对话轮次增加，历史消息将输入框和 Footer 整体推向终端屏幕外，用户查看历史内容时底部输入框和状态行会一同滑出屏幕。而 upstream pi 在全屏模式下，底部的输入框、工作指示器与状态栏始终牢牢吸附固定在终端底部，并且向上滚动历史时，能在视口最后一行正中浮现药丸胶囊 `↓ Jump to latest message · Ctrl+End`。
+**现象**：单屏流式渲染下，对话一长输入框和 Footer 就被推出屏幕。upstream pi 的 fullscreen 模式里输入框、工作指示器、状态栏始终贴在底部，往上滚时视口最后一行正中浮出 `↓ Jump to latest message · Ctrl+End`。
 
-**原因**：
-对照 upstream pi 0.85+（`packages/tui/src/tui-alt-screen.ts` 和 `packages/coding-agent/src/modes/interactive/chat-viewport.ts`），pi 将整屏划分为两部分：
-1. 底部 Dock（`pending`, `status`, `overlay`, `editor`, `footer`）测量高度并严格停靠在最下方几行；
-2. 剩余高度全额分配给 `ScrollView` 视口，负责滚动裁剪渲染历史 transcript；
-3. 默认开启贴底跟随（`followEnd`）；当用户向上翻页（`PageUp` / `Shift+Up` / 鼠标滚轮）时脱离跟随，在视口底部正中合成渲染 `↓ Jump to latest message · Ctrl+End`；按下 `Ctrl+End`（`tui.altScreen.bottom`）或滚回最底立即恢复跟随并隐藏胶囊。
-
-**对策**：
-1. 在 `Pig\Tui\Components\ScrollView` 中实现视口滚动计算、自动跟随、行切片（`renderViewport`）与浮动指示条合成（`composite`）。
-2. 在 `Pig\Tui\Width` 中实现 ANSI 样式感知的 `sliceByColumn` 与 `composite` 方法。
-3. 在 `Pig\CodingAgent\Interactive\ChatViewport` 中实现双段式布局组合与 `Caret` 绝对行号映射（`$lastTranscriptHeight + $inDock`），保证输入法光标精准锁定在底部输入框内。
-4. 在 `InteractiveMode` 中接入 `ChatViewport`，默认在真实终端启用全屏 AltScreen 缓冲，并绑定 `PageUp`, `PageDown`, `Ctrl+Home`, `Ctrl+End`；鼠标滚轮、选择复制与点击浮条归 `Tui` 自己处理（见下一条）。按下 `Ctrl+End`、点击浮条或提交新消息时一键恢复贴底跟随。
-5. 在 `AssistantMessageComponent` 中增加正文内 `<thinking>...</thinking>` 的智能提取与样式分流（`extractInlineThinking`），将模型在正文中泄露的思考过程自动转为弱化浅灰斜体的专用 Thinking 块，彻底消除裸露的 HTML-like 标签。
-6. 全量单元测试覆盖 `ScrollViewTest`、`ChatViewportTest`、`MessageComponentsTest` 及 `InteractiveModeTest`。
+**结构（照 upstream 逐文件移植）**：
+1. `TuiAltScreen`（`tui-alt-screen.ts`）每帧用 `Layout::renderLayoutFrame()`（`layout.ts`）把布局根排进整窗矩形；没有布局根时把 children 放进一个隐式 follow-end 的 `ScrollView`。
+2. `ChatViewport::create()`（`chat-viewport.ts` 的 `createChatViewport()`）：`VStack[transcript ScrollView(basis 0, grow 1, min 1), dock VStack(basis auto)]`；dock 各项可收缩，编辑器最少 3 行。pig 的 overlay 跟 status 一槽、extension footer 跟 footer 一槽、编辑器上方的 Spacer 放在 widgetsAbove 槽。
+3. `ScrollView`（`components/scroll-view.ts`）只管状态：`updateLayout()` 时跟随末尾，`scrollBy()` 返回没滚完的行数（滚轮外溢、拖选自动滚动都靠它），滚动条 `hidden|auto|always`。
+4. 浮条、滚动条、选择高亮都在 `TuiAltScreen::doRender()` 里合成；`tui.altScreen.top/bottom/pageUp/pageDown` 由 `InteractiveMode` 按 `Keybindings` 调 `TuiAltScreen::scrollToTop()/scrollToBottom()/scrollPage()`。
+5. 光标：upstream 找 `CURSOR_MARKER`，pig 用 `Caret`——`Layout::caretIn()` 算出焦点组件在哪个叶子盒子的哪一行。
 
 ### 全屏模式滚轮失灵、底部 Dock 被顶走：AltScreen 必须开鼠标上报 + 关 autowrap
 
@@ -11082,12 +11074,49 @@ PHP 的空安全调用操作符 `$this->terminals[$id]?->resize()` 仅在左侧�
 
 **根因**：为保住终端原生选择复制，把 `?1000h ?1002h ?1006h` 去掉了，`InteractiveMode` 里的滚轮解析成了死代码（测试直接塞 SGR 序列所以一直绿）。绘制分支没有 `?7l`，某行在终端里比 `Width::visible()` 宽一格就自动换行，底行换行会滚屏，逐行 diff 不知道；高度变化也不整屏重画。`scrollToTop()` 在 `ScrollView` 里不存在。
 
-**避坑规则**：AltScreen 照 upstream `TuiAltScreen`：进屏 `?1049h ?7l` + 鼠标上报（tmux/screen 用 button-motion，其余 all-motion，都带 `?1004` 焦点），选择复制由 pig 自己做（`Tui` 里的 selection + `AltScreenFlashContainer` 的 `Copied!`）；每帧逐行绝对寻址第 0..height-1 行，宽或高变了就 `\x1b[2J` 整帧重画。不要为了原生选择再关鼠标上报。
+**避坑规则**：AltScreen 照 upstream `TuiAltScreen`：进屏 `?1049h ?7l` + 鼠标上报（tmux/screen 用 button-motion，其余 all-motion，都带 `?1004` 焦点），选择复制由 pig 自己做（`TuiAltScreen` 里的 selection + `AltScreenFlashContainer` 的 `Copied!`）；每帧逐行绝对寻址第 0..height-1 行，宽或高变了就 `\x1b[2J` 整帧重画。不要为了原生选择再关鼠标上报。
 
 ```php
 $this->terminal->write(self::ENTER_ALT_SCREEN . self::DISABLE_AUTOWRAP . $mouse . "\x1b[2J\x1b[H");
-// 鼠标/焦点报告可能和按键挤在同一次 read 里，handleInput() 先把它们抠出来再交给 listener。
+// 鼠标/焦点报告可能和按键挤在同一次 read 里，TuiAltScreen::handleViewportInput() 先把它们抠出来。
 ```
+
+### 向上滚动后崩溃：`Rendered line N is 172 columns wide, terminal is 171`
+
+**症状**：fullscreen 下往上滚，`↓ Jump to latest message` 胶囊盖在含中文的那一行上时，`checkWidth()` 抛错，pig 崩溃。（现在 `TuiAltScreen` 照 upstream 把超宽行截断而不是抛错，但拼接本身仍必须对。）
+
+**根因**：`Width::composite()` 用非 strict 的 `sliceByColumn()` 取胶囊左边的部分，一个宽字符正好跨在起始列上时被整个留下，整行多出一列。upstream 的 `compositeTuiLine()` 用 `extractSegments()` + strict slice，跨边的宽字符丢掉、用空格补齐，最后还按 `$totalWidth` 截断。
+
+**避坑规则**：任何"把 A 盖到 B 某一列上"的拼接都走 `Width::composite()`；自己拼 before/selected/after 时三段都传 `strict: true`。
+
+```php
+$before = Width::sliceByColumn($line, 0, $start, true);
+```
+
+### TUI 拆成 upstream 的 `TUI` / `TuiBase` / `TuiMainScreen` / `TuiAltScreen`（无别名）
+
+开发者要求 100% 对齐 upstream，出问题直接去 pi 找答案，所以旧类名不留别名。
+
+| 旧 | 新 |
+|---|---|
+| `Tui`（类） | `TUI`（接口）+ `TuiBase`（公共）+ `TuiMainScreen`（regular）+ `TuiAltScreen`（fullscreen） |
+| `new Tui()` + `setAltScreen()` | `TuiRenderer::createInteractiveTui()`（`tui-renderer.ts`） |
+| `onInput()` | `addInputListener()` / `removeInputListener()` |
+| `setDebugHandler()` | `$tui->onDebug = ...` |
+| `handleInput()` / `draw()` | `handleTerminalInput()` / `doRender()` |
+| `setViewportRenderer()` / `setPrimaryScrollView()` / `setCopySelection()` | `setLayoutRoot()` / 布局里 `primary: true` 的 `ScrollView` / `TuiAltScreenOptions` |
+| `new ChatViewport(...)`、`renderViewport()`、`indicatorRect()` | `ChatViewport::create(...)`；浮条由 `TuiAltScreen` 合成 |
+| `ScrollView::scrollToBottom()`、`contentLines()` | `scrollToEnd()`、`LayoutBox::$scrollContentLines` |
+
+**macOS 大小写陷阱**：`Tui.php` → `TUI.php` 只差大小写。APFS 默认不区分大小写、git 默认 `core.ignorecase=true`，`git add -A` 不会记下改名，Linux 上 PSR-4 找不到 `TUI.php`。必须 `git rm --cached packages/tui/src/Tui.php && git add packages/tui/src/TUI.php`。
+
+### `Ansi::at()` 不认 OSC/APC，`\e]8;;\a` 被当成 4 列可见字符
+
+**症状**：`Width::composite()` 在一个已经拼过的行上再拼，第二段落到错误的列（`left  right` 变成 `leright`）。
+
+**根因**：`compositeTuiLine()` 在两段之间插 `\e[0m\e]8;;\a`；`Ansi::at()` 只认 CSI，`]` `8` `;` `;` 被 `sliceByColumn()` 一类按列切的函数算成 4 列。upstream 的 `ansiCodeLength()` 认 OSC（`\e]`）和 APC（`\e_`），到 BEL 或 ST 结束。
+
+**避坑规则**：`Ansi::at()` 是所有按列切分的基础，它认的序列必须和 upstream `ansiCodeLength()` 一致。
 
 ## Version floor: PHP >= 8.3
 

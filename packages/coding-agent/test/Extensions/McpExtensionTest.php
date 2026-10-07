@@ -999,13 +999,13 @@ final class McpExtensionTest extends TestCase
     /**
      * A terminal UI over a fake terminal, started, so what is typed reaches the overlay.
      *
-     * @return array{\Pig\Tui\Test\FakeTerminal, \Pig\Tui\Tui, \Pig\CodingAgent\Interactive\TerminalUi}
+     * @return array{\Pig\Tui\Test\FakeTerminal, \Pig\Tui\TUI, \Pig\CodingAgent\Interactive\TerminalUi}
      */
     private function terminal(): array
     {
         $palette = \Pig\CodingAgent\Theme\Palette::dark(true);
         $terminal = new \Pig\Tui\Test\FakeTerminal(100, 30);
-        $tui = new \Pig\Tui\Tui($terminal);
+        $tui = new \Pig\Tui\TuiMainScreen($terminal);
         $chat = new \Pig\Tui\Container();
         $overlay = new \Pig\Tui\Container();
         $editor = new \Pig\CodingAgent\Interactive\CustomEditor(new \Pig\Tui\Components\Editor($palette->editorTheme()));
@@ -1031,7 +1031,7 @@ final class McpExtensionTest extends TestCase
         return [$terminal, $tui, $ui];
     }
 
-    private function screenOf(\Pig\Tui\Tui $tui): string
+    private function screenOf(\Pig\Tui\TUI $tui): string
     {
         return implode("\n", array_map(\Pig\Tui\Ansi::strip(...), $tui->render(100)));
     }

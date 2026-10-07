@@ -61,6 +61,7 @@ use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Test\ProbeModels;
 use Pig\Test\WithoutProviderKeys;
 use Pig\Tui\Ansi;
+use Pig\Tui\TuiAltScreen;
 use Pig\Tui\Width;
 use Pig\Tui\Components\Text;
 use Pig\Tui\Test\FakeClipboard;
@@ -532,7 +533,7 @@ final class InteractiveModeTest extends TestCase
 
     public function testTheDebugKeyWritesTheFrameAndTheConversation(): void
     {
-        // `Tui` has intercepted shift+ctrl+d and offered `setDebugHandler()` since it was ported,
+        // The renderer has intercepted shift+ctrl+d and offered `onDebug` since it was ported,
         // and nothing ever called the setter — so the key that works whatever holds the focus did
         // nothing, and the frame dump `checkWidth()` writes on a fault could only be got by
         // causing one. Both ends are here now.
@@ -4253,51 +4254,55 @@ final class InteractiveModeTest extends TestCase
         putenv('PIG_TUI_MODE=fullscreen');
         try {
             $this->start(array_fill(0, 10, "an answer with several lines of output\nsecond line\nthird line"));
+            $tui = $this->mode->screen();
+            $this->assertInstanceOf(TuiAltScreen::class, $tui);
+            // The frame actually written, not the document: the pill is composited onto it.
+            $frame = static fn (): string => implode("\n", array_map(Ansi::strip(...), $tui->getScreenLines()));
 
-            // Send a few messages to exceed viewport height (24 rows terminal)
             for ($i = 1; $i <= 8; $i++) {
                 $this->type("user question {$i}");
                 $this->type(self::ENTER);
                 $this->settle();
             }
 
-            // Scroll up using PageUp sequence
+            // PageUp — upstream's `tui.altScreen.pageUp`.
             $this->type("\x1b[5~");
             $this->settle();
+            $this->assertStringContainsString('Jump to latest message · Ctrl+End', $frame());
 
-            $screen = $this->screen();
-            $this->assertStringContainsString('Jump to latest message · Ctrl+End', $screen);
-
-            // Test mouse click on the indicator label:
-            // The indicator is centered on the bottom row of transcript.
-            // Click SGR code: button 0 (left click) on column 35, row 19 (1-based: x=36, y=20)
-            $rect = $this->mode->viewport()?->indicatorRect();
-            $this->assertNotNull($rect);
-            $clickX = $rect['column'] + 5 + 1; // 1-based
-            $clickY = $rect['row'] + 1;
-            $this->type("\x1b[<0;{$clickX};{$clickY}M");
+            // A click on the pill jumps back to the end.
+            $row = null;
+            $column = null;
+            foreach ($tui->getScreenLines() as $index => $line) {
+                $at = mb_strpos(Ansi::strip($line), 'Jump to latest');
+                if ($at !== false) {
+                    [$row, $column] = [$index, $at];
+                }
+            }
+            $this->assertNotNull($row);
+            $this->type("\x1b[<0;" . ($column + 2) . ';' . ($row + 1) . 'M');
             $this->settle();
-            $this->assertStringNotContainsString('Jump to latest message', $this->screen());
+            $this->assertStringNotContainsString('Jump to latest message', $frame());
 
-            // Scroll up again
+            // Ctrl+End — upstream's `tui.altScreen.bottom`.
             $this->type("\x1b[5~");
             $this->settle();
-            $this->assertStringContainsString('Jump to latest message', $this->screen());
-
-            // Test bare End key (MacBook Fn + -> sends \x1b[F or \x1b[4~)
-            $this->type("\x1b[F");
+            $this->assertStringContainsString('Jump to latest message', $frame());
+            $this->type("\x1b[1;5F");
             $this->settle();
-            $this->assertStringNotContainsString('Jump to latest message', $this->screen());
+            $this->assertStringNotContainsString('Jump to latest message', $frame());
 
-            // Test continuous trackpad batched SGR wheel events in a single chunk
+            // A trackpad gesture arrives as several wheel reports in one read.
             $this->type("\x1b[<64;40;10M\x1b[<64;40;10M\x1b[<64;40;10M");
             $this->settle();
-            $this->assertStringContainsString('Jump to latest message', $this->screen());
-
-            // Scroll back down using batched wheel down events
+            $this->assertStringContainsString('Jump to latest message', $frame());
             $this->type("\x1b[<65;40;10M\x1b[<65;40;10M\x1b[<65;40;10M\x1b[<65;40;10M\x1b[<65;40;10M");
             $this->settle();
-            $this->assertStringNotContainsString('Jump to latest message', $this->screen());
+            $this->assertStringNotContainsString('Jump to latest message', $frame());
+
+            // The editor and footer stay on the last rows whatever the transcript does.
+            $lines = $tui->getScreenLines();
+            $this->assertSame(24, count($lines));
         } finally {
             putenv('PIG_TUI_MODE');
         }

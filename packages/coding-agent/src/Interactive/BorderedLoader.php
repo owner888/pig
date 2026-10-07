@@ -13,7 +13,7 @@ use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\Text;
 use Pig\Tui\Container;
 use Pig\Tui\InputHandler;
-use Pig\Tui\Tui;
+use Pig\Tui\TUI;
 
 /**
  * A spinner between two rules, with `esc cancel` under it.
@@ -32,7 +32,7 @@ final class BorderedLoader extends Container implements InputHandler
 {
     private readonly CancellableLoader $loader;
 
-    public function __construct(Tui $tui, Palette $palette, string $message = 'Working...')
+    public function __construct(TUI $tui, Palette $palette, string $message = 'Working...')
     {
         // `border`, not `borderMuted`: upstream's choice, and the right one — these rules are
         // the edge of something that has taken the screen, not the quiet frame around the prompt.
