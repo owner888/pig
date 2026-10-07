@@ -77,6 +77,8 @@ Every release entry strictly follows upstream pi's format with version date and 
   - Execution time dropped from **53.1s to 0.8s** while preserving granular syntax error reporting and failure line locations.
 - **SGR Mouse Protocol Click Parsing**:
   - Implemented SGR mouse sequence decoding (`\x1b[<button;x;y[Mm]`) in `InteractiveMode`, enabling direct mouse left-click navigation on the `↓ Jump to latest message` indicator.
+- **Dock Top Spacing in Chat Viewport**:
+  - Restored `Spacer(1)` padding in `ChatViewport` above the editor dock, ensuring a clean vertical separation between the transcript tool output boxes and the `── ⠋ Working... ──` top border.
 
 ## [0.4.4] - 2026-10-07
 

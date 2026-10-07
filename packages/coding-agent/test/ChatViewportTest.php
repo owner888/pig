@@ -39,8 +39,8 @@ final class ChatViewportTest extends TestCase
         );
 
         // Screen is 30 cols wide, 8 lines tall.
-        // Dock has editor (1 line) + footer (1 line) = 2 lines.
-        // Transcript gets 8 - 2 = 6 lines.
+        // Dock has Spacer(1) + editor (1 line) + footer (1 line) = 3 lines.
+        // Transcript gets 8 - 3 = 5 lines.
         $lines = $viewport->renderViewport(30, 8);
         $this->assertCount(8, $lines);
 
@@ -50,9 +50,9 @@ final class ChatViewportTest extends TestCase
         $this->assertSame('editor prompt', $clean[6]);
         $this->assertSame('footer line', $clean[7]);
 
-        // Transcript shows the last 6 messages (15 to 20) by default
-        $this->assertSame('message 15', $clean[0]);
-        $this->assertSame('message 20', $clean[5]);
+        // Transcript shows the last 5 messages (16 to 20) by default
+        $this->assertSame('message 16', $clean[0]);
+        $this->assertSame('message 20', $clean[4]);
 
         // Scroll up
         $viewport->transcript()->scrollBy(-5);
@@ -65,8 +65,8 @@ final class ChatViewportTest extends TestCase
         $this->assertSame('editor prompt', $cleanScrolled[6]);
         $this->assertSame('footer line', $cleanScrolled[7]);
 
-        // Indicator appears at bottom of transcript viewport (line index 5)
-        $this->assertStringContainsString('Jump · End', $cleanScrolled[5]);
+        // Indicator appears at bottom of transcript viewport (line index 4)
+        $this->assertStringContainsString('Jump · End', $cleanScrolled[4]);
 
         // Scroll back to bottom
         $viewport->transcript()->scrollToBottom();

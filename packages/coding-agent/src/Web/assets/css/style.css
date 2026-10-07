@@ -1755,19 +1755,22 @@
       color: #f8fafc;
     }
 
-    /* Terminal button in user-controls */
-    .ctrl-btn.terminal-btn {
+    /* Terminal button & Nodes button in user-controls */
+    .ctrl-btn {
       display: inline-flex;
       align-items: center;
       gap: 6px;
     }
+    .nodes-btn-icon,
     .terminal-btn-icon {
       flex-shrink: 0;
       color: #38bdf8;
     }
+    [data-theme="light"] .nodes-btn-icon,
     [data-theme="light"] .terminal-btn-icon {
       color: #0284c7;
     }
+    [data-theme="labra"] .nodes-btn-icon,
     [data-theme="labra"] .terminal-btn-icon {
       color: var(--accent);
     }

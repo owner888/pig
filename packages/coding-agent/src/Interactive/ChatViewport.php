@@ -42,6 +42,7 @@ final class ChatViewport extends Container implements Caret
         $this->dock->addChild($status);
         $this->dock->addChild($overlay);
         $this->dock->addChild($widgetsAbove);
+        $this->dock->addChild(new \Pig\Tui\Components\Spacer(1));
         $this->dock->addChild($this->editor);
         $this->dock->addChild($widgetsBelow);
         $this->dock->addChild($footer);
