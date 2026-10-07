@@ -4171,4 +4171,34 @@ final class InteractiveModeTest extends TestCase
             'Expected restart confirmation on /web restart'
         );
     }
+
+    public function testExternalEditorCommandResolution(): void
+    {
+        $this->start();
+        $ref = new \ReflectionMethod($this->mode, 'resolveExternalEditorCommand');
+
+        // 1. settings.externalEditor takes highest precedence
+        $this->settings->setExternalEditor('code --wait');
+        putenv('VISUAL=nano');
+        putenv('EDITOR=vi');
+        $this->assertSame('code --wait', $ref->invoke($this->mode));
+
+        // 2. $VISUAL takes second precedence
+        $this->settings->setExternalEditor(null);
+        putenv('VISUAL=vim');
+        putenv('EDITOR=nano');
+        $this->assertSame('vim', $ref->invoke($this->mode));
+
+        // 3. $EDITOR takes third precedence
+        putenv('VISUAL');
+        putenv('EDITOR=nvim');
+        $this->assertSame('nvim', $ref->invoke($this->mode));
+
+        // 4. Default fallback when unconfigured
+        putenv('VISUAL');
+        putenv('EDITOR');
+        $fallback = $ref->invoke($this->mode);
+        $this->assertIsString($fallback);
+        $this->assertTrue(in_array($fallback, ['notepad', 'nano', 'vim', 'vi'], true));
+    }
 }

@@ -1179,10 +1179,10 @@ final class InteractiveMode
      */
     private function externalEditor(string $text): ?string
     {
-        $command = getenv('VISUAL') ?: getenv('EDITOR');
+        $command = $this->resolveExternalEditorCommand();
 
-        if ($command === false || trim($command) === '') {
-            $this->sayWarning('No editor configured. Set $VISUAL or $EDITOR.');
+        if ($command === null || trim($command) === '') {
+            $this->sayWarning('No editor configured. Set $VISUAL or $EDITOR, or "externalEditor" in settings.json.');
 
             return null;
         }
@@ -1224,6 +1224,54 @@ final class InteractiveMode
             $this->tui->start();
             $this->tui->requestRender(true);
         }
+    }
+
+    /**
+     * Resolves the external editor command (aligned with upstream pi getExternalEditorCommand):
+     * 1. `settings.externalEditor` from settings.json
+     * 2. $VISUAL or $EDITOR environment variables
+     * 3. Fallback: 'notepad' on Windows; 'nano' (or 'vim' / 'vi' if nano not found) on POSIX
+     */
+    private function resolveExternalEditorCommand(): ?string
+    {
+        $configured = $this->settings?->externalEditor();
+        if ($configured !== null && trim($configured) !== '') {
+            return trim($configured);
+        }
+
+        $env = getenv('VISUAL') ?: getenv('EDITOR');
+        if (is_string($env) && trim($env) !== '') {
+            return trim($env);
+        }
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            return 'notepad';
+        }
+
+        foreach (['nano', 'vim', 'vi'] as $candidate) {
+            if ($this->isExecutableOnPath($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return 'nano';
+    }
+
+    private function isExecutableOnPath(string $binary): bool
+    {
+        $path = getenv('PATH');
+        if ($path === false || $path === '') {
+            return false;
+        }
+
+        foreach (explode(PATH_SEPARATOR, $path) as $dir) {
+            $candidate = rtrim($dir, '/') . '/' . $binary;
+            if (is_file($candidate) && is_executable($candidate)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** ctrl+p, and shift+ctrl+p the other way: the next model along, without opening the list. */

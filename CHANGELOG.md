@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.3.65] - 2026-10-06
+
+### Added
+
+- Added `externalEditor` setting and intelligent fallback for `Ctrl+G` external prompt editing (aligned with upstream pi `getExternalEditorCommand`):
+  - Added `Settings::externalEditor()` and `setExternalEditor(?string)` to support `"externalEditor": "vim"` (or `"nvim"`, `"code --wait"`) in `~/.pig/agent/settings.json`.
+  - Resolution precedence: `settings.externalEditor` > `$VISUAL` > `$EDITOR` > platform fallback (`notepad` on Windows; `nano` / `vim` / `vi` on POSIX).
+  - Eliminates the previous hard failure `Warning: No editor configured. Set $VISUAL or $EDITOR.` when environment variables were not exported.
+
 ## [0.3.64] - 2026-10-06
 
 ### New Features

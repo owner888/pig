@@ -112,6 +112,22 @@ final class Settings
         return is_string($path) && $path !== '' ? $path : null;
     }
 
+    /**
+     * External editor command for Ctrl+G external prompt editing.
+     * Takes precedence over VISUAL / EDITOR environment variables (aligned with upstream pi).
+     */
+    public function externalEditor(): ?string
+    {
+        $editor = $this->get('externalEditor');
+
+        return is_string($editor) && trim($editor) !== '' ? trim($editor) : null;
+    }
+
+    public function setExternalEditor(?string $editor): void
+    {
+        $this->set('externalEditor', $editor !== null && trim($editor) !== '' ? trim($editor) : null);
+    }
+
     public function setTheme(string $theme): void
     {
         $this->set('theme', $theme);

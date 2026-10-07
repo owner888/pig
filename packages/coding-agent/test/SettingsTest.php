@@ -373,6 +373,7 @@ final class SettingsTest extends TestCase
     {
         yield 'a theme' => ['theme', 'light'];
         yield 'a shell' => ['shellPath', '/opt/homebrew/bin/bash'];
+        yield 'an external editor' => ['externalEditor', 'vim'];
         yield 'a model' => ['defaultModel', 'claude-sonnet-4-5'];
         yield 'a version somebody has seen' => ['lastChangelogVersion', '0.1.1'];
     }
@@ -383,6 +384,7 @@ final class SettingsTest extends TestCase
         $read = fn (Settings $s): ?string => match ($key) {
             'theme' => $s->theme(),
             'shellPath' => $s->shellPath(),
+            'externalEditor' => $s->externalEditor(),
             'defaultModel' => $s->defaultModel(),
             'lastChangelogVersion' => $s->lastChangelogVersion(),
         };
@@ -416,6 +418,7 @@ final class SettingsTest extends TestCase
         $settings->setCompactionEnabled(false);
         $settings->setQueueMode(QueueMode::All);
         $settings->setLastChangelogVersion('0.2.0');
+        $settings->setExternalEditor('vim');
 
         foreach ([$settings, $this->load()] as $where) {
             $this->assertTrue($where->hideThinking());
@@ -424,6 +427,7 @@ final class SettingsTest extends TestCase
             $this->assertFalse($where->compactionEnabled());
             $this->assertSame(QueueMode::All, $where->queueMode());
             $this->assertSame('0.2.0', $where->lastChangelogVersion());
+            $this->assertSame('vim', $where->externalEditor());
         }
     }
 
