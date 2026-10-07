@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.6] - 2026-10-07
+
+### Changed
+
+- Streamlined Web UI header action buttons for visual consistency:
+  - Renamed "账号与配额" to concise "🔑 账号" (in Chinese) and "🔑 Accounts" (in English) with dedicated key icon.
+  - Added clean 6px gap spacing to `.ctrl-btn` between `.nodes-btn-icon` SVG and "SSH 节点" label, matching all other header buttons.
+
 ## [0.4.5] - 2026-10-07
 
 ### New Features
