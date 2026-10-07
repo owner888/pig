@@ -4288,6 +4288,16 @@ final class InteractiveModeTest extends TestCase
             $this->type("\x1b[F");
             $this->settle();
             $this->assertStringNotContainsString('Jump to latest message', $this->screen());
+
+            // Test continuous trackpad batched SGR wheel events in a single chunk
+            $this->type("\x1b[<64;40;10M\x1b[<64;40;10M\x1b[<64;40;10M");
+            $this->settle();
+            $this->assertStringContainsString('Jump to latest message', $this->screen());
+
+            // Scroll back down using batched wheel down events
+            $this->type("\x1b[<65;40;10M\x1b[<65;40;10M\x1b[<65;40;10M\x1b[<65;40;10M\x1b[<65;40;10M");
+            $this->settle();
+            $this->assertStringNotContainsString('Jump to latest message', $this->screen());
         } finally {
             putenv('PIG_TUI_MODE');
         }

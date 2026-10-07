@@ -135,7 +135,7 @@ export class WebTerminal {
           <button class="web-term-quick-btn" data-cmd="ls -la" title="ls -la">ls -la</button>
           <button class="web-term-btn web-term-clear-btn" title="Clear (Ctrl+L)">🧹</button>
           <button class="web-term-btn web-term-max-btn" title="Toggle Fullscreen">⛶</button>
-          <button class="web-term-btn web-term-close-btn" title="Close (Esc)">✕</button>
+          <button class="web-term-btn web-term-close-btn" title="Close">✕</button>
         </div>
       </div>
       <div class="web-term-viewport" id="web-term-viewport"></div>
@@ -145,6 +145,15 @@ export class WebTerminal {
     this.addTabBtn = this.element.querySelector("#web-term-add-tab-btn");
     this.viewportEl = this.element.querySelector("#web-term-viewport");
     this.cwdBadge = this.element.querySelector(".web-term-cwd");
+
+    if (typeof ResizeObserver !== "undefined") {
+      this.resizeObserver = new ResizeObserver(() => {
+        if (this.isOpen) {
+          this.fitActiveTab();
+        }
+      });
+      this.resizeObserver.observe(this.viewportEl);
+    }
 
     this.bindEvents();
     document.body.appendChild(this.element);
@@ -179,6 +188,15 @@ export class WebTerminal {
         this.fitActiveTab();
       }
     });
+
+    if (typeof ResizeObserver !== "undefined") {
+      this.resizeObserver = new ResizeObserver(() => {
+        if (this.isOpen) {
+          this.fitActiveTab();
+        }
+      });
+      this.resizeObserver.observe(this.viewportEl);
+    }
 
     this.viewportEl.addEventListener("click", () => {
       const tab = this.tabs.find((t) => t.id === this.activeTabId);
@@ -291,12 +309,16 @@ export class WebTerminal {
         fit.fit();
       } catch (e) {}
 
+      // Guard against layout-in-progress / 0px dimensions (clamp to minimum 20x4 or 80x24 default)
+      const initialCols = term.cols && term.cols >= 20 ? term.cols : 80;
+      const initialRows = term.rows && term.rows >= 4 ? term.rows : 24;
+
       network.send({
         type: "terminal_create",
         terminalId: id,
         cwd: targetCwd,
-        cols: term.cols || 80,
-        rows: term.rows || 24,
+        cols: initialCols,
+        rows: initialRows,
         command: command || undefined,
       });
     });
@@ -386,13 +408,29 @@ export class WebTerminal {
     if (tab && tab.fit && tab.term) {
       try {
         tab.fit.fit();
+        // Only send resize if terminal has legitimate dimensions (>10 cols, >2 rows)
+        if (tab.term.cols >= 10 && tab.term.rows >= 2) {
+          network.send({
+            type: "terminal_resize",
+            terminalId: tab.id,
+            cols: tab.term.cols,
+            rows: tab.term.rows,
+          });
+        }
+      } catch (e) {}
+    }
+  }
+
+  reattachAll() {
+    for (const t of this.tabs) {
+      if (t.exitCode === null && t.term) {
         network.send({
           type: "terminal_resize",
-          terminalId: tab.id,
-          cols: tab.term.cols,
-          rows: tab.term.rows,
+          terminalId: t.id,
+          cols: t.term.cols || 80,
+          rows: t.term.rows || 24,
         });
-      } catch (e) {}
+      }
     }
   }
 
@@ -443,6 +481,15 @@ export class WebTerminal {
           tab.term.focus();
         }
       }
+
+      // Re-fit once CSS slide-in transition finishes (220ms)
+      setTimeout(() => {
+        if (this.isOpen) {
+          this.fitActiveTab();
+          const tab = this.tabs.find((t) => t.id === this.activeTabId);
+          tab?.term?.focus();
+        }
+      }, 240);
     });
   }
 

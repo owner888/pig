@@ -323,8 +323,16 @@ final class ProcessTerminal implements Terminal
             return;
         }
 
-        $this->rows = max(1, (int) $match[1]);
-        $this->columns = max(1, (int) $match[2]);
+        $measuredRows = (int) $match[1];
+        $measuredCols = (int) $match[2];
+
+        if ($measuredRows > 0) {
+            $this->rows = $measuredRows;
+        }
+
+        if ($measuredCols > 3) {
+            $this->columns = $measuredCols;
+        }
     }
 
     private function watchResize(): void
@@ -358,10 +366,26 @@ final class ProcessTerminal implements Terminal
     private function stty(string $arguments): ?string
     {
         $descriptors = [0 => ['file', '/dev/tty', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-        $process = proc_open("stty {$arguments}", $descriptors, $pipes);
+        set_error_handler(static fn (): bool => true);
+        try {
+            $process = proc_open("stty {$arguments}", $descriptors, $pipes);
+        } finally {
+            restore_error_handler();
+        }
 
         if (!is_resource($process)) {
-            throw new TuiError("Could not run stty {$arguments}");
+            // Fall back to current input descriptor if /dev/tty cannot be opened directly
+            $fallbackDescriptors = [0 => $this->input, 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+            set_error_handler(static fn (): bool => true);
+            try {
+                $process = proc_open("stty {$arguments}", $fallbackDescriptors, $pipes);
+            } finally {
+                restore_error_handler();
+            }
+
+            if (!is_resource($process)) {
+                return null;
+            }
         }
 
         $output = stream_get_contents($pipes[1]);
@@ -373,7 +397,7 @@ final class ProcessTerminal implements Terminal
         $status = proc_close($process);
 
         if ($status !== 0) {
-            throw new TuiError("stty {$arguments} failed: " . trim((string) $error));
+            return null;
         }
 
         return $output === false ? null : trim($output);

@@ -698,7 +698,17 @@ final class InteractiveMode
         // Stopped here and not only in run()'s finally: whoever calls this wants the
         // terminal back — raw mode off, cursor shown — whether or not the loop is what
         // they are waiting on.
-        $this->tui->stop();
+        if ($this->tuiMode === 'fullscreen' && $this->viewport !== null) {
+            $width = $this->tui->terminal->columns();
+            $dumpLines = $this->viewport->transcript()->render($width);
+            $this->tui->stop();
+            if ($dumpLines !== []) {
+                $out = implode("\n", $dumpLines) . "\n";
+                fwrite(STDOUT, $out);
+            }
+        } else {
+            $this->tui->stop();
+        }
         Loop::get()->stop();
     }
 
@@ -795,6 +805,10 @@ final class InteractiveMode
             });
 
             $this->tui->addChild($this->viewport);
+            // Wheel, selection and the jump-to-latest click are the renderer's, as upstream's
+            // `TuiAltScreen` owns them; it needs to know which view they move and copy from.
+            $this->tui->setPrimaryScrollView($this->viewport->transcript());
+            $this->tui->setCopySelection(fn (string $text): bool => $this->clipboard->write($text));
             $this->tui->setFocus($this->editor);
 
             return;
@@ -1099,43 +1113,6 @@ final class InteractiveMode
                 return null;
             }
 
-            // SGR mouse protocol handling (\x1b[<button;x;y[Mm])
-            if (preg_match('/^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/', $data, $m) === 1) {
-                $button = (int) $m[1];
-                $col = (int) $m[2] - 1; // 1-based to 0-based
-                $row = (int) $m[3] - 1;
-                $release = $m[4] === 'm';
-
-                // Wheel up (\x1b[<64;...M)
-                if ($button === 64) {
-                    $this->viewport->transcript()->scrollBy(-3);
-                    $this->tui->requestRender();
-
-                    return ['consume' => true];
-                }
-
-                // Wheel down (\x1b[<65;...M)
-                if ($button === 65) {
-                    $this->viewport->transcript()->scrollBy(3);
-                    $this->tui->requestRender();
-
-                    return ['consume' => true];
-                }
-
-                // Left click press (button 0, non-motion, press)
-                if (!$release && ($button & 3) === 0 && ($button & 32) === 0) {
-                    $rect = $this->viewport->indicatorRect();
-                    if ($rect !== null && $row === $rect['row'] && $col >= $rect['column'] && $col < $rect['column'] + $rect['width']) {
-                        $this->viewport->transcript()->scrollToBottom();
-                        $this->tui->requestRender();
-
-                        return ['consume' => true];
-                    }
-                }
-
-                return ['consume' => true];
-            }
-
             // Scroll viewport to bottom (Ctrl+End, or bare End / Cmd+Down when scrolled up away from bottom)
             if (Keys::matchesName($data, 'ctrl+end') || (!$this->viewport->transcript()->isFollowingEnd() && Keys::isEnd($data))) {
                 $this->viewport->transcript()->scrollToBottom();
@@ -1146,7 +1123,7 @@ final class InteractiveMode
 
             // Scroll viewport to top (Ctrl+Home, or bare Home when scrolled up away from bottom)
             if (Keys::matchesName($data, 'ctrl+home') || (!$this->viewport->transcript()->isFollowingEnd() && Keys::isHome($data))) {
-                $this->viewport->transcript()->scrollToTop();
+                $this->viewport->transcript()->scrollToStart();
                 $this->tui->requestRender();
 
                 return ['consume' => true];

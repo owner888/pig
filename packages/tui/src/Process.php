@@ -59,7 +59,7 @@ final class Process
      *
      * @return list<int>
      */
-    private static function descendants(int $pid): array
+    public static function descendants(int $pid): array
     {
         $children = self::childrenByParent();
         $found = [];

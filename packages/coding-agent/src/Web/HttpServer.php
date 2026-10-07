@@ -879,7 +879,11 @@ final class HttpServer
                         ]);
                     }
                 })(),
-                'terminal_input' => $pty->input((string) ($data['terminalId'] ?? ''), (string) ($data['data'] ?? '')),
+                'terminal_input' => (function () use ($pty, $data): void {
+                    $tid = (string) ($data['terminalId'] ?? '');
+                    $inputData = (string) ($data['data'] ?? '');
+                    $pty->input($tid, $inputData);
+                })(),
                 'terminal_resize' => $pty->resize(
                     (string) ($data['terminalId'] ?? ''),
                     (int) ($data['cols'] ?? 80),

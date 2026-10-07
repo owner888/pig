@@ -43,6 +43,25 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.8] - 2026-10-07
+
+### Added
+
+- **Complete Upstream Pi-Aligned Fullscreen AltScreen & Trackpad Wheel Acceleration**:
+  - Added `WheelScrollAccelerator` matching upstream pi's `wheel-scroll.ts` to support smooth trackpad gesture inertia and velocity acceleration (up to 6 lines/event on non-accelerating transports, or 15 lines/event with Alt/Option).
+  - Added `AltScreenFlashContainer` to support ephemeral overlay notifications and flash confirmations (`Copied!`).
+  - Added full mouse text selection across the fullscreen viewport with click-and-drag, double-click word selection, triple-click line selection, auto-scroll at viewport edges, and automatic clipboard copying (`copyOnSelect`).
+  - Added `TuiAltScreenTest` unit test suite covering AltScreen lifecycle, SGR mouse reporting, wheel event batching, and text selection.
+
+### Fixed
+
+- **Fixed Fullscreen Viewport Dock Eviction and Terminal Rolling**:
+  - Switched AltScreen rendering from relative cursor movements to absolute row addressing (`\x1b[<row>;1H\x1b[2K`), completely eliminating unintentional `\r\n` terminal rolling that pushed the bottom input dock and status footer off the screen during scroll.
+  - Added batch and stream parsing for SGR mouse sequences (`\x1b[<...M`) and traditional X10/XTerm mouse sequences (`\x1b[M...`), resolving an issue where macOS trackpad gestures with multiple queued wheel events failed strict regex matching and were silently dropped.
+  - Fixed terminal dimension measurement guard in `ProcessTerminal` to preserve valid dimensions when transient resize events report width <= 3, preventing `checkWidth` crash loops.
+  - Enhanced `ProcessTerminal::stty` with automatic fallback to process input descriptor if direct `/dev/tty` opening fails, avoiding startup crashes (`Could not run stty -g`).
+  - Aligned `fullscreenExitOutput` behavior to dump the full transcript back to the main terminal screen buffer on exit, allowing users to scroll through past history in their terminal scrollback after quitting.
+
 ## [0.4.7] - 2026-10-07
 
 ### Fixed

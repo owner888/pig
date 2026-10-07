@@ -912,6 +912,7 @@ import { NodeWorkbench } from "./components/NodeWorkbench.js";
     }
     function pigReachable() {
       if (unreachable) { unreachable = null; hideStatusBanner(); }
+      window.webTerminal?.reattachAll();
     }
     async function fetchJson(url, what) {
       const res = await fetch(url);

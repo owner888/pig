@@ -99,7 +99,7 @@ final class Settings
 
     public function setTuiMode(string $mode): void
     {
-        $this->set('tui.mode', $mode === 'regular' ? 'regular' : 'fullscreen');
+        $this->set('tuiMode', $mode === 'regular' ? 'regular' : 'fullscreen');
     }
 
     public function theme(): ?string
@@ -450,6 +450,10 @@ final class Settings
      */
     public function get(string $key): mixed
     {
+        if (is_array($this->merged) && array_key_exists($key, $this->merged)) {
+            return $this->merged[$key];
+        }
+
         $value = $this->merged;
 
         foreach (explode('.', $key) as $part) {

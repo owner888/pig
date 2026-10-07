@@ -149,4 +149,78 @@ final class PtyTest extends TestCase
             }
         });
     }
+
+    public function testPtyResizeBroadcastsToChildProcesses(): void
+    {
+        $output = '';
+        $deferred = new Deferred();
+
+        Async::run(function () use (&$output, $deferred): void {
+            $pty = new PtyProcess(
+                id: 'term-resize-broadcast',
+                cwd: sys_get_temp_dir(),
+                cols: 80,
+                rows: 24,
+                onOutput: function (string $id, string $data) use (&$output, $deferred): void {
+                    $output .= $data;
+                    if (str_contains($output, 'COLUMNS=120') && str_contains($output, 'LINES=40')) {
+                        if (!$deferred->isComplete()) {
+                            $deferred->complete(true);
+                        }
+                    }
+                },
+            );
+
+            // Resize pty to 120x40 and inspect environment in a child shell
+            $pty->resize(120, 40);
+            $pty->input("sh -c 'echo COLUMNS=\$COLUMNS LINES=\$LINES'\n");
+
+            $ok = $deferred->future->await();
+            $this->assertTrue($ok);
+            $this->assertSame(120, $pty->cols());
+            $this->assertSame(40, $pty->rows());
+
+            $pty->kill();
+            $this->assertFalse($pty->isRunning());
+        });
+    }
+
+    public function testPtyProcessClampsDimensionsAndHandlesLongInput(): void
+    {
+        $output = '';
+        $deferred = new Deferred();
+
+        Async::run(function () use (&$output, $deferred): void {
+            // Pass extreme/invalid dimensions, should safely clamp to bounds
+            $pty = new PtyProcess(
+                id: 'term-clamp',
+                cwd: sys_get_temp_dir(),
+                cols: 2,
+                rows: 1,
+                onOutput: function (string $id, string $data) use (&$output, $deferred): void {
+                    $output .= $data;
+                    if (str_contains($output, 'LONG_INPUT_VERIFIED_OK')) {
+                        if (!$deferred->isComplete()) {
+                            $deferred->complete(true);
+                        }
+                    }
+                },
+            );
+
+            // Should clamp min cols=10, min rows=4
+            $this->assertSame(10, $pty->cols());
+            $this->assertSame(4, $pty->rows());
+
+            // Send a payload with multiple characters without truncation
+            $largeString = str_repeat('X', 500);
+            $pty->input("echo {$largeString} LONG_INPUT_VERIFIED_OK\n");
+
+            $ok = $deferred->future->await();
+            $this->assertTrue($ok);
+            $this->assertStringContainsString($largeString, $output);
+
+            $pty->kill();
+            $this->assertFalse($pty->isRunning());
+        });
+    }
 }

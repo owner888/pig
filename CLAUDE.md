@@ -11072,9 +11072,22 @@ PHP 的空安全调用操作符 `$this->terminals[$id]?->resize()` 仅在左侧�
 1. 在 `Pig\Tui\Components\ScrollView` 中实现视口滚动计算、自动跟随、行切片（`renderViewport`）与浮动指示条合成（`composite`）。
 2. 在 `Pig\Tui\Width` 中实现 ANSI 样式感知的 `sliceByColumn` 与 `composite` 方法。
 3. 在 `Pig\CodingAgent\Interactive\ChatViewport` 中实现双段式布局组合与 `Caret` 绝对行号映射（`$lastTranscriptHeight + $inDock`），保证输入法光标精准锁定在底部输入框内。
-4. 在 `InteractiveMode` 中接入 `ChatViewport`，默认在真实终端启用全屏 AltScreen 缓冲，并绑定 `PageUp`, `PageDown`, `Ctrl+Home`, `Ctrl+End` 及鼠标滚轮事件；按下 `Ctrl+End`、点击浮条或提交新消息时一键恢复贴底跟随。
+4. 在 `InteractiveMode` 中接入 `ChatViewport`，默认在真实终端启用全屏 AltScreen 缓冲，并绑定 `PageUp`, `PageDown`, `Ctrl+Home`, `Ctrl+End`；鼠标滚轮、选择复制与点击浮条归 `Tui` 自己处理（见下一条）。按下 `Ctrl+End`、点击浮条或提交新消息时一键恢复贴底跟随。
 5. 在 `AssistantMessageComponent` 中增加正文内 `<thinking>...</thinking>` 的智能提取与样式分流（`extractInlineThinking`），将模型在正文中泄露的思考过程自动转为弱化浅灰斜体的专用 Thinking 块，彻底消除裸露的 HTML-like 标签。
 6. 全量单元测试覆盖 `ScrollViewTest`、`ChatViewportTest`、`MessageComponentsTest` 及 `InteractiveModeTest`。
+
+### 全屏模式滚轮失灵、底部 Dock 被顶走：AltScreen 必须开鼠标上报 + 关 autowrap
+
+**症状**：fullscreen 下滚轮翻不动历史（Terminal.app 把滚轮变成 ↑/↓，被输入框拿去翻历史）；底部输入框偶尔整体上移一行且不再归位，调窗口高度后错位；`Ctrl+Home` 直接 fatal。
+
+**根因**：为保住终端原生选择复制，把 `?1000h ?1002h ?1006h` 去掉了，`InteractiveMode` 里的滚轮解析成了死代码（测试直接塞 SGR 序列所以一直绿）。绘制分支没有 `?7l`，某行在终端里比 `Width::visible()` 宽一格就自动换行，底行换行会滚屏，逐行 diff 不知道；高度变化也不整屏重画。`scrollToTop()` 在 `ScrollView` 里不存在。
+
+**避坑规则**：AltScreen 照 upstream `TuiAltScreen`：进屏 `?1049h ?7l` + 鼠标上报（tmux/screen 用 button-motion，其余 all-motion，都带 `?1004` 焦点），选择复制由 pig 自己做（`Tui` 里的 selection + `AltScreenFlashContainer` 的 `Copied!`）；每帧逐行绝对寻址第 0..height-1 行，宽或高变了就 `\x1b[2J` 整帧重画。不要为了原生选择再关鼠标上报。
+
+```php
+$this->terminal->write(self::ENTER_ALT_SCREEN . self::DISABLE_AUTOWRAP . $mouse . "\x1b[2J\x1b[H");
+// 鼠标/焦点报告可能和按键挤在同一次 read 里，handleInput() 先把它们抠出来再交给 listener。
+```
 
 ## Version floor: PHP >= 8.3
 

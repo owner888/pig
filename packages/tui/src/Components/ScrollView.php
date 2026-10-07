@@ -26,6 +26,9 @@ final class ScrollView extends Container
 
     private int $contentHeight = 0;
 
+    /** @var list<string> the whole content as last rendered, which a selection reads its text from */
+    private array $contentLines = [];
+
     private int $currentViewportHeight = 0;
 
     /** @var array{row: int, column: int, width: int}|null */
@@ -59,16 +62,26 @@ final class ScrollView extends Container
         return $this->contentHeight;
     }
 
+    /** @return list<string> */
+    public function contentLines(): array
+    {
+        return $this->contentLines;
+    }
+
     /** @return array{row: int, column: int, width: int}|null */
     public function indicatorRect(): ?array
     {
         return $this->indicatorRect;
     }
 
-    public function scrollBy(int $lines): void
+    /**
+     * Move by `$lines` and return the part that could not be moved — upstream returns the
+     * remainder too, which is how a drag-selection stops auto-scrolling at either end.
+     */
+    public function scrollBy(int $lines): int
     {
         if ($lines === 0) {
-            return;
+            return 0;
         }
 
         $maxScrollTop = max(0, $this->contentHeight - $this->currentViewportHeight);
@@ -77,6 +90,8 @@ final class ScrollView extends Container
 
         $this->currentScrollTop = $next;
         $this->followingEnd = $this->followEnd && $next === $maxScrollTop;
+
+        return $lines - ($next - $start);
     }
 
     public function scrollToStart(): void
@@ -101,6 +116,7 @@ final class ScrollView extends Container
     {
         $this->currentViewportHeight = max(1, $height);
         $lines = $this->child->render($width);
+        $this->contentLines = $lines;
         $this->contentHeight = count($lines);
 
         $maxScrollTop = max(0, $this->contentHeight - $this->currentViewportHeight);

@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Web\Pty;
 
 use Closure;
 use Pig\Async\Loop;
+use Pig\CodingAgent\Tools\Shell;
 
 /**
  * PtyProcess — Manages an interactive pseudo-terminal process (pty).
@@ -106,6 +107,15 @@ final class PtyProcess
         $this->process = $proc;
         $this->stream = $pipes[0];
         stream_set_blocking($this->stream, false);
+        stream_set_write_buffer($this->stream, 0);
+
+        // Close redundant master descriptors created by proc_open
+        if (isset($pipes[1]) && is_resource($pipes[1])) {
+            fclose($pipes[1]);
+        }
+        if (isset($pipes[2]) && is_resource($pipes[2])) {
+            fclose($pipes[2]);
+        }
 
         $status = proc_get_status($this->process);
         $this->pid = (int) ($status['pid'] ?? 0);
@@ -125,13 +135,26 @@ final class PtyProcess
             return;
         }
 
-        fwrite($this->stream, $data);
+        $length = strlen($data);
+        $written = 0;
+        while ($written < $length) {
+            $n = fwrite($this->stream, substr($data, $written));
+            if ($n === false || $n === 0) {
+                break;
+            }
+            $written += $n;
+        }
+        fflush($this->stream);
     }
 
     public function resize(int $cols, int $rows): void
     {
-        $this->cols = max(1, min(500, $cols));
-        $this->rows = max(1, min(200, $rows));
+        $this->cols = max(10, min(500, $cols));
+        $this->rows = max(4, min(200, $rows));
+
+        if ($this->slaveDevice === null && $this->pid > 0) {
+            $this->slaveDevice = $this->findSlaveDevice($this->pid);
+        }
 
         if ($this->slaveDevice !== null && file_exists($this->slaveDevice)) {
             $flag = PHP_OS_FAMILY === 'Darwin' ? '-f' : '-F';
@@ -140,16 +163,21 @@ final class PtyProcess
 
         if ($this->pid > 0 && function_exists('posix_kill')) {
             posix_kill($this->pid, SIGWINCH);
+            foreach (Shell::descendants($this->pid) as $childPid) {
+                posix_kill($childPid, SIGWINCH);
+            }
         }
     }
 
     public function kill(): void
     {
         if ($this->running && $this->pid > 0 && function_exists('posix_kill')) {
+            Shell::killTree($this->pid);
             posix_kill($this->pid, SIGTERM);
             // Grace period before SIGKILL
             Loop::get()->delay(0.2, function (): void {
                 if ($this->running && $this->pid > 0 && function_exists('posix_kill')) {
+                    Shell::killTree($this->pid);
                     posix_kill($this->pid, SIGKILL);
                 }
             });

@@ -287,6 +287,33 @@ final class Width
     }
 
     /**
+     * The terminal-cell range occupied by the grapheme at a visible column — upstream's
+     * `getGraphemeCellRange()`. Null when the column is past the end of the line.
+     *
+     * @return array{start: int, end: int}|null
+     */
+    public static function graphemeCellRange(string $line, int $column): ?array
+    {
+        $currentCol = 0;
+
+        foreach (Ansi::segment($line) as [$isCode, $value]) {
+            if ($isCode) {
+                continue;
+            }
+
+            foreach (Graphemes::split($value) as $segment) {
+                $w = self::grapheme($segment);
+                if ($w > 0 && $column >= $currentCol && $column < $currentCol + $w) {
+                    return ['start' => $currentCol, 'end' => $currentCol + $w];
+                }
+                $currentCol += $w;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Composite an overlay string into a line at a specific column.
      */
     public static function composite(

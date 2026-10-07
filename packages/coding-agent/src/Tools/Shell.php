@@ -151,4 +151,12 @@ final class Shell
     {
         Process::killTree($pid);
     }
+
+    /**
+     * @return list<int>
+     */
+    public static function descendants(int $pid): array
+    {
+        return Process::descendants($pid);
+    }
 }
