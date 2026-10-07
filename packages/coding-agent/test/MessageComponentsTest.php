@@ -316,4 +316,20 @@ final class MessageComponentsTest extends TestCase
         $this->assertStringNotContainsString('Syncing CHANGELOG.md', $hiddenRendered);
         $this->assertStringContainsString('Here is the final output.', $hiddenRendered);
     }
+
+    public function testUserAndAssistantMessagesAreOsc133PromptZones(): void
+    {
+        // Upstream's marks: `TuiAltScreen` jumps between prompts by the `A`, and terminals do too.
+        $user = (new UserMessageComponent('hello', $this->palette))->render(self::WIDTH);
+        $this->assertStringStartsWith("\x1b]133;A\x07", $user[0]);
+        $this->assertStringStartsWith("\x1b]133;B\x07\x1b]133;C\x07", $user[count($user) - 1]);
+
+        $said = $this->assistant([new TextContent('hi')]);
+        $assistant = (new AssistantMessageComponent($this->palette, $said))->render(self::WIDTH);
+        $this->assertStringStartsWith("\x1b]133;A\x07", $assistant[0]);
+
+        $calling = $this->assistant([new TextContent('hi'), new ToolCall('1', 'read', [])], StopReason::ToolUse);
+        $withTools = (new AssistantMessageComponent($this->palette, $calling))->render(self::WIDTH);
+        $this->assertStringNotContainsString("\x1b]133;", implode('', $withTools), 'a message that calls tools is not a prompt zone');
+    }
 }

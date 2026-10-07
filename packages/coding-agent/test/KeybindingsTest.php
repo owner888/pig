@@ -127,4 +127,32 @@ final class KeybindingsTest extends TestCase
         $this->assertStringContainsString('is not a JSON object', $keys->problems()[0]);
         $this->assertSame('app.model.select', $keys->actionFor("\x0c"));
     }
+
+    public function testAltScreenKeysGoToTheTuiRegistryAndReplaceItsDefaults(): void
+    {
+        file_put_contents($this->home . '/keybindings.json', json_encode([
+            'tui.altScreen.pageUp' => 'ctrl+u',
+            'tui.altScreen.search' => [],
+        ]));
+
+        $keys = Keybindings::load($this->home);
+        $tui = $keys->tuiKeybindings();
+
+        $this->assertSame([], $keys->problems());
+        $this->assertTrue($tui->matches("\x15", 'tui.altScreen.pageUp'));
+        $this->assertFalse($tui->matches("\x1b[5~", 'tui.altScreen.pageUp'), 'a binding replaces the default');
+        $this->assertSame([], $tui->getKeys('tui.altScreen.search'), 'an empty list unbinds');
+        $this->assertSame(['ctrl+end'], $keys->keysFor('tui.altScreen.bottom'), 'the rest keep upstream\'s defaults');
+        $this->assertNull($keys->actionFor("\x15"), 'the app half does not claim a tui key');
+    }
+
+    public function testTheEditingKeysAreNotBindableYet(): void
+    {
+        file_put_contents($this->home . '/keybindings.json', json_encode(['tui.editor.cursorUp' => 'ctrl+k']));
+
+        $keys = Keybindings::load($this->home);
+
+        $this->assertCount(1, $keys->problems());
+        $this->assertStringContainsString("'tui.editor.cursorUp'", $keys->problems()[0]);
+    }
 }

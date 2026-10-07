@@ -11,6 +11,10 @@ use Pig\Tui\Component;
 use Pig\Tui\Graphemes;
 use Pig\Tui\InputHandler;
 use Pig\Tui\Keys;
+use Pig\Tui\MouseHandler;
+use Pig\Tui\TuiMouseDispatchResult;
+use Pig\Tui\TuiMouseEvent;
+use Pig\Tui\TuiMouseEventResult;
 use Pig\Tui\Width;
 use Pig\Tui\TUI;
 
@@ -45,12 +49,17 @@ use Pig\Tui\TUI;
  * a rule present in one of two siblings, the commonest shape in `CLAUDE.md`'s traps, on upstream's
  * side of the line. Both of pig's editors answer to both.
  */
-final class Input implements Component, Focusable, InputHandler
+final class Input implements Component, Focusable, InputHandler, MouseHandler
 {
     /** Set by the renderer; while true the cursor carries `TUI::CURSOR_MARKER` for the input method. */
     public bool $focused = false;
 
-    private const string PROMPT = '> ';
+    private readonly string $prompt;
+
+    private readonly string $placeholder;
+
+    /** @var Closure(string): string */
+    private readonly Closure $placeholderStyle;
 
     /** Reverse video for the block cursor, and back to normal. */
     private const string CURSOR_ON = "\x1b[7m";
@@ -73,6 +82,22 @@ final class Input implements Component, Focusable, InputHandler
     private bool $pasting = false;
 
     private string $pasteBuffer = '';
+
+    /** The first value column the last render showed — upstream's `renderedStartColumn`, for mouse presses. */
+    private int $renderedStartColumn = 0;
+
+    /**
+     * Upstream's `InputOptions`.
+     *
+     * @param string $placeholder shown, dimmed by `$placeholderStyle`, while the value is empty
+     * @param (Closure(string): string)|null $placeholderStyle
+     */
+    public function __construct(string $prompt = '> ', string $placeholder = '', ?Closure $placeholderStyle = null)
+    {
+        $this->prompt = $prompt;
+        $this->placeholder = $placeholder;
+        $this->placeholderStyle = $placeholderStyle ?? static fn (string $text): string => $text;
+    }
 
     public function value(): string
     {
@@ -360,16 +385,56 @@ final class Input implements Component, Focusable, InputHandler
         return $graphemes === [] ? 0 : strlen($graphemes[0]);
     }
 
+    /**
+     * A primary press on the line puts the cursor under the pointer — upstream's `handleMouse()`.
+     * Upstream also resets its kill-ring/undo coalescing here; pig's input has neither.
+     */
+    #[\Override]
+    public function handleMouse(TuiMouseEvent $event): TuiMouseEventResult|TuiMouseDispatchResult|null
+    {
+        if ($event->type !== 'press' || $event->button !== 'left' || $event->y !== 0) {
+            return null;
+        }
+        $visibleColumn = max(0, $event->x - 2);
+        $targetColumn = $this->renderedStartColumn + $visibleColumn;
+        $currentColumn = 0;
+        $offset = 0;
+        $this->cursor = strlen($this->value);
+        foreach (Graphemes::split($this->value) as $grapheme) {
+            $nextColumn = $currentColumn + Width::visible($grapheme);
+            if ($targetColumn < $nextColumn) {
+                $this->cursor = $offset;
+                break;
+            }
+            $currentColumn = $nextColumn;
+            $offset += strlen($grapheme);
+        }
+
+        return new TuiMouseEventResult(handled: true, focus: true);
+    }
+
     #[\Override]
     public function render(int $width): array
     {
-        $available = $width - Width::visible(self::PROMPT);
+        $available = $width - Width::visible($this->prompt);
 
         if ($available <= 0) {
-            return [self::PROMPT];
+            return [Width::truncate($this->prompt, $width, '')];
+        }
+
+        if ($this->value === '' && $this->placeholder !== '') {
+            $placeholder = Width::truncate($this->placeholder, $available, '');
+            $atCursor = Graphemes::split($placeholder)[0] ?? ' ';
+            $afterCursor = substr($placeholder, strlen($atCursor));
+            $marker = $this->focused ? TUI::CURSOR_MARKER : '';
+            $cursorChar = self::CURSOR_ON . ($this->placeholderStyle)($atCursor) . self::CURSOR_OFF;
+            $textWithCursor = $marker . $cursorChar . ($this->placeholderStyle)($afterCursor);
+
+            return [$this->prompt . $textWithCursor . str_repeat(' ', max(0, $available - Width::visible($textWithCursor)))];
         }
 
         $start = $this->scrollStart($available);
+        $this->renderedStartColumn = $start;
         $end = $start + $available;
         $text = '';
         $column = 0;
@@ -403,7 +468,7 @@ final class Input implements Component, Focusable, InputHandler
             $text .= $marker . self::CURSOR_ON . ' ' . self::CURSOR_OFF;
         }
 
-        $line = self::PROMPT . $text;
+        $line = $this->prompt . $text;
 
         return [$line . str_repeat(' ', max(0, $width - Width::visible($line)))];
     }

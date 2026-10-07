@@ -266,6 +266,9 @@ class TuiMainScreen extends TuiBase
         };
 
         $newLines = $this->render($width);
+        if ($this->hasOverlayEntries()) {
+            $newLines = $this->compositeOverlays($newLines, $width, $height);
+        }
 
         // Found before the line resets, which would otherwise be appended after the marker.
         $cursorPos = $this->extractCursorPosition($newLines, $height);
@@ -328,7 +331,7 @@ class TuiMainScreen extends TuiBase
             return;
         }
 
-        if ($this->getClearOnShrink() && count($newLines) < $this->maxLinesRendered) {
+        if ($this->getClearOnShrink() && count($newLines) < $this->maxLinesRendered && !$this->hasOverlayEntries()) {
             $fullRender(true);
 
             return;

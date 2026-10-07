@@ -14,13 +14,18 @@ use Pig\Tui\Width;
  * A terminal that keeps a screen — upstream's `test/virtual-terminal.ts`, which wraps a headless
  * xterm. This is a small VT emulator of its own: printable text with pending wrap, CR, LF that
  * scrolls into a scrollback at the bottom row, cursor moves (`A B C D G H`), erases (`J K`),
- * autowrap (`?7`) and cursor visibility (`?25`). Styling, OSC and APC sequences are consumed and
- * not kept. Enough to read back what a renderer's escape sequences actually leave on screen.
+ * autowrap (`?7`) and cursor visibility (`?25`). Of the styling only italic (SGR 3 / 23 / 0) is kept,
+ * per cell, for `isItalic()`; other SGR attributes, OSC and APC sequences are consumed and not kept. Enough to read back what a renderer's escape sequences actually leave on screen.
  */
 final class VirtualTerminal implements Terminal
 {
     /** @var list<list<string>> one string per cell; '' is the second half of a wide character */
     private array $screen = [];
+
+    /** @var list<list<bool>> per cell, whether it was drawn italic — upstream reads xterm's `cell.isItalic()` */
+    private array $italicCells = [];
+
+    private bool $italic = false;
 
     /** @var list<string> */
     private array $scrollback = [];
@@ -45,6 +50,13 @@ final class VirtualTerminal implements Terminal
     public function __construct(private int $columns = 80, private int $rows = 24)
     {
         $this->screen = array_fill(0, $rows, self::blankRow($columns));
+        $this->italicCells = array_fill(0, $rows, array_fill(0, $columns, false));
+    }
+
+    /** Whether the cell at a viewport row and column was drawn with italic on. */
+    public function isItalic(int $row, int $col): bool
+    {
+        return $this->italicCells[$row][$col] ?? false;
     }
 
     /** @return list<string> */
@@ -80,15 +92,19 @@ final class VirtualTerminal implements Terminal
             $drop = max(0, $this->row - ($rows - 1));
             for ($index = 0; $index < $drop; $index++) {
                 $this->scrollback[] = self::text(array_shift($this->screen));
+                array_shift($this->italicCells);
             }
             $this->row -= $drop;
             $this->screen = array_slice($this->screen, 0, $rows);
+            $this->italicCells = array_slice($this->italicCells, 0, $rows);
         }
         while (count($this->screen) < $rows) {
             $this->screen[] = self::blankRow($this->columns);
+            $this->italicCells[] = array_fill(0, $this->columns, false);
         }
         foreach ($this->screen as $index => $cells) {
             $this->screen[$index] = array_slice(array_pad($cells, $columns, ' '), 0, $columns);
+            $this->italicCells[$index] = array_slice(array_pad($this->italicCells[$index], $columns, false), 0, $columns);
         }
         $this->columns = $columns;
         $this->rows = $rows;
@@ -213,8 +229,10 @@ final class VirtualTerminal implements Terminal
             $this->lineFeed();
         }
         $this->screen[$this->row][$this->column] = $grapheme;
+        $this->italicCells[$this->row][$this->column] = $this->italic;
         for ($cell = 1; $cell < $width; $cell++) {
             $this->screen[$this->row][$this->column + $cell] = '';
+            $this->italicCells[$this->row][$this->column + $cell] = $this->italic;
         }
         $this->column += $width;
         if ($this->column >= $this->columns) {
@@ -229,6 +247,8 @@ final class VirtualTerminal implements Terminal
         if ($this->row === $this->rows - 1) {
             $this->scrollback[] = self::text(array_shift($this->screen));
             $this->screen[] = self::blankRow($this->columns);
+            array_shift($this->italicCells);
+            $this->italicCells[] = array_fill(0, $this->columns, false);
 
             return;
         }
@@ -256,7 +276,7 @@ final class VirtualTerminal implements Terminal
             return $index + 2;
         }
 
-        if (preg_match('/\G\x1b\[([?>=<]?)([\d;]*)([\x20-\x2f]*)([\x40-\x7e])/', $data, $match, 0, $index) !== 1) {
+        if (preg_match('/\G\x1b\[([?>=<]?)([\d;:]*)([\x20-\x2f]*)([\x40-\x7e])/', $data, $match, 0, $index) !== 1) {
             return $index + 2;
         }
         [$all, $private, $params, , $final] = $match;
@@ -310,15 +330,20 @@ final class VirtualTerminal implements Terminal
                     $this->scrollback = [];
                 } elseif ($mode === 2) {
                     $this->screen = array_fill(0, $this->rows, self::blankRow($this->columns));
+                    $this->italicCells = array_fill(0, $this->rows, array_fill(0, $this->columns, false));
                 } else {
                     $this->eraseLine(0);
                     for ($row = $this->row + 1; $row < $this->rows; $row++) {
                         $this->screen[$row] = self::blankRow($this->columns);
+                        $this->italicCells[$row] = array_fill(0, $this->columns, false);
                     }
                 }
                 break;
             case 'K':
                 $this->eraseLine($numbers[0] ?? 0);
+                break;
+            case 'm':
+                $this->selectGraphicRendition($params);
                 break;
         }
 
@@ -330,6 +355,37 @@ final class VirtualTerminal implements Terminal
         for ($column = 0; $column < $this->columns; $column++) {
             if ($mode === 2 || ($mode === 0 && $column >= $this->column) || ($mode === 1 && $column <= $this->column)) {
                 $this->screen[$this->row][$column] = ' ';
+                $this->italicCells[$this->row][$column] = false;
+            }
+        }
+    }
+
+    /**
+     * Follow SGR italic: 3 sets it, 23 and 0 (or no parameters) reset it. The arguments of an
+     * extended colour (`38;5;n`, `38;2;r;g;b`, likewise 48 and 58) are skipped, so a colour
+     * component of 3 or 23 is not taken for an attribute; colon sub-parameters stay in one field.
+     */
+    private function selectGraphicRendition(string $params): void
+    {
+        $fields = $params === '' ? [''] : explode(';', $params);
+        $count = count($fields);
+        for ($i = 0; $i < $count; $i++) {
+            $field = $fields[$i];
+            if (str_contains($field, ':')) {
+                continue;
+            }
+            $code = (int) $field;
+            if ($code === 38 || $code === 48 || $code === 58) {
+                $kind = (int) ($fields[$i + 1] ?? '');
+                $i += $kind === 5 ? 2 : ($kind === 2 ? 4 : 1);
+                continue;
+            }
+            if ($code === 0) {
+                $this->italic = false;
+            } elseif ($code === 3) {
+                $this->italic = true;
+            } elseif ($code === 23) {
+                $this->italic = false;
             }
         }
     }

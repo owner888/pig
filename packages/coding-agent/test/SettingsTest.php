@@ -495,4 +495,26 @@ final class SettingsTest extends TestCase
         $this->assertSame('dark', $settings->theme());
         $this->assertFileDoesNotExist($this->home . '/settings.json');
     }
+
+    public function testTheFullscreenSettingsHaveUpstreamsDefaultsAndBounds(): void
+    {
+        $settings = Settings::inMemory();
+
+        $this->assertSame('transcript', $settings->fullscreenExitOutput());
+        $this->assertSame('auto', $settings->fullscreenScrollbar());
+        $this->assertTrue($settings->fullscreenCopyOnSelect());
+        $this->assertSame('auto', $settings->fullscreenWheelScrollLines());
+
+        $settings->setFullscreenExitOutput('resume-hint');
+        $settings->setFullscreenScrollbar('hidden');
+        $settings->setFullscreenCopyOnSelect(false);
+        $settings->setFullscreenWheelScrollLines(500);
+
+        $this->assertSame('resume-hint', $settings->fullscreenExitOutput());
+        $this->assertSame('hidden', $settings->fullscreenScrollbar());
+        $this->assertFalse($settings->fullscreenCopyOnSelect());
+        $this->assertSame(100, $settings->fullscreenWheelScrollLines());
+        $this->assertSame(3, Settings::inMemory(['fullscreenWheelScrollLines' => 3.7])->fullscreenWheelScrollLines());
+        $this->assertSame('auto', Settings::inMemory(['fullscreenScrollbar' => 'sometimes'])->fullscreenScrollbar());
+    }
 }

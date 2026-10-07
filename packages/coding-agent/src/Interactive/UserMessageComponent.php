@@ -28,6 +28,10 @@ use Pig\Tui\Container;
  */
 final class UserMessageComponent extends Container
 {
+    private const string OSC133_ZONE_START = "\x1b]133;A\x07";
+    private const string OSC133_ZONE_END = "\x1b]133;B\x07";
+    private const string OSC133_ZONE_FINAL = "\x1b]133;C\x07";
+
     /**
      * @param list<Closure(string, array{role: string, isStreaming: bool}): string> $transformers
      */
@@ -48,5 +52,24 @@ final class UserMessageComponent extends Container
                 background: $palette->of('userMessageBg'),
             ),
         ));
+    }
+
+    /**
+     * Wrapped in OSC 133 prompt marks, as upstream's is: terminals use them to jump between
+     * prompts, and `TuiAltScreen` does the same for `tui.altScreen.previousPrompt`/`nextPrompt`.
+     */
+    #[\Override]
+    public function render(int $width): array
+    {
+        $lines = parent::render($width);
+        if ($lines === []) {
+            return $lines;
+        }
+
+        $lines[0] = self::OSC133_ZONE_START . $lines[0];
+        $last = count($lines) - 1;
+        $lines[$last] = self::OSC133_ZONE_END . self::OSC133_ZONE_FINAL . $lines[$last];
+
+        return $lines;
     }
 }

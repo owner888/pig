@@ -393,6 +393,39 @@ final class Width
         return $tracker->activeBackgroundCode();
     }
 
+    /** Return the OSC 8 hyperlink covering a visible terminal column — upstream's `getOsc8LinkAtColumn()`. */
+    public static function getOsc8LinkAtColumn(string $line, int $column): ?string
+    {
+        $activeUrl = null;
+        $currentCol = 0;
+        $index = 0;
+        $length = strlen($line);
+        while ($index < $length) {
+            $ansi = Ansi::at($line, $index);
+            if ($ansi !== null) {
+                if (preg_match('/^\x1b\]8;[^;]*;([^\x07\x1b]*)(?:\x07|\x1b\\\\)$/', $ansi[0], $hyperlink) === 1) {
+                    $activeUrl = $hyperlink[1] !== '' ? $hyperlink[1] : null;
+                }
+                $index += $ansi[1];
+                continue;
+            }
+            $textEnd = $index;
+            while ($textEnd < $length && Ansi::at($line, $textEnd) === null) {
+                $textEnd++;
+            }
+            foreach (Graphemes::split(substr($line, $index, $textEnd - $index)) as $segment) {
+                $width = self::visible($segment);
+                if ($column >= $currentCol && $column < $currentCol + $width) {
+                    return $activeUrl;
+                }
+                $currentCol += $width;
+            }
+            $index = $textEnd;
+        }
+
+        return null;
+    }
+
     /**
      * What a line is written as — upstream's `normalizeTerminalOutput()`. Thai and Lao SARA AM are
      * decomposed, because terminals give the precomposed character a different width than the

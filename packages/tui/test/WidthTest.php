@@ -243,4 +243,49 @@ final class WidthTest extends TestCase
         $this->assertSame('中', Width::sliceByColumn('中文', 0, 3, true));
         $this->assertSame('中文', Width::sliceByColumn('中文', 0, 3));
     }
+
+    /** Upstream's `regression-overlay-cjk-boundary.test.ts`. */
+    public function testExtractSegmentsExcludesAWideGraphemeFromBeforeWhenTheOverlayStartsInsideIt(): void
+    {
+        $segments = Width::extractSegments('abcd让EFGH', 5, 9, 11, true);
+
+        $this->assertSame('abcd', $segments['before']);
+        $this->assertSame(4, $segments['beforeWidth']);
+        $this->assertSame($segments['beforeWidth'], Width::visible($segments['before']));
+        $this->assertSame('H', $segments['after']);
+        $this->assertSame(1, $segments['afterWidth']);
+    }
+
+    public function testExtractSegmentsKeepsAsciiBeforeSegmentAtTheSameBoundary(): void
+    {
+        $segments = Width::extractSegments('abcdG EFGH', 5, 9, 11, true);
+
+        $this->assertSame('abcdG', $segments['before']);
+        $this->assertSame(5, $segments['beforeWidth']);
+        $this->assertSame($segments['beforeWidth'], Width::visible($segments['before']));
+    }
+
+    public function testCompositeAtTheRequestedColumnWhenItStartsInsideAWideGrapheme(): void
+    {
+        $out = Width::composite('abcd让EFGH', '│XX│', 5, 4, 20);
+        $prefix = Width::sliceByColumn($out, 0, 5, true);
+        $overlay = Width::sliceByColumn($out, 5, 4, true);
+
+        $this->assertStringNotContainsString('让', $out);
+        $this->assertSame(20, Width::visible($out));
+        $this->assertSame(5, Width::visible($prefix));
+        $this->assertSame(4, Width::visible($overlay));
+        $this->assertStringContainsString('│XX│', $overlay);
+    }
+
+    public function testCompositeWhenItStartsAtAWideGraphemeBoundary(): void
+    {
+        $out = Width::composite('abcd让EFGH', '│XX│', 4, 4, 20);
+        $overlay = Width::sliceByColumn($out, 4, 4, true);
+
+        $this->assertStringNotContainsString('让', $out);
+        $this->assertSame(20, Width::visible($out));
+        $this->assertSame(4, Width::visible($overlay));
+        $this->assertStringContainsString('│XX│', $overlay);
+    }
 }

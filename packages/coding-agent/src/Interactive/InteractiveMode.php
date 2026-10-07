@@ -47,6 +47,7 @@ use Pig\CodingAgent\Cli\SessionList;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Export\HtmlExport;
 use Pig\CodingAgent\Export\MarkdownExport;
+use Pig\Tui\Keybindings as TuiKeybindings;
 use Pig\Tui\Keys;
 use Pig\CodingAgent\CustomTools\CustomToolApi;
 use Pig\CodingAgent\CustomTools\CustomToolLoader;
@@ -117,6 +118,7 @@ use Pig\Tui\ProcessTerminal;
 use Pig\Tui\Style;
 use Pig\Tui\Terminal;
 use Pig\Tui\TuiAltScreen;
+use Pig\Tui\TuiStopOptions;
 use Pig\Tui\TuiBase;
 use Pig\Tui\Width;
 use Throwable;
@@ -293,6 +295,8 @@ final class InteractiveMode
         // Which key means which action — `keybindings.json`'s answer, or the defaults.
         private readonly Keybindings $keybindings = new Keybindings(),
     ) {
+        // Upstream's constructor does the same: the TUI reads `tui.*` keys from the registry.
+        TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
         $this->theme = $theme;
         $this->contextFiles = $contextFiles;
         $this->skills = $skills;
@@ -318,7 +322,18 @@ final class InteractiveMode
         // Injected so a test can drive this without a terminal, the same way the editor
         // takes its clipboard: everything below here is arrangement, and arrangement is
         // exactly what is worth testing.
-        $this->tui = TuiRenderer::createInteractiveTui($terminal ?? new ProcessTerminal(), $this->tuiMode, $this->settings->showHardwareCursor(), $this->clipboard, $this->scrollToEndIndicator(...));
+        $this->tui = TuiRenderer::createInteractiveTui(
+            $terminal ?? new ProcessTerminal(),
+            $this->tuiMode,
+            $this->settings->showHardwareCursor(),
+            $this->clipboard,
+            $this->scrollToEndIndicator(...),
+            // Read at each call: `/theme` replaces the palette after the renderer exists.
+            fn (): Palette => $this->palette,
+            self::openInBrowser(...),
+            $this->settings->fullscreenCopyOnSelect(),
+            $this->settings->fullscreenWheelScrollLines(),
+        );
         $this->tui->setClearOnShrink($this->settings->clearOnShrink());
         $this->chat = new Container();
         $this->pending = new Container();
@@ -700,8 +715,11 @@ final class InteractiveMode
         // terminal back — raw mode off, cursor shown — whether or not the loop is what
         // they are waiting on.
         // In fullscreen the renderer prints the conversation back into the normal screen on its
-        // way out (`TuiAltScreen::afterTerminalStop()`), as upstream's does.
-        $this->tui->stop();
+        // way out (`TuiAltScreen::afterTerminalStop()`), unless `fullscreenExitOutput` asks for
+        // only the resume hint, which `bin/pig` prints after this either way.
+        $this->tui->stop(new TuiStopOptions(
+            preserveScreen: $this->tui instanceof TuiAltScreen && $this->settings->fullscreenExitOutput() === 'resume-hint',
+        ));
         Loop::get()->stop();
     }
 
@@ -798,8 +816,9 @@ final class InteractiveMode
                 footer: $footerSlot,
                 widgetsAbove: $widgetsAboveSlot,
                 widgetsBelow: $this->widgetsBelow,
-                scrollbarTrackStyle: fn (string $text): string => $this->palette->fg('dim', $text),
-                scrollbarThumbStyle: fn (string $text): string => $this->palette->fg('muted', $text),
+                scrollbar: $this->settings->fullscreenScrollbar(),
+                scrollbarTrackStyle: fn (string $text): string => $this->palette->fg('scrollbarTrack', $text),
+                scrollbarThumbStyle: fn (string $text): string => $this->palette->fg('scrollbarThumb', $text),
             );
 
             // Mounted for invalidation and mouse routing; the layout root is what is drawn.
@@ -1105,39 +1124,6 @@ final class InteractiveMode
                 $spec['description'],
             );
         }
-
-        $this->tui->addInputListener(function (string $data): bool|array|null {
-            if ($this->viewport === null) {
-                return null;
-            }
-
-            // Upstream's `tui.altScreen.*` keys, which `TuiAltScreen` checks before the editor.
-            $tui = $this->tui;
-            if (!$tui instanceof TuiAltScreen) {
-                return null;
-            }
-
-            switch ($this->keybindings->actionFor($data)) {
-                case 'tui.altScreen.top':
-                    $tui->scrollToTop();
-
-                    return ['consume' => true];
-                case 'tui.altScreen.bottom':
-                    $tui->scrollToBottom();
-
-                    return ['consume' => true];
-                case 'tui.altScreen.pageUp':
-                    $tui->scrollPage(-1);
-
-                    return ['consume' => true];
-                case 'tui.altScreen.pageDown':
-                    $tui->scrollPage(1);
-
-                    return ['consume' => true];
-            }
-
-            return null;
-        });
     }
 
     /**
@@ -4188,6 +4174,41 @@ final class InteractiveMode
             values: ['on', 'off'],
         );
 
+        // Upstream's fullscreen rows. TUI mode itself is not offered: switching renderers inside a
+        // running session (upstream's `switchTuiMode()`) is not ported yet, and a row that only
+        // takes effect after a restart would be a row that changes nothing now.
+        $rows[] = new SettingItem(
+            'fullscreenExitOutput',
+            'Fullscreen exit output',
+            $this->settings->fullscreenExitOutput(),
+            'Print the transcript or only a session resume hint when exiting fullscreen mode',
+            values: ['transcript', 'resume-hint'],
+        );
+        $rows[] = new SettingItem(
+            'fullscreenScrollbar',
+            'Fullscreen scrollbar',
+            $this->settings->fullscreenScrollbar(),
+            'Scrollbar behavior in fullscreen mode; has no effect in regular mode',
+            values: ['auto', 'always', 'hidden'],
+        );
+        $rows[] = new SettingItem(
+            'fullscreenCopyOnSelect',
+            'Fullscreen copy on select',
+            $this->settings->fullscreenCopyOnSelect() ? 'true' : 'false',
+            'Automatically copy selected text in fullscreen mode',
+            values: ['true', 'false'],
+        );
+        $wheelLines = $this->settings->fullscreenWheelScrollLines();
+        $wheelValues = array_values(array_unique(array_filter([1, 2, 3, 5, 10, $wheelLines], 'is_int')));
+        sort($wheelValues);
+        $rows[] = new SettingItem(
+            'fullscreenWheelScrollLines',
+            'Fullscreen wheel scrolling',
+            (string) $wheelLines,
+            "Lines per mouse-wheel event in fullscreen mode; 'auto' speeds up fast wheel spins where the terminal does not",
+            values: ['auto', ...array_map('strval', $wheelValues)],
+        );
+
         $list = new SettingsList($rows, 8, $this->palette->settingsListTheme());
         $list->setChangeHandler(function (string $id, string $value) use ($list): void {
             $this->applySetting($id, $value);
@@ -4271,8 +4292,38 @@ final class InteractiveMode
             ),
             'autoCompact' => $this->settings->setCompactionEnabled($value === 'on'),
             'autoRetry' => $this->settings->setRetryEnabled($value === 'on'),
+            'fullscreenExitOutput' => $this->settings->setFullscreenExitOutput($value),
+            'fullscreenScrollbar' => $this->useFullscreenScrollbar($value),
+            'fullscreenCopyOnSelect' => $this->useFullscreenCopyOnSelect($value === 'true'),
+            'fullscreenWheelScrollLines' => $this->useFullscreenWheelScrollLines($value === 'auto' ? 'auto' : (int) $value),
             default => null,
         };
+    }
+
+    /** Upstream's `applyFullscreenScrollbarSetting()`, after saving. */
+    private function useFullscreenScrollbar(string $mode): void
+    {
+        $mode = in_array($mode, ['always', 'hidden'], true) ? $mode : 'auto';
+        $this->settings->setFullscreenScrollbar($mode);
+        $this->viewport?->transcript->setScrollbar($mode);
+        $this->tui->requestRender();
+    }
+
+    private function useFullscreenCopyOnSelect(bool $enabled): void
+    {
+        $this->settings->setFullscreenCopyOnSelect($enabled);
+        if ($this->tui instanceof TuiAltScreen) {
+            $this->tui->setCopyOnSelect($enabled);
+        }
+    }
+
+    /** @param int|'auto' $lines */
+    private function useFullscreenWheelScrollLines(int|string $lines): void
+    {
+        $this->settings->setFullscreenWheelScrollLines($lines);
+        if ($this->tui instanceof TuiAltScreen) {
+            $this->tui->setWheelScrollLines($this->settings->fullscreenWheelScrollLines());
+        }
     }
 
     private function useThinkingLevel(string $value, bool $persistAsDefault = false): void

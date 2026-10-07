@@ -46,6 +46,23 @@ final class Keys
     private const int HOME = -14;
     private const int END = -15;
 
+    /**
+     * Kitty's keypad keys (`KP_Left` … `KP_Delete`) with Num Lock off are the navigation keys
+     * they are printed with; upstream's `keys.ts` reads them the same way.
+     */
+    private const array KITTY_KEYPAD_EQUIVALENTS = [
+        57417 => self::LEFT,
+        57418 => self::RIGHT,
+        57419 => self::UP,
+        57420 => self::DOWN,
+        57421 => self::PAGE_UP,
+        57422 => self::PAGE_DOWN,
+        57423 => self::HOME,
+        57424 => self::END,
+        57425 => self::INSERT,
+        57426 => self::DELETE,
+    ];
+
     private const int ESCAPE = 27;
     private const int TAB = 9;
     private const int ENTER = 13;
@@ -327,6 +344,26 @@ final class Keys
         return self::matches($data, $codepoint, $modifier);
     }
 
+    /**
+     * A Kitty key-release event — upstream's `isKeyRelease()`. Only sent when the terminal was
+     * asked for event types (flag 2); bracketed paste is never one, even when the pasted text
+     * holds something like `90:62:3F:A5`.
+     */
+    public static function isKeyRelease(string $data): bool
+    {
+        if (str_contains($data, "\x1b[200~")) {
+            return false;
+        }
+
+        foreach ([':3u', ':3~', ':3A', ':3B', ':3C', ':3D', ':3H', ':3F'] as $release) {
+            if (str_contains($data, $release)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /** Whether $name is a key this can read at all. */
     public static function isKeyName(string $name): bool
     {
@@ -434,17 +471,23 @@ final class Keys
      */
     private static function parse(string $data): ?array
     {
-        if (preg_match('/^\x1b\[(\d+)(?:;(\d+))?u$/', $data, $match) === 1) {
-            return [(int) $match[1], (int) ($match[2] ?? 1) - 1];
+        // `<cp>[:<shifted>[:<base>]][;<mod>[:<event>]]u` — the alternate keys and the event type
+        // (press, repeat, release) do not change which key it is.
+        if (preg_match('/^\x1b\[(\d+)(?::\d*){0,2}(?:;(\d+)(?::\d+)?)?u$/', $data, $match) === 1) {
+            $codepoint = (int) $match[1];
+
+            return [self::KITTY_KEYPAD_EQUIVALENTS[$codepoint] ?? $codepoint, (int) (($match[2] ?? '') === '' ? 1 : $match[2]) - 1];
         }
 
-        if (preg_match('/^\x1b\[1;(\d+)([ABCD])$/', $data, $match) === 1) {
+        if (preg_match('/^\x1b\[1;(\d+)(?::\d+)?([ABCD])$/', $data, $match) === 1) {
             $arrows = ['A' => self::UP, 'B' => self::DOWN, 'C' => self::RIGHT, 'D' => self::LEFT];
 
             return [$arrows[$match[2]], (int) $match[1] - 1];
         }
 
-        if (preg_match('/^\x1b\[(\d+)(?:;(\d+))?~$/', $data, $match) === 1) {
+        // `~` carries its modifiers as a parameter; rxvt instead ends the sequence with `^` for
+        // Ctrl, `$` for Shift and `@` for both (`\e[7^` is Ctrl+Home).
+        if (preg_match('/^\x1b\[(\d+)(?:;(\d+)(?::\d+)?)?([~^$@])$/', $data, $match) === 1) {
             $keys = [
                 2 => self::INSERT,
                 3 => self::DELETE,
@@ -457,11 +500,21 @@ final class Keys
             $codepoint = $keys[(int) $match[1]] ?? null;
 
             if ($codepoint !== null) {
-                return [$codepoint, (int) ($match[2] ?? 1) - 1];
+                if ($match[3] !== '~') {
+                    return ($match[2] ?? '') === ''
+                        ? [$codepoint, match ($match[3]) {
+                            '^' => self::CTRL,
+                            '$' => self::SHIFT,
+                            '@' => self::CTRL | self::SHIFT,
+                        }]
+                        : null;
+                }
+
+                return [$codepoint, (int) (($match[2] ?? '') === '' ? 1 : $match[2]) - 1];
             }
         }
 
-        if (preg_match('/^\x1b\[1;(\d+)([HF])$/', $data, $match) === 1) {
+        if (preg_match('/^\x1b\[1;(\d+)(?::\d+)?([HF])$/', $data, $match) === 1) {
             return [$match[2] === 'H' ? self::HOME : self::END, (int) $match[1] - 1];
         }
 

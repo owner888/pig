@@ -7,6 +7,7 @@ namespace Pig\Tui;
 use Closure;
 use Pig\Async\Loop;
 use Pig\Tui\Components\AltScreenFlashContainer;
+use Pig\Tui\Components\AltScreenSearchComponent;
 use Pig\Tui\Components\ScrollView;
 
 /**
@@ -18,8 +19,7 @@ use Pig\Tui\Components\ScrollView;
  * scrollbar, text selection and copy, and the jump-to-latest click are handled here rather than
  * by the terminal.
  *
- * Not ported yet: transcript search, component mouse handlers, overlays, OSC 8 link clicks,
- * Kitty image placement, and the `tui.altScreen.*` keys (the interactive mode binds those).
+ * Not ported yet: Kitty and iTerm2 image placement.
  */
 class TuiAltScreen extends TuiBase implements ViewportTUI
 {
@@ -37,6 +37,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
     private const string BEGIN_SYNCHRONIZED_OUTPUT = "\x1b[?2026h";
     private const string END_SYNCHRONIZED_OUTPUT = "\x1b[?2026l";
     private const string OSC133_ZONE_PREFIX = '/^(?:\x1b\]133;[ABC](?:\x07|\x1b\\\\))+/';
+    private const string OSC133_PROMPT_START = '/^\x1b\]133;A(?:\x07|\x1b\\\\)/';
     private const int PAGE_SCROLL_OVERLAP = 4;
     private const int ALT_WHEEL_SCROLL_MULTIPLIER = 5;
     private const float DOUBLE_CLICK_INTERVAL = 0.5;
@@ -113,9 +114,45 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
     /** @var array{row: int, column: int, width: int}|null */
     private ?array $scrollToEndIndicatorRect = null;
 
+    /**
+     * Upstream's `ActiveSearch`: the open transcript search.
+     *
+     * @var array{component: AltScreenSearchComponent, index: AltScreenSearchIndex, overlay: ?OverlayHandle, query: string, matches: list<AltScreenSearchMatch>, selectedIndex: int, selectedKey: ?string, anchorRow: int, selectionMode: 'query'|'retain'|'next'|'previous'}|null
+     */
+    private ?array $activeSearch = null;
+
+    private ?string $pressedUrl = null;
+
+    private ?TuiMouseDispatchTarget $mouseCapture = null;
+
+    private ?TuiMouseDispatchTarget $mousePressTarget = null;
+
+    /** @var array{x: int, y: int}|null */
+    private ?array $mousePressPoint = null;
+
+    private bool $mousePressMoved = false;
+
+    /** @var array{timestamp: float, count: int, component: Component, x: int, y: int}|null */
+    private ?array $lastComponentClick = null;
+
     private readonly WheelScrollAccelerator $wheelScroll;
 
     private readonly bool $mouseEnabled;
+
+    /** @var Closure(string): string */
+    private readonly Closure $searchMatchStyle;
+
+    /** @var Closure(string): string */
+    private readonly Closure $searchCurrentMatchStyle;
+
+    /** @var Closure(string, bool): string */
+    private readonly Closure $searchNavigationButtonStyle;
+
+    /** @var (Closure(string): void)|null */
+    private readonly ?Closure $openUrl;
+
+    /** @var (Closure(): void)|null */
+    private readonly ?Closure $onRightClickPaste;
 
     /** @var (Closure(): string)|null */
     private readonly ?Closure $scrollToEndIndicator;
@@ -133,9 +170,22 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
     ) {
         parent::__construct($terminal, $showHardwareCursor, $logDirectory);
         $options ??= new TuiAltScreenOptions();
-        $this->implicitDocument = new class (fn (int $width): array => parent::render($width), fn () => $this->invalidateChildren()) implements Component {
-            public function __construct(private readonly Closure $renderChildren, private readonly Closure $invalidateChildren)
+        $this->implicitDocument = new class (
+            fn (int $width): array => parent::render($width),
+            fn (TuiMouseEvent $event): TuiMouseEventResult|TuiMouseDispatchResult|null => parent::handleMouse($event),
+            fn () => $this->invalidateChildren(),
+        ) implements Component, MouseHandler {
+            public function __construct(
+                private readonly Closure $renderChildren,
+                private readonly Closure $handleChildMouse,
+                private readonly Closure $invalidateChildren,
+            ) {
+            }
+
+            #[\Override]
+            public function handleMouse(TuiMouseEvent $event): TuiMouseEventResult|TuiMouseDispatchResult|null
             {
+                return ($this->handleChildMouse)($event);
             }
 
             #[\Override]
@@ -154,6 +204,11 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $this->flashes = new AltScreenFlashContainer(fn () => $this->requestRender());
         $this->wheelScroll = new WheelScrollAccelerator($options->wheelScrollLines);
         $this->mouseEnabled = $options->mouse;
+        $this->searchMatchStyle = $options->searchMatchStyle ?? static fn (string $text): string => "\x1b[4m{$text}\x1b[24m";
+        $this->searchCurrentMatchStyle = $options->searchCurrentMatchStyle ?? static fn (string $text): string => "\x1b[1;7m{$text}\x1b[22;27m";
+        $this->searchNavigationButtonStyle = $options->searchNavigationButtonStyle ?? static fn (string $text, bool $hovered): string => $text;
+        $this->openUrl = $options->openUrl;
+        $this->onRightClickPaste = $options->onRightClickPaste;
         $this->scrollToEndIndicator = $options->scrollToEndIndicator;
         $this->copyOnSelect = $options->copyOnSelect;
         $this->copySelection = $options->copySelection;
@@ -224,18 +279,6 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         return $this->layoutRoot?->render($width) ?? parent::render($width);
     }
 
-    #[\Override]
-    public function invalidate(): void
-    {
-        if ($this->layoutRoot !== null) {
-            $this->layoutRoot->invalidate();
-
-            return;
-        }
-
-        $this->invalidateChildren();
-    }
-
     /** Show a transient message in the alternate-screen flash stack. */
     public function flash(string $message, float $duration = 1.0): void
     {
@@ -260,10 +303,325 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $this->requestRender();
     }
 
-    /** One page, less a few rows of overlap — upstream's page keys. */
-    public function scrollPage(int $direction): void
+    /** -1 for the previous OSC 133 prompt above the top row, 1 for the next one below it. */
+    private function scrollToPrompt(int $direction): void
     {
-        $this->scrollBy($direction * max(1, $this->getPrimaryScrollView()->viewportHeight() - self::PAGE_SCROLL_OVERLAP));
+        if ($this->currentLayout === null) {
+            return;
+        }
+        $scrollView = $this->getPrimaryScrollView();
+        $lines = Layout::getScrollViewBox($this->currentLayout, $scrollView)?->scrollContentLines;
+        if ($lines === null) {
+            return;
+        }
+
+        for ($row = $scrollView->scrollTop() + $direction; $row >= 0 && $row < count($lines); $row += $direction) {
+            if (preg_match(self::OSC133_PROMPT_START, $lines[$row] ?? '') !== 1) {
+                continue;
+            }
+            $scrollView->scrollTo($row);
+            $this->requestRender();
+
+            return;
+        }
+    }
+
+    private function toggleSearch(): void
+    {
+        if ($this->activeSearch !== null) {
+            $this->closeSearch();
+
+            return;
+        }
+        $component = new AltScreenSearchComponent(
+            fn (string $query) => $this->updateSearchQuery($query),
+            $this->searchNavigationButtonStyle,
+        );
+        $this->activeSearch = [
+            'component' => $component,
+            'index' => new AltScreenSearchIndex(),
+            'overlay' => null,
+            'query' => '',
+            'matches' => [],
+            'selectedIndex' => -1,
+            'selectedKey' => null,
+            'anchorRow' => $this->getPrimaryScrollView()->scrollTop(),
+            'selectionMode' => 'query',
+        ];
+        $overlay = $this->showOverlay($component, new OverlayOptions(width: '40%', minWidth: 32, anchor: 'top-right', margin: 1));
+        $this->activeSearch['overlay'] = $overlay;
+    }
+
+    private function closeSearch(): void
+    {
+        $search = $this->activeSearch;
+        if ($search === null) {
+            return;
+        }
+        $this->activeSearch = null;
+        $search['overlay']?->hide();
+        $this->requestRender();
+    }
+
+    private function updateSearchQuery(string $query): void
+    {
+        if ($this->activeSearch === null || $query === $this->activeSearch['query']) {
+            return;
+        }
+        $selected = $this->activeSearch['matches'][$this->activeSearch['selectedIndex']] ?? null;
+        $this->activeSearch['anchorRow'] = $selected?->segments[0]?->row ?? $this->getPrimaryScrollView()->scrollTop();
+        $this->activeSearch['query'] = $query;
+        $this->activeSearch['selectionMode'] = 'query';
+        $this->activeSearch['component']->setResult(-1, 0);
+        $this->requestRender();
+    }
+
+    /** @param -1|1 $direction */
+    private function navigateSearch(int $direction): void
+    {
+        if ($this->activeSearch === null || $this->activeSearch['query'] === '') {
+            return;
+        }
+        $this->activeSearch['selectionMode'] = $direction < 0 ? 'previous' : 'next';
+        $this->requestRender();
+    }
+
+    /** @return -1|1|null */
+    private function getSearchNavigationDirectionAt(int $x, int $y): ?int
+    {
+        $bounds = ($this->activeSearch['overlay'] ?? null)?->getBounds();
+        if ($this->activeSearch === null || $bounds === null) {
+            return null;
+        }
+        if ($x < $bounds->col || $x >= $bounds->col + $bounds->width || $y < $bounds->row || $y >= $bounds->row + $bounds->height) {
+            return null;
+        }
+
+        return $this->activeSearch['component']->getNavigationDirectionAt($y - $bounds->row, $x - $bounds->col);
+    }
+
+    /** @param array{button: int, x: int, y: int, release: bool} $event */
+    private function handleSearchMouseEvent(array $event): bool
+    {
+        if ($this->activeSearch === null) {
+            return false;
+        }
+        $direction = $this->getSearchNavigationDirectionAt($event['x'], $event['y']);
+        if ($this->activeSearch['component']->setHoveredNavigationDirection($direction)) {
+            $this->requestRender();
+        }
+        if ($direction === null || $event['release'] || ($event['button'] & 32) !== 0 || ($event['button'] & 3) !== 0) {
+            return false;
+        }
+        $this->navigateSearch($direction);
+
+        return true;
+    }
+
+    /** @return bool whether the selected match was scrolled into view, so the frame must be laid out again */
+    private function refreshSearch(LayoutFrame $layout): bool
+    {
+        if ($this->activeSearch === null) {
+            return false;
+        }
+        $search = &$this->activeSearch;
+        $scrollView = $layout->primaryScrollView ?? $this->implicitScrollView;
+        $box = Layout::getScrollViewBox($layout, $scrollView);
+        $lines = $box?->scrollContentLines;
+        if ($lines === null || trim($search['query']) === '') {
+            $search['matches'] = [];
+            $search['selectedIndex'] = -1;
+            $search['selectedKey'] = null;
+            $search['selectionMode'] = 'retain';
+            $search['component']->setResult(-1, 0);
+
+            return false;
+        }
+
+        $shouldRevealSelection = $search['selectionMode'] !== 'retain';
+        $result = $search['index']->search($lines, $search['query']);
+        $matches = $result->matches;
+        $search['matches'] = $matches;
+        if (!$result->changed && $search['selectionMode'] === 'retain') {
+            return false;
+        }
+
+        $exactIndex = $search['selectedIndex'];
+        if ($result->changed) {
+            $exactIndex = -1;
+            if ($search['selectedKey'] !== null) {
+                foreach ($matches as $index => $match) {
+                    if (AltScreenSearch::getAltScreenSearchMatchKey($match) === $search['selectedKey']) {
+                        $exactIndex = $index;
+                        break;
+                    }
+                }
+            }
+        }
+        $count = count($matches);
+        $selectedIndex = -1;
+        if ($count > 0) {
+            if ($search['selectionMode'] === 'query') {
+                $low = 0;
+                $high = $count;
+                while ($low < $high) {
+                    $middle = $low + intdiv($high - $low, 2);
+                    if (($matches[$middle]->segments[0]->row ?? 0) < $search['anchorRow']) {
+                        $low = $middle + 1;
+                    } else {
+                        $high = $middle;
+                    }
+                }
+                $selectedIndex = $low < $count ? $low : 0;
+            } elseif ($search['selectionMode'] === 'next') {
+                $baseIndex = $exactIndex >= 0 ? $exactIndex : min($search['selectedIndex'], $count - 1);
+                $selectedIndex = $baseIndex < 0 ? 0 : ($baseIndex + 1) % $count;
+            } elseif ($search['selectionMode'] === 'previous') {
+                $baseIndex = $exactIndex >= 0 ? $exactIndex : min($search['selectedIndex'], $count - 1);
+                $selectedIndex = $baseIndex < 0 ? $count - 1 : ($baseIndex - 1 + $count) % $count;
+            } else {
+                $selectedIndex = $exactIndex >= 0 ? $exactIndex : min(max(0, $search['selectedIndex']), $count - 1);
+            }
+        }
+
+        $search['selectedIndex'] = $selectedIndex;
+        $search['selectedKey'] = $selectedIndex >= 0 ? AltScreenSearch::getAltScreenSearchMatchKey($matches[$selectedIndex]) : null;
+        $search['selectionMode'] = 'retain';
+        $search['component']->setResult($selectedIndex, $count);
+        if (!$shouldRevealSelection) {
+            return false;
+        }
+
+        $selected = $matches[$selectedIndex] ?? null;
+        $firstSegment = $selected?->segments[0] ?? null;
+        $lastSegment = $selected === null ? null : ($selected->segments[count($selected->segments) - 1] ?? null);
+        if ($box === null || $firstSegment === null || $lastSegment === null || $scrollView->viewportHeight() <= 0) {
+            return false;
+        }
+        $before = $scrollView->scrollTop();
+        $visibleBottom = $before + $scrollView->viewportHeight() - 1;
+        $target = $before;
+        if ($firstSegment->row < $before || $lastSegment->row > $visibleBottom) {
+            $target = $firstSegment->row - intdiv($scrollView->viewportHeight(), 3);
+        }
+        $scrollView->scrollTo($target, disableFollow: true);
+
+        return $scrollView->scrollTop() !== $before;
+    }
+
+    private function applySearchTextHighlight(string $text, bool $current): string
+    {
+        $style = $current ? $this->searchCurrentMatchStyle : $this->searchMatchStyle;
+        $result = '';
+        $plainStart = 0;
+        $index = 0;
+        $length = strlen($text);
+        while ($index < $length) {
+            $ansi = Ansi::at($text, $index);
+            if ($ansi === null) {
+                $index++;
+                continue;
+            }
+            if ($index > $plainStart) {
+                $result .= $style(substr($text, $plainStart, $index - $plainStart));
+            }
+            $result .= $ansi[0];
+            $index += $ansi[1];
+            $plainStart = $index;
+        }
+        if ($plainStart < $length) {
+            $result .= $style(substr($text, $plainStart));
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param list<string> $screen
+     *
+     * @return list<string>
+     */
+    private function applySearchHighlights(array $screen, LayoutFrame $layout): array
+    {
+        $search = $this->activeSearch;
+        if ($search === null || $search['selectedIndex'] < 0 || $search['matches'] === []) {
+            return $screen;
+        }
+        $scrollView = $layout->primaryScrollView ?? $this->implicitScrollView;
+        $box = Layout::getScrollViewBox($layout, $scrollView);
+        if ($box === null) {
+            return $screen;
+        }
+
+        /** @var array<int, list<array{startCol: int, endCol: int, current: bool}>> $rangesByRow */
+        $rangesByRow = [];
+        $scrollbarColumn = Layout::getScrollbarGeometry($box)?->column;
+        $minRow = max(0, $box->rect->y, $box->clip->y);
+        $maxRow = min(count($screen), $box->rect->y + $box->rect->height, $box->clip->y + $box->clip->height);
+        $minColumn = max(0, $box->rect->x, $box->clip->x);
+        $maxColumn = min(
+            $this->terminal->columns(),
+            $box->rect->x + $box->rect->width,
+            $box->clip->x + $box->clip->width,
+            $scrollbarColumn ?? PHP_INT_MAX,
+        );
+        $minContentRow = $scrollView->scrollTop() + $minRow - $box->rect->y;
+        $maxContentRow = $scrollView->scrollTop() + $maxRow - $box->rect->y - 1;
+        $matches = $search['matches'];
+        $count = count($matches);
+        $low = 0;
+        $high = $count;
+        while ($low < $high) {
+            $middle = $low + intdiv($high - $low, 2);
+            $segments = $matches[$middle]->segments;
+            $lastRow = $segments[count($segments) - 1]->row ?? -1;
+            if ($lastRow < $minContentRow) {
+                $low = $middle + 1;
+            } else {
+                $high = $middle;
+            }
+        }
+        for ($matchIndex = $low; $matchIndex < $count; $matchIndex++) {
+            $match = $matches[$matchIndex];
+            if (($match->segments[0]->row ?? 0) > $maxContentRow) {
+                break;
+            }
+            foreach ($match->segments as $segment) {
+                $row = $box->rect->y + $segment->row - $scrollView->scrollTop();
+                if ($row < $minRow || $row >= $maxRow) {
+                    continue;
+                }
+                $startCol = max($minColumn, $box->rect->x + $segment->startCol);
+                $endCol = min($maxColumn, $box->rect->x + $segment->endCol);
+                if ($endCol <= $startCol) {
+                    continue;
+                }
+                $rangesByRow[$row][] = ['startCol' => $startCol, 'endCol' => $endCol, 'current' => $matchIndex === $search['selectedIndex']];
+            }
+        }
+
+        foreach ($rangesByRow as $row => $ranges) {
+            $line = $screen[$row] ?? '';
+            if (self::isImageLine($line)) {
+                continue;
+            }
+            $lineWidth = Width::visible($line);
+            usort($ranges, static fn (array $a, array $b): int => $b['startCol'] <=> $a['startCol']);
+            foreach ($ranges as $range) {
+                $startCol = min($range['startCol'], $lineWidth);
+                $endCol = min($range['endCol'], $lineWidth);
+                if ($endCol <= $startCol) {
+                    continue;
+                }
+                $before = Width::sliceByColumn($line, 0, $startCol, true);
+                $highlighted = Width::sliceByColumn($line, $startCol, $endCol - $startCol, true);
+                $after = Width::sliceByColumn($line, $endCol, max(0, $lineWidth - $endCol), true);
+                $line = $before . $this->applySearchTextHighlight($highlighted, $range['current']) . $after;
+            }
+            $screen[$row] = $line;
+        }
+
+        return $screen;
     }
 
     private function invalidateChildren(): void
@@ -292,7 +650,10 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $this->selectionGranularity = 'character';
         $this->selectionInitialRange = null;
         $this->lastClick = null;
+        $this->pressedUrl = null;
         $this->selectionDragged = false;
+        $this->clearComponentMouseGesture();
+        $this->lastComponentClick = null;
         $this->resetRenderState();
         $term = strtolower((string) getenv('TERM'));
         // Multiplexers can lag when every pointer movement is forwarded. Button-motion
@@ -312,10 +673,12 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
     #[\Override]
     protected function beforeTerminalStop(TuiStopOptions $options): void
     {
+        $this->closeSearch();
         $this->stopSelectionAutoScroll();
         $this->selectionPressActive = false;
         $this->stopScrollbarHover();
         $this->stopScrollbarDrag();
+        $this->clearComponentMouseGesture();
         $this->flashes->dispose();
         if (!$this->altScreenActive) {
             return;
@@ -346,8 +709,11 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
 
         $width = max(1, $this->terminal->columns());
         $buffer = self::BEGIN_SYNCHRONIZED_OUTPUT . self::EXIT_ALT_SCREEN . self::DISABLE_AUTOWRAP;
-        foreach ($this->render($width) as $row => $line) {
-            $line = (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $line);
+        $document = array_map(
+            static fn (string $line): string => str_replace(TUI::CURSOR_MARKER, '', (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $line)),
+            $this->render($width),
+        );
+        foreach ($this->applyLineResets($document) as $row => $line) {
             if (!self::isImageLine($line) && Width::visible($line) > $width) {
                 $line = Width::sliceByColumn($line, 0, $width, true);
             }
@@ -355,6 +721,13 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         }
         $buffer .= "\x1b[0m" . self::ENABLE_AUTOWRAP . "\r\n\x1b[?25h" . self::END_SYNCHRONIZED_OUTPUT;
         $this->terminal->write($buffer);
+    }
+
+    /** @return list<Component> */
+    #[\Override]
+    protected function getMountedRoots(): array
+    {
+        return $this->layoutRoot !== null ? [$this->layoutRoot] : $this->children;
     }
 
     #[\Override]
@@ -375,28 +748,158 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
      */
     private function handleViewportInput(string $data): ?array
     {
-        if (!str_contains($data, "\x1b[") || str_contains($data, "\x1b[200~")) {
-            return null;
+        $rest = $data;
+        if (str_contains($data, "\x1b[") && !str_contains($data, "\x1b[200~")) {
+            // A report the viewport defers (a wheel over a focused overlay nothing took) stays in
+            // the read, for the focused component — upstream returns `undefined` for it.
+            $rest = preg_replace_callback(
+                self::MOUSE_REPORT,
+                fn (array $match): string => $this->handleViewportReport($match[0]) ? '' : $match[0],
+                $data,
+            );
+
+            if ($rest === null) {
+                throw new TuiError('Splitting mouse reports failed: ' . preg_last_error_msg());
+            }
+            if ($rest === '') {
+                return ['consume' => true];
+            }
         }
 
-        $rest = preg_replace_callback(self::MOUSE_REPORT, function (array $match): string {
-            $this->handleViewportReport($match[0]);
-
-            return '';
-        }, $data);
-
-        if ($rest === null) {
-            throw new TuiError('Splitting mouse reports failed: ' . preg_last_error_msg());
+        if ($this->handleViewportKey($rest)) {
+            return ['consume' => true];
         }
 
-        return match (true) {
-            $rest === '' => ['consume' => true],
-            $rest === $data => null,
-            default => ['data' => $rest],
-        };
+        return $rest === $data ? null : ['data' => $rest];
     }
 
-    private function handleViewportReport(string $report): void
+    private function shouldDeferViewportInputToOverlay(): bool
+    {
+        return $this->isOverlayFocused() && ($this->activeSearch['overlay'] ?? null)?->isFocused() !== true;
+    }
+
+    private function clearComponentMouseGesture(): void
+    {
+        $this->mouseCapture = null;
+        $this->mousePressTarget = null;
+        $this->mousePressPoint = null;
+        $this->mousePressMoved = false;
+    }
+
+    /** Upstream's `tui.altScreen.*` half of `handleViewportInput()`: true when the key was ours. */
+    private function handleViewportKey(string $data): bool
+    {
+        $keybindings = Keybindings::getKeybindings();
+        $isRelease = Keys::isKeyRelease($data);
+        if ($keybindings->matches($data, 'tui.altScreen.search')) {
+            if (!$isRelease) {
+                $this->toggleSearch();
+            }
+
+            return true;
+        }
+        if (($this->activeSearch['overlay'] ?? null)?->isFocused() === true) {
+            if ($keybindings->matches($data, 'tui.altScreen.searchNext')) {
+                if (!$isRelease) {
+                    $this->navigateSearch(1);
+                }
+
+                return true;
+            }
+            if ($keybindings->matches($data, 'tui.altScreen.searchPrevious')) {
+                if (!$isRelease) {
+                    $this->navigateSearch(-1);
+                }
+
+                return true;
+            }
+            if ($keybindings->matches($data, 'tui.altScreen.searchClose')) {
+                if (!$isRelease) {
+                    $this->closeSearch();
+                }
+
+                return true;
+            }
+        }
+        if ($this->shouldDeferViewportInputToOverlay()) {
+            return false;
+        }
+        if ($keybindings->matches($data, 'tui.altScreen.pageUp')) {
+            if (!$isRelease) {
+                $this->scrollBy(-max(1, $this->getPrimaryScrollView()->viewportHeight() - self::PAGE_SCROLL_OVERLAP));
+            }
+
+            return true;
+        }
+        if ($keybindings->matches($data, 'tui.altScreen.pageDown')) {
+            if (!$isRelease) {
+                $this->scrollBy(max(1, $this->getPrimaryScrollView()->viewportHeight() - self::PAGE_SCROLL_OVERLAP));
+            }
+
+            return true;
+        }
+        if ($keybindings->matches($data, 'tui.altScreen.halfPageUp')) {
+            if (!$isRelease) {
+                $this->scrollBy(-max(1, intdiv($this->getPrimaryScrollView()->viewportHeight(), 2)));
+            }
+
+            return true;
+        }
+        if ($keybindings->matches($data, 'tui.altScreen.halfPageDown')) {
+            if (!$isRelease) {
+                $this->scrollBy(max(1, intdiv($this->getPrimaryScrollView()->viewportHeight(), 2)));
+            }
+
+            return true;
+        }
+        if ($keybindings->matches($data, 'tui.altScreen.lineUp')) {
+            if (!$isRelease) {
+                $this->scrollBy(-1);
+            }
+
+            return true;
+        }
+        if ($keybindings->matches($data, 'tui.altScreen.lineDown')) {
+            if (!$isRelease) {
+                $this->scrollBy(1);
+            }
+
+            return true;
+        }
+        if ($keybindings->matches($data, 'tui.altScreen.previousPrompt')) {
+            if (!$isRelease) {
+                $this->scrollToPrompt(-1);
+            }
+
+            return true;
+        }
+        if ($keybindings->matches($data, 'tui.altScreen.nextPrompt')) {
+            if (!$isRelease) {
+                $this->scrollToPrompt(1);
+            }
+
+            return true;
+        }
+        if ($keybindings->matches($data, 'tui.altScreen.top')) {
+            if (!$isRelease) {
+                $this->scrollToTop();
+            }
+
+            return true;
+        }
+        if ($keybindings->matches($data, 'tui.altScreen.bottom')) {
+            if (!$isRelease) {
+                $this->scrollToBottom();
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /** @return bool false when the report is left for the focused component */
+    private function handleViewportReport(string $report): bool
     {
         if ($report === self::FOCUS_OUT) {
             $hadActiveSelection = $this->selectionPressActive;
@@ -404,8 +907,14 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
             $this->selectionPressActive = false;
             $this->stopSelectionAutoScroll();
             $this->stopScrollbarHover();
+            if ($this->activeSearch !== null && $this->activeSearch['component']->setHoveredNavigationDirection(null)) {
+                $this->requestRender();
+            }
             $this->stopScrollbarDrag();
+            $this->pressedUrl = null;
             $this->selectionDragged = false;
+            $this->clearComponentMouseGesture();
+            $this->lastComponentClick = null;
             if ($hadActiveSelection) {
                 $this->selectionAnchor = null;
                 $this->selectionFocus = null;
@@ -417,11 +926,11 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
             }
             $this->lastClick = null;
 
-            return;
+            return true;
         }
 
         if ($report === self::FOCUS_IN) {
-            return;
+            return true;
         }
 
         $wheel = self::parseWheelEvent($report);
@@ -429,16 +938,31 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
             $lines = $this->wheelScroll->next($wheel['direction'], microtime(true) * 1000);
             // SGR mouse button codes use bit 3 (value 8) for the Alt modifier.
             $delta = $wheel['direction'] * (($wheel['button'] & 8) !== 0 ? $lines * self::ALT_WHEEL_SCROLL_MULTIPLIER : $lines);
+            $event = $this->createMouseEvent('wheel', $wheel['button'], $wheel['x'], $wheel['y'], wheelDelta: $delta);
+            $overlay = $this->dispatchMouseToOverlay($event);
+            $result = $overlay['result'] ?? ($overlay['hit'] ? null : $this->dispatchMouseToLayout($event));
+            if ($result !== null) {
+                if ($this->applyMouseDispatchResult($event, $result)) {
+                    $this->requestRender();
+                }
+
+                return true;
+            }
+            if ($this->shouldDeferViewportInputToOverlay()) {
+                return false;
+            }
             $this->routeWheel($wheel['x'], $wheel['y'], $delta);
 
-            return;
+            return true;
         }
 
         $event = self::parseSgrMouseEvent($report);
         if ($event !== null) {
             $this->handleMouseEvent($event);
         }
+
         // Anything else is a legacy X10 report that is not a wheel: swallowed, never typed.
+        return true;
     }
 
     /** @return array{direction: -1|1, x: int, y: int, button: int}|null */
@@ -497,22 +1021,216 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $this->requestRender();
     }
 
-    /** @param array{button: int, x: int, y: int, release: bool} $event */
-    private function handleMouseEvent(array $event): void
+    /** @return 'left'|'middle'|'right'|'none' */
+    private static function decodeMouseButton(int $button): string
     {
-        if ($this->handleScrollToEndIndicatorMouseEvent($event)) {
+        return match ($button & 3) {
+            0 => 'left',
+            1 => 'middle',
+            2 => 'right',
+            default => 'none',
+        };
+    }
+
+    /** @param 'press'|'release'|'move'|'drag'|'click'|'wheel' $type */
+    private function createMouseEvent(string $type, int $button, int $x, int $y, ?int $wheelDelta = null, ?int $clickCount = null): TuiMouseEvent
+    {
+        return new TuiMouseEvent(
+            type: $type,
+            button: $type === 'wheel' ? 'none' : self::decodeMouseButton($button),
+            x: $x,
+            y: $y,
+            screenX: $x,
+            screenY: $y,
+            width: max(1, $this->terminal->columns()),
+            height: max(1, $this->terminal->rows()),
+            shift: ($button & 4) !== 0,
+            alt: ($button & 8) !== 0,
+            ctrl: ($button & 16) !== 0,
+            wheelDelta: $wheelDelta,
+            clickCount: $clickCount,
+        );
+    }
+
+    private function dispatchMouseToLayout(TuiMouseEvent $event): ?TuiMouseDispatchResult
+    {
+        if ($this->currentLayout === null) {
+            return null;
+        }
+        $visited = [];
+        foreach (Layout::getLayoutBoxesAt($this->currentLayout, $event->screenX, $event->screenY) as $box) {
+            if (in_array($box->component, $visited, true)) {
+                continue;
+            }
+            // A stack's own handler would forward to children that have boxes of their own.
+            if ($box->component instanceof LayoutComponent && self::usesContainerMouseHandler($box->component)) {
+                continue;
+            }
+            $visited[] = $box->component;
+            $result = Mouse::dispatchMouseEvent(
+                $box->component,
+                $event->at($event->screenX - $box->rect->x, $event->screenY - $box->rect->y, $box->rect->width, $box->rect->height),
+            );
+            if ($result !== null) {
+                return $result;
+            }
+        }
+
+        return null;
+    }
+
+    /** Upstream's `box.component.handleMouse === Container.prototype.handleMouse`. */
+    private static function usesContainerMouseHandler(Component $component): bool
+    {
+        return $component instanceof Container
+            && (new \ReflectionMethod($component, 'handleMouse'))->getDeclaringClass()->getName() === Container::class;
+    }
+
+    private function applyMouseDispatchResult(TuiMouseEvent $event, TuiMouseDispatchResult $result): bool
+    {
+        $focusTarget = $this->resolveMouseFocusTarget($result->focusTarget ?? $result->target->component);
+        $focusChanged = $result->focus && $this->getFocusedComponent() !== $focusTarget;
+        if ($result->focus) {
+            $this->setFocus($focusTarget);
+        }
+        if ($result->capture) {
+            $this->mouseCapture = $result->target;
+        }
+
+        return $result->render ?? ($focusChanged || in_array($event->type, ['press', 'click', 'drag', 'wheel'], true));
+    }
+
+    private function dispatchMouseToTarget(TuiMouseEvent $event, TuiMouseDispatchTarget $target): ?TuiMouseDispatchResult
+    {
+        return Mouse::dispatchMouseEvent($target->component, Mouse::retargetMouseEvent($event, $target));
+    }
+
+    private function getComponentClickCount(TuiMouseDispatchTarget $target, int $x, int $y): int
+    {
+        $now = microtime(true);
+        $previous = $this->lastComponentClick;
+        $count = $previous !== null
+            && $now - $previous['timestamp'] <= self::DOUBLE_CLICK_INTERVAL
+            && $previous['component'] === $target->component
+            && $previous['x'] === $x
+            && $previous['y'] === $y
+                ? ($previous['count'] % 3) + 1
+                : 1;
+        $this->lastComponentClick = ['timestamp' => $now, 'count' => $count, 'component' => $target->component, 'x' => $x, 'y' => $y];
+
+        return $count;
+    }
+
+    private function clearTextSelection(): void
+    {
+        $this->stopSelectionAutoScroll();
+        $this->selectionPressActive = false;
+        $this->selectionAnchor = null;
+        $this->selectionFocus = null;
+        $this->selectionGranularity = 'character';
+        $this->selectionInitialRange = null;
+        $this->pressedUrl = null;
+        $this->selectionDragged = false;
+    }
+
+    /** @param array{button: int, x: int, y: int, release: bool} $raw */
+    private function handleMouseEvent(array $raw): void
+    {
+        $isMotion = ($raw['button'] & 32) !== 0;
+        $type = $raw['release'] ? 'release' : ($isMotion ? (self::decodeMouseButton($raw['button']) === 'none' ? 'move' : 'drag') : 'press');
+        $event = $this->createMouseEvent($type, $raw['button'], $raw['x'], $raw['y']);
+
+        $target = $this->mouseCapture ?? $this->mousePressTarget;
+        if ($target !== null) {
+            if ($this->mousePressPoint !== null && ($raw['x'] !== $this->mousePressPoint['x'] || $raw['y'] !== $this->mousePressPoint['y'])) {
+                $this->mousePressMoved = true;
+                $this->lastComponentClick = null;
+            }
+            $render = false;
+            $targetResult = $this->dispatchMouseToTarget($event, $target);
+            if ($targetResult !== null) {
+                $render = $this->applyMouseDispatchResult($event, $targetResult);
+            }
+            if ($raw['release']) {
+                if (!$this->mousePressMoved && $this->mousePressPoint !== null && $this->mousePressPoint['x'] === $raw['x'] && $this->mousePressPoint['y'] === $raw['y']) {
+                    $clickEvent = $this->createMouseEvent('click', $raw['button'], $raw['x'], $raw['y'], clickCount: $this->getComponentClickCount($target, $raw['x'], $raw['y']));
+                    $clickResult = $this->dispatchMouseToTarget($clickEvent, $target);
+                    if ($clickResult !== null) {
+                        $render = $this->applyMouseDispatchResult($clickEvent, $clickResult) || $render;
+                    }
+                }
+                $this->clearComponentMouseGesture();
+            }
+            if ($render) {
+                $this->requestRender();
+            }
+
             return;
         }
 
-        $scrollbarHandled = $this->handleScrollbarMouseEvent($event);
-        if ($this->scrollbarDrag === null) {
-            $this->updateScrollbarHover($event['x'], $event['y']);
-        }
-        if ($scrollbarHandled) {
+        if ($this->handleSearchMouseEvent($raw)) {
             return;
         }
 
-        $this->handleSelectionMouseEvent($event);
+        $overlay = $this->dispatchMouseToOverlay($event);
+        if (!$overlay['hit']) {
+            if ($this->handleScrollToEndIndicatorMouseEvent($raw)) {
+                return;
+            }
+            $scrollbarHandled = $this->handleScrollbarMouseEvent($raw);
+            if ($this->scrollbarDrag === null) {
+                $this->updateScrollbarHover($raw['x'], $raw['y']);
+            }
+            if ($scrollbarHandled) {
+                return;
+            }
+        } else {
+            $this->stopScrollbarHover();
+        }
+
+        $result = $overlay['result'] ?? ($overlay['hit'] ? null : $this->dispatchMouseToLayout($event));
+        if ($result !== null) {
+            $render = $this->applyMouseDispatchResult($event, $result);
+            if ($type === 'press') {
+                $this->clearTextSelection();
+                $this->mousePressTarget = $result->target;
+                $this->mousePressPoint = ['x' => $raw['x'], 'y' => $raw['y']];
+                $this->mousePressMoved = false;
+            }
+            if ($render) {
+                $this->requestRender();
+            }
+
+            return;
+        }
+
+        if ($this->handleRightClickPaste($raw)) {
+            return;
+        }
+        $this->handleSelectionMouseEvent($raw);
+    }
+
+    /**
+     * Upstream wraps the callback in a catch that drops its failure ("best-effort"); here the
+     * callback reports its own failures, and anything it throws is a crash like any other.
+     *
+     * @param array{button: int, x: int, y: int, release: bool} $event
+     */
+    private function handleRightClickPaste(array $event): bool
+    {
+        $termProgram = getenv('TERM_PROGRAM');
+        if (
+            $this->onRightClickPaste === null
+            || PHP_OS_FAMILY !== 'Windows'
+            || ($termProgram !== false && strtolower($termProgram) === 'vscode')
+            || $event['release']
+            || $event['button'] !== 2
+        ) {
+            return false;
+        }
+        ($this->onRightClickPaste)();
+
+        return true;
     }
 
     /** @param array{button: int, x: int, y: int, release: bool} $event */
@@ -624,17 +1342,6 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
     private function stopScrollbarDrag(): void
     {
         $this->scrollbarDrag = null;
-    }
-
-    private function clearTextSelection(): void
-    {
-        $this->stopSelectionAutoScroll();
-        $this->selectionPressActive = false;
-        $this->selectionAnchor = null;
-        $this->selectionFocus = null;
-        $this->selectionGranularity = 'character';
-        $this->selectionInitialRange = null;
-        $this->selectionDragged = false;
     }
 
     /** @return array{row: int, col: int, scrollView: ScrollView}|null */
@@ -931,6 +1638,35 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
             }
 
             $this->updateSelectionFocus($point);
+            $isClick = !$this->selectionDragged
+                && $this->selectionAnchor['scrollView'] === $point['scrollView']
+                && $this->selectionAnchor['row'] === $point['row']
+                && $this->selectionAnchor['col'] === $point['col'];
+            $clickedUrl = $isClick ? $this->pressedUrl : null;
+            $this->pressedUrl = null;
+            if ($clickedUrl !== null && $this->openUrl !== null) {
+                $this->selectionAnchor = null;
+                $this->selectionFocus = null;
+                // Upstream drops a failure here ("best-effort"); the callback reports its own.
+                ($this->openUrl)($clickedUrl);
+                $this->requestRender();
+
+                return;
+            }
+            if ($isClick) {
+                $clickEvent = $this->createMouseEvent('click', $event['button'], $event['x'], $event['y'], clickCount: $this->lastClick['count'] ?? 1);
+                $overlay = $this->dispatchMouseToOverlay($clickEvent);
+                $result = $overlay['result'] ?? ($overlay['hit'] ? null : $this->dispatchMouseToLayout($clickEvent));
+                if ($result !== null) {
+                    $render = $this->applyMouseDispatchResult($clickEvent, $result);
+                    $this->clearTextSelection();
+                    if ($render) {
+                        $this->requestRender();
+                    }
+
+                    return;
+                }
+            }
             if ($this->copyOnSelect) {
                 $this->copySelectionToClipboard();
             }
@@ -946,6 +1682,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
 
             $this->selectionDragged = true;
             $this->lastClick = null;
+            $this->pressedUrl = null;
             $this->updateSelectionFocus($point);
             $this->updateSelectionAutoScroll($event);
             $this->requestRender();
@@ -955,7 +1692,9 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
 
         $this->stopSelectionAutoScroll();
         $this->selectionPressActive = true;
-        $scrollView = $this->currentLayout === null ? null : (Layout::getScrollViewsAt($this->currentLayout, $event['x'], $event['y'])[0] ?? null);
+        $scrollView = !$this->hasOverlay() && $this->currentLayout !== null
+            ? (Layout::getScrollViewsAt($this->currentLayout, $event['x'], $event['y'])[0] ?? null)
+            : null;
         $anchor = $this->getSelectionPoint($event, $scrollView);
         $word = $this->getWordSelection($anchor);
         $clickCount = $this->getClickCount($anchor, $word);
@@ -969,6 +1708,12 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $this->selectionAnchor = $range['start'] ?? $anchor;
         $this->selectionFocus = $range['end'] ?? $anchor;
         $this->selectionDragged = false;
+        $this->pressedUrl = $range !== null
+            ? null
+            : Width::getOsc8LinkAtColumn(
+                $this->previousScreen[max(0, min($this->terminal->rows() - 1, $event['y']))] ?? '',
+                max(0, min($this->terminal->columns() - 1, $event['x'])),
+            );
         $this->requestRender();
     }
 
@@ -1230,8 +1975,13 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $height = max(1, $this->terminal->rows());
         $root = $this->layoutRoot ?? $this->implicitScrollView;
         $nextLayout = Layout::renderLayoutFrame($root, $width, $height, fn () => $this->requestRender());
+        if ($this->refreshSearch($nextLayout)) {
+            $nextLayout = Layout::renderLayoutFrame($root, $width, $height, fn () => $this->requestRender());
+        }
         $screen = array_map(static fn (string $line): string => (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $line), $nextLayout->lines);
+        $screen = $this->applySearchHighlights($screen, $nextLayout);
         $screen = $this->compositeScrollToEndIndicator($screen, $nextLayout, $width);
+        $screen = $this->compositeOverlays($screen, $width, $height);
         if (count($screen) > $height) {
             $screen = array_slice($screen, count($screen) - $height);
         }

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
+use Pig\Tui\Keybindings as TuiKeybindings;
+use Pig\Tui\KeybindingsManager;
 use Pig\Tui\Keys;
 
 /**
@@ -49,11 +51,14 @@ final class Keybindings
         'app.editor.external' => ['ctrl+g'],
         'app.message.followUp' => ['command+enter', 'alt+enter'],
         'app.message.dequeue' => ['alt+up'],
-        'tui.altScreen.top' => ['ctrl+home'],
-        'tui.altScreen.bottom' => ['ctrl+end'],
-        'tui.altScreen.pageUp' => ['pageup'],
-        'tui.altScreen.pageDown' => ['pagedown'],
     ];
+
+    /**
+     * The `tui.*` actions a file may rebind: the alternate-screen ones, which `TuiAltScreen` reads
+     * from the TUI's registry. The editing keys (`tui.editor.*`, `tui.input.*`, `tui.select.*`) are
+     * not read from the registry by pig's components yet, so binding one would never fire.
+     */
+    private const string TUI_PREFIX = 'tui.altScreen.';
 
     /** @var array<string, list<string>> action => keys */
     private array $bindings;
@@ -61,14 +66,36 @@ final class Keybindings
     /** @var list<string> */
     private array $problems = [];
 
+    /** @var array<string, list<string>> the `tui.altScreen.*` keys a file replaced */
+    private array $tuiOverrides = [];
+
     /**
-     * @param array<string, list<string>> $overrides actions whose keys replace the defaults
+     * @param array<string, list<string>> $overrides actions whose keys replace the defaults;
+     *                                               `tui.altScreen.*` ones go to the TUI's registry
      * @param list<string>                $problems
      */
     public function __construct(array $overrides = [], array $problems = [])
     {
+        foreach ($overrides as $action => $keys) {
+            if (str_starts_with($action, self::TUI_PREFIX)) {
+                $this->tuiOverrides[$action] = $keys;
+                unset($overrides[$action]);
+            }
+        }
         $this->bindings = [...self::DEFAULTS, ...$overrides];
         $this->problems = $problems;
+    }
+
+    /** Upstream's coding-agent `KeybindingsManager`, for `Pig\Tui\Keybindings::setKeybindings()`. */
+    public function tuiKeybindings(): KeybindingsManager
+    {
+        return new KeybindingsManager(TuiKeybindings::definitions(), $this->tuiOverrides);
+    }
+
+    private static function isAction(string $action): bool
+    {
+        return isset(self::DEFAULTS[$action])
+            || (str_starts_with($action, self::TUI_PREFIX) && isset(TuiKeybindings::TUI_KEYBINDINGS[$action]));
     }
 
     public static function defaults(): self
@@ -96,7 +123,7 @@ final class Keybindings
         $problems = [];
 
         foreach ($parsed as $action => $keys) {
-            if (!isset(self::DEFAULTS[$action])) {
+            if (!is_string($action) || !self::isAction($action)) {
                 $problems[] = "keybindings: {$path} binds '{$action}', which pig has no action for";
                 continue;
             }
@@ -139,6 +166,10 @@ final class Keybindings
     /** @return list<string> the keys bound to $action, as written */
     public function keysFor(string $action): array
     {
+        if (str_starts_with($action, self::TUI_PREFIX)) {
+            return $this->tuiKeybindings()->getKeys($action);
+        }
+
         return $this->bindings[$action] ?? [];
     }
 

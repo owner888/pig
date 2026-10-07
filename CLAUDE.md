@@ -10963,7 +10963,7 @@ PHP 的空安全调用操作符 `$this->terminals[$id]?->resize()` 仅在左侧�
 1. `TuiAltScreen`（`tui-alt-screen.ts`）每帧用 `Layout::renderLayoutFrame()`（`layout.ts`）把布局根排进整窗矩形；没有布局根时把 children 放进一个隐式 follow-end 的 `ScrollView`。
 2. `ChatViewport::create()`（`chat-viewport.ts` 的 `createChatViewport()`）：`VStack[transcript ScrollView(basis 0, grow 1, min 1), dock VStack(basis auto)]`；dock 各项可收缩，编辑器最少 3 行。pig 的 overlay 跟 status 一槽、extension footer 跟 footer 一槽、编辑器上方的 Spacer 放在 widgetsAbove 槽。
 3. `ScrollView`（`components/scroll-view.ts`）只管状态：`updateLayout()` 时跟随末尾，`scrollBy()` 返回没滚完的行数（滚轮外溢、拖选自动滚动都靠它），滚动条 `hidden|auto|always`。
-4. 浮条、滚动条、选择高亮都在 `TuiAltScreen::doRender()` 里合成；`tui.altScreen.top/bottom/pageUp/pageDown` 由 `InteractiveMode` 按 `Keybindings` 调 `TuiAltScreen::scrollToTop()/scrollToBottom()/scrollPage()`。
+4. 搜索高亮、浮条、overlay、滚动条、选择高亮都在 `TuiAltScreen::doRender()` 里按 upstream 的顺序合成；`tui.altScreen.*` 键（翻页、半页、逐行、上/下一个 prompt、搜索、顶/底）由 `TuiAltScreen::handleViewportKey()` 查 `Pig\Tui\Keybindings::getKeybindings()`，见下面的键位条目。
 5. 光标：和 upstream 一样找 `TUI::CURSOR_MARKER`；叶子盒子比分到的高度高时，`Layout` 让带标记的那一行留在盒子里。
 
 ### 全屏模式滚轮失灵、底部 Dock 被顶走：AltScreen 必须开鼠标上报 + 关 autowrap
@@ -11006,8 +11006,25 @@ $before = Width::sliceByColumn($line, 0, $start, true);
 | `new ChatViewport(...)`、`renderViewport()`、`indicatorRect()` | `ChatViewport::create(...)`；浮条由 `TuiAltScreen` 合成 |
 | `Caret` 接口、`caret()`、`Container::rowOf()` | `Focusable` + `public bool $focused` + `TUI::CURSOR_MARKER` |
 | `ScrollView::scrollToBottom()`、`contentLines()` | `scrollToEnd()`、`LayoutBox::$scrollContentLines` |
+| `TuiAltScreen::scrollPage()`、`InteractiveMode` 里查 `tui.altScreen.*` 的输入监听 | `TuiAltScreen::handleViewportKey()` + `Pig\Tui\Keybindings`（`keybindings.ts`） |
 
 **macOS 大小写陷阱**：`Tui.php` → `TUI.php` 只差大小写。APFS 默认不区分大小写、git 默认 `core.ignorecase=true`，`git add -A` 不会记下改名，Linux 上 PSR-4 找不到 `TUI.php`。必须 `git rm --cached packages/tui/src/Tui.php && git add packages/tui/src/TUI.php`。
+
+### `tui.altScreen.*` 键位走 TUI 的全局注册表，不走 coding-agent 的 `Keybindings`
+
+**结构**：upstream 的 `keybindings.ts` 是 `Pig\Tui\Keybindings`（`TUI_KEYBINDINGS`、`getKeybindings()`、`setKeybindings()`）+ `KeybindingsManager`。`TuiAltScreen` 只问注册表。coding-agent 的 `Keybindings::load()` 把 `keybindings.json` 里的 `tui.altScreen.*` 分出去，`InteractiveMode` 构造时 `TuiKeybindings::setKeybindings($keybindings->tuiKeybindings())`，和 upstream 构造函数里的 `setKeybindings()` 同一处。
+
+**避坑规则**：`tui.editor.*`、`tui.input.*`、`tui.select.*` 还没有组件去读注册表，所以 `keybindings.json` 写它们会报"pig has no action for"，不要放开成静默接受。注册表是进程级静态的：装了自定义键位的测试在 `setUp()`/`tearDown()` 里 `Keybindings::reset()`。`actionFor()` 只认 `app.*`，否则 `searchNext` 的 `enter` 会被编辑器当成动作吃掉。
+
+```php
+TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
+```
+
+### 全屏鼠标：组件优先，滚轮在 overlay 聚焦时留给 overlay
+
+**结构**：照 upstream，`TuiAltScreen::handleMouseEvent()` 依次是捕获/按下目标 → 搜索框按钮 → overlay → 浮条/滚动条 → 布局里的组件（`dispatchMouseToLayout()`，跳过用 `Container` 默认 `handleMouse()` 的栈节点）→ 文本选择。抬起时没移动就合成 `click`。OSC 8 链接按下记下 URL，原地抬起时调 `TuiAltScreenOptions::$openUrl`。
+
+**避坑规则**：pig 的 read 是成批的，`handleViewportReport()` 返回 false 的报告（overlay 聚焦、没有组件接的滚轮）原样留在 read 里交给聚焦组件——这就是 upstream 的 `return undefined`。upstream 对 `openUrl`/右键粘贴用 catch 吞掉失败；pig 不吞，回调自己报错（`InteractiveMode::openInBrowser()` 本来就不抛）。用户消息和非工具调用的助手消息首尾带 OSC 133 `A`/`B`/`C`，`tui.altScreen.previousPrompt/nextPrompt` 靠 `A` 定位，别在渲染里剥掉它们（`TuiAltScreen` 只在合成屏幕时去掉前缀）。
 
 ### `Ansi::at()` 不认 OSC/APC，`\e]8;;\a` 被当成 4 列可见字符
 

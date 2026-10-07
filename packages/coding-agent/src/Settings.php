@@ -102,6 +102,57 @@ final class Settings
         $this->set('tuiMode', $mode === 'regular' ? 'regular' : 'fullscreen');
     }
 
+    /** Upstream's `getFullscreenExitOutput()`: print the transcript, or only the resume hint, on leaving fullscreen. */
+    public function fullscreenExitOutput(): string
+    {
+        return $this->get('fullscreenExitOutput') === 'resume-hint' ? 'resume-hint' : 'transcript';
+    }
+
+    public function setFullscreenExitOutput(string $output): void
+    {
+        $this->set('fullscreenExitOutput', $output === 'resume-hint' ? 'resume-hint' : 'transcript');
+    }
+
+    /** @return 'auto'|'always'|'hidden' upstream's `getFullscreenScrollbar()` */
+    public function fullscreenScrollbar(): string
+    {
+        $mode = $this->get('fullscreenScrollbar');
+
+        return $mode === 'always' || $mode === 'hidden' ? $mode : 'auto';
+    }
+
+    /** @param 'auto'|'always'|'hidden' $mode */
+    public function setFullscreenScrollbar(string $mode): void
+    {
+        $this->set('fullscreenScrollbar', $mode);
+    }
+
+    public function fullscreenCopyOnSelect(): bool
+    {
+        $value = $this->get('fullscreenCopyOnSelect');
+
+        return is_bool($value) ? $value : true;
+    }
+
+    public function setFullscreenCopyOnSelect(bool $enabled): void
+    {
+        $this->set('fullscreenCopyOnSelect', $enabled);
+    }
+
+    /** @return int|'auto' upstream's `getFullscreenWheelScrollLines()`: a whole number from 1 to 100, or `'auto'` */
+    public function fullscreenWheelScrollLines(): int|string
+    {
+        $lines = $this->get('fullscreenWheelScrollLines');
+
+        return is_int($lines) || (is_float($lines) && is_finite($lines)) ? max(1, min(100, (int) floor($lines))) : 'auto';
+    }
+
+    /** @param int|'auto' $lines */
+    public function setFullscreenWheelScrollLines(int|string $lines): void
+    {
+        $this->set('fullscreenWheelScrollLines', $lines === 'auto' ? 'auto' : max(1, min(100, (int) $lines)));
+    }
+
     public function theme(): ?string
     {
         $theme = $this->get('theme');

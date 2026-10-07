@@ -34,6 +34,13 @@ use Pig\Tui\Container;
  */
 final class AssistantMessageComponent extends Container
 {
+    private const string OSC133_ZONE_START = "\x1b]133;A\x07";
+    private const string OSC133_ZONE_END = "\x1b]133;B\x07";
+    private const string OSC133_ZONE_FINAL = "\x1b]133;C\x07";
+
+    /** Upstream's `hasToolCalls`: a message that calls tools is not wrapped in prompt marks. */
+    private bool $hasToolCalls = false;
+
     private readonly Container $content;
 
     /**
@@ -80,6 +87,22 @@ final class AssistantMessageComponent extends Container
         }
     }
 
+    /** Wrapped in OSC 133 prompt marks, as upstream's is — see `UserMessageComponent::render()`. */
+    #[\Override]
+    public function render(int $width): array
+    {
+        $lines = parent::render($width);
+        if ($this->hasToolCalls || $lines === []) {
+            return $lines;
+        }
+
+        $lines[0] = self::OSC133_ZONE_START . $lines[0];
+        $last = count($lines) - 1;
+        $lines[$last] = self::OSC133_ZONE_END . self::OSC133_ZONE_FINAL . $lines[$last];
+
+        return $lines;
+    }
+
     public function setHideThinking(bool $hide): void
     {
         $this->hideThinking = $hide;
@@ -93,6 +116,13 @@ final class AssistantMessageComponent extends Container
     public function update(AssistantMessage $message): void
     {
         $this->slot = 0;
+        $this->hasToolCalls = false;
+        foreach ($message->content as $block) {
+            if ($block instanceof ToolCall) {
+                $this->hasToolCalls = true;
+                break;
+            }
+        }
 
         if (self::hasSomethingToSay($message)) {
             $this->keep('gap', static fn (): Component => new Spacer(1));

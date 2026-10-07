@@ -43,6 +43,24 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.11] - 2026-10-07
+
+### New Features
+
+- **Fullscreen Transcript Search (AltScreen Search via Ctrl+Shift+F / Ctrl+F)**:
+  - Ported upstream pi's `AltScreenSearchIndex`, `AltScreenSearch`, and `AltScreenSearchComponent`.
+  - Supports live regex/substring incremental search across rendered transcript lines with case-folding, match segment mapping, and real-time highlighted matches.
+  - Interactive navigation: `Enter` / `Ctrl+G` (next match), `Shift+Enter` / `Ctrl+Shift+G` (previous match), `Escape` (dismiss search), with viewport auto-scroll tracking the selected result.
+
+### Added
+
+- **Full Mouse Interaction & Region Dispatch Engine (`Mouse`, `MouseHandler`, `MouseRegion`, `TuiMouseEvent`)**:
+  - Implemented component-level mouse dispatching, mouse tracking, region hit-testing (`MouseRegion`), and target capture for interactive elements.
+- **TUI Overlay System (`OverlayBounds`, `OverlayHandle`, `OverlayOptions`, `OverlayStackEntry`)**:
+  - Added floating overlay stack support with anchored bounds calculation (`top-left`, `top-right`, `bottom-left`, `bottom-right`, `center`) and margin constraints.
+- **TUI Keybindings Registry Parity (`KeybindingsManager`, `KeybindingDefinition`)**:
+  - Ported global keybinding registry matching upstream pi's `TUI_KEYBINDINGS`, conflict detection, and user keymap rebinding.
+
 ## [0.4.10] - 2026-10-07
 
 ### Added

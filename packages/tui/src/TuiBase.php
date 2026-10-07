@@ -13,7 +13,7 @@ use Pig\Tui\Images\TerminalImage;
  * listeners, the cell-size query and when a frame is drawn. *How* a frame is drawn is
  * `doRender()`, which `TuiMainScreen` and `TuiAltScreen` each implement.
  *
- * Not ported yet: the overlay stack and terminal-colour queries.
+ * Not ported yet: terminal-colour queries.
  */
 abstract class TuiBase extends Container implements TUI
 {
@@ -30,6 +30,22 @@ abstract class TuiBase extends Container implements TUI
     public ?Closure $onDebug = null;
 
     private ?Component $focusedComponent = null;
+
+    private int $focusOrderCounter = 0;
+
+    /** @var list<OverlayStackEntry> modal components drawn over the content, in the order shown */
+    private array $overlayStack = [];
+
+    /** @var list<array{entry: OverlayStackEntry, row: int, col: int, width: int, height: int}> */
+    private array $renderedOverlayLayouts = [];
+
+    /**
+     * Upstream's `OverlayFocusRestoreState`: whether focus should go back to an overlay that lost it
+     * to something outside it.
+     *
+     * @var array{status: 'inactive'}|array{status: 'eligible', overlay: OverlayStackEntry}|array{status: 'blocked', overlay: OverlayStackEntry, blockedBy: Component, resume: array{status: 'restore-overlay'}|array{status: 'focus-target', target: ?Component}}
+     */
+    private array $overlayFocusRestore = ['status' => 'inactive'];
 
     /** @var list<Closure(string): (bool|array{consume?: bool, data?: string}|null)> */
     private array $inputListeners = [];
@@ -105,15 +121,581 @@ abstract class TuiBase extends Container implements TUI
     #[\Override]
     public function setFocus(?Component $component): void
     {
+        $this->setFocusInternal($component, 'clear');
+    }
+
+    /** @param 'clear'|'preserve' $overlayFocusRestore */
+    private function setFocusInternal(?Component $component, string $overlayFocusRestore): void
+    {
+        $previousFocus = $this->focusedComponent;
+        $nextFocus = $component;
+        $previousFocusedOverlay = null;
+        if ($previousFocus !== null) {
+            foreach ($this->overlayStack as $entry) {
+                if ($entry->component === $previousFocus && $this->isOverlayVisible($entry)) {
+                    $previousFocusedOverlay = $entry;
+                    break;
+                }
+            }
+        }
+        $nextFocusIsOverlay = $nextFocus !== null && $this->overlayFor($nextFocus) !== null;
+        $restoreState = $this->getVisibleOverlayFocusRestore();
+        if ($nextFocus !== null && !$nextFocusIsOverlay) {
+            if ($restoreState['status'] === 'blocked' && $restoreState['blockedBy'] === $previousFocus) {
+                if ($restoreState['resume']['status'] === 'focus-target' || !$this->isComponentMounted($restoreState['blockedBy'])) {
+                    $nextFocus = $this->resolveBlockedOverlayFocusResume($restoreState);
+                } else {
+                    $this->overlayFocusRestore = ['status' => 'blocked', 'overlay' => $restoreState['overlay'], 'blockedBy' => $nextFocus, 'resume' => $restoreState['resume']];
+                }
+            } elseif ($previousFocusedOverlay !== null
+                && $restoreState['status'] !== 'inactive'
+                && $restoreState['overlay'] === $previousFocusedOverlay
+                && !$this->isOverlayFocusAncestor($previousFocusedOverlay, $nextFocus)) {
+                $this->overlayFocusRestore = ['status' => 'blocked', 'overlay' => $previousFocusedOverlay, 'blockedBy' => $nextFocus, 'resume' => ['status' => 'restore-overlay']];
+            }
+        } elseif ($nextFocus === null) {
+            if ($restoreState['status'] === 'blocked' && $restoreState['blockedBy'] === $previousFocus) {
+                $nextFocus = $this->resolveBlockedOverlayFocusResume($restoreState);
+            } elseif ($overlayFocusRestore === 'clear') {
+                $this->clearOverlayFocusRestore();
+            }
+        }
+
         if ($this->focusedComponent instanceof Focusable) {
             $this->focusedComponent->focused = false;
         }
 
-        $this->focusedComponent = $component;
+        $this->focusedComponent = $nextFocus;
 
-        if ($component instanceof Focusable) {
-            $component->focused = true;
+        if ($nextFocus instanceof Focusable) {
+            $nextFocus->focused = true;
         }
+
+        if ($nextFocus !== null) {
+            $focusedOverlay = $this->overlayFor($nextFocus);
+            if ($focusedOverlay !== null && $this->isOverlayVisible($focusedOverlay)) {
+                $this->overlayFocusRestore = ['status' => 'eligible', 'overlay' => $focusedOverlay];
+            }
+        }
+    }
+
+    private function overlayFor(Component $component): ?OverlayStackEntry
+    {
+        foreach ($this->overlayStack as $entry) {
+            if ($entry->component === $component) {
+                return $entry;
+            }
+        }
+
+        return null;
+    }
+
+    private function clearOverlayFocusRestore(): void
+    {
+        $this->overlayFocusRestore = ['status' => 'inactive'];
+    }
+
+    private function clearOverlayFocusRestoreFor(OverlayStackEntry $overlay): void
+    {
+        if ($this->overlayFocusRestore['status'] !== 'inactive' && $this->overlayFocusRestore['overlay'] === $overlay) {
+            $this->clearOverlayFocusRestore();
+        }
+    }
+
+    /** @param array{status: 'blocked', overlay: OverlayStackEntry, blockedBy: Component, resume: array{status: string, target?: ?Component}} $restoreState */
+    private function resolveBlockedOverlayFocusResume(array $restoreState): ?Component
+    {
+        if ($restoreState['resume']['status'] === 'restore-overlay') {
+            return $restoreState['overlay']->component;
+        }
+        $this->clearOverlayFocusRestore();
+
+        return $restoreState['resume']['target'] ?? null;
+    }
+
+    /** @return array{status: string, overlay?: OverlayStackEntry, blockedBy?: Component, resume?: array{status: string, target?: ?Component}} */
+    private function getVisibleOverlayFocusRestore(): array
+    {
+        $restoreState = $this->overlayFocusRestore;
+        if ($restoreState['status'] === 'inactive') {
+            return $restoreState;
+        }
+        if (!in_array($restoreState['overlay'], $this->overlayStack, true) || !$this->isOverlayVisible($restoreState['overlay'])) {
+            return ['status' => 'inactive'];
+        }
+
+        return $restoreState;
+    }
+
+    private function isOverlayFocusAncestor(OverlayStackEntry $entry, Component $component): bool
+    {
+        $visited = [];
+        $current = $entry->preFocus;
+        while ($current !== null && !in_array($current, $visited, true)) {
+            $visited[] = $current;
+            if ($current === $component) {
+                return true;
+            }
+            $current = $this->overlayFor($current)?->preFocus;
+        }
+
+        return false;
+    }
+
+    private function retargetOverlayPreFocus(OverlayStackEntry $removed): void
+    {
+        foreach ($this->overlayStack as $overlay) {
+            if ($overlay !== $removed && $overlay->preFocus === $removed->component) {
+                $overlay->preFocus = $removed->preFocus;
+            }
+        }
+    }
+
+    /** @return list<Component> the trees drawn as the document, which the overlays sit over */
+    protected function getMountedRoots(): array
+    {
+        return $this->children;
+    }
+
+    private function isComponentMounted(Component $component): bool
+    {
+        foreach ($this->getMountedRoots() as $child) {
+            if (self::containsComponent($child, $component)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function containsComponent(Component $root, Component $target): bool
+    {
+        if ($root === $target) {
+            return true;
+        }
+        if (!$root instanceof Container) {
+            return false;
+        }
+        foreach ($root->children() as $child) {
+            if (self::containsComponent($child, $target)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Whether an overlay is shown at all, hidden or not — upstream's `hasOverlayEntries`. */
+    protected function hasOverlayEntries(): bool
+    {
+        return $this->overlayStack !== [];
+    }
+
+    /** Show a component over the content; the handle hides, focuses and moves it — upstream's `showOverlay()`. */
+    public function showOverlay(Component $component, ?OverlayOptions $options = null): OverlayHandle
+    {
+        $entry = new OverlayStackEntry($component, $options, $this->focusedComponent, false, ++$this->focusOrderCounter);
+        $this->overlayStack[] = $entry;
+        if (!($options?->nonCapturing ?? false) && $this->isOverlayVisible($entry)) {
+            $this->setFocus($component);
+        }
+        $this->hideTerminalCursor();
+        $this->requestRender();
+
+        $hide = function () use ($entry, $component): void {
+            $index = array_search($entry, $this->overlayStack, true);
+            if ($index === false) {
+                return;
+            }
+            $this->clearOverlayFocusRestoreFor($entry);
+            $this->retargetOverlayPreFocus($entry);
+            array_splice($this->overlayStack, $index, 1);
+            if ($this->focusedComponent === $component) {
+                $this->setFocus($this->getTopmostVisibleOverlay()?->component ?? $entry->preFocus);
+            }
+            if ($this->overlayStack === []) {
+                $this->hideTerminalCursor();
+            }
+            $this->requestRender();
+        };
+        $setHidden = function (bool $hidden) use ($entry, $component, $options): void {
+            if ($entry->hidden === $hidden) {
+                return;
+            }
+            $entry->hidden = $hidden;
+            if ($hidden) {
+                $this->clearOverlayFocusRestoreFor($entry);
+                if ($this->focusedComponent === $component) {
+                    $this->setFocus($this->getTopmostVisibleOverlay()?->component ?? $entry->preFocus);
+                }
+            } elseif (!($options?->nonCapturing ?? false) && $this->isOverlayVisible($entry)) {
+                $entry->focusOrder = ++$this->focusOrderCounter;
+                $this->setFocus($component);
+            }
+            $this->requestRender();
+        };
+        $focus = function () use ($entry, $component): void {
+            if (!in_array($entry, $this->overlayStack, true) || !$this->isOverlayVisible($entry)) {
+                return;
+            }
+            $entry->focusOrder = ++$this->focusOrderCounter;
+            $this->setFocus($component);
+            $this->requestRender();
+        };
+        $unfocus = function (?Component $target, bool $hasTarget) use ($entry, $component): void {
+            $isFocused = $this->focusedComponent === $component;
+            $restoreState = $this->overlayFocusRestore;
+            $hasPendingRestore = $restoreState['status'] !== 'inactive' && $restoreState['overlay'] === $entry;
+            if (!$isFocused && !$hasPendingRestore) {
+                return;
+            }
+            if ($restoreState['status'] === 'blocked' && $restoreState['overlay'] === $entry && $this->focusedComponent === $restoreState['blockedBy']) {
+                if ($hasTarget) {
+                    $this->overlayFocusRestore = ['status' => 'blocked', 'overlay' => $entry, 'blockedBy' => $restoreState['blockedBy'], 'resume' => ['status' => 'focus-target', 'target' => $target]];
+                } else {
+                    $this->clearOverlayFocusRestore();
+                }
+                $this->requestRender();
+
+                return;
+            }
+            $this->clearOverlayFocusRestoreFor($entry);
+            if ($isFocused || $hasTarget) {
+                $topVisible = $this->getTopmostVisibleOverlay();
+                $fallback = $topVisible !== null && $topVisible !== $entry ? $topVisible->component : $entry->preFocus;
+                $this->setFocus($hasTarget ? $target : $fallback);
+            }
+            $this->requestRender();
+        };
+        $isFocused = fn (): bool => $this->focusedComponent === $component;
+        $getBounds = fn (): ?OverlayBounds => in_array($entry, $this->overlayStack, true) && $this->isOverlayVisible($entry) ? $entry->bounds : null;
+
+        return new class ($hide, $setHidden, $entry, $focus, $unfocus, $isFocused, $getBounds) implements OverlayHandle {
+            public function __construct(
+                private readonly \Closure $hide,
+                private readonly \Closure $setHidden,
+                private readonly OverlayStackEntry $entry,
+                private readonly \Closure $focus,
+                private readonly \Closure $unfocus,
+                private readonly \Closure $isFocused,
+                private readonly \Closure $getBounds,
+            ) {
+            }
+
+            #[\Override]
+            public function hide(): void
+            {
+                ($this->hide)();
+            }
+
+            #[\Override]
+            public function setHidden(bool $hidden): void
+            {
+                ($this->setHidden)($hidden);
+            }
+
+            #[\Override]
+            public function isHidden(): bool
+            {
+                return $this->entry->hidden;
+            }
+
+            #[\Override]
+            public function focus(): void
+            {
+                ($this->focus)();
+            }
+
+            #[\Override]
+            public function unfocus(?Component $target = null, bool $hasTarget = false): void
+            {
+                ($this->unfocus)($target, $hasTarget);
+            }
+
+            #[\Override]
+            public function isFocused(): bool
+            {
+                return ($this->isFocused)();
+            }
+
+            #[\Override]
+            public function getBounds(): ?OverlayBounds
+            {
+                return ($this->getBounds)();
+            }
+        };
+    }
+
+    /** Hide the topmost overlay and give focus back — upstream's `hideOverlay()`. */
+    public function hideOverlay(): void
+    {
+        $overlay = $this->overlayStack[count($this->overlayStack) - 1] ?? null;
+        if ($overlay === null) {
+            return;
+        }
+        $this->clearOverlayFocusRestoreFor($overlay);
+        $this->retargetOverlayPreFocus($overlay);
+        array_pop($this->overlayStack);
+        if ($this->focusedComponent === $overlay->component) {
+            $this->setFocus($this->getTopmostVisibleOverlay()?->component ?? $overlay->preFocus);
+        }
+        if ($this->overlayStack === []) {
+            $this->hideTerminalCursor();
+        }
+        $this->requestRender();
+    }
+
+    /** Hide the cursor while running; after stop() the shell owns it and it must stay visible. */
+    private function hideTerminalCursor(): void
+    {
+        if (!$this->stopped) {
+            $this->terminal->hideCursor();
+        }
+    }
+
+    public function hasOverlay(): bool
+    {
+        foreach ($this->overlayStack as $entry) {
+            if ($this->isOverlayVisible($entry)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Whether the focused component is a visible overlay. */
+    protected function isOverlayFocused(): bool
+    {
+        foreach ($this->overlayStack as $entry) {
+            if ($entry->component === $this->focusedComponent && $this->isOverlayVisible($entry)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Keep an overlay as the keyboard focus owner when a control inside it is clicked. */
+    protected function resolveMouseFocusTarget(Component $component): Component
+    {
+        for ($index = count($this->overlayStack) - 1; $index >= 0; $index--) {
+            $overlay = $this->overlayStack[$index];
+            if ($this->isOverlayVisible($overlay) && self::containsComponent($overlay->component, $component)) {
+                return $overlay->component;
+            }
+        }
+
+        return $component;
+    }
+
+    /**
+     * Dispatch to the visually topmost overlay under the pointer.
+     *
+     * @return array{hit: bool, result?: TuiMouseDispatchResult}
+     */
+    protected function dispatchMouseToOverlay(TuiMouseEvent $event): array
+    {
+        for ($index = count($this->renderedOverlayLayouts) - 1; $index >= 0; $index--) {
+            $layout = $this->renderedOverlayLayouts[$index];
+            if ($event->screenX < $layout['col'] || $event->screenX >= $layout['col'] + $layout['width']
+                || $event->screenY < $layout['row'] || $event->screenY >= $layout['row'] + $layout['height']) {
+                continue;
+            }
+            $result = Mouse::dispatchMouseEvent(
+                $layout['entry']->component,
+                $event->at($event->screenX - $layout['col'], $event->screenY - $layout['row'], $layout['width'], $layout['height']),
+            );
+
+            return $result === null
+                ? ['hit' => true]
+                : ['hit' => true, 'result' => $result->focus ? $result->withFocusTarget($layout['entry']->component) : $result];
+        }
+
+        return ['hit' => false];
+    }
+
+    private function isOverlayVisible(OverlayStackEntry $entry): bool
+    {
+        if ($entry->hidden) {
+            return false;
+        }
+
+        return $entry->options?->visible === null || ($entry->options->visible)($this->terminal->columns(), $this->terminal->rows());
+    }
+
+    /** The visually frontmost visible capturing overlay. */
+    private function getTopmostVisibleOverlay(): ?OverlayStackEntry
+    {
+        $topmost = null;
+        foreach ($this->overlayStack as $overlay) {
+            if (($overlay->options?->nonCapturing ?? false) || !$this->isOverlayVisible($overlay)) {
+                continue;
+            }
+            if ($topmost === null || $overlay->focusOrder > $topmost->focusOrder) {
+                $topmost = $overlay;
+            }
+        }
+
+        return $topmost;
+    }
+
+    #[\Override]
+    public function invalidate(): void
+    {
+        foreach ($this->getMountedRoots() as $root) {
+            $root->invalidate();
+        }
+        foreach ($this->overlayStack as $overlay) {
+            $overlay->component->invalidate();
+        }
+    }
+
+    private static function parseSizeValue(int|string|null $value, int $referenceSize): ?int
+    {
+        if ($value === null || is_int($value)) {
+            return $value;
+        }
+
+        return preg_match('/^(\d+(?:\.\d+)?)%$/', $value, $match) === 1 ? (int) floor($referenceSize * (float) $match[1] / 100) : null;
+    }
+
+    /** @return array{width: int, row: int, col: int, maxHeight: ?int} */
+    private function resolveOverlayLayout(?OverlayOptions $options, int $overlayHeight, int $termWidth, int $termHeight): array
+    {
+        $opt = $options ?? new OverlayOptions();
+        $margin = is_int($opt->margin)
+            ? ['top' => $opt->margin, 'right' => $opt->margin, 'bottom' => $opt->margin, 'left' => $opt->margin]
+            : ($opt->margin ?? []);
+        $marginTop = max(0, $margin['top'] ?? 0);
+        $marginRight = max(0, $margin['right'] ?? 0);
+        $marginBottom = max(0, $margin['bottom'] ?? 0);
+        $marginLeft = max(0, $margin['left'] ?? 0);
+        $availWidth = max(1, $termWidth - $marginLeft - $marginRight);
+        $availHeight = max(1, $termHeight - $marginTop - $marginBottom);
+
+        $width = self::parseSizeValue($opt->width, $termWidth) ?? min(80, $availWidth);
+        if ($opt->minWidth !== null) {
+            $width = max($width, $opt->minWidth);
+        }
+        $width = max(1, min($width, $availWidth));
+
+        $maxHeight = self::parseSizeValue($opt->maxHeight, $termHeight);
+        if ($maxHeight !== null) {
+            $maxHeight = max(1, min($maxHeight, $availHeight));
+        }
+        $effectiveHeight = $maxHeight !== null ? min($overlayHeight, $maxHeight) : $overlayHeight;
+
+        if ($opt->row !== null) {
+            if (is_string($opt->row)) {
+                $row = preg_match('/^(\d+(?:\.\d+)?)%$/', $opt->row, $match) === 1
+                    ? $marginTop + (int) floor(max(0, $availHeight - $effectiveHeight) * (float) $match[1] / 100)
+                    : self::resolveAnchorRow('center', $effectiveHeight, $availHeight, $marginTop);
+            } else {
+                $row = $opt->row;
+            }
+        } else {
+            $row = self::resolveAnchorRow($opt->anchor, $effectiveHeight, $availHeight, $marginTop);
+        }
+
+        if ($opt->col !== null) {
+            if (is_string($opt->col)) {
+                $col = preg_match('/^(\d+(?:\.\d+)?)%$/', $opt->col, $match) === 1
+                    ? $marginLeft + (int) floor(max(0, $availWidth - $width) * (float) $match[1] / 100)
+                    : self::resolveAnchorCol('center', $width, $availWidth, $marginLeft);
+            } else {
+                $col = $opt->col;
+            }
+        } else {
+            $col = self::resolveAnchorCol($opt->anchor, $width, $availWidth, $marginLeft);
+        }
+
+        $row += $opt->offsetY ?? 0;
+        $col += $opt->offsetX ?? 0;
+        $row = max($marginTop, min($row, $termHeight - $marginBottom - $effectiveHeight));
+        $col = max($marginLeft, min($col, $termWidth - $marginRight - $width));
+
+        return ['width' => $width, 'row' => $row, 'col' => $col, 'maxHeight' => $maxHeight];
+    }
+
+    private static function resolveAnchorRow(string $anchor, int $height, int $availHeight, int $marginTop): int
+    {
+        return match ($anchor) {
+            'top-left', 'top-center', 'top-right' => $marginTop,
+            'bottom-left', 'bottom-center', 'bottom-right' => $marginTop + $availHeight - $height,
+            default => $marginTop + intdiv($availHeight - $height, 2),
+        };
+    }
+
+    private static function resolveAnchorCol(string $anchor, int $width, int $availWidth, int $marginLeft): int
+    {
+        return match ($anchor) {
+            'top-left', 'left-center', 'bottom-left' => $marginLeft,
+            'top-right', 'right-center', 'bottom-right' => $marginLeft + $availWidth - $width,
+            default => $marginLeft + intdiv($availWidth - $width, 2),
+        };
+    }
+
+    /**
+     * Draw every visible overlay over the content, the most recently focused on top — upstream's
+     * `compositeOverlays()`.
+     *
+     * @param list<string> $lines
+     * @return list<string>
+     */
+    protected function compositeOverlays(array $lines, int $termWidth, int $termHeight): array
+    {
+        if ($this->overlayStack === []) {
+            $this->renderedOverlayLayouts = [];
+
+            return $lines;
+        }
+
+        $result = $lines;
+        foreach ($this->overlayStack as $entry) {
+            $entry->bounds = null;
+        }
+
+        $rendered = [];
+        $minLinesNeeded = count($result);
+        $visibleEntries = array_values(array_filter($this->overlayStack, $this->isOverlayVisible(...)));
+        usort($visibleEntries, static fn (OverlayStackEntry $a, OverlayStackEntry $b): int => $a->focusOrder <=> $b->focusOrder);
+        foreach ($visibleEntries as $entry) {
+            // Width and maxHeight do not depend on the height, so lay out with 0 first.
+            $first = $this->resolveOverlayLayout($entry->options, 0, $termWidth, $termHeight);
+            $overlayLines = $entry->component->render($first['width']);
+            if ($first['maxHeight'] !== null && count($overlayLines) > $first['maxHeight']) {
+                $overlayLines = array_slice($overlayLines, 0, $first['maxHeight']);
+            }
+            $final = $this->resolveOverlayLayout($entry->options, count($overlayLines), $termWidth, $termHeight);
+            $entry->bounds = new OverlayBounds($final['row'], $final['col'], $first['width'], count($overlayLines));
+            $rendered[] = ['entry' => $entry, 'lines' => $overlayLines, 'row' => $final['row'], 'col' => $final['col'], 'width' => $first['width']];
+            $minLinesNeeded = max($minLinesNeeded, $final['row'] + count($overlayLines));
+        }
+        $this->renderedOverlayLayouts = array_map(
+            static fn (array $item): array => ['entry' => $item['entry'], 'row' => $item['row'], 'col' => $item['col'], 'width' => $item['width'], 'height' => count($item['lines'])],
+            $rendered,
+        );
+
+        // Padded to at least the terminal height, so overlays have screen-relative positions.
+        $workingHeight = max(count($result), $termHeight, $minLinesNeeded);
+        while (count($result) < $workingHeight) {
+            $result[] = '';
+        }
+        $viewportStart = max(0, $workingHeight - $termHeight);
+
+        foreach ($rendered as $item) {
+            foreach ($item['lines'] as $index => $overlayLine) {
+                $row = $viewportStart + $item['row'] + $index;
+                if ($row < 0 || $row >= count($result)) {
+                    continue;
+                }
+                $truncated = Width::visible($overlayLine) > $item['width'] ? Width::sliceByColumn($overlayLine, 0, $item['width'], true) : $overlayLine;
+                $result[$row] = Width::composite($result[$row], $truncated, $item['col'], $item['width'], $termWidth);
+            }
+        }
+
+        return $result;
     }
 
     /** How many full redraws there have been — for a test to ask whether a frame was one. */
@@ -412,6 +994,33 @@ abstract class TuiBase extends Container implements TUI
             ($this->onDebug)();
 
             return;
+        }
+
+        // A focused overlay that stopped being visible (a resize, its visible() callback) hands
+        // focus to the topmost visible one, or back to what it took focus from.
+        $focusedOverlay = $this->focusedComponent === null ? null : $this->overlayFor($this->focusedComponent);
+        if ($focusedOverlay !== null && !$this->isOverlayVisible($focusedOverlay)) {
+            $topVisible = $this->getTopmostVisibleOverlay();
+            if ($topVisible !== null) {
+                $this->setFocus($topVisible->component);
+            } else {
+                $this->setFocusInternal($focusedOverlay->preFocus, 'preserve');
+            }
+        }
+
+        $focusIsOverlay = $this->focusedComponent !== null && $this->overlayFor($this->focusedComponent) !== null;
+        if (!$focusIsOverlay) {
+            $restoreState = $this->getVisibleOverlayFocusRestore();
+            if ($restoreState['status'] === 'eligible') {
+                $this->setFocus($restoreState['overlay']->component);
+            } elseif ($restoreState['status'] === 'blocked' && $restoreState['blockedBy'] !== $this->focusedComponent) {
+                if ($restoreState['resume']['status'] === 'restore-overlay') {
+                    $this->setFocus($restoreState['overlay']->component);
+                } else {
+                    $this->clearOverlayFocusRestore();
+                    $this->setFocus($restoreState['resume']['target'] ?? null);
+                }
+            }
         }
 
         // Ctrl+C included: the focused component decides what it means, because in an
