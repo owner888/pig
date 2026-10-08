@@ -163,7 +163,7 @@ final class PtyTest extends TestCase
                 rows: 24,
                 onOutput: function (string $id, string $data) use (&$output, $deferred): void {
                     $output .= $data;
-                    if (str_contains($output, 'COLUMNS=120') && str_contains($output, 'LINES=40')) {
+                    if (str_contains($output, '40 120')) {
                         if (!$deferred->isComplete()) {
                             $deferred->complete(true);
                         }
@@ -171,9 +171,10 @@ final class PtyTest extends TestCase
                 },
             );
 
-            // Resize pty to 120x40 and inspect environment in a child shell
+            // Resize pty to 120x40 and ask a child what size its terminal is. (Not $COLUMNS: bash
+            // keeps that to itself, so a child never had it — this case hung on it for good.)
             $pty->resize(120, 40);
-            $pty->input("sh -c 'echo COLUMNS=\$COLUMNS LINES=\$LINES'\n");
+            $pty->input("sh -c 'stty size'\n");
 
             $ok = $deferred->future->await();
             $this->assertTrue($ok);

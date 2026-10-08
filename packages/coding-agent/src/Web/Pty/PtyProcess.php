@@ -33,6 +33,10 @@ final class PtyProcess
     private string $pendingOutput = '';
     private string $scrollback = '';
     private bool $running = false;
+    /** @var resource|null the launcher's report: the slave's name, then EOF once it has exec'd */
+    private mixed $ready = null;
+    private ?string $readyWatcherId = null;
+    private bool $resizedEarly = false;
     private ?int $exitCode = null;
 
     /**
@@ -53,6 +57,8 @@ final class PtyProcess
 
     public function start(): void
     {
+        $this->cols = self::clampCols($this->cols);
+        $this->rows = self::clampRows($this->rows);
         $shell = $this->resolveShell();
         $argv = $this->command !== null && $this->command !== '' ? [$shell, '-c', $this->command] : [$shell];
 
@@ -60,6 +66,7 @@ final class PtyProcess
             0 => ['pty'],
             1 => ['pty'],
             2 => ['pty'],
+            3 => ['pipe', 'w'],
         ];
 
         $env = array_merge(getenv(), [
@@ -117,17 +124,20 @@ final class PtyProcess
         if (isset($pipes[2]) && is_resource($pipes[2])) {
             fclose($pipes[2]);
         }
+        if (isset($pipes[3]) && is_resource($pipes[3])) {
+            $this->ready = $pipes[3];
+            stream_set_blocking($this->ready, false);
+        }
 
         $status = proc_get_status($this->process);
         $this->pid = (int) ($status['pid'] ?? 0);
         $this->running = (bool) ($status['running'] ?? true);
 
-        // The size is already on the pty: the launcher set it before the shell started. The slave's
-        // name is looked up on the first resize, not here — right after the fork the child may not
-        // have its pty on fd 0 yet, and what is there is this server's own terminal.
+        // The size is already on the pty: the launcher set it before the shell started.
 
         // Attach to Event Loop
         $this->attachLoop();
+        $this->watchLauncher();
 
         if ($notice !== null) {
             $this->queueOutput($notice);
@@ -172,21 +182,35 @@ final class PtyProcess
                     fclose($handle);
                 }
             }
+            // The size goes on before anything is written: output means the launcher is done.
+            exec(sprintf('stty rows %d cols %d 2>/dev/null', $rows, $cols));
+            // Tell the server which slave this is and that the starting size is on (fd 3).
+            $report = fopen('php://fd/3', 'w');
+            if ($report !== false) {
+                $name = function_exists('posix_ttyname') ? posix_ttyname(STDIN) : false;
+                fwrite($report, (is_string($name) ? $name : '') . "\n");
+                fclose($report);
+            }
             if ($failed !== null) {
                 fwrite(STDERR, "\033[33m[pig] 终端没有控制终端（{$failed}）：Ctrl+C / Ctrl+Z 与作业控制不可用。\033[0m\r\n");
             }
-            exec(sprintf('stty rows %d cols %d 2>/dev/null', $rows, $cols));
-            $program = $command[0];
-            if (!str_contains($program, '/')) {
-                foreach (explode(PATH_SEPARATOR, (string) getenv('PATH')) as $dir) {
-                    if ($dir !== '' && is_executable("{$dir}/{$program}")) {
-                        $program = "{$dir}/{$program}";
-                        break;
-                    }
-                }
+            // Everything this process holds past stdio came from the server: proc_open() leaves
+            // the pty's own master and slave open in the child, plus the server's sockets. A shell
+            // that keeps the master open never sees the hangup when the terminal is closed, so it
+            // outlives the server and keeps its listening port. PHP cannot close a bare fd number;
+            // the shell in between can (bash for numbers past 9 — POSIX sh stops at 9).
+            $inherited = array_values(array_filter(
+                array_map(intval(...), array_diff(scandir('/dev/fd') ?: [], ['.', '..'])),
+                static fn (int $fd): bool => $fd > 2,
+            ));
+            $closer = is_executable('/bin/bash') ? '/bin/bash' : '/bin/sh';
+            $left = $closer === '/bin/bash' ? [] : array_filter($inherited, static fn (int $fd): bool => $fd > 9);
+            if ($left !== []) {
+                fwrite(STDERR, "\033[33m[pig] 没有 /bin/bash，关不掉继承的 fd " . implode(' ', $left) . "：关掉终端后 shell 可能不退出。\033[0m\r\n");
             }
-            pcntl_exec($program, array_slice($command, 1));
-            fwrite(STDERR, "[pig] cannot run {$command[0]}: " . pcntl_strerror(pcntl_get_last_error()) . "\r\n");
+            $closes = implode(' ', array_map(static fn (int $fd): string => "{$fd}<&-", array_diff($inherited, $left)));
+            pcntl_exec($closer, ['-c', "exec {$closes}; exec \"\$0\" \"\$@\"", ...$command]);
+            fwrite(STDERR, "[pig] cannot run {$closer}: " . pcntl_strerror(pcntl_get_last_error()) . "\r\n");
             exit(127);
             PHP;
 
@@ -237,19 +261,85 @@ final class PtyProcess
 
     public function resize(int $cols, int $rows): void
     {
-        $this->cols = max(10, min(500, $cols));
-        $this->rows = max(4, min(200, $rows));
+        $this->cols = self::clampCols($cols);
+        $this->rows = self::clampRows($rows);
 
-        if ($this->slaveDevice === null && $this->pid > 0) {
-            $this->slaveDevice = $this->findSlaveDevice($this->pid);
+        // Until the launcher has reported, its own `stty` of the starting size may still be to
+        // come and would undo this one; the report puts this size back (watchLauncher()).
+        if ($this->ready !== null) {
+            $this->resizedEarly = true;
+
+            return;
         }
 
-        if ($this->slaveDevice !== null && file_exists($this->slaveDevice)) {
+        $this->applySize();
+    }
+
+    private function applySize(): void
+    {
+        if ($this->slaveDevice !== null) {
             $flag = PHP_OS_FAMILY === 'Darwin' ? '-f' : '-F';
             // The pty is the shell's controlling terminal (see launcher()), so the kernel sends
             // SIGWINCH to whatever job is in the foreground — vim, not the shell waiting on it.
             exec(sprintf('stty %s %s rows %d cols %d 2>/dev/null', $flag, escapeshellarg($this->slaveDevice), $this->rows, $this->cols));
         }
+    }
+
+    /**
+     * fd 3 of the launcher: it writes the slave's name once the starting size is on, and the
+     * pipe ends when the shell is exec'd (the fd is among those closed on the way). The name
+     * comes from the launcher because it is the one process sure to have the slave on fd 0 —
+     * looking at the child from here right after the fork can find this server's own terminal.
+     */
+    private function watchLauncher(): void
+    {
+        if ($this->ready === null) {
+            return;
+        }
+
+        $report = '';
+        $this->readyWatcherId = Loop::get()->onReadable($this->ready, function () use (&$report): void {
+            $chunk = $this->ready !== null ? fread($this->ready, 1024) : false;
+            if (is_string($chunk) && $chunk !== '') {
+                $report .= $chunk;
+
+                return;
+            }
+            if ($chunk === '' && $this->ready !== null && !feof($this->ready)) {
+                return;
+            }
+            $this->stopWatchingLauncher();
+            $name = trim($report);
+            $this->slaveDevice = str_starts_with($name, '/dev/') ? $name : null;
+            if ($this->resizedEarly) {
+                $this->resizedEarly = false;
+                $this->applySize();
+            }
+        });
+    }
+
+    private function stopWatchingLauncher(): void
+    {
+        if ($this->readyWatcherId !== null) {
+            Loop::get()->cancel($this->readyWatcherId);
+            $this->readyWatcherId = null;
+        }
+        if ($this->ready !== null) {
+            if (is_resource($this->ready)) {
+                fclose($this->ready);
+            }
+            $this->ready = null;
+        }
+    }
+
+    private static function clampCols(int $cols): int
+    {
+        return max(10, min(500, $cols));
+    }
+
+    private static function clampRows(int $rows): int
+    {
+        return max(4, min(200, $rows));
     }
 
     public function kill(): void
@@ -396,6 +486,7 @@ final class PtyProcess
             Loop::get()->cancel($this->watcherId);
             $this->watcherId = null;
         }
+        $this->stopWatchingLauncher();
 
         if ($this->process !== null && is_resource($this->process)) {
             $status = proc_get_status($this->process);
@@ -479,31 +570,4 @@ final class PtyProcess
         return 'bash';
     }
 
-    /**
-     * The slave end of this pty, as the shell's fd 0 names it. Only a pty slave counts, and never
-     * the terminal this server itself runs on: `stty` on that would resize the person's own window.
-     */
-    private function findSlaveDevice(int $pid): ?string
-    {
-        if ($pid <= 0) {
-            return null;
-        }
-
-        $device = null;
-        if (PHP_OS_FAMILY === 'Darwin') {
-            $out = shell_exec("lsof -a -p {$pid} -d 0 2>/dev/null");
-            if (is_string($out) && preg_match('#(/dev/ttys\d+)#', $out, $m) === 1) {
-                $device = $m[1];
-            }
-        } elseif (PHP_OS_FAMILY === 'Linux' && is_link("/proc/{$pid}/fd/0")) {
-            $link = readlink("/proc/{$pid}/fd/0");
-            if (is_string($link) && preg_match('#^/dev/pts/\d+$#', $link) === 1) {
-                $device = $link;
-            }
-        }
-
-        $own = function_exists('posix_ttyname') && stream_isatty(STDIN) ? posix_ttyname(STDIN) : false;
-
-        return $device !== null && $device !== $own ? $device : null;
-    }
 }

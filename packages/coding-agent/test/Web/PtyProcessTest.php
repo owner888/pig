@@ -69,6 +69,18 @@ final class PtyProcessTest extends TestCase
         $this->assertNotFalse(json_encode(['data' => $output]));
     }
 
+    public function testTheShellInheritsNothingButItsTerminal(): void
+    {
+        // proc_open() leaves the pty's master open in the child, and the server's sockets with
+        // it. A shell holding its own master never gets the hangup when the terminal goes, and
+        // it keeps `pig web`'s port bound after the server has stopped.
+        [$output] = $this->runInPty('ls /dev/fd', [], timeout: 5.0);
+
+        $fds = array_map(intval(...), preg_split('/\s+/', trim($output)) ?: []);
+        // 0–2 are the terminal; 3 and 4 are what `ls` itself opens while traversing /dev/fd.
+        $this->assertSame([], array_values(array_diff($fds, [0, 1, 2, 3, 4])), "Inherited: {$output}");
+    }
+
     public function testTheExitIsReportedWhenTheShellIsGone(): void
     {
         // Linux answers a read of the master with EIO once the slave side is gone; a reader that

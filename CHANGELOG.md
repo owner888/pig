@@ -43,6 +43,19 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.18] - 2026-10-08
+
+### Fixed
+
+- **Fixed Leaked Inherited File Descriptors and Port Lingering in PTY Child Processes**:
+  - Closed all inherited file descriptors past stdio (`fd > 2`) inside `PtyProcess::launcher()` prior to execing the target shell, preventing child processes from holding copies of server listening sockets and the pty master descriptor.
+  - Eliminated process hangup failure where shell processes remained running after terminal closures and retained port bindings.
+  - Fixed PHPUnit test hang in `PtyTest` caused by child processes holding open pipes.
+- **Dedicated Slave Device Discovery via Pipeline Reporting (fd 3)**:
+  - Added dedicated pipeline reporting (`fd 3`) in `PtyProcess::launcher()` to send the exact slave pty device path back to the server once the initial size is applied.
+  - Replaced heuristic `lsof` / `/proc` polling in the parent process, preventing race conditions from misidentifying the server's own controlling terminal during fork and avoiding unexpected console resizes.
+  - Automatically queues and applies early window resize requests once the launcher reports ready.
+
 ## [0.4.17] - 2026-10-08
 
 ### Fixed

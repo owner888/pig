@@ -3312,7 +3312,7 @@ full bilingual client-side `I18N` dictionary with 101 symmetric keys (defaulting
 Telegram-style JSON import/export, `$pig->registerLocale()` on `ExtensionApi` with `/api/locales` aggregation, and in-session
 interactive `/web restart`, `/web status`, and `/web stop` controls;
 **⑤ Interactive Local PTY Terminals, SSH Node Workbench, and SFTP File Explorer (aligned with `youweichen/pi-web-ui` / `omp-web-ui`)**:
-- `Pig\CodingAgent\Web\Pty\PtyProcess` & `PtyManager`: Native `proc_open` with `['pty']` descriptors on macOS/Linux, started through a small PHP launcher (`PtyProcess::launcher()`) that `setsid()`s, opens the slave so the pty becomes the shell's controlling terminal (forkpty / node-pty semantics), `stty`s the initial size and execs the shell. Output is micro-batched for 16ms via `Loop::delay()` and handed on as whole UTF-8 characters (an unfinished tail waits for the next flush, invalid bytes become U+FFFD). Resizes `stty` the slave (found lazily: `lsof` on Darwin, `/proc/$pid/fd/0` on Linux, never the server's own tty) and the kernel sends the foreground job SIGWINCH. 200KB scrollback buffering.
+- `Pig\CodingAgent\Web\Pty\PtyProcess` & `PtyManager`: Native `proc_open` with `['pty']` descriptors on macOS/Linux, started through a small PHP launcher (`PtyProcess::launcher()`) that `setsid()`s, opens the slave so the pty becomes the shell's controlling terminal (forkpty / node-pty semantics), `stty`s the initial size, reports the slave's name on fd 3, then execs the shell through bash with every inherited fd past stdio closed. Output is micro-batched for 16ms via `Loop::delay()` and handed on as whole UTF-8 characters (an unfinished tail waits for the next flush, invalid bytes become U+FFFD). Resizes `stty` the reported slave and the kernel sends the foreground job SIGWINCH; a resize before the launcher has reported is applied once it does. 200KB scrollback buffering.
 - `Pig\CodingAgent\Web\Node\NodeProfile` & `NodeManager`: SSH node inventory in `~/.pig/agent/nodes.json`, secret persistence in `~/.pig/agent/nodes-secrets.json` (chmod 0600), SHA-256 host key fingerprint detection (`ssh-keyscan` + `ssh-keygen -lf`), OpenSSH `~/.ssh/config` discovery, remote PTY terminal streaming (`ssh -tt`), and SFTP remote directory listing/reading/writing (capped at 512 KiB).
 - Frontend: Embedded `xterm.js` + `FitAddon` multi-tab terminal drawer in `WebTerminal.js`, and comprehensive `NodeWorkbench.js` modal with remote terminal tabs and SFTP file explorer/editor.
 
@@ -11056,13 +11056,14 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 **根因**（三处叠加）：
 - vendored `xterm.js`（5.5 ES module 构建）的 `requestMode()`（DECRQM，`CSI ? Ps $ p` 的回答）给枚举赋值到未声明的 `i`，模块是严格模式，第一次模式查询就在解析器里抛 ReferenceError，这次 write 后面的内容全丢。vim 启动就查模式（`?12$p` 光标闪烁），于是首屏和之后的重绘都没了。
 - pty 输出按 JSON 文本帧发，`json_encode()` 遇到任何非 UTF-8 字节就整帧返回 false（`(string) false` 是空帧）。pty 是字节流，读取会把「你」切成两半；vim 启动探测也会写出不成字符的字节——整帧连同 vim 首屏一起消失。
-- `proc_open` 只把 fd 0–2 指到 pty，子进程留在 pig 的 session 里，没有控制终端：^C/^Z 只是普通字节、resize 没有 SIGWINCH、bash 没有作业控制、`/dev/tty` 要么不存在（daemon）要么是启动 `pig web` 的那个终端；master 关闭时也没有 SIGHUP，交互 bash 不理 SIGTERM，残留下来连同继承的监听 socket 一起占住端口。另外 Linux 上 shell 退出后读 master 是 EIO（`fread` 返回 false），旧代码只认 EOF，watcher 空转 100% CPU、永远不报 exit。
+- `proc_open` 只把 fd 0–2 指到 pty，子进程留在 pig 的 session 里，没有控制终端：^C/^Z 只是普通字节、resize 没有 SIGWINCH、bash 没有作业控制、`/dev/tty` 要么不存在（daemon）要么是启动 `pig web` 的那个终端；master 关闭时也没有 SIGHUP，交互 bash 不理 SIGTERM。更糟的是 PHP 的 `proc_open` 把 `openpty()` 得到的 master/slave 原 fd 漏给了子进程（只关了 dup 出来的那份），连同服务器没设 CLOEXEC 的 socket：shell 自己攥着 master，关终端永远等不到 hangup，`pig web` 停了它还占着监听端口；旧 `PtyTest` 每次跑满 300s 超时也是它（残留 shell 攥着 phpunit 的输出管道）。另外 Linux 上 shell 退出后读 master 是 EIO（`fread` 返回 false），旧代码只认 EOF，watcher 空转 100% CPU、永远不报 exit。
 **避坑规则**：
 - shell 一律经 `PtyProcess::launcher()` 启动（setsid → 打开 slave 取得控制终端 → `stty` 初始尺寸 → exec），不要改回 `proc_open($shell)` 直跑；建不了 session 时它在终端第一行明说，不静默。
 - 发给浏览器的终端输出必须是完整 UTF-8：`flushOutput()` 留住未完的尾巴、`mb_scrub` 成 U+FFFD；`Websocket::encode()` 用 `JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR`，不许再出空帧。
 - 读 master 时 `false` 和 EOF 都是结束，都要 `cleanup()`。
-- 初始尺寸由 launcher 在 slave 上设；slave 名在第一次 resize 时才查，且必须是 pty slave、不能是服务器自己的 tty（刚 fork 时 `/proc/$pid/fd/0` 可能还是父进程的终端，`stty` 会改掉用户自己窗口的尺寸）。
-- 换/升级 `assets/js/vendor/xterm.js` 后先跑 `XtermBundleTest`；改 pty 先跑 `PtyProcessTest`（^C、前台进程组、初始尺寸、半个字符、非法字节、EIO 退出）。
+- 初始尺寸由 launcher 在 slave 上设，并由它在 fd 3 报告 slave 名（它是唯一确定 fd 0 已经是 slave 的进程；从父进程刚 fork 完去看 `/proc/$pid/fd/0` / `lsof` 可能看到的是服务器自己的终端，`stty` 会改掉用户自己窗口的尺寸）。报告到之前的 resize 先记下，报告到了再补一次，否则会被 launcher 的初始 `stty` 盖掉。
+- launcher exec shell 前必须关掉 fd 0–2 以外所有继承来的 fd（PHP 关不了裸 fd 号，经 `/bin/bash -c 'exec N<&- …; exec "$0" "$@"'`；POSIX sh 只认到 9）。
+- 换/升级 `assets/js/vendor/xterm.js` 后先跑 `XtermBundleTest`；改 pty 先跑 `PtyProcessTest`（^C、前台进程组、初始尺寸、半个字符、非法字节、继承 fd、EIO 退出）和 `PtyTest`。
 
 ## Version floor: PHP >= 8.3
 
