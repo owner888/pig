@@ -1,7 +1,8 @@
 import { network } from "../network.js";
 import { escapeHtml, openModal } from "../utils.js";
 import { t } from "../i18n.js";
-import { D as Terminal, o as FitAddon } from "../vendor/xterm.js";
+import { Terminal } from "../vendor/xterm.mjs";
+import { FitAddon } from "../vendor/addon-fit.mjs";
 
 /** Build xterm color scheme for node terminal */
 function getTermTheme() {

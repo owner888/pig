@@ -1,5 +1,6 @@
 import { network } from "../network.js";
-import { D as Terminal, o as FitAddon } from "../vendor/xterm.js";
+import { Terminal } from "../vendor/xterm.mjs";
+import { FitAddon } from "../vendor/addon-fit.mjs";
 
 /** Build xterm color scheme matching pig's active UI theme */
 function getTermTheme() {

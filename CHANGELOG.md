@@ -43,6 +43,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.19] - 2026-10-08
+
+### Changed
+
+- **Official `@xterm/xterm` 6.0.0 and `@xterm/addon-fit` 0.11.0 Standard Vendoring**:
+  - Replaced the previously bundled unofficial xterm re-bundle with official npm package builds (`xterm.mjs`, `xterm.css`, and `addon-fit.mjs`), copied byte for byte without modification.
+  - Eliminated minification-induced parser crashes in WebTerminal and NodeWorkbench.
+  - Added `VendoredXtermTest` with SHA-256 integrity verification to prevent bundle tampering and regressions.
+
 ## [0.4.18] - 2026-10-08
 
 ### Fixed
@@ -69,9 +78,9 @@ Every release entry strictly follows upstream pi's format with version date and 
   - Implemented `PtyProcess::launcher()` executing `posix_setsid()`, opening slave devices as the session's controlling terminal (forkpty semantics), applying initial `stty` rows/cols, and executing shells under true job control.
   - Enabled Ctrl+C (`SIGINT`), Ctrl+Z (`SIGTSTP`), and `SIGWINCH` window resizing for foreground child processes (e.g. Vim, less).
   - Fixed UTF-8 chunk fragmenting across WebSocket text frames by buffering partial multibyte sequences in `PtyProcess::flushOutput()` and enforcing `JSON_INVALID_UTF8_SUBSTITUTE` in `Websocket::encode()`.
-  - Patched vendored `xterm.js` 5.5 to fix a fatal ReferenceError during DECRQM cursor blink mode queries (`?12$p`) when Vim launches.
+  - Replaced the vendored `xterm.js` (an unofficial re-bundle of 5.5 + FitAddon whose minifier broke `requestMode()`, throwing a ReferenceError on the DECRQM cursor blink query `?12$p` Vim sends at launch) with the official `@xterm/xterm` 6.0.0 `xterm.mjs` / `xterm.css` and `@xterm/addon-fit` 0.11.0 `addon-fit.mjs`, copied byte for byte.
   - Fixed EIO read handling on Linux when slave closes, avoiding 100% CPU busy loops.
-  - Added dedicated test suites in `PtyProcessTest.php` and `XtermBundleTest.php`.
+  - Added dedicated test suites in `PtyProcessTest.php` and `VendoredXtermTest.php`.
 
 ## [0.4.16] - 2026-10-08
 
