@@ -26,6 +26,11 @@ declare(strict_types=1);
  *   again (`AntigravityApi`'s `$failover`, below).
  * - **`registerHttpRoute('/api/accounts')`** is the web UI's accounts panel, which used to be
  *   written into `HttpServer`.
+ * - **The model catalog is discovered** (`Discovery`, pi-antigravity's `refreshModels`): the
+ *   deployment's `fetchAvailableModels` grouped into public models, filed in pig's own
+ *   `models-store.json` and asked for again after four hours — at session start and after
+ *   `/login antigravity`, since pig has no model registry refresh to hang it on, and on
+ *   `/antigravity.refresh`, which forces it.
  *
  * The client id and secret are not in this repository (`ANTIGRAVITY_CLIENT_ID` /
  * `ANTIGRAVITY_CLIENT_SECRET`, or `antigravity.clientId` / `antigravity.clientSecret` in the
@@ -39,13 +44,17 @@ use Pig\Ai\TextContent;
 use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Async\AbortSignal;
+use Pig\Async\Async;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Hooks\HookContext;
+use Pig\CodingAgent\Logger;
 use PigAntigravity\Accounts;
 use PigAntigravity\AntigravityApi;
+use PigAntigravity\AntigravityOauth;
 use PigAntigravity\Catalog;
+use PigAntigravity\Discovery;
 use PigAntigravity\ImageGenerator;
 use PigAntigravity\LazyAntigravityOauth;
 use PigAntigravity\Models;
@@ -53,7 +62,7 @@ use PigAntigravity\QuotaClient;
 
 // Class files beside the entry, guarded by class and not by `require_once`: the same class can
 // live at two paths (a global copy and the repository's), and `require_once` dedups by path.
-foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigravityOauth', 'Accounts', 'Catalog', 'QuotaClient', 'ImageGenerator', 'GeneratedImageResult'] as $class) {
+foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigravityOauth', 'Accounts', 'Catalog', 'Grouping', 'Discovery', 'QuotaClient', 'ImageGenerator', 'GeneratedImageResult'] as $class) {
     if (!class_exists("PigAntigravity\\{$class}", false)) {
         require __DIR__ . "/src/{$class}.php";
     }
@@ -141,26 +150,69 @@ return function (ExtensionApi $pi): void {
 
     // Resold: `claude-sonnet-4-6` is Anthropic's id, and a bare `--model sonnet` has to keep
     // meaning Anthropic's — see `Models::RESOLD` in the core for the rule this joins.
+    /**
+     * pi-antigravity's `refreshModels`, as pi's model registry calls it: the stored catalog, the
+     * network unless pig is offline, the account's key, and the store to file the answer in. Not
+     * with `--no-save`, which reads and writes none of the person's files.
+     *
+     * @return list<array<string, mixed>> the models now current
+     */
+    $refreshCatalog = static function (bool $force, ?string $apiKey = null, ?AbortSignal $signal = null) use ($auth): array {
+        if ($auth->path() === null) {
+            return Discovery::current()['models'];
+        }
+
+        return Discovery::refresh(
+            Catalog::discover(),
+            // pi's `modelNetworkEnabled` is `process.env.PI_OFFLINE === undefined`.
+            getenv('PIG_OFFLINE') === false,
+            $apiKey ?? $auth->apiKey(Models::PROVIDER),
+            $force,
+            $signal,
+            static fn (array $entry) => Discovery::persist(Catalog::storePath(), $entry),
+        );
+    };
+
+    /** The same, unforced and in the background: what upstream does with `void modelRuntime.refresh()`. */
+    $refreshInBackground = static function (?Credentials $signedIn = null) use ($refreshCatalog): void {
+        Async::spawn(static function () use ($refreshCatalog, $signedIn): void {
+            try {
+                $refreshCatalog(false, $signedIn === null ? null : AntigravityOauth::keyFor($signedIn));
+            } catch (Throwable $error) {
+                Logger::warning('Antigravity model catalog refresh failed: ' . AntigravityApi::redactSecrets($error->getMessage()));
+            }
+        });
+    };
+
     $pi->registerProvider(new Provider(
         id: Models::PROVIDER,
         name: 'Antigravity (Gemini 3, Claude, GPT-OSS)',
         models: Models::fallback(),
         api: new AntigravityApi(failover: $failover),
-        oauth: new LazyAntigravityOauth($antigravityClient),
+        // "After you sign in, the provider refreshes its catalog from Antigravity" — with the new
+        // account's key, which `auth.json` does not hold yet when the flow returns.
+        oauth: new LazyAntigravityOauth(
+            $antigravityClient,
+            static fn (Credentials $credentials) => $refreshInBackground($credentials),
+        ),
         resold: true,
     ));
 
-    // And then the catalogue pi keeps refreshed on disk, which is a newer reading of the same
-    // endpoint the fallback was printed from — same authority, so it wins (`replace: true`).
-    // Not with `--no-save`, which reads none of the person's files.
+    // And then the catalog on disk — pig's own store, which `Discovery` keeps, or pi's — which is a
+    // newer reading of the same endpoint the fallback was printed from, so it replaces the
+    // fallback (`hydrateAntigravityCatalog()`). Not with `--no-save`.
     if ($auth->path() !== null) {
         $catalog = Catalog::discover();
-        $catalog->install();
+        Discovery::hydrate($catalog);
 
         foreach ($catalog->problems as $problem) {
             fwrite(STDERR, "antigravity: {$problem}\n");
         }
     }
+
+    $pi->on('session_start', static function () use ($refreshInBackground): void {
+        $refreshInBackground();
+    });
 
     // ---- the second place the credentials live ------------------------------------------
 
@@ -446,18 +498,33 @@ return function (ExtensionApi $pi): void {
 
     $pi->registerCommand(
         'antigravity.refresh',
-        static function (string $args, HookContext $ctx) use ($emit): void {
-            $emit($ctx, 'Refreshing Antigravity models…', 'info');
+        static function (string $args, HookContext $ctx) use ($auth, $emit, $refreshCatalog): void {
+            $apiKey = $auth->apiKey(Models::PROVIDER);
+
+            if ($apiKey === null) {
+                $emit($ctx, 'No Antigravity credentials. Run /login antigravity first.', 'warning');
+
+                return;
+            }
+
+            if ($ctx->hasUi) {
+                $ctx->ui->notify('Refreshing Antigravity models…', 'info');
+            }
 
             try {
-                $catalog = Catalog::discover();
-                $catalog->install();
-                $emit($ctx, 'Antigravity models catalog inspected (' . count($catalog->models) . ' models loaded)', 'info');
+                $refreshCatalog(true, $apiKey);
+                $models = Discovery::current()['models'];
+                $count = count($models);
+                $sample = implode(', ', array_map(
+                    static fn (array $model): string => is_string($model['name'] ?? null) && $model['name'] !== '' ? $model['name'] : (string) $model['id'],
+                    array_slice($models, 0, 4),
+                ));
+                $emit($ctx, "Antigravity models refreshed ({$count} available: {$sample}" . ($count > 4 ? ', …' : '') . ')', 'info');
             } catch (Throwable $e) {
-                $emit($ctx, 'Antigravity model refresh failed: ' . $e->getMessage(), 'error');
+                $emit($ctx, 'Antigravity model refresh failed: ' . AntigravityApi::redactSecrets($e->getMessage()), 'error');
             }
         },
-        'Force inspect and refresh Antigravity model catalog',
+        'Force refresh Antigravity dynamic model catalog',
     );
 
     $pi->registerCommand(

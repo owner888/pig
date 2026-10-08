@@ -1,0 +1,394 @@
+{
+ "scenario": {
+  "module": "api/azure-openai-responses.ts",
+  "simple": false,
+  "model": {
+   "id": "gpt-5.2",
+   "name": "GPT-5.2",
+   "api": "azure-openai-responses",
+   "provider": "azure",
+   "baseUrl": "",
+   "reasoning": true,
+   "input": [
+    "text",
+    "image"
+   ],
+   "cost": {
+    "input": 1.75,
+    "output": 14,
+    "cacheRead": 0.175,
+    "cacheWrite": 0
+   },
+   "contextWindow": 400000,
+   "maxTokens": 128000,
+   "thinkingLevelMap": {
+    "off": null,
+    "xhigh": "xhigh"
+   },
+   "compat": {
+    "supportsOpenAIGrammarTools": true
+   }
+  },
+  "options": {
+   "apiKey": "az-key",
+   "azureBaseUrl": "SERVER/",
+   "azureDeploymentName": "prod-52",
+   "azureApiVersion": "2025-04-01-preview",
+   "reasoningEffort": "xhigh",
+   "reasoningSummary": "detailed",
+   "toolChoice": "required",
+   "temperature": 0.3,
+   "maxTokens": 8,
+   "headers": {
+    "x-custom": "v",
+    "User-Agent": "mine"
+   }
+  },
+  "context": {
+   "systemPrompt": "Be brief.",
+   "messages": [
+    {
+     "role": "user",
+     "content": "look at a",
+     "timestamp": 1
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "thinking",
+       "thinking": "plan",
+       "thinkingSignature": "{\"type\": \"reasoning\", \"id\": \"rs_1\", \"summary\": [{\"type\": \"summary_text\", \"text\": \"plan\"}], \"encrypted_content\": \"enc\"}"
+      },
+      {
+       "type": "text",
+       "text": "Reading",
+       "textSignature": "{\"v\": 1, \"id\": \"msg_1\", \"phase\": \"commentary\"}"
+      },
+      {
+       "type": "toolCall",
+       "id": "call_1|fc_1",
+       "name": "read",
+       "arguments": {
+        "path": "a"
+       }
+      }
+     ],
+     "api": "azure-openai-responses",
+     "provider": "azure",
+     "model": "gpt-5.2",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "toolUse",
+     "timestamp": 2
+    },
+    {
+     "role": "toolResult",
+     "toolCallId": "call_1|fc_1",
+     "toolName": "read",
+     "content": [
+      {
+       "type": "text",
+       "text": "body of a"
+      }
+     ],
+     "isError": false,
+     "timestamp": 3
+    },
+    {
+     "role": "user",
+     "content": "next",
+     "timestamp": 4
+    }
+   ],
+   "tools": [
+    {
+     "name": "read",
+     "description": "Read a file",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    }
+   ]
+  },
+  "responses": [
+   {
+    "chunks": [
+     {
+      "type": "response.created",
+      "response": {
+       "id": "resp_1"
+      }
+     },
+     {
+      "type": "response.output_item.added",
+      "output_index": 0,
+      "item": {
+       "type": "reasoning",
+       "id": "rs_2",
+       "summary": []
+      }
+     },
+     {
+      "type": "response.reasoning_summary_text.delta",
+      "output_index": 0,
+      "delta": "think"
+     },
+     {
+      "type": "response.output_item.done",
+      "output_index": 0,
+      "item": {
+       "type": "reasoning",
+       "id": "rs_2",
+       "summary": [
+        {
+         "type": "summary_text",
+         "text": "think"
+        }
+       ],
+       "encrypted_content": "e2"
+      }
+     },
+     {
+      "type": "response.output_item.added",
+      "output_index": 1,
+      "item": {
+       "type": "message",
+       "id": "msg_2",
+       "role": "assistant",
+       "content": []
+      }
+     },
+     {
+      "type": "response.output_text.delta",
+      "output_index": 1,
+      "delta": "Hel"
+     },
+     {
+      "type": "response.output_text.delta",
+      "output_index": 1,
+      "delta": "lo"
+     },
+     {
+      "type": "response.output_item.done",
+      "output_index": 1,
+      "item": {
+       "type": "message",
+       "id": "msg_2",
+       "role": "assistant",
+       "phase": "final_answer",
+       "content": [
+        {
+         "type": "output_text",
+         "text": "Hello"
+        }
+       ]
+      }
+     },
+     {
+      "type": "response.output_item.added",
+      "output_index": 2,
+      "item": {
+       "type": "function_call",
+       "id": "fc_2",
+       "call_id": "call_2",
+       "name": "read",
+       "arguments": ""
+      }
+     },
+     {
+      "type": "response.function_call_arguments.delta",
+      "output_index": 2,
+      "delta": "{\"path\":"
+     },
+     {
+      "type": "response.function_call_arguments.delta",
+      "output_index": 2,
+      "delta": "\"b\"}"
+     },
+     {
+      "type": "response.output_item.done",
+      "output_index": 2,
+      "item": {
+       "type": "function_call",
+       "id": "fc_2",
+       "call_id": "call_2",
+       "name": "read",
+       "arguments": "{\"path\":\"b\"}"
+      }
+     },
+     {
+      "type": "response.completed",
+      "response": {
+       "id": "resp_1",
+       "status": "completed",
+       "usage": {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "total_tokens": 120,
+        "input_tokens_details": {
+         "cached_tokens": 40
+        },
+        "output_tokens_details": {
+         "reasoning_tokens": 5
+        }
+       },
+       "service_tier": "priority"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "path": "/responses?api-version=2025-04-01-preview",
+    "headers": {
+     "api-key": "az-key",
+     "content-type": "application/json",
+     "accept": "application/json",
+     "x-stainless-retry-count": "0",
+     "x-stainless-lang": "js",
+     "x-stainless-package-version": "7.19.0",
+     "x-custom": "v"
+    },
+    "userAgent": "mine",
+    "body": "{\"model\":\"prod-52\",\"input\":[{\"role\":\"developer\",\"content\":\"Be brief.\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"look at a\"}]},{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"plan\"}],\"encrypted_content\":\"enc\"},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Reading\",\"annotations\":[]}],\"status\":\"completed\",\"id\":\"msg_1\",\"phase\":\"commentary\"},{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"a\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"body of a\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"next\"}]}],\"stream\":true,\"store\":false,\"max_output_tokens\":16,\"temperature\":0.3,\"tools\":[{\"type\":\"function\",\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]},\"strict\":false}],\"tool_choice\":\"required\",\"reasoning\":{\"effort\":\"xhigh\",\"summary\":\"detailed\"},\"include\":[\"reasoning.encrypted_content\"]}"
+   }
+  ],
+  "events": [
+   [
+    "start",
+    null,
+    null
+   ],
+   [
+    "thinking_start",
+    0,
+    null
+   ],
+   [
+    "thinking_delta",
+    0,
+    "think"
+   ],
+   [
+    "thinking_end",
+    0,
+    null
+   ],
+   [
+    "text_start",
+    1,
+    null
+   ],
+   [
+    "text_delta",
+    1,
+    "Hel"
+   ],
+   [
+    "text_delta",
+    1,
+    "lo"
+   ],
+   [
+    "text_end",
+    1,
+    null
+   ],
+   [
+    "toolcall_start",
+    2,
+    null
+   ],
+   [
+    "toolcall_delta",
+    2,
+    "{\"path\":"
+   ],
+   [
+    "toolcall_delta",
+    2,
+    "\"b\"}"
+   ],
+   [
+    "toolcall_end",
+    2,
+    null
+   ],
+   [
+    "done",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "think",
+     "thinkingSignature": "{\"type\":\"reasoning\",\"id\":\"rs_2\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"think\"}],\"encrypted_content\":\"e2\"}"
+    },
+    {
+     "type": "text",
+     "text": "Hello",
+     "textSignature": "{\"v\":1,\"id\":\"msg_2\",\"phase\":\"final_answer\"}"
+    },
+    {
+     "type": "toolCall",
+     "id": "call_2|fc_2",
+     "name": "read",
+     "arguments": {
+      "path": "b"
+     }
+    }
+   ],
+   "api": "azure-openai-responses",
+   "provider": "azure",
+   "model": "gpt-5.2",
+   "usage": {
+    "input": 60,
+    "output": 20,
+    "cacheRead": 40,
+    "cacheWrite": 0,
+    "reasoning": 5,
+    "totalTokens": 120,
+    "cost": {
+     "input": 0.000105,
+     "output": 0.00028,
+     "cacheRead": 7e-06,
+     "cacheWrite": 0,
+     "total": 0.000392
+    }
+   },
+   "stopReason": "toolUse",
+   "timestamp": 1767323045000,
+   "responseId": "resp_1",
+   "rawStopReason": "completed"
+  }
+ }
+}

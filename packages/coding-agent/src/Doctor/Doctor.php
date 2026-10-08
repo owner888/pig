@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Doctor;
 
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Models;
 use Pig\Ai\Stream;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Session\AgentSession;
@@ -50,7 +51,9 @@ final class Doctor
         $authValid = $authReadable && $auth->problems() === [];
 
         $providersList = [];
-        $knownProviders = ['anthropic', 'openai', 'google', 'google-vertex', 'amazon-bedrock', 'github-copilot', 'xai', 'groq', 'deepseek'];
+        // Every built-in provider, from the table that knows them — a list of its own here went
+        // stale with each provider the table gained.
+        $knownProviders = Models::providers();
         $discovered = array_unique([...$auth->providers(), ...$knownProviders]);
 
         foreach ($discovered as $p) {

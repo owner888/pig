@@ -1,0 +1,87 @@
+{
+ "scenario": {
+  "method": "browser",
+  "paste": "#STATE",
+  "responses": [
+   {
+    "body": {
+     "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjXzEyMyJ9fQ.sig",
+     "refresh_token": "rt_new",
+     "expires_in": 3600
+    }
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [],
+  "events": [
+   {
+    "prompt": "select",
+    "message": "Select OpenAI Codex login method:",
+    "options": [
+     {
+      "id": "browser",
+      "label": "Browser login (default)"
+     },
+     {
+      "id": "device_code",
+      "label": "Device code login (headless)"
+     }
+    ]
+   },
+   {
+    "type": "auth_url",
+    "url": "https://auth.openai.com/oauth/authorize",
+    "instructions": "A browser window should open. Complete login to finish.",
+    "params": [
+     [
+      "response_type",
+      "code"
+     ],
+     [
+      "client_id",
+      "app_EMoamEEZ73f0CkXaXp7hrann"
+     ],
+     [
+      "redirect_uri",
+      "http://localhost:1455/auth/callback"
+     ],
+     [
+      "scope",
+      "openid profile email offline_access"
+     ],
+     [
+      "code_challenge",
+      "<random>"
+     ],
+     [
+      "code_challenge_method",
+      "S256"
+     ],
+     [
+      "state",
+      "<random>"
+     ],
+     [
+      "id_token_add_organizations",
+      "true"
+     ],
+     [
+      "codex_cli_simplified_flow",
+      "true"
+     ],
+     [
+      "originator",
+      "pi"
+     ]
+    ]
+   },
+   {
+    "prompt": "manual_code",
+    "message": "Complete login in your browser, or paste the authorization code / redirect URL here:",
+    "placeholder": "http://localhost:1455/auth/callback"
+   }
+  ],
+  "thrown": "Missing authorization code"
+ }
+}

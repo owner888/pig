@@ -22,6 +22,12 @@ enum Api: string
     case BedrockConverseStream = 'bedrock-converse-stream';
     /** Mistral's own chat API (`Providers\Mistral`), upstream's `mistral-conversations`. */
     case MistralConversations = 'mistral-conversations';
+    /** The Responses API on an Azure OpenAI resource (`Providers\AzureOpenAiResponses`), upstream's `azure-openai-responses`. */
+    case AzureOpenAiResponses = 'azure-openai-responses';
+    /** The Responses API on ChatGPT's Codex backend (`Providers\OpenAiCodexResponses`), upstream's `openai-codex-responses`. */
+    case OpenAiCodexResponses = 'openai-codex-responses';
+    /** pi's own message protocol, which the Radius gateway speaks (`Providers\PiMessages`), upstream's `pi-messages`. */
+    case PiMessages = 'pi-messages';
 
     /**
      * A protocol an extension brought: `Stream::start()` finds the implementation through

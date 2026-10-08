@@ -21,12 +21,8 @@ use RuntimeException;
  *     "docs": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer ${DOCS_TOKEN}" } } } }
  * ```
  *
- * **Exposure.** Upstream's five are read, and the two that name `codemode` are mapped to
- * `deferred`: codemode is a JavaScript sandbox in which the model writes scripts that call MCP
- * tools, and pig has no JavaScript engine and will not bundle one. `deferred` is the nearest
- * behaviour — the tools are not declared to the model until `tool_search` loads them — and the
- * default, where upstream's default is `codemode`. So a file copied from pi works unchanged and
- * reaches the same tools by the other door; `/mcp` says so once.
+ * **Exposure.** `codemode` (the default, as upstream's), `codemode-deferred`, `deferred`, `direct`
+ * and `hidden`, read as written (`here()`).
  */
 final class McpConfig
 {

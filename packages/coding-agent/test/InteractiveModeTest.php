@@ -2439,6 +2439,65 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringNotContainsString('a summary of it all', $screen);
     }
 
+    public function testCompactingSaysEscapeCancelsItAndEscapeDoes(): void
+    {
+        // Upstream's `CompactionStatusIndicator`: `Compacting context... (escape to cancel)` for
+        // `/compact`, and `compaction_end` with `aborted` shows the error `Compaction cancelled`.
+        $this->start(['a summary of it all']);
+
+        foreach (range(1, 6) as $ignored) {
+            $this->session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+        }
+
+        $this->holdTheAgent();
+        $this->type('/compact');
+        $this->type(self::ENTER);
+        self::turnTheLoop();
+
+        $this->assertMatchesRegularExpression('/Compacting context\\.\\.\\.( · \\d+s)? \\(escape to cancel\\)/u', $this->screen());
+
+        $this->type(self::ESC);
+        self::turnTheLoop();
+
+        $this->assertStringContainsString('Error: Compaction cancelled', $this->screen());
+        $this->assertStringNotContainsString('Compacting context...', $this->screen());
+    }
+
+    public function testSummarisingTheBranchSaysEscapeCancelsItAndEscapeReopensTheTree(): void
+    {
+        // Upstream's `BranchSummaryStatusIndicator`, and on an aborted summary
+        // `showStatus("Branch summarization cancelled")` with the tree shown again.
+        $this->start(['first answer', 'second answer', 'the summary'], store: true);
+
+        foreach (['hello', 'and again'] as $said) {
+            $this->type($said);
+            $this->type(self::ENTER);
+            $this->settle();
+        }
+
+        $this->holdTheAgent();
+        $this->type('/tree');
+        $this->type(self::ENTER);
+        $this->type("\e[B");
+        $this->type("\e[B");
+        $this->type(self::ENTER);
+        $this->settle();
+
+        // "Summarise the branch you are leaving?" — Yes is first.
+        $this->type(self::ENTER);
+        self::turnTheLoop();
+
+        $this->assertMatchesRegularExpression('/Summarizing branch\\.\\.\\.( · \\d+s)? \\(escape to cancel\\)/u', $this->screen());
+
+        $this->type(self::ESC);
+        self::turnTheLoop();
+
+        $screen = $this->screen();
+        $this->assertStringContainsString('Branch summarization cancelled', $screen);
+        $this->assertStringContainsString('Go back to', $screen);
+        $this->assertStringContainsString('second answer', $screen, 'nothing moved');
+    }
+
     public function testCtrlOOpensTheSummaryTheModelWillBeWorkingFrom(): void
     {
         $this->start(['a summary of it all']);
@@ -3208,7 +3267,9 @@ final class InteractiveModeTest extends TestCase
             $this->settle();
         }
 
-        $this->assertStringContainsString('summarising', strtolower($this->screen()));
+        // Upstream's `CompactionStatusIndicator` for an overflow.
+        // pig's loader puts the elapsed seconds in front of the parenthesis once a second has passed.
+        $this->assertMatchesRegularExpression('/Context overflow detected, Auto-compacting\\.\\.\\.( · \\d+s)? \\(escape to cancel\\)/u', $this->screen());
 
         $this->type('a question I was half way through');
         $this->type(self::ENTER);
@@ -3691,7 +3752,8 @@ final class InteractiveModeTest extends TestCase
             $screen = $this->screen();
             $this->assertStringContainsString('Probe Sign-in', $screen);
 
-            // Third row: the two built-ins come first.
+            // Fourth row: the three built-ins come first.
+            $this->type(self::DOWN);
             $this->type(self::DOWN);
             $this->type(self::DOWN);
             $this->type(self::ENTER);
@@ -3836,6 +3898,7 @@ final class InteractiveModeTest extends TestCase
 
             $this->type('/login');
             $this->type(self::ENTER);
+            $this->type(self::DOWN);
             $this->type(self::DOWN);
             $this->type(self::DOWN);
             $this->type(self::ENTER);

@@ -1,0 +1,103 @@
+{
+ "scenario": {
+  "method": "device_code",
+  "responses": [
+   {
+    "body": {
+     "device_auth_id": "dev_1",
+     "user_code": "ABCD-EFGH",
+     "interval": " 1 "
+    }
+   },
+   {
+    "status": 403,
+    "body": ""
+   },
+   {
+    "status": 400,
+    "body": {
+     "error": {
+      "code": "deviceauth_authorization_pending"
+     }
+    }
+   },
+   {
+    "body": {
+     "authorization_code": "ac_1",
+     "code_verifier": "cv_1"
+    }
+   },
+   {
+    "body": {
+     "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjXzEyMyJ9fQ.sig",
+     "refresh_token": "rt_new",
+     "expires_in": 3600
+    }
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "url": "/api/accounts/deviceauth/usercode",
+    "contentType": "application/json",
+    "body": "{\"client_id\":\"app_EMoamEEZ73f0CkXaXp7hrann\"}"
+   },
+   {
+    "method": "POST",
+    "url": "/api/accounts/deviceauth/token",
+    "contentType": "application/json",
+    "body": "{\"device_auth_id\":\"dev_1\",\"user_code\":\"ABCD-EFGH\"}"
+   },
+   {
+    "method": "POST",
+    "url": "/api/accounts/deviceauth/token",
+    "contentType": "application/json",
+    "body": "{\"device_auth_id\":\"dev_1\",\"user_code\":\"ABCD-EFGH\"}"
+   },
+   {
+    "method": "POST",
+    "url": "/api/accounts/deviceauth/token",
+    "contentType": "application/json",
+    "body": "{\"device_auth_id\":\"dev_1\",\"user_code\":\"ABCD-EFGH\"}"
+   },
+   {
+    "method": "POST",
+    "url": "/oauth/token",
+    "contentType": "application/x-www-form-urlencoded",
+    "body": "grant_type=authorization_code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&code=ac_1&code_verifier=cv_1&redirect_uri=https%3A%2F%2Fauth.openai.com%2Fdeviceauth%2Fcallback"
+   }
+  ],
+  "events": [
+   {
+    "prompt": "select",
+    "message": "Select OpenAI Codex login method:",
+    "options": [
+     {
+      "id": "browser",
+      "label": "Browser login (default)"
+     },
+     {
+      "id": "device_code",
+      "label": "Device code login (headless)"
+     }
+    ]
+   },
+   {
+    "type": "device_code",
+    "userCode": "ABCD-EFGH",
+    "verificationUri": "https://auth.openai.com/codex/device",
+    "intervalSeconds": 1,
+    "expiresInSeconds": 900
+   }
+  ],
+  "result": {
+   "type": "oauth",
+   "access": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjXzEyMyJ9fQ.sig",
+   "refresh": "rt_new",
+   "expires": 1767326645000,
+   "accountId": "acc_123"
+  }
+ }
+}

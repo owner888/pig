@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Prompt;
 
+use Pig\Agent\AgentError;
 use Pig\Ai\SystemMessage;
 use Pig\Ai\Utils\Text;
 use Pig\CodingAgent\Tools\ToolSet;
@@ -61,8 +62,8 @@ final class SystemPrompt
      * `skills`, `cwd` — and the text is pig's own: upstream wraps every section but the preamble in a
      * tag of its name, and pig's prompt has always been the plain text below, so the sections hold
      * that text verbatim and render, joined by blank lines, to exactly the prompt pig sent before.
-     * pig's `cwd` section carries the date and time beside the directory; upstream's has the
-     * directory alone.
+     * The `cwd` section is the directory alone, with backslashes as forward slashes, as upstream's
+     * is: no date or time, so the section changes only when the directory does.
      *
      * @param list<string>           $tools
      * @param list<ContextFile>|null $contextFiles
@@ -110,7 +111,45 @@ final class SystemPrompt
 
         // Last, because they are facts rather than instructions and the model should not
         // have to read past them to reach the part that tells it what to do.
-        $sections['cwd'] = 'Current date and time: ' . date('l, j F Y, H:i:s T') . "\nCurrent working directory: {$cwd}";
+        $sections['cwd'] = 'Current working directory: ' . str_replace('\\', '/', $cwd);
+
+        return $sections;
+    }
+
+    /** Upstream's `SYSTEM_PROMPT_SECTION_NAME`. */
+    private const string SECTION_NAME = '/^[a-z][a-z0-9_-]*$/';
+
+    /**
+     * $sections with the additional sections a `before_agent_start` handler asked for — upstream's
+     * `sections` option of `buildSystemPromptSections()`: each name must be a lowercase tag name and
+     * not `preamble` (`Invalid system prompt section name: …` otherwise), an empty one is left out,
+     * and each is wrapped in a tag of its name, `<name>\n…\n</name>`. They go after `cwd`; a name
+     * that is already a section replaces it where it stands, as a JavaScript object key does.
+     *
+     * pig's own sections are not tagged (see `sections()`); these are, because a handler's section
+     * is matched by the model against the later update that replaces or removes it.
+     *
+     * @param array<string, string> $sections what `sections()` built
+     * @param array<string, string> $custom   name => content
+     * @return array<string, string>
+     *
+     * @throws AgentError for a name upstream refuses
+     */
+    public static function withSections(array $sections, array $custom): array
+    {
+        foreach (array_keys($custom) as $name) {
+            $name = (string) $name;
+
+            if (preg_match(self::SECTION_NAME, $name) !== 1 || $name === 'preamble') {
+                throw new AgentError("Invalid system prompt section name: {$name}");
+            }
+        }
+
+        foreach ($custom as $name => $content) {
+            if ($content !== '') {
+                $sections[(string) $name] = "<{$name}>\n{$content}\n</{$name}>";
+            }
+        }
 
         return $sections;
     }

@@ -13,7 +13,8 @@ use Pig\Ai\Http\HttpClient;
  * `refreshOAuthToken()` and `getOAuthApiKey()` are methods here rather than free functions,
  * because PHP has no module-level functions and both were a `switch` on the provider anyway.
  *
- * **The two built-in sign-ins**, matching pi 1.0's: Anthropic and GitHub Copilot. The two Google
+ * **The built-in sign-ins**: Anthropic and GitHub Copilot, matching pi 1.0's, and OpenAI's ChatGPT
+ * sign-in for the `openai-codex` provider (`OpenAiCodex`), upstream's `openaiCodexOAuth`. The two Google
  * ones that used to be cases here went the way upstream's did in 0.71 — the Antigravity flow lives
  * in `extensions/pig-antigravity` now and registers itself as an `Extension\OauthFlow`, which is
  * what `CodingAgent\Auth` asks before this enum. `available()` is still a table rather than
@@ -27,12 +28,16 @@ enum Provider: string
 
     case GithubCopilot = 'github-copilot';
 
+    /** ChatGPT Plus/Pro for the `openai-codex` provider — upstream's `openaiCodexOAuth`. */
+    case OpenAiCodex = 'openai-codex';
+
     /** Upstream's wording, because it is what someone picking from a list has to recognise. */
     public function label(): string
     {
         return match ($this) {
             self::Anthropic => 'Anthropic (Claude Pro/Max)',
             self::GithubCopilot => 'GitHub Copilot',
+            self::OpenAiCodex => 'OpenAI (ChatGPT Plus/Pro)',
         };
     }
 
@@ -65,6 +70,7 @@ enum Provider: string
         return match ($this) {
             self::Anthropic => true,
             self::GithubCopilot => true,
+            self::OpenAiCodex => true,
         };
     }
 
@@ -73,6 +79,7 @@ enum Provider: string
         return match ($this) {
             self::Anthropic => true,
             self::GithubCopilot => true,
+            self::OpenAiCodex => true,
         };
     }
 
@@ -101,11 +108,13 @@ enum Provider: string
             // the sign-in ends and how it is renewed — there is no separate refresh endpoint.
             self::GithubCopilot => (new GithubCopilot($http ?? new HttpClient()))
                 ->refresh($credentials->refresh, $credentials->enterpriseUrl),
+            self::OpenAiCodex => (new OpenAiCodex($http ?? new HttpClient()))->refresh($credentials->refresh),
         };
     }
 
     /**
-     * What goes on a request as the key: the access token itself, for both of these. A flow that
+     * What goes on a request as the key: the access token itself, for all three — upstream's
+     * `toAuth()` is `{apiKey: credential.access}` for each. A flow that
      * needs more on the key — Antigravity's carries a project id — is an extension's `OauthFlow`
      * and answers for itself.
      */
@@ -114,7 +123,7 @@ enum Provider: string
         return match ($this) {
             // Both are the short-lived half. Anthropic's is recognised by its `sk-ant-oat`
             // prefix and Copilot's by the provider name, and both go out as bearer tokens.
-            self::Anthropic, self::GithubCopilot => $credentials->access,
+            self::Anthropic, self::GithubCopilot, self::OpenAiCodex => $credentials->access,
         };
     }
 }

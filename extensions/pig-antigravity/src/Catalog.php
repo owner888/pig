@@ -13,13 +13,14 @@ use PigAntigravity\AntigravityApi as Antigravity;
 use Pig\CodingAgent\Config;
 
 /**
- * Antigravity's catalogue, as the `pi-antigravity` extension leaves it on disk.
+ * Antigravity's catalogue, as `Discovery` — and the `pi-antigravity` extension in pi — leaves it on disk.
  *
  * the extension's own `Models::fallback()` and `Routing`'s two tables are a print
  * of the deployment's catalogue endpoint, taken whenever `scripts/fetch-antigravity-models.php`
- * was last run. The extension asks the same endpoint every four hours and writes the answer
- * down. So this is not a second opinion about what Antigravity sells — it is the same source,
- * more recently read, which is why it is allowed to win (`Models::register(replace: true)`).
+ * was last run. `Discovery` asks the same endpoint every four hours and writes the answer
+ * down, in pig's own `models-store.json`, as pi-antigravity does in pi's. So this is not a second
+ * opinion about what Antigravity sells — it is the same source, more recently read, which is why it
+ * replaces the fallback (`install()`).
  *
  * **Where it actually lives was the find.** The developer named three files —
  * `auth.json`, `antigravity-accounts.json`, `antigravity-model-catalog.json` — and the
@@ -38,7 +39,7 @@ use Pig\CodingAgent\Config;
  *       modelEnums { runtime => enum }
  * ```
  *
- * Both are read, the store first. The older file is kept as a fallback rather than dropped
+ * pig's own store is read first, then pi's, then the older file. The older file is kept as a fallback rather than dropped
  * because it is what a machine that has not run the newer extension still has, and reading a
  * stale catalogue is better than reading none — but it carries **no `modelEnums`**, so what it
  * can contribute is routing for models whose runtime ids pig's generated enum table already
@@ -64,12 +65,18 @@ final readonly class Catalog
      * @param array<string, array{default: string, off?: string, levels: array<string, string>}> $routing
      * @param array<string, string>                                                              $enums
      * @param list<string>                                                                      $problems
+     * @param int $checkedAt when the deployment was last asked, in milliseconds; 0 when nobody said
+     * @param array{models: list<array<string, mixed>>, routing: array<string, array<string, mixed>>}|null $catalog
+     *        the tables in the extension's own shape, as read — what `Discovery` keeps as the current
+     *        catalog once this is installed
      */
     private function __construct(
         public array $models,
         public array $routing,
         public array $enums,
         public array $problems,
+        public int $checkedAt = 0,
+        public ?array $catalog = null,
     ) {
     }
 
@@ -80,30 +87,47 @@ final readonly class Catalog
     }
 
     /**
-     * pi's store, or its older catalogue file, or nothing.
+     * A catalog `Discovery` built, through the same checks as one read from a file.
+     *
+     * @param array{models: list<array<string, mixed>>, routing: array<string, array<string, mixed>>} $catalog
+     * @param array<string, string> $enums
+     */
+    public static function fromCatalog(string $source, array $catalog, array $enums, int $checkedAt): self
+    {
+        return self::tables($source, $catalog['models'], $catalog['routing'], $enums, $checkedAt);
+    }
+
+    /** pig's own store, which `Discovery` writes in pi's shape: `~/.pig/agent/models-store.json`. */
+    public static function storePath(): string
+    {
+        return Config::home() . '/models-store.json';
+    }
+
+    /**
+     * pig's own store, then pi's, then pi's older catalogue file, or nothing.
      *
      * A fallback rather than a merge, for `CustomModels::discover()`'s reason: one of them is
      * the current answer and the other is a copy of what the answer used to be, and merging two
-     * snapshots of one table is how a model that was withdrawn comes back.
+     * snapshots of one table is how a model that was withdrawn comes back. pig's own comes first
+     * because it is the one `Discovery` refreshes; pi's is what a machine that has only run pi has.
      */
     public static function discover(): self
     {
-        $store = self::load(Config::piHome() . '/models-store.json');
+        $problems = [];
 
-        if ($store->models !== []) {
-            return $store;
+        foreach ([self::storePath(), Config::piHome() . '/models-store.json', Config::piHome() . '/antigravity-model-catalog.json'] as $path) {
+            $found = self::load($path);
+
+            if ($found->models !== []) {
+                // The earlier files' own problems are kept: they were there and unreadable, which
+                // is worth saying even when a later one answered.
+                return new self($found->models, $found->routing, $found->enums, [...$problems, ...$found->problems], $found->checkedAt, $found->catalog);
+            }
+
+            $problems = [...$problems, ...$found->problems];
         }
 
-        $cached = self::load(Config::piHome() . '/antigravity-model-catalog.json');
-
-        // The store's own problems are kept: it was there and unreadable, which is worth saying
-        // even when the older file answered.
-        return new self(
-            $cached->models,
-            $cached->routing,
-            $cached->enums,
-            [...$store->problems, ...$cached->problems],
-        );
+        return new self([], [], [], $problems);
     }
 
     /** Either shape, told apart by what is in it rather than by the file's name. */
@@ -139,10 +163,16 @@ final readonly class Catalog
         // every start is how people learn to skip the warnings that matter.
         $extension = $decoded[self::PROVIDER][self::EXTENSION] ?? null;
         $enums = [];
+        $checkedAt = 0;
 
         if (is_array($extension)) {
             $catalogue = $extension['catalog'] ?? null;
             $enums = is_array($extension['modelEnums'] ?? null) ? $extension['modelEnums'] : [];
+            // pi-antigravity's `hydrateAntigravityCatalog()`: "typeof persisted.checkedAt === "number"
+            // && persisted.checkedAt > 0 ? persisted.checkedAt : 0".
+            $checkedAt = (is_int($extension['checkedAt'] ?? null) || is_float($extension['checkedAt'] ?? null)) && $extension['checkedAt'] > 0
+                ? (int) $extension['checkedAt']
+                : 0;
         } elseif (is_array($decoded['models'] ?? null) && is_array($decoded['routing'] ?? null)) {
             $catalogue = $decoded;
         } else {
@@ -155,7 +185,7 @@ final readonly class Catalog
             return new self([], [], [], ["{$path} has an Antigravity section with no \"models\" and \"routing\" in it"]);
         }
 
-        return self::tables($path, $catalogue['models'], $catalogue['routing'], $enums);
+        return self::tables($path, $catalogue['models'], $catalogue['routing'], $enums, $checkedAt);
     }
 
     /**
@@ -170,7 +200,10 @@ final readonly class Catalog
             return;
         }
 
+        // pi-antigravity's `applyAntigravityCatalog()` replaces the provider's model list, and the
+        // routing is replaced with it: a row kept from the list before has no routing any more.
         Routing::useTables($this->routing, $this->enums);
+        Registry::forgetProvider(Models::PROVIDER);
         Registry::register($this->models, replace: true);
     }
 
@@ -179,7 +212,7 @@ final readonly class Catalog
      * @param array<mixed> $routing
      * @param array<mixed> $enums
      */
-    private static function tables(string $path, array $models, array $routing, array $enums): self
+    private static function tables(string $path, array $models, array $routing, array $enums, int $checkedAt = 0): self
     {
         $problems = [];
         $strings = [];
@@ -240,7 +273,7 @@ final readonly class Catalog
             $built[] = $one;
         }
 
-        return new self($built, $entries, $strings, $problems);
+        return new self($built, $entries, $strings, $problems, $checkedAt, ['models' => array_values($models), 'routing' => $routing]);
     }
 
     /**

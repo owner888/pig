@@ -1,0 +1,100 @@
+{
+ "scenario": {
+  "method": "browser",
+  "paste": "http://localhost:1455/auth/callback?code=ac_b&state=STATE",
+  "responses": [
+   {
+    "body": {
+     "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjXzEyMyJ9fQ.sig",
+     "refresh_token": "rt_new",
+     "expires_in": 3600
+    }
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "url": "/oauth/token",
+    "contentType": "application/x-www-form-urlencoded",
+    "body": "grant_type=authorization_code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&code=ac_b&code_verifier=ttgTUJu63e7AC6bTZ9HSQMei4p5igQnM2BD6XQa5cK0&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"
+   }
+  ],
+  "events": [
+   {
+    "prompt": "select",
+    "message": "Select OpenAI Codex login method:",
+    "options": [
+     {
+      "id": "browser",
+      "label": "Browser login (default)"
+     },
+     {
+      "id": "device_code",
+      "label": "Device code login (headless)"
+     }
+    ]
+   },
+   {
+    "type": "auth_url",
+    "url": "https://auth.openai.com/oauth/authorize",
+    "instructions": "A browser window should open. Complete login to finish.",
+    "params": [
+     [
+      "response_type",
+      "code"
+     ],
+     [
+      "client_id",
+      "app_EMoamEEZ73f0CkXaXp7hrann"
+     ],
+     [
+      "redirect_uri",
+      "http://localhost:1455/auth/callback"
+     ],
+     [
+      "scope",
+      "openid profile email offline_access"
+     ],
+     [
+      "code_challenge",
+      "<random>"
+     ],
+     [
+      "code_challenge_method",
+      "S256"
+     ],
+     [
+      "state",
+      "<random>"
+     ],
+     [
+      "id_token_add_organizations",
+      "true"
+     ],
+     [
+      "codex_cli_simplified_flow",
+      "true"
+     ],
+     [
+      "originator",
+      "pi"
+     ]
+    ]
+   },
+   {
+    "prompt": "manual_code",
+    "message": "Complete login in your browser, or paste the authorization code / redirect URL here:",
+    "placeholder": "http://localhost:1455/auth/callback"
+   }
+  ],
+  "result": {
+   "type": "oauth",
+   "access": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjXzEyMyJ9fQ.sig",
+   "refresh": "rt_new",
+   "expires": 1767326645000,
+   "accountId": "acc_123"
+  }
+ }
+}

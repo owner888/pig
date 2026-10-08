@@ -55,6 +55,9 @@ final class AssistantMessageBuilder
 
     private ?string $providerThinkingLevel = null;
 
+    /** Upstream's `output.endTurn`, which only the Codex backend's terminal event sets. */
+    private ?bool $endTurn = null;
+
     /** The model usage is priced at — `$model` unless `priceAs()` said otherwise. */
     private Model $pricedAs;
 
@@ -384,6 +387,12 @@ final class AssistantMessageBuilder
         $this->providerThinkingLevel = $level;
     }
 
+    /** Upstream's `output.endTurn = response.end_turn`, from a Codex terminal event that carries one. */
+    public function setEndTurn(?bool $endTurn): void
+    {
+        $this->endTurn = $endTurn;
+    }
+
     /** Upstream's `appendAssistantMessageDiagnostic()`. */
     public function addDiagnostic(AssistantMessageDiagnostic $diagnostic): void
     {
@@ -424,7 +433,7 @@ final class AssistantMessageBuilder
             $this->rawStopReason,
             $this->responseId,
             $this->responseModel,
-            null,
+            $this->endTurn,
             $this->diagnostics,
             $this->providerThinkingLevel,
         );

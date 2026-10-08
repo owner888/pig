@@ -137,13 +137,42 @@ final class SystemPromptTest extends ToolTestCase
         );
     }
 
-    public function testTheWorkingDirectoryAndTimeComeLast(): void
+    public function testAHandlersSectionsAreTaggedAfterTheRestAndDiffIntoAPatch(): void
     {
+        // Upstream's "diffs sections into a patch" with `sections: { plan_mode }`.
+        $base = SystemPrompt::sections($this->cwd, ['read'], contextFiles: []);
+        $previous = SystemPrompt::withSections($base, ['plan_mode' => 'Plan only.']);
+        $current = SystemPrompt::withSections($base, ['plan_mode' => 'Implementation allowed.']);
+
+        $this->assertSame(['preamble', 'tools', 'rules', 'cwd', 'plan_mode'], array_keys($previous));
+        $this->assertSame(['plan_mode' => "<plan_mode>\nImplementation allowed.\n</plan_mode>"], SystemPrompt::diffSections($previous, $current));
+        $this->assertNull(SystemPrompt::diffSections($previous, $previous));
+        $this->assertSame(['plan_mode' => null], SystemPrompt::diffSections($previous, $base));
+
+        // Empty content is left out; a name that is already a section replaces it where it stands.
+        $this->assertSame($base, SystemPrompt::withSections($base, ['plan_mode' => '']));
+        $this->assertSame(['preamble', 'tools', 'rules', 'cwd'], array_keys(SystemPrompt::withSections($base, ['tools' => 'x'])));
+        $this->assertSame("<tools>\nx\n</tools>", SystemPrompt::withSections($base, ['tools' => 'x'])['tools']);
+    }
+
+    public function testASectionNameUpstreamRefusesIsRefused(): void
+    {
+        foreach (['preamble', 'Plan', '1st', 'has space', ''] as $name) {
+            $error = $this->assertThrows(AgentError::class, static fn () => SystemPrompt::withSections([], [$name => 'x']));
+            $this->assertSame("Invalid system prompt section name: {$name}", $error->getMessage());
+        }
+    }
+
+    public function testTheWorkingDirectoryComesLastAndNoDateOrTime(): void
+    {
+        // Upstream's `cwd` section is `cwd.replace(/\\/g, "/")` and nothing else: a clock in the
+        // prompt changed the section every time the loadout was rebuilt.
         $prompt = $this->prompt();
         $lines = explode("\n", rtrim($prompt));
 
-        $this->assertStringStartsWith('Current working directory: ', $lines[count($lines) - 1]);
-        $this->assertStringStartsWith('Current date and time: ', $lines[count($lines) - 2]);
+        $this->assertSame("Current working directory: {$this->cwd}", $lines[count($lines) - 1]);
+        $this->assertStringNotContainsString('Current date', $prompt);
+        $this->assertSame('Current working directory: C:/work/repo', SystemPrompt::sections('C:\\work\\repo', [], contextFiles: [])['cwd']);
     }
 
     public function testACustomPromptReplacesTheDefaultButKeepsTheFacts(): void

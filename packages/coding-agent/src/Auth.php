@@ -14,6 +14,7 @@ use Pig\Ai\Utils\Oauth\Anthropic;
 use Pig\Ai\Utils\Oauth\Credentials;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
+use Pig\Ai\Utils\Oauth\OpenAiCodex;
 use Pig\Ai\Utils\Oauth\Provider;
 use Pig\Async\AbortSignal;
 use Throwable;
@@ -284,6 +285,7 @@ final class Auth
             self::text($entry, 'enterpriseUrl'),
             self::text($entry, 'projectId'),
             self::text($entry, 'email'),
+            self::text($entry, 'accountId'),
         );
     }
 
@@ -304,6 +306,7 @@ final class Auth
                 'enterpriseUrl' => $credentials->enterpriseUrl,
                 'projectId' => $credentials->projectId,
                 'email' => $credentials->email,
+                'accountId' => $credentials->accountId,
             ],
             static fn (mixed $value): bool => $value !== null,
         );
@@ -410,7 +413,8 @@ final class Auth
      * @param Closure(string): void|null $onProgress a line for a step that takes a moment
      * @param Closure(string, list<array{0: string, 1: string}>): ?string|null $onSelect a
      *        choice between named options — upstream's `prompt({type: "select"})`, which
-     *        Anthropic's flow asks first (browser, or copy the code). Null means there is no
+     *        Anthropic's flow asks first (browser, or copy the code) and OpenAI's Codex flow too
+     *        (browser, or device code). Null means there is no
      *        screen to ask on and the flow takes its default.
      */
     public function login(
@@ -432,6 +436,7 @@ final class Auth
             $credentials = match ($provider) {
                 Provider::Anthropic => $this->anthropic($onAuth, $onPrompt, $onProgress, $signal, $onSelect),
                 Provider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
+                Provider::OpenAiCodex => (new OpenAiCodex())->login($onAuth, $onPrompt, $signal, $onSelect),
             };
             $id = $provider->value;
         }
@@ -446,7 +451,7 @@ final class Auth
     }
 
     /**
-     * Every sign-in on offer: the built-in two, then whatever the loaded extensions brought.
+     * Every sign-in on offer: the built-in three, then whatever the loaded extensions brought.
      *
      * @return list<Provider|OauthFlow>
      */

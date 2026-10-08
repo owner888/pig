@@ -29,19 +29,20 @@ use Pig\Ai\Context;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
-use Pig\Ai\ReasoningEffort;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StopReason;
 use Pig\Ai\Stream;
 use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\Timestamp;
+use Pig\Ai\Tool;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\TranscriptContext;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\Overflow;
 use Pig\Ai\Utils\Retry;
+use Pig\Ai\Utils\Text;
 use Pig\Ai\Utils\Transcript;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
@@ -82,6 +83,7 @@ use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\SlashCommands;
 use Pig\CodingAgent\Prompt\SystemPrompt;
+use Pig\CodingAgent\Prompt\SystemPromptOptions;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\Agent\AgentTool;
@@ -169,6 +171,14 @@ final class AgentSession
     private ?AbortController $compacting = null;
 
     /**
+     * What the `before_agent_start` handlers made of the prompt for the run in progress —
+     * upstream's `_runSystemPromptOptions`: "Prompt options after before_agent_start mutations for
+     * the active run." Their sections are diffed with the loadout's before every request of the run;
+     * a forced prompt is projected onto the request and never recorded. Null between runs.
+     */
+    private ?SystemPromptOptions $runSystemPromptOptions = null;
+
+    /**
      * Prompts kept as files, so `/review foo.php` is the prompt in `review.md` with `$1` filled in.
      *
      * Here rather than only in the terminal, which is where they used to live: a stored prompt
@@ -254,7 +264,7 @@ final class AgentSession
                 ? $previousPrepareNextTurn($turn, $signal)
                 : ($previousPrepareNextTurnWithoutContext !== null ? $previousPrepareNextTurnWithoutContext($signal) : null);
             $context = $previous?->context ?? $turn->context;
-            $update = $this->preparePromptUpdate($context->messages);
+            $update = $this->preparePromptUpdate($context->messages, $this->runSystemPromptOptions);
 
             if ($update === null) {
                 return $previous;
@@ -266,6 +276,28 @@ final class AgentSession
                 $previous?->model,
                 $previous?->thinkingLevel,
             );
+        };
+
+        // Upstream's `_installAgentForcedPromptProjection()`: "Send a forced prompt as the provider's
+        // leading system prompt without recording it. A `before_agent_start` handler that returns
+        // `systemPrompt` needs that exact text at the head of the request; a mid-conversation system
+        // message would leave the original prompt in place. The forced text is a rendering of the
+        // current prompt, so the transcript keeps its structured sections and the request is
+        // projected instead: the system messages collapse into one head holding the forced text and
+        // the current tools. Runs after the `context` extension handlers."
+        $previousTransformContext = $this->agent->transformContext;
+        $this->agent->transformContext = function (array $messages, ?AbortSignal $signal = null) use ($previousTransformContext): array {
+            $transformed = $previousTransformContext !== null ? $previousTransformContext($messages, $signal) : $messages;
+            $forced = $this->runSystemPromptOptions?->forceSystemPrompt;
+
+            if ($forced === null) {
+                return $transformed;
+            }
+
+            $current = Transcript::getCurrentSystemMessage($transformed);
+            $head = new SystemMessage($forced, null, $current?->toolsAdded, null, $current?->timestamp ?? Timestamp::nowMs());
+
+            return [$head, ...array_values(array_filter($transformed, static fn (mixed $message): bool => !$message instanceof SystemMessage))];
         };
 
         // What was chosen last time, applied here rather than by whoever built the agent: this
@@ -363,6 +395,42 @@ final class AgentSession
     public function restore(array $messages): void
     {
         $this->agent->replaceMessages($messages);
+        $this->restoreToolsFromTranscript();
+    }
+
+    /**
+     * Restore the active tool loadout declared by the session transcript, if it declares one —
+     * upstream's `_restoreToolsFromTranscript()`, which it runs when a session opens and after tree
+     * navigation (both reach `restore()` here). "Tools reachable only from other tools are never
+     * declared, but they do not depend on the active set, so the transcript's declarations are the
+     * whole loadout." The declared tools that are not registered yet — an MCP server still
+     * connecting, a tool `tool_search` had loaded — are pending until they are.
+     */
+    private function restoreToolsFromTranscript(): void
+    {
+        if ($this->loadout === null) {
+            return;
+        }
+
+        $this->loadout->clearPending();
+        $current = Transcript::getCurrentSystemMessage($this->agent->state->messages);
+
+        if ($current === null) {
+            return;
+        }
+
+        $this->loadout->restore(array_map(static fn (Tool $tool): string => $tool->name, $current->toolsAdded ?? []));
+    }
+
+    /**
+     * Whether $name is a tool the restored loadout declared that has not been registered yet. An
+     * extension that holds a tool back until something asks for it — the MCP extension's
+     * `deferred` tools — registers it when the session is waiting for it, which is what upstream's
+     * registry of inactive deferred tools does by itself.
+     */
+    public function isToolPending(string $name): bool
+    {
+        return $this->loadout?->isPending($name) ?? false;
     }
 
     /**
@@ -672,7 +740,24 @@ final class AgentSession
      */
     public function systemPrompt(): string
     {
-        return $this->loadout?->systemPrompt() ?? $this->agent->state->systemPrompt();
+        return $this->renderSystemPrompt($this->runSystemPromptOptions);
+    }
+
+    /**
+     * Upstream's `buildSystemPrompt(options)`: a forced prompt as it is, otherwise the sections —
+     * the loadout's and the handlers' — rendered as the transcript replays them.
+     */
+    private function renderSystemPrompt(?SystemPromptOptions $options): string
+    {
+        if ($options?->forceSystemPrompt !== null) {
+            return $options->forceSystemPrompt;
+        }
+
+        if ($this->loadout === null) {
+            return $this->agent->state->systemPrompt();
+        }
+
+        return Text::getSystemMessageText(new SystemMessage('', SystemPrompt::withSections($this->loadout->systemPromptSections(), $options?->sections ?? [])));
     }
 
     /**
@@ -686,17 +771,21 @@ final class AgentSession
      * Null for a session with no loadout: nothing here knows what its prompt should be, and the
      * transcript's own system messages stand.
      *
-     * @param list<mixed>|null $messages the transcript to diff against; the agent's when null
+     * @param list<mixed>|null         $messages the transcript to diff against; the agent's when null
+     * @param SystemPromptOptions|null $options  the run's prompt options, as the handlers left them
      */
-    private function preparePromptUpdate(?array $messages = null): ?SystemMessage
+    private function preparePromptUpdate(?array $messages, ?SystemPromptOptions $options): ?SystemMessage
     {
         if ($this->loadout === null) {
             return null;
         }
 
+        // The run's options as well as the loadout's, as upstream's next-turn refresh builds from
+        // `_runSystemPromptOptions ?? _baseSystemPromptOptions`: a handler's section stays for every
+        // request of the run it was added for. A forced prompt does not change what is recorded.
         $sections = SystemPrompt::diffSections(
             Transcript::getCurrentSystemMessage($messages ?? $this->agent->state->messages)?->sections ?? [],
-            $this->loadout->systemPromptSections(),
+            SystemPrompt::withSections($this->loadout->systemPromptSections(), $options?->sections ?? []),
         );
 
         return $sections !== null ? new SystemMessage('', $sections) : null;
@@ -782,7 +871,16 @@ final class AgentSession
             throw new AgentError('This session has no tool loadout to narrow.');
         }
 
+        // Upstream's `setActiveToolsByName()`: "A loadout that deactivates a tool replaces the
+        // restored one, whose pending tools are dropped. One that only adds tools, like activating
+        // tool_search, keeps them."
+        $previous = $this->loadout->activeNames();
         $this->loadout->setActive($names);
+        $active = $this->loadout->activeNames();
+
+        if (array_diff($previous, $active) !== []) {
+            $this->loadout->clearPending();
+        }
     }
 
     private int $extensionCalls = 0;
@@ -1137,7 +1235,10 @@ final class AgentSession
         // still shows what the person actually typed — and it goes in *through* the
         // prompt rather than onto the state, so the session file records it and a
         // resumed conversation still has it.
-        $note = $this->hooks?->emitBeforeAgentStart($text, $images);
+        // The handlers get the prompt options to change — upstream's `systemPromptOptions` — and
+        // what they leave is this run's (`$runSystemPromptOptions`).
+        $options = new SystemPromptOptions();
+        $note = $this->hooks?->emitBeforeAgentStart($text, $images, $options, $this->renderSystemPrompt(...));
 
         // Held-back `!` commands go in before the prompt, as upstream's `prompt()` flushes them.
         $this->flushBash();
@@ -1145,8 +1246,9 @@ final class AgentSession
         // Upstream's `updateMessage`, put in front of the prompt (`messages.unshift(updateMessage)`):
         // the prompt sections that changed since the transcript last said them, in the transcript
         // and the session file before what the person typed.
-        $update = $this->preparePromptUpdate();
-        $messages = $note === null || trim($note->text) === ''
+        $update = $this->preparePromptUpdate(null, $options);
+        $this->runSystemPromptOptions = $options;
+        $messages = $note?->text === null || trim($note->text) === ''
             ? [new UserMessage([new TextContent($text), ...$images])]
             : [new UserMessage($note->text), new UserMessage([new TextContent($text), ...$images])];
 
@@ -1901,6 +2003,9 @@ final class AgentSession
     private function runAgentPrompt(Closure $firstRun): void
     {
         $this->runAbortRequested = false;
+        // "The run records the loadout in the transcript; restored tools that did not register by
+        // now are dropped, so a tool that never registers does not stay pending."
+        $this->loadout?->clearPending();
         $this->runActive = true;
         $this->idle ??= new Deferred();
 
@@ -1929,6 +2034,7 @@ final class AgentSession
                 $this->finishCancelledRetry();
             }
 
+            $this->runSystemPromptOptions = null;
             $this->flushBash();
             $this->emitAgentSettled();
         }
@@ -2540,7 +2646,15 @@ final class AgentSession
             return $summary;
         }
 
-        $text = $this->summarise($model, $request, $signal, source: 'compaction', reason: $reason);
+        $text = $this->summarise(
+            $model,
+            $request,
+            $signal,
+            (int) floor(0.8 * $this->reserveTokens()),
+            source: 'compaction',
+            reason: $reason,
+            thinkingLevel: $this->thinkingLevel(),
+        );
 
         if ($text === null) {
             return null;
@@ -2570,17 +2684,25 @@ final class AgentSession
      * honor the configured retry policy instead of failing the whole compaction on the first
      * attempt"; each retry is announced (`SummarizationRetryEvent`).
      *
-     * @param string      $source `compaction` or `branchSummary`, for the retry events
-     * @param string|null $reason a compaction's `manual`, `threshold` or `overflow`
+     * The reasoning is upstream's `createSummarizationOptions()`: a compaction asks at the
+     * session's thinking level when the model reasons and the level is not `off`, and a branch
+     * summary (`generateBranchSummary()`) passes no reasoning at all. The output budget is capped
+     * by the model's own `maxTokens` when it declares one: `Math.min(budget, model.maxTokens > 0
+     * ? model.maxTokens : Infinity)`.
+     *
+     * @param int         $maxTokens  the budget before the model's cap
+     * @param string      $source     `compaction` or `branchSummary`, for the retry events
+     * @param string|null $reason     a compaction's `manual`, `threshold` or `overflow`
+     * @param ThinkingLevel|null $thinkingLevel the level to ask at; null asks for no reasoning
      * @return string|null null when it was cancelled
      */
-    private function summarise(Model $model, string $request, ?AbortSignal $signal, ?int $maxTokens = null, string $source = 'compaction', ?string $reason = null): ?string
+    private function summarise(Model $model, string $request, ?AbortSignal $signal, int $maxTokens, string $source = 'compaction', ?string $reason = null, ?ThinkingLevel $thinkingLevel = null): ?string
     {
         $stream = new SimpleStreamOptions(
-            maxTokens: $maxTokens ?? (int) (0.8 * $this->reserveTokens()),
+            maxTokens: $model->maxTokens > 0 ? min($maxTokens, $model->maxTokens) : $maxTokens,
             signal: $signal,
             apiKey: $this->keyFor($model),
-            reasoning: ReasoningEffort::High,
+            reasoning: $model->reasoning && $thinkingLevel !== null ? $thinkingLevel->toReasoning() : null,
             cacheRetention: 'none',
             sessionId: self::routingId(),
         );

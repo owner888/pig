@@ -1,0 +1,23 @@
+{
+ "scenario": {
+  "refresh": "rt_old",
+  "responses": [
+   {
+    "status": 401,
+    "body": ""
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "url": "/oauth/token",
+    "contentType": "application/x-www-form-urlencoded",
+    "body": "grant_type=refresh_token&refresh_token=rt_old&client_id=app_EMoamEEZ73f0CkXaXp7hrann"
+   }
+  ],
+  "events": [],
+  "thrown": "OpenAI Codex token refresh failed (401): Unauthorized"
+ }
+}

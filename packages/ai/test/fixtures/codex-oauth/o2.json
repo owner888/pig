@@ -1,0 +1,38 @@
+{
+ "scenario": {
+  "method": "device_code",
+  "responses": [
+   {
+    "status": 404,
+    "body": "nope"
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "url": "/api/accounts/deviceauth/usercode",
+    "contentType": "application/json",
+    "body": "{\"client_id\":\"app_EMoamEEZ73f0CkXaXp7hrann\"}"
+   }
+  ],
+  "events": [
+   {
+    "prompt": "select",
+    "message": "Select OpenAI Codex login method:",
+    "options": [
+     {
+      "id": "browser",
+      "label": "Browser login (default)"
+     },
+     {
+      "id": "device_code",
+      "label": "Device code login (headless)"
+     }
+    ]
+   }
+  ],
+  "thrown": "OpenAI Codex device code login is not enabled for this server. Use browser login or verify the server URL."
+ }
+}

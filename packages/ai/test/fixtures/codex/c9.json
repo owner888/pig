@@ -1,0 +1,162 @@
+{
+ "scenario": {
+  "module": "api/openai-codex-responses.ts",
+  "noZstd": true,
+  "simple": true,
+  "model": {
+   "id": "gpt-6-luna",
+   "name": "GPT-6 Luna",
+   "api": "openai-codex-responses",
+   "provider": "openai-codex",
+   "baseUrl": "SERVER/backend-api",
+   "reasoning": true,
+   "input": [
+    "text",
+    "image"
+   ],
+   "cost": {
+    "input": 0.1,
+    "output": 0.5,
+    "cacheRead": 0.01,
+    "cacheWrite": 0.125
+   },
+   "contextWindow": 272000,
+   "maxTokens": 128000,
+   "thinkingLevelMap": {
+    "off": "none",
+    "minimal": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "xhigh",
+    "max": "max"
+   },
+   "compat": {
+    "supportsOpenAIGrammarTools": true,
+    "supportsToolSearch": true,
+    "supportsMidConvoSystemMessages": true
+   }
+  },
+  "options": {
+   "apiKey": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjXzEyMyJ9LCJleHAiOjF9.sig",
+   "transport": "sse",
+   "cacheRetention": "none",
+   "sessionId": "sess-x"
+  },
+  "context": {
+   "systemPrompt": "Be brief.",
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi",
+     "timestamp": 1
+    }
+   ],
+   "tools": [
+    {
+     "name": "read",
+     "description": "Read a file",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    }
+   ]
+  },
+  "responses": [
+   {
+    "chunks": [
+     "event: ignored\r\n",
+     "data: {\"type\": \"response.output_item.added\", \"output_index\": 0, \"item\": {\"type\": \"message\", \"id\": \"m\", \"content\": []}}\n\n",
+     "data: [DONE]\n\n",
+     "data: {\"type\": \"response.output_text.delta\", \"output_index\": 0, \"delta\": \"x\"}\n\n",
+     "data: {\"type\": \"response.output_item.done\", \"output_index\": 0, \"item\": {\"type\": \"message\", \"id\": \"m\", \"content\": [{\"type\": \"output_text\", \"text\": \"x\"}]}}\n\n",
+     "data: {\"type\": \"response.completed\", \"response\": {\"id\": \"r\", \"status\": \"weird\", \"usage\": {\"input_tokens\": 1, \"output_tokens\": 1, \"total_tokens\": 2}}}"
+    ]
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "path": "/backend-api/codex/responses",
+    "headers": {
+     "authorization": "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjXzEyMyJ9LCJleHAiOjF9.sig",
+     "chatgpt-account-id": "acc_123",
+     "originator": "pi",
+     "openai-beta": "responses=experimental",
+     "accept": "text/event-stream",
+     "content-type": "application/json"
+    },
+    "userAgent": "pi (linux 6.18.44-fc-v80; x64)",
+    "body": "{\"model\":\"gpt-6-luna\",\"store\":false,\"stream\":true,\"instructions\":\"Be brief.\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"text\":{\"verbosity\":\"low\"},\"include\":[\"reasoning.encrypted_content\"],\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"tools\":[{\"type\":\"function\",\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]},\"strict\":null}],\"reasoning\":{\"effort\":\"none\"}}"
+   }
+  ],
+  "events": [
+   [
+    "start",
+    null,
+    null
+   ],
+   [
+    "text_start",
+    0,
+    null
+   ],
+   [
+    "text_delta",
+    0,
+    "x"
+   ],
+   [
+    "text_end",
+    0,
+    null
+   ],
+   [
+    "done",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "x",
+     "textSignature": "{\"v\":1,\"id\":\"m\"}"
+    }
+   ],
+   "api": "openai-codex-responses",
+   "provider": "openai-codex",
+   "model": "gpt-6-luna",
+   "usage": {
+    "input": 1,
+    "output": 1,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "reasoning": 0,
+    "totalTokens": 2,
+    "cost": {
+     "input": 1.0000000000000001e-07,
+     "output": 5e-07,
+     "cacheRead": 0,
+     "cacheWrite": 0,
+     "total": 6e-07
+    }
+   },
+   "stopReason": "stop",
+   "timestamp": 1767323045000,
+   "responseId": "r"
+  }
+ }
+}

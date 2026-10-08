@@ -1,0 +1,97 @@
+{
+ "scenario": {
+  "module": "api/azure-openai-responses.ts",
+  "simple": true,
+  "model": {
+   "id": "o3",
+   "name": "o3",
+   "api": "azure-openai-responses",
+   "provider": "azure",
+   "baseUrl": "",
+   "reasoning": true,
+   "input": [
+    "text",
+    "image"
+   ],
+   "cost": {
+    "input": 1.75,
+    "output": 14,
+    "cacheRead": 0.175,
+    "cacheWrite": 0
+   },
+   "contextWindow": 400000,
+   "maxTokens": 128000,
+   "thinkingLevelMap": {},
+   "compat": {}
+  },
+  "options": {
+   "apiKey": "az-key"
+  },
+  "context": {
+   "systemPrompt": "Be brief.",
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi",
+     "timestamp": 1
+    }
+   ],
+   "tools": [
+    {
+     "name": "read",
+     "description": "Read a file",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    }
+   ]
+  },
+  "responses": [
+   {
+    "chunks": []
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [],
+  "events": [
+   [
+    "error",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [],
+   "api": "azure-openai-responses",
+   "provider": "azure",
+   "model": "o3",
+   "usage": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 0,
+    "cost": {
+     "input": 0,
+     "output": 0,
+     "cacheRead": 0,
+     "cacheWrite": 0,
+     "total": 0
+    }
+   },
+   "stopReason": "error",
+   "timestamp": 1767323045000,
+   "errorMessage": "Azure OpenAI base URL is required. Set AZURE_OPENAI_BASE_URL or AZURE_OPENAI_RESOURCE_NAME, or pass azureBaseUrl, azureResourceName, or model.baseUrl."
+  }
+ }
+}

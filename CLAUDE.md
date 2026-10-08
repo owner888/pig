@@ -552,7 +552,7 @@ Four things about it:
 - **A level the restored model cannot do is clamped**, for the same reason `setModel()` clamps:
   the person resuming did not ask for it, the file did, and a provider would reject it.
 - **A model this pig has no entry for is not an error.** pig's registry carries only the models
-  whose protocol is ported and excludes OpenRouter's, so a pi session on one of those restores to
+  whose protocol is ported, so a pi session on one of the others (one a pi extension pig lacks brings, say) restores to
   whatever pig had. The conversation still opens, and the footer says which model is answering.
 
 Recorded only when something actually changed: `setModel()` is also how the thinking level gets
@@ -901,8 +901,7 @@ snaps to a pure grey and the theme loses its tint.
 
 `Ai\Models` is the registry, and what is in it is the models whose *protocol* is ported — offering
 a model and then failing to send the request is a worse answer than "no such model", so the rest
-arrive with their protocols. OpenRouter's speak a ported protocol and are still left out: that list
-is a directory of everyone else's models and goes stale fastest.
+arrive with their protocols.
 
 **The rows are generated now, and the paragraph this replaces is why.** It read *"the figures are
 upstream's at the anchor commit, not whatever models.dev says today: a port should agree with the
@@ -949,7 +948,7 @@ output at 4096 and cannot reason, so `--model claude-3-haiku-20240307` built a r
 provider rejects, from a flag that looked like it had worked.
 
 `Providers\OpenAiCompletions` is upstream's `openai-completions.ts`, and it is worth more than
-the one name on it: Groq, Cerebras, xAI, Zai, OpenRouter and GitHub Copilot's Gemini and
+the one name on it: Groq, Cerebras, Zai, OpenRouter and GitHub Copilot's Gemini and
 Kimi models all answer this shape (Copilot's Claude speaks `anthropic-messages` and its `gpt-`,
 `grok-`, `oswe` and `mai-` models `openai-responses`, as upstream's generator routes them). Structurally it differs from `Anthropic` in one way that matters — **Anthropic
 numbers its content blocks and says when each opens and closes; this does not.** A block runs
@@ -1563,7 +1562,8 @@ because Code Assist has its own endpoint and wraps a Gemini request inside a Clo
 envelope. The claim was wrong and is recorded as wrong; checking it took one grep of
 `models.generated.ts` for the `api` field. (Since then `mistral-conversations`, `google-vertex` and
 `bedrock-converse-stream` have joined them — the last two in "Vertex AI and Amazon Bedrock: two more
-SDKs, emulated rather than wrapped", below.)
+SDKs, emulated rather than wrapped", below — and `azure-openai-responses`, `openai-codex-responses` and
+`pi-messages`, in "Azure OpenAI, ChatGPT's Codex backend and `pi-messages`".)
 
 `Providers\GoogleGeminiCli` is 250 lines against upstream's 603, because upstream re-implements
 the chunk walk and this shares it — see `GoogleShared`. **GitHub Copilot is done** too, and needed
@@ -3264,15 +3264,15 @@ with the arguments:
   (RFC 6749 §5.1), without which there is nothing to keep; `optionalString()` reading `''` as
   absent; and `oauth.authServerMetadataUrl`, read every time and never cached.
 
-**Left out: `models.generateImages()`**, and the reason is scope rather than difficulty. Upstream's
-is a `models` namespace in the sandbox over a model catalogue with a `type: image` column, run with
-the session's credentials through OpenRouter — a provider pig deliberately does not carry — with the
-usage added to the tool result. pig has no `type` on a model, no OpenRouter and no image-generation
-protocol; what it has is `generate_image` in `pig-antigravity`, an ordinary tool a script already
-reaches as `$tools->generate_image([...])`. So the feature as a *capability* is there by another
-door, and the feature as an *API* is a new provider plus a registry column plus a sandbox namespace.
-The developer's call was to take the three above and decide this one on its own — this entry is
-where to start if it is ever wanted, and the first question is whether pig carries OpenRouter.
+**Left out: the sandbox's `models` namespace** (`models.getModelOfType()`, `models.classify()`,
+`models.generateImages()`), and the reason is scope rather than difficulty. Upstream's runs the
+session's credentials through the catalogue's image and classifier models, with the usage added to
+the tool result. The layer under it is in `pig/ai` now — `Models::findOfType()`/`allOfType()`,
+`Models::classify()` and `Models::generateImages()` over the `openrouter-images` and System One APIs
+(see the trap on classifiers and image models) — so what is missing is the namespace and its
+argument checks, docs and image-result handling in `pig-codemode`. Meanwhile a script reaches image
+generation as `$tools->generate_image([...])` from `pig-antigravity`. The developer's call was to
+take the three above and decide this one on its own.
 
 Regression tests: `OauthTest` (seven new — the `iss` triple, scope recorded and empty, `stepUpScope`,
 the metadata URL), `McpExtensionTest::testAStepUpSignInAsksForTheGrantedScopeAsWellAsTheMissingOne`
@@ -4065,6 +4065,57 @@ What is knowingly not there: HTTP/2 (pig speaks HTTP/1.1; upstream forces it too
 `AWS_BEDROCK_FORCE_HTTP1`), the adaptive retry mode and the retry quota, `login_session` profiles and
 MFA, IMDS static stability, Vertex's project-id discovery and the external-account /
 impersonated / GDCH credential types, a parallel race of the two metadata hosts.
+
+### Azure OpenAI, ChatGPT's Codex backend and `pi-messages`
+
+Three more APIs, ported the way Vertex and Bedrock were — literally, and checked by an oracle rather
+than by reading:
+
+- **`azure-openai-responses`** — `Providers\AzureOpenAiResponses` over `AzureOpenAiConfig`
+  (`api/azure-openai-config.ts`: the endpoint from `azureBaseUrl` / `AZURE_OPENAI_BASE_URL` /
+  `azureResourceName` / `AZURE_OPENAI_RESOURCE_NAME` / the model's `baseUrl`, normalized to
+  `/openai/v1` on an Azure host; the deployment from `azureDeploymentName` /
+  `AZURE_OPENAI_DEPLOYMENT_NAME_MAP`; the API version, `v1` by default). The `azure` provider's Chat
+  Completions arm is `Providers\Azure` (`providers/azure.ts`' `azureStreams()`), which `Stream`
+  takes for any `openai-completions` model whose provider is `azure`.
+- **`openai-codex-responses`** — `Providers\OpenAiCodexResponses`, the ChatGPT backend, signed in
+  through `Utils\Oauth\OpenAiCodex` (`auth/oauth/openai-codex.ts`: browser PKCE on port 1455 with the
+  paste box beside it, or the device code; `accountId` stored on the credential, as pi stores it).
+  `Utils\Oauth\DeviceCodeFlow` is `device-code.ts`' shared poller, which only this flow uses so far.
+- **`pi-messages`** — `Providers\PiMessages` and `PiMessagesEventConverter`, pi's own wire protocol,
+  which the Radius gateway speaks; `Providers\RadiusConfig` is `radius-config.ts`' catalogue half.
+
+The rows: `Models::AZURE_MODELS` is upstream's clone of the `openai` Responses rows (before the
+metadata, so no strict mode, tool search or models.dev efforts, no tiers, Azure's 1,050,000 windows)
+plus DeepSeek V4 Pro on Chat Completions; `OPENAI_CODEX_MODELS` is upstream's hand-kept `codexModels`;
+`RADIUS_MODELS` is the gateway's public `/v1/config`. All three were written from upstream's
+published catalogue (`@earendil-works/pi-ai` 1.1.0) because neither models.dev nor the gateway was
+reachable, and `scripts/generate-models.php` has the rules that write them (`azureRows()`,
+`codexRows()`, `radiusRows()` / `--radius-from`). All three are in `RESOLD`.
+
+The records: `packages/ai/test/fixtures/{azure,codex,pi-messages}/`, `codex-oauth/` and
+`radius-config.json` are upstream run under Node against the same canned servers;
+`AzureOpenAiResponsesTest`, `OpenAiCodexResponsesTest`, `PiMessagesTest`, `OpenAiCodexOauthTest` and
+`RadiusConfigTest` replay them. `AzureOpenAiCompletionsTest` is upstream's
+`azure-openai-completions.test.ts` against `Models`' own DeepSeek row.
+
+What is knowingly not there:
+
+- **Codex's WebSocket transport.** Upstream's default `transport` is `auto`: a cached
+  `wss://…/codex/responses` connection per session and account (5-minute idle TTL, 55-minute age
+  limit), `previous_response_id` continuation sending only the input delta, a connection-limit retry,
+  and SSE only as the fallback. pig has no WebSocket client in `pig/ai` and speaks SSE always — what
+  upstream does with `transport: "sse"`, or after a WebSocket failure. `transport` and
+  `websocketConnectTimeoutMs` are not options here.
+- **zstd** on the Codex SSE body: PHP has no zstd without an extension; upstream sends it plain where
+  `node:zlib` has none, and so does pig.
+- **Radius's sign-in and dynamic catalogue**: `auth/oauth/radius.ts`, a `models.json` provider with
+  `oauth: "radius"`, a custom gateway, the catalogue cached on the credential, and
+  `radiusProvider().refreshModels()` (pig has no models store) — so Radius is `RADIUS_API_KEY` with
+  the public catalogue. The bug-report upload to the gateway is not ported either.
+- **TypeSafe** has no chat models — only the `typesafe-system-one` classifier API, which is
+  `Models::classify()` (see the trap on classifiers and image models).
+
 
 ### Porting the unions
 
@@ -6637,9 +6688,8 @@ reporting the output count beside the budget: 145 against 16 is a limit that was
 about 16 would have been a limit applied and misreported. *A live scenario that reports a verdict
 instead of a measurement can send you to the wrong file.*
 
-Reachable only through `models.json`, since pig ships no DeepSeek entry — so the harness offering
-declared providers is what found it, and the developer having a key for a provider pig does not carry
-is the only reason anybody looked.
+Found through `models.json` — the harness offering declared providers is what found it, and the
+developer having a key for a provider pig did not carry yet is the only reason anybody looked.
 
 **And the same run found the silent overflow is not one provider's quirk.** `Overflow::happened()`
 carries a usage-based branch for z.ai, which takes an oversized request, answers, and bills past the
@@ -6656,7 +6706,7 @@ with `if (contextWindow && message.stopReason === "stop")` and its caller `_chec
 `this.model?.contextWindow ?? 0` — **provider-agnostic, exactly as pig's is**. Only its *comment*
 names z.ai, as the one provider somebody had measured. So the two tools detect a silent overflow
 equally well, and what decides whether either of them does is something else entirely: **whether the
-declared `contextWindow` is right.** For a provider pig ships no entry for — DeepSeek is one — that
+declared `contextWindow` is right.** For a provider pig ships no entry for, that
 number comes out of a hand-written `models.json`, where `CustomModels` checks it is a positive whole
 number and cannot check it is *true*. Declared larger than the real window, the comparison never
 fires in either tool; declared smaller, both compact early. That is the first thing to ask about when
@@ -7669,10 +7719,6 @@ rule, and the empty-table guard. **The fourth appeared silent and was not** — 
 in the mutation script never matched the file, so nothing had been mutated at all; it went red once
 the substitution was checked. *A mutation that changes no test is only evidence once you have
 confirmed the mutation applied.*
-
-What this does **not** do: add providers. DeepSeek is the one worth naming — upstream ships it at
-HEAD, pig has no entry, and adding one is a decision about `OpenAiCompat` rather than a row in a
-table.
 
 ### The first real regeneration, and what it cost
 
@@ -10515,14 +10561,6 @@ has to bring the prefix out, and without the clear it stays hidden until the nex
 Not ported: the `→ routed-model` segment, which is for upstream's virtual models. There is no
 equivalent here yet.
 
-### `ANTIGRAVITY_MODELS` has no upstream left to copy from — but the deployment has a catalogue
-
-Moved to the extension with the provider: the table is `extensions/pig-antigravity/src/Models.php`,
-the catalogue reader is `Catalog.php` beside it, and `scripts/fetch-antigravity-models.php` prints
-the extension's shape. The point that survives: upstream has no Antigravity to copy from since 0.71,
-the deployment answers `v1internal:fetchAvailableModels` with routing and enums as well as models,
-and the catalogue's display names are not trustworthy where its ids and numbers are. See "A provider
-an extension brings" above for why none of it is in `packages/` any more.
 ### `thinkingLevelMap`: the half of Antigravity's routing that belongs in pig
 
 The Antigravity catalogue carries two maps and they are not the same kind of thing. `routing` and
@@ -11972,7 +12010,6 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 - 增量由 `AgentLoop` 的 `declareToolChanges()` 和 `AgentSession` 的 `prepareNextTurnWithContext`（`SystemPrompt::diffSections()`）产生；`Agent` 没有 `setSystemPrompt()` 了，改 prompt 就是追加一条 `SystemMessage`。
 - 压缩：被摘要的部分不含 `SystemMessage`，`CompactionSummary::$systemMessage` 存回放后的那条，重建顺序 `[system, summary, …kept]`。
 - `context` hook 看不到 system 消息（`HookRunner` 先拿掉再放回原位），要看用 `context_with_system`。
-- `cwd` 段带到秒的时间，每次 `ToolLoadout::apply()` 都会变——测试别断言“没有更新”时依赖它不变。
 - 测试：`packages/ai/test/Utils/TranscriptTest.php`、`Providers/SystemMessagesOnTheWireTest.php`、`AgentLoopTest`/`AgentTest` 的 declare/prepareNextTurn 用例、`coding-agent/test/SystemMessageTranscriptTest.php`、`RpcModeTest::testGetMessagesRoundTripsThroughTheSessionCodec`。
 
 ### HTTP 空闲超时是 300 秒，不是 60 秒
@@ -12045,6 +12082,140 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 - `Stream::AMBIENT_AUTH_MARKER` 只表示“已登录”，`Stream::start()`/`translate()` 都会去掉它，任何地方都不能把它当 key 发。
 - oracle 的冻结时钟会触发时钟偏移重试：录制错误类场景用真实时钟；Node 侧要 `AWS_BEDROCK_FORCE_HTTP1=1`。
 - 测试：`BedrockTest`（47 个录制场景）、`GoogleVertexTest`（12 个端到端 + 8 个 URL）、`Utils/Aws/SignatureV4Test`（AWS 签名套件 38 例）、`Utils/Aws/EventStreamTest`、`Utils/Aws/SharedConfigTest`、`Utils/GoogleAuthTest`、`ModelsTest::testBedrockRowsAreUpstreamsCatalogueRows`、`GenerateModelsTest::testBedrockRowsAreUpstreamsBedrockRows`。
+
+### 压缩和分支摘要的 loader 按上游写，并写出 escape 能取消
+
+**症状**：`/compact`、阈值压缩、溢出压缩和 `/tree` 的分支摘要时，编辑框边框上只写 `Summarising the conversation...` / `Summarising the branch...`，没说按什么取消；重试的 loader 却写 `(escape to cancel)`。取消后分支摘要说的是 pig 自己的 `Branch summary cancelled — still where you were.`。
+
+**根因**：上游 `CompactionStatusIndicator` 是 `Compacting context... (${keyText("app.interrupt")} to cancel)`（manual）、`Auto-compacting... (…)`（threshold）、`Context overflow detected, Auto-compacting... (…)`（overflow）；`BranchSummaryStatusIndicator` 是 `Summarizing branch... (…)`。中止时 manual 报错 `Compaction cancelled`，自动的只是状态行 `Auto-compaction cancelled`；分支摘要中止是状态行 `Branch summarization cancelled`，并在原来选中的条目上重新打开树（`showTreeSelector(entryId)`）。提交 bff3d61 曾把这些提示删掉；现按上游对齐。
+
+**避坑规则**：
+- 文案只经 `InteractiveMode::compactionLabel()` / `branchSummaryLabel()`，键名只经 `Keybindings::keyText()`；`summarization_retry_attempt_start` 也走这两个。
+- pig 的 loader 计时器把 ` · 5s` 插在括号前，断言屏幕文字时要允许它。
+- 测试：`InteractiveModeTest::testCompactingSaysEscapeCancelsItAndEscapeDoes`、`testSummarisingTheBranchSaysEscapeCancelsItAndEscapeReopensTheTree`、`testEnterDuringAnAutoCompactionKeepsWhatYouTypedRatherThanLosingIt`。
+
+### 摘要请求不写死 `ReasoningEffort::High`
+
+**症状**：压缩和分支摘要都以 high reasoning 请求，不管会话的思考等级，也不管模型会不会推理；分支摘要的输出上限是 2048，且两者都不按模型自己的 `maxTokens` 截。
+
+**根因**：上游 `createSummarizationOptions()` 只在 `model.reasoning && thinkingLevel && thinkingLevel !== "off"` 时设 `reasoning = thinkingLevel`（会话当前等级）；`generateBranchSummary()` 的请求选项是 `{ apiKey, headers, env, signal, maxTokens }`，没有 reasoning，`maxTokens = Math.min(4096, model.maxTokens)`；压缩是 `Math.min(floor(0.8 * reserveTokens), model.maxTokens)`。
+
+**避坑规则**：
+- `AgentSession::summarise()` 的 `$thinkingLevel` 为 null 就是不带 reasoning；压缩传 `thinkingLevel()`，分支摘要不传。
+- 测试：`SystemMessageTranscriptTest::testACompactionAsksAtTheSessionsThinkingLevelOnlyForAModelThatReasons`、`testABranchSummaryAsksForNoReasoningAndAtMostFourThousandTokens`。
+
+### `cwd` 段只有目录，不带日期时间
+
+**症状**：系统提示的 `cwd` 段带 `Current date and time: …, HH:MM:SS`，每次 `ToolLoadout::apply()` 秒数一变，段就变，下一次请求就多一条只改了 `cwd` 的 system 消息（缓存前缀跟着失效）。
+
+**根因**：上游 `promptSections.cwd = cwd.replace(/\\/g, "/")`，没有时间。
+
+**避坑规则**：
+- `SystemPrompt::sections()` 的 `cwd` 只放目录（反斜杠换成 `/`）；pig 自己的 `Current working directory: ` 前缀保留。
+- 测试：`SystemPromptTest::testTheWorkingDirectoryComesLastAndNoDateOrTime`、`SystemMessageTranscriptTest::testAnUnchangedPromptAddsNothingAndAChangedToolSetSendsOnlyWhatChanged`。
+
+### 恢复会话和树导航按 transcript 恢复工具集；强制 prompt 只投影不记录
+
+**症状**：`--continue` 或 `/tree` 回到某处后，扩展收窄过的工具集（plan mode 一类）丢了，全部工具又都在；`tool_search` 加载过的 MCP deferred 工具 resume 后要重新搜；`before_agent_start` 不能改 prompt 段，也不能给这一轮换整份 prompt；MCP 服务器的 codemode/deferred 工具模型不知道从哪来。
+
+**根因**：上游 `_restoreToolsFromTranscript()`（构造时和 `navigateTree()` 之后）把当前 system 消息 `toolsAdded` 的名字设为激活集，还没注册的进 `_pendingToolNames`，注册时激活；`setActiveToolsByName()` 停用了任何工具就清空 pending，`_runAgentPrompt()` 一开始也清空。`before_agent_start` 的 `systemPromptOptions` 可改（`sections`），结果的 `systemPrompt` 变成 `forceSystemPrompt`，由 `_installAgentForcedPromptProjection()` 在 `context` 处理之后把请求里的 system 消息折成一条 `{content: forced, toolsAdded: current}`，transcript 只记结构化段。MCP 扩展每次 prompt 写 `mcp_servers` 段（`renderServersSection()`）。
+
+**避坑规则**：
+- 恢复只经 `AgentSession::restore()` → `restoreToolsFromTranscript()`；pending 只在 `ToolLoadout`（`restore()`/`refresh()`/`clearPending()`/`isPending()`），每次 `apply()` 把已激活的移出 pending。
+- 注册表变化只经 `ToolLoadout::refresh()`（`onChange` 接的是它，不是 `apply()`）：收窄过的集合里，新注册的工具会被激活（上游 `_isActivatedOnRegistration()`），pending 的也会。
+- pig 的 deferred MCP 工具在 `tool_search` 之前不注册，所以 pig-mcp 在 `ExtensionApi::isToolPending()` 为真时直接注册它——这是上游"注册但不激活，再由 pending 激活"在 pig 里的样子。
+- 附加段只经 `SystemPrompt::withSections()`：名字要合 `/^[a-z][a-z0-9_-]*$/` 且不是 `preamble`，内容包成 `<name>\n…\n</name>`，空内容不出现；pig 自己的段不加标签。
+- 本轮的选项在 `AgentSession::$runSystemPromptOptions`，`runAgentPrompt()` 结束时清空；投影装在 `Agent::$transformContext`（已改成 public，与上游一致）。
+- 测试：`SystemMessageTranscriptTest::testAForcedPromptIsSentAsTheLeadingPromptForTheRunAndNeverRecorded`、`testAHandlersSectionStaysForTheRunAndTheEventRendersThePromptWithIt`、`testAResumedSessionRestoresTheLoadoutItsTranscriptDeclared`、`testGoingBackRestoresTheLoadoutDeclaredAtThatPoint`、`testARestoredToolThatRegistersLaterIsActivatedAndTheNextRunDropsTheRest`、`testALoadoutSetBeforeARestoredToolRegistersDropsItOnlyWhenItDeactivatesSomething`、`SystemPromptTest::testAHandlersSectionsAreTaggedAfterTheRestAndDiffIntoAPatch`、`HookRunnerTest::testASystemPromptAnswerIsForcedAndLaterHandlersSeeItAndTheSections`、`McpExtensionTest::testADeferredToolAResumedTranscriptDeclaredIsRegisteredWhenItsServerConnects`、`testEveryPromptListsTheServersWhoseToolsAreNotDeclared` 和三个 `testTheSection…`。
+
+### Antigravity 的模型目录是动态发现的
+
+**症状**：pig-antigravity 只有生成脚本打印的静态表，加上读 pi 写在 `models-store.json` 里的目录；pig 自己从不问 `fetchAvailableModels`，新模型要等 pi 跑过或重跑脚本；`/antigravity.refresh` 只是重读文件。读入的目录用 `replace: true` 叠在静态行上，静态行留着而它的 routing 已被替换。
+
+**根因**：pi-antigravity 0.9.0 的 `refreshAntigravityModels()`：先 hydrate 存储里的目录，离线/没 key 直接返回；不 force 时上次检查在 `getCatalogRefreshIntervalMs()`（默认 4 小时，`ANTIGRAVITY_CATALOG_REFRESH_INTERVAL_MS`）以内就不问；问三个端点（`ANTIGRAVITY_BASE_URL` 时只问它，且必须是 https 的 `*.googleapis.com`）合并，`buildAntigravityCatalog()` 分组，非空才 apply 并发布 `{models, "pi-antigravity": {catalog, checkedAt, modelEnums}}`；失败保留上次的目录，只有 force 抛出。`applyAntigravityCatalog()` 整体替换模型列表。
+
+**避坑规则**：
+- 分组只在 `Grouping`，网络、TTL、存储只在 `Discovery`；形状是扩展自己的（存储里的样子），转成 pig 的 `Model`/`Routing` 只经 `Catalog::fromCatalog()`/`tables()`，路由目标缺 enum 时整份拒绝（`Discovery::apply()` 抛出）。
+- pig 写自己的 `~/.pig/agent/models-store.json`（pi 的形状，保留其他 provider 的条目）；读的顺序是 pig 的、pi 的、pi 旧的 `antigravity-model-catalog.json`。
+- 何时刷新：pi 是模型注册表在打开 `/model`、登录后、`pi update --models` 时；pig 没有这层，扩展在 session_start 和 `/login antigravity` 之后后台不强制刷新，`/antigravity.refresh` 强制。离线开关是 `PIG_OFFLINE`。
+- 不强制的刷新失败写进 pig 的日志（`Logger::warning`），不抛。
+- 测试：`AntigravityDiscoveryTest`（11 个）、`AntigravityExtensionTest::testRefreshingTheCatalogWithoutAnAccountSaysToSignInFirst`、`AntigravityCatalogTest`。
+
+### Azure、Codex、Radius 的模型行是上游生成器的派生规则，Codex 凭据要带 `accountId`
+
+**症状**：`azure/…`、`openai-codex/…`、`radius/…` 一个模型都没有，协议移植了也选不到；裸 id `gpt-5.4` 有可能被解析到 Azure 或 Radius；`openai/gpt-5.6` 照 models.dev 列出来，OpenAI 拒收；pig 改写 `auth.json` 时丢掉 pi 写进去的 Codex `accountId`。
+
+**根因**：上游这三张表不是 models.dev 的行：Azure 是 `openai` Responses 行在应用 compat/思考元数据**之前**的克隆（只拷四个价格，无 tiers；`AZURE_CONTEXT_WINDOW_OVERRIDES` 把 5.4/5.5/5.6 改成 1,050,000），外加手写的 DeepSeek V4 Pro（Chat Completions、Azure 价、`AZURE_DEEPSEEK_V4_THINKING_LEVEL_MAP`）；Codex 是手写的 `codexModels`；Radius 是网关 `/v1/config`。之后的 `applyThinkingLevelMetadata()` 对 azure/codex API 有自己的分支（`gpt-5` 的 `off: null` 含 Azure、GPT-6 分支和 `max` 含三种 Responses API、Codex 的 xhigh 模型加 `minimal: "low"`）。`MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS` 去掉 `gpt-5.6`。`credentialsFromToken()` 把 `accountId` 存在凭据上。
+
+**避坑规则**：
+- 三张表只经生成器的 `azureRows()`（从刚写的 `openai` 行派生）、`codexRows()`（`CODEX_MODELS`）、`radiusRows()`（`RadiusConfig`，离线用 `--radius-from`）写；不要手改成别的形状。网关的 `baseUrl` 和 `Models::RADIUS_BASE_URL` 不一致时生成器拒绝写。
+- 派生行的 compat 只经 `Models::azureCompat()` / `codexCompat()`，思考表只经 `thinkingLevelMap()` 的分支；改了要对照 `@earendil-works/pi-ai` 发布包里的 `azure.json`/`openai-codex.json`/`radius.json` 逐行比（82 行全等，含 key 顺序）。
+- `RESOLD` 含 `azure`、`openai-codex`、`radius`：裸 id 归直连 provider，转售的写 `azure/<id>`。
+- `Credentials::$accountId` 读写都经 `Auth`；`CallbackServer` 的 `state` 参数开了就按上游对错 state、缺 code 回 400 并继续等。
+- Codex 只走 SSE（无 WebSocket、无 zstd），Radius 只有 `RADIUS_API_KEY` 加公共目录（无登录、无运行时刷新），TypeSafe 没有聊天模型——这些是已知差异，见 “Azure OpenAI, ChatGPT's Codex backend and `pi-messages`”。
+- 测试：`ModelsTest::testAzureRowsAreUpstreamsCatalogueRows`、`testCodexRowsAreUpstreamsCatalogueRows`、`testRadiusRowsAreUpstreamsCatalogueRows`、`GenerateModelsTest::testAzureRowsAreUpstreamsCloneOfTheOpenAiRows`、`testCodexRowsAreUpstreamsExplicitList`、`testRadiusRowsAreTheGatewaysCatalogueAsItSentThem`、`testOpenAisUnsupportedAliasIsNotOffered`、`AzureOpenAiCompletionsTest`、`OpenAiCodexOauthTest`（14 个录制场景）、`RadiusConfigTest`、`AuthTest::testACodexCredentialKeepsItsAccountIdAsPiWritesIt`。
+
+### 其余走已移植 API 的 25 个 provider：行是上游生成器的产出，compat 按生成器自己的检测写
+
+**症状**：DeepSeek、OpenRouter、Vercel AI Gateway、Together、Fireworks、Baseten、Hugging Face、NVIDIA、MiniMax(-cn)、Moonshot(-cn)、Kimi For Coding、Meta、OpenCode Zen/Go、小米及其三个 Token Plan、通义三个 Token Plan、智谱国内编程套餐、Ant Ling 一个模型都没有，协议明明都已移植；`cerebras`、`zai` 行的 compat 只有两三项，和上游目录不是一回事（运行时 `resolve()` 补齐后行为相同，但元数据不是上游的）；OpenCode 的请求不带 `x-opencode-session`。
+
+**根因**：upstream `providers/all.ts` 的这些 provider 都走 `openai-completions` / `anthropic-messages` / `openai-responses` / `google-generative-ai`；生成器对每个 provider 有自己的处理（`processBasetenModels()`、`processFireworksModels()`、`loadModelsDevData()` 的各分支、`fetchOpenRouterModels()`/`fetchAiGatewayModels()`、手写的 DeepSeek/Ant Ling 行、临时覆盖），再对所有模型跑同一串 `apply*Metadata()`。其中 `applyOpenAICompletionsCompatMetadata()` 用的是**生成器自己的** `detectOpenAICompletionsCompat()`，和运行时 `detectCompat()` 有三处不同：`supportsStrictMode` 按 provider 写成显式元数据、`TOGETHER_REASONING_ONLY_MODELS` 不给 together 格式、OpenRouter 的 `~anthropic/` 也给 Anthropic 缓存控制；`applyModelsDevReasoningOptionMetadata()` 在 `applyThinkingLevelMetadata()` 按 id 写 `forceAdaptiveThinking` **之前**判断，所以只按 id 自适应的代理 Claude 不吃 models.dev 的 effort（发布目录里 OpenCode 的 `claude-opus-4-6` 就是 `{max: "max"}`）；`opencode-headers.ts` 给两个 OpenCode provider 的每个请求加会话头。
+
+**避坑规则**：
+- 表只在 `Models::CATALOGUE_PROVIDERS`（provider => 表、各 API 的 base URL）；一行只写目录说的事（九列，多 API 的四家多一列 api；`thinkingLevelMap`、`effortLevelMap`、`tiers`、`supportsToggle`/`supportsEffort`、`cacheControlFormat`）。compat 和 id 规则只在 `catalogueCompat()`、`completionsCompat()`、`responsesCompat()`、`AnthropicCompat::forBuiltIn($provider, $id, $own)`、`thinkingLevelMap()`；单行经 `catalogueModel()` 建。
+- 内置 Chat Completions 模型的 compat（`cerebras`/`groq`/`xai`/`zai` 也是）只经 `completionsCompat()` = `detectedCompletionsCompat()`（生成器的检测，只留和 `OPENAI_COMPLETIONS_DEFAULT_COMPAT` 不同的键）+ 自己的 + transcript 规则；`STRICT_MODE` 那种第二张表已删，不要再加。运行时检测仍是 `OpenAiCompat::detect()` + `resolve()`，两者不要合并。
+- Anthropic API 行的 effort 门一律用处理阶段的 compat（`$own`）判断，`anthropic`、`github-copilot` 表也是——见 “Claude 吃了 models.dev 的 effort map”。
+- 行是从 `@earendil-works/pi-ai` 1.1.0 发布目录写的（models.dev、OpenRouter、Vercel、NVIDIA 列表都不可达）：目录是生成器跑完元数据之后的结果，所以只有 id 规则还原不出来的行才带最终 map（作 `thinkingLevelMap`），都没有 `effortLevelMap`，Baseten/Fireworks 的 toggle/effort 由 compat 反推。下次重生成按来源写。写完逐行和 25 个 `<provider>.json` 比过：1023 行全等（map 含顺序、compat、inputLimits、headers、tiers）。
+- 生成器：`rowsFor()` 的新分支、`openRouterRows()`/`aiGatewayRows()`/`nvidiaIds()`（离线用 `--openrouter-from`/`--vercel-from`/`--nvidia-from`，失败打印并保留原表，同 Radius）、`catalogueTemporaryOverrides()`、`DEEPSEEK_ROWS`/`ANT_LING_ROWS`；Azure 的 DeepSeek 行改为从 `DEEPSEEK_ROWS` 派生。
+- `RESOLD` 加网关、托管、Token Plan、国内端点；裸 id 归厂商自己的 provider（pig 的规则——上游对多个 provider 都有的裸 id 直接不认）。
+- OpenCode 会话头只在 `Stream::base()` 经 `Providers\OpenCodeHeaders::withSessionHeader()`：有 sessionId（空串不算）、调用方没写同名头（不分大小写，null 也算写了）才加。
+- OpenRouter 路由器（`openrouter/auto` 等）的价格是 -1/token，照上游透传成 -1,000,000；`ModelsTest` 只许这一种负价。
+- 没移植：OpenRouter、Kimi、Meta 的 OAuth 登录（只读 Key）。Cloudflare、分类器、图片、faux 见 “Cloudflare、分类器与图片模型”。OpenCode 的 Kimi K2.6 / Grok Build 规则若落在 Messages/Gemini API 的行上，上游会把 OpenAI 的键写进那行的 compat，pig 的 `AnthropicCompat` 装不下——目录里目前没有这种行。
+- 测试：`ModelsTest::testTheCatalogueProvidersRowsAreUpstreamsCatalogueRows`、`testFireworksCombinesModelsDevsEffortAndToggleWithNarrowCorrections`（上游 `fireworks-model-generation.test.ts`）、`testAProxiedClaudeThatThinksAdaptivelyOnlyByItsIdTakesNoModelsDevEfforts`、`testAResoldIdOfTheCatalogueProvidersIsItsMakersOnlyBare`，`CatalogueProvidersTest`（上游 baseten/together/fireworks/qwen-token-plan/xiaomi/zai-coding-plan/openrouter-cache-control/opencode-provider-headers 各测试），`GenerateModelsTest` 的 Baseten、Fireworks、Together、OpenCode、Kimi/Moonshot、Token Plan、NVIDIA、MiniMax、OpenRouter、Vercel、DeepSeek/Ant Ling 与列表取不到时的场景。
+
+### Claude 吃了 models.dev 的 effort map
+
+**症状**：`anthropic` 的 Opus 4.6/4.7/4.8/5、Sonnet 4.6/5、Fable 5/5.1 和 Copilot 的同类 Claude，`thinkingLevelMap` 是 models.dev 的整张 effort 表（`off: null, minimal: null, low, …`）；1.1.0 发布目录里只有 id 规则给的几项（Opus 4.6 只有 `{max: "max"}`）。所以 Sonnet 4.6/5、Opus 4.6–4.8，Copilot 的 Opus 4.7/5、Sonnet 4.6/5/5.5 被说成不能关思考。另有三处行数据和目录不同：`claude-sonnet-4-5`（两个 id）窗口 200k（目录 1M），`claude-sonnet-5-5` 的 cacheRead 0.1（目录 0.2），Copilot 多一个目录没有的 `claude-haiku-5.5`。
+
+**根因**：上游 `generateModels()` 的元数据循环先跑 `applyModelsDevReasoningOptionMetadata()`，再跑 `applyThinkingLevelMetadata()`。前者的门 `supportsDirectReasoningEffort()` 对 `anthropic-messages` 只看 `compat.forceAdaptiveThinking`，而 `loadModelsDevData()` 的 `anthropic` 分支不写 compat、Copilot 分支只写 `getAnthropicMessagesCompat()`——`forceAdaptiveThinking` 是后者按 id 写的。pig 拿 `AnthropicCompat::forBuiltIn()` 的最终 compat 判断，门就开了。行数据是从比 1.1.0 新的 models.dev 生成的；上游的 Opus/Sonnet 5.5 手写行 pig 生成器里也没有。
+
+**避坑规则**：
+- `Models::table()` 里 effort 门一律传处理阶段的 compat：`anthropic` 行传 null，Copilot 的 Anthropic 行传 null，其余 API 的行传它的 compat（就是 `loadModelsDevData()` 写的那份）。不要把 `forBuiltIn()` 的结果传给 `supportsDirectReasoningEffort()`。
+- 行照旧带 `effortLevelMap`（生成器照 models.dev 写），用不用由门决定。
+- 生成器 `OVERRIDES` 有上游的 `anthropic/claude-opus-5-5`、`claude-sonnet-5-5` 手写行（"Add Claude Opus 5.5 until models.dev includes it"），整张 map 由 `thinkingLevelMap()` 第 1 步按 id 合并。
+- 改了要和 1.1.0 发布目录的 `anthropic.json`、`github-copilot.json` 逐行比：51 行全等，map 含顺序。
+- 测试：`ModelsTest::testEveryClaudeCarriesUpstreamsWholeThinkingLevelMap`、`testTheClaudeModelsThatCannotStopThinkingSaySo`，`GenerateModelsTest::testClaudeOpusAndSonnetFiveFiveAreAddedByHandUntilTheCatalogueHasThem`。
+
+### xAI 走了 Chat Completions
+
+**症状**：`xai/grok-4.x` 发到 `https://api.x.ai/v1/chat/completions`，没有 `include: ["reasoning.encrypted_content"]`，`cacheRetention: long` 时发 `prompt_cache_retention`；models.dev 的 effort 没有生效，四个模型都没有 level map。
+
+**根因**：上游 `xaiProvider()` 是 `openAIResponsesApi()`，生成器给每个 xAI 行写 `api: "openai-responses"` 和 `XAI_RESPONSES_COMPAT`（`{supportsLongCacheRetention: false}`）；Responses 模型的 `supportsDirectReasoningEffort()` 恒真，没有 effort 的行由 `applyThinkingLevelMetadata()` 给 `{off: null, minimal: null}`。
+
+**避坑规则**：
+- xAI 行只经 `Models::addXaiModels()` 建（`XAI_BASE_URL`、`XAI_RESPONSES_COMPAT` 经 `responsesCompat()`）；`OPENAI_COMPATIBLE` 里已没有 xai，不要加回去。生成器 `DIRECT` 的 xai 是 `Api::OpenAiResponses`。
+- `OpenAiResponses` 对 `provider === 'xai'` 的 `include` 规则早已在；运行时的 `OpenAiCompat::detect()` 里 xAI 的 completions 判定留给 `models.json` 写成 completions 的自定义模型。
+- 没移植：xAI 的 SuperGrok/X Premium 登录（只读 `XAI_API_KEY`）。
+- 测试：`XaiResponsesTest`（上游 `xai-responses.test.ts`，UA 两例与 OAuth 除外）。
+
+### Cloudflare、分类器与图片模型
+
+**症状**：`cloudflare-workers-ai`、`cloudflare-ai-gateway` 一个模型都没有；没有 `classify()`/`generateImages()`，TypeSafe、OpenRouter、Vercel、OpenCode Zen、Workers AI 的 decision 模型和 OpenRouter 的图片模型无处可放；faux provider 没有。
+
+**根因**：上游 1.x 把一个 provider 的模型分成 chat、image、classifier 三类（`ModelType`、`KnownImageApi`、`KnownClassifierApi`），`Models.classify()`/`generateImages()` "never rejects"；Cloudflare 的 `auth.resolve()` 把账号（和网关）id 放进 env，`cloudflareStreams()`/`cloudflareClassifier()` 在分派前替换 base URL 里的占位符，网关的 key 走 `cf-aig-authorization`，`Authorization`/`x-api-key` 压成 null。
+
+**避坑规则**：
+- 三类分表：chat 仍是 `Model`、`all()`、`find()`；`ClassifierModel`、`ImageModel` 在 `CLASSIFIER_MODELS`、`IMAGE_MODELS`（键 `provider/id`），只经 `Models::findOfType()`/`allOfType()` 取。`classify()`/`generateImages()` 按 API 分派（不是按 provider 的 `classifiers` 表——内置的每个 provider 都把同名 API 注册给同一个实现），任何失败都是结果（`stopReason` error/aborted），不抛；没 key 是 `Provider is not configured: <provider>`（`llama-cpp-classify` 不要 key）。
+- Cloudflare 的 auth 只在 `Stream::start()` 的 `$requestAuth` 和 `Models::applyClassifierAuth()`：`Providers\Cloudflare::resolveCloudflareEnv()` 缺 key、账号或网关 id 就是 `Provider is not configured`；占位符只经 `resolveCloudflareModel()` 换（env 里没有的保留）；网关头经 `gatewayAuthHeaders()` + `mergeHeaders()`，调用方同名的头（不分大小写）赢。
+- pig 的 `Auth` 不存凭据的 `env`：pi 登录 Cloudflare 时写进 `auth.json` 的 `CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_GATEWAY_ID` pig 不读，要放环境变量或 `StreamOptions::$env`。
+- System One 和 llama.cpp 的请求只经 `SystemOneShared::postJson()`：超时是 `ProviderHttpError`（"Request timed out after <ms>ms"，会被重试，和上游 `isProviderError()` 一样），没拿到响应是 `fetch failed`（不重试），拒绝是 `<label> returned <status>` 带 body，展示为 `ErrorBody::format(ErrorBody::normalizeProviderError(), "<label> error")`；默认重试 2 次。
+- 公开的 `bool` 问题上线是 `noul`；`state` 为空数组发 `{}`；响应一律按对象（`stdClass`）解析，`{}` 和 `[]` 才分得开。
+- llama.cpp 的 label token 缓存是进程级静态表，键 `root\0model\0label`；测试每个用例用不同的路径前缀（`/sN/v1`）。
+- `openrouter-images` 走 `SdkRequest`（`openai` SDK 的头、超时、`APIError`），usage 按四个单价算、不看 tiers——上游自己的 `parseUsage()` 就这样。
+- 行是从 `@earendil-works/pi-ai` 1.1.0 发布目录写的（models.dev、OpenRouter、Vercel 不可达）：Cloudflare 74 行、分类器 25 行、图片 61 行逐行比过（map 含顺序）；Cloudflare 行里带最终 `thinkingLevelMap` 的只有 id 规则还原不出的 25 行，下次重生成按来源写 `effortLevelMap`。`openai/gpt-6-luna` 的 `openai-decisions` 分类器不在参考提交（98d2e1947）里，没写。生成器：`DIRECT` 的 `cloudflare-workers-ai`、`cloudflareAiGatewayRows()`、`classifierRows()`/`imageRows()`（离线用 `--decisions-from`、`--openrouter-decisions-from`、`--openrouter-images-from`）、`HAND_KEPT_CLASSIFIERS`。
+- faux：`Providers\Faux`（`fauxText()` 等与 `fauxProvider()`）+ `FauxProvider`（`StreamApi`，`provider()` 交给 `ProviderRegistry`）。经 `Stream` 仍要给 key（pig 的扩展协议都要），直接调 `->stream()` 不要。
+- 没移植：`cloudflare-ai-binding.ts` 只有 sentinel 和 `createAiBindingFetch()` 的检查（`StreamOptions` 没有 `fetch`，Worker 外没有 binding）；faux 的 deferred；`pig-codemode` 的 `models` 命名空间；coding-agent 的 llama 扩展；`api/lazy.ts` 与 `*.lazy.ts`（PHP 自动加载，没有可观察的差别：没有异步装载，就没有装载失败的错误流）；1.1.0 才有的 `classifier-shared`、`openai-decisions`、`context.images`。
+- 测试：`SystemOneTest`（上游 `typesafe-system-one.test.ts`、`cloudflare-workers-ai-system-one.test.ts`、`classifier-models.test.ts`）、`LlamaCppClassifyTest`、`OpenRouterImagesTest`、`CloudflareTest`、`FauxProviderTest`，`ModelsTest::testTheCatalogueProvidersRowsAreUpstreamsCatalogueRows`，`GenerateModelsTest` 的 Workers AI、网关、分类器、图片与读不到时的场景。
 
 ## Version floor: PHP >= 8.3
 

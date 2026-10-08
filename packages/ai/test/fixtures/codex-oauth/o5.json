@@ -1,0 +1,59 @@
+{
+ "scenario": {
+  "method": "device_code",
+  "responses": [
+   {
+    "body": {
+     "device_auth_id": "dev_1",
+     "user_code": "X",
+     "interval": 1
+    }
+   },
+   {
+    "body": {
+     "authorization_code": "ac_1"
+    }
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "url": "/api/accounts/deviceauth/usercode",
+    "contentType": "application/json",
+    "body": "{\"client_id\":\"app_EMoamEEZ73f0CkXaXp7hrann\"}"
+   },
+   {
+    "method": "POST",
+    "url": "/api/accounts/deviceauth/token",
+    "contentType": "application/json",
+    "body": "{\"device_auth_id\":\"dev_1\",\"user_code\":\"X\"}"
+   }
+  ],
+  "events": [
+   {
+    "prompt": "select",
+    "message": "Select OpenAI Codex login method:",
+    "options": [
+     {
+      "id": "browser",
+      "label": "Browser login (default)"
+     },
+     {
+      "id": "device_code",
+      "label": "Device code login (headless)"
+     }
+    ]
+   },
+   {
+    "type": "device_code",
+    "userCode": "X",
+    "verificationUri": "https://auth.openai.com/codex/device",
+    "intervalSeconds": 1,
+    "expiresInSeconds": 900
+   }
+  ],
+  "thrown": "Invalid OpenAI Codex device auth token response: {\"authorization_code\":\"ac_1\"}"
+ }
+}

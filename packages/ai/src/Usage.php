@@ -32,14 +32,15 @@ final readonly class Usage
      * The same counts, priced.
      *
      * Upstream's calculateCost() writes into the usage it is given; this returns a new one,
-     * since Usage is immutable here.
+     * since Usage is immutable here. Any model type, as upstream's takes `AnyModel`: a classifier's
+     * usage is priced from its catalogue row like a chat turn's.
      *
      * **A one-hour cache write is not priced at the cache-write rate.** That rate is the
      * five-minute one; Anthropic charges twice the base input price for the one-hour kind, and
      * upstream prices it that way from the input rate rather than from a separate price-list
      * column — so `Pricing` needs none either.
      */
-    public function withCost(Model $model): self
+    public function withCost(Model|ClassifierModel|ImageModel $model): self
     {
         // Upstream's tier rule (`Pricing::ratesFor()`): the input the whole request read picks the
         // rates, and every line below is billed at them — not only the tokens past the threshold.

@@ -186,28 +186,38 @@ final readonly class AnthropicCompat
      * `supportsMidConvoSystemMessages` and `supportsMidConvoToolChanges` for the `anthropic` provider's
      * models that take them, and the first alone for `opencode` and `github-copilot` ("OpenCode Zen
      * and GitHub Copilot forward mid-conversation system messages but reject
-     * `tool_addition`/`tool_removal` blocks, so tool changes stay top-level there"). Not ported:
-     * `allowEmptySignature` is written by upstream only for xiaomi and opencode's Qwen 3.8 Flash,
-     * which pig has no built-in models of, and `allowedFallbackModels` needs the other rows' prices,
-     * so `Models::table()` adds it after every Anthropic row exists.
+     * `tool_addition`/`tool_removal` blocks, so tool changes stay top-level there");
+     * `allowEmptySignature` for Xiaomi's providers and for OpenCode's Qwen 3.8 Flash ("emits and
+     * accepts thinking blocks with empty signatures"). `allowedFallbackModels` needs the other rows'
+     * prices, so `Models::table()` adds it after every Anthropic row exists.
+     *
+     * `$own` is what the provider's own processing wrote into the model's `compat` before these
+     * passes (Fireworks', Kimi For Coding's, Vercel's — `Models::catalogueCompat()`); the keys above
+     * are laid over it, as upstream's `mergeAnthropicMessagesCompat()` spreads them.
      */
-    public static function forBuiltIn(string $provider, string $modelId): ?self
+    public static function forBuiltIn(string $provider, string $modelId, ?self $own = null): ?self
     {
         $key = "{$provider}:{$modelId}";
         $midConvoEffort = in_array($provider, self::MID_CONVO_EFFORT_PROVIDERS, true)
             && self::supportsMidConvoEffortModel($modelId)
             && !in_array($key, self::MID_CONVO_EFFORT_UNSUPPORTED, true);
 
-        $compat = new self(
+        $rules = new self(
             forceAdaptiveThinking: self::isAdaptiveThinkingModel($modelId) ? true : null,
             strictTools: $provider === 'anthropic' ? true : null,
             supportsTemperature: self::isTemperatureUnsupportedModel($modelId) ? false : null,
             supportsEagerToolInputStreaming: in_array($key, self::EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED, true) ? false : null,
             supportsMidConvoEffort: $midConvoEffort ? true : null,
+            allowEmptySignature: $provider === 'xiaomi' || str_starts_with($provider, 'xiaomi-token-plan-')
+                || (($provider === 'opencode' || $provider === 'opencode-go') && $modelId === 'qwen3.8-flash') ? true : null,
             supportsMidConvoSystemMessages: in_array($provider, ['anthropic', 'opencode', 'github-copilot'], true)
                 && self::supportsMidConvoSystemMessagesModel($modelId) ? true : null,
             supportsMidConvoToolChanges: $provider === 'anthropic' && self::supportsMidConvoSystemMessagesModel($modelId) ? true : null,
         );
+        $compat = $own === null ? $rules : new self(...[
+            ...get_object_vars($own),
+            ...array_filter(get_object_vars($rules), static fn (mixed $flag): bool => $flag !== null),
+        ]);
 
         // `!==` per key and not `==` on the objects: loose comparison counts a `false` as equal to
         // the null of "not said", which would drop exactly the flags that switch something off.

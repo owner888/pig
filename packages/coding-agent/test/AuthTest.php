@@ -259,6 +259,37 @@ final class AuthTest extends TestCase
         $this->assertNull($back->projectId);
     }
 
+    public function testACodexCredentialKeepsItsAccountIdAsPiWritesIt(): void
+    {
+        // Upstream's `credentialsFromToken()` stores `accountId` beside the tokens, and the file is
+        // shared with pi — so a rewrite that dropped it would take it out of pi's credential too.
+        $this->auth()->setCredentials(Provider::OpenAiCodex, new Credentials('r3', 'a3', PHP_INT_MAX, accountId: 'acc_1'));
+
+        $this->assertSame('acc_1', $this->auth()->credentials(Provider::OpenAiCodex)?->accountId);
+        $this->assertSame('a3', $this->auth()->apiKey('openai-codex'));
+        $this->assertStringContainsString('"accountId": "acc_1"', (string) file_get_contents($this->home . '/auth.json'));
+    }
+
+    public function testCodexAsksWhichWayInFirstAndEscapingThatIsACancellation(): void
+    {
+        $asked = null;
+
+        $credentials = $this->auth()->login(
+            Provider::OpenAiCodex,
+            static function (): void {
+            },
+            static fn (): ?string => null,
+            onSelect: static function (string $title, array $options) use (&$asked): ?string {
+                $asked = [$title, array_column($options, 0)];
+
+                return null;
+            },
+        );
+
+        $this->assertNull($credentials);
+        $this->assertSame(['Select OpenAI Codex login method:', ['browser', 'device_code']], $asked);
+    }
+
     public function testTheFileAndItsDirectoryAreReadableOnlyByWhoeverWroteThem(): void
     {
         $this->auth()->setApiKey('groq', 'gsk-1');

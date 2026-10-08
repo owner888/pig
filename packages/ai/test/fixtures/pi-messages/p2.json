@@ -1,0 +1,170 @@
+{
+ "scenario": {
+  "module": "api/pi-messages.ts",
+  "simple": true,
+  "model": {
+   "id": "balanced",
+   "name": "Balanced",
+   "api": "pi-messages",
+   "provider": "radius",
+   "baseUrl": "SERVER/v1/",
+   "reasoning": true,
+   "input": [
+    "text",
+    "image"
+   ],
+   "cost": {
+    "input": 3,
+    "output": 15,
+    "cacheRead": 0.3,
+    "cacheWrite": 0
+   },
+   "contextWindow": 1048576,
+   "maxTokens": 131072,
+   "thinkingLevelMap": {
+    "off": null,
+    "minimal": null,
+    "low": "low",
+    "medium": null,
+    "high": "high",
+    "xhigh": null,
+    "max": "max"
+   }
+  },
+  "options": {
+   "apiKey": "rad-key"
+  },
+  "context": {
+   "systemPrompt": "Be brief.",
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi",
+     "timestamp": 1
+    }
+   ],
+   "tools": [
+    {
+     "name": "read",
+     "description": "Read a file",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    }
+   ]
+  },
+  "responses": [
+   {
+    "chunks": [
+     {
+      "type": "start"
+     },
+     {
+      "type": "thinking_start",
+      "contentIndex": 0
+     },
+     {
+      "type": "thinking_delta",
+      "contentIndex": 0,
+      "delta": "hmm"
+     },
+     {
+      "type": "error",
+      "reason": "error",
+      "usage": {
+       "input": 10,
+       "output": 5,
+       "cacheRead": 2,
+       "cacheWrite": 0,
+       "totalTokens": 17,
+       "cost": {
+        "input": 0.1,
+        "output": 0.2,
+        "cacheRead": 0.01,
+        "cacheWrite": 0,
+        "total": 0.31
+       }
+      },
+      "errorMessage": "upstream exploded",
+      "responseId": "r2"
+     }
+    ]
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "path": "/v1/messages",
+    "headers": {
+     "authorization": "Bearer rad-key",
+     "accept": "text/event-stream",
+     "content-type": "application/json"
+    },
+    "userAgent": "node",
+    "body": "{\"model\":\"balanced\",\"context\":{\"messages\":[{\"role\":\"system\",\"content\":\"Be brief.\",\"toolsAdded\":[{\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}],\"timestamp\":0},{\"role\":\"user\",\"content\":\"hi\",\"timestamp\":1}]},\"options\":{}}"
+   }
+  ],
+  "events": [
+   [
+    "start",
+    null,
+    null
+   ],
+   [
+    "thinking_start",
+    0,
+    null
+   ],
+   [
+    "thinking_delta",
+    0,
+    "hmm"
+   ],
+   [
+    "error",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "hmm"
+    }
+   ],
+   "api": "pi-messages",
+   "provider": "radius",
+   "model": "balanced",
+   "usage": {
+    "input": 10,
+    "output": 5,
+    "cacheRead": 2,
+    "cacheWrite": 0,
+    "totalTokens": 17,
+    "cost": {
+     "input": 0.1,
+     "output": 0.2,
+     "cacheRead": 0.01,
+     "cacheWrite": 0,
+     "total": 0.31
+    }
+   },
+   "stopReason": "error",
+   "timestamp": 1767323045000,
+   "errorMessage": "upstream exploded",
+   "responseId": "r2"
+  }
+ }
+}

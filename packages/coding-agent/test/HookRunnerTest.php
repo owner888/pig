@@ -27,6 +27,7 @@ use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
+use Pig\CodingAgent\Prompt\SystemPromptOptions;
 use Pig\CodingAgent\Hooks\Results\ContextEventResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
@@ -383,6 +384,32 @@ final class HookRunnerTest extends TestCase
         ]);
 
         $this->assertSame('first', $runner->emitBeforeAgentStart('hello')?->text);
+    }
+
+    public function testASystemPromptAnswerIsForcedAndLaterHandlersSeeItAndTheSections(): void
+    {
+        // Upstream's `emitBeforeAgentStart()`: one options object for every handler, a
+        // `systemPrompt` answer becomes `forceSystemPrompt`, and the note is still the first one.
+        $seen = [];
+        $runner = new HookRunner([
+            $this->hook(['before_agent_start' => static function ($event) {
+                $event->systemPromptOptions->sections['plan_mode'] = 'Plan only.';
+
+                return new BeforeAgentStartEventResult(systemPrompt: 'Exact prompt.');
+            }], 'a.php'),
+            $this->hook(['before_agent_start' => static function ($event) use (&$seen) {
+                $seen = [$event->systemPromptOptions->sections, $event->systemPromptOptions->forceSystemPrompt, $event->systemPrompt()];
+
+                return new BeforeAgentStartEventResult('the note');
+            }], 'b.php'),
+        ]);
+        $options = new SystemPromptOptions();
+
+        $note = $runner->emitBeforeAgentStart('hello', [], $options, static fn (SystemPromptOptions $o): string => $o->forceSystemPrompt ?? 'built');
+
+        $this->assertSame([['plan_mode' => 'Plan only.'], 'Exact prompt.', 'Exact prompt.'], $seen);
+        $this->assertSame('Exact prompt.', $options->forceSystemPrompt);
+        $this->assertSame('the note', $note?->text);
     }
 
     public function testTheHandlerSeesThePrompt(): void

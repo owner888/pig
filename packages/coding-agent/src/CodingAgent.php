@@ -481,9 +481,9 @@ final class CodingAgent
 
         // A tool that arrives after startup — an MCP server connecting — reaches the model the
         // same way the ones at startup did: beside the built-ins, wrapped with the hooks, and
-        // filtered by whatever an extension narrowed the active set to.
+        // activated on registration as upstream's `_refreshToolRegistry()` does (`refresh()`).
         $loadout = new ToolLoadout($agent, $cwd, $builtIn, $customTools, $hooks, $contextFiles, $skills);
-        $customTools->onChange(static fn () => $loadout->apply());
+        $customTools->onChange(static fn () => $loadout->refresh());
         $loadout->apply();
 
         // Upstream's `createAgentSession()` starts the agent with `systemPrompt: ""` and `tools: []`

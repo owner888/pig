@@ -9,11 +9,13 @@ use Pig\Agent\Agent;
 use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentOptions;
+use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Model;
+use Pig\Ai\ReasoningEffort;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
@@ -28,12 +30,17 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\Transcript;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
+use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Extensions\LoadedExtension;
+use Pig\CodingAgent\Hooks\Events\BeforeAgentStartEvent;
 use Pig\CodingAgent\Hooks\Events\ContextEvent;
 use Pig\CodingAgent\Hooks\Events\ContextWithSystemEvent;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
+use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
 use Pig\CodingAgent\Hooks\Results\ContextEventResult;
 use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Session\AgentSession;
@@ -119,9 +126,8 @@ final class SystemMessageTranscriptTest extends TestCase
         $system = array_values(array_filter($session->messages(), static fn ($m): bool => $m instanceof SystemMessage));
         $this->assertCount(2, $system);
         $update = $system[1];
-        // The tool list and the rules that mention bash changed; the role did not. (`cwd` carries the
-        // time to the second, so it changes too when the clock has moved on since the last build.)
-        $this->assertSame(['tools', 'rules'], array_values(array_diff(array_keys($update->sections ?? []), ['cwd'])));
+        // The tool list and the rules that mention bash changed; the role and the directory did not.
+        $this->assertSame(['tools', 'rules'], array_keys($update->sections ?? []));
         $this->assertSame(['bash'], array_map(static fn (ToolReference $t): string => $t->name, $update->toolsRemoved ?? []));
         $this->assertNull($update->toolsAdded);
         $this->assertSame(['read'], array_map(static fn (Tool $t): string => $t->name, Transcript::getCurrentTools($this->requests[2]->messages)));
@@ -182,6 +188,234 @@ final class SystemMessageTranscriptTest extends TestCase
         // One-off requests: no cache writes, and a routing id of their own.
         $this->assertSame('none', $this->options[1]->cacheRetention);
         $this->assertNotSame($session->agent->sessionId, $this->options[1]->sessionId);
+    }
+
+    public function testACompactionAsksAtTheSessionsThinkingLevelOnlyForAModelThatReasons(): void
+    {
+        // Upstream's `createSummarizationOptions()`: `reasoning` is the thinking level when the
+        // model reasons and the level is not `off`, and absent otherwise; the budget is
+        // `min(floor(0.8 * reserveTokens), model.maxTokens)`.
+        foreach ([[true, ThinkingLevel::Medium, ReasoningEffort::Medium], [true, ThinkingLevel::Off, null], [false, ThinkingLevel::Medium, null]] as [$reasons, $level, $expected]) {
+            $this->options = [];
+            [$session] = $this->session(['one', 'the summary'], reasoning: $reasons, maxTokens: 64_000);
+            $session->agent->state->thinkingLevel = $level;
+
+            Async::run(static fn () => $session->prompt('first'));
+
+            foreach (range(1, 4) as $ignored) {
+                $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+            }
+
+            Async::run(static fn () => $session->compact());
+
+            $this->assertSame($expected, $this->options[1]->reasoning, ($reasons ? 'reasoning' : 'non-reasoning') . " model at {$level->value}");
+            $this->assertSame((int) floor(0.8 * 16_384), $this->options[1]->maxTokens);
+        }
+
+        // A model whose own cap is lower wins.
+        $this->options = [];
+        [$session] = $this->session(['one', 'the summary'], maxTokens: 1_000);
+        Async::run(static fn () => $session->prompt('first'));
+
+        foreach (range(1, 4) as $ignored) {
+            $session->agent->appendMessage(new UserMessage(str_repeat('x', 40_000)));
+        }
+
+        Async::run(static fn () => $session->compact());
+        $this->assertSame(1_000, $this->options[1]->maxTokens);
+    }
+
+    public function testABranchSummaryAsksForNoReasoningAndAtMostFourThousandTokens(): void
+    {
+        // Upstream's `generateBranchSummary()`: `{ apiKey, headers, env, signal, maxTokens }` with
+        // `maxTokens = Math.min(4096, model.maxTokens)` — no reasoning, whatever the session's level.
+        foreach ([[64_000, 4_096], [1_024, 1_024]] as [$modelMax, $expected]) {
+            $this->options = [];
+            [$session, $store] = $this->session(['one', 'two', 'the summary'], reasoning: true, maxTokens: $modelMax);
+            $session->agent->state->thinkingLevel = ThinkingLevel::High;
+
+            Async::run(static fn () => $session->prompt('first'));
+            Async::run(static fn () => $session->prompt('second'));
+
+            $jump = Async::run(static fn () => $session->goTo($store->branch()[1]['id'], summarise: true));
+
+            $this->assertTrue($jump->moved);
+            $this->assertNull($this->options[2]->reasoning);
+            $this->assertSame($expected, $this->options[2]->maxTokens);
+            $this->assertSame('none', $this->options[2]->cacheRetention);
+        }
+    }
+
+    public function testAForcedPromptIsSentAsTheLeadingPromptForTheRunAndNeverRecorded(): void
+    {
+        // Upstream's `system-prompt-updates.test.ts`, "a forced prompt is sent as the leading prompt
+        // for the run and never recorded".
+        $turn = 0;
+        $api = new HookApi();
+        $api->on('before_agent_start', static function (BeforeAgentStartEvent $event) use (&$turn): ?BeforeAgentStartEventResult {
+            if (++$turn === 3) {
+                $event->systemPromptOptions->sections['plan_mode'] = 'Plan only.';
+            }
+
+            return $turn === 2 || $turn === 3 ? new BeforeAgentStartEventResult(systemPrompt: 'Exact prompt.') : null;
+        });
+        $hooks = new HookRunner([new LoadedHook('test-hook', 'test-hook', $api)]);
+        [$session] = $this->session(['one', 'two', 'three', 'four'], hooks: $hooks);
+
+        foreach (['one', 'two', 'three', 'four'] as $text) {
+            Async::run(static fn () => $session->prompt($text));
+        }
+
+        $systemMessages = array_map(
+            static fn (TranscriptContext $request): array => array_values(array_filter($request->messages, static fn ($m): bool => $m instanceof SystemMessage)),
+            $this->requests,
+        );
+        // "Forced turns collapse to one leading message; the unforced fourth turn passes the
+        // recorded head and both plan_mode patches through."
+        $this->assertSame([1, 1, 1, 3], array_map('count', $systemMessages));
+
+        $forced = $systemMessages[1][0];
+        $this->assertSame('Exact prompt.', $forced->content);
+        $this->assertNull($forced->sections);
+        $this->assertNull($forced->toolsRemoved);
+        $this->assertEquals($systemMessages[0][0]->toolsAdded, $forced->toolsAdded);
+        $this->assertSame($systemMessages[0][0]->timestamp, $forced->timestamp);
+        $this->assertEquals($forced, $systemMessages[2][0]);
+        $this->assertSame('Exact prompt.', Transcript::getCurrentSystemPrompt($this->requests[2]->messages));
+        $this->assertSame(
+            [SystemMessage::class, UserMessage::class, AssistantMessage::class, UserMessage::class, AssistantMessage::class, UserMessage::class],
+            array_map(static fn ($m): string => $m::class, $this->requests[2]->messages),
+        );
+
+        // "The transcript only records the structured sections, never the forced text."
+        $recorded = array_values(array_map(
+            static fn (SystemMessage $m): ?array => $m->sections,
+            array_filter($session->messages(), static fn ($m): bool => $m instanceof SystemMessage),
+        ));
+        $this->assertSame([
+            $systemMessages[0][0]->sections,
+            ['plan_mode' => "<plan_mode>\nPlan only.\n</plan_mode>"],
+            ['plan_mode' => null],
+        ], $recorded);
+        $this->assertSame($session->systemPrompt(), Transcript::getCurrentSystemPrompt($session->messages()));
+    }
+
+    public function testAHandlersSectionStaysForTheRunAndTheEventRendersThePromptWithIt(): void
+    {
+        $seen = null;
+        $api = new HookApi();
+        $api->on('before_agent_start', static function (BeforeAgentStartEvent $event) use (&$seen): null {
+            $event->systemPromptOptions->sections['notes'] = 'Remember the notes.';
+            $seen = $event->systemPrompt();
+
+            return null;
+        });
+        $hooks = new HookRunner([new LoadedHook('test-hook', 'test-hook', $api)]);
+        [$session] = $this->session(['one'], hooks: $hooks);
+
+        Async::run(static fn () => $session->prompt('first'));
+
+        $this->assertStringEndsWith("<notes>\nRemember the notes.\n</notes>", (string) $seen);
+        $this->assertSame($seen, Transcript::getCurrentSystemPrompt($this->requests[0]->messages));
+    }
+
+    public function testAResumedSessionRestoresTheLoadoutItsTranscriptDeclared(): void
+    {
+        // Upstream's `_restoreToolsFromTranscript()`, run when a session opens.
+        [$session, $store] = $this->session(['one']);
+        $session->setActiveTools(['read']);
+        Async::run(static fn () => $session->prompt('first'));
+
+        [$resumed] = $this->session([], resume: SessionManager::open($store->path));
+
+        $this->assertSame(['read'], $resumed->activeTools());
+    }
+
+    public function testGoingBackRestoresTheLoadoutDeclaredAtThatPoint(): void
+    {
+        // And after tree navigation: the loadout is the one the branch being joined declared.
+        [$session, $store] = $this->session(['one', 'two']);
+        Async::run(static fn () => $session->prompt('first'));
+        $session->setActiveTools(['read']);
+        Async::run(static fn () => $session->prompt('second'));
+        $this->assertSame(['read'], $session->activeTools());
+
+        $firstAnswer = null;
+
+        foreach ($store->branch() as $entry) {
+            if ($entry['message'] instanceof AssistantMessage) {
+                $firstAnswer = $entry['id'];
+
+                break;
+            }
+        }
+
+        $this->assertNotNull($firstAnswer);
+        Async::run(static fn () => $session->goTo($firstAnswer));
+
+        $this->assertSame(['read', 'bash'], $session->activeTools());
+    }
+
+    public function testARestoredToolThatRegistersLaterIsActivatedAndTheNextRunDropsTheRest(): void
+    {
+        // "Tools of the restored or reloaded loadout that are not registered yet, such as tools of
+        // MCP servers that are still connecting. They are activated when they are registered, and
+        // dropped when `setActiveToolsByName()` deactivates a tool or the next agent run starts."
+        $late = static fn (): CustomTool => new CustomTool('late', 'late', 'A tool that registers late.', ['type' => 'object'], static fn () => null);
+        [$first, $firstExtension] = self::extensionTools();
+        $firstExtension->registerTool($late());
+        [$session, $store] = $this->session(['one'], customTools: $first);
+        Async::run(static fn () => $session->prompt('first'));
+        $this->assertSame(['read', 'bash', 'late'], $session->activeTools());
+
+        // Resumed before the tool is there: it waits, and arrives active.
+        [$tools, $extension] = self::extensionTools();
+        [$resumed] = $this->session(['two'], customTools: $tools, resume: SessionManager::open($store->path));
+        $this->assertSame(['read', 'bash'], $resumed->activeTools());
+        $this->assertTrue($resumed->isToolPending('late'));
+
+        $extension->registerTool($late());
+        $this->assertSame(['read', 'bash', 'late'], $resumed->activeTools());
+        $this->assertFalse($resumed->isToolPending('late'));
+
+        // The next run drops what has not registered by then.
+        [$again] = $this->session(['three'], customTools: self::extensionTools()[0], resume: SessionManager::open($store->path));
+        $this->assertTrue($again->isToolPending('late'));
+        Async::run(static fn () => $again->prompt('go'));
+        $this->assertFalse($again->isToolPending('late'));
+    }
+
+    public function testALoadoutSetBeforeARestoredToolRegistersDropsItOnlyWhenItDeactivatesSomething(): void
+    {
+        $late = new CustomTool('late', 'late', 'A tool that registers late.', ['type' => 'object'], static fn () => null);
+        [$first, $firstExtension] = self::extensionTools();
+        $firstExtension->registerTool($late);
+        [$session, $store] = $this->session(['one'], customTools: $first);
+        Async::run(static fn () => $session->prompt('first'));
+
+        // "Like plan mode restoring its tools": a loadout that deactivates a tool drops them.
+        [$dropped] = $this->session([], customTools: self::extensionTools()[0], resume: SessionManager::open($store->path));
+        $dropped->setActiveTools(['read']);
+        $this->assertFalse($dropped->isToolPending('late'));
+
+        // "or an extension adding one to the current loadout": one that only adds keeps them.
+        [$kept] = $this->session([], customTools: self::extensionTools()[0], resume: SessionManager::open($store->path));
+        $kept->setActiveTools([...$kept->activeTools(), 'read']);
+        $this->assertTrue($kept->isToolPending('late'));
+    }
+
+    /**
+     * A custom tool set fed by one extension, so a test can register a tool after the session exists.
+     *
+     * @return array{0: CustomToolSet, 1: ExtensionApi}
+     */
+    private static function extensionTools(): array
+    {
+        $api = new ExtensionApi(sys_get_temp_dir(), 'late.php', 'late');
+        $set = new CustomToolSet([]);
+        $set->adopt(new LoadedExtension('late.php', 'late.php', 'late', $api));
+
+        return [$set, $api];
     }
 
     public function testAgentEndSaysWhetherTheSessionWillRetry(): void
@@ -250,8 +484,15 @@ final class SystemMessageTranscriptTest extends TestCase
      * @param array<string, mixed>               $settings
      * @return array{0: AgentSession, 1: SessionManager}
      */
-    private function session(array $answers, array $settings = [], ?HookRunner $hooks = null): array
-    {
+    private function session(
+        array $answers,
+        array $settings = [],
+        ?HookRunner $hooks = null,
+        bool $reasoning = false,
+        int $maxTokens = 64_000,
+        ?CustomToolSet $customTools = null,
+        ?SessionManager $resume = null,
+    ): array {
         $this->answers = $answers;
         // As `CodingAgent::create()` wires the hooks: the `context` event is the agent's transform.
         $agent = new Agent(new AgentOptions(
@@ -259,12 +500,21 @@ final class SystemMessageTranscriptTest extends TestCase
             streamFn: $this->provider(...),
             apiKey: 'test-key',
         ));
-        $agent->setModel(new Model('test-model', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000));
-        $loadout = new ToolLoadout($agent, $this->cwd, ['read', 'bash'], new CustomToolSet(), $hooks ?? new HookRunner(), [], []);
+        $agent->setModel(new Model('test-model', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, $maxTokens, $reasoning));
+        $customTools ??= new CustomToolSet();
+        $loadout = new ToolLoadout($agent, $this->cwd, ['read', 'bash'], $customTools, $hooks ?? new HookRunner(), [], []);
+        // As `CodingAgent::session()` wires it: a tool that arrives later goes through `refresh()`.
+        $customTools->onChange(static fn () => $loadout->refresh());
         $loadout->apply();
-        $store = SessionManager::create($this->cwd);
+        $store = $resume ?? SessionManager::create($this->cwd);
+        $session = new AgentSession($agent, $this->cwd, $store, Settings::inMemory($settings), $hooks, loadout: $loadout);
 
-        return [new AgentSession($agent, $this->cwd, $store, Settings::inMemory($settings), $hooks, loadout: $loadout), $store];
+        // And as it resumes one.
+        if ($resume !== null) {
+            $session->restore($resume->messages());
+        }
+
+        return [$session, $store];
     }
 
     private function provider(Model $model, TranscriptContext $context, SimpleStreamOptions $options): AssistantMessageEventStream

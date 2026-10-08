@@ -219,6 +219,25 @@ final class AntigravityExtensionTest extends TestCase
         $this->assertArrayHasKey('antigravity.image', $registeredCommands);
     }
 
+    public function testRefreshingTheCatalogWithoutAnAccountSaysToSignInFirst(): void
+    {
+        // pi-antigravity's `/antigravity.refresh`: no key, no request, and its words.
+        putenv("PIG_HOME={$this->home}");
+
+        try {
+            [$loaded] = $this->loadTheExtension();
+            $ext = $loaded[0];
+            [$commands] = (new \Pig\CodingAgent\Hooks\HookRunner([new \Pig\CodingAgent\Hooks\LoadedHook($ext->path, $ext->resolved, $ext->api)], $this->home))->commands();
+            $ui = new NoticingUi();
+
+            ($commands['antigravity.refresh']->handler)('', new \Pig\CodingAgent\Hooks\HookContext('.', ui: $ui, hasUi: true));
+
+            $this->assertSame(['[warning] No Antigravity credentials. Run /login antigravity first.'], $ui->notices);
+        } finally {
+            putenv('PIG_HOME');
+        }
+    }
+
     // ---- what loading the extension puts into the core ----------------------------------
 
     public function testLoadingTheExtensionRegistersTheProviderAndUnloadingTakesItBack(): void

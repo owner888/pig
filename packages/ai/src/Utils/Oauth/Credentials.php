@@ -14,9 +14,9 @@ use Pig\Ai\Timestamp;
  * other, the same way the session file is.
  *
  * `access` is the token that goes on a request and expires in hours; `refresh` is the one that
- * buys a new `access` and lasts until it is revoked. The last three are each for one provider
+ * buys a new `access` and lasts until it is revoked. The last four are each for one provider
  * and are null for the rest: a GitHub Enterprise host, a Google Cloud project, the address
- * a token was issued to.
+ * a token was issued to, the ChatGPT account an OpenAI Codex token belongs to.
  */
 final readonly class Credentials
 {
@@ -33,6 +33,7 @@ final readonly class Credentials
         public ?string $enterpriseUrl = null,
         public ?string $projectId = null,
         public ?string $email = null,
+        public ?string $accountId = null,
     ) {
     }
 

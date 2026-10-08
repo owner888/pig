@@ -202,6 +202,21 @@ final class CustomModelsTest extends TestCase
         $this->assertSame(Api::BedrockConverseStream, $custom->models[1]->api);
     }
 
+    public function testAzureCodexAndPiMessagesAreApisAModelCanSpeak(): void
+    {
+        // Upstream's `KnownApi` values: an Azure resource's deployment, a Codex backend behind a
+        // gateway, and "any backend implementing" pi's own message protocol — `"api": "pi-messages"`.
+        $custom = $this->load(self::provider(['models' => [
+            self::model(['id' => 'my-deployment', 'api' => 'azure-openai-responses']),
+            self::model(['id' => 'gpt-codex', 'api' => 'openai-codex-responses']),
+            self::model(['id' => 'house-model', 'api' => 'pi-messages']),
+        ]]));
+
+        $this->assertSame(Api::AzureOpenAiResponses, $custom->models[0]->api);
+        $this->assertSame(Api::OpenAiCodexResponses, $custom->models[1]->api);
+        $this->assertSame(Api::PiMessages, $custom->models[2]->api);
+    }
+
     public function testABedrockModelsCompatBlockIsUpstreamsBedrockCompat(): void
     {
         // `BedrockCompatSchema`: one key, "Whether the model supports Bedrock strict tool schemas."

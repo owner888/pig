@@ -130,6 +130,38 @@ final class Routing
         self::$enums = $enums;
     }
 
+    /**
+     * The generated routing in the extension's own shape — `{off?, routing, defaultRequestId}` per
+     * model, pi-antigravity's `ANTIGRAVITY_ROUTING` — for `Discovery`'s fallback catalog.
+     *
+     * @return array<string, array{off?: string, routing: array<string, string>, defaultRequestId: string}>
+     */
+    public static function fallbackRouting(): array
+    {
+        $routing = [];
+
+        foreach (self::ROUTING as $id => $entry) {
+            $routing[$id] = [
+                ...(isset($entry['off']) ? ['off' => $entry['off']] : []),
+                'routing' => $entry['levels'],
+                'defaultRequestId' => $entry['default'],
+            ];
+        }
+
+        return $routing;
+    }
+
+    /**
+     * The enums a catalogue installed on top of the generated ones — pi-antigravity's
+     * `snapshotDynamicModelEnums()`.
+     *
+     * @return array<string, string>
+     */
+    public static function dynamicEnums(): array
+    {
+        return self::$enums;
+    }
+
     /** Back to the generated tables. For tests, which must not leak a catalogue into each other. */
     public static function forgetTables(): void
     {

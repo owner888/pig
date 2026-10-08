@@ -187,7 +187,8 @@ final readonly class SignIn
                 null,
                 // A choice between ways in, numbered the way the provider list is.
                 function (string $title, array $options): ?string {
-                    ($this->say)("{$title}:");
+                    // OpenAI's title ends in a colon of its own, Anthropic's does not.
+                    ($this->say)(rtrim($title, ':') . ':');
 
                     foreach ($options as $index => [$id, $label]) {
                         ($this->say)(sprintf('  %d. %s', $index + 1, $label));

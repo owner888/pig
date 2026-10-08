@@ -25,6 +25,9 @@ final class ProviderHttpError extends RuntimeException
      * @param string|null $display what the provider's catch makes of this error for the turn's
      *        `errorMessage` (upstream's `formatProviderError(normalizeProviderError(error))`, which
      *        reads more of the SDK error than its message), when that is not the message itself
+     * @param string|null $body the raw response body, for an error that carries it as `body` — the
+     *        shape the classifier and image APIs' own `httpError()` builds, which
+     *        `ErrorBody::normalizeProviderError()` reads as upstream's `normalizeProviderError()` does
      */
     public function __construct(
         string $message,
@@ -32,6 +35,7 @@ final class ProviderHttpError extends RuntimeException
         public readonly ?array $headers = null,
         ?Throwable $previous = null,
         public readonly ?string $display = null,
+        public readonly ?string $body = null,
     ) {
         parent::__construct($message, 0, $previous);
     }

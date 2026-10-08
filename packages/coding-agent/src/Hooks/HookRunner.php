@@ -32,6 +32,7 @@ use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeTreeResult;
 use Pig\CodingAgent\Hooks\Results\ToolCallEventResult;
 use Pig\CodingAgent\Hooks\Results\ToolResultEventResult;
+use Pig\CodingAgent\Prompt\SystemPromptOptions;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\SessionManager;
 use Throwable;
@@ -579,14 +580,22 @@ final class HookRunner
     /**
      * Offer the hooks a word before the prompt goes out.
      *
-     * First answer wins. Upstream does the same, and for the same reason: two notes in
-     * front of one prompt is a conversation nobody wrote.
+     * First note wins. Upstream does the same, and for the same reason: two notes in
+     * front of one prompt is a conversation nobody wrote. A `systemPrompt` answer is not a note:
+     * every one is applied to the options in turn, so the last handler's is the one sent.
      *
-     * @param list<ImageContent> $images
+     * @param list<ImageContent>                          $images
+     * @param SystemPromptOptions|null                    $systemPromptOptions mutated in place; a fresh one when null
+     * @param (Closure(SystemPromptOptions): string)|null $renderSystemPrompt  what `$event->systemPrompt()` renders
      */
-    public function emitBeforeAgentStart(string $prompt, array $images = []): ?BeforeAgentStartEventResult
+    public function emitBeforeAgentStart(string $prompt, array $images = [], ?SystemPromptOptions $systemPromptOptions = null, ?Closure $renderSystemPrompt = null): ?BeforeAgentStartEventResult
     {
-        $event = new BeforeAgentStartEvent($prompt, $images);
+        // One options object for every handler, as upstream's `currentOptions`: a section one
+        // handler adds is there for the next, and a `systemPrompt` answer becomes
+        // `forceSystemPrompt`, which later handlers observe.
+        $options = $systemPromptOptions ?? new SystemPromptOptions();
+        $render = $renderSystemPrompt === null ? null : static fn (): string => $renderSystemPrompt($options);
+        $event = new BeforeAgentStartEvent($prompt, $images, $options, $render);
         $context = $this->context();
         $first = null;
 
@@ -610,7 +619,13 @@ final class HookRunner
                     continue;
                 }
 
-                $first ??= $result;
+                if ($result->systemPrompt !== null) {
+                    $options->forceSystemPrompt = $result->systemPrompt;
+                }
+
+                if ($result->text !== null) {
+                    $first ??= $result;
+                }
             }
         }
 

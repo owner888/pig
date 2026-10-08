@@ -1,0 +1,186 @@
+{
+ "scenario": {
+  "module": "api/azure-openai-responses.ts",
+  "simple": true,
+  "model": {
+   "id": "gpt-4.1",
+   "name": "GPT-4.1",
+   "api": "azure-openai-responses",
+   "provider": "azure",
+   "baseUrl": "",
+   "reasoning": false,
+   "input": [
+    "text",
+    "image"
+   ],
+   "cost": {
+    "input": 1.75,
+    "output": 14,
+    "cacheRead": 0.175,
+    "cacheWrite": 0
+   },
+   "contextWindow": 400000,
+   "maxTokens": 128000,
+   "thinkingLevelMap": {},
+   "compat": {}
+  },
+  "env": {
+   "AZURE_OPENAI_BASE_URL": "SERVER"
+  },
+  "options": {
+   "apiKey": "az-key",
+   "reasoning": "low",
+   "sessionId": "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss"
+  },
+  "context": {
+   "systemPrompt": "Be brief.",
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi",
+     "timestamp": 1
+    }
+   ],
+   "tools": [
+    {
+     "name": "read",
+     "description": "Read a file",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    }
+   ]
+  },
+  "responses": [
+   {
+    "chunks": [
+     {
+      "type": "response.output_item.added",
+      "output_index": 0,
+      "item": {
+       "type": "message",
+       "id": "msg_9",
+       "content": []
+      }
+     },
+     {
+      "type": "response.output_text.delta",
+      "output_index": 0,
+      "delta": "ok"
+     },
+     {
+      "type": "response.output_item.done",
+      "output_index": 0,
+      "item": {
+       "type": "message",
+       "id": "msg_9",
+       "content": [
+        {
+         "type": "output_text",
+         "text": "ok"
+        }
+       ]
+      }
+     },
+     {
+      "type": "response.completed",
+      "response": {
+       "id": "resp_9",
+       "status": "completed",
+       "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1,
+        "total_tokens": 4
+       }
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "path": "/responses?api-version=v1",
+    "headers": {
+     "api-key": "az-key",
+     "content-type": "application/json",
+     "accept": "application/json",
+     "x-stainless-retry-count": "0",
+     "x-stainless-lang": "js",
+     "x-stainless-package-version": "7.19.0"
+    },
+    "userAgent": "pi (linux 6.18.44-fc-v80; x64)",
+    "body": "{\"model\":\"gpt-4.1\",\"input\":[{\"role\":\"system\",\"content\":\"Be brief.\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"stream\":true,\"prompt_cache_key\":\"ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss\",\"store\":false,\"max_output_tokens\":128000,\"tools\":[{\"type\":\"function\",\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]},\"strict\":false}]}"
+   }
+  ],
+  "events": [
+   [
+    "start",
+    null,
+    null
+   ],
+   [
+    "text_start",
+    0,
+    null
+   ],
+   [
+    "text_delta",
+    0,
+    "ok"
+   ],
+   [
+    "text_end",
+    0,
+    null
+   ],
+   [
+    "done",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "ok",
+     "textSignature": "{\"v\":1,\"id\":\"msg_9\"}"
+    }
+   ],
+   "api": "azure-openai-responses",
+   "provider": "azure",
+   "model": "gpt-4.1",
+   "usage": {
+    "input": 3,
+    "output": 1,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "reasoning": 0,
+    "totalTokens": 4,
+    "cost": {
+     "input": 5.25e-06,
+     "output": 1.4e-05,
+     "cacheRead": 0,
+     "cacheWrite": 0,
+     "total": 1.925e-05
+    }
+   },
+   "stopReason": "stop",
+   "timestamp": 1767323045000,
+   "responseId": "resp_9",
+   "rawStopReason": "completed"
+  }
+ }
+}

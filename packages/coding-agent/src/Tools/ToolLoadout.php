@@ -45,6 +45,19 @@ final class ToolLoadout
     private array $sections = [];
 
     /**
+     * Tools of the restored or reloaded loadout that are not registered yet — upstream's
+     * `_pendingToolNames`: "such as tools of MCP servers that are still connecting. They are
+     * activated when they are registered, and dropped when `setActiveToolsByName()` deactivates a
+     * tool or the next agent run starts."
+     *
+     * @var array<string, true>
+     */
+    private array $pending = [];
+
+    /** @var list<string>|null every tool registered as of the last `apply()`; null before the first */
+    private ?array $registered = null;
+
+    /**
      * @param list<string>            $builtIn      built-in tool names, as `ToolSet` knows them
      * @param list<ContextFile>|null  $contextFiles
      * @param list<Skill>             $skills
@@ -71,6 +84,12 @@ final class ToolLoadout
      */
     public function reloaded(CustomToolSet $customTools, ?array $contextFiles, array $skills): void
     {
+        // Upstream's `reload()`: "Tools the new extensions register later, such as MCP tools, are
+        // pending until then."
+        foreach ($this->activeNames() as $name) {
+            $this->pending[$name] = true;
+        }
+
         $this->customTools = $customTools;
         $this->contextFiles = $contextFiles;
         $this->skills = $skills;
@@ -97,6 +116,13 @@ final class ToolLoadout
 
         $this->agent->setTools(HookedTool::wrap([...ToolSet::create($this->cwd, $builtIn), ...$custom], $this->hooks));
 
+        // Upstream's `_setActiveTools()`: a pending tool that is active now is pending no longer.
+        foreach ($this->activeNames() as $name) {
+            unset($this->pending[$name]);
+        }
+
+        $this->registered = $this->names();
+
         [$snippets, $guidelines] = $this->customTools->promptContributions($this->active);
         $this->sections = SystemPrompt::sections(
             $this->cwd,
@@ -108,6 +134,59 @@ final class ToolLoadout
             $snippets,
             $guidelines,
         );
+    }
+
+    /**
+     * The registry changed after startup — an extension registered or removed a tool, an MCP
+     * server connected. Upstream's `_refreshToolRegistry()` without a new loadout: the tools that
+     * were active stay active, a tool that was not registered before is activated
+     * (`_isActivatedOnRegistration()` — pig has no exposure or `defaultActive` on a registered
+     * tool, so that is every new one), and so is a pending tool that is registered now.
+     *
+     * With every tool active there is nothing to add to. The set is kept by name rather than
+     * narrowed to what is registered, so a tool that goes away and comes back is still active.
+     */
+    public function refresh(): void
+    {
+        if ($this->active !== null) {
+            $names = $this->names();
+            $this->active = array_values(array_unique([
+                ...$this->active,
+                ...array_diff($names, $this->registered ?? []),
+                ...array_intersect($names, array_keys($this->pending)),
+            ]));
+        }
+
+        $this->apply();
+    }
+
+    /**
+     * Restore the active tools a session transcript declared — the second half of upstream's
+     * `_restoreToolsFromTranscript()`. The ones not registered yet are pending; `--tools` and
+     * `--exclude-tools` keep out of the pending set what they would keep out of the registry.
+     *
+     * @param list<string> $names
+     */
+    public function restore(array $names): void
+    {
+        $filter = $this->customTools->filter();
+        $this->pending = array_fill_keys(
+            $filter === null ? $names : array_values(array_filter($names, static fn (string $name): bool => $filter($name))),
+            true,
+        );
+        $this->setActive($names);
+    }
+
+    /** Forget the pending tools. Upstream's `_pendingToolNames.clear()`. */
+    public function clearPending(): void
+    {
+        $this->pending = [];
+    }
+
+    /** Whether $name is a restored tool waiting to be registered. */
+    public function isPending(string $name): bool
+    {
+        return isset($this->pending[$name]);
     }
 
     /**

@@ -1,0 +1,41 @@
+{
+ "scenario": {
+  "method": "device_code",
+  "responses": [
+   {
+    "body": {
+     "device_auth_id": "dev_1",
+     "user_code": "X",
+     "interval": "soon"
+    }
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "url": "/api/accounts/deviceauth/usercode",
+    "contentType": "application/json",
+    "body": "{\"client_id\":\"app_EMoamEEZ73f0CkXaXp7hrann\"}"
+   }
+  ],
+  "events": [
+   {
+    "prompt": "select",
+    "message": "Select OpenAI Codex login method:",
+    "options": [
+     {
+      "id": "browser",
+      "label": "Browser login (default)"
+     },
+     {
+      "id": "device_code",
+      "label": "Device code login (headless)"
+     }
+    ]
+   }
+  ],
+  "thrown": "Invalid OpenAI Codex device code response: {\"device_auth_id\":\"dev_1\",\"user_code\":\"X\",\"interval\":\"soon\"}"
+ }
+}

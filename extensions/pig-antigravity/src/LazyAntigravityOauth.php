@@ -23,8 +23,11 @@ use Pig\Async\AbortSignal;
  */
 final class LazyAntigravityOauth implements OauthFlow
 {
-    /** @param Closure(bool): array{0: string, 1: string} $client */
-    public function __construct(private readonly Closure $client)
+    /**
+     * @param Closure(bool): array{0: string, 1: string} $client
+     * @param (Closure(Credentials): void)|null          $onLogin told about a sign-in that finished
+     */
+    public function __construct(private readonly Closure $client, private readonly ?Closure $onLogin = null)
     {
     }
 
@@ -54,7 +57,13 @@ final class LazyAntigravityOauth implements OauthFlow
         ?AbortSignal $signal = null,
         ?Closure $onSelect = null,
     ): ?Credentials {
-        return $this->flow(false)->login($onAuth, $onPrompt, $onProgress, $signal, $onSelect);
+        $credentials = $this->flow(false)->login($onAuth, $onPrompt, $onProgress, $signal, $onSelect);
+
+        if ($credentials !== null && $this->onLogin !== null) {
+            ($this->onLogin)($credentials);
+        }
+
+        return $credentials;
     }
 
     #[\Override]

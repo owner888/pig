@@ -109,19 +109,24 @@ final class TreeList implements Component, InputHandler
     /**
      * @param list<array{id: string, message: mixed, label: string|null, children: list<array<string, mixed>>}> $tree
      * @param string|null $leaf the point the conversation is at, which is where the cursor starts
+     * @param string|null $initialSelectedId upstream's: where the cursor starts instead, when given
      */
     public function __construct(
         array $tree,
         private readonly ?string $leaf,
         private readonly int $maxVisible,
+        ?string $initialSelectedId = null,
     ) {
         $this->manyRoots = count($tree) > 1;
         $this->flat = $this->flatten($tree);
         $this->buildActivePath();
         $this->applyFilter();
 
+        // "Start with initialSelectedId if provided, otherwise current leaf".
+        $targetId = $initialSelectedId ?? $leaf;
+
         foreach ($this->visible as $position => $index) {
-            if ($this->flat[$index]['id'] === $leaf) {
+            if ($this->flat[$index]['id'] === $targetId) {
                 $this->selected = $position;
 
                 break;

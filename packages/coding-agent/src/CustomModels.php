@@ -62,6 +62,9 @@ final readonly class CustomModels
         'mistral-conversations' => Api::MistralConversations,
         'google-vertex' => Api::GoogleVertex,
         'bedrock-converse-stream' => Api::BedrockConverseStream,
+        'azure-openai-responses' => Api::AzureOpenAiResponses,
+        'openai-codex-responses' => Api::OpenAiCodexResponses,
+        'pi-messages' => Api::PiMessages,
     ];
 
     /**

@@ -1,0 +1,34 @@
+{
+ "scenario": {
+  "method": "magic",
+  "responses": [
+   {
+    "body": {
+     "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjXzEyMyJ9fQ.sig",
+     "refresh_token": "rt_new",
+     "expires_in": 3600
+    }
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [],
+  "events": [
+   {
+    "prompt": "select",
+    "message": "Select OpenAI Codex login method:",
+    "options": [
+     {
+      "id": "browser",
+      "label": "Browser login (default)"
+     },
+     {
+      "id": "device_code",
+      "label": "Device code login (headless)"
+     }
+    ]
+   }
+  ],
+  "thrown": "Unknown OpenAI Codex login method: magic"
+ }
+}

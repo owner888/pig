@@ -47,8 +47,16 @@ final class ModelsTest extends TestCase
             $this->assertNotSame('', $model->name);
             $this->assertGreaterThan(0, $model->contextWindow, $model->id);
             $this->assertGreaterThan(0, $model->maxTokens, $model->id);
-            $this->assertGreaterThanOrEqual(0.0, $model->pricing->input, $model->id);
-            $this->assertGreaterThanOrEqual(0.0, $model->pricing->output, $model->id);
+
+            // OpenRouter lists its routers (`openrouter/auto`, …) at -1 per token, a price that depends
+            // on the model the request is routed to, and upstream's generator passes it through
+            // (`parseFloat(prompt) * 1_000_000`) — so -1,000,000 is the one negative price, and only
+            // there.
+            foreach ([$model->pricing->input, $model->pricing->output] as $price) {
+                if ($price < 0.0) {
+                    $this->assertSame(['openrouter', -1_000_000.0], [$model->provider, $price], $model->id);
+                }
+            }
         }
     }
 
@@ -95,6 +103,9 @@ final class ModelsTest extends TestCase
                     Api::MistralConversations,
                     Api::GoogleVertex,
                     Api::BedrockConverseStream,
+                    Api::AzureOpenAiResponses,
+                    Api::OpenAiCodexResponses,
+                    Api::PiMessages,
                 ],
                 $model->id . ' speaks ' . $model->api->value,
             );
@@ -209,17 +220,19 @@ final class ModelsTest extends TestCase
 
     /**
      * Which built-in models take strict tools, as upstream's generated catalogue says: OpenAI's own
-     * Responses models, and every `openai-completions` provider but Cerebras (and Moonshot,
-     * Together, Cloudflare's gateway and NVIDIA, which pig does not ship). Copilot's completions
-     * models too — detection at generation time gives them the flag. Everything else is false by
-     * default. Without this the `constrainedSampling` the built-in tools declare reached nothing.
+     * Responses models, and every `openai-completions` provider but Cerebras, Moonshot, Together and
+     * NVIDIA (and Cloudflare's gateway, which pig does not ship) — the generator's
+     * `detectOpenAICompletionsCompat()`, with Moonshot's, Together's and NVIDIA's own compat saying
+     * false outright. Copilot's completions models too. Everything else is false by default. Without
+     * this the `constrainedSampling` the built-in tools declare reached nothing.
      */
     public function testTheBuiltInModelsThatTakeStrictToolsSaySo(): void
     {
         foreach (Models::all() as $model) {
             $expected = match (true) {
-                $model->api === Api::OpenAiResponses => $model->provider === 'openai',
-                $model->api === Api::OpenAiCompletions => $model->provider !== 'cerebras',
+                // `applyStrictToolCompatMetadata()`: `openai` and Cloudflare's gateway on the Responses API.
+                $model->api === Api::OpenAiResponses => in_array($model->provider, ['openai', 'cloudflare-ai-gateway'], true),
+                $model->api === Api::OpenAiCompletions => !in_array($model->provider, ['cerebras', 'moonshotai', 'moonshotai-cn', 'together', 'nvidia', 'cloudflare-ai-gateway'], true),
                 $model->api === Api::AnthropicMessages => $model->provider === Models::ANTHROPIC,
                 default => false,
             };
@@ -274,6 +287,36 @@ final class ModelsTest extends TestCase
                 'xai',
                 'zai',
                 'amazon-bedrock',
+                'azure',
+                'openai-codex',
+                'radius',
+                'ant-ling',
+                'baseten',
+                'cloudflare-ai-gateway',
+                'cloudflare-workers-ai',
+                'deepseek',
+                'fireworks',
+                'huggingface',
+                'kimi-coding',
+                'meta',
+                'minimax',
+                'minimax-cn',
+                'moonshotai',
+                'moonshotai-cn',
+                'nvidia',
+                'opencode',
+                'opencode-go',
+                'openrouter',
+                'qwen-token-plan',
+                'qwen-token-plan-cn',
+                'qwen-token-plan-individual',
+                'together',
+                'vercel-ai-gateway',
+                'xiaomi',
+                'xiaomi-token-plan-ams',
+                'xiaomi-token-plan-cn',
+                'xiaomi-token-plan-sgp',
+                'zai-coding-cn',
                 'github-copilot',
             ],
             Models::providers(),
@@ -331,6 +374,267 @@ final class ModelsTest extends TestCase
         $this->assertNull(Models::find(Models::AMAZON_BEDROCK, 'anthropic.claude-opus-5'));
     }
 
+    public function testAzureRowsAreUpstreamsCatalogueRows(): void
+    {
+        // Pinned from upstream's published catalogue (`azure.json`, pi-ai 1.1.0): OpenAI's Responses
+        // rows cloned before the metadata — no strict mode, no tool search, no models.dev efforts, no
+        // tiers — at Azure's larger window for the ids it names, and no base URL.
+        $this->assertCount(45, self::of(Models::AZURE));
+
+        $gpt = Models::find(Models::AZURE, 'gpt-5.5');
+        $this->assertNotNull($gpt);
+        $this->assertSame(Api::AzureOpenAiResponses, $gpt->api);
+        $this->assertSame('', $gpt->baseUrl);
+        $this->assertSame(1_050_000, $gpt->contextWindow);
+        $this->assertSame([], $gpt->pricing->tiers);
+        $this->assertSame(['off' => null, 'xhigh' => 'xhigh'], $gpt->thinkingLevelMap);
+        $this->assertInstanceOf(OpenAiCompat::class, $gpt->compat);
+        $this->assertTrue($gpt->compat->grammarTools);
+        $this->assertNull($gpt->compat->strictMode);
+        $this->assertNull($gpt->compat->supportsToolSearch);
+
+        // GPT-6's arm covers the Azure API too.
+        $this->assertSame(
+            ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'],
+            Models::find(Models::AZURE, 'gpt-6-sol')?->thinkingLevelMap,
+        );
+        $this->assertNull(Models::find(Models::AZURE, 'o3')?->compat);
+
+        // DeepSeek V4 Pro on Chat Completions, under Azure's compat and Azure's level map.
+        $deepseek = Models::find(Models::AZURE, 'deepseek-v4-pro');
+        $this->assertNotNull($deepseek);
+        $this->assertSame(Api::OpenAiCompletions, $deepseek->api);
+        $this->assertSame([1.925, 3.828, 0.165, 0.0], [$deepseek->pricing->input, $deepseek->pricing->output, $deepseek->pricing->cacheRead, $deepseek->pricing->cacheWrite]);
+        $this->assertSame(['minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], $deepseek->thinkingLevelMap);
+        $this->assertInstanceOf(OpenAiCompat::class, $deepseek->compat);
+        $this->assertSame(
+            [false, true, true, 'openai', false, true],
+            [$deepseek->compat->developerRole, $deepseek->compat->reasoningContentOnAssistantMessages, $deepseek->compat->strictMode, $deepseek->compat->thinkingFormat, $deepseek->compat->supportsLongCacheRetention, $deepseek->compat->supportsMidConvoSystemMessages],
+        );
+
+        // `MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS`: neither OpenAI nor its clone offers the alias.
+        $this->assertNull(Models::find('openai', 'gpt-5.6'));
+        $this->assertNull(Models::find(Models::AZURE, 'gpt-5.6'));
+    }
+
+    public function testCodexRowsAreUpstreamsCatalogueRows(): void
+    {
+        // Pinned from upstream's published catalogue (`openai-codex.json`, pi-ai 1.1.0).
+        $this->assertCount(9, self::of(Models::OPENAI_CODEX));
+
+        $luna = Models::find(Models::OPENAI_CODEX, 'gpt-5.6-luna');
+        $this->assertNotNull($luna);
+        $this->assertSame(Api::OpenAiCodexResponses, $luna->api);
+        $this->assertSame('https://chatgpt.com/backend-api', $luna->baseUrl);
+        $this->assertSame([272_000, 128_000], [$luna->contextWindow, $luna->maxTokens]);
+        $this->assertSame(['xhigh' => 'xhigh', 'max' => 'max', 'minimal' => 'low'], $luna->thinkingLevelMap);
+        $this->assertInstanceOf(OpenAiCompat::class, $luna->compat);
+        $this->assertSame([true, true, true, true], [$luna->compat->grammarTools, $luna->compat->supportsAdditionalTools, $luna->compat->supportsToolSearch, $luna->compat->supportsMidConvoSystemMessages]);
+
+        // GPT-5.5 takes tool search and not `additional_tools` on Codex, where OpenAI's takes both.
+        $gpt = Models::find(Models::OPENAI_CODEX, 'gpt-5.5');
+        $this->assertNotNull($gpt);
+        $this->assertInstanceOf(OpenAiCompat::class, $gpt->compat);
+        $this->assertNull($gpt->compat->supportsAdditionalTools);
+        $this->assertTrue($gpt->compat->supportsToolSearch);
+        $this->assertSame(['xhigh' => 'xhigh', 'minimal' => 'low'], $gpt->thinkingLevelMap);
+
+        $this->assertSame(
+            ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'],
+            Models::find(Models::OPENAI_CODEX, 'gpt-6-astra')?->thinkingLevelMap,
+        );
+        $this->assertNull(Models::find(Models::OPENAI_CODEX, 'gpt-5.3-codex-spark')?->inputLimits);
+    }
+
+    public function testRadiusRowsAreUpstreamsCatalogueRows(): void
+    {
+        // Pinned from upstream's published catalogue (`radius.json`, pi-ai 1.1.0): the gateway's own
+        // models, with the gateway's own level maps. The count is the gateway's to change, so only
+        // the rows are pinned.
+        $this->assertNotEmpty(self::of(Models::RADIUS));
+
+        $balanced = Models::find(Models::RADIUS, 'balanced');
+        $this->assertNotNull($balanced);
+        $this->assertSame(Api::PiMessages, $balanced->api);
+        $this->assertSame('https://radius.pi.dev/v1', $balanced->baseUrl);
+        $this->assertSame(['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], $balanced->thinkingLevelMap);
+        $this->assertSame(['images' => ['resize' => ['maxWidth' => 2000, 'maxHeight' => 2000, 'maxBytes' => 4_718_592, 'jpegQuality' => 80]]], $balanced->inputLimits);
+        $this->assertSame('radius', Models::get('balanced')?->provider);
+
+        $gpt = Models::find(Models::RADIUS, 'gpt-5.4');
+        $this->assertNotNull($gpt);
+        $this->assertCount(1, $gpt->pricing->tiers);
+        $this->assertSame(['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null], $gpt->thinkingLevelMap);
+
+        // A bare id the gateway shares with its maker is still the maker's.
+        $this->assertSame('openai', Models::get('gpt-5.4')?->provider);
+        $this->assertSame('anthropic', Models::get('claude-opus-4-8')?->provider);
+    }
+
+    public function testTheCatalogueProvidersRowsAreUpstreamsCatalogueRows(): void
+    {
+        // Pinned from upstream's published catalogue (`@earendil-works/pi-ai` 1.1.0, one `<provider>.json`
+        // each): the 27 providers on the APIs pig speaks, compared field by field — compat, level map
+        // in its order, image limits, headers, tiers — when the rows were written. Row counts are
+        // the catalogues' to change on every regeneration, so each provider is only required to
+        // have rows.
+        foreach ([
+            'ant-ling', 'baseten', 'cloudflare-ai-gateway', 'cloudflare-workers-ai', 'deepseek', 'fireworks', 'huggingface',
+            'kimi-coding', 'meta', 'minimax', 'minimax-cn', 'moonshotai', 'moonshotai-cn', 'nvidia', 'opencode',
+            'opencode-go', 'openrouter', 'qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual',
+            'together', 'vercel-ai-gateway', 'xiaomi', 'xiaomi-token-plan-ams', 'xiaomi-token-plan-cn',
+            'xiaomi-token-plan-sgp', 'zai-coding-cn',
+        ] as $provider) {
+            $this->assertNotEmpty(self::of($provider), $provider);
+        }
+
+        // DeepSeek's hand-written rows: `deepseekCompat` under what the generator detects, V4 Pro
+        // taking plain system text mid-conversation, Flash's own map and Pro's from the V4 rule.
+        $pro = Models::find('deepseek', 'deepseek-v4-pro');
+        $this->assertNotNull($pro);
+        $this->assertSame('https://api.deepseek.com', $pro->baseUrl);
+        $this->assertEquals(new OpenAiCompat(
+            store: false,
+            developerRole: false,
+            maxTokensField: 'max_tokens',
+            reasoningContentOnAssistantMessages: true,
+            strictMode: true,
+            thinkingFormat: 'deepseek',
+            supportsMidConvoSystemMessages: true,
+        ), $pro->compat);
+        $this->assertSame(['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'max' => 'max'], $pro->thinkingLevelMap);
+        $this->assertSame(['minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'max' => 'max'], Models::find('deepseek', 'deepseek-flash')?->thinkingLevelMap);
+        $this->assertSame('deepseek', Models::get('deepseek-v4-pro')?->provider);
+
+        // "Ring reasons by default. Only high/xhigh have documented explicit effort controls."
+        $this->assertSame(['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh'], Models::find('ant-ling', 'Ring-2.6-1T')?->thinkingLevelMap);
+        $this->assertSame([], Models::find('ant-ling', 'Ling-2.6-flash')?->thinkingLevelMap);
+
+        // NVIDIA's header on every row.
+        foreach (self::of('nvidia') as $model) {
+            $this->assertSame(['NVCF-POLL-SECONDS' => '3600'], $model->headers, $model->id);
+        }
+
+        // Kimi For Coding thinks adaptively, and K3 and the canonical model replay empty signatures.
+        $kimi = Models::find('kimi-coding', 'kimi-for-coding');
+        $this->assertNotNull($kimi);
+        $this->assertSame([Api::AnthropicMessages, 'https://api.kimi.com/coding'], [$kimi->api, $kimi->baseUrl]);
+        $this->assertEquals(new AnthropicCompat(forceAdaptiveThinking: true, allowEmptySignature: true), $kimi->compat);
+
+        // OpenRouter's Claudes on its Messages endpoint, the rest on Chat Completions.
+        $this->assertSame([Api::AnthropicMessages, 'https://openrouter.ai/api'], [Models::find('openrouter', 'anthropic/claude-opus-4.8')?->api, Models::find('openrouter', 'anthropic/claude-opus-4.8')?->baseUrl]);
+        $this->assertSame('https://openrouter.ai/api/v1', Models::find('openrouter', 'auto')?->baseUrl);
+
+        // Vercel's: every one on Messages, replaying empty signatures.
+        foreach (self::of('vercel-ai-gateway') as $model) {
+            $this->assertSame(Api::AnthropicMessages, $model->api);
+            $this->assertInstanceOf(AnthropicCompat::class, $model->compat);
+            $this->assertTrue($model->compat->allowEmptySignature, $model->id);
+        }
+
+        // OpenCode Zen's Responses models: no session id in the body, and OpenAI's grammar tools and
+        // transcript additions passed through for the ids that take them.
+        $gpt = Models::find('opencode', 'gpt-5.5');
+        $this->assertNotNull($gpt);
+        $this->assertSame([Api::OpenAiResponses, 'https://opencode.ai/zen/v1'], [$gpt->api, $gpt->baseUrl]);
+        $this->assertEquals(new OpenAiCompat(grammarTools: true, sessionAffinityFormat: 'openai-nosession', supportsMidConvoSystemMessages: true, supportsAdditionalTools: true), $gpt->compat);
+        $this->assertSame([Api::AnthropicMessages, 'https://opencode.ai/zen/go'], [Models::find('opencode-go', 'qwen3.8-flash')?->api, Models::find('opencode-go', 'qwen3.8-flash')?->baseUrl]);
+
+        // Meta's own, on the Responses API.
+        $this->assertSame([Api::OpenAiResponses, 'https://api.meta.ai/v1'], [Models::find('meta', 'muse-spark-1.3')?->api, Models::find('meta', 'muse-spark-1.3')?->baseUrl]);
+    }
+
+    /**
+     * Upstream's `fireworks-model-generation.test.ts`, which runs its generator over a models.dev of
+     * Fireworks models with these reasoning options and reads the catalogue it writes. Here the two
+     * halves pig splits that into: the row `scripts/generate-models.php` writes for each — its
+     * `effortLevelMap` (`getEffortThinkingLevelMap()` of the options) and the toggle/effort flags, as
+     * `GenerateModelsTest` checks — and the model `Models` makes of the row.
+     */
+    public function testFireworksCombinesModelsDevsEffortAndToggleWithNarrowCorrections(): void
+    {
+        $effort = static fn (array $values): array => [
+            'off' => in_array('none', $values, true) ? 'none' : null,
+            ...array_combine(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], array_map(
+                static fn (string $level): ?string => in_array($level, $values, true) ? $level : null,
+                ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+            )),
+        ];
+        $model = static function (string $id, array $row): Model {
+            $build = new \ReflectionMethod(Models::class, 'catalogueModel');
+
+            return $build->invoke(null, 'fireworks', "accounts/fireworks/models/{$id}", ['Model', Api::AnthropicMessages, 262_144, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, ...$row]);
+        };
+        $deepSeek = ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'];
+        $qwen = ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null];
+
+        // "combines upstream effort and toggle metadata with narrow corrections"
+        foreach (['deepseek-v4-flash-0731' => ['low', 'high', 'max'], 'deepseek-v4-flash-vision-exp' => ['low', 'high', 'max'], 'deepseek-v4-pro-0813' => ['high', 'max']] as $id => $values) {
+            $this->assertSame($deepSeek, $model($id, ['effortLevelMap' => $effort($values), 'supportsToggle' => true, 'supportsEffort' => true])->thinkingLevelMap, $id);
+        }
+
+        $this->assertSame($qwen, $model('qwen3p8-max', ['supportsToggle' => true])->thinkingLevelMap);
+        $this->assertSame($qwen, $model('qwen3p8-2p4t-a95b', ['effortLevelMap' => $effort(['low', 'medium', 'xhigh']), 'supportsEffort' => true])->thinkingLevelMap);
+
+        $kimi = $model('kimi-k2p6', ['supportsToggle' => true]);
+        $this->assertSame([], $kimi->thinkingLevelMap);
+        $this->assertInstanceOf(AnthropicCompat::class, $kimi->compat);
+        $this->assertNull($kimi->compat->forceAdaptiveThinking);
+        $this->assertTrue($kimi->compat->allowEmptySignature);
+
+        // "automatically sends native effort for newly cataloged Messages models"
+        $new = $model('new-reasoner', ['effortLevelMap' => $effort(['low', 'max']), 'supportsToggle' => true, 'supportsEffort' => true]);
+        $this->assertInstanceOf(AnthropicCompat::class, $new->compat);
+        $this->assertTrue($new->compat->forceAdaptiveThinking);
+        $this->assertSame(['off', 'low', 'max'], $new->supportedThinkingLevels());
+
+        // "does not infer adaptive thinking from toggle, budget, or missing metadata"
+        foreach (['toggle-only' => ['supportsToggle' => true], 'budget-only' => [], 'missing-metadata' => []] as $id => $row) {
+            $plain = $model($id, $row);
+            $this->assertInstanceOf(AnthropicCompat::class, $plain->compat);
+            $this->assertNull($plain->compat->forceAdaptiveThinking, $id);
+            $this->assertSame([], $plain->thinkingLevelMap, $id);
+        }
+
+        // "prefers updated upstream efforts over fixed maps and the Qwen fallback"
+        $this->assertSame(
+            ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'],
+            $model('deepseek-v4-flash-0731', ['effortLevelMap' => $effort(['high', 'max']), 'supportsEffort' => true])->thinkingLevelMap,
+        );
+        $this->assertSame(
+            ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null],
+            $model('qwen3p8-max', ['effortLevelMap' => $effort(['medium', 'xhigh']), 'supportsToggle' => true, 'supportsEffort' => true])->thinkingLevelMap,
+        );
+    }
+
+    public function testAProxiedClaudeThatThinksAdaptivelyOnlyByItsIdTakesNoModelsDevEfforts(): void
+    {
+        // Upstream asks `supportsDirectReasoningEffort()` before `applyThinkingLevelMetadata()` writes
+        // `forceAdaptiveThinking` from the id, so an OpenCode or OpenRouter Claude keeps the id rules'
+        // map alone — the published catalogue's `claude-opus-4-6` on OpenCode is `{max: "max"}`.
+        $build = new \ReflectionMethod(Models::class, 'catalogueModel');
+        $opus = $build->invoke(null, 'opencode', 'claude-opus-4-6', ['Claude Opus 4.6', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25,
+            'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']]);
+
+        $this->assertSame(['max' => 'max'], $opus->thinkingLevelMap);
+        $this->assertInstanceOf(AnthropicCompat::class, $opus->compat);
+        $this->assertTrue($opus->compat->forceAdaptiveThinking);
+    }
+
+    public function testAResoldIdOfTheCatalogueProvidersIsItsMakersOnlyBare(): void
+    {
+        // `RESOLD`: the gateways, hosts, Token Plans and China endpoints serve the makers' ids, and a
+        // bare id is the maker's.
+        $this->assertSame('moonshotai', Models::get('kimi-k2.6')?->provider);
+        $this->assertSame('zai', Models::get('glm-5.3')?->provider);
+        $this->assertSame('xiaomi', Models::get('mimo-v2.5-pro')?->provider);
+        $this->assertSame('minimax', Models::get('MiniMax-M2.7')?->provider);
+        $this->assertSame('openai', Models::get('gpt-5.5')?->provider);
+        $this->assertSame('anthropic', Models::get('claude-opus-4-8')?->provider);
+        $this->assertSame('openrouter', Models::find('openrouter', 'moonshotai/kimi-k2.6')?->provider);
+        $this->assertSame('moonshotai-cn', Models::find('moonshotai-cn', 'kimi-k2.6')?->provider);
+    }
+
     public function testAProviderAndIdTogetherFindExactlyOneModel(): void
     {
         $groq = self::anyFrom('groq');
@@ -350,12 +654,12 @@ final class ModelsTest extends TestCase
 
     public function testAnOpenAiCompatibleModelCarriesItsOwnEndpoint(): void
     {
-        // Each of the four has an endpoint of its own; a shared default would send every one of
-        // them to whichever was written first. (Mistral was the fifth until it moved to its own
-        // API, as upstream's did — see the next test.)
+        // Each of the three has an endpoint of its own; a shared default would send every one of
+        // them to whichever was written first. (Mistral and xAI were the fourth and fifth until each
+        // moved to the API upstream's provider serves — see `XaiResponsesTest` and the next test.)
         $urls = [];
 
-        foreach (['cerebras', 'groq', 'xai', 'zai'] as $provider) {
+        foreach (['cerebras', 'groq', 'zai'] as $provider) {
             $model = self::anyFrom($provider);
 
             $this->assertSame(Api::OpenAiCompletions, $model->api, $provider);
@@ -364,7 +668,7 @@ final class ModelsTest extends TestCase
             $urls[$model->baseUrl] = true;
         }
 
-        $this->assertCount(4, $urls, 'two of the compatible providers share a base URL');
+        $this->assertCount(3, $urls, 'two of the compatible providers share a base URL');
     }
 
     public function testMistralsModelsSpeakMistralsOwnApiAsUpstreamsGeneratorRoutesThem(): void
@@ -397,8 +701,11 @@ final class ModelsTest extends TestCase
         $this->assertTrue($glm->compat->zaiToolStream);
         $this->assertSame('zai', $glm->compat->thinkingFormat);
         $this->assertFalse($glm->compat->developerRole);
-        // No verified efforts on the row, so `reasoning_effort` stays off as detection has it.
-        $this->assertNull($glm->compat->reasoningEffort);
+        // No verified efforts on the row, so `reasoning_effort` stays off — written out, as the
+        // generator writes detection's `false` into the compat (`applyOpenAICompletionsCompatMetadata()`).
+        $this->assertFalse($glm->compat->reasoningEffort);
+        $this->assertFalse($glm->compat->store);
+        $this->assertSame('max_tokens', $glm->compat->maxTokensField);
     }
 
     public function testCostIsPerMillionTokens(): void
@@ -769,22 +1076,35 @@ final class ModelsTest extends TestCase
 
     /**
      * Upstream's generator writes each Claude's whole `thinkingLevelMap`, not only its `off`: `max`
-     * on the adaptive 4.6 models, `xhigh` and `max` from Opus 4.7 on, the full map on the 5.5
-     * models, and Copilot's measured `minimal: "low"` overrides. pig carried `{off: null}` alone, so
-     * `xhigh` was never offered on a Claude that has it.
+     * on the adaptive 4.6 models, `xhigh` and `max` from Opus 4.7 on, `off: null` on the
+     * managed-effort ones and Fable 5, the full map on the 5.5 overrides, and Copilot's measured
+     * `minimal: "low"` overrides — the 1.1.0 catalogue's maps, key order included.
+     *
+     * **models.dev's efforts are not among them.** `applyModelsDevReasoningOptionMetadata()` runs
+     * before `applyThinkingLevelMetadata()` writes `forceAdaptiveThinking` by id, and neither the
+     * `anthropic` nor the Copilot arm of `loadModelsDevData()` writes it, so its gate
+     * (`supportsDirectReasoningEffort()`) is false for every one of these rows. pig used to apply the
+     * gate to the finished compat and gave Opus 4.6 models.dev's `{off: null, minimal: null, …}`.
      */
     public function testEveryClaudeCarriesUpstreamsWholeThinkingLevelMap(): void
     {
+        $whole = ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'];
+
         foreach ([
             [Models::ANTHROPIC, 'claude-sonnet-4-5', []],
-            [Models::ANTHROPIC, 'claude-opus-4-6', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-            [Models::ANTHROPIC, 'claude-opus-4-7', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-            [Models::ANTHROPIC, 'claude-opus-5', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-            [Models::ANTHROPIC, 'claude-opus-5-5', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-            [Models::ANTHROPIC, 'claude-fable-5', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-            [Models::COPILOT, 'claude-sonnet-4.6', ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-            [Models::COPILOT, 'claude-opus-4.7', ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-            [Models::COPILOT, 'claude-opus-5', ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::ANTHROPIC, 'claude-opus-4-6', ['max' => 'max']],
+            [Models::ANTHROPIC, 'claude-sonnet-4-6', ['max' => 'max']],
+            [Models::ANTHROPIC, 'claude-opus-4-7', ['xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::ANTHROPIC, 'claude-sonnet-5', ['xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::ANTHROPIC, 'claude-opus-5', ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::ANTHROPIC, 'claude-opus-5-5', $whole],
+            [Models::ANTHROPIC, 'claude-haiku-5-5', $whole],
+            [Models::ANTHROPIC, 'claude-fable-5', ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::COPILOT, 'claude-sonnet-4.6', ['max' => 'max', 'minimal' => 'low']],
+            [Models::COPILOT, 'claude-opus-4.7', ['xhigh' => 'xhigh', 'max' => 'max', 'minimal' => 'low']],
+            [Models::COPILOT, 'claude-opus-5', ['xhigh' => 'xhigh', 'max' => 'max', 'minimal' => 'low']],
+            [Models::COPILOT, 'claude-sonnet-5.5', ['xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::COPILOT, 'claude-opus-5.5', $whole],
         ] as [$provider, $id, $map]) {
             $model = Models::find($provider, $id);
             $this->assertNotNull($model, "{$provider}/{$id}");
@@ -797,30 +1117,34 @@ final class ModelsTest extends TestCase
     }
 
     /**
-     * `off` is no level at all — `{off: null}` — on every Claude whose models.dev entry lists its
-     * efforts without `none` (`getEffortThinkingLevelMap()`, merged where
-     * `supportsDirectReasoningEffort()` holds), on the managed-effort ones, and on the 5.5
-     * overrides. Needed now that a turn without thinking says `{type: "disabled"}`: without the
-     * mark such a model would be sent an off it does not have. A model with no effort list, such as
-     * Haiku 4.5, keeps an empty map, so `off` stays offered.
+     * `off` is no level at all — `{off: null}` — only where upstream's catalogue says so: the
+     * managed-effort models (`applyAnthropicMessagesCompatMetadata()`'s `{off: null}` beside
+     * `supportsMidConvoEffort`, which is `anthropic`/`openrouter` only), Fable 5 by id, and the 5.5
+     * overrides. Needed now that a turn without thinking says `{type: "disabled"}`: without the mark
+     * such a model would be sent an off it does not have. Every other Claude keeps `off` — Sonnet 4.6
+     * and Sonnet 5 included, which models.dev's efforts used to take it from here.
      */
     public function testTheClaudeModelsThatCannotStopThinkingSaySo(): void
     {
         foreach ([
             [Models::ANTHROPIC, 'claude-fable-5'], [Models::ANTHROPIC, 'claude-fable-5-1'],
             [Models::ANTHROPIC, 'claude-opus-5'], [Models::ANTHROPIC, 'claude-opus-5-5'],
-            [Models::ANTHROPIC, 'claude-sonnet-5-5'], [Models::ANTHROPIC, 'claude-sonnet-4-6'],
-            [Models::ANTHROPIC, 'claude-sonnet-5'],
+            [Models::ANTHROPIC, 'claude-sonnet-5-5'], [Models::ANTHROPIC, 'claude-haiku-5-5'],
             [Models::COPILOT, 'claude-fable-5'], [Models::COPILOT, 'claude-fable-5.1'],
-            [Models::COPILOT, 'claude-opus-5.5'], [Models::COPILOT, 'claude-opus-5'],
-            [Models::COPILOT, 'claude-sonnet-5.5'],
+            [Models::COPILOT, 'claude-opus-5.5'],
         ] as [$provider, $id]) {
             $model = Models::find($provider, $id);
             $this->assertNotNull($model, "{$provider}/{$id}");
             $this->assertFalse($model->hasThinkingLevel('off'), "{$provider}/{$id}");
         }
 
-        foreach ([[Models::ANTHROPIC, 'claude-haiku-4-5'], [Models::ANTHROPIC, 'claude-sonnet-4-5']] as [$provider, $id]) {
+        foreach ([
+            [Models::ANTHROPIC, 'claude-haiku-4-5'], [Models::ANTHROPIC, 'claude-sonnet-4-5'],
+            [Models::ANTHROPIC, 'claude-sonnet-4-6'], [Models::ANTHROPIC, 'claude-sonnet-5'],
+            [Models::ANTHROPIC, 'claude-opus-4-6'], [Models::ANTHROPIC, 'claude-opus-4-8'],
+            [Models::COPILOT, 'claude-sonnet-4.6'], [Models::COPILOT, 'claude-opus-5'],
+            [Models::COPILOT, 'claude-sonnet-5.5'],
+        ] as [$provider, $id]) {
             $model = Models::find($provider, $id);
             $this->assertNotNull($model, "{$provider}/{$id}");
             $this->assertTrue($model->hasThinkingLevel('off'), "{$provider}/{$id}");

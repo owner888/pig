@@ -6,7 +6,9 @@ declare(strict_types=1);
 /**
  * Rewrite `Ai\Models`' tables from models.dev.
  *
- * `php scripts/generate-models.php [--from <file>] [--dry-run]`
+ * `php scripts/generate-models.php [--from <file>] [--radius-from <file>] [--openrouter-from <file>]
+ *  [--vercel-from <file>] [--nvidia-from <file>] [--decisions-from <file>]
+ *  [--openrouter-images-from <file>] [--openrouter-decisions-from <file>] [--dry-run]`
  *
  * **Why this exists, which is the whole argument for it.** `Ai\Models` was a transcription: 178
  * rows copied by hand out of upstream's `models.generated.ts` at the anchor commit, and
@@ -40,8 +42,11 @@ declare(strict_types=1);
  *   so they are hand-written here for the same reason and not for want of trying.
  * - **It does not add providers.** The filter is "the protocol is ported", which is `Models`' own
  *   standing rule: offering a model and then failing to send the request is a worse answer than
- *   "no such model". DeepSeek is the one worth naming — upstream ships it at HEAD, pig has no
- *   entry, and adding one is a decision about `OpenAiCompat` rather than a row in a table.
+ *   "no such model". A provider is added by giving it a table in `Models` first. The classifier and
+ *   image models are written into their own two tables (`CLASSIFIER_MODELS`, `IMAGE_MODELS`) from
+ *   their own sources — models.dev's decision models (`--decisions-from`), OpenRouter's image and
+ *   decision listings (`--openrouter-images-from`, `--openrouter-decisions-from`), Vercel's
+ *   `evaluation` models and upstream's hand-kept rows.
  * - **It never writes silently.** Every run prints what changed against the table that was
  *   loaded before the rewrite: added, gone, and every field that moved. A regeneration nobody
  *   read is a registry nobody checked.
@@ -50,6 +55,10 @@ declare(strict_types=1);
  * unreachable from some of the machines this repository is worked on, a regeneration from the
  * snapshot somebody else fetched is the only way to reproduce a table, and a generator whose
  * input cannot be pinned is a generator whose output cannot be explained.
+ *
+ * `--radius-from` reads a saved Radius `/v1/config` answer instead of asking the gateway, and
+ * `--openrouter-from`, `--vercel-from` and `--nvidia-from` saved answers of OpenRouter's, Vercel AI
+ * Gateway's and NVIDIA NIM's model lists, for the same reason.
  *
  * `--dry-run` writes nothing and prints the rows it would have written, which is the shape worth
  * reading before overwriting a table and is also the only way the rendering is checkable without
@@ -68,10 +77,14 @@ if (!is_file($autoload)) {
 require $autoload;
 
 use Pig\Ai\Api;
+use Pig\Ai\ClassifierApi;
+use Pig\Ai\ImageApi;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
+use Pig\Ai\Providers\Cloudflare;
+use Pig\Ai\Providers\RadiusConfig;
 use Pig\Async\Async;
 
 const MODELS_DEV = 'https://models.dev/api.json';
@@ -96,9 +109,33 @@ const DIRECT = [
     'cerebras' => ['CEREBRAS_MODELS', Api::OpenAiCompletions, 'https://api.cerebras.ai/v1'],
     'groq' => ['GROQ_MODELS', Api::OpenAiCompletions, 'https://api.groq.com/openai/v1'],
     'mistral' => ['MISTRAL_MODELS', Api::MistralConversations, 'https://api.mistral.ai'],
-    'xai' => ['XAI_MODELS', Api::OpenAiCompletions, 'https://api.x.ai/v1'],
+    'xai' => ['XAI_MODELS', Api::OpenAiResponses, 'https://api.x.ai/v1'],
     'zai' => ['ZAI_MODELS', Api::OpenAiCompletions, 'https://api.z.ai/api/coding/paas/v4'],
     'amazon-bedrock' => ['AMAZON_BEDROCK_MODELS', Api::BedrockConverseStream, 'https://bedrock-runtime.us-east-1.amazonaws.com'],
+    // `Models::CATALOGUE_PROVIDERS`' models.dev providers. Fireworks' and the OpenCodes' api is per
+    // model (`rowsFor()`), as is their base URL (`Models`).
+    'baseten' => ['BASETEN_MODELS', Api::OpenAiCompletions, 'https://inference.baseten.co/v1'],
+    'cloudflare-workers-ai' => ['CLOUDFLARE_WORKERS_AI_MODELS', Api::OpenAiCompletions, Cloudflare::CLOUDFLARE_WORKERS_AI_BASE_URL],
+    'fireworks' => ['FIREWORKS_MODELS', Api::AnthropicMessages, 'https://api.fireworks.ai/inference'],
+    'huggingface' => ['HUGGINGFACE_MODELS', Api::OpenAiCompletions, 'https://router.huggingface.co/v1'],
+    'kimi-coding' => ['KIMI_CODING_MODELS', Api::AnthropicMessages, 'https://api.kimi.com/coding'],
+    'meta' => ['META_MODELS', Api::OpenAiResponses, 'https://api.meta.ai/v1'],
+    'minimax' => ['MINIMAX_MODELS', Api::AnthropicMessages, 'https://api.minimax.io/anthropic'],
+    'minimax-cn' => ['MINIMAX_CN_MODELS', Api::AnthropicMessages, 'https://api.minimaxi.com/anthropic'],
+    'moonshotai' => ['MOONSHOTAI_MODELS', Api::OpenAiCompletions, 'https://api.moonshot.ai/v1'],
+    'moonshotai-cn' => ['MOONSHOTAI_CN_MODELS', Api::OpenAiCompletions, 'https://api.moonshot.cn/v1'],
+    'nvidia' => ['NVIDIA_MODELS', Api::OpenAiCompletions, 'https://integrate.api.nvidia.com/v1'],
+    'opencode' => ['OPENCODE_MODELS', Api::OpenAiCompletions, 'https://opencode.ai/zen/v1'],
+    'opencode-go' => ['OPENCODE_GO_MODELS', Api::OpenAiCompletions, 'https://opencode.ai/zen/go/v1'],
+    'qwen-token-plan' => ['QWEN_TOKEN_PLAN_MODELS', Api::OpenAiCompletions, 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1'],
+    'qwen-token-plan-cn' => ['QWEN_TOKEN_PLAN_CN_MODELS', Api::OpenAiCompletions, 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'],
+    'qwen-token-plan-individual' => ['QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS', Api::OpenAiCompletions, 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1'],
+    'together' => ['TOGETHER_MODELS', Api::OpenAiCompletions, 'https://api.together.ai/v1'],
+    'xiaomi' => ['XIAOMI_MODELS', Api::OpenAiCompletions, 'https://api.xiaomimimo.com/v1'],
+    'xiaomi-token-plan-ams' => ['XIAOMI_TOKEN_PLAN_AMS_MODELS', Api::OpenAiCompletions, 'https://token-plan-ams.xiaomimimo.com/v1'],
+    'xiaomi-token-plan-cn' => ['XIAOMI_TOKEN_PLAN_CN_MODELS', Api::OpenAiCompletions, 'https://token-plan-cn.xiaomimimo.com/v1'],
+    'xiaomi-token-plan-sgp' => ['XIAOMI_TOKEN_PLAN_SGP_MODELS', Api::OpenAiCompletions, 'https://token-plan-sgp.xiaomimimo.com/v1'],
+    'zai-coding-cn' => ['ZAI_CODING_CN_MODELS', Api::OpenAiCompletions, 'https://open.bigmodel.cn/api/coding/paas/v4'],
 ];
 
 /**
@@ -112,6 +149,14 @@ const DIRECT = [
  */
 const SOURCE = [
     'zai' => 'zai-coding-plan',
+    'zai-coding-cn' => 'zhipuai-coding-plan',
+    'fireworks' => 'fireworks-ai',
+    'kimi-coding' => 'kimi-code-plan-global',
+    // "models.dev keys are "alibaba-token-plan[-cn]"; pi exposes them as "qwen-token-plan[-cn]" plus
+    // the Individual catalog view."
+    'qwen-token-plan' => 'alibaba-token-plan',
+    'qwen-token-plan-individual' => 'alibaba-token-plan',
+    'qwen-token-plan-cn' => 'alibaba-token-plan-cn',
 ];
 
 /**
@@ -201,6 +246,51 @@ const OPENAI_STANDARD_COSTS = [
 ];
 
 /**
+ * Upstream's `AZURE_CONTEXT_WINDOW_OVERRIDES`: "Azure Foundry deploys these with larger context
+ * windows than OpenAI's own short-tier defaults. See models-sold-directly-by-azure docs."
+ */
+const AZURE_CONTEXT_WINDOW_OVERRIDES = [
+    'gpt-5.4' => 1_050_000,
+    'gpt-5.5' => 1_050_000,
+    'gpt-5.6-luna' => 1_050_000,
+    'gpt-5.6-sol' => 1_050_000,
+    'gpt-5.6-terra' => 1_050_000,
+];
+
+/**
+ * Upstream's `AZURE_DEEPSEEK_V4_PRO_COST`, for its Azure DeepSeek clone — the `deepseek-v4-pro` row of
+ * `DEEPSEEK_ROWS` under `azure` at these rates: "Azure resells DeepSeek at its own rates. US data zone,
+ * checked 2026-09-16" — on Chat Completions. Its compat and level map are `Models`' (`azureCompat()`,
+ * the DeepSeek V4 arm of `thinkingLevelMap()`).
+ */
+const AZURE_DEEPSEEK_V4_PRO_COST = ['input' => 1.925, 'out' => 3.828, 'cacheRead' => 0.165, 'cacheWrite' => 0.0];
+
+/**
+ * Upstream's `codexModels`, "OpenAI Codex (ChatGPT OAuth) models": "These are not fetched from
+ * models.dev; we keep a small, explicit list to avoid aliases. Older model limits are based on
+ * observed server behavior; GPT-5.6 and GPT-6 use Codex's 272k default catalog limit." id => [name,
+ * window, takes images, price] — the price `withOpenAiLongContextPricing()` of
+ * `OPENAI_STANDARD_COSTS[id]` where it names `standard`, and GPT-5.5 of its own rates; Spark's is
+ * flat. `CODEX_MAX_TOKENS` (128000) for every one.
+ *
+ * @var array<string, array{0: string, 1: int, 2: bool, 3: string|array{input: float, out: float, cacheRead: float, cacheWrite: float}, 4: bool}>
+ */
+const CODEX_MODELS = [
+    'gpt-6.1-sol' => ['GPT-6.1 Sol', 272_000, true, 'standard', true],
+    'gpt-6-astra' => ['GPT-6 Astra', 272_000, true, 'standard', true],
+    'gpt-6-sol' => ['GPT-6 Sol', 272_000, true, 'standard', true],
+    'gpt-6-luna' => ['GPT-6 Luna', 272_000, true, 'standard', true],
+    'gpt-5.3-codex-spark' => ['GPT-5.3 Codex Spark', 128_000, false, ['input' => 1.75, 'out' => 14.0, 'cacheRead' => 0.175, 'cacheWrite' => 0.0], false],
+    'gpt-5.5' => ['GPT-5.5', 272_000, true, ['input' => 5.0, 'out' => 30.0, 'cacheRead' => 0.5, 'cacheWrite' => 0.0], true],
+    'gpt-5.6-luna' => ['GPT-5.6 Luna', 272_000, true, 'standard', true],
+    'gpt-5.6-sol' => ['GPT-5.6 Sol', 272_000, true, 'standard', true],
+    'gpt-5.6-terra' => ['GPT-5.6 Terra', 272_000, true, 'standard', true],
+];
+
+/** Upstream's `CODEX_MAX_TOKENS`. */
+const CODEX_MAX_TOKENS = 128_000;
+
+/**
  * The providers whose models.dev `reasoning_options` upstream records
  * (`recordModelsDevReasoningOptions()`) for `applyModelsDevReasoningOptionMetadata()`, among the
  * ones pig generates. Google and Mistral are not here because upstream does not record theirs:
@@ -209,10 +299,202 @@ const OPENAI_STANDARD_COSTS = [
  * is here *and* gets a built map, as upstream's `processZaiModels()` does both; its recorded options
  * never apply, because `thinkingFormat: "zai"` fails `supportsDirectReasoningEffort()`.
  */
-const REASONING_OPTION_PROVIDERS = ['anthropic', 'openai', 'cerebras', 'groq', 'xai', 'zai', 'github-copilot'];
+const REASONING_OPTION_PROVIDERS = [
+    'anthropic',
+    'cloudflare-workers-ai',
+    'cloudflare-ai-gateway',
+    'openai',
+    'cerebras',
+    'groq',
+    'xai',
+    'zai',
+    'zai-coding-cn',
+    'github-copilot',
+    'meta',
+    'huggingface',
+    'fireworks',
+    'nvidia',
+    'together',
+    'opencode',
+    'opencode-go',
+    'minimax',
+    'minimax-cn',
+    'kimi-coding',
+    'moonshotai',
+    'moonshotai-cn',
+    'xiaomi',
+    'xiaomi-token-plan-cn',
+    'xiaomi-token-plan-ams',
+    'xiaomi-token-plan-sgp',
+];
 
 /** Upstream's `THINKING_LEVELS` in `models-dev-reasoning-options.ts` — no `off`, which `none` stands for. */
 const EFFORT_THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+/**
+ * The catalogues upstream's generator reads for a provider that are not models.dev's: OpenRouter's
+ * and Vercel AI Gateway's model lists (`fetchOpenRouterModels()`, `fetchAiGatewayModels()`), and
+ * NVIDIA NIM's, which says which of models.dev's `nvidia` ids NIM serves and under what spelling
+ * (`fetchNvidiaNimModelIds()`). Each can be read from a saved answer instead (`--openrouter-from`,
+ * `--vercel-from`, `--nvidia-from`), for the reason `--from` exists.
+ */
+const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
+
+const AI_GATEWAY_MODELS_URL = 'https://ai-gateway.vercel.sh/v1/models';
+
+const NVIDIA_MODELS_URL = 'https://integrate.api.nvidia.com/v1/models';
+
+/** The tables with an api column: Copilot's by `copilotApi()`, the rest by the row's `api`. */
+const API_COLUMN_TABLES = ['COPILOT_MODELS', 'AZURE_MODELS', 'CLOUDFLARE_AI_GATEWAY_MODELS', 'FIREWORKS_MODELS', 'OPENCODE_MODELS', 'OPENCODE_GO_MODELS', 'OPENROUTER_MODELS'];
+
+/** The providers whose models.dev entry marks a retired model `deprecated`, and upstream leaves it out. */
+const DEPRECATED_LEFT_OUT = [
+    'github-copilot',
+    'together',
+    'baseten',
+    'opencode',
+    'opencode-go',
+    'xiaomi',
+    'xiaomi-token-plan-cn',
+    'xiaomi-token-plan-ams',
+    'xiaomi-token-plan-sgp',
+];
+
+/** Upstream's `NVIDIA_NIM_UNSUPPORTED_MODELS`, by NIM's id. */
+const NVIDIA_NIM_UNSUPPORTED_MODELS = [
+    'abacusai/dracarys-llama-3.1-70b-instruct',
+    'bytedance/seed-oss-36b-instruct',
+    'deepseek-ai/deepseek-v4-flash',
+    'deepseek-ai/deepseek-v4-pro',
+    'google/gemma-2-2b-it',
+    'google/gemma-3n-e2b-it',
+    'google/gemma-3n-e4b-it',
+    'google/gemma-4-31b-it',
+    'meta/llama-3.2-1b-instruct',
+    'meta/llama-4-maverick-17b-128e-instruct',
+    'microsoft/phi-4-mini-instruct',
+    'minimaxai/minimax-m2.7',
+    'mistralai/mistral-nemotron',
+    'nvidia/nemotron-mini-4b-instruct',
+    'qwen/qwen3-next-80b-a3b-instruct',
+    'qwen/qwen3.5-397b-a17b',
+    'sarvamai/sarvam-m',
+    'upstage/solar-10.7b-instruct',
+];
+
+/** Upstream's `TOGETHER_REASONING_ONLY_MODELS`, `TOGETHER_REASONING_EFFORT_MODELS`, `TOGETHER_TOGGLE_REASONING_EFFORT_MODELS`. */
+const TOGETHER_REASONING_ONLY_MODELS = ['deepseek-ai/DeepSeek-R1', 'MiniMaxAI/MiniMax-M2.7'];
+
+const TOGETHER_REASONING_EFFORT_MODELS = ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'];
+
+const TOGETHER_TOGGLE_REASONING_EFFORT_MODELS = ['deepseek-ai/DeepSeek-V4-Pro-0813'];
+
+/** `processBasetenModels()`' `toggleThinkingLevelMap` and `glm52ThinkingLevelMap`. */
+const BASETEN_TOGGLE_THINKING_LEVEL_MAP = ['off' => 'off', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null];
+
+const BASETEN_GLM52_THINKING_LEVEL_MAP = ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'];
+
+/** Upstream's `QWEN_TOKEN_PLAN_FALLBACK_THINKING_LEVEL_MAP` and the ids it is the fallback for. */
+const QWEN_TOKEN_PLAN_FALLBACK_THINKING_LEVEL_MAP = ['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'];
+
+const QWEN_TOKEN_PLAN_REASONING_EFFORT_FALLBACK_MODEL_IDS = ['glm-5', 'glm-5.1'];
+
+/** Upstream's `QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS`: "Retired preview id — models.dev may still list it after GA ships." */
+const QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS = ['qwen3.8-max-preview'];
+
+/**
+ * Upstream's `QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS`: "QwenCloud Token Plan Individual text-model
+ * allowlist, verified 2026-09-03. Retired models remain excluded above even if the public catalog lags."
+ */
+const QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS = [
+    'deepseek-v4-flash-0731',
+    'deepseek-v4-pro',
+    'deepseek-v4-pro-0813',
+    'glm-5.2',
+    'qwen3.6-flash',
+    'qwen3.7-max',
+    'qwen3.7-plus',
+    'qwen3.8-flash',
+    'qwen3.8-max',
+];
+
+/** The aliases upstream folds into `kimi-for-coding`. */
+const KIMI_ALIASES = ['k2p5', 'k2p6', 'k2p7'];
+
+/** Upstream's `KIMI_K3_COST` and `KIMI_K3_MAX_TOKENS`, in a row's price keys. */
+const KIMI_K3_COST = ['input' => 3.0, 'out' => 15.0, 'cacheRead' => 0.3, 'cacheWrite' => 0.0];
+
+const KIMI_K3_MAX_TOKENS = 131_072;
+
+/**
+ * Upstream's `KIMI_CODING_IMPLIED_COSTS`: "Kimi Coding is subscription-backed, so models.dev reports
+ * zero cost. Use the equivalent Moonshot API rates to estimate the value of subscription usage."
+ */
+const KIMI_CODING_IMPLIED_COSTS = [
+    'k3' => KIMI_K3_COST,
+    'kimi-for-coding' => ['input' => 0.95, 'out' => 4.0, 'cacheRead' => 0.19, 'cacheWrite' => 0.0],
+    'kimi-for-coding-highspeed' => ['input' => 1.9, 'out' => 8.0, 'cacheRead' => 0.38, 'cacheWrite' => 0.0],
+    'kimi-k2-thinking' => ['input' => 0.6, 'out' => 2.5, 'cacheRead' => 0.15, 'cacheWrite' => 0.0],
+];
+
+/** Upstream's `OPENROUTER_KIMI_K3_MODEL_IDS`. */
+const OPENROUTER_KIMI_K3_MODEL_IDS = ['moonshotai/kimi-k3', '~moonshotai/kimi-latest'];
+
+/** Upstream's `minimaxDirectSupportedIds`: every other MiniMax model is removed from both providers. */
+const MINIMAX_DIRECT_SUPPORTED_IDS = ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed', 'MiniMax-M3'];
+
+/**
+ * Upstream's hand-written `deepseekModels`: "DeepSeek also offers time-based off-peak rates, which
+ * the cost schema cannot represent yet." Flash's map is `DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP`; the
+ * compat (`deepseekCompat`) is `Models`'.
+ */
+const DEEPSEEK_ROWS = [
+    'deepseek-flash' => [
+        'name' => 'DeepSeek V4.1 Flash', 'reasoning' => true, 'images' => true, 'context' => 1_000_000, 'output' => 384_000,
+        'input' => 0.3, 'out' => 1.2, 'cacheRead' => 0.006, 'cacheWrite' => 0.0,
+        'thinkingLevelMap' => ['minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'max' => 'max'],
+    ],
+    'deepseek-v4-pro' => [
+        'name' => 'DeepSeek V4 Pro', 'reasoning' => true, 'images' => false, 'context' => 1_000_000, 'output' => 384_000,
+        'input' => 1.32, 'out' => 3.96, 'cacheRead' => 0.044, 'cacheWrite' => 0.0,
+    ],
+];
+
+/** Upstream's `fetch("https://models.dev/models.json?type=decision")`, `loadModelsDevClassifierModels()`'s source. */
+const MODELS_DEV_DECISIONS = 'https://models.dev/models.json?type=decision';
+
+/** Upstream's `AI_GATEWAY_TYPESAFE_BASE_URL`, where Vercel serves its `evaluation` models. */
+const AI_GATEWAY_TYPESAFE_BASE_URL = 'https://ai-gateway.vercel.sh/typesafe/v1';
+
+/**
+ * Upstream's `OPENCODE_CLASSIFIER_MODELS` and `CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS`, hand-kept:
+ * "OpenCode Zen serves Jev through its TypeSafe-compatible System One endpoint. Neither its
+ * /zen/v1/models listing nor models.dev carries metadata for it", and "Workers AI has no
+ * unauthenticated catalog and models.dev does not list its System One models yet. Cloudflare
+ * publishes pricing only in the dashboard." The Clef models "accept images, but classifier contexts
+ * carry text or JSON state only, so the catalog advertises text."
+ *
+ * @var array<string, array{name: string, api: ClassifierApi, baseUrl: string, context: int, input: list<string>, in: float, out: float, cacheRead: float, cacheWrite: float}>
+ */
+const HAND_KEPT_CLASSIFIERS = [
+    'opencode/jev-1.13' => ['name' => 'Jev 1.13', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/zen/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.042, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    'opencode/jev-1.13-free' => ['name' => 'Jev 1.13 Free', 'api' => ClassifierApi::TypesafeSystemOne, 'baseUrl' => 'https://opencode.ai/zen/v1', 'context' => 32_000, 'input' => ['text'], 'in' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    // Pricing: https://developers.cloudflare.com/workers-ai/models/clef/ and …/clef-flash/
+    'cloudflare-workers-ai/@cf/cloudflare/clef' => ['name' => 'Clef', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 65_536, 'input' => ['text'], 'in' => 0.24, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    'cloudflare-workers-ai/@cf/cloudflare/clef-flash' => ['name' => 'Clef Flash', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 65_536, 'input' => ['text'], 'in' => 0.09, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    // https://developers.cloudflare.com/ai/models/typesafe/jev/
+    'cloudflare-workers-ai/typesafe/jev' => ['name' => 'Jev', 'api' => ClassifierApi::CloudflareWorkersAiSystemOne, 'baseUrl' => Cloudflare::CLOUDFLARE_WORKERS_AI_REST_BASE_URL, 'context' => 32_000, 'input' => ['text'], 'in' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+];
+
+/**
+ * Upstream's hand-written `antLingModels`. The compat (`antLingCompat`, and the Ring row's thinking
+ * format) and the Ring level map are `Models`'.
+ */
+const ANT_LING_ROWS = [
+    'Ling-2.6-1T' => ['name' => 'Ling 2.6 1T', 'reasoning' => false, 'images' => false, 'context' => 262_144, 'output' => 65_536, 'input' => 0.06, 'out' => 0.25, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    'Ling-2.6-flash' => ['name' => 'Ling 2.6 Flash', 'reasoning' => false, 'images' => false, 'context' => 262_144, 'output' => 65_536, 'input' => 0.01, 'out' => 0.02, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+    'Ring-2.6-1T' => ['name' => 'Ring 2.6 1T', 'reasoning' => true, 'images' => false, 'context' => 262_144, 'output' => 65_536, 'input' => 0.06, 'out' => 0.25, 'cacheRead' => 0.0, 'cacheWrite' => 0.0],
+];
 
 /**
  * What models.dev gets wrong, and what it does not carry yet.
@@ -271,6 +553,28 @@ const OVERRIDES = [
             'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null],
         ],
     ],
+    // Upstream's own hand-added rows: "Add Claude Opus 5.5 until models.dev includes it" and the same
+    // for Sonnet 5.5, each with the whole effort map (which `Models::thinkingLevelMap()` merges by id).
+    // https://platform.claude.com/docs/en/models/opus-5-5/overview
+    'anthropic/claude-opus-5-5' => [
+        'kind' => 'add',
+        'why' => 'models.dev does not list it yet',
+        'row' => [
+            'name' => 'Claude Opus 5.5', 'reasoning' => true, 'images' => true,
+            'context' => 1_000_000, 'output' => 128_000,
+            'input' => 4.0, 'out' => 20.0, 'cacheRead' => 0.2, 'cacheWrite' => 5.0,
+        ],
+    ],
+    // https://platform.claude.com/docs/en/models/sonnet-5-5/overview
+    'anthropic/claude-sonnet-5-5' => [
+        'kind' => 'add',
+        'why' => 'models.dev does not list it yet',
+        'row' => [
+            'name' => 'Claude Sonnet 5.5', 'reasoning' => true, 'images' => true,
+            'context' => 1_000_000, 'output' => 128_000,
+            'input' => 2.0, 'out' => 10.0, 'cacheRead' => 0.2, 'cacheWrite' => 2.5,
+        ],
+    ],
     // Upstream's own hand-added row: "Add Claude Haiku 5.5 until models.dev includes it. Prompts
     // over 100k input tokens are billed at 5x for the whole request."
     // https://platform.claude.com/docs/en/models/haiku-5-5/overview
@@ -282,6 +586,26 @@ const OVERRIDES = [
             'context' => 1_000_000, 'output' => 128_000,
             'input' => 0.1, 'out' => 0.5, 'cacheRead' => 0.01, 'cacheWrite' => 0.125,
             'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]],
+        ],
+    ],
+    // Upstream: "Add "auto" alias for openrouter/auto" — "we dont know about the costs because
+    // OpenRouter auto routes to different models and then charges you for the underlying used model".
+    'openrouter/auto' => [
+        'kind' => 'add',
+        'why' => 'upstream adds its alias for openrouter/auto',
+        'row' => [
+            'name' => 'Auto', 'api' => Api::OpenAiCompletions, 'reasoning' => true, 'images' => true,
+            'context' => 2_000_000, 'output' => 30_000, 'input' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0,
+        ],
+    ],
+    // "OpenRouter exposes Fusion as a router alias/plugin entry point; its model metadata does not
+    // advertise tools, but the alias resolves to a concrete model that can invoke caller tools".
+    'openrouter/openrouter/fusion' => [
+        'kind' => 'add',
+        'why' => 'upstream adds its Fusion alias, whose listing does not advertise tools',
+        'row' => [
+            'name' => 'OpenRouter: Fusion', 'api' => Api::OpenAiCompletions, 'reasoning' => true, 'images' => false,
+            'context' => 1_000_000, 'output' => 30_000, 'input' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0,
         ],
     ],
     'openai/gpt-5-chat-latest' => [
@@ -363,10 +687,22 @@ const OVERRIDES = [
  * @var array<string, list<string>>
  */
 const EXCLUDED = [
+    // Upstream's `MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS`: "models.dev lists this alias, but it is
+    // not accepted by OpenAI APIs."
+    'openai' => [
+        'gpt-5.6',
+    ],
     // Upstream's `BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS`: served through an inference profile
     // (`us.`, `global.` …) only, so the bare id is not a model a request can name.
     'amazon-bedrock' => [
         'anthropic.claude-opus-5',
+    ],
+    // Upstream's filter on the combined catalogue: OpenCode's GPT-5.3 Codex Spark is not offered.
+    'opencode' => [
+        'gpt-5.3-codex-spark',
+    ],
+    'opencode-go' => [
+        'gpt-5.3-codex-spark',
     ],
     'xai' => [
         'grok-3',
@@ -443,8 +779,8 @@ function catalogue(?string $file): array
  *
  * `tool_call !== true` is upstream's filter and it is not cosmetic: pig is an agent, so a model
  * that cannot be handed a tool cannot do the one thing it would be chosen for. A `deprecated` model
- * is left out for Copilot alone, which is where upstream's generator leaves it out among the
- * providers pig generates — Copilot marks a retired model rather than removing it.
+ * is left out where upstream's generator leaves it out (`DEPRECATED_LEFT_OUT`) — those catalogues
+ * mark a retired model rather than removing it.
  *
  * Per provider, what upstream's own processing of it does differently:
  *
@@ -455,8 +791,9 @@ function catalogue(?string $file): array
  * - **mistral**: the map is `getEffortThinkingLevelMap()` of the efforts — "Models with effort values
  *   use `reasoning_effort` with these levels. Reasoning models without them (Magistral) use
  *   `prompt_mode`" — a missing cache-read price is a tenth of the input price, and no tiers.
- * - **zai** (`processZaiModels()`): the rows are `zai-coding-plan`'s (`SOURCE`), priced from `zai`'s
- *   entry when it has one; the map is the efforts', with `off: "none"` for GLM-5.2.
+ * - **zai** and **zai-coding-cn** (`processZaiModels()`): the rows are `zai-coding-plan`'s and
+ *   `zhipuai-coding-plan`'s (`SOURCE`), priced from `zai`'s entry when it has one; the map is the
+ *   efforts', with `off: "none"` for GLM-5.2.
  * - **google-vertex** (the end of `processGoogleModels()`): "The google-vertex models.dev catalog
  *   also includes Claude, OpenAI, and other MaaS models that do not use the @google/genai Gemini
  *   streaming path" — so `gemini-` ids only, and not `gemini-3.1-flash-lite-preview`; the two
@@ -471,14 +808,37 @@ function catalogue(?string $file): array
  *   `compat: {supportsStrictMode: true}`) where models.dev says `structured_output`. No map: upstream
  *   records the reasoning options, but `supportsDirectReasoningEffort()` is false for
  *   `bedrock-converse-stream`, and the map `Models` gives a Bedrock row is the ids'.
+ * - **nvidia**: models that take text in and out, under the id NIM's own `/v1/models` gives them
+ *   (`$nvidiaIds`, `fetchNvidiaNimModelIds()`: as listed, or lower-cased with `_` read as `.`), and
+ *   not `NVIDIA_NIM_UNSUPPORTED_MODELS`.
+ * - **together**: models.dev's `together`, `togetherai` or `together-ai` entry, whichever there is;
+ *   the map `getTogetherThinkingLevelMap()`'s.
+ * - **baseten** (`processBasetenModels()`): the map GLM-5.2's, a toggle's, or the efforts'; the row
+ *   says whether models.dev lists a toggle and an effort, which `Models` picks the compat by; GLM-5.2
+ *   takes no images "despite models.dev reporting image input".
+ * - **fireworks** (`processFireworksModels()`): GLM and Kimi K3 on Chat Completions, the rest on the
+ *   Messages API; the row says whether models.dev lists a toggle and an effort.
+ * - **opencode** and **opencode-go**: the API from `provider.npm`, the generator's corrections for
+ *   OpenCode Go, the Google rows' map and OpenCode Go DeepSeek V4.1 Flash's efforts as its map, and
+ *   `cacheControlFormat` for an `@ai-sdk/alibaba` model.
+ * - **kimi-coding**: the `k2p5`/`k2p6`/`k2p7` aliases folded into `kimi-for-coding` (or dropped when
+ *   the catalogue has that id), K3 reasoning whatever models.dev says, `KIMI_CODING_IMPLIED_COSTS`
+ *   where models.dev says zero, and no tiers.
+ * - **moonshotai** and **moonshotai-cn**: Kimi K3 reasoning and at `KIMI_K3_COST`, and no tiers.
+ * - **qwen-token-plan**, **-cn** and **-individual**: not `QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS`, the
+ *   Individual plan only `QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS`; the map the efforts', or
+ *   `QWEN_TOKEN_PLAN_FALLBACK_THINKING_LEVEL_MAP` for GLM-5 and 5.1.
  *
  * @param array<string, mixed> $catalogue
+ * @param array<string, string> $nvidiaIds NIM's ids, keyed as listed and normalized
  * @return array<string, array<string, mixed>>
  */
-function rowsFor(array $catalogue, string $provider): array
+function rowsFor(array $catalogue, string $provider, array $nvidiaIds = []): array
 {
     $source = SOURCE[$provider] ?? $provider;
-    $models = $catalogue[$source]['models'] ?? null;
+    $models = $provider === 'together'
+        ? ($catalogue['together']['models'] ?? $catalogue['togetherai']['models'] ?? $catalogue['together-ai']['models'] ?? null)
+        : ($catalogue[$source]['models'] ?? null);
 
     if (!is_array($models)) {
         // Named, not skipped: a provider that has vanished from models.dev is either a rename
@@ -490,17 +850,18 @@ function rowsFor(array $catalogue, string $provider): array
 
     $rows = [];
 
-    foreach ($models as $id => $model) {
-        if (!is_string($id) || !is_array($model)) {
+    foreach ($models as $catalogueId => $model) {
+        if (!is_string($catalogueId) || !is_array($model)) {
             continue;
         }
+
+        $id = $catalogueId;
 
         if (($model['tool_call'] ?? null) !== true) {
             continue;
         }
 
-        // Copilot marks a retired model rather than removing it.
-        if ($provider === 'github-copilot' && ($model['status'] ?? null) === 'deprecated') {
+        if (in_array($provider, DEPRECATED_LEFT_OUT, true) && ($model['status'] ?? null) === 'deprecated') {
             continue;
         }
 
@@ -510,6 +871,40 @@ function rowsFor(array $catalogue, string $provider): array
 
         if ($provider === 'amazon-bedrock' && (str_starts_with($id, 'ai21.jamba') || str_starts_with($id, 'mistral.mistral-7b-instruct-v0'))) {
             continue;
+        }
+
+        if ($provider === 'nvidia') {
+            $modalities = $model['modalities'] ?? [];
+
+            if (!in_array('text', (array) ($modalities['input'] ?? []), true) || !in_array('text', (array) ($modalities['output'] ?? []), true)) {
+                continue;
+            }
+
+            $live = $nvidiaIds[$id] ?? $nvidiaIds[normalizeNvidiaModelId($id)] ?? null;
+
+            if ($live === null || in_array($live, NVIDIA_NIM_UNSUPPORTED_MODELS, true)) {
+                continue;
+            }
+
+            $id = $live;
+        }
+
+        if (in_array($provider, ['qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual'], true)
+            && (in_array($id, QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS, true)
+                || ($provider === 'qwen-token-plan-individual' && !in_array($id, QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS, true)))) {
+            continue;
+        }
+
+        // "models.dev may expose versioned aliases (e.g. k2p5/k2p6/k2p7). Normalize aliases to the
+        // canonical model id and drop duplicates when canonical exists."
+        $kimiAlias = $provider === 'kimi-coding' && in_array($id, KIMI_ALIASES, true);
+
+        if ($kimiAlias && array_key_exists('kimi-for-coding', $models)) {
+            continue;
+        }
+
+        if ($kimiAlias) {
+            $id = 'kimi-for-coding';
         }
 
         if (in_array($id, EXCLUDED[$provider] ?? [], true)) {
@@ -528,11 +923,12 @@ function rowsFor(array $catalogue, string $provider): array
         }
 
         $input = $from['modalities']['input'] ?? [];
-        $cost = $provider === 'zai' && is_array($catalogue['zai']['models'][$id]['cost'] ?? null)
+        $cost = in_array($provider, ['zai', 'zai-coding-cn'], true) && is_array($catalogue['zai']['models'][$id]['cost'] ?? null)
             ? $catalogue['zai']['models'][$id]['cost']
             : ($from['cost'] ?? null);
-        $tiers = $provider === 'mistral' || $provider === 'google-vertex' ? [] : tiers($cost);
+        $tiers = in_array($provider, ['mistral', 'google-vertex', 'kimi-coding', 'moonshotai', 'moonshotai-cn'], true) ? [] : tiers($cost);
         $reasoningOptions = is_array($from['reasoning_options'] ?? null) ? $from['reasoning_options'] : [];
+        $optionTypes = array_map(static fn (mixed $option): mixed => is_array($option) ? ($option['type'] ?? null) : null, $reasoningOptions);
         // Upstream's `recordModelsDevReasoningOptions(provider, id, m)`, read back by
         // `applyModelsDevReasoningOptionMetadata()`. That reader needs the model's api and compat
         // (`supportsDirectReasoningEffort()`), which pig works out in `Models::table()` and not
@@ -541,39 +937,121 @@ function rowsFor(array $catalogue, string $provider): array
         $effortLevelMap = in_array($provider, REASONING_OPTION_PROVIDERS, true) && is_array($model['reasoning_options'] ?? null)
             ? getEffortThinkingLevelMap($model['reasoning_options'])
             : null;
+        $reasoning = ($from['reasoning'] ?? null) === true
+            || ($provider === 'kimi-coding' && $id === 'k3')
+            || (($provider === 'moonshotai' || $provider === 'moonshotai-cn') && $id === 'kimi-k3');
+        $api = match ($provider) {
+            'fireworks' => str_contains($id, 'glm-') || str_contains($id, 'kimi-k3') ? Api::OpenAiCompletions : Api::AnthropicMessages,
+            'opencode', 'opencode-go' => opencodeApi($provider, $id, $model['provider']['npm'] ?? null),
+            default => null,
+        };
+        $glm52 = $id === 'zai-org/GLM-5.2' || $id === 'zai-org/GLM-5.2-Fast';
         $thinkingLevelMap = match ($provider) {
             'google', 'google-vertex' => getGoogleThinkingLevelMap($id, $reasoningOptions),
             'mistral' => getEffortThinkingLevelMap($reasoningOptions),
-            'zai' => zaiThinkingLevelMap($id, $reasoningOptions),
+            'zai', 'zai-coding-cn' => zaiThinkingLevelMap($id, $reasoningOptions),
+            'together' => getTogetherThinkingLevelMap($id, $reasoning),
+            'baseten' => match (true) {
+                $glm52 => BASETEN_GLM52_THINKING_LEVEL_MAP,
+                in_array('toggle', $optionTypes, true) => BASETEN_TOGGLE_THINKING_LEVEL_MAP,
+                default => getEffortThinkingLevelMap($reasoningOptions),
+            },
+            'opencode', 'opencode-go' => match (true) {
+                $api === Api::GoogleGenerativeAi => getGoogleThinkingLevelMap($id, $reasoningOptions),
+                $provider === 'opencode-go' && $id === 'deepseek-v4.1-flash' => getEffortThinkingLevelMap($reasoningOptions),
+                default => null,
+            },
+            'qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual' => getEffortThinkingLevelMap($reasoningOptions)
+                ?? (in_array($id, QWEN_TOKEN_PLAN_REASONING_EFFORT_FALLBACK_MODEL_IDS, true) ? QWEN_TOKEN_PLAN_FALLBACK_THINKING_LEVEL_MAP : null),
             default => null,
         };
         $in = (float) ($cost['input'] ?? 0);
+        $implied = $provider === 'kimi-coding' ? (KIMI_CODING_IMPLIED_COSTS[$id] ?? null) : null;
+        $kimiK3Cost = ($provider === 'moonshotai' || $provider === 'moonshotai-cn') && $id === 'kimi-k3';
+        // `m.cost?.input || implied?.input || 0`: a zero price is models.dev not knowing it.
+        $price = static fn (string $catalogueKey, string $rowKey): float => $kimiK3Cost
+            ? KIMI_K3_COST[$rowKey]
+            : ((float) ($cost[$catalogueKey] ?? 0) ?: (float) ($implied[$rowKey] ?? 0));
 
         $rows[$id] = [
-            'name' => is_string($model['name'] ?? null) && $model['name'] !== '' ? $model['name'] : $id,
-            'reasoning' => ($from['reasoning'] ?? null) === true,
-            'images' => is_array($input) && in_array('image', $input, true),
+            'name' => $kimiAlias ? 'Kimi For Coding' : (is_string($model['name'] ?? null) && $model['name'] !== '' ? $model['name'] : $id),
+            ...($api === null ? [] : ['api' => $api]),
+            'reasoning' => $reasoning,
+            'images' => is_array($input) && in_array('image', $input, true) && !($provider === 'baseten' && $glm52),
             'context' => (int) ($from['limit']['context'] ?? 0),
             'output' => (int) ($from['limit']['output'] ?? 0),
-            'input' => $in,
-            'out' => (float) ($cost['output'] ?? 0),
+            'input' => $kimiK3Cost || $implied !== null ? $price('input', 'input') : $in,
+            'out' => $kimiK3Cost || $implied !== null ? $price('output', 'out') : (float) ($cost['output'] ?? 0),
             // Mistral: `m.cost?.cache_read ?? (m.cost?.input ? roundCost(m.cost.input * 0.1) : 0)`.
             'cacheRead' => match (true) {
+                $kimiK3Cost || $implied !== null => $price('cache_read', 'cacheRead'),
                 $provider === 'mistral' && !is_numeric($cost['cache_read'] ?? null) => $in != 0.0 ? roundCost($in * 0.1) : 0.0,
                 $provider === 'google-vertex' && $id === 'gemini-2.5-flash' => 0.03,
                 default => (float) ($cost['cache_read'] ?? 0),
             },
-            'cacheWrite' => $provider === 'google-vertex' ? 0.0 : (float) ($cost['cache_write'] ?? 0),
+            'cacheWrite' => match (true) {
+                $kimiK3Cost || $implied !== null => $price('cache_write', 'cacheWrite'),
+                $provider === 'google-vertex' => 0.0,
+                default => (float) ($cost['cache_write'] ?? 0),
+            },
             ...($thinkingLevelMap === null ? [] : ['thinkingLevelMap' => $thinkingLevelMap]),
             ...($tiers === [] ? [] : ['tiers' => $tiers]),
             ...($effortLevelMap === null ? [] : ['effortLevelMap' => $effortLevelMap]),
             ...($provider === 'amazon-bedrock' && ($model['structured_output'] ?? null) === true ? ['strictMode' => true] : []),
+            ...(in_array($provider, ['baseten', 'fireworks'], true) && in_array('toggle', $optionTypes, true) ? ['supportsToggle' => true] : []),
+            ...(in_array($provider, ['baseten', 'fireworks'], true) && in_array('effort', $optionTypes, true) ? ['supportsEffort' => true] : []),
+            ...(($provider === 'opencode' || $provider === 'opencode-go') && $api === Api::OpenAiCompletions && ($model['provider']['npm'] ?? null) === '@ai-sdk/alibaba' ? ['cacheControlFormat' => 'anthropic'] : []),
         ];
     }
 
     ksort($rows);
 
     return $rows;
+}
+
+/**
+ * Upstream's OpenCode API mapping, "based on provider.npm field: @ai-sdk/openai → openai-responses,
+ * @ai-sdk/anthropic → anthropic-messages, @ai-sdk/google → google-generative-ai,
+ * null/undefined/@ai-sdk/openai-compatible → openai-completions" (`@ai-sdk/alibaba` too), then its fix
+ * for OpenCode Go: "models.dev reports these models as @ai-sdk/anthropic, but the OpenCode Go
+ * endpoints either don't accept Anthropic SDK auth (MiniMax M2.7) or are served through the
+ * OpenAI-compatible /v1/chat/completions path (Qwen 3.5/3.6)."
+ */
+function opencodeApi(string $provider, string $id, mixed $npm): Api
+{
+    if ($provider === 'opencode-go' && in_array($id, ['minimax-m2.7', 'qwen3.5-plus', 'qwen3.6-plus'], true)) {
+        return Api::OpenAiCompletions;
+    }
+
+    return match ($npm) {
+        '@ai-sdk/openai' => Api::OpenAiResponses,
+        '@ai-sdk/anthropic' => Api::AnthropicMessages,
+        '@ai-sdk/google' => Api::GoogleGenerativeAi,
+        default => Api::OpenAiCompletions,
+    };
+}
+
+/** Upstream's `normalizeNvidiaModelId()`. */
+function normalizeNvidiaModelId(string $modelId): string
+{
+    return str_replace('_', '.', strtolower($modelId));
+}
+
+/**
+ * Upstream's `getTogetherThinkingLevelMap()`: none for a model that does not reason, then by
+ * `TOGETHER_*_MODELS`.
+ *
+ * @return array<string, string|null>|null
+ */
+function getTogetherThinkingLevelMap(string $modelId, bool $reasoning): ?array
+{
+    return match (true) {
+        !$reasoning => null,
+        in_array($modelId, TOGETHER_REASONING_EFFORT_MODELS, true) => ['off' => null, 'minimal' => null],
+        in_array($modelId, TOGETHER_TOGGLE_REASONING_EFFORT_MODELS, true) => ['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null],
+        in_array($modelId, TOGETHER_REASONING_ONLY_MODELS, true) => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null],
+        default => ['minimal' => null, 'low' => null, 'medium' => null],
+    };
 }
 
 /**
@@ -851,6 +1329,765 @@ function applyOverrides(array $rows, string $provider): array
     return $rows;
 }
 
+/**
+ * Upstream's Azure clone, after its temporary overrides: every `openai` Responses row as an
+ * `azure-openai-responses` one, with `AZURE_CONTEXT_WINDOW_OVERRIDES`' window where it names one and
+ * the cost's four rates alone — `cost: {input, output, cacheRead, cacheWrite}`, so no tiers — and none
+ * of the metadata applied after the clone: no models.dev efforts (those are recorded under
+ * `openai:<id>`, which an `azure` row is not). Then the DeepSeek row.
+ *
+ * @param array<string, array<string, mixed>> $openai the `openai` rows as written
+ * @return array<string, array<string, mixed>>
+ */
+function azureRows(array $openai): array
+{
+    $rows = [];
+
+    foreach ($openai as $id => $row) {
+        $rows[$id] = [
+            'name' => $row['name'],
+            'reasoning' => $row['reasoning'],
+            'images' => $row['images'],
+            'context' => AZURE_CONTEXT_WINDOW_OVERRIDES[$id] ?? $row['context'],
+            'output' => $row['output'],
+            'input' => $row['input'],
+            'out' => $row['out'],
+            'cacheRead' => $row['cacheRead'],
+            'cacheWrite' => $row['cacheWrite'],
+            'api' => Api::AzureOpenAiResponses,
+        ];
+    }
+
+    $rows['deepseek-v4-pro'] = [...DEEPSEEK_ROWS['deepseek-v4-pro'], ...AZURE_DEEPSEEK_V4_PRO_COST, 'api' => Api::OpenAiCompletions];
+    ksort($rows);
+
+    return $rows;
+}
+
+/**
+ * `CODEX_MODELS` as rows.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function codexRows(): array
+{
+    $rows = [];
+
+    foreach (CODEX_MODELS as $id => [$name, $window, $images, $cost, $longContext]) {
+        $row = [
+            'name' => $name,
+            'reasoning' => true,
+            'images' => $images,
+            'context' => $window,
+            'output' => CODEX_MAX_TOKENS,
+            ...($cost === 'standard' ? OPENAI_STANDARD_COSTS[$id] : $cost),
+        ];
+        $rows[$id] = $longContext ? withOpenAiLongContextPricing($row) : $row;
+    }
+
+    ksort($rows);
+
+    return $rows;
+}
+
+/**
+ * Upstream's `fetchRadiusModels()`: the gateway's unauthenticated catalogue
+ * (`loadRadiusGatewayConfig(DEFAULT_RADIUS_GATEWAY)`, `getRadiusModelsFromConfig("radius", config)`),
+ * or the saved answer `--radius-from` names. A failure is printed and gives no rows, as upstream's
+ * non-strict run does — and an empty answer leaves the table as it is, as for every other provider.
+ * The rows are the models as the gateway sent them; the gateway's `baseUrl` is `Models`'
+ * `RADIUS_BASE_URL`, and one that is not is refused rather than written under the old one.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function radiusRows(?string $file): array
+{
+    try {
+        if ($file !== null) {
+            if (!is_readable($file)) {
+                fail("cannot read {$file}");
+            }
+
+            $text = (string) file_get_contents($file);
+            $config = RadiusConfig::getRadiusModelsFromConfig(
+                'radius',
+                RadiusConfig::sanitizeRadiusGatewayConfig(json_decode($text, false, flags: JSON_THROW_ON_ERROR))
+                    ?? throw new RuntimeException("Invalid Radius config in {$file}"),
+            );
+        } else {
+            printf("Fetching models from Radius API...\n");
+            $config = Async::run(static fn (): array => RadiusConfig::getRadiusModelsFromConfig(
+                'radius',
+                RadiusConfig::loadRadiusGatewayConfig(RadiusConfig::DEFAULT_RADIUS_GATEWAY),
+            ));
+        }
+
+        if ($config === []) {
+            throw new RuntimeException('Radius API returned no models');
+        }
+    } catch (Throwable $error) {
+        printf("  ! Failed to fetch Radius models: %s\n", $error->getMessage());
+
+        return [];
+    }
+
+    $rows = [];
+
+    foreach ($config as $model) {
+        if ($model->baseUrl !== Models::RADIUS_BASE_URL) {
+            fail("the Radius gateway serves {$model->id} at {$model->baseUrl}, and Models::RADIUS_BASE_URL says " . Models::RADIUS_BASE_URL . ' — change it there first');
+        }
+
+        $rows[$model->id] = [
+            'name' => $model->name,
+            'reasoning' => $model->reasoning,
+            'images' => in_array('image', $model->input, true),
+            'context' => $model->contextWindow,
+            'output' => $model->maxTokens,
+            'input' => $model->pricing->input,
+            'out' => $model->pricing->output,
+            'cacheRead' => $model->pricing->cacheRead,
+            'cacheWrite' => $model->pricing->cacheWrite,
+            ...($model->thinkingLevelMap === [] ? [] : ['thinkingLevelMap' => $model->thinkingLevelMap]),
+            ...($model->pricing->tiers === [] ? [] : ['tiers' => array_map(
+                static fn (Pig\Ai\PricingTier $tier): array => [$tier->inputTokensAbove, $tier->input, $tier->output, $tier->cacheRead, $tier->cacheWrite],
+                $model->pricing->tiers,
+            )]),
+        ];
+    }
+
+    ksort($rows);
+
+    return $rows;
+}
+
+/**
+ * A JSON document from a saved file, or fetched — the way `catalogue()` reads models.dev's.
+ *
+ * @return array<mixed>
+ */
+function fetchedJson(?string $file, string $url): array
+{
+    // One answer per source for the run: the chat, image and classifier rows of OpenRouter and Vercel
+    // each read the listing they share, as upstream reads it once.
+    static $answers = [];
+    $key = ($file ?? '') . "\0" . $url;
+
+    if (isset($answers[$key])) {
+        return $answers[$key];
+    }
+
+    return $answers[$key] = fetchedJsonOnce($file, $url);
+}
+
+/** @return array<mixed> */
+function fetchedJsonOnce(?string $file, string $url): array
+{
+    if ($file !== null) {
+        if (!is_readable($file)) {
+            fail("cannot read {$file}");
+        }
+
+        $text = (string) file_get_contents($file);
+    } else {
+        printf("fetching %s\n", $url);
+        $text = Async::run(static function () use ($url): string {
+            $response = (new HttpClient())->follow(new Request('GET', $url, ['accept' => 'application/json']));
+
+            if (!$response->isSuccessful()) {
+                throw new RuntimeException(sprintf('%s answered %d', $url, $response->status));
+            }
+
+            return $response->body->all();
+        });
+    }
+
+    return json_decode($text, true, flags: JSON_THROW_ON_ERROR);
+}
+
+/**
+ * Upstream's `fetchNvidiaNimModelIds()`: NIM's ids, each under itself and under
+ * `normalizeNvidiaModelId()` of itself. Asked only when the catalogue has `nvidia` models, as upstream
+ * asks; a failure is printed and gives no ids — so no NVIDIA rows, and its table is left alone.
+ *
+ * @param array<string, mixed> $catalogue
+ * @return array<string, string>
+ */
+function nvidiaIds(array $catalogue, ?string $file): array
+{
+    if (!is_array($catalogue['nvidia']['models'] ?? null)) {
+        return [];
+    }
+
+    try {
+        $data = fetchedJson($file, NVIDIA_MODELS_URL);
+    } catch (Throwable $error) {
+        printf("  ! Failed to fetch NVIDIA NIM models: %s\n", $error->getMessage());
+
+        return [];
+    }
+
+    $ids = [];
+
+    foreach (is_array($data['data'] ?? null) ? $data['data'] : [] as $model) {
+        if (is_array($model) && is_string($model['id'] ?? null)) {
+            $ids[$model['id']] = $model['id'];
+            $ids[normalizeNvidiaModelId($model['id'])] = $model['id'];
+        }
+    }
+
+    return $ids;
+}
+
+/**
+ * Upstream's `fetchOpenRouterModels()`, the chat half of `buildOpenRouterCatalog()`: every model of
+ * the default listing whose `supported_parameters` has `tools`; images when `architecture.modality`
+ * mentions them; `anthropic/…` models (not `:batch` ones) on the Messages API; reasoning when
+ * `supported_parameters` has `reasoning`; the map `getOpenRouterThinkingLevelMap()`'s; the price per
+ * million from the price per token, its `min_prompt_tokens` overrides as tiers ("Time-of-day
+ * overrides are skipped because ModelCost cannot express them"); the window and output cap
+ * `top_provider`'s, else 4,096. A failure is printed and gives no rows.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function openRouterRows(?string $file): array
+{
+    try {
+        $data = fetchedJson($file, OPENROUTER_MODELS_URL);
+    } catch (Throwable $error) {
+        printf("  ! Failed to fetch OpenRouter models: %s\n", $error->getMessage());
+
+        return [];
+    }
+
+    $rows = [];
+
+    foreach (is_array($data['data'] ?? null) ? $data['data'] : [] as $model) {
+        if (!is_array($model) || !is_string($model['id'] ?? null) || !in_array('tools', (array) ($model['supported_parameters'] ?? []), true)) {
+            continue;
+        }
+
+        $id = $model['id'];
+        $messages = str_starts_with($id, 'anthropic/') && !str_ends_with($id, ':batch');
+        $map = getOpenRouterThinkingLevelMap(is_array($model['reasoning'] ?? null) ? $model['reasoning'] : null);
+        [$prices, $tiers] = openRouterCost(is_array($model['pricing'] ?? null) ? $model['pricing'] : []);
+
+        $rows[$id] = [
+            'name' => (string) ($model['name'] ?? $id),
+            'api' => $messages ? Api::AnthropicMessages : Api::OpenAiCompletions,
+            'reasoning' => in_array('reasoning', (array) $model['supported_parameters'], true),
+            'images' => str_contains((string) ($model['architecture']['modality'] ?? ''), 'image'),
+            'context' => (int) (($model['top_provider']['context_length'] ?? 0) ?: ($model['context_length'] ?? 0) ?: 4_096),
+            'output' => (int) (($model['top_provider']['max_completion_tokens'] ?? 0) ?: 4_096),
+            ...$prices,
+            ...($map === null ? [] : ['thinkingLevelMap' => $map]),
+            ...($tiers === [] ? [] : ['tiers' => $tiers]),
+        ];
+    }
+
+    ksort($rows);
+
+    return $rows;
+}
+
+/**
+ * `openrouter-catalog.ts`' `cost()`: `perMillion(value, fallback)` is `value ? roundCost(parseFloat(value)
+ * * 1_000_000) : fallback` — an empty price is the fallback, `"0"` is zero.
+ *
+ * @param array<string, mixed> $pricing
+ * @return array{0: array{input: float, out: float, cacheRead: float, cacheWrite: float}, 1: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>}
+ */
+function openRouterCost(array $pricing): array
+{
+    $perMillion = static fn (mixed $value, float $fallback): float => is_string($value) && $value !== '' ? roundCost((float) $value * 1_000_000) : $fallback;
+    $base = [
+        'input' => $perMillion($pricing['prompt'] ?? null, 0.0),
+        'out' => $perMillion($pricing['completion'] ?? null, 0.0),
+        'cacheRead' => $perMillion($pricing['input_cache_read'] ?? null, 0.0),
+        'cacheWrite' => $perMillion($pricing['input_cache_write'] ?? null, 0.0),
+    ];
+    $tiers = [];
+
+    foreach (is_array($pricing['overrides'] ?? null) ? $pricing['overrides'] : [] as $override) {
+        if (!is_array($override) || !is_numeric($override['min_prompt_tokens'] ?? null)
+            || array_key_exists('utc_start', $override) || array_key_exists('utc_end', $override) || array_key_exists('utc_days', $override)) {
+            continue;
+        }
+
+        $tiers[] = [
+            (int) $override['min_prompt_tokens'],
+            $perMillion($override['prompt'] ?? null, $base['input']),
+            $perMillion($override['completion'] ?? null, $base['out']),
+            $perMillion($override['input_cache_read'] ?? null, $base['cacheRead']),
+            $perMillion($override['input_cache_write'] ?? null, $base['cacheWrite']),
+        ];
+    }
+
+    return [$base, $tiers];
+}
+
+/**
+ * Upstream's `getOpenRouterThinkingLevelMap()`: "Convert OpenRouter's reasoning metadata into Pi model
+ * capabilities" — no map without metadata, `{off: null}` alone for a mandatory reasoner that lists no
+ * efforts, else the efforts' map with `off` null when reasoning is mandatory and `none` when it is not.
+ *
+ * @param array<string, mixed>|null $reasoning
+ * @return array<string, string|null>|null
+ */
+function getOpenRouterThinkingLevelMap(?array $reasoning): ?array
+{
+    if ($reasoning === null) {
+        return null;
+    }
+
+    $mandatory = ($reasoning['mandatory'] ?? null) === true;
+    $efforts = is_array($reasoning['supported_efforts'] ?? null) ? $reasoning['supported_efforts'] : [];
+    $map = $efforts === [] ? null : getEffortThinkingLevelMap([['type' => 'effort', 'values' => $efforts]]);
+
+    if ($map === null) {
+        return $mandatory ? ['off' => null] : null;
+    }
+
+    return [...$map, 'off' => $mandatory ? null : 'none'];
+}
+
+/**
+ * Upstream's `fetchAiGatewayModels()`: every model of Vercel's listing tagged `tool-use` (an
+ * `evaluation` model is a classifier, which is another API), images when tagged `vision`, reasoning
+ * when tagged `reasoning`, priced by `getAiGatewayCost()`, the window and output cap the listing's or
+ * 4,096. A failure is printed and gives no rows.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function aiGatewayRows(?string $file): array
+{
+    try {
+        $data = fetchedJson($file, AI_GATEWAY_MODELS_URL);
+    } catch (Throwable $error) {
+        printf("  ! Failed to fetch Vercel AI Gateway models: %s\n", $error->getMessage());
+
+        return [];
+    }
+
+    $rows = [];
+
+    foreach (is_array($data['data'] ?? null) ? $data['data'] : [] as $model) {
+        if (!is_array($model) || !is_string($model['id'] ?? null) || ($model['type'] ?? null) === 'evaluation') {
+            continue;
+        }
+
+        $tags = is_array($model['tags'] ?? null) ? $model['tags'] : [];
+
+        if (!in_array('tool-use', $tags, true)) {
+            continue;
+        }
+
+        [$prices, $tiers] = aiGatewayCost(is_array($model['pricing'] ?? null) ? $model['pricing'] : []);
+        $rows[$model['id']] = [
+            'name' => is_string($model['name'] ?? null) && $model['name'] !== '' ? $model['name'] : $model['id'],
+            'reasoning' => in_array('reasoning', $tags, true),
+            'images' => in_array('vision', $tags, true),
+            'context' => (int) (($model['context_window'] ?? 0) ?: 4_096),
+            'output' => (int) (($model['max_tokens'] ?? 0) ?: 4_096),
+            ...$prices,
+            ...($tiers === [] ? [] : ['tiers' => $tiers]),
+        ];
+    }
+
+    ksort($rows);
+
+    return $rows;
+}
+
+/**
+ * `ai-gateway-pricing.ts`' `getAiGatewayCost()`: "Convert AI Gateway pricing to $/million tokens. Each
+ * rate lists its own prompt-length brackets; every bracket start above zero becomes a request-wide
+ * tier with the rates in effect there" — `inputTokensAbove` one below the bracket's `min`.
+ *
+ * @param array<string, mixed> $pricing
+ * @return array{0: array{input: float, out: float, cacheRead: float, cacheWrite: float}, 1: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>}
+ */
+function aiGatewayCost(array $pricing): array
+{
+    $perMillion = static function (mixed $value): float {
+        $parsed = is_int($value) || is_float($value) ? (float) $value : (is_numeric($value) ? (float) $value : NAN);
+
+        return is_finite($parsed) ? round($parsed * 1_000_000, 6) : 0.0;
+    };
+    $fields = [['input', 'input_tiers', 'input'], ['out', 'output_tiers', 'output'], ['cacheRead', 'input_cache_read_tiers', 'input_cache_read'], ['cacheWrite', 'input_cache_write_tiers', 'input_cache_write']];
+    $base = [];
+
+    foreach ($fields as [$rate, , $key]) {
+        $base[$rate] = $perMillion($pricing[$key] ?? '0');
+    }
+
+    $starts = [];
+
+    foreach ($fields as [, $tierKey]) {
+        foreach (is_array($pricing[$tierKey] ?? null) ? $pricing[$tierKey] : [] as $bracket) {
+            if (is_array($bracket) && is_numeric($bracket['min'] ?? null) && $bracket['min'] > 0) {
+                $starts[(int) $bracket['min']] = true;
+            }
+        }
+    }
+
+    $starts = array_keys($starts);
+    sort($starts);
+    $tiers = [];
+
+    foreach ($starts as $start) {
+        $tier = [$start - 1, $base['input'], $base['out'], $base['cacheRead'], $base['cacheWrite']];
+
+        foreach ($fields as $index => [, $tierKey]) {
+            foreach (is_array($pricing[$tierKey] ?? null) ? $pricing[$tierKey] : [] as $bracket) {
+                if (is_array($bracket) && (float) ($bracket['min'] ?? 0) <= $start
+                    && (!array_key_exists('max', $bracket) || $start < $bracket['max'])) {
+                    if (array_key_exists('cost', $bracket)) {
+                        $tier[$index + 1] = $perMillion($bracket['cost']);
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        $tiers[] = $tier;
+    }
+
+    return [$base, $tiers];
+}
+
+/**
+ * The Cloudflare AI Gateway arm of upstream's `loadModelsDevData()`: every tool-calling model of
+ * models.dev's `cloudflare-ai-gateway` entry by the upstream its id names — `openai/…` on the
+ * Responses passthrough under its own id, `anthropic/…` on the Messages one under the dashed id
+ * ("models.dev lists dotted versions (claude-opus-5.5), but Anthropic only accepts dashed IDs
+ * (claude-opus-5-5)"), `workers-ai/…` on `/compat` under the whole id, anything else skipped — and
+ * then "the Workers AI catalog under the documented prefix so the gateway keeps its
+ * OpenAI-compatible models stable", where the gateway's own entry does not already have the id.
+ * Then the temporary override "Cloudflare AI Gateway passes OpenAI usage through at OpenAI list
+ * prices": `withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id])` where there is one.
+ *
+ * The compat (`sendSessionAffinityHeaders` on the Anthropic and Workers AI rows) is `Models`'.
+ *
+ * @param array<string, mixed> $catalogue
+ * @return array<string, array<string, mixed>>
+ */
+function cloudflareAiGatewayRows(array $catalogue): array
+{
+    $sources = [];
+
+    foreach (is_array($catalogue['cloudflare-ai-gateway']['models'] ?? null) ? $catalogue['cloudflare-ai-gateway']['models'] : [] as $prefixedId => $model) {
+        $slash = is_string($prefixedId) ? strpos($prefixedId, '/') : false;
+
+        if (!is_array($model) || ($model['tool_call'] ?? null) !== true || $slash === false) {
+            continue;
+        }
+
+        $upstream = substr($prefixedId, 0, $slash);
+        $nativeId = substr($prefixedId, $slash + 1);
+        [$api, $id] = match ($upstream) {
+            'openai' => [Api::OpenAiResponses, $nativeId],
+            'anthropic' => [Api::AnthropicMessages, str_replace('.', '-', $nativeId)],
+            'workers-ai' => [Api::OpenAiCompletions, $prefixedId],
+            default => [null, null],
+        };
+
+        if ($api !== null) {
+            $sources[$id] = [$api, $model];
+        }
+    }
+
+    foreach (is_array($catalogue['cloudflare-workers-ai']['models'] ?? null) ? $catalogue['cloudflare-workers-ai']['models'] : [] as $modelId => $model) {
+        $id = "workers-ai/{$modelId}";
+
+        if (is_array($model) && ($model['tool_call'] ?? null) === true && !isset($sources[$id])) {
+            $sources[$id] = [Api::OpenAiCompletions, $model];
+        }
+    }
+
+    $rows = [];
+
+    foreach ($sources as $id => [$api, $model]) {
+        $cost = is_array($model['cost'] ?? null) ? $model['cost'] : [];
+        $effortLevelMap = is_array($model['reasoning_options'] ?? null) ? getEffortThinkingLevelMap($model['reasoning_options']) : null;
+        $tiers = tiers($cost);
+        $row = [
+            'name' => is_string($model['name'] ?? null) && $model['name'] !== '' ? $model['name'] : $id,
+            'api' => $api,
+            'reasoning' => ($model['reasoning'] ?? null) === true,
+            'images' => in_array('image', (array) ($model['modalities']['input'] ?? []), true),
+            'context' => (int) ($model['limit']['context'] ?? 0),
+            'output' => (int) ($model['limit']['output'] ?? 0),
+            'input' => (float) ($cost['input'] ?? 0),
+            'out' => (float) ($cost['output'] ?? 0),
+            'cacheRead' => (float) ($cost['cache_read'] ?? 0),
+            'cacheWrite' => (float) ($cost['cache_write'] ?? 0),
+            ...($tiers === [] ? [] : ['tiers' => $tiers]),
+            ...($effortLevelMap === null ? [] : ['effortLevelMap' => $effortLevelMap]),
+        ];
+        $rows[(string) $id] = isset(OPENAI_STANDARD_COSTS[$id]) ? withOpenAiLongContextPricing([...$row, ...OPENAI_STANDARD_COSTS[$id]]) : $row;
+    }
+
+    ksort($rows);
+
+    return fillLimits($rows, 'cloudflare-ai-gateway', 4_096, 4_096);
+}
+
+/**
+ * Every built-in classifier row, keyed `provider/id` — upstream's `classifierModels`, in its order
+ * and first one winning: models.dev's decision model (`loadModelsDevClassifierModels()`: TypeSafe's
+ * `jev-latest`, "The canonical models.dev entry has no direct-provider pricing", its window or
+ * 64,000), OpenRouter's `?output_modalities=decisions` listing (`buildOpenRouterCatalog()`: a model
+ * whose output modalities include `decisions`, its input modalities or text, its price per million,
+ * `top_provider.context_length` or `context_length` or 4,096), Vercel's `evaluation` models
+ * (`fetchAiGatewayModels()`, text in, `context_window` or 4,096), and `HAND_KEPT_CLASSIFIERS`. A
+ * source that cannot be read is printed and gives none; nothing at all leaves the table as it is.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function classifierRows(?string $decisionsFile, ?string $openRouterDecisionsFile, ?string $vercelFile): array
+{
+    $rows = [];
+
+    try {
+        $metadata = fetchedJson($decisionsFile, MODELS_DEV_DECISIONS)['typesafe/jev-latest'] ?? null;
+
+        if (!is_array($metadata) || ($metadata['type'] ?? null) !== 'decision') {
+            throw new RuntimeException('models.dev did not return decision model typesafe/jev-latest');
+        }
+
+        $rows['typesafe/jev-latest'] = [
+            'name' => (string) ($metadata['name'] ?? 'jev-latest'),
+            'api' => ClassifierApi::TypesafeSystemOne,
+            'baseUrl' => 'https://api.typesafe.ai/v1/',
+            'context' => (int) (($metadata['limit']['context'] ?? 0) ?: 64_000),
+            'input' => in_array('image', (array) ($metadata['modalities']['input'] ?? []), true) ? ['text', 'image'] : ['text'],
+            'in' => 0.0, 'out' => 0.0, 'cacheRead' => 0.0, 'cacheWrite' => 0.0,
+        ];
+    } catch (Throwable $error) {
+        printf("  ! Failed to load models.dev classifier data: %s\n", $error->getMessage());
+    }
+
+    try {
+        foreach ((array) (fetchedJson($openRouterDecisionsFile, OPENROUTER_MODELS_URL . '?output_modalities=decisions')['data'] ?? []) as $model) {
+            if (!is_array($model) || !is_string($model['id'] ?? null) || isset($rows['openrouter/' . $model['id']])
+                || !in_array('decisions', (array) ($model['architecture']['output_modalities'] ?? []), true)) {
+                continue;
+            }
+
+            [$prices] = openRouterCost(is_array($model['pricing'] ?? null) ? $model['pricing'] : []);
+            $input = openRouterModalities($model['architecture']['input_modalities'] ?? null);
+            $rows['openrouter/' . $model['id']] = [
+                'name' => (string) ($model['name'] ?? $model['id']),
+                'api' => ClassifierApi::TypesafeSystemOne,
+                'baseUrl' => 'https://openrouter.ai/api/v1',
+                'context' => (int) (($model['top_provider']['context_length'] ?? 0) ?: ($model['context_length'] ?? 0) ?: 4_096),
+                'input' => $input !== [] ? $input : ['text'],
+                'in' => $prices['input'], 'out' => $prices['out'], 'cacheRead' => $prices['cacheRead'], 'cacheWrite' => $prices['cacheWrite'],
+            ];
+        }
+    } catch (Throwable $error) {
+        printf("  ! Failed to fetch OpenRouter decision models: %s\n", $error->getMessage());
+    }
+
+    try {
+        foreach ((array) (fetchedJson($vercelFile, AI_GATEWAY_MODELS_URL)['data'] ?? []) as $model) {
+            if (!is_array($model) || !is_string($model['id'] ?? null) || ($model['type'] ?? null) !== 'evaluation' || isset($rows['vercel-ai-gateway/' . $model['id']])) {
+                continue;
+            }
+
+            $perMillion = static fn (mixed $value): float => roundCost((is_numeric($value) ? (float) $value : 0.0) * 1_000_000);
+            $rows['vercel-ai-gateway/' . $model['id']] = [
+                'name' => is_string($model['name'] ?? null) && $model['name'] !== '' ? $model['name'] : $model['id'],
+                'api' => ClassifierApi::TypesafeSystemOne,
+                'baseUrl' => AI_GATEWAY_TYPESAFE_BASE_URL,
+                'context' => (int) (($model['context_window'] ?? 0) ?: 4_096),
+                'input' => ['text'],
+                'in' => $perMillion($model['pricing']['input'] ?? null), 'out' => $perMillion($model['pricing']['output'] ?? null), 'cacheRead' => 0.0, 'cacheWrite' => 0.0,
+            ];
+        }
+    } catch (Throwable $error) {
+        printf("  ! Failed to fetch Vercel AI Gateway classifier models: %s\n", $error->getMessage());
+    }
+
+    foreach (HAND_KEPT_CLASSIFIERS as $key => $row) {
+        $rows[$key] ??= $row;
+    }
+
+    ksort($rows);
+
+    return $rows;
+}
+
+/**
+ * OpenRouter's image models, keyed `provider/id` — the image half of `buildOpenRouterCatalog()`:
+ * every model of the `?output_modalities=image` listing whose output modalities include `image`,
+ * its input modalities (text when it lists none), its price per million. A listing that cannot be
+ * read is printed and gives none.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function imageRows(?string $file): array
+{
+    try {
+        $data = fetchedJson($file, OPENROUTER_MODELS_URL . '?output_modalities=image');
+    } catch (Throwable $error) {
+        printf("  ! Failed to fetch OpenRouter image models: %s\n", $error->getMessage());
+
+        return [];
+    }
+
+    $rows = [];
+
+    foreach ((array) ($data['data'] ?? []) as $model) {
+        if (!is_array($model) || !is_string($model['id'] ?? null) || isset($rows['openrouter/' . $model['id']])) {
+            continue;
+        }
+
+        $output = openRouterModalities($model['architecture']['output_modalities'] ?? null);
+
+        if (!in_array('image', $output, true)) {
+            continue;
+        }
+
+        [$prices] = openRouterCost(is_array($model['pricing'] ?? null) ? $model['pricing'] : []);
+        $input = openRouterModalities($model['architecture']['input_modalities'] ?? null);
+        $rows['openrouter/' . $model['id']] = [
+            'name' => (string) ($model['name'] ?? $model['id']),
+            'api' => ImageApi::OpenRouterImages,
+            'baseUrl' => 'https://openrouter.ai/api/v1',
+            'input' => $input !== [] ? $input : ['text'],
+            'output' => $output,
+            'in' => $prices['input'], 'out' => $prices['out'], 'cacheRead' => $prices['cacheRead'], 'cacheWrite' => $prices['cacheWrite'],
+        ];
+    }
+
+    ksort($rows);
+
+    return $rows;
+}
+
+/**
+ * `openrouter-catalog.ts`' `modalities()`: the `text` and `image` entries, once each, in the order
+ * listed.
+ *
+ * @return list<string>
+ */
+function openRouterModalities(mixed $values): array
+{
+    return array_values(array_unique(array_filter((array) $values, static fn (mixed $value): bool => $value === 'text' || $value === 'image')));
+}
+
+/**
+ * `CLASSIFIER_MODELS`' rows as the PHP text between its markers.
+ *
+ * @param array<string, array<string, mixed>> $rows
+ */
+function renderClassifiers(array $rows): string
+{
+    return implode("\n", array_map(static fn (string $key, array $row): string => sprintf(
+        '        %s => [%s, ClassifierApi::%s, %s, %s, %s, %s, %s, %s, %s],',
+        var_export($key, true),
+        var_export($row['name'], true),
+        $row['api']->name,
+        var_export($row['baseUrl'], true),
+        grouped((int) $row['context']),
+        listOf($row['input']),
+        money((float) $row['in']),
+        money((float) $row['out']),
+        money((float) $row['cacheRead']),
+        money((float) $row['cacheWrite']),
+    ), array_keys($rows), $rows));
+}
+
+/**
+ * `IMAGE_MODELS`' rows as the PHP text between its markers.
+ *
+ * @param array<string, array<string, mixed>> $rows
+ */
+function renderImages(array $rows): string
+{
+    return implode("\n", array_map(static fn (string $key, array $row): string => sprintf(
+        '        %s => [%s, ImageApi::%s, %s, %s, %s, %s, %s, %s, %s],',
+        var_export($key, true),
+        var_export($row['name'], true),
+        $row['api']->name,
+        var_export($row['baseUrl'], true),
+        listOf($row['input']),
+        listOf($row['output']),
+        money((float) $row['in']),
+        money((float) $row['out']),
+        money((float) $row['cacheRead']),
+        money((float) $row['cacheWrite']),
+    ), array_keys($rows), $rows));
+}
+
+/** @param list<string> $values */
+function listOf(array $values): string
+{
+    return '[' . implode(', ', array_map(static fn (string $value): string => var_export($value, true), $values)) . ']';
+}
+
+/**
+ * The lines of upstream's "Temporary overrides until upstream model metadata is corrected" loop for
+ * the providers `CATALOGUE_PROVIDERS` holds, applied every run and silently as
+ * `openAiTemporaryOverrides()` is:
+ *
+ * - OpenCode Zen and Go: Claude Opus/Sonnet 4.6 at a 1,000,000 window, "OpenCode variants list Claude
+ *   Sonnet 4/4.5 with 1M context, actual limit is 200K", GPT-5.4 at 272,000 and 128,000;
+ * - OpenRouter: "Keep Kimi K3's canonical output limit when gateway metadata is missing or incorrect"
+ *   (`OPENROUTER_KIMI_K3_MODEL_IDS`), and "Keep selected OpenRouter model metadata stable until
+ *   upstream settles" — Kimi K2.5's price and output cap, GLM-5's price;
+ * - Vercel AI Gateway: Kimi K3's output cap;
+ * - MiniMax: only `MINIMAX_DIRECT_SUPPORTED_IDS` are kept.
+ *
+ * @param array<string, array<string, mixed>> $rows
+ * @return array<string, array<string, mixed>>
+ */
+function catalogueTemporaryOverrides(array $rows, string $provider): array
+{
+    foreach ($rows as $id => $row) {
+        if ($provider === 'opencode' || $provider === 'opencode-go') {
+            if (in_array($id, ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4.6', 'claude-sonnet-4.6'], true)) {
+                $row['context'] = 1_000_000;
+            }
+
+            if ($id === 'claude-sonnet-4-5' || $id === 'claude-sonnet-4') {
+                $row['context'] = 200_000;
+            }
+
+            if ($id === 'gpt-5.4') {
+                $row['context'] = 272_000;
+                $row['output'] = 128_000;
+            }
+        }
+
+        if (($provider === 'openrouter' && in_array($id, OPENROUTER_KIMI_K3_MODEL_IDS, true))
+            || ($provider === 'vercel-ai-gateway' && $id === 'moonshotai/kimi-k3')) {
+            $row['output'] = KIMI_K3_MAX_TOKENS;
+        }
+
+        if ($provider === 'openrouter' && $id === 'moonshotai/kimi-k2.5') {
+            $row = [...$row, 'input' => 0.41, 'out' => 2.06, 'cacheRead' => 0.07, 'output' => 4_096];
+        }
+
+        if ($provider === 'openrouter' && $id === 'z-ai/glm-5') {
+            $row = [...$row, 'input' => 0.6, 'out' => 1.9, 'cacheRead' => 0.119];
+        }
+
+        if (($provider === 'minimax' || $provider === 'minimax-cn') && !in_array($id, MINIMAX_DIRECT_SUPPORTED_IDS, true)) {
+            unset($rows[$id]);
+
+            continue;
+        }
+
+        $rows[$id] = $row;
+    }
+
+    return $rows;
+}
+
 /** A number the table writes with underscores, as every row in it already does. */
 function grouped(int $value): string
 {
@@ -887,6 +2124,8 @@ function render(array $rows, string $constant): string
 
         if ($constant === 'COPILOT_MODELS') {
             $cells[] = 'Api::' . copilotApi($id)->name;
+        } elseif (in_array($constant, API_COLUMN_TABLES, true)) {
+            $cells[] = 'Api::' . $row['api']->name;
         }
 
         $cells[] = grouped((int) $row['context']);
@@ -923,6 +2162,17 @@ function render(array $rows, string $constant): string
         // Bedrock's `compat: {supportsStrictMode: true}`.
         if (($row['strictMode'] ?? false) === true) {
             $cells[] = "'strictMode' => true";
+        }
+
+        // What `Models` picks Baseten's and Fireworks' compat by, and an OpenCode `@ai-sdk/alibaba` model's.
+        foreach (['supportsToggle', 'supportsEffort'] as $flag) {
+            if (($row[$flag] ?? false) === true) {
+                $cells[] = "'{$flag}' => true";
+            }
+        }
+
+        if (isset($row['cacheControlFormat'])) {
+            $cells[] = "'cacheControlFormat' => " . var_export($row['cacheControlFormat'], true);
         }
 
         $lines[] = sprintf("        %s => [%s],", var_export($id, true), implode(', ', $cells));
@@ -1068,6 +2318,13 @@ function report(array $before, array $after): void
 // ---- the run -------------------------------------------------------------------------------
 
 $from = null;
+$radiusFrom = null;
+$openRouterFrom = null;
+$vercelFrom = null;
+$nvidiaFrom = null;
+$decisionsFrom = null;
+$openRouterImagesFrom = null;
+$openRouterDecisionsFrom = null;
 $dryRun = false;
 
 for ($i = 1; $i < $argc; $i++) {
@@ -1075,8 +2332,22 @@ for ($i = 1; $i < $argc; $i++) {
         $dryRun = true;
     } elseif ($argv[$i] === '--from' && isset($argv[$i + 1])) {
         $from = $argv[++$i];
+    } elseif ($argv[$i] === '--radius-from' && isset($argv[$i + 1])) {
+        $radiusFrom = $argv[++$i];
+    } elseif ($argv[$i] === '--openrouter-from' && isset($argv[$i + 1])) {
+        $openRouterFrom = $argv[++$i];
+    } elseif ($argv[$i] === '--vercel-from' && isset($argv[$i + 1])) {
+        $vercelFrom = $argv[++$i];
+    } elseif ($argv[$i] === '--nvidia-from' && isset($argv[$i + 1])) {
+        $nvidiaFrom = $argv[++$i];
+    } elseif ($argv[$i] === '--decisions-from' && isset($argv[$i + 1])) {
+        $decisionsFrom = $argv[++$i];
+    } elseif ($argv[$i] === '--openrouter-images-from' && isset($argv[$i + 1])) {
+        $openRouterImagesFrom = $argv[++$i];
+    } elseif ($argv[$i] === '--openrouter-decisions-from' && isset($argv[$i + 1])) {
+        $openRouterDecisionsFrom = $argv[++$i];
     } else {
-        fail("unknown argument {$argv[$i]} — usage: generate-models.php [--from <file>] [--dry-run]");
+        fail("unknown argument {$argv[$i]} — usage: generate-models.php [--from <file>] [--radius-from <file>] [--openrouter-from <file>] [--vercel-from <file>] [--nvidia-from <file>] [--decisions-from <file>] [--openrouter-images-from <file>] [--openrouter-decisions-from <file>] [--dry-run]");
     }
 }
 
@@ -1084,13 +2355,22 @@ $before = currently();
 $catalogue = catalogue($from);
 $source = (string) file_get_contents(TABLE);
 $counts = [];
+$openaiRows = [];
+$nvidiaIds = nvidiaIds($catalogue, $nvidiaFrom);
 
 foreach (DIRECT as $provider => [$constant]) {
     printf("%s\n", $provider);
-    $rows = openAiTemporaryOverrides(applyOverrides(fillLimits(rowsFor($catalogue, $provider), $provider, 4_096, 4_096), $provider), $provider);
+    $rows = catalogueTemporaryOverrides(
+        openAiTemporaryOverrides(applyOverrides(fillLimits(rowsFor($catalogue, $provider, $nvidiaIds), $provider, 4_096, 4_096), $provider), $provider),
+        $provider,
+    );
 
     if ($provider === 'anthropic') {
         assertImages($rows);
+    }
+
+    if ($provider === 'openai') {
+        $openaiRows = $rows;
     }
 
     if ($rows === []) {
@@ -1124,6 +2404,63 @@ if ($copilot !== []) {
     }
 } else {
     printf("  ! nothing to write for github-copilot, so its table is left as it is\n");
+}
+
+// Derived and hand-listed tables, after the catalogue's: Azure is a clone of what was just written
+// for `openai`, Codex, DeepSeek and Ant Ling are upstream's explicit lists, Radius, OpenRouter and
+// Vercel's AI Gateway are their own catalogues.
+$openRouter = openRouterRows($openRouterFrom);
+$derived = [
+    'azure' => ['AZURE_MODELS', $openaiRows === [] ? [] : azureRows($openaiRows)],
+    'openai-codex' => ['OPENAI_CODEX_MODELS', codexRows()],
+    'radius' => ['RADIUS_MODELS', radiusRows($radiusFrom)],
+    'deepseek' => ['DEEPSEEK_MODELS', DEEPSEEK_ROWS],
+    'ant-ling' => ['ANT_LING_MODELS', ANT_LING_ROWS],
+    // The hand-added aliases only beside a listing that arrived: an empty one leaves the table alone.
+    'openrouter' => ['OPENROUTER_MODELS', $openRouter === [] ? [] : applyOverrides(catalogueTemporaryOverrides($openRouter, 'openrouter'), 'openrouter')],
+    'vercel-ai-gateway' => ['VERCEL_AI_GATEWAY_MODELS', catalogueTemporaryOverrides(aiGatewayRows($vercelFrom), 'vercel-ai-gateway')],
+    'cloudflare-ai-gateway' => ['CLOUDFLARE_AI_GATEWAY_MODELS', cloudflareAiGatewayRows($catalogue)],
+];
+
+foreach ($derived as $provider => [$constant, $rows]) {
+    printf("%s\n", $provider);
+
+    if ($rows === []) {
+        printf("  ! nothing to write for %s, so its table is left as it is\n", $provider);
+
+        continue;
+    }
+
+    $rendered = render($rows, $constant);
+    $source = splice($source, $constant, $rendered);
+    $counts[$provider] = count($rows);
+
+    if ($dryRun) {
+        printf("%s\n", $rendered);
+    }
+}
+
+// The classifier and image models, which are their own tables (`Models::CLASSIFIER_MODELS`,
+// `IMAGE_MODELS`) as upstream keeps chat, image and classifier catalogues apart.
+foreach ([
+    'classifiers' => ['CLASSIFIER_MODELS', classifierRows($decisionsFrom, $openRouterDecisionsFrom, $vercelFrom), renderClassifiers(...)],
+    'images' => ['IMAGE_MODELS', imageRows($openRouterImagesFrom), renderImages(...)],
+] as $kind => [$constant, $rows, $renderer]) {
+    printf("%s\n", $kind);
+
+    if ($rows === []) {
+        printf("  ! nothing to write for %s, so its table is left as it is\n", $kind);
+
+        continue;
+    }
+
+    $rendered = $renderer($rows);
+    $source = splice($source, $constant, $rendered);
+    $counts[$kind] = count($rows);
+
+    if ($dryRun) {
+        printf("%s\n", $rendered);
+    }
 }
 
 printf("\n");

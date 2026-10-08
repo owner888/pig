@@ -1,0 +1,150 @@
+{
+ "scenario": {
+  "module": "api/pi-messages.ts",
+  "simple": true,
+  "model": {
+   "id": "balanced",
+   "name": "Balanced",
+   "api": "pi-messages",
+   "provider": "radius",
+   "baseUrl": "SERVER/v1/",
+   "reasoning": true,
+   "input": [
+    "text",
+    "image"
+   ],
+   "cost": {
+    "input": 3,
+    "output": 15,
+    "cacheRead": 0.3,
+    "cacheWrite": 0
+   },
+   "contextWindow": 1048576,
+   "maxTokens": 131072,
+   "thinkingLevelMap": {
+    "off": null,
+    "minimal": null,
+    "low": "low",
+    "medium": null,
+    "high": "high",
+    "xhigh": null,
+    "max": "max"
+   }
+  },
+  "options": {
+   "apiKey": "rad-key"
+  },
+  "context": {
+   "systemPrompt": "Be brief.",
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi",
+     "timestamp": 1
+    }
+   ],
+   "tools": [
+    {
+     "name": "read",
+     "description": "Read a file",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    }
+   ]
+  },
+  "responses": [
+   {
+    "status": 402,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "chunks": [
+     "{\"error\": {\"message\": \"Out of credits\", \"code\": \"insufficient_credits\", \"details\": {\"balance\": 0}}}"
+    ]
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "path": "/v1/messages",
+    "headers": {
+     "authorization": "Bearer rad-key",
+     "accept": "text/event-stream",
+     "content-type": "application/json"
+    },
+    "userAgent": "node",
+    "body": "{\"model\":\"balanced\",\"context\":{\"messages\":[{\"role\":\"system\",\"content\":\"Be brief.\",\"toolsAdded\":[{\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}],\"timestamp\":0},{\"role\":\"user\",\"content\":\"hi\",\"timestamp\":1}]},\"options\":{}}"
+   }
+  ],
+  "events": [
+   [
+    "error",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [],
+   "api": "pi-messages",
+   "provider": "radius",
+   "model": "balanced",
+   "usage": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 0,
+    "cost": {
+     "input": 0,
+     "output": 0,
+     "cacheRead": 0,
+     "cacheWrite": 0,
+     "total": 0
+    }
+   },
+   "stopReason": "error",
+   "errorMessage": "402 Payment Required: Out of credits (insufficient_credits)",
+   "timestamp": 1767323045000,
+   "diagnostics": [
+    {
+     "type": "pi_messages_response_failure",
+     "timestamp": 1767323045000,
+     "error": {
+      "name": "PiMessagesResponseError",
+      "message": "402 Payment Required: Out of credits (insufficient_credits)",
+      "stack": "PiMessagesResponseError: 402 Payment Required: Out of credits (insufficient_credits)\n    at createPiMessagesResponseError (file:///tmp/claude-0/-home-claude/e189d256-3a58-5b6b-a118-077765eb2cc2/scratchpad/oracle_azcx/ai/src/api/pi-messages.ts:145:9)\n    at file:///tmp/claude-0/-home-claude/e189d256-3a58-5b6b-a118-077765eb2cc2/scratchpad/oracle_azcx/ai/src/api/pi-messages.ts:408:11\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)",
+      "code": "insufficient_credits"
+     },
+     "details": {
+      "version": 1,
+      "provider": "radius",
+      "model": "balanced",
+      "url": "http://127.0.0.1:38183/v1/messages",
+      "status": 402,
+      "statusText": "Payment Required",
+      "error": {
+       "message": "Out of credits",
+       "code": "insufficient_credits",
+       "details": {
+        "balance": 0
+       }
+      },
+      "timestampMs": 1767323045000
+     }
+    }
+   ]
+  }
+ }
+}

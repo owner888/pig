@@ -713,8 +713,8 @@ final class AntigravityApi implements StreamApi
         return $msg;
     }
 
-    /** pi-antigravity's `redactSecrets()`. */
-    private static function redactSecrets(string $text): string
+    /** pi-antigravity's `redactSecrets()`. Public for `Discovery`, which words its errors the same way. */
+    public static function redactSecrets(string $text): string
     {
         return (string) preg_replace(
             [

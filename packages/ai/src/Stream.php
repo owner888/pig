@@ -7,7 +7,11 @@ namespace Pig\Ai;
 use Pig\Ai\Providers\Anthropic;
 use Pig\Ai\Providers\AnthropicFederation;
 use Pig\Ai\Providers\AnthropicOptions;
+use Pig\Ai\Providers\Azure;
+use Pig\Ai\Providers\AzureOpenAiResponses;
+use Pig\Ai\Providers\AzureOpenAiResponsesOptions;
 use Pig\Ai\Providers\Bedrock;
+use Pig\Ai\Providers\Cloudflare;
 use Pig\Ai\Providers\BedrockOptions;
 use Pig\Ai\Providers\Google;
 use Pig\Ai\Providers\GoogleOptions;
@@ -16,9 +20,14 @@ use Pig\Ai\Providers\GoogleVertex;
 use Pig\Ai\Providers\GoogleVertexOptions;
 use Pig\Ai\Providers\Mistral;
 use Pig\Ai\Providers\MistralOptions;
+use Pig\Ai\Providers\OpenAiCodexResponses;
+use Pig\Ai\Providers\OpenAiCodexResponsesOptions;
 use Pig\Ai\Providers\OpenAiCompletions;
 use Pig\Ai\Providers\OpenAiOptions;
 use Pig\Ai\Providers\OpenAiResponses;
+use Pig\Ai\Providers\OpenCodeHeaders;
+use Pig\Ai\Providers\PiMessages;
+use Pig\Ai\Providers\PiMessagesOptions;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\Transcript;
 
@@ -102,15 +111,34 @@ final class Stream
             ? $options->apiKey
             : self::envApiKey($model->provider, $options?->env));
 
+        // What the provider's own auth adds to the request before its API sees it — upstream's
+        // `Models.applyAuth()` over the provider's `resolve()`, which only Cloudflare's two use for
+        // more than a key: the account and gateway ids into the env and the base URL
+        // (`cloudflareStreams()`), and for the gateway its `cf-aig-authorization` header.
+        $requestAuth = [];
+        $headers = $options?->headers;
+
+        if (Cloudflare::isCloudflare($model->provider)) {
+            $resolved = Cloudflare::resolveCloudflareEnv($model->provider, $apiKey, $options?->env)
+                ?? throw new ProviderError("Provider is not configured: {$model->provider}");
+            $env = [...$resolved['env'], ...($options?->env ?? [])];
+            $model = Cloudflare::resolveCloudflareModel($model, $env);
+            $apiKey = $resolved['apiKey'];
+            $headers = $model->provider === Cloudflare::AI_GATEWAY
+                ? Cloudflare::mergeHeaders(Cloudflare::gatewayAuthHeaders($resolved['apiKey']), $headers)
+                : $headers;
+            $requestAuth = ['headers' => $headers, 'env' => $env];
+        }
+
         // Each API's own refusal, which upstream's `streamSimple()`s throw before anything is sent:
         // Anthropic goes without a key when an auth header (`options.headers`) or workload identity
         // federation stands in for it, the OpenAI APIs when an `authorization` or
         // `cf-aig-authorization` header does; Gemini, Mistral and an extension need the key.
         $headerAuth = match ($model->api) {
-            Api::AnthropicMessages => AnthropicFederation::hasRequestAuth($apiKey, $options?->headers)
-                || AnthropicFederation::config($model, $apiKey, $options?->headers, $options?->env) !== null,
-            Api::OpenAiCompletions, Api::OpenAiResponses => Utils\Headers::has($options?->headers, 'authorization')
-                || Utils\Headers::has($options?->headers, 'cf-aig-authorization'),
+            Api::AnthropicMessages => AnthropicFederation::hasRequestAuth($apiKey, $headers)
+                || AnthropicFederation::config($model, $apiKey, $headers, $options?->env) !== null,
+            Api::OpenAiCompletions, Api::OpenAiResponses => Utils\Headers::has($headers, 'authorization')
+                || Utils\Headers::has($headers, 'cf-aig-authorization'),
             // Neither of upstream's two refuses a missing key: Vertex falls back on Application
             // Default Credentials and Bedrock on the AWS credential chain, and each says so itself
             // when there is nothing there either.
@@ -123,10 +151,18 @@ final class Stream
         }
 
         return match ($model->api) {
-            Api::AnthropicMessages => (new Anthropic())->stream($model, $context, self::anthropic($options, $apiKey)),
-            Api::OpenAiCompletions => (new OpenAiCompletions())->stream($model, $context, self::openAi($options, $apiKey)),
-            Api::OpenAiResponses => (new OpenAiResponses())->stream($model, $context, self::openAi($options, $apiKey)),
-            Api::GoogleGenerativeAi => (new Google())->stream($model, $context, self::google($options, (string) $apiKey)),
+            Api::AnthropicMessages => (new Anthropic())->stream($model, $context, self::anthropic($model, $options, $apiKey, $requestAuth)),
+            // Upstream's `azureProvider()` serves Chat Completions through `azureStreams()`: the
+            // endpoint and the deployment resolved the Azure way first. Keyed on the provider, as
+            // upstream's provider registry is — a `models.json` row under `azure` takes the same path.
+            Api::OpenAiCompletions => $model->provider === Azure::PROVIDER
+                ? Azure::stream($model, $context, self::openAi($model, $options, $apiKey), static fn (Model $m, TranscriptContext $c, OpenAiOptions $o): Utils\AssistantMessageEventStream => (new OpenAiCompletions())->stream($m, $c, $o))
+                : (new OpenAiCompletions())->stream($model, $context, self::openAi($model, $options, $apiKey, $requestAuth)),
+            Api::OpenAiResponses => (new OpenAiResponses())->stream($model, $context, self::openAi($model, $options, $apiKey, $requestAuth)),
+            Api::AzureOpenAiResponses => (new AzureOpenAiResponses())->stream($model, $context, self::azure($options, $apiKey)),
+            Api::OpenAiCodexResponses => (new OpenAiCodexResponses())->stream($model, $context, self::codex($options, $apiKey)),
+            Api::PiMessages => (new PiMessages())->stream($model, $context, self::piMessages($options, $apiKey)),
+            Api::GoogleGenerativeAi => (new Google())->stream($model, $context, self::google($model, $options, (string) $apiKey)),
             Api::GoogleVertex => (new GoogleVertex())->stream($model, $context, self::vertex($options, $apiKey)),
             Api::BedrockConverseStream => (new Bedrock())->stream($model, $context, self::bedrock($options, $apiKey)),
             Api::MistralConversations => (new Mistral())->stream($model, $context, self::mistral($options, (string) $apiKey)),
@@ -192,15 +228,41 @@ final class Stream
             'anthropic' => ['ANTHROPIC_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'],
             'github-copilot' => ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'],
             'openai' => ['OPENAI_API_KEY'],
+            'azure' => ['AZURE_OPENAI_API_KEY'],
             'google' => ['GEMINI_API_KEY'],
             'google-vertex' => ['GOOGLE_CLOUD_API_KEY'],
             'amazon-bedrock' => [],
             'groq' => ['GROQ_API_KEY'],
             'cerebras' => ['CEREBRAS_API_KEY'],
             'xai' => ['XAI_API_KEY'],
+            'typesafe' => ['TYPESAFE_API_KEY'],
+            'radius' => ['RADIUS_API_KEY'],
             'openrouter' => ['OPENROUTER_API_KEY'],
             'zai' => ['ZAI_API_KEY'],
             'mistral' => ['MISTRAL_API_KEY'],
+            'ant-ling' => ['ANT_LING_API_KEY'],
+            'qwen-token-plan' => ['QWEN_TOKEN_PLAN_API_KEY'],
+            'qwen-token-plan-cn' => ['QWEN_TOKEN_PLAN_CN_API_KEY'],
+            'qwen-token-plan-individual' => ['QWEN_TOKEN_PLAN_API_KEY'],
+            'nvidia' => ['NVIDIA_API_KEY'],
+            'deepseek' => ['DEEPSEEK_API_KEY'],
+            'vercel-ai-gateway' => ['AI_GATEWAY_API_KEY'],
+            'zai-coding-cn' => ['ZAI_CODING_CN_API_KEY'],
+            'minimax' => ['MINIMAX_API_KEY'],
+            'minimax-cn' => ['MINIMAX_CN_API_KEY'],
+            'moonshotai', 'moonshotai-cn' => ['MOONSHOT_API_KEY'],
+            'huggingface' => ['HF_TOKEN'],
+            'fireworks' => ['FIREWORKS_API_KEY'],
+            'together' => ['TOGETHER_API_KEY'],
+            'baseten' => ['BASETEN_API_KEY'],
+            'opencode', 'opencode-go' => ['OPENCODE_API_KEY'],
+            'kimi-coding' => ['KIMI_API_KEY'],
+            'meta' => ['META_API_KEY'],
+            'xiaomi' => ['XIAOMI_API_KEY'],
+            'xiaomi-token-plan-cn' => ['XIAOMI_TOKEN_PLAN_CN_API_KEY'],
+            'xiaomi-token-plan-ams' => ['XIAOMI_TOKEN_PLAN_AMS_API_KEY'],
+            'xiaomi-token-plan-sgp' => ['XIAOMI_TOKEN_PLAN_SGP_API_KEY'],
+            'cloudflare-workers-ai', 'cloudflare-ai-gateway' => ['CLOUDFLARE_API_KEY'],
             default => Extension\ProviderRegistry::envKeysFor($provider),
         };
 
@@ -309,6 +371,29 @@ final class Stream
                 reasoning: self::clampedReasoning($model, $options?->reasoning),
                 toolChoice: $options?->toolChoice,
             ),
+            // Upstream's `streamSimple()` in `azure-openai-responses.ts`: the same as the Responses
+            // arm above, under Azure's option names.
+            Api::AzureOpenAiResponses => new AzureOpenAiResponsesOptions(
+                ...$base,
+                reasoningEffort: self::clampedReasoning($model, $options?->reasoning),
+                toolChoice: $options?->toolChoice,
+            ),
+            // Upstream's `streamSimple()` in `openai-codex-responses.ts`: the same again — the level
+            // clamped, `off` meaning none — and the key required up front.
+            Api::OpenAiCodexResponses => new OpenAiCodexResponsesOptions(
+                ...$base,
+                reasoningEffort: self::clampedReasoning($model, $options?->reasoning)?->value,
+                toolChoice: $options?->toolChoice,
+            ),
+            // Upstream's `streamSimple()` in `pi-messages.ts`: `{...options, reasoning, toolChoice,
+            // debug}` — the caller's own options rather than `buildBaseOptions()`, so the level as it
+            // was asked for (the backend clamps it) and `maxTokens` as given, neither defaulted to the
+            // model's ceiling nor cut to the context.
+            Api::PiMessages => new PiMessagesOptions(
+                ...[...$base, 'maxTokens' => $options?->maxTokens],
+                reasoning: $options?->reasoning?->value,
+                toolChoice: $options?->toolChoice,
+            ),
             Api::GoogleGenerativeAi => self::gemini($model, $options, $base),
             Api::GoogleVertex => self::vertexSimple($model, $options, $base),
             Api::BedrockConverseStream => self::bedrockSimple($model, $context, $options, $base),
@@ -414,9 +499,10 @@ final class Stream
             ?? throw new ProviderError("{$model->provider}/{$model->id} has no '{$reasoning->value}' thinking level, and its nearest, '{$clamped}', is not one pig can send");
     }
 
-    private static function anthropic(?StreamOptions $options, ?string $apiKey): AnthropicOptions
+    /** @param array<string, mixed> $requestAuth see `base()` */
+    private static function anthropic(Model $model, ?StreamOptions $options, ?string $apiKey, array $requestAuth = []): AnthropicOptions
     {
-        $base = [...($options ?? new StreamOptions())->baseArgs(), 'apiKey' => $apiKey];
+        $base = self::base($model, $options, $apiKey, $requestAuth);
 
         if ($options instanceof AnthropicOptions) {
             return new AnthropicOptions(
@@ -680,9 +766,9 @@ final class Stream
     }
 
     /** The key is resolved late; a caller's own Google options are otherwise kept whole. */
-    private static function google(?StreamOptions $options, string $apiKey): GoogleOptions
+    private static function google(Model $model, ?StreamOptions $options, string $apiKey): GoogleOptions
     {
-        $base = [...($options ?? new StreamOptions())->baseArgs(), 'apiKey' => $apiKey];
+        $base = self::base($model, $options, $apiKey);
 
         if ($options instanceof GoogleOptions) {
             return new GoogleOptions(
@@ -697,10 +783,32 @@ final class Stream
         return new GoogleOptions(...$base);
     }
 
-    /** The same shape as `anthropic()`: the key is resolved late, everything else is kept. */
-    private static function openAi(?StreamOptions $options, ?string $apiKey): OpenAiOptions
+    /**
+     * The options' base fields with the key resolved late — and for OpenCode Zen and Go their routing
+     * header (`OpenCodeHeaders`, upstream's `withOpenCodeSessionHeader()` around the four APIs those
+     * providers serve: Anthropic's, both OpenAI ones and Gemini's, the three builders that call this).
+     *
+     * `$requestAuth` is what the provider's auth resolved for the request (`headers`, `env`), laid over
+     * the caller's fields as upstream's `applyAuth()` hands the API `{...options, apiKey, headers, env}`.
+     *
+     * @param array<string, mixed> $requestAuth
+     * @return array<string, mixed>
+     */
+    private static function base(Model $model, ?StreamOptions $options, ?string $apiKey, array $requestAuth = []): array
     {
-        $base = [...($options ?? new StreamOptions())->baseArgs(), 'apiKey' => $apiKey];
+        $base = [...($options ?? new StreamOptions())->baseArgs(), 'apiKey' => $apiKey, ...$requestAuth];
+
+        return [...$base, 'headers' => OpenCodeHeaders::withSessionHeader($model, $base['sessionId'], $base['headers'])];
+    }
+
+    /**
+     * The same shape as `anthropic()`: the key is resolved late, everything else is kept.
+     *
+     * @param array<string, mixed> $requestAuth see `base()`
+     */
+    private static function openAi(Model $model, ?StreamOptions $options, ?string $apiKey, array $requestAuth = []): OpenAiOptions
+    {
+        $base = self::base($model, $options, $apiKey, $requestAuth);
 
         if ($options instanceof OpenAiOptions) {
             return new OpenAiOptions(
@@ -713,5 +821,62 @@ final class Stream
         }
 
         return new OpenAiOptions(...$base);
+    }
+
+    /** The key is resolved late; a caller's own Azure options are otherwise kept whole. */
+    private static function azure(?StreamOptions $options, ?string $apiKey): AzureOpenAiResponsesOptions
+    {
+        $base = [...($options ?? new StreamOptions())->baseArgs(), 'apiKey' => $apiKey];
+
+        if ($options instanceof AzureOpenAiResponsesOptions) {
+            return new AzureOpenAiResponsesOptions(
+                ...$base,
+                reasoningEffort: $options->reasoningEffort,
+                toolChoice: $options->toolChoice,
+                reasoningSummary: $options->reasoningSummary,
+                azureApiVersion: $options->azureApiVersion,
+                azureResourceName: $options->azureResourceName,
+                azureBaseUrl: $options->azureBaseUrl,
+                azureDeploymentName: $options->azureDeploymentName,
+            );
+        }
+
+        return new AzureOpenAiResponsesOptions(...$base);
+    }
+
+    /** The key is resolved late; a caller's own Codex options are otherwise kept whole. */
+    private static function codex(?StreamOptions $options, ?string $apiKey): OpenAiCodexResponsesOptions
+    {
+        $base = [...($options ?? new StreamOptions())->baseArgs(), 'apiKey' => $apiKey];
+
+        if ($options instanceof OpenAiCodexResponsesOptions) {
+            return new OpenAiCodexResponsesOptions(
+                ...$base,
+                reasoningEffort: $options->reasoningEffort,
+                reasoningSummary: $options->reasoningSummary,
+                serviceTier: $options->serviceTier,
+                textVerbosity: $options->textVerbosity,
+                toolChoice: $options->toolChoice,
+            );
+        }
+
+        return new OpenAiCodexResponsesOptions(...$base);
+    }
+
+    /** The key is resolved late; a caller's own pi-messages options are otherwise kept whole. */
+    private static function piMessages(?StreamOptions $options, ?string $apiKey): PiMessagesOptions
+    {
+        $base = [...($options ?? new StreamOptions())->baseArgs(), 'apiKey' => $apiKey];
+
+        if ($options instanceof PiMessagesOptions) {
+            return new PiMessagesOptions(
+                ...$base,
+                reasoning: $options->reasoning,
+                toolChoice: $options->toolChoice,
+                debug: $options->debug,
+            );
+        }
+
+        return new PiMessagesOptions(...$base);
     }
 }

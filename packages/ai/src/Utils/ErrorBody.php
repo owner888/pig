@@ -75,6 +75,29 @@ final class ErrorBody
     }
 
     /**
+     * Upstream's `normalizeProviderError(error)` for an error pig built itself: the status and the
+     * `body` string a `ProviderHttpError` carries (trimmed, cut at 4,000, none when empty), the
+     * message, and whether the message already contains the body. Anything else is its message
+     * alone, with no status — the shape a network failure or a parse error has upstream.
+     *
+     * @return array{status: int|null, body: string|null, message: string, messageCarriesBody: bool}
+     */
+    public static function normalizeProviderError(\Throwable $error): array
+    {
+        $status = $error instanceof ProviderHttpError ? $error->status : null;
+        $body = $error instanceof ProviderHttpError && $error->body !== null ? JsJson::trim($error->body) : null;
+        $body = $body === null || $body === '' ? null : self::truncateErrorText($body, self::MAX_PROVIDER_ERROR_BODY_CHARS);
+        $message = $error->getMessage();
+
+        return [
+            'status' => $status,
+            'body' => $body,
+            'message' => $message,
+            'messageCarriesBody' => $body === null || str_contains($message, $body),
+        ];
+    }
+
+    /**
      * Upstream's `formatProviderError(norm, prefix?)`.
      *
      * @param array{status: int|null, body: string|null, message: string, messageCarriesBody: bool} $norm

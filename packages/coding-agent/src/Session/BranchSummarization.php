@@ -24,8 +24,8 @@ final class BranchSummarization
     /** What to leave for the prompt and the answer. Upstream's default. */
     public const int RESERVE_TOKENS = 16_384;
 
-    /** How much of the answer to allow. Upstream's `maxTokens: 2048`. */
-    public const int MAX_TOKENS = 2_048;
+    /** How much of the answer to allow, before the model's own cap. Upstream's `Math.min(4096, model.maxTokens)`. */
+    public const int MAX_TOKENS = 4_096;
 
     /**
      * Upstream's prompt, format and all.

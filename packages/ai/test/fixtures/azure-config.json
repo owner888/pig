@@ -1,0 +1,218 @@
+{
+ "baseUrls": [
+  [
+   {
+    "baseUrl": ""
+   },
+   {
+    "azureBaseUrl": "https://myres.openai.azure.com"
+   },
+   "https://myres.openai.azure.com/openai/v1"
+  ],
+  [
+   {
+    "baseUrl": ""
+   },
+   {
+    "azureBaseUrl": "https://MyRes.OpenAI.Azure.com/"
+   },
+   "https://myres.openai.azure.com/openai/v1"
+  ],
+  [
+   {
+    "baseUrl": ""
+   },
+   {
+    "azureBaseUrl": "  https://myres.openai.azure.com/openai/  "
+   },
+   "https://myres.openai.azure.com/openai/v1"
+  ],
+  [
+   {
+    "baseUrl": ""
+   },
+   {
+    "azureBaseUrl": "https://myres.openai.azure.com/openai/v1/responses?api-version=x"
+   },
+   "https://myres.openai.azure.com/openai/v1"
+  ],
+  [
+   {
+    "baseUrl": ""
+   },
+   {
+    "azureBaseUrl": "https://myres.cognitiveservices.azure.com:443/openai"
+   },
+   "https://myres.cognitiveservices.azure.com/openai/v1"
+  ],
+  [
+   {
+    "baseUrl": ""
+   },
+   {
+    "azureBaseUrl": "https://proj.services.ai.azure.com/api/projects/p1"
+   },
+   "https://proj.services.ai.azure.com/api/projects/p1"
+  ],
+  [
+   {
+    "baseUrl": ""
+   },
+   {
+    "azureBaseUrl": "https://gateway.example.com/azure/openai/v1///"
+   },
+   "https://gateway.example.com/azure/openai/v1"
+  ],
+  [
+   {
+    "baseUrl": ""
+   },
+   {
+    "azureBaseUrl": "http://localhost:8080?x=1"
+   },
+   "http://localhost:8080/?x=1"
+  ],
+  [
+   {
+    "baseUrl": ""
+   },
+   {
+    "azureResourceName": "myres"
+   },
+   "https://myres.openai.azure.com/openai/v1"
+  ],
+  [
+   {
+    "baseUrl": "https://from-model.openai.azure.com"
+   },
+   {},
+   "https://from-model.openai.azure.com/openai/v1"
+  ],
+  [
+   {
+    "baseUrl": ""
+   },
+   {
+    "azureBaseUrl": "   ",
+    "azureResourceName": "fallback"
+   },
+   "https://fallback.openai.azure.com/openai/v1"
+  ],
+  [
+   {
+    "baseUrl": ""
+   },
+   {
+    "azureBaseUrl": "myres.openai.azure.com"
+   },
+   {
+    "error": "Invalid Azure OpenAI base URL: myres.openai.azure.com"
+   }
+  ],
+  [
+   {
+    "baseUrl": ""
+   },
+   {},
+   {
+    "error": "Azure OpenAI base URL is required. Set AZURE_OPENAI_BASE_URL or AZURE_OPENAI_RESOURCE_NAME, or pass azureBaseUrl, azureResourceName, or model.baseUrl."
+   }
+  ],
+  [
+   {
+    "baseUrl": ""
+   },
+   {
+    "env": {
+     "AZURE_OPENAI_BASE_URL": "https://envres.openai.azure.com/openai"
+    }
+   },
+   "https://envres.openai.azure.com/openai/v1"
+  ],
+  [
+   {
+    "baseUrl": ""
+   },
+   {
+    "env": {
+     "AZURE_OPENAI_RESOURCE_NAME": "envres"
+    }
+   },
+   "https://envres.openai.azure.com/openai/v1"
+  ]
+ ],
+ "deployments": [
+  [
+   "gpt-5.4",
+   {},
+   "gpt-5.4"
+  ],
+  [
+   "gpt-5.4",
+   {
+    "azureDeploymentName": "explicit"
+   },
+   "explicit"
+  ],
+  [
+   "gpt-5.4",
+   {
+    "env": {
+     "AZURE_OPENAI_DEPLOYMENT_NAME_MAP": "gpt-5.4=prod, o3 = reasoning"
+    }
+   },
+   "prod"
+  ],
+  [
+   "o3",
+   {
+    "env": {
+     "AZURE_OPENAI_DEPLOYMENT_NAME_MAP": "gpt-5.4=prod, o3 = reasoning=x"
+    }
+   },
+   "reasoning"
+  ],
+  [
+   "o3",
+   {
+    "env": {
+     "AZURE_OPENAI_DEPLOYMENT_NAME_MAP": "o3=,=y,o3"
+    }
+   },
+   "o3"
+  ]
+ ],
+ "configs": [
+  [
+   {
+    "azureBaseUrl": "https://a.openai.azure.com"
+   },
+   {
+    "baseUrl": "https://a.openai.azure.com/openai/v1",
+    "apiVersion": "v1"
+   }
+  ],
+  [
+   {
+    "azureBaseUrl": "https://a.openai.azure.com",
+    "azureApiVersion": "2025-01"
+   },
+   {
+    "baseUrl": "https://a.openai.azure.com/openai/v1",
+    "apiVersion": "2025-01"
+   }
+  ],
+  [
+   {
+    "azureBaseUrl": "https://a.openai.azure.com",
+    "env": {
+     "AZURE_OPENAI_API_VERSION": "env-v"
+    }
+   },
+   {
+    "baseUrl": "https://a.openai.azure.com/openai/v1",
+    "apiVersion": "env-v"
+   }
+  ]
+ ]
+}

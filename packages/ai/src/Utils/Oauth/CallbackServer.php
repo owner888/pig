@@ -61,11 +61,19 @@ final class CallbackServer
     /**
      * @param string $who which provider sends the browser here — named in the two messages that
      *        blame the far end, since Anthropic's flow uses this server as well as Google's two
+     * @param string|null $state the `state` the callback must carry, upstream's
+     *        `startOAuthCallbackServer({state})`: a request with another one is answered
+     *        `400 State mismatch.` and the wait goes on. Null checks nothing here, and leaves the
+     *        state to the caller, which is how the Google and Anthropic flows use it.
+     * @param string $host the address to listen on — upstream's `host`, which OpenAI's Codex flow
+     *        takes from `PI_OAUTH_CALLBACK_HOST`. The redirect still names `localhost`.
      */
     public function __construct(
         private readonly int $port = self::PORT,
         private readonly string $path = self::PATH,
         private readonly string $who = 'Google',
+        private readonly ?string $state = null,
+        private readonly string $host = '127.0.0.1',
     ) {
     }
 
@@ -101,7 +109,8 @@ final class CallbackServer
         });
 
         try {
-            $socket = stream_socket_server("tcp://127.0.0.1:{$this->port}", $errno, $errstr);
+            $bind = str_contains($this->host, ':') ? "[{$this->host}]" : $this->host;
+            $socket = stream_socket_server("tcp://{$bind}:{$this->port}", $errno, $errstr);
         } finally {
             restore_error_handler();
         }
@@ -110,7 +119,7 @@ final class CallbackServer
             $reason = $errstr !== '' ? $errstr : ($problem ?? 'unknown error');
 
             throw new OauthError(
-                "Could not listen on 127.0.0.1:{$this->port} for the sign-in to come back to: {$reason}. "
+                "Could not listen on {$this->host}:{$this->port} for the sign-in to come back to: {$reason}. "
                 . "{$this->who} will only redirect to that exact port, so whatever is holding it has to stop first.",
             );
         }
@@ -252,6 +261,18 @@ final class CallbackServer
         $error = is_string($query['error'] ?? null) ? $query['error'] : null;
         $code = is_string($query['code'] ?? null) ? $query['code'] : null;
         $state = is_string($query['state'] ?? null) ? $query['state'] : null;
+
+        if ($this->state !== null && $state !== $this->state) {
+            $this->reply($id, '400 Bad Request', '<h1>State mismatch.</h1>');
+
+            return;
+        }
+
+        if ($this->state !== null && $error === null && ($code === null || $code === '')) {
+            $this->reply($id, '400 Bad Request', '<h1>Missing authorization code.</h1>');
+
+            return;
+        }
 
         if ($error !== null) {
             $this->reply($id, '400 Bad Request', '<h1>Signing in failed</h1><p>You can close this window.</p>');

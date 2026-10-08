@@ -6,6 +6,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Hooks\Events\BeforeAgentStartEvent;
 use Pig\CodingAgent\Hooks\Events\SessionShutdownEvent;
 use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
 use Pig\CodingAgent\Hooks\HookContext;
@@ -17,6 +18,7 @@ use PigMcp\McpManagerView;
 use PigMcp\McpOauth;
 use PigMcp\McpResources;
 use PigMcp\McpServerLog;
+use PigMcp\McpServersSection;
 use PigMcp\McpSignInCancelledError;
 use PigMcp\McpTools;
 use PigMcp\ServerConnection;
@@ -25,7 +27,7 @@ use Pig\Codemode\ToolSearch;
 
 // Class files beside the entry, guarded by class and not by `require_once`: the same class can
 // live at two paths (a global copy and the repository's), and `require_once` dedups by path.
-foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResources', 'McpManagerView', 'McpSignInCancelledError', 'McpOauth', 'McpServerLog'] as $class) {
+foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResources', 'McpManagerView', 'McpSignInCancelledError', 'McpOauth', 'McpServerLog', 'McpServersSection'] as $class) {
     if (!class_exists("PigMcp\\{$class}", false)) {
         require __DIR__ . "/{$class}.php";
     }
@@ -46,8 +48,12 @@ foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResour
  * A `deferred` tool is not declared to the model until `tool_search` loads it: that tool is
  * registered as soon as a connected server has a deferred tool, searches the ones not yet loaded
  * with BM25 over their names, descriptions and schemas, and registers the matches — which reach
- * the model from the next call. `codemode` and `codemode-deferred` are read as `deferred`, since
- * pig has no sandbox; the mapping is said once.
+ * the model from the next call. A deferred tool a resumed session's transcript declared is
+ * registered as soon as its server connects (`ExtensionApi::isToolPending()`), as upstream's
+ * session restores it. `codemode` and `codemode-deferred` tools go to the codemode registry.
+ *
+ * Every prompt lists the servers with codemode or deferred tools in the `mcp_servers` prompt
+ * section (`McpServersSection`), as they are when it starts.
  *
  * `/mcp` with a terminal opens the manager: a list of servers that redraws as they connect, and
  * per server the tools, reconnect, exposure and enable/disable — the last two written back to the
@@ -315,8 +321,15 @@ return static function (ExtensionApi $pi): void {
             }
 
             if ($exposure === 'deferred' && !isset($loaded[$name])) {
-                $deferred[$name] = ['server' => $server, 'tool' => $tool, 'connection' => $connection, 'define' => $define];
-                continue;
+                // Upstream registers a deferred tool inactive and the session's restored loadout
+                // activates it; pig registers one only once it is asked for, and a session waiting
+                // for it is asking.
+                if (!$pi->isToolPending($name)) {
+                    $deferred[$name] = ['server' => $server, 'tool' => $tool, 'connection' => $connection, 'define' => $define];
+                    continue;
+                }
+
+                $loaded[$name] = ['server' => $server, 'connection' => $connection];
             }
 
             $declared[] = $name;
@@ -574,9 +587,9 @@ return static function (ExtensionApi $pi): void {
 
     // The first prompt waits for startup connections so their tools are available to it, but
     // not indefinitely: a slow or hanging server must not hold up the prompt.
-    $pi->on('before_agent_start', static function ($event, HookContext $ctx) use (&$pending, &$waitedForStartup, $startupWait): ?BeforeAgentStartEventResult {
+    $waitForStartup = static function (HookContext $ctx) use (&$pending, &$waitedForStartup, $startupWait): void {
         if ($pending === null || $waitedForStartup) {
-            return null;
+            return;
         }
 
         $waitedForStartup = true;
@@ -588,6 +601,22 @@ return static function (ExtensionApi $pi): void {
 
         if (!$pending->isComplete()) {
             $ctx->ui->notify('MCP servers are still connecting; their tools become available once connected.', 'info');
+        }
+    };
+
+    // "Every prompt lists the servers in the `mcp_servers` section as they are when it starts. Pi
+    // appends the section to the conversation when it changed, for example after a server connected."
+    $pi->on('before_agent_start', static function (BeforeAgentStartEvent $event, HookContext $ctx) use (&$entries, &$connections, $waitForStartup): ?BeforeAgentStartEventResult {
+        $waitForStartup($ctx);
+        $section = McpServersSection::render(array_map(
+            static fn (ServerEntry $entry): array => ['entry' => $entry, 'instructions' => $connections[$entry->name]?->instructions ?? null],
+            $entries,
+        ));
+
+        if ($section !== null) {
+            $event->systemPromptOptions->sections[McpServersSection::NAME] = $section;
+        } else {
+            unset($event->systemPromptOptions->sections[McpServersSection::NAME]);
         }
 
         return null;

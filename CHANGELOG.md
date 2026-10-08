@@ -43,6 +43,34 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.5.0] - 2026-10-08
+
+### New Features
+
+- **New Native Protocol Implementations (`AzureOpenAiResponses`, `OpenAiCodexResponses`, `PiMessages`)**:
+  - Added native support for `azure-openai-responses` and Azure Chat Completions (`Providers\Azure`) with automatic endpoint normalization and deployment routing.
+  - Added native support for `openai-codex-responses` (ChatGPT Codex backend) with full OAuth PKCE and device code authorization (`Utils\Oauth\OpenAiCodex`, `DeviceCodeFlow`).
+  - Added native support for `pi-messages` wire protocol powering the Radius gateway (`Providers\PiMessages`, `PiMessagesEventConverter`, `RadiusConfig`).
+- **Non-Chat Model Architecture (`ModelType`, `ClassifierModel`, `ImageModel`, `FauxProvider`)**:
+  - Introduced `ModelType` (`chat`, `classifier`, `image`), supporting classification models (`Models::classify()` via System One, Cloudflare Workers AI, and LlamaCpp) and image generation models (`Models::generateImages()` via OpenRouter).
+  - Added `FauxProvider` for deterministic offline provider stream testing.
+- **Full Catalog Provider Coverage (25+ Providers Aligned with Upstream pi 1.1.0)**:
+  - Added official model catalog definitions and metadata across 25+ major providers: DeepSeek, OpenRouter, Vercel AI Gateway, Together, Fireworks, Baseten, Hugging Face, NVIDIA, MiniMax, Moonshot, Kimi For Coding, Meta, OpenCode, Qwen Token Plans, Z.ai Coding Plan, and Ant Ling.
+  - Sourced Cloudflare Workers AI and AI Gateway models (`Providers\Cloudflare`).
+  - Routed xAI models natively to `Api::OpenAiResponses` with full reasoning support.
+- **Dynamic Antigravity Model Catalog Discovery & Grouping (`Discovery`, `Grouping`)**:
+  - Implemented background catalog hydration and TTL-cached discovery against Google endpoints (`Discovery`), updating local `models-store.json` and grouping models (`Grouping`) without requiring full restarts.
+- **Transcript-Driven Tool Loadout & Prompt Projection (`ToolLoadout`, `SystemPrompt`)**:
+  - Automatically restored active and pending tool sets from transcript `SystemMessage` entries upon session resume or tree navigation.
+  - Supported `forceSystemPrompt` projections and handler-injected prompt sections (`withSections`) without corrupting disk session history.
+
+### Changed
+
+- **Clean Working Directory Prompt Sections (`SystemPrompt`)**:
+  - Stripped volatile second-by-second timestamps from `cwd` prompt sections, preventing cache prefix invalidations on unchanged system prompts.
+- **Compaction & Branch Summary Cancellation Parity (`InteractiveMode`)**:
+  - Aligned status indicators for `/compact`, threshold compaction, overflow compaction, and branch summarization with upstream pi, allowing graceful cancellation via escape key with localized key labels.
+
 ## [0.4.37] - 2026-10-08
 
 ### Changed

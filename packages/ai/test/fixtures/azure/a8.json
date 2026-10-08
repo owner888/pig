@@ -1,0 +1,111 @@
+{
+ "scenario": {
+  "module": "providers/azure.ts",
+  "factory": "azureProvider",
+  "simple": true,
+  "model": {
+   "id": "deepseek-v4-pro",
+   "name": "DeepSeek V4 Pro",
+   "api": "openai-completions",
+   "provider": "azure",
+   "baseUrl": "",
+   "reasoning": true,
+   "input": [
+    "text"
+   ],
+   "cost": {
+    "input": 1.925,
+    "output": 3.828,
+    "cacheRead": 0.165,
+    "cacheWrite": 0
+   },
+   "contextWindow": 1000000,
+   "maxTokens": 384000,
+   "compat": {
+    "supportsStrictMode": true,
+    "requiresReasoningContentOnAssistantMessages": true,
+    "thinkingFormat": "openai",
+    "supportsDeveloperRole": false,
+    "supportsMidConvoSystemMessages": true,
+    "supportsLongCacheRetention": false
+   },
+   "thinkingLevelMap": {
+    "minimal": null,
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": null,
+    "max": null
+   }
+  },
+  "options": {
+   "apiKey": "az-key"
+  },
+  "context": {
+   "systemPrompt": "Be brief.",
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi",
+     "timestamp": 1
+    }
+   ],
+   "tools": [
+    {
+     "name": "read",
+     "description": "Read a file",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    }
+   ]
+  },
+  "responses": [
+   {
+    "chunks": []
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [],
+  "events": [
+   [
+    "error",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [],
+   "api": "openai-completions",
+   "provider": "azure",
+   "model": "deepseek-v4-pro",
+   "usage": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 0,
+    "cost": {
+     "input": 0,
+     "output": 0,
+     "cacheRead": 0,
+     "cacheWrite": 0,
+     "total": 0
+    }
+   },
+   "stopReason": "error",
+   "errorMessage": "Azure OpenAI base URL is required. Set AZURE_OPENAI_BASE_URL or AZURE_OPENAI_RESOURCE_NAME, or pass azureBaseUrl, azureResourceName, or model.baseUrl.",
+   "timestamp": 1767323045000
+  }
+ }
+}

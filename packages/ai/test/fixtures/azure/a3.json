@@ -1,0 +1,170 @@
+{
+ "scenario": {
+  "module": "api/azure-openai-responses.ts",
+  "simple": true,
+  "model": {
+   "id": "gpt-5.2",
+   "name": "GPT-5.2",
+   "api": "azure-openai-responses",
+   "provider": "azure",
+   "baseUrl": "",
+   "reasoning": true,
+   "input": [
+    "text",
+    "image"
+   ],
+   "cost": {
+    "input": 1.75,
+    "output": 14,
+    "cacheRead": 0.175,
+    "cacheWrite": 0
+   },
+   "contextWindow": 400000,
+   "maxTokens": 128000,
+   "thinkingLevelMap": {
+    "off": null,
+    "xhigh": "xhigh"
+   },
+   "compat": {
+    "supportsOpenAIGrammarTools": true
+   }
+  },
+  "env": {
+   "AZURE_OPENAI_BASE_URL": "SERVER/v1",
+   "AZURE_OPENAI_DEPLOYMENT_NAME_MAP": " gpt-4.1=x, gpt-5.2 = dep-52 =tail,bad,=y",
+   "AZURE_OPENAI_API_VERSION": "preview"
+  },
+  "options": {
+   "apiKey": "az-key"
+  },
+  "context": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "look at a",
+     "timestamp": 1
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "thinking",
+       "thinking": "plan",
+       "thinkingSignature": "{\"type\": \"reasoning\", \"id\": \"rs_1\", \"summary\": [{\"type\": \"summary_text\", \"text\": \"plan\"}], \"encrypted_content\": \"enc\"}"
+      },
+      {
+       "type": "text",
+       "text": "Reading",
+       "textSignature": "{\"v\": 1, \"id\": \"msg_1\", \"phase\": \"commentary\"}"
+      },
+      {
+       "type": "toolCall",
+       "id": "call_1|fc_1",
+       "name": "read",
+       "arguments": {
+        "path": "a"
+       }
+      }
+     ],
+     "api": "openai-responses",
+     "provider": "openai",
+     "model": "gpt-5.2",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "toolUse",
+     "timestamp": 2
+    },
+    {
+     "role": "toolResult",
+     "toolCallId": "call_1|fc_1",
+     "toolName": "read",
+     "content": [
+      {
+       "type": "text",
+       "text": "body of a"
+      }
+     ],
+     "isError": false,
+     "timestamp": 3
+    },
+    {
+     "role": "user",
+     "content": "next",
+     "timestamp": 4
+    }
+   ]
+  },
+  "responses": [
+   {
+    "status": 400,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "chunks": [
+     "{\"error\": {\"message\": \"Unsupported parameter\", \"type\": \"invalid_request_error\", \"code\": \"bad_param\"}}"
+    ]
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "path": "/v1/responses?api-version=preview",
+    "headers": {
+     "api-key": "az-key",
+     "content-type": "application/json",
+     "accept": "application/json",
+     "x-stainless-retry-count": "0",
+     "x-stainless-lang": "js",
+     "x-stainless-package-version": "7.19.0"
+    },
+    "userAgent": "pi (linux 6.18.44-fc-v80; x64)",
+    "body": "{\"model\":\"dep-52\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"look at a\"}]},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"plan\",\"annotations\":[]}],\"status\":\"completed\",\"id\":\"msg_pi_1\"},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Reading\",\"annotations\":[]}],\"status\":\"completed\",\"id\":\"msg_pi_1_1\"},{\"type\":\"function_call\",\"id\":\"fc_lxmq3j1alksqn\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"a\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"body of a\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"next\"}]}],\"stream\":true,\"store\":false,\"max_output_tokens\":128000}"
+   }
+  ],
+  "events": [
+   [
+    "error",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [],
+   "api": "azure-openai-responses",
+   "provider": "azure",
+   "model": "gpt-5.2",
+   "usage": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 0,
+    "cost": {
+     "input": 0,
+     "output": 0,
+     "cacheRead": 0,
+     "cacheWrite": 0,
+     "total": 0
+    }
+   },
+   "stopReason": "error",
+   "timestamp": 1767323045000,
+   "errorMessage": "Azure OpenAI API error (400): {\"message\":\"Unsupported parameter\",\"type\":\"invalid_request_error\",\"code\":\"bad_param\"}"
+  }
+ }
+}

@@ -1984,7 +1984,7 @@ final class InteractiveMode
             return;
         }
 
-        $this->showLoader('Summarising the conversation...', timer: true);
+        $this->showLoader($this->compactionLabel($reason), timer: true);
 
         $this->compaction = new AbortController();
         $signal = $this->compaction->signal;
@@ -2007,8 +2007,14 @@ final class InteractiveMode
             return;
         }
 
+        // Upstream's `compaction_end` with `aborted`: an error for the one somebody asked for, a
+        // status line for the one that started itself.
         if ($summary === null) {
-            $this->sayError('Compaction cancelled');
+            if ($reason === 'manual') {
+                $this->sayError('Compaction cancelled');
+            } else {
+                $this->say('Auto-compaction cancelled');
+            }
 
             return;
         }
@@ -3101,7 +3107,7 @@ final class InteractiveMode
             $loadout->reloaded($customTools, $this->contextFiles, $this->skills);
         }
 
-        $customTools->onChange(static fn () => $loadout->apply());
+        $customTools->onChange(static fn () => $loadout->refresh());
 
         // 8. Rebind autocomplete on editor, and redraw the header and what was loaded — upstream's
         // `showLoadedResources()` after a reload, which draws the problems as its warning blocks.
@@ -3259,7 +3265,8 @@ final class InteractiveMode
      * gone back *to* stays; what came after it is left in the file, so a road not taken
      * is a road that can be taken again.
      */
-    private function showTree(): void
+    /** @param string|null $initialSelectedId where the cursor starts; the current leaf when null */
+    private function showTree(?string $initialSelectedId = null): void
     {
         if ($this->session->isStreaming()) {
             $this->sayWarning('Still working. Press esc first.');
@@ -3286,7 +3293,7 @@ final class InteractiveMode
         // `tree()`, not `branch()`. The branch is the path being talked on; a conversation that went
         // back has another one beside it, still in the file with its parents intact, and listing
         // only the current path made it unreachable — `goTo()` needs an id and nothing showed one.
-        $picker = new TreeList($tree, $store->leaf(), 12);
+        $picker = new TreeList($tree, $store->leaf(), 12, $initialSelectedId);
         $picker->setSelectHandler(function (string $id): void {
             $this->closePicker();
 
@@ -3723,8 +3730,10 @@ final class InteractiveMode
         if (!$jump->moved) {
             // Called off part-way: nothing moved, so the list comes back rather than the
             // person being left wondering which branch they are on.
-            $this->sayWarning('Branch summary cancelled — still where you were.');
-            $this->showTree();
+            // Upstream: `showStatus("Branch summarization cancelled")` and the tree again, on the
+            // entry that was picked.
+            $this->say('Branch summarization cancelled');
+            $this->showTree($entryId);
 
             return;
         }
@@ -3760,7 +3769,7 @@ final class InteractiveMode
         $controller = new AbortController();
         $this->compaction = $controller;
 
-        $this->showLoader('Summarising the branch...', timer: true);
+        $this->showLoader($this->branchSummaryLabel(), timer: true);
 
         try {
             return $this->session->goTo($entryId, summarise: true, signal: $controller->signal);
@@ -4947,11 +4956,10 @@ final class InteractiveMode
 
         if ($event->phase === SummarizationRetryEvent::ATTEMPT_START) {
             $this->stopRetryCountdown();
-            $this->showLoader(match (true) {
-                $event->source === 'branchSummary' => 'Summarising the branch...',
-                $event->reason === 'overflow' => 'Context is full — summarising, then trying again.',
-                default => 'Summarising the conversation...',
-            }, timer: true);
+            $this->showLoader(
+                $event->source === 'branchSummary' ? $this->branchSummaryLabel() : $this->compactionLabel($event->reason ?? 'manual'),
+                timer: true,
+            );
         }
     }
 
@@ -4979,7 +4987,29 @@ final class InteractiveMode
         // next Enter sends it.
         $this->editor->disableSubmit(true);
 
-        $this->showLoader('Context is full — summarising, then trying again.', timer: true);
+        $this->showLoader($this->compactionLabel('overflow'), timer: true);
+    }
+
+    /**
+     * Upstream's `CompactionStatusIndicator` label: `Compacting context...` for `/compact`,
+     * `Auto-compacting...` for the threshold, with `Context overflow detected, ` in front for an
+     * overflow — each followed by the interrupt key as `keyText()` names it.
+     *
+     * @param string $reason `manual`, `threshold` or `overflow`
+     */
+    private function compactionLabel(string $reason): string
+    {
+        $cancelHint = '(' . $this->keybindings->keyText('app.interrupt') . ' to cancel)';
+
+        return $reason === 'manual'
+            ? "Compacting context... {$cancelHint}"
+            : ($reason === 'overflow' ? 'Context overflow detected, ' : '') . "Auto-compacting... {$cancelHint}";
+    }
+
+    /** Upstream's `BranchSummaryStatusIndicator` label. */
+    private function branchSummaryLabel(): string
+    {
+        return 'Summarizing branch... (' . $this->keybindings->keyText('app.interrupt') . ' to cancel)';
     }
 
     private function onOverflowHandled(AutoCompactionEndEvent $event): void

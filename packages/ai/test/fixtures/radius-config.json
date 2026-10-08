@@ -1,0 +1,115 @@
+{
+ "normalize": [
+  "https://radius.pi.dev",
+  "https://x.dev",
+  "HTTP://y.dev",
+  "https://ftp://z"
+ ],
+ "results": [
+  {
+   "config": {
+    "baseUrl": "https://g.example/v1",
+    "models": [
+     {
+      "id": "a",
+      "name": "A",
+      "reasoning": true,
+      "input": [
+       "text",
+       "image"
+      ],
+      "cost": {
+       "input": 1,
+       "output": 2,
+       "cacheRead": 0.1,
+       "cacheWrite": 0,
+       "tiers": [
+        {
+         "inputTokensAbove": 10,
+         "input": 2,
+         "output": 3,
+         "cacheRead": 0.2,
+         "cacheWrite": 0
+        }
+       ]
+      },
+      "contextWindow": 100,
+      "maxTokens": 10,
+      "thinkingLevelMap": {
+       "off": null,
+       "high": "high"
+      },
+      "lab": "X"
+     }
+    ]
+   },
+   "models": [
+    {
+     "id": "a",
+     "name": "A",
+     "reasoning": true,
+     "input": [
+      "text",
+      "image"
+     ],
+     "cost": {
+      "input": 1,
+      "output": 2,
+      "cacheRead": 0.1,
+      "cacheWrite": 0,
+      "tiers": [
+       {
+        "inputTokensAbove": 10,
+        "input": 2,
+        "output": 3,
+        "cacheRead": 0.2,
+        "cacheWrite": 0
+       }
+      ]
+     },
+     "contextWindow": 100,
+     "maxTokens": 10,
+     "thinkingLevelMap": {
+      "off": null,
+      "high": "high"
+     },
+     "lab": "X",
+     "api": "pi-messages",
+     "provider": "radius-x",
+     "baseUrl": "https://g.example/v1"
+    }
+   ]
+  },
+  {
+   "error": "Could not load Radius config from GATEWAY: 503: éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé…"
+  },
+  {
+   "error": "Invalid Radius config from GATEWAY"
+  },
+  {
+   "error": "Could not load Radius config from GATEWAY: 401: "
+  }
+ ],
+ "seen": [
+  {
+   "url": "/v1/config",
+   "accept": "application/json",
+   "authorization": "Bearer k1"
+  },
+  {
+   "url": "/v1/config",
+   "accept": "application/json",
+   "authorization": null
+  },
+  {
+   "url": "/v1/config",
+   "accept": "application/json",
+   "authorization": null
+  },
+  {
+   "url": "/v1/config",
+   "accept": "application/json",
+   "authorization": "Bearer k2"
+  }
+ ]
+}

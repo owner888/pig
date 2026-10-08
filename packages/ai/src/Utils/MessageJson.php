@@ -333,7 +333,10 @@ final class MessageJson
 
         foreach ($content as $block) {
             $encoded = match (true) {
-                $block instanceof TextContent => ['type' => 'text', 'text' => $block->text],
+                // `textSignature` only when there is one, as `JSON.stringify` leaves out an undefined
+                // field: the Responses APIs' message id and phase, which a replay sends back.
+                $block instanceof TextContent => ['type' => 'text', 'text' => $block->text]
+                    + ($block->textSignature === null ? [] : ['textSignature' => $block->textSignature]),
                 $block instanceof ThinkingContent => [
                     'type' => 'thinking',
                     'thinking' => $block->thinking,
@@ -378,7 +381,7 @@ final class MessageJson
 
         foreach ($blocks as $block) {
             $decoded = match ($block['type'] ?? null) {
-                'text' => new TextContent((string) ($block['text'] ?? '')),
+                'text' => new TextContent((string) ($block['text'] ?? ''), is_string($block['textSignature'] ?? null) ? $block['textSignature'] : null),
                 'thinking' => new ThinkingContent(
                     (string) ($block['thinking'] ?? ''),
                     $block['thinkingSignature'] ?? null,

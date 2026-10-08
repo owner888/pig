@@ -94,7 +94,13 @@ final class Agent
 
     private readonly Closure $convertToLlm;
 
-    private readonly ?Closure $transformContext;
+    /**
+     * Upstream's `Agent.transformContext`, a public field there too: a session wraps it to project
+     * the request after the hooks' `context` handlers have had it (`AgentSession`'s forced prompt).
+     *
+     * @var (Closure(list<mixed>, ?AbortSignal): list<mixed>)|null
+     */
+    public ?Closure $transformContext;
 
     /** @var list<mixed> */
     private array $steeringQueue = [];

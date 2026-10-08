@@ -18,7 +18,7 @@ trait LoadsAntigravity
     {
         $src = dirname(__DIR__, 4) . '/extensions/pig-antigravity/src';
 
-        foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigravityOauth', 'Accounts', 'Catalog', 'QuotaClient', 'ImageGenerator', 'GeneratedImageResult'] as $class) {
+        foreach (['Routing', 'Models', 'AntigravityApi', 'AntigravityOauth', 'LazyAntigravityOauth', 'Accounts', 'Catalog', 'Grouping', 'Discovery', 'QuotaClient', 'ImageGenerator', 'GeneratedImageResult'] as $class) {
             if (!class_exists("PigAntigravity\\{$class}", false)) {
                 require $src . "/{$class}.php";
             }

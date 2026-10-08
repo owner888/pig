@@ -1,0 +1,164 @@
+{
+ "scenario": {
+  "module": "api/openai-codex-responses.ts",
+  "noZstd": true,
+  "simple": true,
+  "model": {
+   "id": "gpt-5.5",
+   "name": "GPT-5.5",
+   "api": "openai-codex-responses",
+   "provider": "openai-codex",
+   "baseUrl": "SERVER/backend-api",
+   "reasoning": true,
+   "input": [
+    "text",
+    "image"
+   ],
+   "cost": {
+    "input": 5,
+    "output": 30,
+    "cacheRead": 0.5,
+    "cacheWrite": 0
+   },
+   "contextWindow": 272000,
+   "maxTokens": 128000,
+   "thinkingLevelMap": {
+    "xhigh": "xhigh",
+    "minimal": "low"
+   },
+   "compat": {
+    "supportsOpenAIGrammarTools": true,
+    "supportsToolSearch": true,
+    "supportsMidConvoSystemMessages": true
+   }
+  },
+  "options": {
+   "apiKey": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjXzEyMyJ9LCJleHAiOjF9.sig",
+   "transport": "sse"
+  },
+  "context": {
+   "systemPrompt": "Be brief.",
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi",
+     "timestamp": 1
+    }
+   ],
+   "tools": [
+    {
+     "name": "read",
+     "description": "Read a file",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    }
+   ]
+  },
+  "responses": [
+   {
+    "chunks": [
+     {
+      "type": "response.created",
+      "response": {
+       "id": "resp_1"
+      }
+     },
+     {
+      "type": "response.output_item.added",
+      "output_index": 0,
+      "item": {
+       "type": "reasoning",
+       "id": "rs_2",
+       "summary": []
+      }
+     },
+     {
+      "type": "response.reasoning_summary_text.delta",
+      "output_index": 0,
+      "delta": "think"
+     },
+     "data: {not json\n\n"
+    ]
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "path": "/backend-api/codex/responses",
+    "headers": {
+     "authorization": "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjXzEyMyJ9LCJleHAiOjF9.sig",
+     "chatgpt-account-id": "acc_123",
+     "originator": "pi",
+     "openai-beta": "responses=experimental",
+     "accept": "text/event-stream",
+     "content-type": "application/json"
+    },
+    "userAgent": "pi (linux 6.18.44-fc-v80; x64)",
+    "body": "{\"model\":\"gpt-5.5\",\"store\":false,\"stream\":true,\"instructions\":\"Be brief.\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"text\":{\"verbosity\":\"low\"},\"include\":[\"reasoning.encrypted_content\"],\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"tools\":[{\"type\":\"function\",\"name\":\"read\",\"description\":\"Read a file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]},\"strict\":null}],\"reasoning\":{\"effort\":\"none\"}}"
+   }
+  ],
+  "events": [
+   [
+    "start",
+    null,
+    null
+   ],
+   [
+    "thinking_start",
+    0,
+    null
+   ],
+   [
+    "thinking_delta",
+    0,
+    "think"
+   ],
+   [
+    "error",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "think"
+    }
+   ],
+   "api": "openai-codex-responses",
+   "provider": "openai-codex",
+   "model": "gpt-5.5",
+   "usage": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 0,
+    "cost": {
+     "input": 0,
+     "output": 0,
+     "cacheRead": 0,
+     "cacheWrite": 0,
+     "total": 0
+    }
+   },
+   "stopReason": "error",
+   "timestamp": 1767323045000,
+   "responseId": "resp_1",
+   "errorMessage": "Invalid Codex SSE JSON: Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+  }
+ }
+}

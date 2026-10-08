@@ -119,6 +119,15 @@ final class ExtensionApi extends HookApi
     }
 
     /**
+     * Whether the session restored $name from its transcript and is waiting for it to be
+     * registered — see `AgentSession::isToolPending()`. False with no session.
+     */
+    public function isToolPending(string $name): bool
+    {
+        return $this->session()?->isToolPending($name) ?? false;
+    }
+
+    /**
      * Register a tool that the model can call.
      */
     public function registerTool(CustomTool $tool): void

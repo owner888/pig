@@ -81,6 +81,16 @@ final class StreamTest extends TestCase
         $this->restoreEnv();
     }
 
+    public function testAzureRadiusAndTypeSafeReadTheirOwnVariablesAndCodexNone(): void
+    {
+        // Upstream's `getApiKeyEnvVars()`: `azure: "AZURE_OPENAI_API_KEY"`, `radius: "RADIUS_API_KEY"`,
+        // `typesafe: "TYPESAFE_API_KEY"`; `openai-codex` has none — it is a ChatGPT sign-in only.
+        $this->assertSame('az', Stream::envApiKey('azure', ['AZURE_OPENAI_API_KEY' => 'az']));
+        $this->assertSame('rad', Stream::envApiKey('radius', ['RADIUS_API_KEY' => 'rad']));
+        $this->assertSame('ts', Stream::envApiKey('typesafe', ['TYPESAFE_API_KEY' => 'ts']));
+        $this->assertNull(Stream::envApiKey('openai-codex', ['OPENAI_API_KEY' => 'sk']));
+    }
+
     public function testBedrockIsSignedInByAnyOfItsAwsSources(): void
     {
         $this->assertNull(Stream::envApiKey('amazon-bedrock', []));

@@ -29,8 +29,8 @@ final readonly class AssistantMessage
      * @param string|null            $responseModel the model the provider says answered, set only
      *        when it is not the `model` that was asked for (an alias resolved, a router's pick)
      * @param bool|null              $endTurn whether the model said it was done with its turn.
-     *        Upstream sets it only from the Codex responses API, which pig does not have, so nothing
-     *        here sets it; it is carried so a session file that has it keeps it
+     *        Upstream sets it only from the Codex responses API (`response.end_turn` on its terminal
+     *        event), and so does `Providers\OpenAiCodexResponses`
      * @param list<AssistantMessageDiagnostic>|null $diagnostics what the provider or the runtime
      *        noticed about the turn, for `/bug`
      * @param string|null            $providerThinkingLevel upstream's "exact provider-native effort

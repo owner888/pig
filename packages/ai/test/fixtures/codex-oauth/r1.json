@@ -1,0 +1,32 @@
+{
+ "scenario": {
+  "refresh": "rt_old",
+  "responses": [
+   {
+    "body": {
+     "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjXzEyMyJ9fQ.sig",
+     "refresh_token": "rt_new",
+     "expires_in": 3600
+    }
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "method": "POST",
+    "url": "/oauth/token",
+    "contentType": "application/x-www-form-urlencoded",
+    "body": "grant_type=refresh_token&refresh_token=rt_old&client_id=app_EMoamEEZ73f0CkXaXp7hrann"
+   }
+  ],
+  "events": [],
+  "result": {
+   "type": "oauth",
+   "access": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjXzEyMyJ9fQ.sig",
+   "refresh": "rt_new",
+   "expires": 1767326645000,
+   "accountId": "acc_123"
+  }
+ }
+}

@@ -19,6 +19,8 @@ use Pig\CodingAgent\Hooks\Events\SessionStartEvent;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use PigMcp\McpConfig;
+use PigMcp\McpServersSection;
+use PigMcp\ServerEntry;
 use PigMcp\McpTools;
 use Pig\Codemode\ToolSearch;
 
@@ -47,7 +49,7 @@ final class McpExtensionTest extends TestCase
 
         $repo = dirname(__DIR__, 4);
 
-        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResources', 'McpSignInCancelledError', 'McpOauth', 'McpServerLog'] as $class) {
+        foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResources', 'McpSignInCancelledError', 'McpOauth', 'McpServerLog', 'McpServersSection'] as $class) {
             if (!class_exists("PigMcp\\{$class}", false)) {
                 require $repo . "/extensions/pig-mcp/{$class}.php";
             }
@@ -417,6 +419,112 @@ final class McpExtensionTest extends TestCase
         $this->assertSame('echo: hi', $result->content[0]->text);
 
         Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
+    public function testADeferredToolAResumedTranscriptDeclaredIsRegisteredWhenItsServerConnects(): void
+    {
+        // Upstream's "declares tools tool_search loaded again on resume once their server connects":
+        // the session restores its loadout before the server is there, and the tool arrives
+        // declared rather than waiting for `tool_search` again.
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'deferred'],
+        ]]));
+
+        $repo = dirname(__DIR__, 4);
+        [$loaded] = ExtensionLoader::load($this->cwd, cliPaths: [$repo . '/extensions/pig-mcp/index.php'], home: $this->home);
+        $this->extension = $loaded[0];
+        $set = new CustomToolSet([]);
+        $set->adopt($this->extension);
+        $hooks = new HookRunner([new LoadedHook($this->extension->path, $this->extension->resolved, $this->extension->api)], $this->cwd);
+        $hooks->initialize(static fn () => null, ui: new NoticingUi());
+        $agent = new \Pig\Agent\Agent(new \Pig\Agent\AgentOptions());
+        $loadout = new \Pig\CodingAgent\Tools\ToolLoadout($agent, $this->cwd, ['read'], $set, $hooks, [], []);
+        $set->onChange(static fn () => $loadout->refresh());
+        $loadout->apply();
+        $session = new \Pig\CodingAgent\Session\AgentSession($agent, $this->cwd, hooks: $hooks, loadout: $loadout);
+
+        // What the transcript of the earlier session declared, `tool_search` having loaded the tool.
+        $session->restore([new \Pig\Ai\SystemMessage('', ['cwd' => 'x'], [
+            new \Pig\Ai\Tool('read', 'Read', []),
+            new \Pig\Ai\Tool('tool_search', 'Search', []),
+            new \Pig\Ai\Tool('mcp__fixture__echo', 'Echo', []),
+        ])]);
+        $this->assertTrue($session->isToolPending('mcp__fixture__echo'));
+
+        Async::run(function () use ($hooks): void {
+            $hooks->emit(new SessionStartEvent());
+            $hooks->emitBeforeAgentStart('hi');
+        });
+
+        $this->assertSame(['mcp__fixture__echo', 'tool_search'], $set->names());
+        $this->assertSame(['read', 'mcp__fixture__echo', 'tool_search'], $session->activeTools());
+        $this->assertFalse($session->isToolPending('mcp__fixture__echo'));
+
+        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
+    public function testEveryPromptListsTheServersWhoseToolsAreNotDeclared(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'deferred', 'description' => 'Echoes text.'],
+        ]]));
+        [, $hooks] = $this->start();
+
+        $options = new \Pig\CodingAgent\Prompt\SystemPromptOptions();
+        Async::run(static fn () => $hooks->emitBeforeAgentStart('again', [], $options));
+
+        $this->assertSame([McpServersSection::NAME => "MCP servers whose tools are not declared to you. Load the tools of `tool_search` servers with `tool_search`.\n- mcp__fixture (tool_search): Echoes text."], $options->sections);
+
+        Async::run(fn () => $hooks->emit(new SessionShutdownEvent()));
+    }
+
+    // ---- the `mcp_servers` section: upstream's "MCP servers section" ----------------------------
+
+    /** @return array{entry: ServerEntry, instructions?: string} */
+    private static function listing(string $name, ?string $description = null, ?string $exposure = null, ?string $instructions = null): array
+    {
+        $config = ['command' => 'x', ...($description !== null ? ['description' => $description] : []), ...($exposure !== null ? ['exposure' => $exposure] : [])];
+
+        return ['entry' => new ServerEntry($name, $config, 'test', 'global'), ...($instructions !== null ? ['instructions' => $instructions] : [])];
+    }
+
+    public function testTheSectionListsServersWithHowTheirToolsAreReachedAndTheFirstLineOfTheirDescription(): void
+    {
+        $section = McpServersSection::render([
+            self::listing('docs', "Docs search.\nMore."),
+            self::listing('later', null, 'deferred'),
+            self::listing('direct', 'Declared.', 'direct'),
+            self::listing('plain', null, null, 'From instructions.'),
+        ]);
+
+        $this->assertSame([
+            '- mcp__docs (codemode): Docs search.',
+            '- mcp__later (tool_search)',
+            '- mcp__plain (codemode): From instructions.',
+        ], array_slice(explode("\n", (string) $section), 1));
+        $this->assertNull(McpServersSection::render([self::listing('direct', 'Declared.', 'direct')]));
+    }
+
+    public function testTheSectionShortensDescriptionsToFitTheSizeLimit(): void
+    {
+        $servers = array_map(static fn (int $index): array => self::listing("server{$index}", str_repeat('x', 400)), range(0, 39));
+        $section = (string) McpServersSection::render($servers);
+
+        $this->assertLessThanOrEqual(McpServersSection::MAX_SERVERS_SECTION_CHARS, mb_strlen($section));
+        $this->assertCount(41, explode("\n", $section));
+        $this->assertStringContainsString('- mcp__server39 (codemode): x', $section);
+    }
+
+    public function testTheSectionLeavesOutTheLastServersWhenTheirNamesAloneDoNotFit(): void
+    {
+        $servers = array_map(static fn (int $index): array => self::listing("server-with-a-long-name-{$index}", 'desc'), range(0, 199));
+        $section = (string) McpServersSection::render($servers);
+
+        $this->assertLessThanOrEqual(McpServersSection::MAX_SERVERS_SECTION_CHARS, mb_strlen($section));
+        $lines = explode("\n", $section);
+        $this->assertMatchesRegularExpression('/^- … \d+ more servers; find their tools with searchTools\(\)$/u', end($lines));
+        preg_match('/(\d+) more/', end($lines), $match);
+        $this->assertSame(200, count($lines) - 2 + (int) $match[1]);
     }
 
     public function testToolSearchRefusesAnEmptyQueryAndABadLimit(): void
