@@ -8,6 +8,7 @@ use Pig\Ai\Providers\Anthropic;
 use Pig\Ai\Providers\AnthropicOptions;
 use Pig\Ai\Providers\Google;
 use Pig\Ai\Providers\GoogleOptions;
+use Pig\Ai\Providers\GoogleShared;
 use Pig\Ai\Providers\OpenAiCompletions;
 use Pig\Ai\Providers\OpenAiOptions;
 use Pig\Ai\Providers\OpenAiResponses;
@@ -218,9 +219,14 @@ final class Stream
     /**
      * How hard Gemini should think, said the way the model in question understands it.
      *
-     * Gemini 3 takes a named level and ignores a budget; 2.5 takes a budget in tokens and
-     * has different ceilings for pro and flash. And saying nothing means *dynamic*
-     * thinking, not none — so a turn that did not ask for thinking has to ask for none.
+     * Upstream's `streamSimple()` in `google-generative-ai.ts`. A level model takes a named level
+     * and ignores a budget; 2.5 takes a budget in tokens and has different ceilings for pro and
+     * flash. And saying nothing means *dynamic* thinking, not none — so a turn that did not ask
+     * for thinking has to ask for none, which `Google` words per model.
+     *
+     * Upstream clamps the level to the model here (`clampThinkingLevel`); pig's agent has already
+     * done that with `ThinkingLevel::clampedFor()` before a request is built, and this package
+     * cannot see that one, so what is left here is upstream's `xhigh` → `high` for Google.
      */
     private static function gemini(Model $model, ?SimpleStreamOptions $options, int $maxTokens, ?string $apiKey): GoogleOptions
     {
@@ -231,53 +237,37 @@ final class Stream
             return new GoogleOptions(...$base, thinkingEnabled: false);
         }
 
-        // Every Gemini 3.x model takes a *level*, which was measured rather than read — one
-        // request per model and level against the public endpoint, 2026-10-01 (CLAUDE.md, "Gemini
-        // 3.x on the public endpoint"). Upstream's two checks, `3-pro` and `3-flash`, matched the
-        // anchor-era ids and stopped matching once the catalogue moved to `gemini-3.1-pro-preview`
-        // and `gemini-3.5-flash`: every one of those fell through to `thinkingBudget: -1`, which
-        // thinks as much as it likes and ignores the level entirely.
-        if (str_contains($model->id, 'gemini-3')) {
-            return new GoogleOptions(...$base, thinkingEnabled: true, thinkingLevel: self::geminiLevel($model, $effort));
+        $resolvedLevel = GoogleShared::resolveGoogleThinkingLevel($model, $effort->value);
+
+        // Upstream's `usesGoogleThinkingLevel()`, a regex over the id. It replaces
+        // `str_contains($id, 'gemini-3')`, which matched every 3.x id but missed
+        // `gemini-flash-latest`, `gemini-flash-lite-latest` and Gemma 4, which all take a level too.
+        if (GoogleShared::usesGoogleThinkingLevel($model)) {
+            return new GoogleOptions(...$base, thinkingEnabled: true, thinkingLevel: GoogleShared::toGoogleThinkingLevel($resolvedLevel));
         }
 
-        return new GoogleOptions(...$base, thinkingEnabled: true, thinkingBudget: self::geminiBudget($model, $effort));
+        return new GoogleOptions(...$base, thinkingEnabled: true, thinkingBudget: self::geminiBudget($model, $resolvedLevel));
     }
 
     /**
-     * The level's own name, upper-cased, unless the model's map says otherwise.
+     * Upstream's `getGoogleBudget()`, from the level the model's map resolved to.
      *
-     * Upstream folded Pro down to two levels (`gemini-3-pro-preview` took LOW and HIGH). Measured
-     * on `gemini-3.1-pro-preview`, MEDIUM is a real level there — 111 thinking tokens against
-     * 87 and 142 — so there is nothing to fold any more. Which levels a model *refuses* (MINIMAL
-     * on five of the nine, `off` on five) is per model with no pattern in the name, so it lives
-     * in the row's `thinkingLevelMap` and is clamped away before a request is built; a level that
-     * still reaches here is sent as it is, and a provider that refuses it says so by name.
+     * Upstream also takes the caller's own `thinkingBudgets` first; pig's `SimpleStreamOptions` has
+     * no such field, so the table is the whole answer. https://ai.google.dev/gemini-api/docs/thinking#set-budget
      */
-    private static function geminiLevel(Model $model, ReasoningEffort $effort): string
-    {
-        return strtoupper($model->thinkingEffort($effort->value) ?? $effort->value);
-    }
-
-    /** https://ai.google.dev/gemini-api/docs/thinking#set-budget */
-    private static function geminiBudget(Model $model, ReasoningEffort $effort): int
+    private static function geminiBudget(Model $model, string $level): int
     {
         if (str_contains($model->id, '2.5-pro')) {
-            return match ($effort) {
-                ReasoningEffort::Minimal => 128,
-                ReasoningEffort::Low => 2048,
-                ReasoningEffort::Medium => 8192,
-                default => 32768,
-            };
+            return ['minimal' => 128, 'low' => 2048, 'medium' => 8192, 'high' => 32768][$level];
+        }
+
+        // Before `2.5-flash`, which its id also contains: Flash-Lite thinks at least 512.
+        if (str_contains($model->id, '2.5-flash-lite')) {
+            return ['minimal' => 512, 'low' => 2048, 'medium' => 8192, 'high' => 24576][$level];
         }
 
         if (str_contains($model->id, '2.5-flash')) {
-            return match ($effort) {
-                ReasoningEffort::Minimal => 128,
-                ReasoningEffort::Low => 2048,
-                ReasoningEffort::Medium => 8192,
-                default => 24576,
-            };
+            return ['minimal' => 128, 'low' => 2048, 'medium' => 8192, 'high' => 24576][$level];
         }
 
         // A model with no published ceiling: -1 lets it decide, which beats a guess.

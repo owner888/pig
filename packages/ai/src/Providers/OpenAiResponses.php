@@ -314,7 +314,9 @@ final class OpenAiResponses
         }
 
         if ($kind === 'text') {
-            $builder->setSignature($index, (string) ($item['id'] ?? ''));
+            // Upstream's `encodeTextSignatureV1(item.id, item.phase ?? undefined)`: the id *and* the
+            // phase, so `assistant()` can send the phase back on the same message next turn.
+            $builder->setSignature($index, self::encodeTextSignatureV1($item));
             $stream->push(new TextEndEvent($index, $builder->textOf($index), $builder->snapshot()));
 
             return null;
@@ -617,27 +619,41 @@ final class OpenAiResponses
             ];
         }
 
-        $position = 0;
+        // Upstream's `msgIndex`. It counts the messages that went out, not the messages that came
+        // in: upstream's `continue` for a user turn with no content and an assistant turn with no
+        // output skips its `msgIndex++`, so neither moves the count. Upstream's leading system
+        // message does not count either; pig's system prompt is `Context::$systemPrompt` and never
+        // in this list, so there is nothing to skip for it.
+        $msgIndex = 0;
         $normalizeToolCallId = fn (string $id, Model $target, AssistantMessage $source): string
             => $this->normalizeToolCallId($id, $model, $source);
 
         foreach (TransformMessages::apply($context->messages, $model, $normalizeToolCallId) as $message) {
-            foreach ($this->convert($message, $model, $position) as $item) {
+            $converted = $this->convert($message, $model, $msgIndex);
+
+            foreach ($converted as $item) {
                 $items[] = $item;
             }
 
-            $position++;
+            // Upstream tests the user content *before* conversion (`content.length === 0`) and the
+            // assistant output after it, so these are the two tests, each where upstream has it.
+            $skipped = ($message instanceof UserMessage && $message->content === [])
+                || ($message instanceof AssistantMessage && $converted === []);
+
+            if (!$skipped) {
+                $msgIndex++;
+            }
         }
 
         return $items;
     }
 
     /** @return list<array<string, mixed>> */
-    private function convert(mixed $message, Model $model, int $position): array
+    private function convert(mixed $message, Model $model, int $msgIndex): array
     {
         return match (true) {
             $message instanceof UserMessage => $this->user($message, $model),
-            $message instanceof AssistantMessage => $this->assistant($message, $model, $position),
+            $message instanceof AssistantMessage => $this->assistant($message, $model, $msgIndex),
             $message instanceof ToolResultMessage => $this->toolResult($message, $model),
             default => [],
         };
@@ -686,9 +702,10 @@ final class OpenAiResponses
      *
      * @return list<array<string, mixed>>
      */
-    private function assistant(AssistantMessage $message, Model $model, int $position): array
+    private function assistant(AssistantMessage $message, Model $model, int $msgIndex): array
     {
         $items = [];
+        $textBlockIndex = 0;
 
         // Upstream's `isDifferentModel`: this provider and API, another model.
         $differentModel = $message->provider === $model->provider
@@ -709,12 +726,28 @@ final class OpenAiResponses
             }
 
             if ($block instanceof TextContent) {
+                $parsedSignature = self::parseTextSignature($block->textSignature);
+                $fallbackMessageId = $textBlockIndex === 0 ? "msg_pi_{$msgIndex}" : "msg_pi_{$msgIndex}_{$textBlockIndex}";
+                $textBlockIndex++;
+
+                // Upstream's comment: OpenAI requires id to be max 64 characters.
+                $msgId = $parsedSignature['id'] ?? null;
+
+                if ($msgId === null || $msgId === '') {
+                    $msgId = $fallbackMessageId;
+                } elseif (strlen($msgId) > self::MAX_ID_LENGTH) {
+                    $msgId = 'msg_' . ShortHash::of($msgId);
+                }
+
                 $items[] = [
                     'type' => 'message',
                     'role' => 'assistant',
                     'content' => [['type' => 'output_text', 'text' => Utf8::sanitize($block->text), 'annotations' => []]],
                     'status' => 'completed',
-                    'id' => $this->messageId($block->textSignature, $position),
+                    'id' => $msgId,
+                    // Upstream's `phase: parsedSignature?.phase`, which is `undefined` — and so not
+                    // in the JSON at all — unless the signature carried one.
+                    ...(isset($parsedSignature['phase']) ? ['phase' => $parsedSignature['phase']] : []),
                 ];
 
                 continue;
@@ -783,21 +816,66 @@ final class OpenAiResponses
     }
 
     /**
-     * An id OpenAI will take back.
+     * Upstream's `encodeTextSignatureV1()`: a finished message item's id and phase, as the JSON
+     * `TextSignatureV1` (`{"v":1,"id":…,"phase":…}`) that `parseTextSignature()` reads back.
      *
-     * Its own ids can arrive longer than it accepts, so an overlong one is replaced by a
-     * hash of itself: the same message has to come back under the same id every turn, and
-     * a counter would renumber the conversation every time something earlier was dropped.
+     * `phase` is written only when it is truthy, as upstream's `if (phase)`. An item with no `id`
+     * gives `{"v":1}`, which is what `JSON.stringify` makes of `id: undefined`.
+     *
+     * @param array<string, mixed> $item
      */
-    private function messageId(?string $signature, int $position): string
+    private static function encodeTextSignatureV1(array $item): string
     {
-        if ($signature === null || $signature === '') {
-            return "msg_{$position}";
+        $payload = ['v' => 1];
+
+        if (array_key_exists('id', $item)) {
+            $payload['id'] = $item['id'];
         }
 
-        return strlen($signature) <= self::MAX_ID_LENGTH
-            ? $signature
-            : 'msg_' . ShortHash::of($signature);
+        $phase = $item['phase'] ?? null;
+
+        if ($phase !== null && $phase !== '' && $phase !== false) {
+            $payload['phase'] = $phase;
+        }
+
+        return (string) json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Upstream's `parseTextSignature()`: a `TextSignatureV1` JSON, or the plain id string that
+     * sessions written before it hold.
+     *
+     * Null for no signature. A JSON with `v: 1` and a string `id` gives that id, and its phase
+     * only when it is `commentary` or `final_answer`; anything else — including text that starts
+     * with `{` and is not that JSON — is a legacy plain id, whole.
+     *
+     * @return array{id: string, phase?: string}|null
+     */
+    private static function parseTextSignature(?string $signature): ?array
+    {
+        if ($signature === null || $signature === '') {
+            return null;
+        }
+
+        if (str_starts_with($signature, '{')) {
+            $parsed = json_decode($signature, true);
+
+            // `parsed.v === 1`: a JSON number, which PHP may decode as int or float.
+            if (is_array($parsed)
+                && (is_int($parsed['v'] ?? null) || is_float($parsed['v'] ?? null)) && $parsed['v'] == 1
+                && is_string($parsed['id'] ?? null)
+            ) {
+                $phase = $parsed['phase'] ?? null;
+
+                if ($phase === 'commentary' || $phase === 'final_answer') {
+                    return ['id' => $parsed['id'], 'phase' => $phase];
+                }
+
+                return ['id' => $parsed['id']];
+            }
+        }
+
+        return ['id' => $signature];
     }
 
     /**

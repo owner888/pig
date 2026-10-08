@@ -63,6 +63,9 @@ final class OpenAiCompletions
     /** Where reasoning arrives, depending on who is answering. */
     private const array REASONING_FIELDS = ['reasoning_content', 'reasoning', 'reasoning_text'];
 
+    /** `JSON.stringify`'s output for what is stored and replayed: no escaped slashes or Unicode. */
+    private const int JSON_FLAGS = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
+
     /** Mistral wants tool ids exactly this long, alphanumeric, and rejects anything else. */
     private const int MISTRAL_ID_LENGTH = 9;
 
@@ -100,6 +103,12 @@ final class OpenAiCompletions
         // block has ended, so it ends when the next thing is not the same kind.
         $open = null;
 
+        // Upstream's `streamedReasoningDetails`: the message's `reasoning_details`, merged as they
+        // stream and written into the thinking block's signature once, at the end — and, beside
+        // it, the thinking block made only to hold them, when no reasoning text came to make one.
+        // See `onReasoningDetails()`.
+        $replay = ['details' => null, 'detached' => null];
+
         try {
             $response = $this->http->send($this->request($model, $context, $options), $signal);
 
@@ -120,18 +129,27 @@ final class OpenAiCompletions
                     $data = json_decode($event->data, true);
 
                     if (is_array($data)) {
-                        $open = $this->onChunk($data, $model, $builder, $stream, $open);
+                        $open = $this->onChunk($data, $model, $builder, $stream, $open, $replay);
                     }
                 }
             }
 
+            self::applyStreamedReasoningDetails($builder, $replay);
             $this->close($builder, $stream, $open);
+
+            if ($replay['detached'] !== null) {
+                $stream->push(new ThinkingEndEvent($replay['detached'], $builder->textOf($replay['detached']), $builder->snapshot()));
+            }
+
             $signal?->throwIfAborted();
 
             $message = $builder->snapshot();
             $stream->push(new DoneEvent($message->stopReason, $message));
             $stream->end();
         } catch (Throwable $error) {
+            // Upstream applies the details in its `catch` too, so a failed turn keeps them.
+            self::applyStreamedReasoningDetails($builder, $replay);
+
             // A provider never throws at its caller: the failure is the stream's result.
             $builder->fail($error->getMessage(), $signal?->aborted() ?? false);
             $failed = $builder->snapshot();
@@ -143,6 +161,7 @@ final class OpenAiCompletions
     /**
      * @param array<string, mixed> $data
      * @param array{0: int, 1: string, 2: string}|null $open
+     * @param array{details: list<array<string, mixed>>|null, detached: int|null} $replay
      * @return array{0: int, 1: string, 2: string}|null
      */
     private function onChunk(
@@ -151,6 +170,7 @@ final class OpenAiCompletions
         AssistantMessageBuilder $builder,
         AssistantMessageEventStream $stream,
         ?array $open,
+        array &$replay,
     ): ?array {
         // Every chunk of one completion carries the same id; the first one that has it is kept,
         // as upstream's `||=` does. The model, likewise, but only when it is not the one asked
@@ -198,11 +218,19 @@ final class OpenAiCompletions
             $open = $this->onText($text, $builder, $stream, $open);
         }
 
+        // Upstream's comment: use the first non-empty reasoning field to avoid duplication —
+        // chutes.ai sends the same text in both `reasoning_content` and `reasoning`, and reading
+        // every field put it in the thinking block twice.
         foreach (self::REASONING_FIELDS as $field) {
             $thinking = $delta[$field] ?? null;
 
             if (is_string($thinking) && $thinking !== '') {
-                $open = $this->onThinking($thinking, $field, $builder, $stream, $open);
+                // Upstream's one provider rule here: opencode-go streams `reasoning` and takes it
+                // back only as `reasoning_content`.
+                $signature = $model->provider === 'opencode-go' && $field === 'reasoning' ? 'reasoning_content' : $field;
+                $open = $this->onThinking($thinking, $signature, $builder, $stream, $open);
+
+                break;
             }
         }
 
@@ -212,46 +240,235 @@ final class OpenAiCompletions
             }
         }
 
-        // After the calls, because it names one of them.
         if (is_array($delta['reasoning_details'] ?? null)) {
-            $this->onReasoningDetails($delta['reasoning_details'], $builder);
+            $this->onReasoningDetails($delta['reasoning_details'], $builder, $stream, $replay);
         }
 
         return $open;
     }
 
     /**
-     * OpenRouter's encrypted reasoning, filed against the call it belongs to.
+     * Upstream's `reasoning_details` arm: replay metadata, not text anybody reads.
      *
-     * A reasoning model reached through OpenRouter returns its chain of thought as an opaque blob
-     * rather than as text, addressed to a tool call by id, and it has to go back out with that call
-     * or the next turn starts the reasoning over. Both halves of this were missing: nothing read the
-     * field and nothing wrote it, so multi-step tool use through OpenRouter lost the model's
-     * reasoning between every turn. Upstream reads it here and writes it in `assistant()`.
+     * OpenRouter streams a reasoning model's reasoning as a list of details — `reasoning.text`,
+     * `reasoning.summary`, `reasoning.encrypted` — and wants the list back on the next request, or
+     * the model starts its reasoning over. Upstream keeps the whole list for the message in the
+     * thinking block's signature: consecutive text and summary deltas are merged into one entry,
+     * an encrypted entry stays opaque and on its own (`appendOpenAIReasoningDetail()`).
      *
-     * The whole detail is kept, not just its data, because that is what goes back.
+     * A detail needs a thinking block to live in, so one is made if none exists — upstream's
+     * `ensureThinkingBlock("")`. **pig's structural difference**: upstream has one thinking block
+     * per message and ends every block when the stream ends, while pig ends a block when something
+     * of another kind arrives. The details usually come beside the calls, and opening a block the
+     * ordinary way would end the call they came with — so a block made here is never the open one,
+     * and its end event is pushed after the stream ends, which is where upstream pushes it too.
      *
      * @param list<mixed> $details
+     * @param array{details: list<array<string, mixed>>|null, detached: int|null} $replay
      */
-    private function onReasoningDetails(array $details, AssistantMessageBuilder $builder): void
-    {
+    private function onReasoningDetails(
+        array $details,
+        AssistantMessageBuilder $builder,
+        AssistantMessageEventStream $stream,
+        array &$replay,
+    ): void {
         foreach ($details as $detail) {
-            if (!is_array($detail) || ($detail['type'] ?? null) !== 'reasoning.encrypted') {
+            if (!self::isOpenAIReasoningDetail($detail)) {
                 continue;
             }
 
-            $id = $detail['id'] ?? null;
-
-            if (!is_string($id) || $id === '' || !is_string($detail['data'] ?? null)) {
-                continue;
+            if ($builder->firstIndexOf('thinking') === null) {
+                $index = $builder->startThinking($builder->nextWire());
+                $replay['detached'] = $index;
+                $stream->push(new ThinkingStartEvent($index, $builder->snapshot()));
             }
 
-            $index = $builder->indexOfToolCall($id);
+            $replay['details'] ??= [];
+            self::appendOpenAIReasoningDetail($replay['details'], $detail);
+        }
+    }
 
-            if ($index !== null) {
-                $builder->setSignature($index, (string) json_encode($detail));
+    /**
+     * Upstream's `applyStreamedReasoningDetails()`: the details, as JSON, become the signature of
+     * the message's thinking block — pig's first one, which is the one upstream's single block is.
+     *
+     * Applied when the stream ends rather than when the block ends, because pig can end a thinking
+     * block (text arrived) before the details stop arriving; that block's `ThinkingEndEvent`
+     * carries the field name it streamed in, and the finished message carries the details.
+     *
+     * @param array{details: list<array<string, mixed>>|null, detached: int|null} $replay
+     */
+    private static function applyStreamedReasoningDetails(AssistantMessageBuilder $builder, array $replay): void
+    {
+        if ($replay['details'] === null) {
+            return;
+        }
+
+        $index = $builder->firstIndexOf('thinking');
+
+        if ($index !== null) {
+            $builder->setSignature($index, (string) json_encode($replay['details'], self::JSON_FLAGS));
+        }
+    }
+
+    /** Upstream's `isOpenAIReasoningDetail()`, with `isReasoningDetailObject()` and the common-field check. */
+    private static function isOpenAIReasoningDetail(mixed $detail): bool
+    {
+        // A JSON object: PHP decodes one as an array that is not a list. `{}` decodes as `[]`, a
+        // list — it has no `type`, so it is not a detail either way.
+        if (!is_array($detail) || array_is_list($detail)) {
+            return false;
+        }
+
+        // `hasValidCommonReasoningDetailFields()`: `id` absent, null or a string; `format` absent or
+        // a string (null is not undefined); `index` absent or a number.
+        if (array_key_exists('id', $detail) && $detail['id'] !== null && !is_string($detail['id'])) {
+            return false;
+        }
+
+        if (array_key_exists('format', $detail) && !is_string($detail['format'])) {
+            return false;
+        }
+
+        if (array_key_exists('index', $detail) && !is_int($detail['index']) && !is_float($detail['index'])) {
+            return false;
+        }
+
+        return match ($detail['type'] ?? null) {
+            'reasoning.summary' => is_string($detail['summary'] ?? null),
+            'reasoning.encrypted' => is_string($detail['data'] ?? null),
+            'reasoning.text' => is_string($detail['text'] ?? null)
+                && (($detail['signature'] ?? null) === null || is_string($detail['signature'])),
+            default => false,
+        };
+    }
+
+    /**
+     * Upstream's `appendOpenAIReasoningDetail()`.
+     *
+     * @param list<array<string, mixed>> $details
+     * @param array<string, mixed> $detail
+     */
+    private static function appendOpenAIReasoningDetail(array &$details, array $detail): void
+    {
+        $last = array_key_last($details);
+        $lastType = $last === null ? null : ($details[$last]['type'] ?? null);
+
+        if ($detail['type'] === 'reasoning.text' && $lastType === 'reasoning.text') {
+            $details[$last]['text'] .= $detail['text'];
+
+            // `lastDetail.signature ||= detail.signature`
+            if (self::falsy($details[$last]['signature'] ?? null)) {
+                self::assignFrom($details[$last], 'signature', $detail);
+            }
+
+            self::fillMissingCommonReasoningDetailFields($details[$last], $detail);
+
+            return;
+        }
+
+        if ($detail['type'] === 'reasoning.summary' && $lastType === 'reasoning.summary') {
+            $details[$last]['summary'] .= $detail['summary'];
+            self::fillMissingCommonReasoningDetailFields($details[$last], $detail);
+
+            return;
+        }
+
+        $details[] = $detail;
+    }
+
+    /**
+     * Upstream's `fillMissingCommonReasoningDetailFields()`: `id ??=`, `format ||=`, `index ??=`.
+     *
+     * @param array<string, mixed> $target
+     * @param array<string, mixed> $source
+     */
+    private static function fillMissingCommonReasoningDetailFields(array &$target, array $source): void
+    {
+        if (($target['id'] ?? null) === null) {
+            self::assignFrom($target, 'id', $source);
+        }
+
+        if (self::falsy($target['format'] ?? null)) {
+            self::assignFrom($target, 'format', $source);
+        }
+
+        if (($target['index'] ?? null) === null) {
+            self::assignFrom($target, 'index', $source);
+        }
+    }
+
+    /** JavaScript's falsiness for the string-or-null fields above: `"0"` is truthy there. */
+    private static function falsy(mixed $value): bool
+    {
+        return $value === null || $value === '' || $value === false;
+    }
+
+    /**
+     * `target[key] = source[key]` with JavaScript's `undefined`: a key the source does not have is
+     * one the target ends up without, since `JSON.stringify` leaves an `undefined` property out.
+     *
+     * @param array<string, mixed> $target
+     * @param array<string, mixed> $source
+     */
+    private static function assignFrom(array &$target, string $key, array $source): void
+    {
+        if (array_key_exists($key, $source)) {
+            $target[$key] = $source[$key];
+        } else {
+            unset($target[$key]);
+        }
+    }
+
+    /**
+     * Upstream's `parseOpenAIReasoningDetails()`: a thinking signature that is a non-empty JSON list
+     * of details, or null.
+     *
+     * @return list<array<string, mixed>>|null
+     */
+    private static function parseOpenAIReasoningDetails(?string $signature): ?array
+    {
+        if ($signature === null || $signature === '') {
+            return null;
+        }
+
+        $parsed = json_decode($signature, true);
+
+        if (!is_array($parsed) || !array_is_list($parsed) || $parsed === []) {
+            return null;
+        }
+
+        foreach ($parsed as $detail) {
+            if (!self::isOpenAIReasoningDetail($detail)) {
+                return null;
             }
         }
+
+        return $parsed;
+    }
+
+    /**
+     * Upstream's `parseLegacyEncryptedReasoningDetail()`: one `reasoning.encrypted` detail with a
+     * non-empty id and data, as a tool call's `thoughtSignature` held it before the details moved to
+     * the thinking block. Read, never written any more — sessions saved before still carry it.
+     *
+     * @return array<string, mixed>|null
+     */
+    private static function parseLegacyEncryptedReasoningDetail(?string $signature): ?array
+    {
+        if ($signature === null || $signature === '') {
+            return null;
+        }
+
+        $parsed = json_decode($signature, true);
+
+        return self::isOpenAIReasoningDetail($parsed)
+            && $parsed['type'] === 'reasoning.encrypted'
+            && is_string($parsed['id'] ?? null)
+            && $parsed['id'] !== ''
+            && $parsed['data'] !== ''
+            ? $parsed
+            : null;
     }
 
     /**
@@ -620,49 +837,99 @@ final class OpenAiCompletions
     private function assistant(AssistantMessage $message, Model $model, OpenAiCompat $compat): array
     {
         $text = [];
-        $thinking = [];
+        $thinkingBlocks = [];
         $calls = [];
 
         foreach ($message->content as $block) {
             if ($block instanceof TextContent && trim($block->text) !== '') {
                 $text[] = Utf8::sanitize($block->text);
-            } elseif ($block instanceof ThinkingContent && trim($block->thinking) !== '') {
-                $thinking[] = $block;
+            } elseif ($block instanceof ThinkingContent) {
+                $thinkingBlocks[] = $block;
             } elseif ($block instanceof ToolCall) {
                 $calls[] = $block;
             }
         }
 
+        // Upstream's `preservedReasoningDetails`: the details from the first thinking block whose
+        // signature is a list of them — empty thinking included, since a block made only to hold
+        // encrypted details has no text — or else the encrypted details older sessions filed on
+        // each tool call's `thoughtSignature`.
+        $signedReasoningDetails = null;
+
+        foreach ($thinkingBlocks as $block) {
+            $signedReasoningDetails = self::parseOpenAIReasoningDetails($block->thinkingSignature);
+
+            if ($signedReasoningDetails !== null) {
+                break;
+            }
+        }
+
+        $legacyReasoningDetails = [];
+
+        foreach ($calls as $call) {
+            $detail = self::parseLegacyEncryptedReasoningDetail($call->thoughtSignature);
+
+            if ($detail !== null) {
+                $legacyReasoningDetails[] = $detail;
+            }
+        }
+
+        $preservedReasoningDetails = $signedReasoningDetails
+            ?? ($legacyReasoningDetails !== [] ? $legacyReasoningDetails : null);
+
+        $nonEmptyThinkingBlocks = array_values(array_filter(
+            $thinkingBlocks,
+            static fn (ThinkingContent $block): bool => trim($block->thinking) !== '',
+        ));
+
         // Mistral rejects a null content and every endpoint rejects an assistant turn
         // that has neither content nor calls.
         $out = ['role' => 'assistant', 'content' => $compat->assistantAfterToolResult ? '' : null];
 
-        if ($compat->thinkingAsText && $thinking !== []) {
-            // Some endpoints have no field for it, so reasoning goes back as text rather than
-            // being dropped. Upstream's `requiresThinkingAsText` arm, literally: every thought
-            // joined by a blank line into **one** part, in front of the text parts, with no tags
-            // so the model does not learn to mimic them — and as parts, the one arm upstream
-            // does not send as a plain string.
-            $out['content'] = [
-                ['type' => 'text', 'text' => implode("\n\n", array_map(
-                    static fn (ThinkingContent $block): string => Utf8::sanitize($block->thinking),
-                    $thinking,
-                ))],
-                ...array_map(static fn (string $one): array => ['type' => 'text', 'text' => $one], $text),
-            ];
-            $thinking = [];
+        if ($nonEmptyThinkingBlocks !== []) {
+            if ($compat->thinkingAsText) {
+                // Some endpoints have no field for it, so reasoning goes back as text rather than
+                // being dropped. Upstream's `requiresThinkingAsText` arm, literally: every thought
+                // joined by a blank line into **one** part, in front of the text parts, with no tags
+                // so the model does not learn to mimic them — and as parts, the one arm upstream
+                // does not send as a plain string.
+                $out['content'] = [
+                    ['type' => 'text', 'text' => implode("\n\n", array_map(
+                        static fn (ThinkingContent $block): string => Utf8::sanitize($block->thinking),
+                        $nonEmptyThinkingBlocks,
+                    ))],
+                    ...array_map(static fn (string $one): array => ['type' => 'text', 'text' => $one], $text),
+                ];
+            } else {
+                if ($text !== []) {
+                    // Always a plain string — see the arm below.
+                    $out['content'] = implode('', $text);
+                }
+
+                // Upstream: `reasoning_details` is the structured alternative to a raw reasoning
+                // field, so the field is written only when there are none. Its name is the first
+                // thinking block's signature — the field it streamed in — and only when that is one
+                // of the three; every thought goes in it, joined by a newline.
+                if ($preservedReasoningDetails === null) {
+                    $signature = $nonEmptyThinkingBlocks[0]->thinkingSignature;
+
+                    if ($model->provider === 'opencode-go' && $signature === 'reasoning') {
+                        $signature = 'reasoning_content';
+                    }
+
+                    if ($signature !== null && $signature !== '' && in_array($signature, self::REASONING_FIELDS, true)) {
+                        $out[$signature] = implode("\n", array_map(
+                            static fn (ThinkingContent $block): string => $block->thinking,
+                            $nonEmptyThinkingBlocks,
+                        ));
+                    }
+                }
+            }
         } elseif ($text !== []) {
             // Always a plain string, for every endpoint — upstream's comment: the array of
             // `{type: "text"}` parts is non-standard, and some models (DeepSeek V3.2 via NVIDIA
             // NIM) mirror the structure in their output, nesting it deeper every turn.
             $out['content'] = implode('', $text);
-        }
-
-        foreach ($thinking as $block) {
-            // Sent back in the field it arrived in, which is what the signature holds.
-            if ($block->thinkingSignature !== null && $block->thinkingSignature !== '') {
-                $out[$block->thinkingSignature] = ($out[$block->thinkingSignature] ?? '') . $block->thinking;
-            }
         }
 
         if ($calls !== []) {
@@ -679,23 +946,11 @@ final class OpenAiCompletions
                 ],
                 $calls,
             );
+        }
 
-            // The encrypted reasoning that came with these calls, handed back as it arrived —
-            // see `onReasoningDetails()`. Anything that will not decode is left out rather than
-            // sent as a string: the field is a list of objects and OpenRouter rejects it otherwise.
-            $details = [];
-
-            foreach ($calls as $call) {
-                $decoded = $call->thoughtSignature === null ? null : json_decode($call->thoughtSignature, true);
-
-                if (is_array($decoded)) {
-                    $details[] = $decoded;
-                }
-            }
-
-            if ($details !== []) {
-                $out['reasoning_details'] = $details;
-            }
+        // Sent as the objects they arrived as: a string here is rejected.
+        if ($preservedReasoningDetails !== null) {
+            $out['reasoning_details'] = $preservedReasoningDetails;
         }
 
         $empty = ($out['content'] === null || $out['content'] === '' || $out['content'] === [])

@@ -162,32 +162,150 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame('c2', $message->content[1]->id);
     }
 
-    public function testEncryptedReasoningIsKeptWithTheCallItBelongsTo(): void
+    public function testOnlyTheFirstReasoningFieldInADeltaIsRead(): void
     {
-        // OpenRouter's shape: a reasoning model's chain of thought comes back as an opaque blob
-        // addressed to a tool call by id, not as text. Nothing read this field, so the reasoning was
-        // lost — and with it the model's place in a multi-step task.
+        // chutes.ai sends the same text in `reasoning_content` and `reasoning`. Upstream reads the
+        // first non-empty field and stops; pig read all three, and every thought appeared twice.
         $url = $this->serve([
-            ['choices' => [['delta' => ['tool_calls' => [['id' => 'c1', 'function' => ['name' => 'read', 'arguments' => '{}']]]]]]],
-            ['choices' => [['delta' => ['reasoning_details' => [
-                ['type' => 'reasoning.encrypted', 'id' => 'c1', 'data' => 'AAAA'],
-            ]]]]],
-            ['choices' => [['delta' => [], 'finish_reason' => 'tool_calls']]],
+            ['choices' => [['delta' => ['reasoning_content' => 'let me think', 'reasoning' => 'let me think']]]],
+            ['choices' => [['delta' => ['content' => 'the answer'], 'finish_reason' => 'stop']]],
         ]);
 
         [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
-        $call = $message->content[0];
 
-        $this->assertInstanceOf(ToolCall::class, $call);
-        $this->assertSame(
-            ['type' => 'reasoning.encrypted', 'id' => 'c1', 'data' => 'AAAA'],
-            json_decode((string) $call->thoughtSignature, true),
-            'the whole detail, because that is what has to go back',
-        );
+        $this->assertSame('let me think', $message->content[0]->thinking);
+        $this->assertSame('reasoning_content', $message->content[0]->thinkingSignature);
     }
 
-    public function testEncryptedReasoningGoesBackBesideTheCalls(): void
+    public function testReasoningDetailsAreKeptOnTheThinkingBlockAndMergedAsTheyStream(): void
     {
+        // OpenRouter's shape: the reasoning as text in `reasoning`, and the same reasoning as
+        // `reasoning_details` that have to go back on the next request. Upstream merges consecutive
+        // `reasoning.text` deltas into one entry, keeps an encrypted entry on its own, and stores
+        // the list as the thinking block's signature. pig read only encrypted entries and filed
+        // them on a tool call, so the text entries were dropped.
+        $url = $this->serve([
+            ['choices' => [['delta' => ['reasoning' => 'let me ', 'reasoning_details' => [
+                ['type' => 'reasoning.text', 'text' => 'let me ', 'format' => 'anthropic-claude-v1', 'index' => 0],
+            ]]]]],
+            ['choices' => [['delta' => ['reasoning' => 'think', 'reasoning_details' => [
+                ['type' => 'reasoning.text', 'text' => 'think', 'signature' => 'SIG', 'index' => 0],
+            ]]]]],
+            ['choices' => [['delta' => ['content' => 'the answer', 'reasoning_details' => [
+                ['type' => 'reasoning.encrypted', 'data' => 'AAAA'],
+            ]]]]],
+            ['choices' => [['delta' => [], 'finish_reason' => 'stop']]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $thinking = $message->content[0];
+
+        $this->assertInstanceOf(ThinkingContent::class, $thinking);
+        $this->assertSame('let me think', $thinking->thinking);
+        $this->assertSame([
+            ['type' => 'reasoning.text', 'text' => 'let me think', 'format' => 'anthropic-claude-v1', 'index' => 0, 'signature' => 'SIG'],
+            ['type' => 'reasoning.encrypted', 'data' => 'AAAA'],
+        ], json_decode((string) $thinking->thinkingSignature, true), 'the details that arrived after the text ended too');
+    }
+
+    public function testEncryptedReasoningBesideACallGetsAThinkingBlockOfItsOwnAndLeavesTheCallWhole(): void
+    {
+        // Encrypted-only reasoning comes beside the calls with no reasoning text before it, so there
+        // is no thinking block to keep it on. Upstream makes one (`ensureThinkingBlock("")`). pig's
+        // ordinary way to open a block would end the call it arrived with; this one is never the
+        // open block, so the call's arguments that follow still land in the same call.
+        $detail = ['type' => 'reasoning.encrypted', 'id' => 'c1', 'data' => 'AAAA'];
+        $url = $this->serve([
+            ['choices' => [['delta' => ['tool_calls' => [['id' => 'c1', 'function' => ['name' => 'read', 'arguments' => '{"pa']]]]]]],
+            ['choices' => [['delta' => ['reasoning_details' => [$detail]]]]],
+            ['choices' => [['delta' => ['tool_calls' => [['function' => ['arguments' => 'th":"a"}']]]]]]],
+            ['choices' => [['delta' => [], 'finish_reason' => 'tool_calls']]],
+        ]);
+
+        [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertCount(2, $message->content);
+        [$call, $thinking] = $message->content;
+
+        $this->assertInstanceOf(ToolCall::class, $call);
+        $this->assertSame(['path' => 'a'], $call->arguments);
+        $this->assertNull($call->thoughtSignature, 'not on the call any more');
+
+        $this->assertInstanceOf(ThinkingContent::class, $thinking);
+        $this->assertSame('', $thinking->thinking);
+        $this->assertSame([$detail], json_decode((string) $thinking->thinkingSignature, true));
+
+        // Every block that started also ended.
+        $this->assertSame(['ThinkingStartEvent'], array_values(array_filter($types, static fn (string $t): bool => $t === 'ThinkingStartEvent')));
+        $this->assertContains('ThinkingEndEvent', $types);
+    }
+
+    public function testReasoningDetailsGoBackInsteadOfTheReasoningField(): void
+    {
+        // Upstream: `reasoning_details` is the structured alternative to a raw reasoning field, so
+        // a message that has them sends them and not the field — even with no tool call.
+        $details = [['type' => 'reasoning.text', 'text' => 'hmm', 'signature' => 'SIG']];
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ThinkingContent('hmm', (string) json_encode($details)), new TextContent('so')]),
+            new UserMessage('go on'),
+        ]);
+
+        $this->send($context);
+        $assistant = $this->server->receivedJson()['messages'][1];
+
+        $this->assertSame($details, $assistant['reasoning_details']);
+        $this->assertSame('so', $assistant['content']);
+
+        foreach (['reasoning', 'reasoning_content', 'reasoning_text'] as $field) {
+            $this->assertArrayNotHasKey($field, $assistant);
+        }
+    }
+
+    public function testTheFirstThinkingBlocksFieldCarriesEveryThoughtJoinedByANewline(): void
+    {
+        // Upstream picks the field from the first thinking block's signature and joins all the
+        // thinking with "\n". pig sent each block under its own signature with no separator, so two
+        // thoughts ran together as "hmmand then" — and two signatures meant two fields.
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([
+                new ThinkingContent('hmm', 'reasoning_content'),
+                new TextContent('so'),
+                new ThinkingContent('and then', 'reasoning'),
+            ]),
+            new UserMessage('go on'),
+        ]);
+
+        $this->send($context);
+        $assistant = $this->server->receivedJson()['messages'][1];
+
+        $this->assertSame("hmm\nand then", $assistant['reasoning_content']);
+        $this->assertArrayNotHasKey('reasoning', $assistant);
+    }
+
+    public function testASignatureThatIsNotAReasoningFieldSendsNoField(): void
+    {
+        // Upstream writes the field only when the signature names one of the three. A signature
+        // that is something else — here one that is not a list of details either — is not a field
+        // name, and pig used it as one.
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ThinkingContent('hmm', 'thinking'), new TextContent('so')]),
+            new UserMessage('go on'),
+        ]);
+
+        $this->send($context);
+        $assistant = $this->server->receivedJson()['messages'][1];
+
+        $this->assertSame(['role', 'content'], array_keys($assistant));
+    }
+
+    public function testEncryptedReasoningAnOlderSessionKeptOnACallStillGoesBack(): void
+    {
+        // Sessions saved before the details moved to the thinking block have each encrypted detail
+        // on its tool call's `thoughtSignature`. Upstream still reads them there
+        // (`parseLegacyEncryptedReasoningDetail()`), so a resumed session keeps its reasoning.
         $detail = ['type' => 'reasoning.encrypted', 'id' => 'c1', 'data' => 'AAAA'];
 
         $context = new Context([
@@ -202,7 +320,7 @@ final class OpenAiCompletionsTest extends TestCase
         $messages = $this->server->receivedJson()['messages'];
         $assistant = array_values(array_filter($messages, static fn (array $m): bool => $m['role'] === 'assistant'))[0];
 
-        // The other half. Sent as the object it arrived as: a string here is rejected.
+        // Sent as the object it arrived as: a string here is rejected.
         $this->assertSame([$detail], $assistant['reasoning_details']);
         $this->assertSame('c1', $assistant['tool_calls'][0]['id']);
     }

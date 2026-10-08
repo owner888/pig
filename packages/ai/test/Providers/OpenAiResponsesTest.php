@@ -22,6 +22,7 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\ShortHash;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
@@ -71,8 +72,10 @@ final class OpenAiResponsesTest extends TestCase
 
         $this->assertSame('Hello', $message->content[0]->text);
 
-        // The message's own id, which has to go back with it next turn.
-        $this->assertSame('msg_1', $message->content[0]->textSignature);
+        // The message's own id, which has to go back with it next turn — as upstream's
+        // `TextSignatureV1` JSON now, where it used to be the bare id: upstream changed what it
+        // writes so the item's `phase` can travel with the id (see the phase tests below).
+        $this->assertSame('{"v":1,"id":"msg_1"}', $message->content[0]->textSignature);
         $this->assertSame(StopReason::Stop, $message->stopReason);
     }
 
@@ -404,6 +407,93 @@ final class OpenAiResponsesTest extends TestCase
         $this->send($context);
 
         $this->assertSame('msg_abc', $this->server->receivedJson()['input'][1]['id']);
+    }
+
+    public function testAMessagesPhaseIsKeptWithItsIdAndSentBackOnTheSameMessage(): void
+    {
+        // gpt-5 marks a message item `commentary` (said between tool calls) or `final_answer`.
+        // Upstream writes the phase into the text signature beside the id and sends it back on
+        // the replayed item; pig kept the bare id, so the phase was dropped on every replay.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => ['type' => 'message', 'id' => 'msg_1']],
+            ['type' => 'response.output_text.delta', 'delta' => 'checking'],
+            ['type' => 'response.output_item.done', 'item' => ['type' => 'message', 'id' => 'msg_1', 'phase' => 'commentary']],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('{"v":1,"id":"msg_1","phase":"commentary"}', $message->content[0]->textSignature);
+
+        $this->server = new CannedServer();
+        $this->send(new Context([new UserMessage('hi'), $message, new UserMessage('go on')]));
+        $item = $this->server->receivedJson()['input'][1];
+
+        $this->assertSame('msg_1', $item['id'], 'the id out of the JSON, not the JSON');
+        $this->assertSame('commentary', $item['phase']);
+    }
+
+    public function testOnlyTheTwoKnownPhasesGoBackAndNoPhaseMeansNoField(): void
+    {
+        // Upstream's `parseTextSignature()` passes on `commentary` and `final_answer` and nothing
+        // else; a signature without one gives an item with no `phase` key at all (upstream's
+        // `undefined`), not `phase: null`.
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([
+                new TextContent('one', '{"v":1,"id":"msg_a","phase":"final_answer"}'),
+                new TextContent('two', '{"v":1,"id":"msg_b","phase":"thinking_aloud"}'),
+                new TextContent('three', '{"v":1,"id":"msg_c"}'),
+            ]),
+            new UserMessage('go on'),
+        ]);
+
+        $this->send($context);
+        $input = $this->server->receivedJson()['input'];
+
+        $this->assertSame(['msg_a', 'msg_b', 'msg_c'], [$input[1]['id'], $input[2]['id'], $input[3]['id']]);
+        $this->assertSame('final_answer', $input[1]['phase']);
+        $this->assertArrayNotHasKey('phase', $input[2]);
+        $this->assertArrayNotHasKey('phase', $input[3]);
+    }
+
+    public function testATextBlockWithNoIdGetsUpstreamsFallbackNumberedByMessageAndBlock(): void
+    {
+        // Upstream's fallback is `msg_pi_${msgIndex}` for a message's first text block and
+        // `msg_pi_${msgIndex}_${textBlockIndex}` for the rest. pig sent `msg_${position}` for every
+        // block, so two text blocks in one message went out under the same id. And `msgIndex` counts
+        // the messages that went out: the empty user turn sends nothing and does not move it.
+        $context = new Context([
+            new UserMessage([]),
+            new UserMessage('hi'),
+            $this->assistant([new TextContent('first'), new TextContent('second')]),
+            new UserMessage('go on'),
+            $this->assistant([new TextContent('third')]),
+        ]);
+
+        $this->send($context);
+        $ids = array_column(
+            array_filter($this->server->receivedJson()['input'], static fn (array $item): bool => ($item['type'] ?? null) === 'message'),
+            'id',
+        );
+
+        $this->assertSame(['msg_pi_1', 'msg_pi_1_1', 'msg_pi_3'], array_values($ids));
+    }
+
+    public function testAnOverlongIdInsideTheJsonIsHashedAsTheIdAlone(): void
+    {
+        // The hash is of the id, as upstream's `shortHash(msgId)` after parsing — not of the
+        // whole signature, which would give a different id from pi's for the same message.
+        $long = 'msg_' . str_repeat('x', 200);
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new TextContent('the answer', (string) json_encode(['v' => 1, 'id' => $long]))]),
+            new UserMessage('go on'),
+        ]);
+
+        $this->send($context);
+
+        $this->assertSame('msg_' . ShortHash::of($long), $this->server->receivedJson()['input'][1]['id']);
     }
 
     public function testAnOverlongIdIsHashedRatherThanRenumbered(): void

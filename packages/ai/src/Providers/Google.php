@@ -176,7 +176,7 @@ final class Google
         }
 
         if ($model->reasoning) {
-            $config['thinkingConfig'] = $this->thinking($options);
+            $config['thinkingConfig'] = $this->thinking($model, $options);
         }
 
         if ($config !== []) {
@@ -190,15 +190,17 @@ final class Google
      * What to tell Gemini about thinking.
      *
      * Saying nothing is not the same as saying no: Gemini thinks by default, so a turn
-     * that did not ask for it has to ask for none. Gemini 3 takes a level and ignores a
-     * budget; 2.5 takes a budget. `Stream` works out which; this sends whichever arrived.
+     * that did not ask for it has to ask for none — upstream's `getDisabledGoogleThinkingConfig()`,
+     * which is a zero budget except for a level model that has no `off`, which gets the lowest
+     * level it has. A level model takes a level and ignores a budget; 2.5 takes a budget.
+     * `Stream` works out which; this sends whichever arrived.
      *
      * @return array<string, mixed>
      */
-    private function thinking(?GoogleOptions $options): array
+    private function thinking(Model $model, ?GoogleOptions $options): array
     {
         if ($options === null || !$options->thinkingEnabled) {
-            return ['thinkingBudget' => 0];
+            return GoogleShared::disabledGoogleThinkingConfig($model);
         }
 
         $config = ['includeThoughts' => true];

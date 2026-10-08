@@ -995,6 +995,10 @@ no counterpart anywhere else:
   from nothing again. So the entire item is kept as the thinking block's signature and replayed
   as it came — which is what `TextContent::$textSignature` and the builder's `setSignature()`
   are for. Asking for it at all needs `include: ["reasoning.encrypted_content"]`.
+- **A message item's id goes back with its phase.** A text block's `textSignature` is upstream's
+  `TextSignatureV1` JSON, `{"v":1,"id":…,"phase":…}`; a plain id string from an older session is
+  read as the id. No id gives `msg_pi_<msgIndex>` (`_<textBlockIndex>` after the first text block),
+  where `msgIndex` counts the messages that went out; an id over 64 is `msg_` + `shortHash(id)`.
 - **A tool call has two ids.** `call_id` addresses the result, `id` is the item's own, and both
   have to go back, so they travel joined as `call_id|id` and are split on the way out. The `id` is
   left out — as upstream's `undefined` is — for a call with no `|`, one whose item id does not start
@@ -1015,10 +1019,15 @@ three. A chunk carries a list of *parts*, and a part is text, or thinking (text 
 - **Gemini often sends no id for a call**, and a result has to be addressed to something, so
   one is invented — and a repeat within a message is replaced for the same reason.
 - **Saying nothing about thinking means dynamic thinking, not none.** A turn that did not ask
-  for it has to ask for `thinkingBudget: 0`, or the model thinks anyway and bills for it.
-- **Thinking is said two ways.** Gemini 3 takes a named level and ignores a budget; 2.5 takes a
-  budget in tokens, with a different ceiling for pro and flash. `Stream::gemini()` picks; the
-  provider sends whichever arrived.
+  for it has to ask for none, or the model thinks anyway and bills for it — upstream's
+  `getDisabledGoogleThinkingConfig()`: `thinkingBudget: 0`, except on a level model that has no
+  `off` (3.1 Pro, 3.5 Flash Lite, 3.7/3.8 Flash), which gets the level `off` clamps to.
+- **Thinking is said two ways.** A model upstream's `usesGoogleThinkingLevel()` matches — Gemini 3
+  Pro/Flash with or without a minor version, `gemini-flash-latest`, `gemini-flash-lite-latest`,
+  Gemma 4 — takes a named level and ignores a budget; the rest take a budget in tokens, from
+  `getGoogleBudget()`'s table (2.5 Pro, 2.5 Flash-Lite, 2.5 Flash, else -1) at the level the
+  model's `thinkingLevelMap` resolved to. `Stream::gemini()` picks; the provider sends whichever
+  arrived. The helpers are in `GoogleShared`, as in upstream's `google-shared.ts`.
 - **Eighteen of its twenty finish reasons mean "no"** — safety, recitation, a malformed call, a
   language it will not answer in. Only `STOP` and `MAX_TOKENS` are not errors.
 
@@ -7930,8 +7939,9 @@ base URL.
 
 Two deviations in the request bodies that are **deliberate** and now written down:
 
-- **Gemini's public endpoint gets an explicit `thinkingBudget: 0`** when nothing asked for
-  thinking, where upstream sends no `thinkingConfig` at all. Saying nothing to Gemini is not saying
+- **Gemini's public endpoint gets an explicit "no thinking"** (upstream's
+  `getDisabledGoogleThinkingConfig()`) when nothing asked for thinking at all, where upstream sends
+  no `thinkingConfig`. Saying nothing to Gemini is not saying
   no — it thinks by default — so upstream's "off" is really "Gemini decides". pig says no. (The
   Code Assist endpoint is the opposite way round: it rejects a `thinkingConfig` on a model that
   cannot think, and reads its absence as none, so that one sends nothing.)
@@ -7999,14 +8009,23 @@ call first and returned, dropping any text that shared the part. And a later par
 
 Fourteenth, and both halves were missing, which is why nothing looked wrong. A reasoning model
 reached through OpenRouter returns its chain of thought as `reasoning_details` — a list of
-`reasoning.encrypted` objects, each naming a tool call by id — rather than as text in one of the
-three `reasoning*` fields pig already read. Upstream files each one against the matching call's
-`thoughtSignature` and writes them back beside `tool_calls` on the next request. pig did neither, so
-**multi-step tool use through OpenRouter lost the model's reasoning between every turn.**
+`reasoning.text`, `reasoning.summary` and `reasoning.encrypted` objects — beside or instead of the
+text in one of the three `reasoning*` fields. pig read none of it, so **multi-step tool use through
+OpenRouter lost the model's reasoning between every turn.**
 
-Both halves are ported, with the whole detail kept rather than just its `data`, because the whole
-object is what goes back. Anything that will not decode is left out rather than sent as a string:
-the field is a list of objects and is rejected otherwise.
+What upstream does now, and pig with it: the whole list for the message is kept as the thinking
+block's signature (consecutive text and summary deltas merged, encrypted entries kept whole), a
+thinking block is made to hold them when no reasoning text made one, and on replay the list goes
+back as `reasoning_details` — *instead of* the raw reasoning field, which is written only when there
+are no details. An older session's encrypted details on each tool call's `thoughtSignature` are
+still read back. pig differs in one structural way: it ends a block when something of another kind
+arrives, so the details are written into the first thinking block when the stream ends, and a block
+made for them is never the open one (it would end the call they arrived beside).
+
+The raw field on replay is upstream's too: its name is the **first** thinking block's signature,
+only when that is `reasoning`, `reasoning_content` or `reasoning_text`, and every thought goes in it
+joined by `\n`. While streaming, only the first non-empty of the three fields in a delta is read —
+chutes.ai sends the same text in two.
 
 Two differences in the completions provider that are **kept** rather than aligned, now that they are
 written down: a tool call whose id arrives *after* its first delta stays one call here and becomes
@@ -8041,11 +8060,14 @@ are now the model's:
   `supportsXhigh(model)` in both OpenAI arms; so does pig now.
 - **Gemini 3** was `str_contains($id, 'gemini-3')` in the public arm and upstream's two checks
   (`3-pro`, `3-flash`) in the one being added. Two arms of one file disagreeing about which models
-  are Gemini 3 is the shape of every other find here, so both now ask upstream's question.
+  are Gemini 3 is the shape of every other find here. The public arm now asks upstream's
+  `usesGoogleThinkingLevel()`.
 
 The Code Assist arm is deliberately *not* the public Google arm: upstream gives it one flat budget
 table for all 2.x models where the public arm has per-model ceilings (`2.5-pro` starts at 128 there
-and 1024 here). The Gemini 3 level path is shared, because that part is the same.
+and 1024 here). `Stream` no longer has a Code Assist arm: that request is built by the antigravity
+extension, whose `Routing::thinkingBudget()` keeps its own per-model table and does not go through
+`GoogleShared::usesGoogleThinkingLevel()`.
 
 **`StreamTest` covered one API of the four.** The tests it had were good ones — every reasoning
 level against Anthropic's budget table — and the arm that was missing entirely belonged to a
@@ -10596,8 +10618,9 @@ Three things came out of it, and the first is worse than the question that was a
   Flash *accept* the zero and think anyway, so "off" there was a label on a thing that was on. None
   of this was the drift; it was the `thinkingEnabled: false` arm, which was right for 2.5 and is
   wrong for the models that cannot stop.
-- **Every 3.x model takes a level**, so the check is `str_contains($id, 'gemini-3')` and the budget
-  arm is for 2.5 alone. `MEDIUM` is a real level on Pro now — 111 thinking tokens against LOW's 87
+- **Every 3.x model takes a level.** The check is now upstream's `usesGoogleThinkingLevel()`
+  (`/gemini-3(?:\.\d+)?-(?:pro|flash)/`, the two `-latest` aliases, `/gemma-?4/`), which matches all
+  of them. `MEDIUM` is a real level on Pro now — 111 thinking tokens against LOW's 87
   and HIGH's 142 — so upstream's fold of Pro to two levels went with `gemini-3-pro-preview`, the
   model it was measured on.
 - **Which levels a model refuses has no pattern in its name.** MINIMAL is refused on 3.7, 3.8 and
@@ -11139,6 +11162,28 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 - 同一模型（provider、API、model 三者相同）的 id 原样发回，不在发送时再清洗。
 - Responses 的 `id` 只在以 `fc_` 开头、且不是同 provider 同 API 的另一个型号时才发。
 - 测试：`AnthropicTest::testAnotherModelsToolCallIdIsMadeSafeAndItsResultFollows`，`OpenAiCompletionsTest::testAResponsesIdIsRemadeForChatCompletionsWhoeverMintedIt`，`OpenAiResponsesTest::testAnotherProvidersPairKeepsItsCallIdAndGetsAnItemIdOfItsOwn`、`testAnotherModelOfThisProviderSendsNoItemIdAndNeitherDoesOneNotStartingFc`，`GoogleTest::testAnotherModelsIdIsMadeSafeOnlyForAModelThatIsSentIt`。
+
+### Gemini 思考配置按 `str_contains($id, 'gemini-3')` 判断：不思考的请求 400，Gemma 4 / `-latest` 的级别无效
+
+**症状**：hook（`HookContext` 的补全）或导出摘要这类不带思考级别的请求，在 `google/gemini-3.1-pro-preview` 上直接 400 "Budget 0 is invalid. This model only works in thinking mode"，3.5 Flash Lite 同样 400；`gemma-4-*`、`gemini-flash-latest`、`gemini-flash-lite-latest` 上 `--thinking low` 不起作用，模型照样想多少是多少。
+
+**根因**：`Stream::gemini()` 用 `str_contains($id, 'gemini-3')` 选级别还是预算，Gemma 4 和两个 `-latest` 别名落到 `thinkingBudget: -1`；`Google::thinking()` 对“不思考”一律发 `thinkingBudget: 0`，而 agent 的 `ThinkingLevel::clampedFor()` 只管 agent 自己的请求，不带级别的请求不经过它。upstream 用 `usesGoogleThinkingLevel()`（正则 + 两个别名 + `/gemma-?4/`）选格式，“不思考”走 `getDisabledGoogleThinkingConfig()`：没有 `off` 的级别模型发 `off` 夹到的最低级别。预算也按 `thinkingLevelMap` 解析后的级别查表，2.5 Flash-Lite 有自己的一行。
+
+**避坑规则**：
+- 判断 Google 模型的思考格式只用 `GoogleShared::usesGoogleThinkingLevel()`，不在别处按 id 片段判断。
+- “不思考”只经 `GoogleShared::disabledGoogleThinkingConfig($model)` 生成，不直接写 `thinkingBudget: 0`。
+- 测试：`GoogleTest::testThinkingOffOnALevelModelWithNoOffIsItsLowestLevelAndNotABudgetOfZero`、`testTheLatestAliasesAndGemmaFourTakeALevelToo`、`testABudgetIsReadFromTheLevelTheMapResolvedTo`。
+
+### chat completions 的推理回放：思考重复、多段思考连在一起、`reasoning_details` 丢失
+
+**症状**：chutes.ai 这类同时发 `reasoning_content` 和 `reasoning` 的端点，每段思考在消息里出现两遍；多个思考块回放时没有分隔符（`hmmand then`），签名不同的块各写一个字段；经 OpenRouter 的推理模型，`reasoning_details` 里的 `reasoning.text` / `reasoning.summary` 被丢掉，下一轮推理从头开始。
+
+**根因**：`OpenAiCompletions` 读三个推理字段时每个都追加，upstream 只读第一个非空的；回放时按每块自己的签名拼接，upstream 用第一块的签名选字段名、`"\n"` 连接、只在签名是三个已知字段名之一且没有 `reasoning_details` 时才写；`reasoning_details` 只认 `reasoning.encrypted` 并挂在工具调用的 `thoughtSignature` 上，upstream 把整份列表合并后存进思考块的签名，回放时发 `reasoning_details` 而不发原始字段。
+
+**避坑规则**：
+- 推理字段只读第一个非空的；回放字段名只取第一个非空思考块的签名，并且必须在 `REASONING_FIELDS` 里。
+- `reasoning_details` 存在思考块签名里（流结束时写入第一个思考块；没有就建一个不打开的思考块），旧会话挂在工具调用上的加密条目照 upstream 的 legacy 分支继续读。
+- 测试：`OpenAiCompletionsTest::testOnlyTheFirstReasoningFieldInADeltaIsRead`、`testReasoningDetailsAreKeptOnTheThinkingBlockAndMergedAsTheyStream`、`testTheFirstThinkingBlocksFieldCarriesEveryThoughtJoinedByANewline`。
 
 ## Version floor: PHP >= 8.3
 

@@ -793,8 +793,6 @@ final class GoogleTest extends TestCase
 
     public function testGeminiThreeIsGivenALevelAndNoBudget(): void
     {
-        // `gemini-3-flash-preview`, because it is the only public model left whose id the level
-        // check matches — see the test below, which is about exactly that.
         $options = $this->translate(Models::get('gemini-3-flash-preview'), ReasoningEffort::Medium);
 
         $this->assertSame('MEDIUM', $options->thinkingLevel);
@@ -856,6 +854,78 @@ final class GoogleTest extends TestCase
         // MEDIUM really is a level on Pro now (111 thinking tokens against LOW 87 and HIGH 142), so
         // upstream's fold of Pro to two levels is gone with the model it was measured on.
         $this->assertSame('MEDIUM', $this->translate($pro, ReasoningEffort::Medium)->thinkingLevel);
+    }
+
+    public function testTheLatestAliasesAndGemmaFourTakeALevelToo(): void
+    {
+        // Upstream's `usesGoogleThinkingLevel()` is a regex and three names, not "the id contains
+        // gemini-3": `gemini-flash-latest`, `gemini-flash-lite-latest` and Gemma 4 (`gemma-4-*` and
+        // `gemma4-*`) take a level. pig sent them `thinkingBudget: -1` — think as much as you like —
+        // so `--thinking low` on any of them changed nothing.
+        foreach (['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it'] as $id) {
+            $options = $this->translate(Models::find('google', $id), ReasoningEffort::Low);
+
+            $this->assertSame('LOW', $options->thinkingLevel, $id);
+            $this->assertNull($options->thinkingBudget, $id);
+        }
+
+        $this->assertSame('HIGH', $this->translate($this->model(reasoning: true, id: 'gemma4-e4b'), ReasoningEffort::High)->thinkingLevel);
+
+        // And a Gemini 3 id that is neither Pro nor Flash is not one: the regex asks for the family.
+        $this->assertSame(-1, $this->translate($this->model(reasoning: true, id: 'gemini-3-ultra'), ReasoningEffort::High)->thinkingBudget);
+    }
+
+    public function testThinkingOffOnALevelModelWithNoOffIsItsLowestLevelAndNotABudgetOfZero(): void
+    {
+        // Upstream's `getDisabledGoogleThinkingConfig()`. Gemini 3.1 Pro answers `thinkingBudget: 0`
+        // with a 400 ("only works in thinking mode") and 3.5 Flash Lite with "invalid argument", so
+        // a request that asks for no thinking — a hook's or an export's, which carry no level and
+        // are not clamped by the agent — failed outright on them. Upstream sends the level `off`
+        // clamps to instead; a model that has `off` keeps the zero budget.
+        $wanted = [
+            'gemini-3.1-pro-preview' => ['thinkingLevel' => 'LOW'],
+            'gemini-3.5-flash-lite' => ['thinkingLevel' => 'MINIMAL'],
+            'gemini-3.5-flash' => ['thinkingBudget' => 0],
+            'gemini-2.5-pro' => ['thinkingBudget' => 0],
+        ];
+
+        foreach ($wanted as $id => $config) {
+            $model = Models::find('google', $id);
+            $this->assertNotNull($model, $id);
+
+            $this->server = new CannedServer();
+            $this->send(new Context([new UserMessage('hi')]), $model);
+
+            $this->assertSame($config, $this->server->receivedJson()['generationConfig']['thinkingConfig'], $id);
+        }
+    }
+
+    public function testABudgetIsReadFromTheLevelTheMapResolvedTo(): void
+    {
+        // Upstream's `getGoogleBudget()` takes the level after `resolveGoogleThinkingLevel()`; pig
+        // took the level that was asked for, so a row that says "high means medium here" was still
+        // given the high budget.
+        $model = new Model('gemini-2.5-pro', 'x', Api::GoogleGenerativeAi, 'google', 'http://127.0.0.1:1', 1, 1, true, thinkingLevelMap: ['high' => 'MEDIUM']);
+
+        $this->assertSame(8192, $this->translate($model, ReasoningEffort::High)->thinkingBudget);
+    }
+
+    public function testFlashLiteHasItsOwnFloor(): void
+    {
+        // Upstream gives `2.5-flash-lite` its own table — 512 at minimal — ahead of the `2.5-flash`
+        // table its id would otherwise match.
+        $this->assertSame(512, $this->translate(Models::get('gemini-2.5-flash-lite'), ReasoningEffort::Minimal)->thinkingBudget);
+        $this->assertSame(128, $this->translate(Models::get('gemini-2.5-flash'), ReasoningEffort::Minimal)->thinkingBudget);
+    }
+
+    public function testAMapToALevelGoogleDoesNotHaveIsRefusedByName(): void
+    {
+        // Upstream's `resolveGoogleThinkingLevel()` throws rather than send a level Google has never
+        // heard of.
+        $model = new Model('gemini-3.8-flash', 'x', Api::GoogleGenerativeAi, 'google', 'http://127.0.0.1:1', 1, 1, true, thinkingLevelMap: ['high' => 'max']);
+
+        $this->expectExceptionMessage('Unsupported Google thinking level mapping for google/gemini-3.8-flash: high -> max');
+        $this->translate($model, ReasoningEffort::High);
     }
 
     public function testAModelWithNoPublishedCeilingIsLeftToDecide(): void
@@ -1001,7 +1071,7 @@ final class GoogleTest extends TestCase
 
         Async::run(function () use ($url, $context, $model, $options): void {
             $stream = (new Google())->stream(
-                $this->model($url, $model->reasoning, $model->acceptsImages(), $model->id),
+                $this->model($url, $model->reasoning, $model->acceptsImages(), $model->id, $model->thinkingLevelMap),
                 $context,
                 $options,
             );
@@ -1014,11 +1084,13 @@ final class GoogleTest extends TestCase
         });
     }
 
+    /** @param array<string, string|null> $thinkingLevelMap */
     private function model(
         string $baseUrl = 'http://127.0.0.1:1',
         bool $reasoning = false,
         bool $images = true,
         string $id = 'test-model',
+        array $thinkingLevelMap = [],
     ): Model {
         return new Model(
             $id,
@@ -1031,6 +1103,7 @@ final class GoogleTest extends TestCase
             $reasoning,
             $images ? ['text', 'image'] : ['text'],
             new Pricing(input: 1.0, output: 2.0),
+            thinkingLevelMap: $thinkingLevelMap,
         );
     }
 

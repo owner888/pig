@@ -43,6 +43,20 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.26] - 2026-10-08
+
+### Fixed
+
+- **Google / Gemini Thinking Configuration and Level Model Compatibility (`GoogleShared`, `Stream`)**:
+  - Aligned Google thinking mode selection with upstream pi's `usesGoogleThinkingLevel()`: correctly matched Gemini 3.x, `-latest` aliases, and Gemma 4 models to named thinking levels rather than falling back to `-1` token budgets.
+  - Implemented `disabledGoogleThinkingConfig($model)`: prevented 400 errors ("Budget 0 is invalid. This model only works in thinking mode") on models without an `off` level by clamping to their lowest supported level.
+  - Aligned Gemini 2.5 thinking token budget tables across 2.5 Pro, 2.5 Flash, and 2.5 Flash-Lite.
+- **OpenAI Responses Multi-Phase Signatures (`TextSignatureV1`)**:
+  - Ported upstream's `TextSignatureV1` encoding (`{"v":1,"id":...,"phase":...}`), preserving message IDs and reasoning phases (`commentary` / `final_answer`) across multi-turn interactions.
+- **Chat Completions Reasoning Streaming and OpenRouter `reasoning_details` Parity**:
+  - Merged streaming `reasoning.text`, `reasoning.summary`, and `reasoning.encrypted` deltas into thinking block signatures for OpenRouter reasoning models, echoing them back as `reasoning_details`.
+  - Read only the first non-empty reasoning delta field, eliminating duplicate thinking text on endpoints (such as chutes.ai) that send multiple reasoning keys.
+
 ## [0.4.25] - 2026-10-08
 
 ### Fixed

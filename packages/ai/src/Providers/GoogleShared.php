@@ -97,6 +97,103 @@ final class GoogleShared
         return $contents;
     }
 
+    // ---- thinking --------------------------------------------------------------------------
+
+    /** The levels in upstream's `EXTENDED_THINKING_LEVELS` order, without `max`, which pig has no level for. */
+    private const array THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+
+    /**
+     * Upstream's `usesGoogleThinkingLevel()`: whether this model takes Gemini's named
+     * `thinkingLevel` rather than a `thinkingBudget` in tokens.
+     *
+     * Upstream's comment: which levels it supports comes from the model's `thinkingLevelMap`; this
+     * only selects the wire format. Gemini 3 Pro and Flash with or without a minor version
+     * (`gemini-3-flash-preview`, `gemini-3.1-pro-preview`, `gemini-3.8-flash`), the two
+     * `-latest` aliases, and Gemma 4 in both of its hosted spellings, `gemma-4-*` and `gemma4-*`.
+     */
+    public static function usesGoogleThinkingLevel(Model $model): bool
+    {
+        $id = strtolower($model->id);
+
+        return preg_match('/gemini-3(?:\.\d+)?-(?:pro|flash)/', $id) === 1
+            || $id === 'gemini-flash-latest'
+            || $id === 'gemini-flash-lite-latest'
+            || preg_match('/gemma-?4/', $id) === 1;
+    }
+
+    /**
+     * Upstream's `resolveGoogleThinkingLevel()`: a level, through the model's `thinkingLevelMap`,
+     * as one of Google's four. A mapping to anything else is refused by name, as upstream throws.
+     */
+    public static function resolveGoogleThinkingLevel(Model $model, string $level): string
+    {
+        $mapped = $model->thinkingLevelMap[$level] ?? null;
+        $resolvedLevel = is_string($mapped) ? strtolower($mapped) : $level;
+
+        return match ($resolvedLevel) {
+            'minimal', 'low', 'medium', 'high' => $resolvedLevel,
+            default => throw new ProviderError(
+                "Unsupported Google thinking level mapping for {$model->provider}/{$model->id}: {$level} -> "
+                . (array_key_exists($level, $model->thinkingLevelMap) ? ($mapped ?? 'null') : 'undefined'),
+            ),
+        };
+    }
+
+    /** Upstream's `toGoogleThinkingLevel()`: `minimal` → `MINIMAL`, and so on. */
+    public static function toGoogleThinkingLevel(string $level): string
+    {
+        return strtoupper($level);
+    }
+
+    /**
+     * Upstream's `getDisabledGoogleThinkingConfig()`: what "no thinking" is for this model.
+     *
+     * `thinkingBudget: 0`, unless the model takes a level and has no `off` — Gemini 3.1 Pro answers
+     * a zero budget with a 400 ("only works in thinking mode") — in which case it is the level
+     * `off` clamps to, upstream's `clampThinkingLevel(model, "off")`: the first level up from `off`
+     * that the model has.
+     *
+     * @return array<string, mixed>
+     */
+    public static function disabledGoogleThinkingConfig(Model $model): array
+    {
+        if (!self::usesGoogleThinkingLevel($model)) {
+            return ['thinkingBudget' => 0];
+        }
+
+        $fallback = self::clampOff($model);
+
+        if ($fallback === 'off') {
+            return ['thinkingBudget' => 0];
+        }
+
+        return ['thinkingLevel' => self::toGoogleThinkingLevel(self::resolveGoogleThinkingLevel($model, $fallback))];
+    }
+
+    /**
+     * Upstream's `clampThinkingLevel(model, "off")`, over `getSupportedThinkingLevels()`.
+     *
+     * Here rather than `Pig\Agent\ThinkingLevel::clampedFor()`, which is the same search, because
+     * this package cannot see that one. Only the search from `off` is needed, and from `off` it is
+     * upward only: the first level the model has, which is also upstream's `availableLevels[0]`.
+     */
+    private static function clampOff(Model $model): string
+    {
+        if (!$model->reasoning) {
+            return 'off';
+        }
+
+        foreach (self::THINKING_LEVELS as $level) {
+            $supported = $level === 'xhigh' ? $model->supportsXhigh() : $model->hasThinkingLevel($level);
+
+            if ($supported) {
+                return $level;
+            }
+        }
+
+        return 'off';
+    }
+
     /**
      * Upstream's `requiresToolCallId()`: the models behind Google's APIs that need a call's `id`
      * on its `functionCall` and `functionResponse` — Claude, gpt-oss, and Gemini 3 and later.

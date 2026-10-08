@@ -118,15 +118,15 @@ final class AssistantMessageBuilder
     }
 
     /**
-     * Which block is the tool call with this id, if any.
+     * The first block of this type, if any.
      *
-     * For a provider that addresses something *to* a call rather than putting it in the call's own
-     * event — OpenRouter's encrypted reasoning arrives as its own field, naming the call by id.
+     * For a provider that keeps something for the whole message on one block — chat completions'
+     * `reasoning_details`, which upstream stores on the message's thinking block.
      */
-    public function indexOfToolCall(string $id): ?int
+    public function firstIndexOf(string $type): ?int
     {
         foreach ($this->blocks as $index => $block) {
-            if ($block['type'] === 'toolCall' && $block['id'] === $id) {
+            if ($block['type'] === $type) {
                 return $index;
             }
         }
