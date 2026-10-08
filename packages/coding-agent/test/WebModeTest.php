@@ -367,8 +367,10 @@ final class WebModeTest extends TestCase
             $server->start();
             $ws = $this->wsConnect($port);
             $this->wsSend($ws, ['type' => 'start_session', 'cwd' => $this->cwd, 'sessionFile' => 'r.jsonl']);
-            $this->wsCollect($ws, static fn (array $m) => $m['type'] === 'session_bound');
-            $child = $server->pool()->all()[0];
+            $collected = $this->wsCollect($ws, static fn (array $m) => $m['type'] === 'session_bound');
+            $all = $server->pool()->all();
+            $this->assertNotEmpty($all, 'child session is bound in pool: ' . json_encode($collected));
+            $child = $all[0];
 
             fclose($ws);
             Async::delay(0.1);

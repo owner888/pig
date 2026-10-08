@@ -229,7 +229,8 @@ final class CodemodeTest extends TestCase
 
         // And the ordinary language is all there.
         $result = $this->script('return [strtoupper("php"), array_sum(range(1, 4)), json_encode(["a" => 1]), preg_match("/x/", "x"), mb_strlen("中文")];');
-        $this->assertSame(['PHP', 10, '{"a":1}', 1, 2], $result['value']);
+        $this->assertTrue($result['ok'], 'script succeeded: ' . json_encode($result['error'] ?? null));
+        $this->assertSame(['PHP', 10, '{"a":1}', 1, 2], $result['value'] ?? null);
     }
 
     public function testAScriptErrorNamesTheScriptLine(): void

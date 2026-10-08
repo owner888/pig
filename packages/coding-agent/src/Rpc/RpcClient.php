@@ -122,10 +122,13 @@ final class RpcClient
      */
     private static function withoutInheritedFds(array $command): array
     {
+        $shell = is_executable('/bin/bash') ? '/bin/bash' : '/bin/sh';
+        $maxFd = $shell === '/bin/bash' ? 255 : 9;
+
         return [
-            '/bin/sh',
+            $shell,
             '-c',
-            'for fd in $(seq 3 255); do eval "exec $fd>&-"; done; exec "$0" "$@"',
+            'for fd in $(seq 3 ' . $maxFd . '); do eval "exec $fd>&-"; done; exec "$0" "$@"',
             ...$command,
         ];
     }

@@ -117,7 +117,6 @@ final class Sandbox
     {
         return [
             $this->phpBinary ?? PHP_BINARY,
-            '-n',
             '-d', 'disable_functions=' . implode(',', self::DISABLED_FUNCTIONS),
             '-d', 'open_basedir=' . self::childPath(),
             '-d', 'memory_limit=' . $this->memoryLimitBytes,
