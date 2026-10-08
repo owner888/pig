@@ -6,7 +6,6 @@ namespace PigAntigravity;
 
 
 use Pig\Ai\AssistantMessage;
-use Pig\Ai\Context;
 use Pig\Ai\Extension\StreamApi;
 use Pig\Ai\Providers\AssistantMessageBuilder;
 use Pig\Ai\Providers\GoogleOptions;
@@ -25,7 +24,10 @@ use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\Timestamp;
+use Pig\Ai\TranscriptContext;
+use Pig\Ai\Utils\Transcript;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Closure;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Throwable;
@@ -70,8 +72,12 @@ final class AntigravityApi implements StreamApi
      */
     private const string USER_AGENT = 'antigravity/cli/1.1.23 (aidev_client; os_type=linux; arch=amd64; cl=974125021; auth_method=consumer)';
 
-    /** What a 403 or a 404 from the primary host means: try the other one. */
-    private const array FALL_BACK_ON = [403, 404];
+    /**
+     * The statuses after which the next endpoint is tried — pi-antigravity's `endpointCandidates()`
+     * loop: `if (![403, 404, 429, 500, 502, 503, 504].includes(response.status)) break` — except a
+     * 429 that is a quota wall, which every endpoint would answer the same way.
+     */
+    private const array FALL_BACK_ON = [403, 404, 429, 500, 502, 503, 504];
 
     /**
      * @param string|null $fallback where to try when the primary refuses us, or null to work it
@@ -81,9 +87,16 @@ final class AntigravityApi implements StreamApi
      *        Google's host and also have the request arrive at a canned server, so under a
      *        hardcoded pair the one branch that matters is the one no test can see.
      */
+    /**
+     * @param (Closure(list<string> $triedAccessTokens): ?string)|null $failover pi-antigravity's
+     *        `failoverToNextAccount()`: the next stored account whose access token has not been tried
+     *        yet, made the active one, as an api key (`{"token", "projectId"}`) — or null when there
+     *        is none. Asked when a request hits a quota wall.
+     */
     public function __construct(
         private readonly HttpClient $http = new HttpClient(),
         private readonly ?string $fallback = null,
+        private readonly ?Closure $failover = null,
     ) {
     }
 
@@ -108,7 +121,7 @@ final class AntigravityApi implements StreamApi
 
     /** Returns at once; the response fills in as it arrives. */
     #[\Override]
-    public function stream(Model $model, Context $context, ?StreamOptions $options = null): AssistantMessageEventStream
+    public function stream(Model $model, TranscriptContext $context, ?StreamOptions $options = null): AssistantMessageEventStream
     {
         // Options that did not come through `translate()` — a caller of `Stream::start()` with
         // base options — carry the key and nothing Gemini-shaped; `GoogleOptions` is what the
@@ -129,48 +142,44 @@ final class AntigravityApi implements StreamApi
     private function run(
         AssistantMessageEventStream $stream,
         Model $model,
-        Context $context,
+        TranscriptContext $context,
         ?GoogleOptions $options,
     ): void {
         $builder = new AssistantMessageBuilder($model);
         $signal = $options?->signal;
-        $open = null;
 
         try {
-            $response = $this->send($model, $context, $options, $signal);
+            $received = false;
 
-            if (!$response->isSuccessful()) {
-                throw new ProviderError($this->explain($response->status, $response->body->all()));
-            }
+            // pi-antigravity's `emptyAttempt` loop: a response that carried no text, thinking or
+            // tool call is asked for again, after 500 ms and then 1 s, before the turn fails with
+            // "Antigravity API returned an empty response". Nothing goes out on the stream until
+            // something has arrived (`ensureStarted()`), so an empty attempt leaves no trace.
+            for ($emptyAttempt = 0; $emptyAttempt <= 2; $emptyAttempt++) {
+                if ($signal?->aborted() ?? false) {
+                    throw new ProviderError('Request was aborted');
+                }
 
-            $stream->push(new StartEvent($builder->snapshot()));
-            $parser = new SseParser();
+                if ($emptyAttempt > 0) {
+                    self::sleep(0.5 * 2 ** ($emptyAttempt - 1), $signal);
+                }
 
-            foreach ($response->body as $chunk) {
-                foreach ($parser->feed($chunk) as $event) {
-                    $data = json_decode($event->data, true);
+                $response = $this->send($model, $context, $options, $signal);
 
-                    // A chunk with no `response` in it is Code Assist saying nothing rather than
-                    // saying something unreadable.
-                    if (is_array($data) && is_array($data['response'] ?? null)) {
-                        // A blocked prompt comes back as a 200 with nothing in it but the reason.
-                        // This provider's own rule: upstream's Gemini path has no such check (its
-                        // turn ends "without a finish reason"), so it lives here, not in `GoogleShared`.
-                        $blocked = $data['response']['promptFeedback']['blockReason'] ?? null;
+                // "output.content = []; output.usage = {…}; output.stopReason = "stop"": each attempt
+                // starts from nothing.
+                $builder = new AssistantMessageBuilder($model);
+                $received = $this->read($response, $builder, $stream);
 
-                        if (is_string($blocked)) {
-                            throw new ProviderError("Gemini refused the prompt: {$blocked}");
-                        }
-
-                        // As the direct Gemini path reads it: an error finish reason is recorded and
-                        // the rest of the stream — usage included — is read before the turn fails on
-                        // it below.
-                        $open = GoogleShared::onChunk($data['response'], $builder, $stream, $open);
-                    }
+                if ($received) {
+                    break;
                 }
             }
 
-            GoogleShared::close($builder, $stream, $open);
+            if (!$received) {
+                throw new ProviderError('Antigravity API returned an empty response');
+            }
+
             $signal?->throwIfAborted();
 
             // The direct Gemini path's check after the stream (`Google::run()`): an error reason
@@ -185,8 +194,9 @@ final class AntigravityApi implements StreamApi
             $stream->push(new DoneEvent($message->stopReason, $message));
             $stream->end();
         } catch (Throwable $error) {
-            // A provider never throws at its caller: the failure is the stream's result.
-            $builder->fail($error->getMessage(), $signal?->aborted() ?? false);
+            // A provider never throws at its caller: the failure is the stream's result, with any
+            // secret in it redacted (pi-antigravity's `safeError()`).
+            $builder->fail(self::redactSecrets($error->getMessage()), $signal?->aborted() ?? false);
             $failed = $builder->snapshot();
             $stream->push(new ErrorEvent($failed->stopReason, $failed));
             $stream->end();
@@ -194,16 +204,109 @@ final class AntigravityApi implements StreamApi
     }
 
     /**
-     * The request, and the second host if the first one refuses us.
-     *
-     * Only 403 and 404 fall through, and only once. A 429 is the quota answering and a 500 is the
-     * deployment having a bad time — asking the other host the same question would get the same
-     * answer, and `Session\Retry` one level up is what waits either of those out.
+     * Read one response into the builder — pi-antigravity's `streamResponse()` — and say whether
+     * anything arrived: a part with text (thinking or not) or a function call. The stream's
+     * `start` goes out with the first of those, and not before.
      */
-    private function send(Model $model, Context $context, ?GoogleOptions $options, ?AbortSignal $signal): Response
+    private function read(Response $response, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream): bool
     {
-        $body = $this->encode($this->body($model, $context, $options));
-        $token = self::credentials($options?->apiKey)[0];
+        $parser = new SseParser();
+        $open = null;
+        $hasContent = false;
+
+        foreach ($response->body as $chunk) {
+            foreach ($parser->feed($chunk) as $event) {
+                $data = json_decode($event->data, true);
+
+                if (!is_array($data)) {
+                    continue;
+                }
+
+                // "if (chunk.error) throw new Error(chunk.error.message || JSON.stringify(chunk.error))".
+                if (isset($data['error']) && $data['error'] !== null && $data['error'] !== false) {
+                    $message = is_array($data['error']) ? ($data['error']['message'] ?? null) : null;
+
+                    throw new ProviderError(is_string($message) && $message !== '' ? $message : (string) json_encode($data['error']));
+                }
+
+                // `chunk.response || chunk`.
+                $responseData = is_array($data['response'] ?? null) ? $data['response'] : $data;
+
+                // A blocked prompt comes back as a 200 with nothing in it but the reason. This
+                // provider's own rule: upstream's Gemini path has no such check (its turn ends
+                // "without a finish reason"), so it lives here, not in `GoogleShared`.
+                $blocked = $responseData['promptFeedback']['blockReason'] ?? null;
+
+                if (is_string($blocked)) {
+                    throw new ProviderError("Gemini refused the prompt: {$blocked}");
+                }
+
+                foreach ($responseData['candidates'][0]['content']['parts'] ?? [] as $part) {
+                    if (is_array($part) && (array_key_exists('text', $part) || isset($part['functionCall']))) {
+                        if (!$hasContent) {
+                            $stream->push(new StartEvent($builder->snapshot()));
+                        }
+
+                        $hasContent = true;
+
+                        break;
+                    }
+                }
+
+                // As the direct Gemini path reads it: an error finish reason is recorded and the
+                // rest of the stream — usage included — is read before the turn fails on it.
+                $open = GoogleShared::onChunk($responseData, $builder, $stream, $open);
+            }
+        }
+
+        GoogleShared::close($builder, $stream, $open);
+
+        return $hasContent;
+    }
+
+    /** pi-antigravity's backoff between empty attempts, cut short by an abort. */
+    private static function sleep(float $seconds, ?AbortSignal $signal): void
+    {
+        $done = new \Pig\Async\Deferred();
+        $timer = \Pig\Async\Loop::get()->delay($seconds, static fn () => $done->isComplete() ? null : $done->complete(null));
+        $listener = $signal?->onAbort(static function () use ($done, $timer): void {
+            \Pig\Async\Loop::get()->cancel($timer);
+
+            if (!$done->isComplete()) {
+                $done->complete(null);
+            }
+        });
+
+        try {
+            $done->future->await();
+        } finally {
+            if ($listener !== null) {
+                $signal?->removeListener($listener);
+            }
+        }
+    }
+
+    /**
+     * The request, through the runtime models, the endpoints and the stored accounts —
+     * pi-antigravity's request loop.
+     *
+     * The runtime model `Routing` resolves, then `Routing::fallback()`'s (pi-antigravity's
+     * `getFallbackRuntimeModel()`) when that one is answered 404. For each, every endpoint in turn
+     * while the answer is one of `FALL_BACK_ON`, stopping at a success, at any other status, or at
+     * a 429 that is a quota wall (`isQuotaWall()`). A quota wall then asks `$failover` for an
+     * account not yet tried and starts over with it, its own project in the envelope; with none
+     * left, the turn fails with the wall's own sentence ("Quota reached. …"), which the session
+     * does not retry. Any other refusal is `Antigravity API error (<status>, <diagnostics>):
+     * <friendlyAntigravityError()>`.
+     *
+     * Not ported: pi-antigravity's dynamic model discovery (`fetchAvailableRuntimeModel()`), for a
+     * model its tables do not know or a 404 on every candidate — pig's catalogue is the tables.
+     */
+    private function send(Model $model, TranscriptContext $context, ?GoogleOptions $options, ?AbortSignal $signal): Response
+    {
+        $apiKey = $options?->apiKey;
+        [$token, $project] = self::credentials($apiKey);
+        $tried = [$token];
 
         // A `models.json` pointing this provider somewhere of its own — a proxy, a local gateway
         // — is believed rather than silently second-guessed with Google's other host.
@@ -211,18 +314,97 @@ final class AntigravityApi implements StreamApi
         $second = $this->fallback ?? ($primary === self::ENDPOINT ? self::FALLBACK_ENDPOINT : null);
         $hosts = $second === null || $second === $primary ? [$primary] : [$primary, $second];
 
-        $last = null;
+        // Both, so that the two cannot contradict each other: `thinkingEnabled: false` with a level
+        // set means off, which is the reading every other provider here gives it.
+        $level = ($options?->thinkingEnabled ?? false) ? $options?->thinkingLevel : null;
+        $initial = Routing::resolve($model->id, $level)[0];
+        $candidates = [$initial];
+        $fallback = Routing::fallback($initial, $level);
 
-        foreach ($hosts as $host) {
-            $last = $this->http->send($this->request($host, $token, $model, $body), $signal);
-
-            if ($last->isSuccessful() || !in_array($last->status, self::FALL_BACK_ON, true)) {
-                return $last;
-            }
+        if ($fallback !== null && $fallback !== $initial) {
+            $candidates[] = $fallback;
         }
 
-        // Unreachable with a non-empty host list, and `$hosts` always has one.
-        return $last ?? throw new ProviderError('No endpoint to try.');
+        while (true) {
+            $last = null;
+            $lastText = '';
+            $lastHost = $primary;
+            $runtime = $initial;
+
+            foreach ($candidates as $index => $runtime) {
+                $body = $this->encode($this->body($model, $context, $options, $project, $runtime));
+
+                foreach ($hosts as $host) {
+                    $lastHost = $host;
+                    $last = $this->http->send($this->request($host, $token, $model, $body), $signal);
+
+                    if ($last->isSuccessful()) {
+                        return $last;
+                    }
+
+                    $lastText = $last->body->all();
+
+                    if ($last->status === 429 && self::isQuotaWall($lastText)) {
+                        break;
+                    }
+
+                    if (!in_array($last->status, self::FALL_BACK_ON, true)) {
+                        break;
+                    }
+                }
+
+                // "if (response?.status === 404) { if (candIdx + 1 < runtimeCandidates.length) continue; }"
+                if ($last?->status === 404 && $index + 1 < count($candidates)) {
+                    continue;
+                }
+
+                break;
+            }
+
+            // Unreachable with a non-empty host list, and `$hosts` always has one.
+            if ($last === null) {
+                throw new ProviderError('No endpoint to try.');
+            }
+
+            $friendly = self::friendlyAntigravityError($last->status, $lastText);
+
+            if ($last->status === 429 && preg_match('/Quota reached\./i', $friendly) === 1) {
+                $next = $this->failover !== null ? ($this->failover)($tried) : null;
+
+                if ($next !== null) {
+                    [$token, $project] = self::credentials($next);
+                    $tried[] = $token;
+
+                    continue;
+                }
+
+                throw new ProviderError($friendly);
+            }
+
+            throw new ProviderError(
+                "Antigravity API error ({$last->status}, " . self::formatRequestDiagnostics($lastHost, $project, $runtime) . "): {$friendly}",
+            );
+        }
+    }
+
+    /**
+     * pi-antigravity's `formatRequestDiagnostics()`. `matched` and `available` come from its
+     * dynamic model discovery, which pig has not got, so they are its own values for "never ran".
+     */
+    private static function formatRequestDiagnostics(string $endpoint, string $project, string $runtime): string
+    {
+        return "endpoint={$endpoint}, project={$project}, runtimeModel={$runtime}, matched=none, available=unknown";
+    }
+
+    /**
+     * pi-antigravity's quota-wall test on a 429's text: "Individual quota reached", a "Resets in …"
+     * hint, or quota wording that is not about rate limiting.
+     */
+    private static function isQuotaWall(string $text): bool
+    {
+        return preg_match('/Individual quota reached/i', $text) === 1
+            || preg_match('/Resets? in /i', $text) === 1
+            || (preg_match('/rate.?limit/i', $text) !== 1 && preg_match('/quota exceeded|exceeded your|daily limit/i', $text) === 1);
     }
 
     private function request(string $host, string $token, Model $model, string $body): Request
@@ -250,13 +432,19 @@ final class AntigravityApi implements StreamApi
      *
      * @return array<string, mixed>
      */
-    private function body(Model $model, Context $context, ?GoogleOptions $options): array
+    private function body(Model $model, TranscriptContext $context, ?GoogleOptions $options, string $project, ?string $runtime = null): array
     {
-        [, $project] = self::credentials($options?->apiKey);
         // Both, so that the two cannot contradict each other: `thinkingEnabled: false` with a
         // level set means off, which is the reading every other provider here gives it.
         $level = ($options?->thinkingEnabled ?? false) ? $options?->thinkingLevel : null;
-        [$runtime, $enum] = Routing::resolve($model->id, $level);
+        [$resolved, $enum] = Routing::resolve($model->id, $level);
+
+        // A runtime model `send()` fell back to goes out under its own enum.
+        if ($runtime !== null && $runtime !== $resolved) {
+            $enum = Routing::enumOf($runtime);
+        } else {
+            $runtime = $resolved;
+        }
 
         $inner = ['contents' => GoogleShared::contents($model, $context)];
         $config = [];
@@ -269,12 +457,19 @@ final class AntigravityApi implements StreamApi
             $config['maxOutputTokens'] = $options->maxTokens;
         }
 
-        if ($context->systemPrompt !== null && $context->systemPrompt !== '') {
-            $inner['systemInstruction'] = GoogleShared::systemInstruction($context->systemPrompt);
+        // The prompt and the tools are the transcript's, replayed (pi-antigravity's
+        // `resolveCurrentSystemPrompt()` / `resolveCurrentTools()` over pi-ai's
+        // `getCurrentSystemPrompt()` / `getCurrentTools()`): Code Assist has no mid-conversation
+        // system messages, so the current state goes in the request's own fields.
+        $systemPrompt = Transcript::getCurrentSystemPrompt($context->messages);
+        $tools = Transcript::getCurrentTools($context->messages);
+
+        if ($systemPrompt !== '') {
+            $inner['systemInstruction'] = GoogleShared::systemInstruction($systemPrompt);
         }
 
-        if ($context->tools !== []) {
-            $inner['tools'] = GoogleShared::tools($context->tools);
+        if ($tools !== []) {
+            $inner['tools'] = GoogleShared::tools($tools);
 
             if ($options?->toolChoice !== null) {
                 $inner['toolConfig'] = GoogleShared::toolConfig($options->toolChoice);
@@ -337,11 +532,17 @@ final class AntigravityApi implements StreamApi
      * A cut that lands inside a character is a different byte string, not a broken one — and
      * changing how it is cut would change every id, which is what the deployment caches against.
      */
-    private static function seed(Context $context): string
+    private static function seed(TranscriptContext $context): string
     {
         $text = '';
+        // The first message of the conversation, not the system message that leads the transcript:
+        // that one is the prompt, which is the same in every session.
+        $conversation = array_values(array_filter(
+            $context->messages,
+            static fn (mixed $message): bool => !$message instanceof \Pig\Ai\SystemMessage,
+        ));
 
-        foreach ($context->messages[0]->content ?? [] as $part) {
+        foreach ($conversation[0]->content ?? [] as $part) {
             if ($part instanceof TextContent) {
                 $text = $part->text;
 
@@ -356,7 +557,7 @@ final class AntigravityApi implements StreamApi
     }
 
     /** How many turns the assistant has already taken, which is the reference's `requestIndex`. */
-    private static function turnsSoFar(Context $context): int
+    private static function turnsSoFar(TranscriptContext $context): int
     {
         return count(array_filter(
             $context->messages,
@@ -403,24 +604,134 @@ final class AntigravityApi implements StreamApi
     }
 
     /**
-     * What went wrong, in the words the deployment used.
+     * What went wrong — pi-antigravity's `friendlyAntigravityError()`, word for word. The backend's
+     * text is `jsonOrTextError()`'s (the error body's `error.message`, else the body), with secrets
+     * redacted, cut at 500 characters.
      *
-     * A quota refusal is named as one, because "RESOURCE_EXHAUSTED" in a wall of JSON is the one
-     * failure people need to recognise at a glance — and `Session\Retry` reads the delay out of
-     * the same body, so the wait is as long as was asked for.
+     * The 429 wording is what decides whether the session retries: a quota wall ("Individual quota
+     * reached", a "Resets in …" hint, or quota wording that is not about rate limiting) is `Quota
+     * reached. …` — which matches none of the retryable patterns, so the turn fails at once with
+     * the time to wait — and any other 429 is transient throttling, `Rate limited by Antigravity
+     * (429 ResourceExhausted)…`, which the session's backoff waits out.
      */
-    private function explain(int $status, string $body): string
+    public static function friendlyAntigravityError(?int $status, string $text): string
     {
-        $decoded = json_decode($body, true);
-        $message = is_array($decoded) ? ($decoded['error']['message'] ?? null) : null;
-        $said = is_string($message) ? $message : trim($body);
+        $decoded = json_decode($text, true);
+        $message = is_array($decoded) && is_array($decoded['error'] ?? null) ? ($decoded['error']['message'] ?? null) : null;
+        $msg = mb_substr(self::redactSecrets(is_string($message) && $message !== '' ? $message : $text), 0, 500, 'UTF-8');
 
-        $quota = $status === 429
-            || stripos($said, 'RESOURCE_EXHAUSTED') !== false
-            || stripos($said, 'quota') !== false;
+        if ($status === 400) {
+            if (preg_match('/Requests ending with a model turn are not supported/i', $msg) === 1) {
+                return 'Antigravity rejected an invalid conversation message boundary. Next: update the extension or add a user message / start a new session, then retry.';
+            }
 
-        return $quota
-            ? "antigravity is out of quota ({$status}): {$said}"
-            : "antigravity returned {$status}: {$said}";
+            if (preg_match('/function call turn comes immediately after a user turn or after a function response turn/i', $msg) === 1) {
+                return 'Antigravity rejected an invalid function-call message boundary. Next: update the extension or start a new session, then retry; re-login is not required.';
+            }
+
+            if (preg_match('/API key not valid|API_KEY_INVALID/i', $msg) === 1) {
+                return 'Antigravity login expired or credentials are invalid. Next: run /login antigravity, then retry.';
+            }
+
+            if (preg_match('/Invalid JSON payload|Unknown name/i', $msg) === 1) {
+                return "Antigravity request format was rejected by the backend ({$msg}). Next: switch to a simpler model or retry after updating the extension.";
+            }
+
+            if (preg_match('/Request contains an invalid argument/i', $msg) === 1) {
+                return "Antigravity rejected this request ({$msg}). Next: retry once; if it keeps failing, switch models or re-login.";
+            }
+
+            return "Bad request from Antigravity. Next: retry once, then run /login antigravity if it keeps failing. Backend said: {$msg}";
+        }
+
+        if ($status === 401) {
+            return 'Antigravity authentication failed. Next: run /login antigravity, then retry.';
+        }
+
+        if ($status === 403) {
+            if (preg_match('/permission|forbidden|access/i', $msg) === 1) {
+                return 'Antigravity access was denied for this account or project. Next: try another model, re-login, or use an account with access.';
+            }
+
+            return "Antigravity denied this request. Next: re-login or try another model. Backend said: {$msg}";
+        }
+
+        if ($status === 404) {
+            if (preg_match('/Requested entity was not found/i', $msg) === 1) {
+                return 'This model is not available right now. Next: switch to gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.1-pro, or another working model.';
+            }
+
+            return "Antigravity could not find the requested resource. Next: retry or switch models. Backend said: {$msg}";
+        }
+
+        if ($status === 408) {
+            return 'Antigravity timed out. Next: retry the same request.';
+        }
+
+        if ($status === 409) {
+            return 'Antigravity reported a conflict for this request. Next: retry once or start a new chat session.';
+        }
+
+        if ($status === 429) {
+            $wait = preg_match('/Resets? in ([^.\n]+)/i', $msg, $match) === 1 ? trim($match[1]) : '';
+
+            if (preg_match('/Individual quota reached/i', $msg) === 1) {
+                return 'Quota reached. Please wait ' . ($wait !== '' ? $wait : 'for reset') . '. Next: switch models or try again after reset.';
+            }
+
+            $hardLimit = $wait !== ''
+                || (preg_match('/rate.?limit/i', $msg) !== 1
+                    && preg_match('/quota exceeded|exceeded your|limit reached|reached your|daily limit/i', $msg) === 1);
+
+            if ($hardLimit) {
+                return 'Quota reached.' . ($wait !== '' ? " Please wait {$wait}." : '') . ' Next: switch models or retry later.';
+            }
+
+            return 'Rate limited by Antigravity (429 ResourceExhausted). Next: retrying automatically; if it persists, switch models.';
+        }
+
+        if ($status === 500) {
+            return 'Antigravity had an internal server error. Next: retry in a moment or switch models.';
+        }
+
+        if ($status === 502) {
+            return 'Antigravity returned a bad gateway error. Next: retry in a moment.';
+        }
+
+        if ($status === 503) {
+            if (preg_match('/No capacity available/i', $msg) === 1) {
+                return 'This model has no capacity right now. Next: retry later or switch to another model.';
+            }
+
+            return 'Antigravity is temporarily unavailable. Next: retry in a moment or switch models.';
+        }
+
+        if ($status === 504) {
+            return 'Antigravity timed out upstream. Next: retry in a moment.';
+        }
+
+        return $msg;
+    }
+
+    /** pi-antigravity's `redactSecrets()`. */
+    private static function redactSecrets(string $text): string
+    {
+        return (string) preg_replace(
+            [
+                '/\bya29\.[A-Za-z0-9._~+\/-]+=*/',
+                '/\b1\/[A-Za-z0-9_-]{20,}/',
+                '/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/i',
+                '/("?(?:access_token|refresh_token|id_token|token|client_secret|code_verifier|authorization)"?\s*[:=]\s*")[^"]*(")/i',
+                '/("?(?:access_token|refresh_token|id_token|token|client_secret|code_verifier|authorization)"?\s*[:=]\s*)[^\s&,}]+/i',
+            ],
+            [
+                '[redacted-access-token]',
+                '[redacted-refresh-token]',
+                'Bearer [redacted]',
+                '$1[redacted]$2',
+                '$1[redacted]',
+            ],
+            $text,
+        );
     }
 }

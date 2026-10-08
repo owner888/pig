@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Pig\Ai\Providers;
 
 use Pig\Ai\AssistantMessage;
-use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\Response;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\SseParser;
 use Pig\Ai\ImageContent;
@@ -18,6 +18,7 @@ use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\ProviderError;
 use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
+use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\TextDeltaEvent;
 use Pig\Ai\TextEndEvent;
@@ -32,15 +33,22 @@ use Pig\Ai\ToolCallDeltaEvent;
 use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
 use Pig\Ai\ToolResultMessage;
+use Pig\Ai\TranscriptContext;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
+use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\ProviderRetry;
+use Pig\Ai\Utils\SdkHeaders;
 use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\ShortHash;
+use Pig\Ai\Utils\Text;
+use Pig\Ai\Utils\Transcript;
 use Pig\Ai\Utils\Utf8;
+use Pig\Async\AbortError;
 use Pig\Async\Async;
 use Throwable;
 
@@ -89,7 +97,7 @@ final class OpenAiResponses
     }
 
     /** Returns at once; the response fills in as it arrives. */
-    public function stream(Model $model, Context $context, ?OpenAiOptions $options = null): AssistantMessageEventStream
+    public function stream(Model $model, TranscriptContext $context, ?OpenAiOptions $options = null): AssistantMessageEventStream
     {
         $stream = new AssistantMessageEventStream();
 
@@ -103,9 +111,12 @@ final class OpenAiResponses
     private function run(
         AssistantMessageEventStream $stream,
         Model $model,
-        Context $context,
+        TranscriptContext $context,
         ?OpenAiOptions $options,
     ): void {
+        // Upstream's `normalizedContext = resolveTranscript(context, getCompat(model).
+        // supportsMidConvoSystemMessages)`, which everything below is handed.
+        $context = Transcript::resolveTranscript($context, self::compat($model)?->supportsMidConvoSystemMessages ?? false);
         $builder = new AssistantMessageBuilder($model);
         // Upstream's `stopReason: "pending"`: only a terminal event's status replaces it.
         $builder->setStopReason(StopReason::Pending);
@@ -125,17 +136,43 @@ final class OpenAiResponses
             // Upstream's `grammarToolInputProperties`: tool name => the property a grammar tool's raw
             // input lives in, for the tools this request sends as OpenAI custom tools. Read when a
             // `custom_tool_call` arrives and when one is replayed, so both directions agree.
-            $grammar = ConstrainedSampling::createGrammarToolInputProperties($context->tools, self::supportsGrammarTools($model));
-            $response = $this->http->send($this->request($model, $context, $options, $grammar), $signal);
+            $grammar = ConstrainedSampling::createGrammarToolInputProperties(Transcript::getDeclaredTools($context->messages), self::supportsGrammarTools($model));
+            // Upstream's `getClientApiKey()`: the key, or `"unused"` when an `authorization` or
+            // `cf-aig-authorization` header in `options.headers` carries the auth.
+            $apiKey = self::getClientApiKey($model->provider, $options?->apiKey, $options?->headers);
 
-            if (!$response->isSuccessful()) {
-                throw new ProviderError($this->explain($model, $response->status, $response->body->all()));
+            // `buildParams()`, then `onPayload`, whose answer replaces the params.
+            $params = $this->body($model, $context, $options, $grammar);
+            $nextParams = $options?->onPayload !== null ? ($options->onPayload)($params, $model) : null;
+
+            if ($nextParams !== null) {
+                $params = (array) $nextParams;
+            }
+
+            // `retryProviderRequest(() => client.responses.create(params, {signal, timeout,
+            // maxRetries: 0}).withResponse(), {maxRetries, maxRetryDelayMs, signal})`.
+            $timeoutMs = $options?->timeoutMs ?? SdkHeaders::STAINLESS_DEFAULT_TIMEOUT_MS;
+            $response = ProviderRetry::retryProviderRequest(
+                fn (): Response => SdkRequest::send(
+                    $this->http,
+                    $this->request($model, $context, $options, $params, $apiKey, $timeoutMs),
+                    $signal,
+                    $timeoutMs,
+                    fn (int $status, string $body): array => $this->explain($model, $status, $body),
+                ),
+                $options?->maxRetries,
+                $options?->maxRetryDelayMs,
+                $signal,
+            );
+
+            if ($options?->onResponse !== null) {
+                ($options->onResponse)(['status' => $response->status, 'headers' => $response->headers], $model);
             }
 
             $stream->push(new StartEvent($builder->snapshot()));
             $parser = new SseParser();
 
-            foreach ($response->body as $chunk) {
+            foreach (self::untilAborted($response->body) as $chunk) {
                 foreach ($parser->feed($chunk) as $event) {
                     // The SDK's completion sentinel: `if (sse.data === '[DONE]') break` — the stream
                     // is over, whatever follows. Before the JSON parse, which would refuse it.
@@ -144,6 +181,11 @@ final class OpenAiResponses
                     }
 
                     $data = ErrorBody::openAiStreamEvent($event->type, $event->data);
+
+                    if ($options?->onProviderStreamEvent !== null) {
+                        ($options->onProviderStreamEvent)($data, $model);
+                    }
+
                     $this->dispatch($data, $builder, $stream, $slots, $grammar, $unfinished, $reasoningById, $sawTerminal);
 
                     // The end of upstream's `finalizeResponse()`, after the cost is worked out:
@@ -155,10 +197,9 @@ final class OpenAiResponses
                 }
             }
 
-            // Before the stream checks below because upstream's SDK throws the abort from inside
-            // the loop, so an aborted turn never reaches them; here the body just ends.
-            $signal?->throwIfAborted();
-
+            // An abort mid-stream ended the SDK's iteration quietly ("Abort errors … are
+            // non-fatal"), so `processResponsesStream()`'s checks below run first, as upstream's do,
+            // and only then `stream()`'s "Request was aborted".
             // Upstream's `processResponsesStream()`: a body that ended with no `response.completed`,
             // `.incomplete` or `.failed` is a cut connection, not an answer — it used to come back as
             // a clean `stop` with whatever half-message had streamed and no usage.
@@ -176,6 +217,10 @@ final class OpenAiResponses
 
                     throw new ProviderError("OpenAI Responses stream completed with an unfinished tool call: {$call->name} ({$call->id})");
                 }
+            }
+
+            if ($signal?->aborted() ?? false) {
+                throw new ProviderError('Request was aborted');
             }
 
             if ($builder->stopReason() === StopReason::Pending) {
@@ -198,7 +243,7 @@ final class OpenAiResponses
             $stream->end();
         } catch (Throwable $error) {
             // A provider never throws at its caller: the failure is the stream's result.
-            $message = $error->getMessage();
+            $message = SdkRequest::errorMessage($error);
 
             // Upstream: "Sign in with ChatGPT shares the subscription's usage limit with other apps."
             // Its test is the formatted message, which for a refused request is the SDK's JSON of the
@@ -957,30 +1002,71 @@ final class OpenAiResponses
      * the error object as JSON, or `… (502): 502 <body text>` when the body is not a JSON error. It
      * used to be pig's own `<provider> returned <status>: <error.message>`, which dropped the code.
      */
-    private function explain(Model $model, int $status, string $body): string
+    /** @return array{0: string, 1: string} the SDK `APIError` message, and the turn's `errorMessage` */
+    private function explain(Model $model, int $status, string $body): array
     {
-        return ErrorBody::format(
-            ErrorBody::openAiApiError($status, $body),
-            ($model->provider === 'openai' ? 'OpenAI' : $model->provider) . ' API error',
-        );
+        $norm = ErrorBody::openAiApiError($status, $body);
+
+        return [$norm['message'], ErrorBody::format($norm, ($model->provider === 'openai' ? 'OpenAI' : $model->provider) . ' API error')];
     }
 
     // ---- the request ---------------------------------------------------------------------
 
-    /** @param array<string, string> $grammar see `run()` */
-    private function request(Model $model, Context $context, ?OpenAiOptions $options, array $grammar = []): Request
+    /**
+     * Upstream's `getClientApiKey()`.
+     *
+     * @param array<string, string|null>|null $headers
+     */
+    private static function getClientApiKey(string $provider, ?string $apiKey, ?array $headers): string
     {
-        $headers = [
-            'accept' => 'text/event-stream',
-            'content-type' => 'application/json',
-            'authorization' => 'Bearer ' . ($options?->apiKey ?? ''),
-            // Upstream's `{"User-Agent": getPiUserAgent(), ...model.headers}`.
-            'User-Agent' => PigUserAgent::get(),
-            ...$model->headers,
-            // Copilot's models speak this API, not completions, so this is the provider that has to
-            // send them — and it was the one that did not. See `Copilot`.
-            ...Copilot::headers($model, $context),
-        ];
+        if ($apiKey !== null && $apiKey !== '') {
+            return $apiKey;
+        }
+
+        if (Headers::has($headers, 'authorization') || Headers::has($headers, 'cf-aig-authorization')) {
+            return 'unused';
+        }
+
+        throw new ProviderError("No API key for provider: {$provider}");
+    }
+
+    /**
+     * The `openai` SDK's own iteration over the body: an abort while it is being read ends the
+     * stream quietly ("Abort errors … are non-fatal").
+     *
+     * @param iterable<string> $body
+     * @return \Generator<int, string>
+     */
+    private static function untilAborted(iterable $body): \Generator
+    {
+        try {
+            foreach ($body as $chunk) {
+                yield $chunk;
+            }
+        } catch (AbortError) {
+            return;
+        }
+    }
+
+    /**
+     * One attempt's request, as `client.responses.create(params)` builds it with upstream's
+     * `createClient()`: `POST <baseURL>/responses` and the `openai` SDK's headers
+     * (`OpenAiCompletions::sdkHeaders()`) over upstream's `defaultHeaders` — `User-Agent: pig (…)`,
+     * the model's headers, Copilot's, the session ones, and `options.headers` last.
+     *
+     * @param array<string, mixed> $params
+     */
+    private function request(Model $model, TranscriptContext $context, ?OpenAiOptions $options, array $params, string $apiKey, int $timeoutMs): Request
+    {
+        // Upstream's `{"User-Agent": getPiUserAgent(), ...model.headers}`, then Copilot's: its models
+        // speak this API, so this is the provider that has to send them. See `Copilot`.
+        $headers = ['User-Agent' => PigUserAgent::get()];
+
+        foreach ([$model->headers, Copilot::headers($model, $context)] as $source) {
+            foreach ($source as $name => $value) {
+                $headers[(string) $name] = $value;
+            }
+        }
 
         // Upstream's `createClient()`: the session id, when caching is on (`cacheSessionId`), as the
         // compat's `sessionAffinityFormat` names it — `x-session-id` for OpenRouter; otherwise
@@ -1003,11 +1089,16 @@ final class OpenAiResponses
             }
         }
 
+        // "Merge options headers last so they can override defaults".
+        foreach ($options?->headers ?? [] as $name => $value) {
+            $headers[(string) $name] = $value;
+        }
+
         return new Request(
             'POST',
             $this->endpoint($model, $options?->apiKey, '/responses'),
-            $headers,
-            $this->encode($this->body($model, $context, $options, $grammar)),
+            OpenAiCompletions::sdkHeaders($apiKey, $headers, $timeoutMs),
+            $this->encode($params),
         );
     }
 
@@ -1027,10 +1118,17 @@ final class OpenAiResponses
      * @param array<string, string> $grammar see `run()`
      * @return array<string, mixed>
      */
-    private function body(Model $model, Context $context, ?OpenAiOptions $options, array $grammar = []): array
+    private function body(Model $model, TranscriptContext $context, ?OpenAiOptions $options, array $grammar = []): array
     {
-        $input = $this->input($model, $context, $grammar);
         $compat = self::compat($model);
+        // Upstream's `resolveTranscriptTools(context.messages, compat.supportsAdditionalTools ||
+        // compat.supportsToolSearch)`: where later tools can be loaded in place, the request's
+        // `tools` is the initial set; otherwise it is the current one.
+        $transcriptTools = Transcript::resolveTranscriptTools(
+            $context->messages,
+            ($compat?->supportsAdditionalTools ?? false) || ($compat?->supportsToolSearch ?? false),
+        );
+        $input = $this->input($model, $context, $grammar);
         $cacheRetention = ($options ?? new OpenAiOptions())->resolvedCacheRetention();
         $supportsLongCacheRetention = $compat?->supportsLongCacheRetention ?? true;
         $supportsExplicitPromptCacheMode = $compat?->supportsExplicitPromptCacheMode ?? false;
@@ -1088,16 +1186,8 @@ final class OpenAiResponses
             $body['service_tier'] = $options->serviceTier;
         }
 
-        if ($context->tools !== []) {
-            // Upstream's `supportsStrictMode: model.compat?.supportsStrictMode ?? false` — on for
-            // OpenAI's own models, which carry it in their `compat` (`Models`), and off for every
-            // other endpoint of this API unless its `compat` says so.
-            $supportsStrictMode = $model->compat instanceof OpenAiCompat && ($model->compat->strictMode ?? false);
-            $supportsGrammarTools = self::supportsGrammarTools($model);
-            $body['tools'] = array_map(
-                fn (Tool $tool): array => $this->tool($tool, $supportsStrictMode, $supportsGrammarTools),
-                $context->tools,
-            );
+        if ($transcriptTools['requestTools'] !== []) {
+            $body['tools'] = $this->tools($model, $transcriptTools['requestTools']);
         }
 
         if ($options?->toolChoice !== null) {
@@ -1163,9 +1253,31 @@ final class OpenAiResponses
     }
 
     /**
+     * Upstream's `convertResponsesTools(tools, {supportsStrictMode, supportsOpenAIGrammarTools,
+     * toolSearchResult})` with this model's compat. Upstream's `supportsStrictMode:
+     * model.compat?.supportsStrictMode ?? false` — on for OpenAI's own models, which carry it in
+     * their `compat` (`Models`), and off for every other endpoint of this API unless its `compat`
+     * says so.
+     *
+     * @param list<Tool> $tools
+     * @return list<array<string, mixed>>
+     */
+    private function tools(Model $model, array $tools, bool $toolSearchResult = false): array
+    {
+        $supportsStrictMode = $model->compat instanceof OpenAiCompat && ($model->compat->strictMode ?? false);
+        $supportsGrammarTools = self::supportsGrammarTools($model);
+
+        return array_map(
+            fn (Tool $tool): array => $this->tool($tool, $supportsStrictMode, $supportsGrammarTools, $toolSearchResult),
+            $tools,
+        );
+    }
+
+    /**
      * Upstream's `convertResponsesTools()`. A grammar tool the endpoint takes goes out as an OpenAI
      * custom tool, `{type: "custom", name, description, format: {type: "grammar", syntax,
-     * definition}}`; every other tool is a function tool.
+     * definition}}`; every other tool is a function tool. A tool loaded by tool search
+     * (`toolSearchResult`) is marked `defer_loading: true`, as upstream marks it.
      *
      * `strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode) ?? defaultStrict`, the
      * default being `false`; the field is sent only where strict mode is supported. pig used to send
@@ -1173,7 +1285,7 @@ final class OpenAiResponses
      *
      * @return array<string, mixed>
      */
-    private function tool(Tool $tool, bool $supportsStrictMode, bool $supportsGrammarTools = false): array
+    private function tool(Tool $tool, bool $supportsStrictMode, bool $supportsGrammarTools = false, bool $toolSearchResult = false): array
     {
         $grammar = ConstrainedSampling::resolveGrammarConstrainedSampling($tool, $supportsGrammarTools);
 
@@ -1187,6 +1299,7 @@ final class OpenAiResponses
                     'syntax' => $grammar['format'],
                     'definition' => $grammar['definition'],
                 ],
+                ...($toolSearchResult ? ['defer_loading' => true] : []),
             ];
         }
 
@@ -1196,6 +1309,7 @@ final class OpenAiResponses
             'name' => $tool->name,
             'description' => $tool->description,
             'parameters' => ConstrainedSampling::getJsonSchemaToolParameters($tool, $strict),
+            ...($toolSearchResult ? ['defer_loading' => true] : []),
         ];
 
         if ($supportsStrictMode) {
@@ -1211,30 +1325,89 @@ final class OpenAiResponses
      * @param array<string, string> $grammar see `run()`
      * @return list<array<string, mixed>>
      */
-    private function input(Model $model, Context $context, array $grammar = []): array
+    private function input(Model $model, TranscriptContext $context, array $grammar = []): array
     {
         $items = [];
+        $compat = self::compat($model);
+        $context = Transcript::resolveTranscript($context, $compat?->supportsMidConvoSystemMessages ?? false);
+        $supportsAdditionalTools = $compat?->supportsAdditionalTools ?? false;
+        $supportsToolSearch = $compat?->supportsToolSearch ?? false;
+        $transcriptTools = Transcript::resolveTranscriptTools($context->messages, $supportsAdditionalTools || $supportsToolSearch);
+        // Upstream's `instructionRole`: `model.reasoning && compat?.supportsDeveloperRole !== false ?
+        // "developer" : "system"` — a model whose compat says it has no developer role gets
+        // `system`, which an OpenAI-compatible Responses endpoint may be the only one of.
+        $instructionRole = $model->reasoning && $compat?->developerRole !== false ? 'developer' : 'system';
 
-        if ($context->systemPrompt !== null && $context->systemPrompt !== '') {
+        // Upstream's `appendSystemToolAdditions()`: the tools a later system message adds, loaded
+        // where it stands — as an `additional_tools` item where the model takes those, or else as a
+        // completed client-executed tool search, a `tool_search_call` and the `tool_search_output`
+        // that answers it, whose tools are marked `defer_loading`. Nothing when the transcript does
+        // not anchor additions (a removal or a redefinition), since `tools` is the current set then.
+        $appendSystemToolAdditions = function (SystemMessage $message, string $seed) use (&$items, $transcriptTools, $supportsAdditionalTools, $supportsToolSearch, $model): void {
+            $tools = $transcriptTools['anchorsAdditions'] ? ($message->toolsAdded ?? []) : [];
+
+            if ($tools === []) {
+                return;
+            }
+
+            if ($supportsAdditionalTools) {
+                $items[] = ['type' => 'additional_tools', 'role' => 'developer', 'tools' => $this->tools($model, $tools)];
+
+                return;
+            }
+
+            if (!$supportsToolSearch) {
+                return;
+            }
+
+            $names = array_map(static fn (Tool $tool): string => $tool->name, $tools);
+            $callId = 'pi_tool_load_' . ShortHash::of("{$seed}:" . implode(',', $names));
             $items[] = [
-                // Upstream's `instructionRole`: `model.reasoning && compat?.supportsDeveloperRole !==
-                // false ? "developer" : "system"` — a model whose compat says it has no developer role
-                // gets `system`, which an OpenAI-compatible Responses endpoint may be the only one of.
-                'role' => $model->reasoning && self::compat($model)?->developerRole !== false ? 'developer' : 'system',
-                'content' => Utf8::sanitize($context->systemPrompt),
+                'type' => 'tool_search_call',
+                'call_id' => $callId,
+                'execution' => 'client',
+                'status' => 'completed',
+                'arguments' => ['query' => implode(' ', $names), 'limit' => count($names)],
             ];
-        }
+            $items[] = [
+                'type' => 'tool_search_output',
+                'call_id' => $callId,
+                'execution' => 'client',
+                'status' => 'completed',
+                'tools' => $this->tools($model, $tools, toolSearchResult: true),
+            ];
+        };
 
         // Upstream's `msgIndex`. It counts the messages that went out, not the messages that came
         // in: upstream's `continue` for a user turn with no content and an assistant turn with no
-        // output skips its `msgIndex++`, so neither moves the count. Upstream's leading system
-        // message does not count either; pig's system prompt is `Context::$systemPrompt` and never
-        // in this list, so there is nothing to skip for it.
+        // output skips its `msgIndex++`, so neither moves the count, and the leading system message
+        // does not count either. A later system message does.
         $msgIndex = 0;
+        $sourceIndex = 0;
         $normalizeToolCallId = fn (string $id, Model $target, AssistantMessage $source): string
             => $this->normalizeToolCallId($id, $model, $source);
 
         foreach (TransformMessages::apply($context->messages, $model, $normalizeToolCallId) as $message) {
+            $isLeadingSystemMessage = $sourceIndex++ === 0 && $message instanceof SystemMessage;
+
+            if ($message instanceof SystemMessage) {
+                if (!$isLeadingSystemMessage) {
+                    $appendSystemToolAdditions($message, "system:{$msgIndex}");
+                }
+
+                $text = $isLeadingSystemMessage ? Text::getSystemMessageText($message) : Text::renderSystemMessageUpdate($message);
+
+                if ($text !== '') {
+                    $items[] = ['role' => $instructionRole, 'content' => Utf8::sanitize($text)];
+                }
+
+                if (!$isLeadingSystemMessage) {
+                    $msgIndex++;
+                }
+
+                continue;
+            }
+
             $converted = $this->convert($message, $model, $msgIndex, $grammar);
 
             foreach ($converted as $item) {

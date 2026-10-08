@@ -36,6 +36,7 @@ use Pig\CodingAgent\Session\AutoCompactionStartEvent;
 use Pig\CodingAgent\Session\RetryEndEvent;
 use Pig\CodingAgent\Session\RetryStartEvent;
 use Pig\CodingAgent\Session\SessionCodec;
+use Pig\CodingAgent\Session\SummarizationRetryEvent;
 
 /**
  * What the agent is doing, as JSON a host can render.
@@ -65,9 +66,11 @@ final class RpcEvents
             $event instanceof AgentStartEvent => ['type' => 'agent_start'],
             $event instanceof TurnStartEvent => ['type' => 'turn_start'],
 
+            // Upstream's session `agent_end`: the messages and `willRetry`.
             $event instanceof AgentEndEvent => array_filter([
                 'type' => 'agent_end',
                 'messages' => self::messages($event->messages),
+                'willRetry' => $event->willRetry,
                 'error' => self::lastError($event->messages),
             ], static fn (mixed $v): bool => $v !== null),
 
@@ -135,6 +138,23 @@ final class RpcEvents
                 'attempts' => $event->attempts,
                 'error' => $event->error,
             ],
+
+            // Upstream's three summarization retry events, under its names and fields.
+            $event instanceof SummarizationRetryEvent => match ($event->phase) {
+                SummarizationRetryEvent::SCHEDULED => [
+                    'type' => 'summarization_retry_scheduled',
+                    'attempt' => $event->attempt,
+                    'maxAttempts' => $event->maxAttempts,
+                    'delayMs' => (int) round($event->delaySeconds * 1000),
+                    'errorMessage' => $event->error,
+                ],
+                SummarizationRetryEvent::ATTEMPT_START => [
+                    'type' => 'summarization_retry_attempt_start',
+                    'source' => $event->source,
+                    ...($event->reason !== null ? ['reason' => $event->reason] : []),
+                ],
+                default => ['type' => 'summarization_retry_finished'],
+            },
 
             $event instanceof AutoCompactionStartEvent => [
                 'type' => 'auto_compaction_start',

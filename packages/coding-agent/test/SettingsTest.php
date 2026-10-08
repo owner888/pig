@@ -150,23 +150,71 @@ final class SettingsTest extends TestCase
 
     public function testTheRetryKeysAreUpstreamsSpellings(): void
     {
-        // A `settings.json` written for pi has to work here, and `retry.maxAttempts` — which is
-        // what this read before the audit — is nobody's spelling. Its two siblings were right,
-        // which is what made it visible.
-        $this->writeGlobal(['retry' => ['enabled' => false, 'maxRetries' => 7, 'baseDelayMs' => 500]]);
+        // A `settings.json` written for pi has to work here: upstream's `getRetrySettings()` keys,
+        // all four, in milliseconds as the file writes them.
+        $this->writeGlobal(['retry' => ['enabled' => false, 'maxRetries' => 7, 'baseDelayMs' => 500, 'maxAgentDelayMs' => 9000]]);
 
-        $settings = $this->load();
-
-        $this->assertFalse($settings->retryEnabled());
-        $this->assertSame(7, $settings->retryMaxAttempts(3));
-        $this->assertSame(0.5, $settings->retryBaseDelay(2.0), 'milliseconds in the file, seconds in the code');
+        $this->assertSame(
+            ['enabled' => false, 'maxRetries' => 7, 'baseDelayMs' => 500.0, 'maxAgentDelayMs' => 9000.0],
+            $this->load()->retrySettings(),
+        );
     }
 
-    public function testAMissingRetryKeyFallsBackToWhatTheCallerBrought(): void
+    public function testAMissingRetryKeyIsUpstreamsDefault(): void
     {
-        $this->assertSame(3, $this->load()->retryMaxAttempts(3));
-        $this->assertSame(2.0, $this->load()->retryBaseDelay(2.0));
-        $this->assertTrue($this->load()->retryEnabled(), 'on unless turned off, like compaction');
+        // `SETTINGS_DEFAULTS.retry`: on, three retries, 2 s doubling, capped at a minute.
+        $this->assertSame(
+            ['enabled' => true, 'maxRetries' => 3, 'baseDelayMs' => 2000.0, 'maxAgentDelayMs' => 60000.0],
+            $this->load()->retrySettings(),
+        );
+    }
+
+    public function testNoRetriesIsANumberUpstreamTakesAtItsWord(): void
+    {
+        // `settings.retry?.maxRetries ?? 3`: 0 is a setting, not a missing one — it means none.
+        // pig used to read anything under 1 as "not set" and retry three times anyway.
+        $this->writeGlobal(['retry' => ['maxRetries' => 0, 'baseDelayMs' => 0]]);
+
+        $settings = $this->load()->retrySettings();
+
+        $this->assertSame(0, $settings['maxRetries']);
+        $this->assertSame(0.0, $settings['baseDelayMs']);
+    }
+
+    public function testTheProviderRetryKeysAreUpstreamsToo(): void
+    {
+        // `getProviderRetrySettings()`: what a provider does with one request, under
+        // `retry.provider` — and the legacy `retry.maxDelayMs` counted as its `maxRetryDelayMs`.
+        $this->assertSame(['timeoutMs' => null, 'maxRetries' => null, 'maxRetryDelayMs' => 60_000], $this->load()->providerRetrySettings());
+
+        $this->writeGlobal(['retry' => ['provider' => ['timeoutMs' => 1000, 'maxRetries' => 2, 'maxRetryDelayMs' => 5000]]]);
+        $this->assertSame(['timeoutMs' => 1000, 'maxRetries' => 2, 'maxRetryDelayMs' => 5000], $this->load()->providerRetrySettings());
+
+        $this->writeGlobal(['retry' => ['maxDelayMs' => 7000]]);
+        $this->assertSame(7000, $this->load()->providerRetrySettings()['maxRetryDelayMs']);
+
+        $this->writeGlobal(['retry' => ['maxDelayMs' => 7000, 'provider' => ['maxRetryDelayMs' => 0]]]);
+        $this->assertSame(0, $this->load()->providerRetrySettings()['maxRetryDelayMs'], 'the new key wins, and 0 is no cap');
+    }
+
+    public function testTheHttpIdleTimeoutIsUpstreamsSetting(): void
+    {
+        $this->assertSame(300_000, $this->load()->httpIdleTimeoutMs());
+
+        $this->writeGlobal(['httpIdleTimeoutMs' => 'disabled']);
+        $this->assertSame(0, $this->load()->httpIdleTimeoutMs());
+
+        $this->writeGlobal(['httpIdleTimeoutMs' => ' 60000 ']);
+        $this->assertSame(60_000, $this->load()->httpIdleTimeoutMs());
+
+        $this->writeGlobal(['httpIdleTimeoutMs' => -1]);
+        $settings = $this->load();
+        try {
+            $settings->httpIdleTimeoutMs();
+            $this->fail('a negative timeout was taken');
+        } catch (\RuntimeException $error) {
+            $this->assertSame('Invalid httpIdleTimeoutMs setting: -1', $error->getMessage());
+        }
     }
 
     public function testTheUpdateCheckIsOnUnlessTheFileTurnsItOff(): void
@@ -317,8 +365,9 @@ final class SettingsTest extends TestCase
     // ---- the numbers, and what is not one --------------------------------------------------
 
     /**
-     * The four accessors that take a fallback all read `is_int($value) && $value > 0`, and the
-     * cases below are the three ways a hand-written file misses that. A **quoted number** is the
+     * The two accessors that take a fallback read `is_int($value) && $value > 0`, and the cases
+     * below are the ways a hand-written file misses that. (The retry numbers are upstream's
+     * `getRetrySettings()` now, which takes any number as it is — see the retry tests above.) A **quoted number** is the
      * one to expect — the same mistake `models.json`'s `cost` block has its own entry for — and
      * without the type check it comes back as a string out of a method declared `int`, which under
      * `strict_types` is a TypeError from somewhere that has nothing to do with the file.
@@ -334,11 +383,6 @@ final class SettingsTest extends TestCase
         yield 'a whole count is the answer' => ['compaction.reserveTokens', 9_000, true];
         yield 'zero is not a limit' => ['compaction.reserveTokens', 0, false];
         yield 'nor is a negative one' => ['compaction.keepRecentTokens', -1, false];
-        yield 'a number with the quotes left on' => ['retry.maxRetries', '7', false];
-        yield 'nor is a float where a count belongs' => ['retry.maxRetries', 2.5, false];
-        yield 'no retries at all is not a count either' => ['retry.maxRetries', 0, false];
-        yield 'milliseconds, still counted' => ['retry.baseDelayMs', 500, true];
-        yield 'a delay of nothing is not a delay' => ['retry.baseDelayMs', 0, false];
     }
 
     #[DataProvider('numbersAndNonNumbers')]
@@ -351,17 +395,9 @@ final class SettingsTest extends TestCase
         $answer = match ($key) {
             'compaction.reserveTokens' => $settings->compactionReserveTokens(1_111),
             'compaction.keepRecentTokens' => $settings->compactionKeepRecentTokens(1_111),
-            'retry.maxRetries' => $settings->retryMaxAttempts(1_111),
-            'retry.baseDelayMs' => $settings->retryBaseDelay(1.111),
         };
 
-        // The delay is the one that is not handed back as it was written: milliseconds in the
-        // file, seconds in the code.
-        $expected = $taken
-            ? ($key === 'retry.baseDelayMs' ? $value / 1000 : $value)
-            : ($key === 'retry.baseDelayMs' ? 1.111 : 1_111);
-
-        $this->assertSame($expected, $answer);
+        $this->assertSame($taken ? $value : 1_111, $answer);
     }
 
     /**

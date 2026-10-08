@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Pig\Ai\Providers;
 
 use Pig\Ai\AssistantMessage;
-use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\Response;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\SseParser;
 use Pig\Ai\ImageContent;
@@ -18,6 +18,8 @@ use Pig\Ai\OpenAiCompat;
 use Pig\Ai\ProviderError;
 use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
+use Pig\Ai\StreamOptions;
+use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\TextDeltaEvent;
 use Pig\Ai\TextEndEvent;
@@ -32,15 +34,22 @@ use Pig\Ai\ToolCallDeltaEvent;
 use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
 use Pig\Ai\ToolResultMessage;
+use Pig\Ai\TranscriptContext;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
+use Pig\Ai\Utils\Headers;
 use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\PigUserAgent;
+use Pig\Ai\Utils\ProviderRetry;
+use Pig\Ai\Utils\SdkHeaders;
 use Pig\Ai\Utils\ShortHash;
+use Pig\Ai\Utils\Text;
+use Pig\Ai\Utils\Transcript;
 use Pig\Ai\Utils\Utf8;
+use Pig\Async\AbortError;
 use Pig\Async\Async;
 use Throwable;
 
@@ -81,7 +90,7 @@ final class OpenAiCompletions
     }
 
     /** Returns at once; the response fills in as it arrives. */
-    public function stream(Model $model, Context $context, ?OpenAiOptions $options = null): AssistantMessageEventStream
+    public function stream(Model $model, TranscriptContext $context, ?OpenAiOptions $options = null): AssistantMessageEventStream
     {
         $stream = new AssistantMessageEventStream();
 
@@ -95,9 +104,12 @@ final class OpenAiCompletions
     private function run(
         AssistantMessageEventStream $stream,
         Model $model,
-        Context $context,
+        TranscriptContext $context,
         ?OpenAiOptions $options,
     ): void {
+        // Upstream's `normalizedContext = resolveTranscript(context, getCompat(model).
+        // supportsMidConvoSystemMessages)`, which everything below is handed.
+        $context = Transcript::resolveTranscript($context, OpenAiCompat::resolve($model)->supportsMidConvoSystemMessages);
         $builder = new AssistantMessageBuilder($model);
         // Upstream's `stopReason: "pending"`: only a `finish_reason` replaces it, and a stream
         // that ends with it still pending is checked below rather than read as an answer.
@@ -121,19 +133,45 @@ final class OpenAiCompletions
             // Upstream's `grammarToolInputProperties`, as in `OpenAiResponses`: tool name => the
             // property a grammar tool's raw input lives in, for the tools sent as custom tools.
             $grammar = ConstrainedSampling::createGrammarToolInputProperties(
-                $context->tools,
+                Transcript::getDeclaredTools($context->messages),
                 OpenAiCompat::resolve($model)->grammarTools ?? false,
             );
-            $response = $this->http->send($this->request($model, $context, $options, $grammar), $signal);
+            // Upstream's `getClientApiKey()`: the key, or `"unused"` when an `authorization` or
+            // `cf-aig-authorization` header in `options.headers` carries the auth.
+            $apiKey = self::getClientApiKey($model->provider, $options?->apiKey, $options?->headers);
 
-            if (!$response->isSuccessful()) {
-                throw new ProviderError($this->explain($response->status, $response->body->all()));
+            // `buildParams()`, then `onPayload`, whose answer replaces the params.
+            $params = $this->body($model, $context, $options, $grammar);
+            $nextParams = $options?->onPayload !== null ? ($options->onPayload)($params, $model) : null;
+
+            if ($nextParams !== null) {
+                $params = (array) $nextParams;
+            }
+
+            // `retryProviderRequest(() => client.chat.completions.create(params, {signal, timeout,
+            // maxRetries: 0}).withResponse(), {maxRetries, maxRetryDelayMs, signal})`.
+            $timeoutMs = $options?->timeoutMs ?? SdkHeaders::STAINLESS_DEFAULT_TIMEOUT_MS;
+            $response = ProviderRetry::retryProviderRequest(
+                fn (): Response => SdkRequest::send(
+                    $this->http,
+                    $this->request($model, $context, $options, $params, $apiKey, $timeoutMs),
+                    $signal,
+                    $timeoutMs,
+                    $this->explain(...),
+                ),
+                $options?->maxRetries,
+                $options?->maxRetryDelayMs,
+                $signal,
+            );
+
+            if ($options?->onResponse !== null) {
+                ($options->onResponse)(['status' => $response->status, 'headers' => $response->headers], $model);
             }
 
             $stream->push(new StartEvent($builder->snapshot()));
             $parser = new SseParser();
 
-            foreach ($response->body as $chunk) {
+            foreach (self::untilAborted($response->body) as $chunk) {
                 foreach ($parser->feed($chunk) as $event) {
                     // The `openai` SDK's `Stream`, which upstream's chunks come through: `[DONE]` ends
                     // the stream whatever follows it, data that is not JSON is the SDK's fixed
@@ -145,6 +183,10 @@ final class OpenAiCompletions
                     }
 
                     $data = ErrorBody::openAiStreamEvent($event->type, $event->data, self::withRawMetadata(...));
+
+                    if ($options?->onProviderStreamEvent !== null) {
+                        ($options->onProviderStreamEvent)($data, $model);
+                    }
 
                     if ($data !== []) {
                         $open = $this->onChunk($data, $model, $builder, $stream, $open, $replay, $grammar, $hasFinishReason);
@@ -159,9 +201,12 @@ final class OpenAiCompletions
                 $stream->push(new ThinkingEndEvent($replay['detached'], $builder->textOf($replay['detached']), $builder->snapshot()));
             }
 
-            $signal?->throwIfAborted();
+            // Upstream's checks after the stream, in its order. An abort mid-stream ended the SDK's
+            // iteration quietly (`isTransportAbortError()`), so this is where it is said.
+            if ($signal?->aborted() ?? false) {
+                throw new ProviderError('Request was aborted');
+            }
 
-            // Upstream's checks after the stream, in its order.
             if ($builder->stopReason() === StopReason::Aborted) {
                 throw new ProviderError('Request was aborted');
             }
@@ -192,7 +237,7 @@ final class OpenAiCompletions
             self::applyStreamedReasoningDetails($builder, $replay);
 
             // A provider never throws at its caller: the failure is the stream's result.
-            $builder->fail($error->getMessage(), $signal?->aborted() ?? false);
+            $builder->fail(SdkRequest::errorMessage($error), $signal?->aborted() ?? false);
             $failed = $builder->snapshot();
             $stream->push(new ErrorEvent($failed->stopReason, $failed));
             $stream->end();
@@ -774,11 +819,12 @@ final class OpenAiCompletions
      * `\n<error.metadata.raw>` when OpenRouter sent one the message does not already contain. It
      * used to be pig's own `<provider> returned <status>: <error.message>`.
      */
-    private function explain(int $status, string $body): string
+    /** @return array{0: string, 1: string} the SDK `APIError` message, and the turn's `errorMessage` */
+    private function explain(int $status, string $body): array
     {
         $norm = ErrorBody::openAiApiError($status, $body);
 
-        return self::withRawMetadata(ErrorBody::format($norm), $norm['error']);
+        return [$norm['message'], self::withRawMetadata(ErrorBody::format($norm), $norm['error'])];
     }
 
     /**
@@ -792,16 +838,11 @@ final class OpenAiCompletions
             : null;
 
         // `if (rawMetadata && !output.errorMessage.includes(String(rawMetadata)))`.
-        if ($raw !== null && $raw !== false && $raw !== '' && $raw !== 0) {
+        if ($raw !== null && $raw !== false && $raw !== '' && $raw !== 0 && $raw !== 0.0) {
             // `String(rawMetadata)`.
-            $text = match (true) {
-                is_string($raw) => $raw,
-                is_bool($raw) => $raw ? 'true' : 'false',
-                is_float($raw) => JsJson::number($raw),
-                is_int($raw) => (string) $raw,
-                is_array($raw) => implode(',', array_map(static fn (mixed $item): string => is_scalar($item) ? (string) $item : '', $raw)),
-                default => '[object Object]',
-            };
+            // `String(rawMetadata)` — `JsJson::toString()` is JavaScript's, nested arrays flattened
+            // with commas and null items empty, as `Array.prototype.toString()` joins them.
+            $text = JsJson::toString($raw);
 
             if (!str_contains($message, $text)) {
                 $message .= "\n{$text}";
@@ -813,20 +854,65 @@ final class OpenAiCompletions
 
     // ---- the request ---------------------------------------------------------------------
 
-    /** @param array<string, string> $grammar see `run()` */
-    private function request(Model $model, Context $context, ?OpenAiOptions $options, array $grammar = []): Request
+    /**
+     * Upstream's `getClientApiKey()`.
+     *
+     * @param array<string, string|null>|null $headers
+     */
+    private static function getClientApiKey(string $provider, ?string $apiKey, ?array $headers): string
     {
-        $headers = [
-            'accept' => 'text/event-stream',
-            'content-type' => 'application/json',
-            'authorization' => 'Bearer ' . ($options?->apiKey ?? ''),
-            // Upstream's `{"User-Agent": getPiUserAgent(), ...model.headers}`.
-            'User-Agent' => PigUserAgent::get(),
-            ...$model->headers,
-            // After the model's own, which is upstream's order: a registry entry cannot turn off
-            // the headers Copilot needs to accept the request at all.
-            ...Copilot::headers($model, $context),
-        ];
+        if ($apiKey !== null && $apiKey !== '') {
+            return $apiKey;
+        }
+
+        if (Headers::has($headers, 'authorization') || Headers::has($headers, 'cf-aig-authorization')) {
+            return 'unused';
+        }
+
+        throw new ProviderError("No API key for provider: {$provider}");
+    }
+
+    /**
+     * The `openai` SDK's own iteration over the body: an abort while it is being read ends the
+     * stream quietly ("Abort errors … are non-fatal"), for the check after the loop to report.
+     *
+     * @param iterable<string> $body
+     * @return \Generator<int, string>
+     */
+    private static function untilAborted(iterable $body): \Generator
+    {
+        try {
+            foreach ($body as $chunk) {
+                yield $chunk;
+            }
+        } catch (AbortError) {
+            return;
+        }
+    }
+
+    /**
+     * One attempt's request, as `client.chat.completions.create(params)` builds it with upstream's
+     * `createClient()`: `POST <baseURL>/chat/completions` and the SDK's `buildHeaders()` over its
+     * sources — the SDK's own (`Accept: application/json`, its `User-Agent`, the `X-Stainless-*`
+     * set, and `OpenAI-Organization` / `OpenAI-Project` from `OPENAI_ORG_ID` / `OPENAI_PROJECT_ID`,
+     * which the SDK reads itself), `Authorization: Bearer <key>`, upstream's `defaultHeaders`
+     * (`User-Agent: pig (…)`, the model's headers, Copilot's, the session-affinity ones, and
+     * `options.headers` last), and the JSON body's `content-type`. A later source replaces an
+     * earlier header of the same name, any case; a null removes it.
+     *
+     * @param array<string, mixed> $params
+     */
+    private function request(Model $model, TranscriptContext $context, ?OpenAiOptions $options, array $params, string $apiKey, int $timeoutMs): Request
+    {
+        // Upstream's `{"User-Agent": getPiUserAgent(), ...model.headers}`, then Copilot's: a
+        // registry entry cannot turn off the headers Copilot needs to accept the request at all.
+        $headers = ['User-Agent' => PigUserAgent::get()];
+
+        foreach ([$model->headers, Copilot::headers($model, $context)] as $source) {
+            foreach ($source as $name => $value) {
+                $headers[(string) $name] = $value;
+            }
+        }
 
         // Upstream's `createClient()`: the session id, when caching is on (`cacheSessionId`), as
         // headers — but only where `sendSessionAffinityHeaders` says (detected: OpenRouter), and
@@ -848,12 +934,44 @@ final class OpenAiCompletions
             }
         }
 
+        // "Merge options headers last so they can override defaults".
+        foreach ($options?->headers ?? [] as $name => $value) {
+            $headers[(string) $name] = $value;
+        }
+
         return new Request(
             'POST',
             $this->endpoint($model, $options?->apiKey, '/chat/completions'),
-            $headers,
-            $this->encode($this->body($model, $context, $options, $grammar)),
+            self::sdkHeaders($apiKey, $headers, $timeoutMs),
+            $this->encode($params),
         );
+    }
+
+    /**
+     * The `openai` SDK's `buildHeaders()` for a chat request, and its `validateHeaders()`.
+     *
+     * @param array<string, string|null> $defaultHeaders
+     * @return array<string, string>
+     */
+    public static function sdkHeaders(string $apiKey, array $defaultHeaders, int $timeoutMs): array
+    {
+        $built = Headers::build(
+            [
+                ...SdkHeaders::stainless('OpenAI/JS ' . SdkHeaders::OPENAI_SDK_VERSION, SdkHeaders::OPENAI_SDK_VERSION, $timeoutMs),
+                'OpenAI-Organization' => StreamOptions::providerEnvValue('OPENAI_ORG_ID', null),
+                'OpenAI-Project' => StreamOptions::providerEnvValue('OPENAI_PROJECT_ID', null),
+            ],
+            ['Authorization' => "Bearer {$apiKey}"],
+            $defaultHeaders,
+            ['content-type' => 'application/json'],
+        );
+
+        if (($built['values']['authorization'] ?? '') === '' && ($built['values']['api-key'] ?? '') === ''
+            && !isset($built['nulls']['authorization']) && !isset($built['nulls']['api-key'])) {
+            throw new ProviderError('Could not resolve authentication method. Expected either apiKey or adminAPIKey to be set. Or for one of the "Authorization" or "api-key" headers to be explicitly omitted');
+        }
+
+        return $built['values'];
     }
 
     /** @param array<string, mixed> $body */
@@ -872,9 +990,16 @@ final class OpenAiCompletions
      * @param array<string, string> $grammar see `run()`
      * @return array<string, mixed>
      */
-    private function body(Model $model, Context $context, ?OpenAiOptions $options, array $grammar = []): array
+    private function body(Model $model, TranscriptContext $context, ?OpenAiOptions $options, array $grammar = []): array
     {
         $compat = OpenAiCompat::resolve($model);
+        // Upstream's `resolveTranscriptTools()`: with mid-conversation system messages that may add
+        // tools (Kimi K3), the initial tools go in `tools` and later ones where they were added;
+        // otherwise `tools` is the current set.
+        $transcriptTools = Transcript::resolveTranscriptTools(
+            $context->messages,
+            $compat->supportsMidConvoSystemMessages === true && $compat->supportsMidConvoToolAdditions === true,
+        );
         $cacheRetention = ($options ?? new OpenAiOptions())->resolvedCacheRetention();
         $supportsLongCacheRetention = $compat->supportsLongCacheRetention ?? true;
 
@@ -915,8 +1040,8 @@ final class OpenAiCompletions
             $body['temperature'] = $options->temperature;
         }
 
-        if ($context->tools !== []) {
-            $body['tools'] = array_map(fn (Tool $tool): array => $this->tool($tool, $compat), $context->tools);
+        if ($transcriptTools['requestTools'] !== []) {
+            $body['tools'] = array_map(fn (Tool $tool): array => $this->tool($tool, $compat), $transcriptTools['requestTools']);
 
             // z.ai streams tool-call deltas only when asked to.
             if ($compat->zaiToolStream) {
@@ -1349,19 +1474,19 @@ final class OpenAiCompletions
      * @param array<string, string> $grammar
      * @return list<array<string, mixed>>
      */
-    private function messages(Model $model, Context $context, OpenAiCompat $compat, array $grammar = []): array
+    private function messages(Model $model, TranscriptContext $context, OpenAiCompat $compat, array $grammar = []): array
     {
         $out = [];
-
-        if ($context->systemPrompt !== null && $context->systemPrompt !== '') {
-            // A reasoning model reads `developer` as the stronger of the two roles; the
-            // strict endpoints have never heard of it.
-            $role = $model->reasoning && $compat->developerRole ? 'developer' : 'system';
-            $out[] = ['role' => $role, 'content' => Utf8::sanitize($context->systemPrompt)];
-        }
-
+        $context = Transcript::resolveTranscript($context, $compat->supportsMidConvoSystemMessages);
         $normalizeToolCallId = fn (string $id): string => $this->normalizeToolCallId($id, $model);
         $messages = array_values(TransformMessages::apply($context->messages, $model, $normalizeToolCallId));
+        $transcriptTools = Transcript::resolveTranscriptTools(
+            $context->messages,
+            $compat->supportsMidConvoSystemMessages === true && $compat->supportsMidConvoToolAdditions === true,
+        );
+        // A reasoning model reads `developer` as the stronger of the two roles; the strict endpoints
+        // have never heard of it.
+        $instructionRole = $model->reasoning && $compat->developerRole ? 'developer' : 'system';
         // Upstream's `lastRole`: the role of the last message that produced output — a skipped empty
         // user or assistant message leaves it as it was — and `"user"` after a run of tool results
         // whose images went out as a user message.
@@ -1375,6 +1500,27 @@ final class OpenAiCompletions
             // synthetic assistant message to bridge the gap."
             if ($compat->assistantAfterToolResult && $lastRole === 'toolResult' && $message instanceof UserMessage) {
                 $out[] = ['role' => 'assistant', 'content' => 'I have processed the tool results.'];
+            }
+
+            // The leading system message is the whole prompt; a later one is an update. Tools it adds
+            // go first, as the system message Kimi K3 reads them from (`{role: "system", tools}`),
+            // when the transcript anchors additions. Upstream sets `lastRole` after this arm too.
+            if ($message instanceof SystemMessage) {
+                $addedTools = $i > 0 && $transcriptTools['anchorsAdditions'] ? ($message->toolsAdded ?? []) : [];
+
+                if ($addedTools !== []) {
+                    $out[] = ['role' => 'system', 'tools' => array_map(fn (Tool $tool): array => $this->tool($tool, $compat), $addedTools)];
+                }
+
+                $text = $i === 0 ? Text::getSystemMessageText($message) : Text::renderSystemMessageUpdate($message);
+
+                if ($text !== '') {
+                    $out[] = ['role' => $instructionRole, 'content' => Utf8::sanitize($text)];
+                }
+
+                $lastRole = 'system';
+
+                continue;
             }
 
             if ($message instanceof ToolResultMessage) {

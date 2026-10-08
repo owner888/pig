@@ -36,6 +36,7 @@ use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
+use Pig\Ai\Utils\Transcript;
 
 final class AnthropicTest extends TestCase
 {
@@ -154,7 +155,7 @@ final class AnthropicTest extends TestCase
         $partials = Async::run(function () use ($url): array {
             $seen = [];
 
-            foreach ($this->anthropic()->stream($this->model($url), new Context([new UserMessage('hi')]), $this->options()) as $event) {
+            foreach ($this->anthropic()->stream($this->model($url), Transcript::normalizeContext(new Context([new UserMessage('hi')])), $this->options()) as $event) {
                 if ($event instanceof TextDeltaEvent) {
                     // Every event carries a real snapshot, not a view of one mutating object.
                     $seen[] = $event->partial->content[0]->text;
@@ -182,7 +183,7 @@ final class AnthropicTest extends TestCase
             $partials = [];
             $final = null;
 
-            foreach ($this->anthropic()->stream($this->model($url), new Context([new UserMessage('read it')]), $this->options()) as $event) {
+            foreach ($this->anthropic()->stream($this->model($url), Transcript::normalizeContext(new Context([new UserMessage('read it')])), $this->options()) as $event) {
                 if ($event instanceof ToolCallDeltaEvent) {
                     $partials[] = $event->partial->content[0]->arguments;
                 }
@@ -229,7 +230,7 @@ final class AnthropicTest extends TestCase
         ]);
 
         $events = Async::run(function () use ($url): array {
-            $stream = $this->anthropic()->stream($this->model($url), new Context([new UserMessage('hi')]), $this->options());
+            $stream = $this->anthropic()->stream($this->model($url), Transcript::normalizeContext(new Context([new UserMessage('hi')])), $this->options());
             $seen = [];
 
             foreach ($stream as $event) {
@@ -305,7 +306,7 @@ final class AnthropicTest extends TestCase
             $controller = new AbortController();
             $stream = $this->anthropic()->stream(
                 $this->model($url),
-                new Context([new UserMessage('hi')]),
+                Transcript::normalizeContext(new Context([new UserMessage('hi')])),
                 $this->options($controller),
             );
 
@@ -318,8 +319,10 @@ final class AnthropicTest extends TestCase
             return $stream->result()->await();
         });
 
+        // Upstream's reader is mid-`read()` when the abort lands, and Node's fetch rejects it with
+        // the DOMException "This operation was aborted" — the abort's reason is not the message.
         $this->assertSame(StopReason::Aborted, $message->stopReason);
-        $this->assertSame('user pressed esc', $message->errorMessage);
+        $this->assertSame('This operation was aborted', $message->errorMessage);
     }
 
     /**
@@ -357,7 +360,7 @@ final class AnthropicTest extends TestCase
             $controller = new AbortController();
             $stream = $this->anthropic()->stream(
                 $this->model($url),
-                new Context([new UserMessage('write a long poem')]),
+                Transcript::normalizeContext(new Context([new UserMessage('write a long poem')])),
                 $this->options($controller),
             );
 
@@ -393,14 +396,15 @@ final class AnthropicTest extends TestCase
                 [new Tool('read', 'Read a file', ['properties' => ['path' => ['type' => 'string']], 'required' => ['path']])],
             );
 
-            foreach ($this->anthropic()->stream($this->model($url), $context, $this->options()) as $ignored) {
+            foreach ($this->anthropic()->stream($this->model($url), Transcript::normalizeContext($context), $this->options()) as $ignored) {
             }
         });
 
         $head = $this->server->receivedHead();
         $body = $this->server->receivedJson();
 
-        $this->assertStringContainsString('POST /v1/messages HTTP/1.1', $head);
+        // `client.beta.messages.create()` posts to `/v1/messages?beta=true`.
+        $this->assertStringContainsString('POST /v1/messages?beta=true HTTP/1.1', $head);
         $this->assertStringContainsString('anthropic-version: 2023-06-01', $head);
         $this->assertStringContainsString('x-api-key: test-key', $head);
         // Upstream streams a tool's input with `eager_input_streaming` on the tool now, not with the
@@ -440,7 +444,7 @@ final class AnthropicTest extends TestCase
         Async::run(function () use ($url): void {
             $stream = $this->anthropic()->stream(
                 $this->model($url),
-                new Context([new UserMessage('hi')], 'be brief'),
+                Transcript::normalizeContext(new Context([new UserMessage('hi')], 'be brief')),
                 new AnthropicOptions(apiKey: 'sk-ant-oat01-abc'),
             );
 
@@ -496,7 +500,7 @@ final class AnthropicTest extends TestCase
                 new ToolResultMessage('c1', 'bash', [new TextContent('a.php')], false),
             ], 'be brief', $tools);
 
-            foreach ($this->anthropic()->stream($this->model($url), $context, new AnthropicOptions(apiKey: 'sk-ant-oat01-abc')) as $event) {
+            foreach ($this->anthropic()->stream($this->model($url), Transcript::normalizeContext($context), new AnthropicOptions(apiKey: 'sk-ant-oat01-abc')) as $event) {
                 if ($event instanceof ToolCallEndEvent) {
                     $final = $event->toolCall;
                 }
@@ -535,7 +539,7 @@ final class AnthropicTest extends TestCase
         $url = $this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]]);
 
         Async::run(function () use ($url): void {
-            foreach ($this->anthropic()->stream($this->model($url), new Context([new UserMessage('hi')], 'be brief'), $this->options()) as $ignored) {
+            foreach ($this->anthropic()->stream($this->model($url), Transcript::normalizeContext(new Context([new UserMessage('hi')], 'be brief')), $this->options()) as $ignored) {
             }
         });
 
@@ -580,7 +584,7 @@ final class AnthropicTest extends TestCase
         [$deltas, $message] = Async::run(function () use ($model, $key): array {
             $stream = $this->anthropic()->stream(
                 $model,
-                new Context([new UserMessage('Reply with exactly: pong')], 'Follow the instruction exactly.'),
+                Transcript::normalizeContext(new Context([new UserMessage('Reply with exactly: pong')], 'Follow the instruction exactly.')),
                 new AnthropicOptions(maxTokens: 16, apiKey: $key),
             );
 
@@ -660,7 +664,7 @@ final class AnthropicTest extends TestCase
         ], ['type' => 'json_schema', 'strict' => 'prefer'])]);
 
         Async::run(function () use ($model, $context): void {
-            foreach ($this->anthropic()->stream($model, $context, $this->options()) as $ignored) {
+            foreach ($this->anthropic()->stream($model, Transcript::normalizeContext($context), $this->options()) as $ignored) {
             }
         });
 
@@ -819,16 +823,18 @@ final class AnthropicTest extends TestCase
         $this->assertNotNull($model);
         $this->assertSame(Api::AnthropicMessages, $model->api);
 
-        // An empty key keeps the model's own base URL (see `endpoint()`), so the canned server
-        // sees the request; the header logic does not depend on the key's content.
+        // No key keeps the model's own base URL (see `endpoint()`), so the canned server sees the
+        // request; the bearer travels as header-owned auth (`options.headers`), which upstream's
+        // `assertRequestAuth()` accepts in place of a key. (An empty key with no auth header is
+        // refused before anything is sent, as upstream refuses it.)
         [$head, $body] = $this->capture(
             $model,
             new Context([new UserMessage([new TextContent('look'), new ImageContent('AAA', 'image/png')])]),
-            new AnthropicOptions(apiKey: '', thinkingEnabled: true, effort: 'high'),
+            new AnthropicOptions(thinkingEnabled: true, effort: 'high', headers: ['Authorization' => 'Bearer copilot-token']),
         );
         $head = strtolower($head);
 
-        $this->assertStringContainsString("authorization: bearer \r\n", $head);
+        $this->assertStringContainsString("authorization: bearer copilot-token\r\n", $head);
         $this->assertStringNotContainsString('x-api-key', $head);
         $this->assertStringContainsString('copilot-integration-id: vscode-chat', $head);
         $this->assertStringContainsString('x-initiator: user', $head);
@@ -854,11 +860,15 @@ final class AnthropicTest extends TestCase
         $request = (new \ReflectionMethod(Anthropic::class, 'request'))->invoke(
             new Anthropic(),
             $model,
-            new Context([new UserMessage('hi')]),
+            Transcript::normalizeContext(new Context([new UserMessage('hi')])),
             new AnthropicOptions(apiKey: 'tid=1;proxy-ep=proxy.business.githubcopilot.com;exp=9'),
+            [],
+            false,
+            null,
+            600_000,
         );
 
-        $this->assertSame('https://api.business.githubcopilot.com/v1/messages', $request->url);
+        $this->assertSame('https://api.business.githubcopilot.com/v1/messages?beta=true', $request->url);
         $this->assertSame('Bearer tid=1;proxy-ep=proxy.business.githubcopilot.com;exp=9', $request->headers['authorization']);
     }
 
@@ -1013,10 +1023,10 @@ final class AnthropicTest extends TestCase
         $this->assertNotNull($base);
         $opus = new Model($base->id, $base->name, $base->api, $base->provider, rtrim($url, '/'), $base->contextWindow, $base->maxTokens, $base->reasoning, $base->input, $base->pricing, compat: $base->compat);
 
-        $message = Async::run(fn (): AssistantMessage => $this->anthropic()->stream($opus, new Context([new UserMessage('hi')]), new AnthropicOptions(apiKey: 'test-key', effort: 'medium'))->result()->await());
+        $message = Async::run(fn (): AssistantMessage => $this->anthropic()->stream($opus, Transcript::normalizeContext(new Context([new UserMessage('hi')])), new AnthropicOptions(apiKey: 'test-key', effort: 'medium'))->result()->await());
         $this->assertSame('medium', $message->providerThinkingLevel);
 
-        $plain = Async::run(fn (): AssistantMessage => $this->anthropic()->stream($this->model($this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]])), new Context([new UserMessage('hi')]), new AnthropicOptions(apiKey: 'test-key', effort: 'medium'))->result()->await());
+        $plain = Async::run(fn (): AssistantMessage => $this->anthropic()->stream($this->model($this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]])), Transcript::normalizeContext(new Context([new UserMessage('hi')])), new AnthropicOptions(apiKey: 'test-key', effort: 'medium'))->result()->await());
         $this->assertNull($plain->providerThinkingLevel);
     }
 
@@ -1918,7 +1928,7 @@ final class AnthropicTest extends TestCase
         );
 
         return Async::run(function () use ($model): AssistantMessage {
-            $stream = $this->anthropic()->stream($model, new Context([new UserMessage('hi')]), $this->options());
+            $stream = $this->anthropic()->stream($model, Transcript::normalizeContext(new Context([new UserMessage('hi')])), $this->options());
 
             foreach ($stream as $ignored) {
             }
@@ -1933,7 +1943,7 @@ final class AnthropicTest extends TestCase
         $options = new AnthropicOptions(apiKey: 'test-key', temperature: $temperature);
 
         Async::run(function () use ($url, $context, $options): void {
-            foreach ($this->anthropic()->stream($this->model($url), $context, $options) as $ignored) {
+            foreach ($this->anthropic()->stream($this->model($url), Transcript::normalizeContext($context), $options) as $ignored) {
             }
         });
 
@@ -1944,7 +1954,7 @@ final class AnthropicTest extends TestCase
     private function collect(string $url, Context $context, ?Pricing $pricing = null): array
     {
         return Async::run(function () use ($url, $context, $pricing): array {
-            $stream = $this->anthropic()->stream($this->model($url, $pricing), $context, $this->options());
+            $stream = $this->anthropic()->stream($this->model($url, $pricing), Transcript::normalizeContext($context), $this->options());
             $types = [];
 
             foreach ($stream as $event) {
@@ -2013,7 +2023,7 @@ final class AnthropicTest extends TestCase
         );
 
         Async::run(function () use ($model, $context, $options): void {
-            foreach ($this->anthropic()->stream($model, $context, $options) as $ignored) {
+            foreach ($this->anthropic()->stream($model, Transcript::normalizeContext($context), $options) as $ignored) {
             }
         });
 

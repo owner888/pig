@@ -6,6 +6,8 @@ namespace Pig\CodingAgent\Tools;
 
 use Pig\Agent\Agent;
 use Pig\Agent\AgentTool;
+use Pig\Ai\SystemMessage;
+use Pig\Ai\Utils\Text;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
 use Pig\CodingAgent\Hooks\HookedTool;
 use Pig\CodingAgent\Hooks\HookRunner;
@@ -31,6 +33,16 @@ final class ToolLoadout
 {
     /** @var list<string>|null null is every registered tool */
     private ?array $active = null;
+
+    /**
+     * The prompt sections `apply()` last worked out — upstream's `_baseSystemPromptOptions`, built.
+     * The loadout no longer writes the prompt into the agent: the session diffs these against the
+     * sections the transcript has and sends what changed as a system message
+     * (`AgentSession::preparePromptUpdate()`).
+     *
+     * @var array<string, string>
+     */
+    private array $sections = [];
 
     /**
      * @param list<string>            $builtIn      built-in tool names, as `ToolSet` knows them
@@ -65,7 +77,13 @@ final class ToolLoadout
         $this->apply();
     }
 
-    /** Hand the agent the tools that are active now, and a system prompt that names them. */
+    /**
+     * Hand the agent the tools that are active now, and work out the system prompt that names them.
+     *
+     * Upstream's `_applyToolLoadout()` and `_rebuildSystemPrompt()`: the tools go on the agent,
+     * whose loop declares any difference from what the transcript says before the next request;
+     * the prompt is kept here as sections (`systemPromptSections()`) for the session to send.
+     */
     public function apply(): void
     {
         $builtIn = $this->active === null
@@ -80,7 +98,7 @@ final class ToolLoadout
         $this->agent->setTools(HookedTool::wrap([...ToolSet::create($this->cwd, $builtIn), ...$custom], $this->hooks));
 
         [$snippets, $guidelines] = $this->customTools->promptContributions($this->active);
-        $this->agent->setSystemPrompt(SystemPrompt::build(
+        $this->sections = SystemPrompt::sections(
             $this->cwd,
             $builtIn,
             SystemPrompt::resolve($this->systemPrompt),
@@ -89,7 +107,23 @@ final class ToolLoadout
             $this->skills,
             $snippets,
             $guidelines,
-        ));
+        );
+    }
+
+    /**
+     * The prompt sections for the tools active now, as of the last `apply()`.
+     *
+     * @return array<string, string>
+     */
+    public function systemPromptSections(): array
+    {
+        return $this->sections;
+    }
+
+    /** The prompt those sections render to — upstream's `buildSystemPrompt()` of the current options. */
+    public function systemPrompt(): string
+    {
+        return Text::getSystemMessageText(new SystemMessage('', $this->sections));
     }
 
     /** Every registered tool's name, active or not. Upstream's `getAllTools()`, by name. @return list<string> */

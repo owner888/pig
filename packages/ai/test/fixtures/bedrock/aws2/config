@@ -1,0 +1,16 @@
+[profile role]
+role_arn = arn:aws:iam::123456789012:role/Bedrock
+source_profile = base
+role_session_name = sess1
+region = us-west-2
+
+[profile proc]
+credential_process = printf '{"Version":1,"AccessKeyId":"AKIDPROC","SecretAccessKey":"sp","SessionToken":"tp"}'
+region = us-east-2
+
+[profile ssoold]
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+sso_account_id = 111122223333
+sso_role_name = Dev
+region = us-east-1

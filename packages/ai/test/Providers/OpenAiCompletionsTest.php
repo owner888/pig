@@ -28,6 +28,7 @@ use Pig\Ai\Utils\PigUserAgent;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
+use Pig\Ai\Utils\Transcript;
 
 /**
  * The chat-completions protocol, against a server answering from a script.
@@ -1210,14 +1211,14 @@ final class OpenAiCompletionsTest extends TestCase
 
         $url = $this->serve([['choices' => [['delta' => ['content' => 'done']]]]]);
         $message = Async::run(fn (): AssistantMessage => (new OpenAiCompletions())
-            ->stream($this->model(baseUrl: $url, compat: $compat), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'k'))
+            ->stream($this->model(baseUrl: $url, compat: $compat), Transcript::normalizeContext(new Context([new UserMessage('hi')])), new OpenAiOptions(apiKey: 'k'))
             ->result()->await());
         $this->assertSame(StopReason::Stop, $message->stopReason);
 
         $this->server = new CannedServer();
         $url = $this->serve([['choices' => [['delta' => ['tool_calls' => [['index' => 0, 'id' => 'c1', 'function' => ['name' => 'read', 'arguments' => '{}']]]]]]]]);
         $message = Async::run(fn (): AssistantMessage => (new OpenAiCompletions())
-            ->stream($this->model(baseUrl: $url, compat: $compat), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'k'))
+            ->stream($this->model(baseUrl: $url, compat: $compat), Transcript::normalizeContext(new Context([new UserMessage('hi')])), new OpenAiOptions(apiKey: 'k'))
             ->result()->await());
         $this->assertSame(StopReason::ToolUse, $message->stopReason);
     }
@@ -1340,6 +1341,19 @@ final class OpenAiCompletionsTest extends TestCase
         $url = $this->server->start(["HTTP/1.1 400 Bad Request\r\nContent-Length: " . strlen($body) . "\r\n\r\n" . $body]);
         $this->assertSame(
             '400: {"message":"m","metadata":{"raw":"say \\"no\\""}}' . "\nsay \"no\"",
+            $this->collect($url, new Context([new UserMessage('hi')]))[1]->errorMessage,
+        );
+    }
+
+    public function testRawMetadataThatIsANestedListIsWrittenAsJavaScriptWritesIt(): void
+    {
+        // `String(rawMetadata)`: `Array.prototype.toString()` flattens nested lists with commas
+        // and writes null as nothing. pig used to drop every item that was not a scalar.
+        $body = '{"error":{"message":"m","metadata":{"raw":[["a","b"],null,3,true,{"x":1}]}}}';
+        $url = $this->server->start(["HTTP/1.1 400 Bad Request\r\nContent-Length: " . strlen($body) . "\r\n\r\n" . $body]);
+
+        $this->assertSame(
+            '400: {"message":"m","metadata":{"raw":[["a","b"],null,3,true,{"x":1}]}}' . "\na,b,,3,true,[object Object]",
             $this->collect($url, new Context([new UserMessage('hi')]))[1]->errorMessage,
         );
     }
@@ -1591,11 +1605,12 @@ final class OpenAiCompletionsTest extends TestCase
                 new Pricing(),
             );
 
-            // Empty key on purpose — see the responses test: a key sends this to the real Copilot.
+            // No key on purpose — see the responses test: a key sends this to the real Copilot. The
+            // bearer goes as header-owned auth, which upstream's `getClientApiKey()` accepts.
             $stream = (new OpenAiCompletions())->stream(
                 $model,
-                new Context([new UserMessage([new TextContent('look'), new ImageContent('AAA', 'image/png')])]),
-                new OpenAiOptions(apiKey: ''),
+                Transcript::normalizeContext(new Context([new UserMessage([new TextContent('look'), new ImageContent('AAA', 'image/png')])])),
+                new OpenAiOptions(headers: ['Authorization' => 'Bearer copilot-token']),
             );
 
             foreach ($stream as $ignored) {
@@ -1648,7 +1663,7 @@ final class OpenAiCompletionsTest extends TestCase
         [$deltas, $message] = Async::run(function () use ($url): array {
             $stream = (new OpenAiCompletions())->stream(
                 $this->model($url, compat: new OpenAiCompat(grammarTools: true)),
-                new Context([new UserMessage('patch it')], tools: [self::grammarTool()]),
+                Transcript::normalizeContext(new Context([new UserMessage('patch it')], tools: [self::grammarTool()])),
                 new OpenAiOptions(apiKey: 'test-key'),
             );
             $deltas = [];
@@ -1715,7 +1730,7 @@ final class OpenAiCompletionsTest extends TestCase
         return Async::run(function () use ($url, $context): array {
             $stream = (new OpenAiCompletions())->stream(
                 $this->model(baseUrl: $url),
-                $context,
+                Transcript::normalizeContext($context),
                 new OpenAiOptions(apiKey: 'test-key'),
             );
             $types = [];
@@ -1860,7 +1875,7 @@ final class OpenAiCompletionsTest extends TestCase
         Async::run(function () use ($url, $model, $options, $context): void {
             $stream = (new OpenAiCompletions())->stream(
                 new Model($model->id, $model->name, $model->api, $model->provider, $url, $model->contextWindow, $model->maxTokens, $model->reasoning, $model->input, $model->pricing, $model->headers, $model->compat, $model->thinkingLevelMap),
-                $context ?? new Context([new UserMessage('hi')]),
+                Transcript::normalizeContext($context ?? new Context([new UserMessage('hi')])),
                 $options,
             );
 
@@ -1900,7 +1915,7 @@ final class OpenAiCompletionsTest extends TestCase
                     // broken in whichever test happens to need it.
                     $model->thinkingLevelMap,
                 ),
-                $context,
+                Transcript::normalizeContext($context),
                 new OpenAiOptions(temperature: $temperature, apiKey: 'test-key', reasoning: $reasoning),
             );
 
@@ -1950,7 +1965,7 @@ final class OpenAiCompletionsTest extends TestCase
             new ToolResultMessage($long, 'read', [new TextContent('contents')]),
         ]);
 
-        // Sent by hand rather than through `send()`, and the empty key is the reason: with one,
+        // Sent by hand rather than through `send()`, and the missing key is the reason: with one,
         // `endpoint()` asks `GithubCopilot::baseUrl()` where to go and the request leaves for the
         // real Copilot API instead of the canned server. The first version of this case did
         // exactly that and failed reading a body nothing had received.
@@ -1970,8 +1985,8 @@ final class OpenAiCompletionsTest extends TestCase
                     $model->input,
                     $model->pricing,
                 ),
-                $context,
-                new OpenAiOptions(apiKey: ''),
+                Transcript::normalizeContext($context),
+                new OpenAiOptions(headers: ['Authorization' => 'Bearer copilot-token']),
             );
 
             foreach ($stream as $ignored) {

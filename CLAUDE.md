@@ -118,9 +118,10 @@ Both were chosen explicitly, not by default:
   2. `RpcMode`: Top-level pipe reading in `line()` wraps command execution to ensure any uncaught exception
      returns a structured JSON-RPC failure response (`{"id": ..., "type": "response", "success": false, "error": ...}`)
      rather than crashing child agent processes.
-  3. `Socket` & `Retry`: Non-blocking OpenSSL transport failures (`Broken pipe`, `SSL operation failed`,
-     handshake drops, zero-write stalls) are recognized as retryable transient errors in `Retry::WORDS`,
-     triggering automatic backoff retries rather than aborting sessions.
+  3. Providers: a transport failure is worded as Node's fetch words it — `Connection error.` /
+     `Request timed out.` before the response for Anthropic and OpenAI (`SdkRequest`), `fetch failed`
+     for Gemini and Mistral, `terminated` mid-body — so upstream's retryable patterns
+     (`Pig\Ai\Utils\Retry`) recognise it and the session retries.
 - **Unified Zero-Dependency Logger (aligned with smart-book OmniPHP\Logger specifications).**
   `Pig\CodingAgent\Logger` (aliased as `Pig\Logger`) provides a static, zero-dependency logging suite:
   - 5 log levels with ANSI terminal colors: `VERBOSE` (34 blue, 0), `DEBUG` (36 cyan, 1), `INFO` (32 green, 2),
@@ -630,10 +631,14 @@ the three kinds of line apart on a screen that is already full of colour: `sayEr
 — upstream's `showError()` / `showWarning()`. A message that is drawn by colour alone is
 a message nobody can name, so no new one is drawn that way.
 
-Not ported from upstream's compaction: branch summarisation (`branch-summarization.ts`,
-which needs the tree) and the split-turn prefix summary — upstream generates a second,
-smaller summary when the cut falls inside a turn, which needs turn boundaries that the
-linear log here does not mark.
+Not ported from upstream's compaction: the split-turn prefix summary — upstream generates a
+second, smaller summary when the cut falls inside a turn, which needs turn boundaries that the
+linear log here does not mark. Both summaries (compaction and the branch summary of `/tree`) go
+through `Retry::retryAssistantCall()` with the session's retry settings and the session's own
+stream function and request options, as upstream's `retryAssistantCall()` callers do; a retry is
+reported as `SummarizationRetryEvent` (RPC `summarization_retry_*`). A compaction records the
+replayed system message (`CompactionSummary::$systemMessage`, upstream's `systemMessage` on the
+entry), and the rebuilt context is `[system, summary, …kept]`.
 
 `Interactive\` is the terminal front end. `InteractiveMode` is the arrangement — which event
 becomes which component, which key means what — and `bin/pig` is the entry point.
@@ -653,8 +658,10 @@ every frame, so the spinner ticks without the editor knowing one is there, and i
 the border's own colour so the rule reads as one rule. What it replaced was a line of its own with
 a blank above it, which grew the frame by two rows at the start of every turn and shrank it at the
 end. The retry countdown lost the error text on the way in — it is already a red line in the
-transcript, and in an 80-column border it pushed `esc to stop` off the end — and says upstream's
-`Retrying (1/3) in 30s... (esc to stop)`. `$status` stays for anything that is not a loader.
+transcript — and says upstream's `Retrying (1/3) in 30s... (escape to cancel)`, counting down once a
+second. The key name is upstream's `keyText("app.interrupt")` (`Keybindings::keyText()`), which prints
+the raw key id — `escape`, not `esc` — so the label follows a rebound key. `$status` stays for
+anything that is not a loader.
 
 The
 components it draws with are `UserMessageComponent`, `AssistantMessageComponent`,
@@ -1035,8 +1042,9 @@ no result gets one invented** (`No result provided`, `isError: true`) — before
 or user message, and at the end of the conversation — because an interrupted turn leaves a
 dangling call and every provider rejects the whole conversation rather than ignoring it. A stated
 "No result provided" is worse than the truth and far better than a request that cannot be sent at
-all. Upstream also holds back a `system` message that lands between a call and its results; pig's
-message union has no system message, so there is nothing to hold.
+all. A `SystemMessage` that lands between a call and its results is held back until the results
+are in (or the synthetic one is written), as upstream's is — a provider rejects anything between a
+`tool_use` and its `tool_result`.
 
 **Tool call ids are each provider's rule, passed in.** `TransformMessages::apply()` takes upstream's
 optional `normalizeToolCallId` closure and runs it on every call of a message that is not from this
@@ -1103,9 +1111,11 @@ line; `response.failed` is `<code || "unknown">: <message || "no message">`, `in
 `Unknown error (no error details in response)`; non-JSON data is `Error reading response: malformed
 server-sent event JSON.` Any error carrying `subscription_sharing_usage_limit_exceeded` — in the
 message or in a refused request's body — gets `\nCheck your ChatGPT usage:
-https://chatgpt.com/settings/usage`. Upstream has `additional_tools` and tool-search items for tools
-added mid-conversation (`toolsAdded` on a later system message); pig's context has one system prompt
-and one tool list, so there is nothing to send them for.
+https://chatgpt.com/settings/usage`. Tools added mid-conversation (`toolsAdded` on a later system
+message) go where the message stands, as upstream's: `additional_tools` on a `developer` item when
+the compat says `supportsMidConvoToolAdditions`, otherwise a `tool_search_call`/`tool_search_output`
+pair (`call_id` `pi_tool_load_<hash>`) with the tools `defer_loading`; a removal or a redeclaration
+anywhere sends the current tool list at the top instead (`Transcript::resolveTranscriptTools()`).
 
 `Providers\Google` is upstream's `google.ts` — Gemini, and the shape furthest from the other
 three. A chunk carries a list of *parts*, and a part is text, or thinking (text with
@@ -1117,10 +1127,12 @@ three. A chunk carries a list of *parts*, and a part is text, or thinking (text 
   flag changes: the boundary problem from `openai-completions`, one field over.
 - **Gemini often sends no id for a call**, and a result has to be addressed to something, so
   one is invented — and a repeat within a message is replaced for the same reason.
-- **Saying nothing about thinking means dynamic thinking, not none.** A turn that did not ask
-  for it has to ask for none, or the model thinks anyway and bills for it — upstream's
+- **Saying nothing about thinking sends no `thinkingConfig`; asking for none sends a disabled one.**
+  `GoogleOptions::$thinkingEnabled` is `?bool` and null is upstream's `options.thinking` left unset:
+  no `thinkingConfig` at all, and Gemini decides. `false` is upstream's
   `getDisabledGoogleThinkingConfig()`: `thinkingBudget: 0`, except on a level model that has no
   `off` (3.1 Pro, 3.5 Flash Lite, 3.7/3.8 Flash), which gets the level `off` clamps to.
+  `Stream::gemini()` (the simple path, which every agent turn takes) always says one or the other.
 - **Thinking is said two ways.** A model upstream's `usesGoogleThinkingLevel()` matches — Gemini 3
   Pro/Flash with or without a minor version, `gemini-flash-latest`, `gemini-flash-lite-latest`,
   Gemma 4 — takes a named level and ignores a budget; the rest take a budget in tokens, from
@@ -1549,7 +1561,9 @@ used to say it "was never a protocol" — that `google-gemini-cli` was Gemini be
 is not. Its models carry `api: "google-gemini-cli"` and upstream has a 603-line provider for it,
 because Code Assist has its own endpoint and wraps a Gemini request inside a Cloud-project
 envelope. The claim was wrong and is recorded as wrong; checking it took one grep of
-`models.generated.ts` for the `api` field.
+`models.generated.ts` for the `api` field. (Since then `mistral-conversations`, `google-vertex` and
+`bedrock-converse-stream` have joined them — the last two in "Vertex AI and Amazon Bedrock: two more
+SDKs, emulated rather than wrapped", below.)
 
 `Providers\GoogleGeminiCli` is 250 lines against upstream's 603, because upstream re-implements
 the chunk walk and this shares it — see `GoogleShared`. **GitHub Copilot is done** too, and needed
@@ -1765,30 +1779,12 @@ And the key is two things in one string — `Provider::apiKey()` encodes `{token
 which is taken apart in `credentials()`. **An ordinary Gemini API key arriving there is refused by
 name**, because that is the likely mistake and a 401 three layers later names nothing.
 
-**Upstream's in-provider retry is not ported**: three attempts with exponential backoff, because
-Code Assist's free tier rate-limits hard. `Session\Retry` already waits out a 429 one level up, and
-that one can be turned off with `retry.enabled`, counts down on screen and stops on escape. Two
-retry mechanisms means neither is the one somebody is looking at. If Code Assist turns out to need a
-tighter loop than a session-level wait, it belongs in the provider and its docblock says so.
-
-**The one thing that loop knew, the policy knows now.** Upstream's loop reads the moment the quota
-comes back out of the error — `Your quota will reset after 18h31m10s`, `Please retry in 250ms`, a
-`retryDelay` field in the body — and pig had kept the loop out and the reading with it, so a 429
-saying "39 seconds" was answered at 2s, 4s and 8s: three more 429s inside the window the provider
-had just named, and a turn dead after fourteen seconds of waiting when forty would have worked.
-`Retry::statedDelay()` reads the three shapes and `AgentSession` prefers it to the doubling. A
-second is added, as upstream adds it, because coming back at the exact moment a quota resets is a
-coin toss between two clocks.
-
-**Past a minute it is not a retry any more, so there is none.** `MAX_STATED_WAIT = 60` is the
-developer's number and it is checked in `worthRetrying()`, before the status and before the word
-list, because it has to beat both: a 429 is retryable and "rate limit" is in the word list, and
-neither of them knows that the sentence beside it says "not for ten minutes". So a stated wait
-inside the minute is waited out as asked; one past it ends the turn then and there, and what the
-person reads is the provider's own line — which names the time, and is the only thing anybody can
-act on. The alternative was upstream's, which waits whatever it is told inside a `setTimeout`: an
-eighteen-hour countdown is a session that looks dead, and *a retry whose point is that the turn
-carries on is not a retry when the turn resumes after lunch*.
+**Retries are upstream's two layers.** Inside the provider, `retryProviderRequest()` retries the
+initial request when the caller asks (`maxRetries`, from `retry.provider.maxRetries`); around the
+turn, the session retries a failure whose text matches upstream's retryable patterns. Neither reads a
+stated wait out of the message: a `retry-after` header is honoured by the provider layer (refused
+past `maxRetryDelayMs`), and a quota wall is the provider's to word so that the session does not
+retry it — pi-antigravity's `Quota reached. Please wait …`.
 
 ### A provider an extension brings: `Pig\Ai\Extension`, and why Antigravity is one
 
@@ -1826,14 +1822,15 @@ surface asks for: decided by its first caller.
 - **`Auth::useSecondStore(provider, read, renewed)`** is the seam `antigravity-accounts.json`
   needed: `credentials()` asks it only when `auth.json` has nothing, and `fresh()` tells it about
   a renewal. `Auth::login()` takes `Provider|OauthFlow` and stores under the flow's `id()`.
-- **Three provider-traffic hooks**, upstream's names where upstream has them: `before_provider_request`
-  (chained like `context`, through `HttpClient::observe()` — the one place every provider's bytes
-  go), `after_provider_response` (status and headers, before the body), and `before_retry`, which
-  is pig's own: the 429 account rotation used to be an `if provider === 'antigravity'` inside
-  `AgentSession::prepareRetry()`, and is now the extension answering `BeforeRetryResult(delay:
-  0.5, resetAttempts: true)`. `model_select` and `thinking_level_select` came in the same batch.
-  The observer is only installed when a hook listens (`HookRunner::listensToProviderTraffic()`),
-  so a session with no provider hooks pays nothing per request.
+- **Upstream's four provider events**, wired as upstream wires them — through the request's
+  options, which the session puts on the agent: `before_provider_request` is `onPayload` (the
+  payload the provider built, chained, a `BeforeProviderRequestResult` replacing it),
+  `before_provider_headers` is `transformHeaders` (handlers edit `$event->headers` in place, a null
+  deleting), `after_provider_response` is `onResponse` (status and headers before the body) and
+  `provider_stream_event` is `onProviderStreamEvent`. A sign-in or any other `HttpClient` call is
+  not a provider request and is not seen. The 429 account failover is the protocol's own, inside
+  the request, as pi-antigravity has it. `model_select` and `thinking_level_select` came in the
+  same batch.
 - **`ExtensionApi` grew the rest of the gap that this needed**: `registerProvider()`,
   `registerFlag()`/`getFlag()` (`bin/pig` hands every option over after the extensions load,
   because which flags exist is only known then), `getSettings()`, `setModel()`,
@@ -2538,9 +2535,11 @@ Six things that took a decision:
   proxy server before the response completed`. The partial starts at `StopReason::Pending`, as
   upstream's does. `done` and `error` carry `providerThinkingLevel` onto the message, and
   `toolcall_end` lays the server's finished `toolCall` over what the deltas built — and is ignored,
-  not fatal, for a block that is not a tool call. Of upstream's request options, `samplingParams`,
-  `headers`, `transport`, `thinkingBudgets` and `maxRetryDelayMs` are not sent: upstream's coding
-  agent fills them from settings, auth and the model, and pig has none of those settings or fields.
+  not fatal, for a block that is not a tool call. Of upstream's request options, `headers` and
+  `maxRetryDelayMs` are sent as upstream sends them; `samplingParams`, `transport` and
+  `thinkingBudgets` are not, because pig has none of those settings or fields. The request carries
+  upstream's two headers only — no `Accept`. An abort while the body is read is `Request aborted by
+  user`, as upstream's reader says.
 - **An unknown `done` reason is a plain stop, and an unknown event type is ignored.** The turn did
   finish; refusing it over a word this pig does not know loses the work. Same rule as `JsonSchema`'s
   unknown keywords, applied to a wire protocol.
@@ -3336,19 +3335,18 @@ after the run ends, from `handlePostAgentRun()` in `runAgentPrompt()`'s post-run
 `prepareRetry()` for the first, `compactForOverflow()` for the second.
 
 Which one it is, is decided by what the provider said, and the two are mutually exclusive on
-purpose. `Retry::worthRetrying()` asks `Overflow::happened()` first and answers false for an
-overflow however retryable the rest of it looks — a 429 that says "prompt is too long" is a
-429 that will say it again in four seconds.
+purpose: upstream's `_isRetryableError()` answers false for an overflow however retryable the rest
+of it looks — a 429 that says "prompt is too long" is a 429 that will say it again in four seconds
+— and `handlePostAgentRun()` follows upstream's order: retry, then report a retrying that ended in
+failure, then compaction.
 
-**`Session\Retry` reads the status code, where upstream reads the prose.** Upstream matches
-the error message against `/overloaded|rate.?limit|429|500|.../i` because its providers word
-failures however they like. pig's providers write upstream's own text — the SDK `APIError`
-message `<status> …` (Anthropic, completions' `<status>: …`), `formatProviderError()`'s prefixed
-`OpenAI API error (<status>): …` / `Mistral API error (<status>): …`, and `@google/genai`'s error
-JSON `{"error":{"code":<status>,…}}` — and `statusOf()` reads the number out of each — 408, 429, 500,
-502, 503, 504 and 529 are waited out, and everything else a provider returns is about the
-request, which will not change by being sent again. The word list survives underneath for the
-failures that never reached HTTP at all: a socket that died mid-stream has no status to read.
+**The classification is upstream's `utils/retry.ts`, by the error's text** (`Pig\Ai\Utils\Retry`):
+`isRetryableAssistantError()` matches `RETRYABLE_PROVIDER_ERROR_PATTERN` and not
+`NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN`, both lists copied entry for entry. pig used to read an
+HTTP status out of the message and keep its own word list; neither exists any more. What makes a
+transport failure retryable is that pig words it as Node does (`Connection error.`, `fetch failed`,
+`terminated`, `Request timed out.`) — so a new failure path in a provider has to be worded the way
+upstream's runtime words it, or it is not retried.
 
 **`Ai\Utils\Overflow` is a table of what each provider actually says**, ported from upstream's
 `ai/src/utils/overflow.ts` with its examples kept as comments. There is no status code for
@@ -3383,20 +3381,17 @@ Five things that are load-bearing rather than tidy:
 - **`prompt()` waits for a retry in progress.** `isStreaming()` is true for the whole prompt,
   sleep included, so the screen queues; a caller without a queue — RPC's `prompt`, `-p` with
   several messages — waits for the prompt to settle rather than racing it into the same agent.
-- **The waits double** — 2s, 4s, 8s from `retry.baseDelayMs`. The failures this waits out are
-  the ones where everybody else is also retrying, and a fixed delay brings the whole crowd back
-  at once. **Unless the provider said when**: `Retry::statedDelay()` reads a stated reset time out
-  of the error and that wins, because against a quota that comes back in 39 seconds the doubling
-  is three more refusals. A stated wait **past a minute** is not waited out at all — see the Gemini
-  CLI section.
+- **The waits double** — `retryDelayMs()`: `retry.baseDelayMs` (2s) × 2^(attempt−1), capped at
+  `retry.maxAgentDelayMs` (60s). Nothing in the message changes it.
 
-Settings are upstream's keys: `retry.enabled` (on unless turned off, like compaction),
-`retry.maxRetries`, `retry.baseDelayMs`. **That sentence was false until the audit read it**: the
-middle one was `retry.maxAttempts` here, so a `settings.json` written for pi had its `maxRetries`
-ignored and got the built-in three. Its two siblings were upstream's, which is what gave it away —
-one key out of a group of three not matching is a typo, not a decision. The method is still
-`retryMaxAttempts()`, because attempts is what the number counts; the file speaks upstream's
-dialect and the code speaks its own.
+Settings are upstream's keys, read as `getRetrySettings()` reads them (`Settings::retrySettings()`):
+`retry.enabled` (true), `retry.maxRetries` (3 — and 0 means none), `retry.baseDelayMs` (2000),
+`retry.maxAgentDelayMs` (60000). The provider layer's are `getProviderRetrySettings()`'s
+(`Settings::providerRetrySettings()`): `retry.provider.timeoutMs`, `retry.provider.maxRetries` and
+`retry.provider.maxRetryDelayMs` (60000, the legacy `retry.maxDelayMs` counting for it), which the
+session puts on every request (`AgentSession::buildRequestOptions()`, upstream's
+`buildRequestOptions()`), with `httpIdleTimeoutMs` (300000, `disabled` = 2147483647) as the default
+`timeoutMs`.
 
 ### Where the startup time went
 
@@ -4038,6 +4033,38 @@ bug in them shows up as tokens going missing rather than as an error, and there 
 implementation to fall back to. The second is that this is a dated judgement, not a principle — if an
 official PHP SDK appears for OpenAI and for Gemini, and the streaming question is answerable, the
 arithmetic changes and this section should be re-run rather than quoted.
+
+### Vertex AI and Amazon Bedrock: two more SDKs, emulated rather than wrapped
+
+`google-vertex.ts` and `bedrock-converse-stream.ts` are thin over `@google/genai` +
+`google-auth-library` and `@aws-sdk/client-bedrock-runtime` + the AWS credential providers, so the
+port is mostly of the SDKs — in plain PHP, with no new composer package:
+
+- **Bedrock** — `Providers\Bedrock` (the provider, a literal port) over `Utils\Aws\`:
+  `BedrockRuntimeClient` (config resolution — region, FIPS/dual-stack, `AWS_MAX_ATTEMPTS`, endpoint
+  overrides — the schema-ordered request serializer, the SDK's headers and user agent with its
+  `m/…` business metrics, the standard retry strategy, clock-skew correction, the first event read
+  inside the call), `SignatureV4` (smithy's signer, checked against AWS's own suite),
+  `EventStream` (the binary framing with both CRCs), `CredentialChain` (the default provider chain:
+  env, `~/.aws` profiles with assume role / web identity / `credential_process` / SSO,
+  `credential_process`, web identity, ECS/EKS, IMDS), `SharedConfig` (smithy's ini reader),
+  `RestJson`/`ServiceError` (restJson1 errors), `Endpoints`.
+- **Vertex** — `Providers\GoogleVertex` shares `Google`'s chunk walk and `GoogleShared`;
+  `Utils\GoogleAuth` is ADC (a key file, `GOOGLE_APPLICATION_CREDENTIALS`, gcloud's well-known
+  file, the metadata server) with RS256 JWTs through `openssl_sign()` and gaxios's retries.
+
+**How it was checked: an oracle, not a reading.** Upstream's `src` with its lockfile's npm packages
+was run under `node --experimental-strip-types` against the same canned server as pig, scenario by
+scenario, and what it sent and emitted was recorded. `packages/ai/test/fixtures/bedrock/` and
+`fixtures/vertex/` are those records, and `BedrockTest` / `GoogleVertexTest` replay every one through
+pig and hold it to the record — request bodies byte for byte, headers, retry attempts, events, the
+final message. A fixture is upstream's behaviour; a mismatch is pig's bug unless the test says why
+not (the two exclusions are written in the tests: an abort's exact cut point, and undici's `accept`).
+
+What is knowingly not there: HTTP/2 (pig speaks HTTP/1.1; upstream forces it too under
+`AWS_BEDROCK_FORCE_HTTP1`), the adaptive retry mode and the retry quota, `login_session` profiles and
+MFA, IMDS static stability, Vertex's project-id discovery and the external-account /
+impersonated / GDCH credential types, a parallel race of the two metadata hosts.
 
 ### Porting the unions
 
@@ -7782,8 +7809,8 @@ finishReason=MAX_TOKENS               stopReason=length  errorMessage=NULL   ove
 finishReason=STOP                     stopReason=stop    errorMessage=NULL   overflow=no
 ```
 
-**`errorMessage` is null, and three things read it.** `Overflow::happened()` and
-`Retry::worthRetrying()` each test `stopReason === Error && errorMessage !== null` as their *first*
+**`errorMessage` is null, and three things read it.** `Overflow::happened()` and the retry
+classification each test `stopReason === Error && errorMessage !== null` as their *first*
 condition, so such a turn is **neither compacted nor retried**; and what reaches the screen is an
 error with no text. A safety block, a recitation block and a malformed call are then the same event
 to look at — and the last of those is ordinary on Gemini 3 with tools. The nearest thing to a
@@ -7816,10 +7843,9 @@ Three things had to be got right and each has its own test:
   produced nothing did not therefore cost nothing.* `GoogleShared::onChunk()` only records the reason;
   both callers throw after the loop, with the open block already closed (`close()`), so the events
   still pair `TextStart` with `TextEnd`.
-- **Nothing became retryable by accident.** None of the reason names matches `Retry::WORDS`
-  (`overloaded|rate.?limit|…`), the sentence carries no status for `statusOf()` to read, and none
-  matches an `Overflow` pattern — so a safety block is explained and still not waited out, which is
-  right, because asking again gets the same answer.
+- **Nothing became retryable by accident.** None of the reason names matches upstream's retryable
+  patterns (`Pig\Ai\Utils\Retry`), and none matches an `Overflow` pattern — so a safety block is
+  explained and still not waited out, which is right, because asking again gets the same answer.
 - **`MAX_TOKENS` and `STOP` still say nothing**, or the fix would be "every finish reason throws".
 
 Regression tests: `GoogleTest::testAFinishReasonThatMeansNothingUsableSaysWhichOneItWas` (four cases,
@@ -7827,8 +7853,8 @@ including a reason this pig has never heard of), `testACallCutOffByTheTokenLimit
 `testAMalformedCallIsAnErrorEvenWithACallPartInIt`, `testARefusedTurnKeepsWhatItSaidAndWhatItCost`,
 `testTheTwoReasonsThatAreNotFailuresStillSayNothing`, the strengthened
 `testASafetyBlockIsAnErrorHoweverPolitelyItIsPhrased`,
-`AntigravityApiTest::testAnErrorFinishReasonIsReadToTheEndOfTheStreamBeforeTheTurnFails`, and
-`RetryTest::testAGeminiRefusalIsExplainedAndStillNotRetried`.
+`AntigravityApiTest::testAnErrorFinishReasonIsReadToTheEndOfTheStreamBeforeTheTurnFails`, and the
+`gemini safety` case of `Pig\Ai\Test\Utils\RetryTest::testWhatUpstreamDoesNotRetryIsNotRetried`.
 
 **And the old test is why this lasted.** `testASafetyBlockIsAnErrorHoweverPolitelyItIsPhrased`
 asserted `StopReason::Error` and nothing else, so it passed identically with a message and without
@@ -7883,7 +7909,7 @@ for; for a model newer than the anchor, declare it in `models.json` first.
 Seventeenth, and the narrowest kind of porting bug: a regex ported with its subject left behind.
 Upstream's bodiless-4xx pattern matches `"400 status code (no body)"` — the **OpenAI SDK's**
 phrasing. pig's providers then wrote `"<who> returned <status>: <message or body>"`, so a 4xx with
-an empty body ended at the colon and the pattern could not fire, and `Retry::worthRetrying()` sent the
+an empty body ended at the colon and the pattern could not fire, and the session retry sent the
 same too-long request three more times with backoff where compaction was the answer.
 
 Every built-in provider now writes upstream's own error text (the SDK messages, `Utils\ErrorBody`), so
@@ -7901,9 +7927,7 @@ endpoints, client ids and the same five-minute renewal margin; `SseParser` follo
 one optional space, multi-line `data:`, comments and CRLF; `PartialJson` is a hand-written stand-in
 for the `partial-json` package, and it has now been run **against** it — `partial-json@0.1.7`, every
 prefix of a corpus of realistic tool arguments, two differences and both accounted for in its
-docblock. `Retry` differs from upstream deliberately and says so: it reads the status out of
-the message shapes pig's providers write instead of matching bare numbers anywhere in the prose, and adds 408 and
-529 — Anthropic's real "overloaded" — to upstream's list.
+docblock. `Utils\Retry` is upstream's `utils/retry.ts`, its two pattern lists entry for entry.
 
 ### `Agent::continue()` turned a misuse into a fabricated turn in somebody's conversation
 
@@ -8098,14 +8122,11 @@ Testing them needs one trick worth knowing: with a non-empty key, `endpoint()` a
 server never sees it. The tests pass an empty key, which is the branch that keeps the model's own
 base URL.
 
-One deviation in the request bodies that is **deliberate** and now written down:
-
-- **Gemini's public endpoint gets an explicit "no thinking"** (upstream's
-  `getDisabledGoogleThinkingConfig()`) when nothing asked for thinking at all, where upstream sends
-  no `thinkingConfig`. Saying nothing to Gemini is not saying
-  no — it thinks by default — so upstream's "off" is really "Gemini decides". pig says no. (The
-  Code Assist endpoint is the opposite way round: it rejects a `thinkingConfig` on a model that
-  cannot think, and reads its absence as none, so that one sends nothing.)
+The request bodies no longer deviate on thinking: Gemini's public endpoint sends no
+`thinkingConfig` when the options say nothing about thinking, as upstream does (it used to send an
+explicit "no thinking"). The simple path still always says on or off, so only a direct
+`Google::stream()` caller sees the difference. (The Code Assist endpoint rejects a
+`thinkingConfig` on a model that cannot think and reads its absence as none.)
 
 ### Every Anthropic turn's input count was wiped out by its own last event
 
@@ -8574,10 +8595,6 @@ fixture and asserted two attempts; with the key corrected, the fixture stopped a
 assertion failed at three. The test had been documenting the wrong key rather than the behaviour.
 That is worth remembering for the rest of the audit — a green suite proves the code and the tests
 agree, and both were written by the same hand on the same day.
-
-The method is still `retryMaxAttempts()`: attempts is what the number counts, and upstream's own name
-is the odd one (it counts attempts after the first). The file speaks upstream's dialect; the code
-speaks its own.
 
 ### A hook's compaction summary was indistinguishable from pig's own
 
@@ -10699,8 +10716,9 @@ touched. Two tests pinned `version === 2` and both were pinning the number rathe
 "pi's current version" — and say 3 now.
 
 What this does **not** port: `usage` entries (pi's cache-warm accounting lines, read as nothing here
-and summed nowhere), and `systemMessage` on a compaction. Both are read-and-walk-past, which is the
-right answer until something here needs them.
+and summed nowhere), which are read-and-walk-past. `systemMessage` on a compaction is read and
+written now (`CompactionSummary::$systemMessage`), and a `system` message entry is an ordinary
+message entry, as upstream's are.
 
 Regression tests: `PiFormatTest::testAContextEditWithNullOmitsItsTargetFromTheModelAndFromNowhereElse`,
 `testAContextEditWithAStringReplacesTheContentAndKeepsTheRole`,
@@ -11016,15 +11034,15 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 4. 前端 `onRpcEvent` 增加对无 ID 或未匹配失败响应的通用捕获，终止 running 状态并调用 `appendErrorMessage`。
 5. `submitMessage` 增加故障回填保护：发送或连接失败时将 `text` 和 `pendingImages` 完整还原回输入框。
 
-### 长 quota reset 是行动提示，不是原始 provider 错误
+### quota 墙的行动提示是 provider 的措辞，session 不改写
 
-**现象**：pi 在当前模型 quota 用尽且 reset 很久以后时显示 `Quota reached. Please wait 15h7m17s. Next: switch models or try again after reset.`；pig 只显示 provider 原始错误（例如 Antigravity/Google 的 429、`RESOURCE_EXHAUSTED`、`Your quota will reset after …` 或 Antigravity 的 `Resets in …`），用户需要自己从 JSON/长句里看出下一步。TUI 还会把同一个失败显示两次：assistant error component 一次，`InteractiveMode::onMessageEnd()` 的 `sayError()` 又一次。
+**现象**：pi 在 quota 用尽且 reset 很久以后显示 `Quota reached. Please wait 15h7m17s. Next: switch models or try again after reset.`。TUI 还曾把同一个失败显示两次：assistant error component 一次，`InteractiveMode::onMessageEnd()` 的 `sayError()` 又一次。
 
-**原因**：`Retry::statedDelay()` 能读 Google 的 `reset after …`，但漏了 Antigravity 真实的 `Resets in …`；`Retry::worthRetrying()` 会在超过 `MAX_STATED_WAIT` 时拒绝等待，但拒绝后没有规范化错误文案；`AgentSession` 直接 settle，UI/RPC/print/session file 都保留原始 provider 文案。更细的一层：失败 assistant 先通过 `MessageEndEvent` 写盘，再通过 `AgentEndEvent` 通知 UI，所以只在 run 结束后的 `handlePostAgentRun()` 改最后消息会修当前状态而漏掉 session file 和 `agent_end`。TUI 的重复是另一个 sibling 问题：`AssistantMessageComponent::update()` 已经会画 error，`onMessageEnd()` 只应在没有 streaming component 的畸形事件流里 fallback 到 `sayError()`。
+**原因**：这句话是 pi-antigravity 的 `friendlyAntigravityError()` 在 provider 里写的，不是 pi 的 session 写的；上游 session 不读错误里的等待时间。pig 曾在 `Session\Retry` 里解析 `reset after …`/`Resets in …` 并在 `AgentSession` 里改写消息——上游没有这一层，已删除。
 
-**规则**：短 reset 仍然按 provider 指定时间重试；超过 `MAX_STATED_WAIT` 且错误像 quota/rate-limit 的，统一显示 pi 风格行动提示。规范化必须发生在 `MessageEndEvent` 写盘前，也必须反映到 `AgentEndEvent` 发给 UI 的 messages 上。同一个 assistant error 只能由一个 transcript component 负责显示；`sayError()` 是兜底，不是第二份渲染。
+**规则**：配额墙的措辞属于 provider（`AntigravityApi::explain()` 的 429 分支，逐字照 pi-antigravity），措辞本身保证不命中上游的可重试模式，所以 session 不重试、原样结束这一轮。同一个 assistant error 只能由一个 transcript component 负责显示；`sayError()` 只在 `$this->streaming === null` 的畸形事件流里兜底。
 
-**对策**：`Retry::quotaMessage()` 负责识别长 quota reset 并格式化 `h/m/s`，`statedDelay()` 同时读 `reset after …` 和 `Resets in …`；`AgentSession::onAgentEvent()` 在 fan-out 前规范化 `MessageEndEvent` 与 `AgentEndEvent`，同时替换 agent state 的最后一条 assistant message；`InteractiveMode::onMessageEnd()` 只有 `$this->streaming === null` 时才 `sayError()`。回归测试断言不会出现 retry countdown，session state、`MessageEndEvent` 和 `AgentEndEvent` 三处都是同一句 pi 文案，并且 TUI 只显示一次。
+**对策**：`AntigravityApiTest::testAQuotaWallIsNotTriedOnTheOtherHostAndIsSaidInPiAntigravitysWords`、`AgentSessionTest::testAProvidersQuotaWallIsNotRetriedAndItsSentenceIsKept`、`InteractiveModeTest::testAProvidersQuotaWallIsShownOnceAsItWasWordedAndNotRetried`。
 
 ### Web 历史回放消息块不能有第二套更窄的 wire 规则
 
@@ -11065,7 +11083,7 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 **现象**：
 在长连接通信或流式请求期间，如果服务端因超时、限流、断网或重置连接而提前关闭了 TCP/SSL 连接，客户端在调用 `Socket::write()` 写数据时，终端会被 PHP 抛出的多条原生 OpenSSL Warning 严重刷屏：
 `Warning: fwrite(): SSL operation failed with code 5. OpenSSL Error messages: error:80000020:system library::Broken pipe in Socket.php on line 92`。
-并且，`Socket::write()` 此前仅抛出硬编码的 `SocketError('Write failed')`，不仅丢失了底层的真实失败原因，还导致 `Retry::worthRetrying()`（匹配 `broken pipe` 词典）无法命中该网络故障，会话直接报错中断而未能自动重试。
+并且，`Socket::write()` 此前仅抛出硬编码的 `SocketError('Write failed')`，丢失了底层的真实失败原因。
 
 **原因**：
 `Socket.php` 中虽然定义了用于捕获 Warning 的 `capturingWarnings()` 闭包工具，但在 `Socket::write()` 和 `Socket::read()` 调用底层 PHP 内置函数 `fwrite()` 和 `fread()` 时，未包裹在 `set_error_handler` 中。当连接对端关闭导致 EPIPE/Broken pipe 时，PHP 底层直接将 OpenSSL Warning 打印到了标准错误输出，既破坏了 TUI 和 CLI 的渲染状态，又丢弃了 warning 文本，使得上层捕获到的异常信息不包含 `broken pipe` 关键字。
@@ -11073,7 +11091,6 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 **对策**：
 1. 在 `Socket::write()` 和 `Socket::read()` 中全面通过 `self::capturingWarnings()` 执行 `fwrite` 和 `fread`，杜绝任何 PHP Warning 泄露到终端。
 2. 当写入或读取返回 `false` 时，主动调用 `$this->close()` 释放已失效连接，并将 `$warning` 详细原因追加至异常信息中（形如 `Write failed: ... Broken pipe`）。
-3. 异常信息包含 `Broken pipe` 后，上层会话重试模块 `Retry::worthRetrying()` 能瞬间识别网络抖动与对端重置，从而自动触发无缝透明重试。
 
 ### `fwrite(): SSL operation failed` 零写死循环、fclose close_notify 警告泄露与网络重试补强
 
@@ -11083,14 +11100,13 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 **原因**：
 1. **零写死循环（Zero-write loop）**：在 OpenSSL 非阻塞流上，当连接被对端提早关闭时，`fwrite` 并不总是返回 `false`，而是返回 `0`。在非阻塞模式下，已关闭的 TCP socket 在 `stream_select` 中永远处于 Writable 状态，因此 `$this->awaitReady(true)` 瞬间返回，导致 `while ($offset < $length)` 在毫秒级内空转上万次并耗尽超时，甚至导致 OpenSSL 状态机崩溃报错。且 `Socket::write()` 原先缺少对 `feof($this->stream)` 的即时检测。
 2. **`fclose()` close_notify 警告泄露**：当连接已被底层异常打断时，直接执行 `fclose($stream)` 会触发 OpenSSL 尝试发送 TLS `close_notify` alert，在 Broken pipe 连接上写入直接向终端抛出裸露的 `Warning: fwrite(): SSL operation failed with code 5`。
-3. **`Retry::WORDS` 正则漏判 PHP 原生网络异常**：`Retry::WORDS` 原先仅涵盖了 `broken pipe` 和 `connection reset` 等字眼。而 PHP 在发生 SSL 故障、握手失败、写失败时，异常信息通常为 `Write failed: fwrite(): SSL operation failed with code 5`、`Read failed: ...`、`TLS handshake with ... failed`、`Cannot connect to ...`。这些关键错误信息未被纳入正则，导致所有此类网络波动被误判为“不可重试的请求错误”，直接中断会话。
-4. **一秒轮询片段被误当成整体写入超时**：连续零写时，代码用 `awaitReady(true, min(1.0, $stallLimit))` 等下一次可写。这样一个 30 秒或 5 秒的整体写入超时，遇到对端暂时不读、socket 一秒内没有重新可写，就会提前抛出 `Socket timed out after 1.0s`。这不是 provider 超时，而是 pig 把内部 poll slice 当成了用户可见超时；大 payload 或代理背压时尤其容易触发。
+3. **一秒轮询片段被误当成整体写入超时**：连续零写时，代码用 `awaitReady(true, min(1.0, $stallLimit))` 等下一次可写。这样一个 30 秒或 5 秒的整体写入超时，遇到对端暂时不读、socket 一秒内没有重新可写，就会提前抛出 `Socket timed out after 1.0s`。这不是 provider 超时，而是 pig 把内部 poll slice 当成了用户可见超时；大 payload 或代理背压时尤其容易触发。
 
 **对策**：
 1. 在 `Socket::write()` 中加入前置 `feof()` 检查及连续零写（`$zeroWrites > 10`）熔断保护，遇到断开立即安全抛出 `SocketError`，杜绝死循环空转与状态机损坏。
 2. 在 `Socket::close()` 中使用 `self::capturingWarnings()` 包裹 `fclose($stream)`，彻底静音已断连 SSL 的 `close_notify` 原生警告。
 3. `Socket::capturingWarnings()` 改为字符串累加（`$warning .= ' ' . $message`），确保 OpenSSL 的连续复合报警（如 Code 5 叠加具体 Broken pipe）不丢失。
-4. 全面扩充 `Retry::WORDS` 正则，将 `ssl.*operation failed`、`tls.*handshake.*failed`、`write failed`、`read failed`、`cannot connect`、`network.*unreachable`、`host.*unreachable`、`socket.*closed` 等原生异常全部纳入自动重试机制。遇网络抖动或 SSL 断连自动无缝重试，彻底保障长时间无人值守运行的稳定性。
+4. 这类传输失败能否被会话自动重试，取决于 provider 按 Node fetch 的措辞报告它（响应头前 `Connection error.`/`fetch failed`，body 中途 `terminated`，见 `SdkRequest::errorMessage()`），而不是 PHP 原生异常文本——上游的可重试模式只认前者。
 5. 零写后的等待使用整体写入超时剩余值（`$stallLimit - elapsed`），而不是固定的一秒片段；`SocketTest::testAWriteStalledByAPeerThatDoesNotReadGetsTheWholeWriteTimeout` 用一个接受但不读取的本地 peer 证明旧代码约 1 秒失败，新代码等完整 1.5 秒。
 
 ### 会话树回溯 O(N²) 数组重分配与 `latestFor` 全文件扫描导致 `pig -c` 启动严重迟钝
@@ -11854,9 +11870,9 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 
 **避坑规则**：
 - 错误文本只从 `Utils\ErrorBody`（`anthropicApiError()`、`genaiApiError()`、`openAiApiError()`）来，不要手拼 `<who> returned <status>`。
-- `Retry::STATUS` 认得这些形状（包括 Gemini 错误 JSON 里的 `"code":N`）；新增错误形状时先加 `RetryTest` 用例。
+- 会话重试按上游 `utils/retry.ts` 的模式匹配这些原文（`Pig\Ai\Utils\Retry`），不读状态码；改错误措辞时先跑 `packages/ai/test/Utils/RetryTest.php`。
 - Gemini 流走 `Google::sdkChunks()`，不要换回 `SseParser`。
-- 测试：`AnthropicTest::testARefusedRequestReadsAsTheSdksApiErrorMessage`，`GoogleTest::testARefusedRequestReadsAsTheGenaiSdkWritesIt`、`testTheStreamIsReadAsTheGenaiSdkReadsIt`，`RetryTest::testTheStatusIsReadFromTheSdksMessagesAnthropicAndGoogleNowWrite`。
+- 测试：`AnthropicTest::testARefusedRequestReadsAsTheSdksApiErrorMessage`，`GoogleTest::testARefusedRequestReadsAsTheGenaiSdkWritesIt`、`testTheStreamIsReadAsTheGenaiSdkReadsIt`。
 
 ### chat completions 流里的错误对象被读过去、tool 结果的图片插在结果中间
 
@@ -11908,6 +11924,128 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 **避坑规则**：
 - 两条 Gemini 路径的流尾检查保持一致；`promptFeedback.blockReason` 只在 Antigravity 里检查（upstream 的 Gemini 路径没有这一条）。
 - 测试：`AntigravityApiTest::testAnErrorFinishReasonIsReadToTheEndOfTheStreamBeforeTheTurnFails`、`testABlockedPromptIsStillNamedHere`。
+
+### 会话自动重试按上游的文字模式分类，不读状态码、不读错误里的等待时间
+
+**症状**：pig 用自己的 `Session\Retry`：从错误里抠 HTTP 状态码决定是否重试、照错误里写的 `retry in 39s` 等待、超过 60 秒的等待直接不重试并把消息改写成 `Quota reached…`；`retry.maxRetries: 0` 被当成未设置照样重试 3 次；还有上游没有的 `before_retry` hook。行为和 pi 不一致。
+
+**根因**：上游 `packages/ai/src/utils/retry.ts` 的 `isRetryableAssistantError()` 只用两张文字模式表（`RETRYABLE_PROVIDER_ERROR_PATTERN` / `NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN`），等待是 `retryDelayMs()`（`baseDelayMs` 翻倍、`maxAgentDelayMs` 封顶），`settings.retry?.maxRetries ?? 3` 照收 0。
+
+**避坑规则**：
+- 分类只在 `Pig\Ai\Utils\Retry`，两张表逐条照抄上游；不加 pig 自己的词。
+- 传输失败要按 Node 的措辞报出来才会被重试（`Connection error.`、`Request timed out.`、`fetch failed`、`terminated`，见 `SdkRequest::errorMessage()`）；新增失败路径先想上游运行时会怎么说。
+- `prepareRetry()` 超预算时 `attempt--`，由 post-run 报失败；取消文案是 `Retry cancelled`。
+- 已装在 `~/.pig/agent/extensions/` 的旧 `pig-antigravity` 仍订阅 `before_retry`，加载会报 `No event called 'before_retry'`——更新全局副本。
+- 测试：`packages/ai/test/Utils/RetryTest.php`、`AgentSessionTest::testNoRetriesInTheSettingsMeansNone`、`testARetryBudgetThatRunsOutReportsTheAttemptsThatWereMade`、`SettingsTest::testTheRetryKeysAreUpstreamsSpellings`。
+
+### provider 层重试、请求选项与 provider 事件走请求 options，不走全局 `HttpClient` 观察者
+
+**症状**：pig 的 provider 没有 `onPayload`/`onResponse`/`onProviderStreamEvent`/`headers`/`timeoutMs`/`maxRetries`/`maxRetryDelayMs`；`before_provider_request` 挂在进程级 `HttpClient::observe()` 上，拿到的是 `Request` 对象，连登录换 token 的请求也会被看到；Anthropic 无 key 时不能用 header 鉴权或 workload identity federation。
+
+**根因**：上游这些都是 `ProviderRequestOptions`/`StreamOptions` 字段，provider 用 `retryProviderRequest()` 包首个请求；coding-agent 的 `buildRequestOptions()` 每次请求填 `timeoutMs`（`retry.provider.timeoutMs` → `httpIdleTimeoutMs`）、`maxRetries`、`maxRetryDelayMs`，扩展事件经 `onPayload`/`transformHeaders`/`onResponse`/`onProviderStreamEvent` 接上。
+
+**避坑规则**：
+- 新字段加在 `StreamOptions` 基类，`Stream` 用 `baseArgs()` 整体传递，别逐个手抄。
+- provider 层重试只认 `ProviderHttpError`（有/无 status+headers）；Gemini 的错误没有 headers，`retry-after` 不读、上限不生效。
+- `onResponse` 只在上游调用的地方调用：Anthropic/OpenAI 成功响应后、Mistral 每个响应（含拒绝）、Gemini 不调用。
+- federation 客户端按 `[baseUrl, config]` 缓存 token；不能按 `HttpClient` 实例做 key（`Stream` 每次 new provider）。
+- 测试：`RequestOptionsTest`（五个 provider × 各选项、federation、Mistral URL/对象 toolChoice）、`ProviderRetryTest`、`ExtensionApiTest::testTheProviderHooksSeeThePayloadTheHeadersTheResponseAndEachStreamEvent`、`AgentSessionTest::testEveryRequestCarriesTheProviderRequestOptions`。
+
+### SDK 自带的请求头与中止文案也是移植的一部分
+
+**症状**：Anthropic 发到 `/v1/messages`（SDK 是 `?beta=true`）；Anthropic/OpenAI 缺 `X-Stainless-*`，OpenAI 发 `accept: text/event-stream`（SDK 发 `Accept: application/json`）；Gemini 缺 `x-goog-api-client` 却多发了 `accept`；中止时错误文本是 pig 的 abort reason。
+
+**避坑规则**：
+- 头部版本号取上游 `packages/ai/package.json` 钉住的 SDK 版本（`Utils\SdkHeaders`）；描述运行时的字段（`X-Stainless-Runtime*`、`gl-*`）如实写 PHP，不冒充 Node。
+- 中止文案按 provider：请求阶段 `Request aborted`（`retryProviderRequest`），读 body 时 `This operation was aborted`（Anthropic/Gemini/Mistral）或静默结束后 `Request was aborted`（OpenAI 两条），StreamProxy 读流时 `Request aborted by user`。
+- `SseParser`、Mistral、Gemini、StreamProxy 解码都按 `TextDecoder`：流首 BOM 去掉、坏 UTF-8 变 U+FFFD；JS 的 `trim()` 用 `JsJson::trim()`。
+- 测试：`RequestOptionsTest::testTheStainlessSdksOwnHeadersAreSent`、`testGeminiGetsTheGoogleSdksHeadersAndNoAccept`、`testAnAbortBeforeTheResponseIsRequestAborted`、`SseParserTest::testALeadingByteOrderMarkIsDroppedEvenSplitAcrossFeeds`、`AnthropicTest::testAbortingLeavesAnAbortedMessage`。
+
+### 系统提示和工具是 transcript 里的 `SystemMessage`，不是 `Context` 上的两个字段
+
+**症状**：pig 只有一份 system prompt 和一张工具表；会话中途增删工具、技能或 `AGENTS.md` 变化、`cwd` 段刷新时整份 prompt 重发（缓存全部失效）；会话文件不记 prompt；RPC `get_messages` 没有 `system` 消息。
+
+**根因**：上游把 prompt 和工具放进消息流：首条 `SystemMessage`（`sections` + `toolsAdded`，timestamp 0）就是 prompt，之后的 `SystemMessage` 只带变化的段（`null` 表示删除）和 `toolsAdded`/`toolsRemoved`；provider 用 `resolveTranscript()` 决定原地发还是折叠成一条（`supportsMidConvoSystemMessages`），工具用 `resolveTranscriptTools()` 决定原地加载还是整表重发。
+
+**避坑规则**：
+- provider 只收 `TranscriptContext`；`Stream` 用 `Transcript::normalizeContext()` 把旧的 `Context` 折成首条 system 消息。新 provider 先 `resolveTranscript()`，再取 `getInitialSystemMessage()`/`getCurrentTools()`，不要再读 `systemPrompt`/`tools`。
+- 比较工具定义只用 `Transcript::declarationsEqual()`：PHP 的空对象有 `[]` 和 `stdClass` 两种写法，会话文件读回的是前者，直接比会让每次 resume 都重声明全部工具。
+- 增量由 `AgentLoop` 的 `declareToolChanges()` 和 `AgentSession` 的 `prepareNextTurnWithContext`（`SystemPrompt::diffSections()`）产生；`Agent` 没有 `setSystemPrompt()` 了，改 prompt 就是追加一条 `SystemMessage`。
+- 压缩：被摘要的部分不含 `SystemMessage`，`CompactionSummary::$systemMessage` 存回放后的那条，重建顺序 `[system, summary, …kept]`。
+- `context` hook 看不到 system 消息（`HookRunner` 先拿掉再放回原位），要看用 `context_with_system`。
+- `cwd` 段带到秒的时间，每次 `ToolLoadout::apply()` 都会变——测试别断言“没有更新”时依赖它不变。
+- 测试：`packages/ai/test/Utils/TranscriptTest.php`、`Providers/SystemMessagesOnTheWireTest.php`、`AgentLoopTest`/`AgentTest` 的 declare/prepareNextTurn 用例、`coding-agent/test/SystemMessageTranscriptTest.php`、`RpcModeTest::testGetMessagesRoundTripsThroughTheSessionCodec`。
+
+### HTTP 空闲超时是 300 秒，不是 60 秒
+
+**症状**：模型思考超过一分钟才吐下一个 token 时，流在 `Socket timed out after 60.0s` 处断掉；`httpIdleTimeoutMs` 设置只影响 provider 重试层的 `timeoutMs`，管不到读流。
+
+**根因**：上游 `configureHttpDispatcher(httpIdleTimeoutMs)` 把 undici 的 `headersTimeout`/`bodyTimeout` 设成 300000（`DEFAULT_HTTP_IDLE_TIMEOUT_MS`）；pig 的 `HttpClient` 每步都用构造参数 60 秒。
+
+**避坑规则**：
+- 不传超时的 `HttpClient` 等响应头和每次读 body 都用进程级 `HttpClient::useIdleTimeout()`（默认 `DEFAULT_IDLE_TIMEOUT = 300.0`，0 为不限）；连接和写仍是 60 秒。`bin/pig` 在设好代理后按设置调用它。
+- 测试：`HttpClientTest::testTheIdleTimeoutIsFiveMinutesUnlessTheSettingSaysOtherwise`、`testAClientWithoutATimeoutOfItsOwnWaitsBetweenReadsAsLongAsTheSettingSays`。
+
+### 压缩和分支摘要也会重试，`agent_end` 说明会不会重试
+
+**症状**：压缩时遇到一次 `overloaded_error` 整个压缩就失败；摘要请求不带会话的请求选项（provider 重试、超时、扩展的 payload hook）；RPC/扩展收到 `agent_end` 时不知道会话马上要重试。
+
+**根因**：上游摘要走 `retryAssistantCall()`（同一套 `isRetryableAssistantError()` 和退避）并用会话的 `streamFn` 与请求选项；会话转发的 `agent_end` 带 `willRetry`（`_willRetryAfterAgentEnd()`）。
+
+**避坑规则**：
+- 摘要只经 `Retry::retryAssistantCall()`，回调转成 `SummarizationRetryEvent`（RPC `summarization_retry_*`）；不要在调用处自己写循环。
+- `AgentEndEvent::$willRetry` 只由 `AgentSession` 填，循环本身永远发 false。
+- 测试：`RetryTest::testRetryAssistantCall…`、`SystemMessageTranscriptTest::testASummaryRetriesATransientFailureWithTheSessionsRetrySettings`、`testAgentEndSaysWhetherTheSessionWillRetry`。
+
+### 重试提示按上游写 `(escape to cancel)` 并逐秒倒数
+
+**症状**：重试时编辑框边框上写 `Retrying (1/3) in 30s... (esc to stop)`，秒数不动。
+
+**根因**：上游 `Retrying (${attempt}/${max}) in ${seconds}s... (${keyText("app.interrupt")} to cancel)`，每秒刷新；`keyText()` 输出的是按键 id 原文（`escape`），macOS 上 `alt` 写成 `option`。
+
+**避坑规则**：
+- 键名只经 `Keybindings::keyText()`，不手写 `esc`；倒计时在重试结束或取消时停掉（`stopRetryCountdown()`）。
+- 测试：`InteractiveModeTest::testTheRetryCountdownCountsDownOnceASecond`、`testEscapeStopsTheRetryTheScreenSaysItCanStop`。
+
+### Antigravity：空响应先重问两次，运行时模型 404 回退旧名
+
+**症状**：Antigravity 偶尔回一个没有任何内容的流，pig 直接以空回答结束；新的运行时模型名在某些账号上 404 时整轮失败；错误文本不是 pi-antigravity 的措辞。
+
+**根因**：pi-antigravity 0.9.0 对空响应最多再请求两次（退避 0.5s、1s），之后报 `Antigravity API returned an empty response`；运行时模型按 `[首选, Routing::fallback()]` 依次试，404 换下一个；状态码的措辞来自 `friendlyAntigravityError()`。
+
+**避坑规则**：
+- 措辞只改 `AntigravityApi::friendlyAntigravityError()`，逐字对照上游；错误里的 token 要先脱敏。
+- 测试：`AntigravityApiTest::testAnEmptyResponseIsAskedForAgainBeforeTheTurnFails`、`testARuntimeModelThatIsNotThereFallsBackToTheOlderOne`、`testEveryStatusIsWordedAsPiAntigravityWordsIt`。
+
+### Gemini：没提思考就不发 `thinkingConfig`；Windows 的 `os.release()` 带 build 号
+
+**症状**：直接调 `Google::stream()` 而选项没提思考时，pig 发 `thinkingBudget: 0`（上游什么都不发，让 Gemini 自己决定）；Windows 上 User-Agent 里的系统版本是 `10.0` 而 Node 给的是 `10.0.22631`。
+
+**避坑规则**：
+- `GoogleOptions::$thinkingEnabled` 是 `?bool`，null 表示没说；“不思考”仍只经 `GoogleShared::disabledGoogleThinkingConfig()`。
+- 系统版本走 `PigUserAgent::releaseFrom($family, $release, $version)`，Windows 从 `php_uname('v')` 取 build；测试注入值，不依赖本机系统。产品名保持 `pig`。
+- 测试：`GoogleTest::testOptionsThatSayNothingAboutThinkingSendNoThinkingConfig`、`PigUserAgentTest`。
+
+### Vertex 与 Bedrock：SDK 行为按 oracle 录制逐项对齐
+
+**症状**：照着 `google-vertex.ts` / `bedrock-converse-stream.ts` 读代码写出来的请求，和上游实际发出的不一样——`[profile work]` 被当成名叫 `profile work` 的段而读不到 region；空的 `inferenceConfig` 序列化成 `[]`；STS/SSO 请求没有 SDK 的 user agent 和 `amz-sdk-request`，也不重试；assume role 之后 Bedrock 的 UA 少了 `T`；Vertex 的裸 id `gemini-2.5-flash` 被解析成 Vertex 而不是 Gemini API；凭据不是 key 时把 `<authenticated>` 当 key 发了出去。
+
+**根因**：这两个 provider 的行为大半在 SDK 里（`@aws-sdk/*`、smithy、`@google/genai`、`google-auth-library`），源码只读 provider 文件看不出来：
+- smithy 的 ini 段名正则 `(["'])?…\2` 在 JS 里未参与的分组反向引用匹配空串，PCRE 里则失败；
+- PHP 的空数组 `json_encode` 成 `[]`，JS 的空对象是 `{}`；
+- STS/SSO/SSO-OIDC 是 `@aws-sdk/nested-clients`（3.997.45），同样有 UA、invocation id、标准重试；
+- `RESOLVED_ACCOUNT_ID`（`T`）是 user-agent 中间件对任何带 `$source` 且有 accountId 的身份加的，不只是 web identity；
+- Vertex 用 Google 自己的 id，和直连的 Gemini API 撞名。
+
+**避坑规则**：
+- 改 Bedrock/Vertex 行为前先看 `packages/ai/test/fixtures/{bedrock,vertex}/*.json` 里上游的录制；fixture 是上游的行为，对不上就是 pig 的 bug，除非测试里写了为什么（只有两处：abort 的确切截断点、undici 的 `accept: */*`）。
+- smithy 正则里的可选分组写成 `(["\']?)`，让它总是参与匹配。
+- 结构体走 `BedrockRuntimeClient::serializeRequest()` 的 `shape()`，空结构返回 `stdClass`；不要在调用处拼 JSON。
+- STS/SSO/OIDC 请求只经 `CredentialChain::call()`（SDK 头 + 标准重试）；UA 的凭据特征只经 `BedrockRuntimeClient::credentialFeatures()`。
+- `Models::RESOLD` 含 `google-vertex`：裸 id 归直连的 Gemini API，Vertex 写 `google-vertex/<id>`。
+- `Stream::AMBIENT_AUTH_MARKER` 只表示“已登录”，`Stream::start()`/`translate()` 都会去掉它，任何地方都不能把它当 key 发。
+- oracle 的冻结时钟会触发时钟偏移重试：录制错误类场景用真实时钟；Node 侧要 `AWS_BEDROCK_FORCE_HTTP1=1`。
+- 测试：`BedrockTest`（47 个录制场景）、`GoogleVertexTest`（12 个端到端 + 8 个 URL）、`Utils/Aws/SignatureV4Test`（AWS 签名套件 38 例）、`Utils/Aws/EventStreamTest`、`Utils/Aws/SharedConfigTest`、`Utils/GoogleAuthTest`、`ModelsTest::testBedrockRowsAreUpstreamsCatalogueRows`、`GenerateModelsTest::testBedrockRowsAreUpstreamsBedrockRows`。
 
 ## Version floor: PHP >= 8.3
 

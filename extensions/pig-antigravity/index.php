@@ -21,9 +21,9 @@ declare(strict_types=1);
  * - **`Auth::useSecondStore()`** is where `antigravity-accounts.json` meets `auth.json`: the
  *   session reads the active account when `auth.json` has none, and tells the store about a
  *   renewal so the extension's copy of a token does not go stale.
- * - **`before_retry`** is the 429 failover. A quota wall on one account is answered by switching
- *   to the next and retrying at once with the count reset — which used to be an `if provider ===
- *   'antigravity'` inside `AgentSession::prepareRetry()`.
+ * - **The 429 failover** is the protocol's own, as pi-antigravity has it: a quota wall on one
+ *   account is answered inside the request by switching to the next stored account and sending
+ *   again (`AntigravityApi`'s `$failover`, below).
  * - **`registerHttpRoute('/api/accounts')`** is the web UI's accounts panel, which used to be
  *   written into `HttpServer`.
  *
@@ -42,9 +42,7 @@ use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CustomTools\CustomTool;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\Hooks\Events\BeforeRetryEvent;
 use Pig\CodingAgent\Hooks\HookContext;
-use Pig\CodingAgent\Hooks\Results\BeforeRetryResult;
 use PigAntigravity\Accounts;
 use PigAntigravity\AntigravityApi;
 use PigAntigravity\Catalog;
@@ -107,13 +105,47 @@ return function (ExtensionApi $pi): void {
 
     // ---- the provider -------------------------------------------------------------------
 
+    /**
+     * pi-antigravity's `failoverToNextAccount(triedAccessTokens)`: the next stored account whose
+     * access token has not been tried, renewed if it is due (one whose renewal fails is skipped),
+     * made the active one in both files — and its api key, or null when no account is left.
+     *
+     * @param list<string> $tried
+     */
+    $failover = static function (array $tried) use ($auth, $accounts): ?string {
+        for ($i = 0, $total = $accounts->count(); $i < $total; $i++) {
+            $next = $accounts->rotateNext();
+
+            if ($next === null) {
+                return null;
+            }
+
+            $auth->setCredentials(Models::PROVIDER, $next);
+
+            try {
+                $fresh = $auth->freshCredentials(Models::PROVIDER);
+            } catch (\Throwable) {
+                // "Skip accounts whose refresh token is no longer valid."
+                continue;
+            }
+
+            if ($fresh === null || $fresh->access === '' || in_array($fresh->access, $tried, true)) {
+                continue;
+            }
+
+            return $auth->apiKey(Models::PROVIDER);
+        }
+
+        return null;
+    };
+
     // Resold: `claude-sonnet-4-6` is Anthropic's id, and a bare `--model sonnet` has to keep
     // meaning Anthropic's — see `Models::RESOLD` in the core for the rule this joins.
     $pi->registerProvider(new Provider(
         id: Models::PROVIDER,
         name: 'Antigravity (Gemini 3, Claude, GPT-OSS)',
         models: Models::fallback(),
-        api: new AntigravityApi(),
+        api: new AntigravityApi(failover: $failover),
         oauth: new LazyAntigravityOauth($antigravityClient),
         resold: true,
     ));
@@ -201,36 +233,6 @@ return function (ExtensionApi $pi): void {
 
         return null;
     };
-
-    // ---- 429 failover -------------------------------------------------------------------
-
-    $pi->on('before_retry', static function (BeforeRetryEvent $event, HookContext $ctx) use ($rotate): ?BeforeRetryResult {
-        if ($ctx->model?->provider !== Models::PROVIDER) {
-            return null;
-        }
-
-        $quota = str_contains($event->error, '429')
-            || stripos($event->error, 'quota') !== false
-            || str_contains($event->error, 'RESOURCE_EXHAUSTED');
-
-        if (!$quota) {
-            return null;
-        }
-
-        $next = $rotate();
-
-        if ($next === null) {
-            return null;
-        }
-
-        // Fast failover: the new account's quota is a fresh set of attempts, and nothing has to
-        // wait out the old account's reset window.
-        return new BeforeRetryResult(
-            delaySeconds: 0.5,
-            resetAttempts: true,
-            reason: 'Antigravity quota reached. Switched to account ' . ($next->email ?? 'next account') . '.',
-        );
-    });
 
     // ---- what every command needs ------------------------------------------------------
 

@@ -141,6 +141,26 @@ final class AssistantMessageBuilder
         return null;
     }
 
+    /** `text`, `thinking` or `toolCall`: what the block at a position is. */
+    public function typeOf(int $index): string
+    {
+        return $this->blocks[$index]['type'];
+    }
+
+    /**
+     * Turn a thinking block already open into a redacted one — Bedrock's encrypted reasoning, which
+     * arrives as deltas of a block that started out as ordinary thinking.
+     */
+    public function markRedacted(int $index): void
+    {
+        $this->blocks[$index]['redacted'] = true;
+    }
+
+    public function isRedacted(int $index): bool
+    {
+        return $this->blocks[$index]['redacted'];
+    }
+
     public function append(int $index, string $field, string $delta): void
     {
         $this->blocks[$index][$field] .= $delta;

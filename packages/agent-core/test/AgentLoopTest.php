@@ -10,12 +10,17 @@ use Pig\Agent\AgentContext;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentLoop;
 use Pig\Agent\AgentLoopConfig;
+use Pig\Agent\AgentLoopTurnUpdate;
+use Pig\Agent\PrepareNextTurnContext;
 use Pig\Agent\AgentMessage;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
-use Pig\Ai\Context;
+use Pig\Ai\SystemMessage;
+use Pig\Ai\ToolReference;
+use Pig\Ai\TranscriptContext;
+use Pig\Ai\Utils\Transcript;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Model;
@@ -79,7 +84,7 @@ final class AgentLoopTest extends TestCase
 {
     use AssertsThrows;
 
-    /** @var list<Context> every context the provider was handed */
+    /** @var list<TranscriptContext> every context the provider was handed */
     private array $seen = [];
 
     #[\Override]
@@ -318,8 +323,11 @@ final class AgentLoopTest extends TestCase
 
         $sent = $this->seen[0]->messages;
 
-        $this->assertCount(1, $sent);
-        $this->assertInstanceOf(UserMessage::class, $sent[0]);
+        // The prompt leads as the transcript's system message (it is an LLM message); the app's
+        // own notice is gone.
+        $this->assertCount(2, $sent);
+        $this->assertInstanceOf(SystemMessage::class, $sent[0]);
+        $this->assertInstanceOf(UserMessage::class, $sent[1]);
     }
 
     public function testContinueRefusesWhatWouldBeRejectedAnyway(): void
@@ -458,10 +466,12 @@ final class AgentLoopTest extends TestCase
             $stream = AgentLoop::start(
                 [new UserMessage('the new one')],
                 new AgentContext([
+                    // Upstream's `AgentContext` has no `systemPrompt`: the prompt leads the transcript.
+                    new SystemMessage('be brief', null, null, null, 0),
                     new Notice('the app said something'),
                     new UserMessage('an old question'),
                     $this->answer('an old answer'),
-                ], 'be brief'),
+                ]),
                 $config,
                 null,
                 $this->provider([$this->answer('ok')]),
@@ -474,10 +484,10 @@ final class AgentLoopTest extends TestCase
             $stream->result()->await();
         });
 
-        // Four in the context by then — three plus the prompt — and the transform saw all of them,
-        // the app's own message included.
-        $this->assertCount(4, $saw ?? []);
-        $this->assertInstanceOf(Notice::class, ($saw ?? [])[0]);
+        // Five in the context by then — the system message, three, and the prompt — and the transform
+        // saw all of them, the app's own message included.
+        $this->assertCount(5, $saw ?? []);
+        $this->assertInstanceOf(Notice::class, ($saw ?? [])[1]);
         $this->assertCount(2, $transformed ?? []);
         $this->assertSame($transformed, $converted, 'convertToLlm is handed the transform’s output');
 
@@ -521,6 +531,148 @@ final class AgentLoopTest extends TestCase
         $this->assertInstanceOf(UserMessage::class, $sent[0]);
     }
 
+    // ---- tool loadout declarations (upstream's `declareToolChanges()`) ------------------------
+
+    public function testToolsTheTranscriptDoesNotDeclareAreDeclaredInFrontOfThePrompt(): void
+    {
+        $tool = new ScriptedTool('read', static fn (): AgentToolResult => new AgentToolResult([]));
+
+        [$events, $messages] = Async::run(function () use ($tool): array {
+            $stream = AgentLoop::start([new UserMessage('hi')], new AgentContext([], [$tool]), $this->config([$this->answer('ok')]), null, $this->provider([$this->answer('ok')]));
+            $events = [];
+
+            foreach ($stream as $event) {
+                $events[] = $event;
+            }
+
+            return [$events, $stream->result()->await()];
+        });
+
+        // A system message carrying the tool, then the prompt — both announced and both returned.
+        $this->assertInstanceOf(SystemMessage::class, $messages[0]);
+        $this->assertSame('', $messages[0]->content);
+        $this->assertSame(['read'], array_map(static fn (Tool $t): string => $t->name, $messages[0]->toolsAdded ?? []));
+        $this->assertNull($messages[0]->toolsRemoved);
+        $this->assertInstanceOf(UserMessage::class, $messages[1]);
+        $this->assertSame($messages[0], $events[2]->message);
+
+        // And the request carried it.
+        $this->assertSame(['read'], array_map(static fn (Tool $t): string => $t->name, Transcript::getCurrentTools($this->seen[0]->messages)));
+    }
+
+    public function testAPendingSystemMessageCarriesTheToolChangesRatherThanASecondOne(): void
+    {
+        $tool = new ScriptedTool('read', static fn (): AgentToolResult => new AgentToolResult([]));
+        // Its own tool fields are intent; what it ends up with is the delta to what can run.
+        $pending = new SystemMessage('', ['cwd' => '/x'], [new Tool('ghost', 'g', [])], null, 3);
+
+        [, $messages] = $this->runWith([$pending, new UserMessage('hi')], new AgentContext([], [$tool]));
+
+        $this->assertCount(3, $messages);
+        $this->assertSame(['cwd' => '/x'], $messages[0]->sections);
+        $this->assertSame(['read'], array_map(static fn (Tool $t): string => $t->name, $messages[0]->toolsAdded ?? []));
+        $this->assertSame(3, $messages[0]->timestamp);
+    }
+
+    public function testATranscriptThatAlreadyDeclaresTheToolsGetsNothingNew(): void
+    {
+        $tool = new ScriptedTool('read', static fn (): AgentToolResult => new AgentToolResult([]));
+        $leading = Transcript::createInitialSystemMessage('be brief', [Transcript::toToolDeclaration($tool->definition())]);
+        $pending = new SystemMessage('', ['cwd' => '/x']);
+
+        [, $messages] = $this->runWith([$pending, new UserMessage('hi')], new AgentContext([$leading], [$tool]));
+
+        // The caller's own object, untouched.
+        $this->assertSame($pending, $messages[0]);
+        $this->assertCount(3, $messages);
+    }
+
+    public function testAToolThatLeavesMidRunIsDeclaredRemovedBeforeTheNextRequest(): void
+    {
+        $read = new ScriptedTool('read', static fn (): AgentToolResult => new AgentToolResult([new TextContent('ok')]));
+        $calls = 0;
+        $config = new AgentLoopConfig(
+            model: $this->model(),
+            convertToLlm: static fn (array $messages): array => $messages,
+            apiKey: 'test-key',
+            // The tool goes away once the first request is out.
+            getTools: static function () use (&$calls, $read): array {
+                return $calls++ === 0 ? [$read] : [];
+            },
+        );
+
+        [, $messages] = Async::run(function () use ($read, $config): array {
+            $stream = AgentLoop::start([new UserMessage('hi')], new AgentContext([], [$read]), $config, null, $this->provider([
+                $this->wantsTool('read', ['path' => 'a']),
+                $this->answer('done'),
+            ]));
+
+            foreach ($stream as $ignored) {
+            }
+
+            return [null, $stream->result()->await()];
+        });
+
+        $system = array_values(array_filter($messages, static fn ($m): bool => $m instanceof SystemMessage));
+        $this->assertCount(2, $system);
+        $this->assertSame([['read'], null], [array_map(static fn (Tool $t): string => $t->name, $system[0]->toolsAdded ?? []), $system[0]->toolsRemoved]);
+        $this->assertSame([['read'], null], [array_map(static fn (ToolReference $t): string => $t->name, $system[1]->toolsRemoved ?? []), $system[1]->toolsAdded]);
+        // After the tool result, before the second request.
+        $this->assertInstanceOf(ToolResultMessage::class, $messages[array_search($system[1], $messages, true) - 1]);
+        $this->assertSame([], Transcript::getCurrentTools($this->seen[1]->messages));
+    }
+
+    public function testPrepareNextTurnPutsItsMessagesInFrontOfTheNextRequest(): void
+    {
+        $read = new ScriptedTool('read', static fn (): AgentToolResult => new AgentToolResult([new TextContent('ok')]));
+        $asked = [];
+        $config = new AgentLoopConfig(
+            model: $this->model(),
+            convertToLlm: static fn (array $messages): array => $messages,
+            apiKey: 'test-key',
+            prepareNextTurn: static function (PrepareNextTurnContext $turn) use (&$asked): AgentLoopTurnUpdate {
+                $asked[] = $turn;
+
+                return new AgentLoopTurnUpdate(messages: [new SystemMessage('', ['rules' => 'new rules'])]);
+            },
+        );
+
+        [, $messages] = Async::run(function () use ($read, $config): array {
+            $stream = AgentLoop::start([new UserMessage('hi')], new AgentContext([], [$read]), $config, null, $this->provider([
+                $this->wantsTool('read', ['path' => 'a']),
+                $this->answer('done'),
+            ]));
+
+            foreach ($stream as $ignored) {
+            }
+
+            return [null, $stream->result()->await()];
+        });
+
+        // Asked once — before the second turn, not the first — about the turn that just ended.
+        $this->assertCount(1, $asked);
+        $this->assertSame('read', $asked[0]->message->toolCalls()[0]->name);
+        $this->assertCount(1, $asked[0]->toolResults);
+        $this->assertSame(['rules' => 'new rules'], Transcript::getCurrentSystemMessage($this->seen[1]->messages)?->sections);
+        $this->assertSame(['rules' => 'new rules'], $messages[4]->sections);
+    }
+
+    /**
+     * @param list<mixed> $prompts
+     * @return array{0: null, 1: list<mixed>}
+     */
+    private function runWith(array $prompts, AgentContext $context): array
+    {
+        return Async::run(function () use ($prompts, $context): array {
+            $stream = AgentLoop::start($prompts, $context, $this->config([$this->answer('ok')]), null, $this->provider([$this->answer('ok')]));
+
+            foreach ($stream as $ignored) {
+            }
+
+            return [null, $stream->result()->await()];
+        });
+    }
+
     /**
      * @param list<AssistantMessage> $turns   one per model call, in order
      * @param list<mixed>            $prompts
@@ -537,7 +689,12 @@ final class AgentLoopTest extends TestCase
         return Async::run(function () use ($turns, $prompts, $tools, $getSteeringMessages, $getFollowUpMessages): array {
             $stream = AgentLoop::start(
                 $prompts,
-                new AgentContext([], 'be brief', $tools),
+                // The prompt and the tools as the transcript declares them, as `AgentState` seeds them —
+                // so the loop has no tool changes of its own to announce.
+                new AgentContext(
+                    [Transcript::createInitialSystemMessage('be brief', array_map(static fn (AgentTool $tool): Tool => Transcript::toToolDeclaration($tool->definition()), $tools))],
+                    $tools,
+                ),
                 $this->config($turns, $getSteeringMessages, $getFollowUpMessages),
                 null,
                 $this->provider($turns),
@@ -558,10 +715,12 @@ final class AgentLoopTest extends TestCase
     {
         return new AgentLoopConfig(
             model: $this->model(),
-            // The default from upstream: keep what the LLM understands, drop the rest.
+            // The default from upstream: keep what the LLM understands, drop the rest — the system
+            // messages included, since they carry the prompt and the tools.
             convertToLlm: static fn (array $messages): array => array_values(array_filter(
                 $messages,
-                static fn ($m): bool => $m instanceof UserMessage
+                static fn ($m): bool => $m instanceof SystemMessage
+                    || $m instanceof UserMessage
                     || $m instanceof AssistantMessage
                     || $m instanceof ToolResultMessage,
             )),
@@ -580,7 +739,7 @@ final class AgentLoopTest extends TestCase
     {
         $index = 0;
 
-        return function (Model $model, Context $context, mixed $options) use ($turns, &$index): AssistantMessageEventStream {
+        return function (Model $model, TranscriptContext $context, mixed $options) use ($turns, &$index): AssistantMessageEventStream {
             $this->seen[] = $context;
             $message = $turns[$index++] ?? throw new RuntimeException('the loop asked for more turns than were scripted');
             $stream = new AssistantMessageEventStream();

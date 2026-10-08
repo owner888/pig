@@ -1,3 +1,4 @@
+#!/usr/bin/env php
 <?php
 
 declare(strict_types=1);
@@ -81,7 +82,9 @@ const TABLE = __DIR__ . '/../packages/ai/src/Models.php';
  * provider on models.dev => [pig's constant, the api, the base URL]
  *
  * The three columns upstream's script varies per provider and nothing else does. `github-copilot`
- * is absent because its api is per model — see `copilotApi()`.
+ * is absent because its api is per model — see `copilotApi()`. `amazon-bedrock`'s base URL is per
+ * model too (upstream's `getBedrockBaseUrl()`, which `Models` applies to each row): the one named
+ * here is everything but the `eu.` inference profiles'.
  *
  * @var array<string, array{0: string, 1: Api, 2: string}>
  */
@@ -89,11 +92,13 @@ const DIRECT = [
     'anthropic' => ['ANTHROPIC_MODELS', Api::AnthropicMessages, 'https://api.anthropic.com'],
     'openai' => ['OPENAI_MODELS', Api::OpenAiResponses, 'https://api.openai.com/v1'],
     'google' => ['GOOGLE_MODELS', Api::GoogleGenerativeAi, 'https://generativelanguage.googleapis.com/v1beta'],
+    'google-vertex' => ['GOOGLE_VERTEX_MODELS', Api::GoogleVertex, 'https://{location}-aiplatform.googleapis.com'],
     'cerebras' => ['CEREBRAS_MODELS', Api::OpenAiCompletions, 'https://api.cerebras.ai/v1'],
     'groq' => ['GROQ_MODELS', Api::OpenAiCompletions, 'https://api.groq.com/openai/v1'],
     'mistral' => ['MISTRAL_MODELS', Api::MistralConversations, 'https://api.mistral.ai'],
     'xai' => ['XAI_MODELS', Api::OpenAiCompletions, 'https://api.x.ai/v1'],
     'zai' => ['ZAI_MODELS', Api::OpenAiCompletions, 'https://api.z.ai/api/coding/paas/v4'],
+    'amazon-bedrock' => ['AMAZON_BEDROCK_MODELS', Api::BedrockConverseStream, 'https://bedrock-runtime.us-east-1.amazonaws.com'],
 ];
 
 /**
@@ -399,6 +404,11 @@ const OVERRIDES = [
  * @var array<string, list<string>>
  */
 const EXCLUDED = [
+    // Upstream's `BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS`: served through an inference profile
+    // (`us.`, `global.` …) only, so the bare id is not a model a request can name.
+    'amazon-bedrock' => [
+        'anthropic.claude-opus-5',
+    ],
     'xai' => [
         'grok-3',
         'grok-3-fast',
@@ -488,6 +498,20 @@ function catalogue(?string $file): array
  *   `prompt_mode`" — a missing cache-read price is a tenth of the input price, and no tiers.
  * - **zai** (`processZaiModels()`): the rows are `zai-coding-plan`'s (`SOURCE`), priced from `zai`'s
  *   entry when it has one; the map is the efforts', with `off: "none"` for GLM-5.2.
+ * - **google-vertex** (the end of `processGoogleModels()`): "The google-vertex models.dev catalog
+ *   also includes Claude, OpenAI, and other MaaS models that do not use the @google/genai Gemini
+ *   streaming path" — so `gemini-` ids only, and not `gemini-3.1-flash-lite-preview`; the two
+ *   `-latest` aliases read their aliased model as on `google`; the map is
+ *   `getGoogleThinkingLevelMap()`; no tiers, no cache-write price, and Gemini 2.5 Flash's cache read
+ *   is 0.03 — "models.dev reports Vertex cache_read/cache_write values for Gemini 2.5 Flash that do
+ *   not match the official Gemini API standard pricing table. pi only accounts
+ *   cachedContentTokenCount as cacheRead."
+ * - **amazon-bedrock**: not AI21's Jamba ("These models doesn't support tool use in streaming
+ *   mode") or Mistral 7B Instruct v0 ("These models doesn't support system messages"), nor
+ *   `EXCLUDED`'s inference-profile-only id; and `strictMode` (upstream's
+ *   `compat: {supportsStrictMode: true}`) where models.dev says `structured_output`. No map: upstream
+ *   records the reasoning options, but `supportsDirectReasoningEffort()` is false for
+ *   `bedrock-converse-stream`, and the map `Models` gives a Bedrock row is the ids'.
  *
  * @param array<string, mixed> $catalogue
  * @return array<string, array<string, mixed>>
@@ -521,6 +545,14 @@ function rowsFor(array $catalogue, string $provider): array
             continue;
         }
 
+        if ($provider === 'google-vertex' && (!str_starts_with($id, 'gemini-') || $id === 'gemini-3.1-flash-lite-preview')) {
+            continue;
+        }
+
+        if ($provider === 'amazon-bedrock' && (str_starts_with($id, 'ai21.jamba') || str_starts_with($id, 'mistral.mistral-7b-instruct-v0'))) {
+            continue;
+        }
+
         if (in_array($id, EXCLUDED[$provider] ?? [], true)) {
             printf("  · %s/%s is listed and not offered — see EXCLUDED\n", $provider, $id);
 
@@ -531,7 +563,7 @@ function rowsFor(array $catalogue, string $provider): array
         // entry for the alias lags behind — upstream reads the aliased model instead.
         $from = $model;
 
-        if ($provider === 'google' && ($id === 'gemini-flash-latest' || $id === 'gemini-flash-lite-latest')) {
+        if (($provider === 'google' || $provider === 'google-vertex') && ($id === 'gemini-flash-latest' || $id === 'gemini-flash-lite-latest')) {
             $aliased = $models[$id === 'gemini-flash-latest' ? 'gemini-3.5-flash' : 'gemini-3.1-flash-lite'] ?? null;
             $from = is_array($aliased) ? $aliased : $model;
         }
@@ -540,7 +572,7 @@ function rowsFor(array $catalogue, string $provider): array
         $cost = $provider === 'zai' && is_array($catalogue['zai']['models'][$id]['cost'] ?? null)
             ? $catalogue['zai']['models'][$id]['cost']
             : ($from['cost'] ?? null);
-        $tiers = $provider === 'mistral' ? [] : tiers($cost);
+        $tiers = $provider === 'mistral' || $provider === 'google-vertex' ? [] : tiers($cost);
         $reasoningOptions = is_array($from['reasoning_options'] ?? null) ? $from['reasoning_options'] : [];
         // Upstream's `recordModelsDevReasoningOptions(provider, id, m)`, read back by
         // `applyModelsDevReasoningOptionMetadata()`. That reader needs the model's api and compat
@@ -551,7 +583,7 @@ function rowsFor(array $catalogue, string $provider): array
             ? getEffortThinkingLevelMap($model['reasoning_options'])
             : null;
         $thinkingLevelMap = match ($provider) {
-            'google' => getGoogleThinkingLevelMap($id, $reasoningOptions),
+            'google', 'google-vertex' => getGoogleThinkingLevelMap($id, $reasoningOptions),
             'mistral' => getEffortThinkingLevelMap($reasoningOptions),
             'zai' => zaiThinkingLevelMap($id, $reasoningOptions),
             default => null,
@@ -567,13 +599,16 @@ function rowsFor(array $catalogue, string $provider): array
             'input' => $in,
             'out' => (float) ($cost['output'] ?? 0),
             // Mistral: `m.cost?.cache_read ?? (m.cost?.input ? roundCost(m.cost.input * 0.1) : 0)`.
-            'cacheRead' => $provider === 'mistral' && !is_numeric($cost['cache_read'] ?? null)
-                ? ($in != 0.0 ? roundCost($in * 0.1) : 0.0)
-                : (float) ($cost['cache_read'] ?? 0),
-            'cacheWrite' => (float) ($cost['cache_write'] ?? 0),
+            'cacheRead' => match (true) {
+                $provider === 'mistral' && !is_numeric($cost['cache_read'] ?? null) => $in != 0.0 ? roundCost($in * 0.1) : 0.0,
+                $provider === 'google-vertex' && $id === 'gemini-2.5-flash' => 0.03,
+                default => (float) ($cost['cache_read'] ?? 0),
+            },
+            'cacheWrite' => $provider === 'google-vertex' ? 0.0 : (float) ($cost['cache_write'] ?? 0),
             ...($thinkingLevelMap === null ? [] : ['thinkingLevelMap' => $thinkingLevelMap]),
             ...($tiers === [] ? [] : ['tiers' => $tiers]),
             ...($effortLevelMap === null ? [] : ['effortLevelMap' => $effortLevelMap]),
+            ...($provider === 'amazon-bedrock' && ($model['structured_output'] ?? null) === true ? ['strictMode' => true] : []),
         ];
     }
 
@@ -912,7 +947,7 @@ function money(float $value): string
  * Three shapes, because the tables have three shapes and this writes what is there rather than
  * widening them: Anthropic has no images column (everything it sells takes images, and
  * `assertImages()` is what keeps that true), Copilot has an api column before the others, and the
- * other seven are the full nine. Copilot's rows carry models.dev's list prices, as upstream's
+ * other nine are the full nine. Copilot's rows carry models.dev's list prices, as upstream's
  * generator writes them (`cost: getModelsDevCost(m.cost)`); they used to carry none, on the grounds
  * that a subscription is not metered per token, which made `/session` say $0.00 where pi says what
  * the same tokens are worth.
@@ -959,6 +994,11 @@ function render(array $rows, string $constant): string
         // models.dev's verified efforts, under their own key in any table — see `rowsFor()`.
         if (isset($row['effortLevelMap'])) {
             $cells[] = "'effortLevelMap' => " . levelMap($row['effortLevelMap']);
+        }
+
+        // Bedrock's `compat: {supportsStrictMode: true}`.
+        if (($row['strictMode'] ?? false) === true) {
+            $cells[] = "'strictMode' => true";
         }
 
         $lines[] = sprintf("        %s => [%s],", var_export($id, true), implode(', ', $cells));

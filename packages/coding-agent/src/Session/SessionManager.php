@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Session;
 
 use Pig\Agent\AgentError;
 use Pig\Ai\AssistantMessage;
+use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\Timestamp;
 use Pig\Ai\ToolResultMessage;
@@ -774,8 +775,17 @@ final class SessionManager
 
                 // Replaced, not seen: what came before minus what is being kept. Counting
                 // everything before the compaction would say a summary that kept the last
-                // four messages had replaced them too.
-                $messages = [[$id, self::withCount($item, count($messages) - count($kept))], ...$kept];
+                // four messages had replaced them too. System messages are prompt state rather
+                // than conversation, and not counted on either side.
+                $said = count(array_filter($messages, static fn (array $one): bool => !$one[1] instanceof SystemMessage));
+
+                // pi's `sessionEntryToContextMessages()` for a compaction: the prompt and tool state
+                // it recorded, then the summary — both from this one entry.
+                $messages = [
+                    ...($item->systemMessage !== null ? [[$id, $item->systemMessage]] : []),
+                    [$id, self::withCount($item, $said - count($kept))],
+                    ...$kept,
+                ];
 
                 continue;
             }
@@ -913,7 +923,9 @@ final class SessionManager
 
             $keeping = $keeping || $id === $firstKept;
 
-            if ($keeping && self::isSaid($item) && !$item instanceof CompactionSummary) {
+            // pi's `buildContextEntries()` leaves the kept part's system messages out: the
+            // compaction's own `systemMessage` already holds their replay.
+            if ($keeping && self::isSaid($item) && !$item instanceof CompactionSummary && !$item instanceof SystemMessage) {
                 $kept[] = [$id, $item];
             }
         }
@@ -939,6 +951,8 @@ final class SessionManager
             $summary->firstKeptEntryId,
             max(0, $replaced),
             $summary->timestamp,
+            $summary->fromHook,
+            $summary->systemMessage,
         );
     }
 

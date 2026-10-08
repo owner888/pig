@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Http;
 
-use Closure;
 use Pig\Async\AbortSignal;
 use Pig\Async\Socket;
 use Throwable;
@@ -38,11 +37,54 @@ final class HttpClient
      */
     private static ?Proxy $default = null;
 
+    /**
+     * Upstream's `DEFAULT_HTTP_IDLE_TIMEOUT_MS`, in seconds: how long a request may wait for its
+     * response head, and then between two reads of its body, before it fails.
+     */
+    public const float DEFAULT_IDLE_TIMEOUT = 300.0;
+
+    /**
+     * The idle timeout every client without a timeout of its own uses — upstream's
+     * `configureHttpDispatcher(timeoutMs)`, which sets undici's `headersTimeout` and `bodyTimeout`
+     * on the global dispatcher. Process-wide for `$default`'s reason: the providers are built with
+     * `new HttpClient()`. `bin/pig` sets it from `httpIdleTimeoutMs`; 0 is upstream's `disabled`.
+     */
+    private static float $defaultIdleTimeout = self::DEFAULT_IDLE_TIMEOUT;
+
     private readonly ?Proxy $proxy;
 
-    public function __construct(private readonly float $timeout = 60.0, ?Proxy $proxy = null)
+    /** Seconds for connecting and writing. */
+    private readonly float $timeout;
+
+    /** Seconds the response head, and then each read of the body, may take; 0 waits forever. */
+    private readonly float $idleTimeout;
+
+    /**
+     * @param float|null $timeout seconds for each step — connecting, writing, the head, each read of
+     *        the body. Null is a client that keeps to the process-wide idle timeout for the head and
+     *        the body (`useIdleTimeout()`, upstream's dispatcher) and 60 seconds for connecting and
+     *        writing, which every provider is.
+     */
+    public function __construct(?float $timeout = null, ?Proxy $proxy = null)
     {
         $this->proxy = $proxy ?? self::$default;
+        $this->timeout = $timeout ?? 60.0;
+        $this->idleTimeout = $timeout ?? self::$defaultIdleTimeout;
+    }
+
+    /**
+     * Set the idle timeout for every client built from here on without one of its own —
+     * upstream's `configureHttpDispatcher(settings.getHttpIdleTimeoutMs())`. Seconds; 0 disables it.
+     */
+    public static function useIdleTimeout(float $seconds): void
+    {
+        self::$defaultIdleTimeout = max(0.0, $seconds);
+    }
+
+    /** What `useIdleTimeout()` last set. */
+    public static function idleTimeout(): float
+    {
+        return self::$defaultIdleTimeout;
     }
 
     /** Route every client built from here on through $proxy; null goes back to direct. */
@@ -55,36 +97,6 @@ final class HttpClient
     public static function proxy(): ?Proxy
     {
         return self::$default;
-    }
-
-    /**
-     * Who is told about every request and response, if anybody.
-     *
-     * Upstream's `before_provider_headers` / `before_provider_request` / `after_provider_response`
-     * hooks, at the one place every provider's bytes go through. Process-wide for the proxy's
-     * reason — thirteen `new HttpClient()` and none of them handed one — and the two closures are
-     * the hook runner's, installed by the mode: an extension that wants to put a tracing header on
-     * every request, or read a 429's `retry-after` before the provider does, reaches it here.
-     *
-     * The request observer may hand back a different request (headers changed, body rewritten);
-     * null means "as it was". The response observer only looks — a response is a socket mid-read,
-     * and there is nothing sensible to hand back in its place.
-     *
-     * @var Closure(Request): ?Request|null
-     */
-    private static ?Closure $onRequest = null;
-
-    /** @var Closure(Response, Request): void|null */
-    private static ?Closure $onResponse = null;
-
-    /**
-     * @param Closure(Request): ?Request|null $onRequest
-     * @param Closure(Response, Request): void|null $onResponse
-     */
-    public static function observe(?Closure $onRequest, ?Closure $onResponse): void
-    {
-        self::$onRequest = $onRequest;
-        self::$onResponse = $onResponse;
     }
 
     /**
@@ -152,21 +164,6 @@ final class HttpClient
     /** Send the request and return once status and headers are in. */
     public function send(Request $request, ?AbortSignal $signal = null): Response
     {
-        if (self::$onRequest !== null) {
-            $request = (self::$onRequest)($request) ?? $request;
-        }
-
-        $response = $this->sendAsIs($request, $signal);
-
-        if (self::$onResponse !== null) {
-            (self::$onResponse)($response, $request);
-        }
-
-        return $response;
-    }
-
-    private function sendAsIs(Request $request, ?AbortSignal $signal): Response
-    {
         [$host, $port, $tls, $target] = $this->resolve($request->url);
         $socket = $this->proxy !== null && !$this->proxy->bypasses($host)
             ? $this->proxy->open($host, $port, $tls, $this->timeout, $signal)
@@ -196,7 +193,7 @@ final class HttpClient
                 $rest,
                 $chunked ? new ChunkedDecoder() : null,
                 $chunked ? null : $length,
-                $this->timeout,
+                $this->idleTimeout,
                 $signal,
             ),
         );
@@ -264,7 +261,7 @@ final class HttpClient
                 throw new HttpError('Response head exceeds ' . self::MAX_HEAD_BYTES . ' bytes');
             }
 
-            $chunk = $socket->read(self::READ_SIZE, $this->timeout, $signal);
+            $chunk = $socket->read(self::READ_SIZE, $this->idleTimeout, $signal);
 
             if ($chunk === null) {
                 throw new HttpError('Connection closed before the response head was complete');

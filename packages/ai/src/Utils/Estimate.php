@@ -5,14 +5,16 @@ declare(strict_types=1);
 namespace Pig\Ai\Utils;
 
 use Pig\Ai\AssistantMessage;
-use Pig\Ai\Context;
 use Pig\Ai\ImageContent;
 use Pig\Ai\StopReason;
+use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\ThinkingContent;
 use Pig\Ai\Tool;
 use Pig\Ai\ToolCall;
+use Pig\Ai\ToolReference;
 use Pig\Ai\ToolResultMessage;
+use Pig\Ai\TranscriptContext;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 
@@ -22,12 +24,8 @@ use Pig\Ai\UserMessage;
  *
  * The last finished assistant turn's usage is the measured size of everything up to it, and what
  * came after it is estimated at 3.5 characters a token (an image as 4,800 characters). With no
- * usable turn the whole conversation is estimated.
- *
- * **Where pig's shape differs**: upstream's transcript opens with a system message carrying the
- * prompt and the tools (`createInitialSystemMessage()`, timestamp 0); pig keeps both on `Context`.
- * They are counted here as that message would be — the prompt's text plus the tools' JSON — at
- * the same place, first and with timestamp 0. Lengths are UTF-16 code units, which is what
+ * usable turn the whole conversation is estimated. A system message is its rendered prompt text
+ * plus the JSON of the tools it adds and removes. Lengths are UTF-16 code units, which is what
  * JavaScript's `.length` counts.
  */
 final class Estimate
@@ -36,19 +34,19 @@ final class Estimate
 
     private const int ESTIMATED_IMAGE_CHARS = 4800;
 
-    /** Upstream's `estimateContextTokens(context).tokens`. */
-    public static function contextTokens(Context $context): int
+    /**
+     * Upstream's `estimateContextTokens(context).tokens`, for a transcript or a bare message list.
+     *
+     * @param TranscriptContext|list<mixed> $context
+     */
+    public static function contextTokens(TranscriptContext|array $context): int
     {
+        $messages = $context instanceof TranscriptContext ? $context->messages : $context;
         // [timestamp, tokens, usage when it is an assistant turn whose usage applies]
         $entries = [];
-        $systemText = $context->systemPrompt ?? '';
 
-        if ($systemText !== '' || $context->tools !== []) {
-            $entries[] = [0, self::textTokens($systemText) + self::toolsTokens($context->tools), null, null];
-        }
-
-        foreach ($context->messages as $message) {
-            if ($message instanceof UserMessage || $message instanceof AssistantMessage || $message instanceof ToolResultMessage) {
+        foreach ($messages as $message) {
+            if ($message instanceof SystemMessage || $message instanceof UserMessage || $message instanceof AssistantMessage || $message instanceof ToolResultMessage) {
                 $entries[] = [$message->timestamp, self::messageTokens($message), $message instanceof AssistantMessage ? $message : null];
             }
         }
@@ -89,8 +87,15 @@ final class Estimate
         return $usage->totalTokens ?: $usage->input + $usage->output + $usage->cacheRead + $usage->cacheWrite;
     }
 
-    private static function messageTokens(UserMessage|AssistantMessage|ToolResultMessage $message): int
+    /** Upstream's `estimateMessageTokens()`. */
+    public static function messageTokens(SystemMessage|UserMessage|AssistantMessage|ToolResultMessage $message): int
     {
+        if ($message instanceof SystemMessage) {
+            return self::textTokens(Text::getSystemMessageText($message))
+                + self::toolsTokens($message->toolsAdded ?? [])
+                + self::toolsTokens($message->toolsRemoved ?? []);
+        }
+
         if (!$message instanceof AssistantMessage) {
             $chars = 0;
 
@@ -124,9 +129,10 @@ final class Estimate
 
     /**
      * Upstream's `estimateToolsTokens()`: the tools' JSON, as `JSON.stringify` writes the `Tool`
-     * objects — name, description, parameters, and `constrainedSampling` when set.
+     * objects — name, description, parameters, and `constrainedSampling` when set — or the
+     * references `{name}`.
      *
-     * @param list<Tool> $tools
+     * @param list<Tool|ToolReference> $tools
      */
     private static function toolsTokens(array $tools): int
     {
@@ -134,11 +140,10 @@ final class Estimate
             return 0;
         }
 
-        $encoded = array_map(static fn (Tool $tool): array => [
-            'name' => $tool->name,
-            'description' => $tool->description,
-            'parameters' => $tool->parameters,
-        ] + ($tool->constrainedSampling === null ? [] : ['constrainedSampling' => $tool->constrainedSampling]), $tools);
+        $encoded = array_map(
+            static fn (Tool|ToolReference $tool): array => $tool instanceof Tool ? MessageJson::encodeTool($tool) : ['name' => $tool->name],
+            $tools,
+        );
 
         return self::textTokens(self::json($encoded));
     }

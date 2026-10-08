@@ -8,11 +8,13 @@ use Closure;
 use Pig\Ai\ImageContent;
 use Pig\Async\AbortSignal;
 use Pig\Ai\Model;
+use Pig\Ai\SystemMessage;
+use Pig\Ai\Utils\Transcript;
 use Pig\CodingAgent\Hooks\Events\BeforeAgentStartEvent;
 use Pig\CodingAgent\Hooks\Events\ContextEvent;
-use Pig\Ai\Http\Request;
+use Pig\CodingAgent\Hooks\Events\ContextWithSystemEvent;
 use Pig\CodingAgent\Hooks\Events\BeforeProviderRequestEvent;
-use Pig\CodingAgent\Hooks\Events\BeforeRetryEvent;
+use Pig\CodingAgent\Hooks\Events\BeforeProviderHeadersEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeCompactEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionBeforeTreeEvent;
@@ -25,7 +27,6 @@ use Pig\CodingAgent\Hooks\Results\UserBashEventResult;
 use Pig\CodingAgent\Hooks\Results\BeforeAgentStartEventResult;
 use Pig\CodingAgent\Hooks\Results\ContextEventResult;
 use Pig\CodingAgent\Hooks\Results\BeforeProviderRequestResult;
-use Pig\CodingAgent\Hooks\Results\BeforeRetryResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeCompactResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeSwitchResult;
 use Pig\CodingAgent\Hooks\Results\SessionBeforeTreeResult;
@@ -472,10 +473,14 @@ final class HookRunner
     }
 
     /**
-     * Run the conversation past the hooks on its way to the model.
+     * Run the conversation past the hooks on its way to the model — upstream's `emitContext()`, in
+     * its two phases.
      *
-     * The one chained event: each handler is given what the last one returned, so two
-     * hooks can both edit the context without either having to know about the other.
+     * The `context` handlers are chained: each is given what the last one returned, so two hooks
+     * can both edit the context without either having to know about the other. They see the
+     * conversation only; "the system messages belong to Pi", so after each handler they are put
+     * back (`restoreSystemMessages()`). Then the `context_with_system` handlers see the whole
+     * transcript and their output is used as returned.
      *
      * @param list<mixed> $messages
      * @return list<mixed>
@@ -487,8 +492,10 @@ final class HookRunner
 
         foreach ($this->hooks as $hook) {
             foreach ($hook->api->handlers('context') as $handler) {
+                $visible = array_values(array_filter($current, static fn (mixed $message): bool => !$message instanceof SystemMessage));
+
                 try {
-                    $result = $handler(new ContextEvent($current), $context);
+                    $result = $handler(new ContextEvent($visible), $context);
                 } catch (Throwable $error) {
                     $this->fail($hook, 'context', $error);
 
@@ -505,11 +512,68 @@ final class HookRunner
                     continue;
                 }
 
-                $current = $result->messages;
+                $current = self::restoreSystemMessages($current, $visible, $result->messages);
+            }
+        }
+
+        foreach ($this->hooks as $hook) {
+            foreach ($hook->api->handlers('context_with_system') as $handler) {
+                $hadLeadingSystemMessage = ($current[0] ?? null) instanceof SystemMessage;
+
+                try {
+                    $result = $handler(new ContextWithSystemEvent($current), $context);
+                } catch (Throwable $error) {
+                    $this->fail($hook, 'context_with_system', $error);
+
+                    continue;
+                }
+
+                if ($result !== null && !$result instanceof ContextEventResult) {
+                    $this->wrongType($hook, 'context_with_system', ContextEventResult::class, $result);
+
+                    continue;
+                }
+
+                $current = $result?->messages ?? $current;
+
+                // "Providers read the prompt and initial tools from the leading system message.
+                // Losing it is never intended; report it but honor the handler's output."
+                if ($hadLeadingSystemMessage && !(($current[0] ?? null) instanceof SystemMessage)) {
+                    $this->emitError(new HookError(
+                        $hook->path,
+                        'context_with_system',
+                        'Handler removed the leading system message; the request has no prompt or initial tool declarations. Keep it at index 0 or replace a dropped prefix with getCurrentSystemMessage().',
+                    ));
+                }
             }
         }
 
         return $current;
+    }
+
+    /**
+     * Re-attach the prompt and tool state after a `context` handler — upstream's
+     * `restoreSystemMessages()`: "An unchanged conversation keeps every system message in place,
+     * so models with mid-conversation support keep their cached prefix. A changed one gets the
+     * replayed prompt sections and tool declarations as one leading system message, so pruning,
+     * windowing, or slicing from a compaction summary cannot drop them."
+     *
+     * Unchanged is upstream's `sameMessages()`: the same objects in the same order.
+     *
+     * @param list<mixed> $current
+     * @param list<mixed> $visible
+     * @param list<mixed> $returned
+     * @return list<mixed>
+     */
+    private static function restoreSystemMessages(array $current, array $visible, array $returned): array
+    {
+        if (array_values($returned) === $visible) {
+            return $current;
+        }
+
+        $head = Transcript::getCurrentSystemMessage($current);
+
+        return $head !== null ? [$head, ...array_values($returned)] : array_values($returned);
     }
 
     /**
@@ -554,16 +618,18 @@ final class HookRunner
     }
 
     /**
-     * Give every handler a chance to change the request going out. Chained, like `context`.
+     * Upstream's `emitBeforeProviderRequest(payload)`: each handler given the payload the last one
+     * left, a non-null answer replacing it. A handler that throws is reported and skipped.
      */
-    public function emitBeforeProviderRequest(Request $request): Request
+    public function emitBeforeProviderRequest(mixed $payload): mixed
     {
         $context = $this->context();
+        $currentPayload = $payload;
 
         foreach ($this->hooks as $hook) {
             foreach ($hook->api->handlers('before_provider_request') as $handler) {
                 try {
-                    $result = $handler(new BeforeProviderRequestEvent($request), $context);
+                    $result = $handler(new BeforeProviderRequestEvent($currentPayload), $context);
                 } catch (Throwable $error) {
                     $this->fail($hook, 'before_provider_request', $error);
 
@@ -580,17 +646,36 @@ final class HookRunner
                     continue;
                 }
 
-                $request = $result->request;
+                $currentPayload = $result->payload;
             }
         }
 
-        return $request;
+        return $currentPayload;
     }
 
-    /** Ask whether a retry should go ahead, and on what terms. The first answer decides. */
-    public function emitBeforeRetry(BeforeRetryEvent $event): ?BeforeRetryResult
+    /**
+     * Upstream's `emitBeforeProviderHeaders(headers)`: one event for every handler, which mutate its
+     * `headers` in place; what is left is the answer. A handler that throws is reported and skipped.
+     *
+     * @param array<string, string|null> $headers
+     * @return array<string, string|null>
+     */
+    public function emitBeforeProviderHeaders(array $headers): array
     {
-        return $this->ask($event, BeforeRetryResult::class, static fn (object $r): bool => true);
+        $context = $this->context();
+        $event = new BeforeProviderHeadersEvent($headers);
+
+        foreach ($this->hooks as $hook) {
+            foreach ($hook->api->handlers('before_provider_headers') as $handler) {
+                try {
+                    $handler($event, $context);
+                } catch (Throwable $error) {
+                    $this->fail($hook, 'before_provider_headers', $error);
+                }
+            }
+        }
+
+        return $event->headers;
     }
 
     /**
@@ -696,18 +781,6 @@ final class HookRunner
     {
         foreach ($this->hooks as $hook) {
             if ($hook->api->handlers($event) !== []) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /** Whether anything is listening on either provider event, so `HttpClient` is not observed for nobody. */
-    public function listensToProviderTraffic(): bool
-    {
-        foreach ($this->hooks as $hook) {
-            if ($hook->api->handlers('before_provider_request') !== [] || $hook->api->handlers('after_provider_response') !== []) {
                 return true;
             }
         }

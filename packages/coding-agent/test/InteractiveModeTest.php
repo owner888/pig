@@ -55,6 +55,7 @@ use Pig\Ai\Utils\Oauth\OauthError;
 use Pig\Ai\Utils\Oauth\Credentials;
 use Throwable;
 use Pig\Ai\Utils\Oauth\Provider;
+use Pig\Ai\TranscriptContext;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Tools\ToolSet;
@@ -364,7 +365,7 @@ final class InteractiveModeTest extends TestCase
         $this->assertFileDoesNotExist($this->home . '/trust.json');
     }
 
-    private function provider(Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream
+    private function provider(Model $model, TranscriptContext $context, SimpleStreamOptions $options): AssistantMessageEventStream
     {
         $answer = array_shift($this->answers) ?? throw new RuntimeException('out of scripted answers');
         $message = $answer instanceof AssistantMessage ? $answer : self::message($answer);
@@ -912,7 +913,7 @@ final class InteractiveModeTest extends TestCase
         // deciding that `/setings` *meant* `/settings` is a guess, and guessing is what read
         // a pasted picture's path as a command in the first place.
         $this->assertStringNotContainsString('No command called', $this->screen());
-        $this->assertSame(2, count($this->session->messages()), 'sent, and answered');
+        $this->assertSame(2, count(self::said($this->session->messages())), 'sent, and answered');
     }
 
     public function testAPastedPathIsAMessageAndNotABadCommand(): void
@@ -1212,7 +1213,8 @@ final class InteractiveModeTest extends TestCase
         $this->type(self::ENTER);
         $this->settle();
 
-        $saved = SessionManager::open($this->session->store()->path)->messages();
+        // What was said: the system message in front of it declares the agent's tools.
+        $saved = self::said(SessionManager::open($this->session->store()->path)->messages());
 
         $this->assertCount(2, $saved);
         $this->assertInstanceOf(UserMessage::class, $saved[0]);
@@ -1236,7 +1238,7 @@ final class InteractiveModeTest extends TestCase
 
         $this->assertStringContainsString('the first question', $screen);
         $this->assertStringContainsString('the first answer', $screen);
-        $this->assertCount(2, $this->session->messages());
+        $this->assertCount(2, self::said($this->session->messages()));
     }
 
     /**
@@ -1275,7 +1277,7 @@ final class InteractiveModeTest extends TestCase
 
         $resumed = array_map(
             static fn (mixed $m): string => $m->content[0]->text ?? '',
-            SessionManager::open($old)->messages(),
+            self::said(SessionManager::open($old)->messages()),
         );
 
         // The resumed file carries the whole thing: what was there, and what came after.
@@ -1319,11 +1321,11 @@ final class InteractiveModeTest extends TestCase
 
         $this->assertSame(
             ['the first conversation', 'first answer'],
-            array_map(static fn (mixed $m): string => $m->content[0]->text ?? '', SessionManager::open($first)->messages()),
+            array_map(static fn (mixed $m): string => $m->content[0]->text ?? '', self::said(SessionManager::open($first)->messages())),
         );
         $this->assertSame(
             ['the second conversation', 'second answer'],
-            array_map(static fn (mixed $m): string => $m->content[0]->text ?? '', SessionManager::open($second)->messages()),
+            array_map(static fn (mixed $m): string => $m->content[0]->text ?? '', self::said(SessionManager::open($second)->messages())),
         );
 
         // Two conversations, two sessions to pick from.
@@ -1378,7 +1380,7 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('something memorable', $screen);
         $this->assertStringContainsString('Resumed 2 messages', $screen);
         $this->assertStringNotContainsString('Pick a session', $screen);
-        $this->assertCount(2, $this->session->messages());
+        $this->assertCount(2, self::said($this->session->messages()));
     }
 
     public function testTypingSearchesTheSessionsFromInsideASession(): void
@@ -1759,7 +1761,8 @@ final class InteractiveModeTest extends TestCase
         // question came back to be asked differently, which is what going back to it is for.
         $this->assertStringNotContainsString('first answer', $screen);
         $this->assertStringContainsString('hello', $screen);
-        $this->assertSame([], $this->session->messages());
+        // Back to before "hello": what is left is the system message that declared the tools.
+        $this->assertSame([], self::said($this->session->messages()));
     }
 
     public function testWithNothingSaidYetThereIsNowhereToGoBackTo(): void
@@ -1859,7 +1862,12 @@ final class InteractiveModeTest extends TestCase
 
     public function testSwitchingModelChangesSessionAndLeavesSettingsUntouched(): void
     {
-        $this->start();
+        // Anthropic's key only: Bedrock and Vertex serve Claude and Gemini under ids of their own
+        // (`us.anthropic.claude-haiku-5-5`), and with every model on offer upstream's resolver ranks
+        // those first. Which provider wins is not what this case is about.
+        $auth = Auth::inMemory();
+        $auth->setRuntimeApiKey('anthropic', 'for-this-run');
+        $this->start(auth: $auth);
 
         $this->type('/model haiku:high');
         $this->type(self::ENTER);
@@ -2098,7 +2106,12 @@ final class InteractiveModeTest extends TestCase
 
     public function testTypingInTheModelListNarrowsItAndSwitchesToWhatIsLeft(): void
     {
-        $this->start();
+        // Anthropic's key only: Bedrock and Vertex serve Claude and Gemini under ids of their own
+        // (`us.anthropic.claude-haiku-5-5`), and with every model on offer upstream's resolver ranks
+        // those first. Which provider wins is not what this case is about.
+        $auth = Auth::inMemory();
+        $auth->setRuntimeApiKey('anthropic', 'for-this-run');
+        $this->start(auth: $auth);
 
         $this->type('/model');
         $this->type(self::ENTER);
@@ -2188,7 +2201,12 @@ final class InteractiveModeTest extends TestCase
 
     public function testModelWithAPatternSwitchesWithoutOpeningTheList(): void
     {
-        $this->start();
+        // Anthropic's key only: Bedrock and Vertex serve Claude and Gemini under ids of their own
+        // (`us.anthropic.claude-haiku-5-5`), and with every model on offer upstream's resolver ranks
+        // those first. Which provider wins is not what this case is about.
+        $auth = Auth::inMemory();
+        $auth->setRuntimeApiKey('anthropic', 'for-this-run');
+        $this->start(auth: $auth);
 
         $this->type('/model haiku');
         $this->type(self::ENTER);
@@ -2539,7 +2557,7 @@ final class InteractiveModeTest extends TestCase
         $this->start(answers: ['first answer', 'second answer'], initialMessages: ['one', 'two']);
         $this->settle();
 
-        $messages = $this->session->messages();
+        $messages = self::said($this->session->messages());
         $this->assertCount(4, $messages);
         $this->assertSame('one', $messages[0]->content[0]->text);
         $this->assertSame('first answer', $messages[1]->content[0]->text);
@@ -2558,7 +2576,7 @@ final class InteractiveModeTest extends TestCase
         $this->settle();
 
         $this->assertStringContainsString('typed by hand', $this->screen());
-        $this->assertCount(4, $this->session->messages());
+        $this->assertCount(4, self::said($this->session->messages()));
     }
 
     public function testAnImageRidesOnTheFirstMessageOnly(): void
@@ -2571,7 +2589,7 @@ final class InteractiveModeTest extends TestCase
         );
         $this->settle();
 
-        $messages = $this->session->messages();
+        $messages = self::said($this->session->messages());
         $this->assertCount(2, $messages[0]->content, 'the text and the image');
         $this->assertCount(1, $messages[2]->content, 'the text only');
     }
@@ -3214,20 +3232,21 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('and one more', $this->screen());
     }
 
-    public function testAQuotaErrorIsShownOnceInTheActionableWords(): void
+    public function testAProvidersQuotaWallIsShownOnceAsItWasWordedAndNotRetried(): void
     {
-        $raw = 'antigravity is out of quota (429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 13h58m52s.';
-        $expected = 'Quota reached. Please wait 13h58m52s. Next: switch models or try again after reset.';
+        // The actionable sentence is the provider's own now — pi-antigravity's, which
+        // `AntigravityApi` writes — and the session neither rewrites it nor retries it. pig's
+        // session used to turn "out of quota (429): … Resets in …" into this sentence itself.
+        $wall = 'Quota reached. Please wait 13h58m52s. Next: switch models or try again after reset.';
 
-        $this->start(answers: [self::failed($raw)]);
+        $this->start(answers: [self::failed($wall)]);
         $this->type('hi');
         $this->type(self::ENTER);
         $this->settle();
 
         $screen = $this->screenText();
-        $this->assertStringContainsString($expected, $screen);
-        $this->assertSame(1, substr_count($screen, $expected));
-        $this->assertStringNotContainsString('antigravity is out of quota', $screen);
+        $this->assertSame(1, substr_count($screen, $wall));
+        $this->assertStringNotContainsString('Retrying', $screen);
     }
 
     public function testEscapeStopsTheRetryTheScreenSaysItCanStop(): void
@@ -3235,7 +3254,7 @@ final class InteractiveModeTest extends TestCase
         // Two loaders on this screen name escape — the retry countdown and the summariser — and
         // `interrupt()`'s last branch called `$this->session->agent->abort()`, which reaches
         // neither: a sleeping retry and a running summariser both happen between runs, where the
-        // agent has no controller to raise. So the label said "esc to stop" and the key did not.
+        // agent has no controller to raise. So the label said escape stopped it and the key did not.
         $this->start(
             answers: [self::failed('Anthropic returned 503: overloaded'), 'here you go'],
             settings: Settings::inMemory(['retry' => ['baseDelayMs' => 30_000]]),
@@ -3246,13 +3265,44 @@ final class InteractiveModeTest extends TestCase
         self::turnTheLoop();
 
         $this->assertTrue($this->session->isRetrying());
-        $this->assertStringContainsString('esc to stop', $this->screen());
+        // Upstream's `RetryStatusIndicator` wording: the interrupt key as `keyText()` names it
+        // (`escape`) and the seconds rounded up. This used to say `(esc to stop)`, which upstream
+        // never says.
+        $this->assertStringContainsString('Retrying (1/3) in 30s... (escape to cancel)', $this->screen());
 
         $this->type(self::ESC);
         self::turnTheLoop();
 
         $this->assertFalse($this->session->isRetrying());
         $this->assertStringContainsString('cancelled', $this->screen());
+    }
+
+    public function testTheRetryCountdownCountsDownOnceASecond(): void
+    {
+        // Upstream's `CountdownTimer` under the `RetryStatusIndicator`: the seconds left, ticked
+        // down once a second until the retry starts.
+        $this->start(
+            answers: [self::failed('Anthropic returned 503: overloaded'), 'here you go'],
+            settings: Settings::inMemory(['retry' => ['baseDelayMs' => 3_000]]),
+        );
+
+        $this->type('hi');
+        $this->type(self::ENTER);
+        self::turnTheLoop();
+
+        $this->assertStringContainsString('Retrying (1/3) in 3s... (escape to cancel)', $this->screen());
+
+        $until = microtime(true) + 1.3;
+
+        while (microtime(true) < $until) {
+            self::turnTheLoop(1);
+            usleep(5_000);
+        }
+
+        $this->assertStringContainsString('Retrying (1/3) in 2s... (escape to cancel)', $this->screen());
+
+        $this->type(self::ESC);
+        self::turnTheLoop();
     }
 
     public function testWhatIsTypedDuringARetryJoinsThatPromptAndItSettlesOnce(): void
@@ -4547,5 +4597,17 @@ final class InteractiveModeTest extends TestCase
         } finally {
             putenv('PIG_TUI_MODE');
         }
+    }
+
+    /**
+     * The messages that were said: the transcript without its system messages, which carry the
+     * prompt and the tool declarations (the first prompt declares this agent's tools in one).
+     *
+     * @param list<mixed> $messages
+     * @return list<mixed>
+     */
+    private static function said(array $messages): array
+    {
+        return array_values(array_filter($messages, static fn (mixed $message): bool => !$message instanceof \Pig\Ai\SystemMessage));
     }
 }

@@ -7,12 +7,16 @@ namespace Pig\CodingAgent;
 use Closure;
 use Pig\Agent\Agent;
 use Pig\Agent\AgentOptions;
+use Pig\Agent\AgentTool;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
+use Pig\Ai\SystemMessage;
+use Pig\Ai\Tool;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\Transcript;
 use Pig\CodingAgent\CustomTools\CustomToolApi;
 use Pig\CodingAgent\CustomTools\CustomToolLoader;
 use Pig\CodingAgent\CustomTools\CustomToolSet;
@@ -114,7 +118,7 @@ final class CodingAgent
         // a `tool_call` hook guards a tool somebody wrote exactly as it guards `bash`.
         // The built-ins come first: they are what the system prompt lists in that order.
         $agent->setThinkingLevel($thinking);
-        (new ToolLoadout(
+        $loadout = new ToolLoadout(
             $agent,
             $cwd,
             $tools,
@@ -124,7 +128,21 @@ final class CodingAgent
             $skills,
             $systemPrompt,
             $appendSystemPrompt,
-        ))->apply();
+        );
+        $loadout->apply();
+
+        // The prompt and the tools as the transcript's leading system message — upstream's agent
+        // seeds one from `initialState.systemPrompt` and `tools` (`createInitialSystemMessage()`),
+        // here with the prompt as its sections so that a later change can replace one of them. An
+        // agent driven through an `AgentSession` starts from an empty transcript instead (see
+        // `session()`): the session writes the prompt in itself, as the first entry of its file.
+        $agent->replaceMessages([new SystemMessage(
+            '',
+            $loadout->systemPromptSections(),
+            array_map(static fn (AgentTool $tool): Tool => Transcript::toToolDeclaration($tool->definition()), $agent->tools()) ?: null,
+            null,
+            0,
+        )]);
 
         return $agent;
     }
@@ -466,6 +484,13 @@ final class CodingAgent
         // filtered by whatever an extension narrowed the active set to.
         $loadout = new ToolLoadout($agent, $cwd, $builtIn, $customTools, $hooks, $contextFiles, $skills);
         $customTools->onChange(static fn () => $loadout->apply());
+        $loadout->apply();
+
+        // Upstream's `createAgentSession()` starts the agent with `systemPrompt: ""` and `tools: []`
+        // and lets the session declare both: its first prompt carries the whole prompt as a system
+        // message, which the session file records as its first entry. `create()`'s seeded leading
+        // message would be in the transcript and never in the file, so it is taken out here.
+        $agent->replaceMessages([]);
 
         $session = new AgentSession($agent, $cwd, $store, $settings, $hooks, $fileCommands, $scope, auth: $auth, loadout: $loadout, projectTrusted: $projectTrusted);
 
@@ -607,7 +632,10 @@ final class CodingAgent
                 continue;
             }
 
-            if ($message instanceof UserMessage
+            // System messages pass through: they carry the prompt and the tool declarations
+            // (upstream's `convertToLlm()` keeps `system` with the other three LLM roles).
+            if ($message instanceof SystemMessage
+                || $message instanceof UserMessage
                 || $message instanceof AssistantMessage
                 || $message instanceof ToolResultMessage
             ) {

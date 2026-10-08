@@ -28,6 +28,7 @@ use Pig\Ai\Utils\PigUserAgent;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
+use Pig\Ai\Utils\Transcript;
 
 /**
  * Mistral's own API, `mistral-conversations` — upstream's `api/mistral-conversations.ts`.
@@ -326,7 +327,7 @@ final class MistralTest extends TestCase
         $url = $this->server->start([], closeAfter: false);
 
         $message = Async::run(function () use ($url): AssistantMessage {
-            $stream = (new Mistral())->stream($this->model(baseUrl: $url), new Context([new UserMessage('hi')]), new MistralOptions(apiKey: 'k', timeoutMs: 150));
+            $stream = (new Mistral())->stream($this->model(baseUrl: $url), Transcript::normalizeContext(new Context([new UserMessage('hi')])), new MistralOptions(apiKey: 'k', timeoutMs: 150));
 
             foreach ($stream as $ignored) {
             }
@@ -353,7 +354,7 @@ final class MistralTest extends TestCase
         $url = $this->server->start($pieces);
 
         $message = Async::run(function () use ($url): AssistantMessage {
-            $stream = (new Mistral())->stream($this->model(baseUrl: $url), new Context([new UserMessage('hi')]), new MistralOptions(apiKey: 'k', timeoutMs: 30));
+            $stream = (new Mistral())->stream($this->model(baseUrl: $url), Transcript::normalizeContext(new Context([new UserMessage('hi')])), new MistralOptions(apiKey: 'k', timeoutMs: 30));
 
             foreach ($stream as $ignored) {
             }
@@ -412,7 +413,7 @@ final class MistralTest extends TestCase
         $model = new Model($model->id, $model->name, $model->api, $model->provider, rtrim($url, '/'), $model->contextWindow, $model->maxTokens, $model->reasoning, $model->input, $model->pricing, $model->headers, $model->compat, $model->thinkingLevelMap);
 
         Async::run(function () use ($model, $context, $options): void {
-            $stream = (new Mistral())->stream($model, $context, $options ?? new MistralOptions(apiKey: 'test-key'));
+            $stream = (new Mistral())->stream($model, Transcript::normalizeContext($context), $options ?? new MistralOptions(apiKey: 'test-key'));
 
             foreach ($stream as $ignored) {
             }
@@ -442,7 +443,7 @@ final class MistralTest extends TestCase
     private function collect(string $url): array
     {
         return Async::run(function () use ($url): array {
-            $stream = (new Mistral())->stream($this->model(baseUrl: $url), new Context([new UserMessage('hi')]), new MistralOptions(apiKey: 'test-key'));
+            $stream = (new Mistral())->stream($this->model(baseUrl: $url), Transcript::normalizeContext(new Context([new UserMessage('hi')])), new MistralOptions(apiKey: 'test-key'));
             $types = [];
 
             foreach ($stream as $event) {

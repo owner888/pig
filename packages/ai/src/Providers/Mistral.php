@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Pig\Ai\Providers;
 
 use Pig\Ai\AssistantMessage;
-use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
@@ -13,9 +12,11 @@ use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
+use Pig\Ai\OpenAiCompat;
 use Pig\Ai\ProviderError;
 use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
+use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\TextDeltaEvent;
 use Pig\Ai\TextEndEvent;
@@ -30,6 +31,7 @@ use Pig\Ai\ToolCallDeltaEvent;
 use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
 use Pig\Ai\ToolResultMessage;
+use Pig\Ai\TranscriptContext;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
@@ -37,9 +39,13 @@ use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
 use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\PigUserAgent;
+use Pig\Ai\Utils\TextDecoder;
 use Pig\Ai\Utils\ShortHash;
+use Pig\Ai\Utils\Text;
+use Pig\Ai\Utils\Transcript;
 use Pig\Ai\Utils\Utf8;
 use Pig\Async\AbortController;
+use Pig\Async\AbortError;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -71,9 +77,6 @@ use Throwable;
  * (`PigUserAgent`), and gives the response headers `timeoutMs` (60 s) to arrive — the headers only:
  * the stream after them is never cut off by a fixed deadline, which upstream changed for long
  * extended-thinking streams.
- *
- * Not ported: the `onPayload`, `onResponse` and `onProviderStreamEvent` hooks and the per-request
- * `headers`, which pig's stream options do not have for any provider.
  */
 final class Mistral
 {
@@ -93,7 +96,7 @@ final class Mistral
     }
 
     /** Returns at once; the response fills in as it arrives. */
-    public function stream(Model $model, Context $context, ?MistralOptions $options = null): AssistantMessageEventStream
+    public function stream(Model $model, TranscriptContext $context, ?MistralOptions $options = null): AssistantMessageEventStream
     {
         $stream = new AssistantMessageEventStream();
 
@@ -107,9 +110,16 @@ final class Mistral
     private function run(
         AssistantMessageEventStream $stream,
         Model $model,
-        Context $context,
+        TranscriptContext $context,
         ?MistralOptions $options,
     ): void {
+        // Upstream's `normalizedContext = resolveTranscript(context,
+        // model.compat?.supportsMidConvoSystemMessages)`. A `models.json` block on a
+        // `mistral-conversations` model is read into an `OpenAiCompat`, which carries the flag.
+        $context = Transcript::resolveTranscript(
+            $context,
+            $model->compat instanceof OpenAiCompat ? $model->compat->supportsMidConvoSystemMessages : null,
+        );
         // Upstream's `createOutput()`: `stopReason: "pending"` until a `finish_reason` arrives.
         $builder = new AssistantMessageBuilder($model);
         $builder->setStopReason(StopReason::Pending);
@@ -130,19 +140,16 @@ final class Mistral
             );
 
             $payload = self::buildChatPayload($model, $context, $transformedMessages, $options);
-            $response = $this->requestMistralStream(new Request(
-                'POST',
-                rtrim($model->baseUrl, '/') . '/v1/chat/completions',
-                self::buildMistralHeaders($model, $apiKey, $options),
-                self::encode($payload),
-            ), $signal, $options?->timeoutMs ?? 60_000);
+            $nextPayload = $options?->onPayload !== null ? ($options->onPayload)($payload, $model) : null;
 
-            if (!$response->isSuccessful()) {
-                throw new ProviderError(self::formatMistralHttpError($response->status, $response->body->all(), $response->reason));
+            if ($nextPayload !== null) {
+                $payload = (array) $nextPayload;
             }
 
+            $response = $this->requestMistralStream($model, $payload, $apiKey, $options);
+
             $stream->push(new StartEvent($builder->snapshot()));
-            $this->consumeChatStream($builder, $stream, self::readMistralEvents($response->body));
+            $this->consumeChatStream($builder, $stream, self::readMistralEvents($response->body, $signal), $model, $options?->onProviderStreamEvent);
 
             if ($signal?->aborted() ?? false) {
                 throw new ProviderError('Request was aborted');
@@ -163,8 +170,13 @@ final class Mistral
             $stream->end();
         } catch (Throwable $error) {
             // A provider never throws at its caller: the failure is the stream's result.
-            // `formatMistralError()` for anything but a refused request is the error's own message.
-            $builder->fail($error->getMessage(), $signal?->aborted() ?? false);
+            // `formatMistralError()` for anything but a refused request is the error's own message —
+            // for an abort, the signal's reason that `fetch` and `readMistralEvents()` throw, the
+            // DOMException "This operation was aborted".
+            $builder->fail(
+                SdkRequest::errorMessage($error),
+                $signal?->aborted() ?? false,
+            );
             $failed = $builder->snapshot();
             $stream->push(new ErrorEvent($failed->stopReason, $failed));
             $stream->end();
@@ -172,14 +184,31 @@ final class Mistral
     }
 
     /**
-     * Upstream's `requestMistralStream()` up to the response: "The timeout covers only the wait for
-     * response headers. Long streams (e.g. extended thinking) must not be cut off by a fixed
-     * deadline; body stalls are left to the HTTP client idle timeout." A deadline that passes before
-     * the headers, with the caller's own signal not aborted, is `Mistral response headers timed out
-     * after <ms>ms`. The caller's signal keeps reaching the body afterwards; the deadline does not.
+     * Upstream's `requestMistralStream()` up to the response.
+     *
+     * The URL is `new URL("v1/chat/completions", baseUrl)` after the base URL's path has had its
+     * trailing slashes replaced by one (`chatCompletionsUrl()`).
+     *
+     * "The timeout covers only the wait for response headers. Long streams (e.g. extended thinking)
+     * must not be cut off by a fixed deadline; body stalls are left to the HTTP client idle timeout."
+     * A deadline that passes before the headers, with the caller's own signal not aborted, is
+     * `Mistral response headers timed out after <ms>ms`. The caller's signal keeps reaching the body
+     * afterwards; the deadline does not. A fetch that fails otherwise is Node's `fetch failed`.
+     *
+     * `onResponse` hears every response, a refusal included, before it is read.
+     *
+     * @param array<string, mixed> $payload
      */
-    private function requestMistralStream(Request $request, ?AbortSignal $signal, int $timeoutMs): Response
+    private function requestMistralStream(Model $model, array $payload, string $apiKey, ?MistralOptions $options): Response
     {
+        $signal = $options?->signal;
+        $request = new Request(
+            'POST',
+            self::chatCompletionsUrl($model->baseUrl),
+            self::buildMistralHeaders($model, $apiKey, $options),
+            self::encode(self::toMistralWirePayload($payload)),
+        );
+        $timeoutMs = $options?->timeoutMs ?? 60_000;
         $combined = new AbortController();
         $timedOut = false;
         $timer = Loop::get()->delay($timeoutMs / 1000, static function () use ($combined, &$timedOut): void {
@@ -191,7 +220,7 @@ final class Mistral
         });
 
         try {
-            return $this->http->send($request, $combined->signal);
+            $response = $this->http->send($request, $combined->signal);
         } catch (Throwable $error) {
             if ($listener !== null) {
                 $signal?->removeListener($listener);
@@ -201,10 +230,70 @@ final class Mistral
                 throw new ProviderError("Mistral response headers timed out after {$timeoutMs}ms", previous: $error);
             }
 
-            throw $error;
+            if ($signal?->aborted() ?? false) {
+                throw $error;
+            }
+
+            throw new ProviderError('fetch failed', previous: $error);
         } finally {
             Loop::get()->cancel($timer);
         }
+
+        if ($options?->onResponse !== null) {
+            ($options->onResponse)(['status' => $response->status, 'headers' => $response->headers], $model);
+        }
+
+        if (!$response->isSuccessful()) {
+            throw new ProviderError(self::formatMistralHttpError($response->status, $response->body->all(), $response->reason));
+        }
+
+        return $response;
+    }
+
+    /**
+     * `const baseUrl = new URL(model.baseUrl); baseUrl.pathname = `${pathname.replace(/\/+$/u, "")}/`;
+     * new URL("v1/chat/completions", baseUrl)` — WHATWG URL resolution for this one relative path:
+     * the scheme and host lowercased, a default port dropped, dot segments in the base path resolved,
+     * and the base URL's query and fragment gone, as resolving a path-relative reference drops them.
+     * A base URL that does not parse is `new URL()`'s `TypeError: Invalid URL`.
+     */
+    private static function chatCompletionsUrl(string $baseUrl): string
+    {
+        $parts = parse_url(JsJson::trim($baseUrl));
+
+        if ($parts === false || !isset($parts['scheme'], $parts['host']) || $parts['host'] === '') {
+            throw new ProviderError('Invalid URL');
+        }
+
+        $scheme = strtolower($parts['scheme']);
+        $port = $parts['port'] ?? null;
+
+        if (($scheme === 'http' && $port === 80) || ($scheme === 'https' && $port === 443)) {
+            $port = null;
+        }
+
+        $userinfo = isset($parts['user']) ? $parts['user'] . (isset($parts['pass']) ? ':' . $parts['pass'] : '') . '@' : '';
+        $segments = [];
+
+        // The path's own segments, the leading slash's empty one left out; an empty segment inside
+        // the path (`/a//b`) is kept, as WHATWG keeps it.
+        foreach (array_slice(explode('/', (string) preg_replace('#/+$#', '', $parts['path'] ?? '')), 1) as $segment) {
+            if ($segment === '.' || strtolower($segment) === '%2e') {
+                continue;
+            }
+
+            if ($segment === '..' || in_array(strtolower($segment), ['.%2e', '%2e.', '%2e%2e'], true)) {
+                array_pop($segments);
+
+                continue;
+            }
+
+            $segments[] = $segment;
+        }
+
+        $path = '/' . ($segments === [] ? '' : implode('/', $segments) . '/');
+
+        return $scheme . '://' . $userinfo . strtolower($parts['host']) . ($port !== null ? ":{$port}" : '') . $path . 'v1/chat/completions';
     }
 
     /**
@@ -280,9 +369,10 @@ final class Mistral
     }
 
     /**
-     * Upstream's `buildMistralHeaders()`: the four fixed headers (`User-Agent` among them), the model's own and then the
-     * request's over them (by name, whatever the case), and `x-affinity` — the session id — when
-     * caching is on and neither set one.
+     * Upstream's `buildMistralHeaders()`: the four fixed headers (`User-Agent` among them), then the
+     * model's own and the request's over them — `applyMistralHeaderOverrides()`, by name whatever the
+     * case, a null deleting — and `x-affinity`, the session id, when caching is on and neither named
+     * one.
      *
      * @return array<string, string>
      */
@@ -296,11 +386,25 @@ final class Mistral
             'content-type' => 'application/json',
         ];
 
-        foreach ($model->headers as $name => $value) {
-            $headers[strtolower($name)] = $value;
+        foreach ([$model->headers, $options?->headers ?? []] as $overrides) {
+            foreach ($overrides as $name => $value) {
+                if ($value === null) {
+                    unset($headers[strtolower((string) $name)]);
+                } else {
+                    $headers[strtolower((string) $name)] = $value;
+                }
+            }
         }
 
-        if (self::shouldUsePromptCaching($options) && !array_key_exists('x-affinity', $headers)) {
+        $hasExplicitAffinity = false;
+
+        foreach ([$model->headers, $options?->headers ?? []] as $overrides) {
+            foreach (array_keys($overrides) as $name) {
+                $hasExplicitAffinity = $hasExplicitAffinity || strtolower((string) $name) === 'x-affinity';
+            }
+        }
+
+        if (self::shouldUsePromptCaching($options) && !$hasExplicitAffinity) {
             $headers['x-affinity'] = (string) $options?->sessionId;
         }
 
@@ -326,22 +430,25 @@ final class Mistral
     }
 
     /**
-     * Upstream's `buildChatPayload()` written straight in the wire's names — what its
-     * `toMistralWirePayload()` produces, key order included: the renamed keys after the rest.
+     * Upstream's `buildChatPayload()`: the payload in the SDK-style camelCase names (`maxTokens`,
+     * `toolChoice`, `toolCalls`, `imageUrl`, …) that `onPayload` is shown, which
+     * `toMistralWirePayload()` then renames to the wire's.
      *
      * @param list<mixed> $messages the transformed conversation
      * @return array<string, mixed>
      */
-    private static function buildChatPayload(Model $model, Context $context, array $messages, ?MistralOptions $options): array
+    private static function buildChatPayload(Model $model, TranscriptContext $context, array $messages, ?MistralOptions $options): array
     {
         $payload = [
             'model' => $model->id,
             'stream' => true,
-            'messages' => self::toChatMessages($context->systemPrompt, $messages, $model->acceptsImages()),
+            'messages' => self::toChatMessages($messages, $model->acceptsImages()),
         ];
 
-        if ($context->tools !== []) {
-            $payload['tools'] = self::toFunctionTools($context->tools);
+        $currentTools = Transcript::getCurrentTools($context->messages);
+
+        if ($currentTools !== []) {
+            $payload['tools'] = self::toFunctionTools($currentTools);
         }
 
         if ($options?->temperature !== null) {
@@ -349,26 +456,146 @@ final class Mistral
         }
 
         if ($options?->maxTokens !== null) {
-            $payload['max_tokens'] = $options->maxTokens;
+            $payload['maxTokens'] = $options->maxTokens;
         }
 
-        if ($options?->toolChoice !== null && $options->toolChoice !== '') {
-            $payload['tool_choice'] = $options->toolChoice;
-        }
-
-        if ($options?->reasoningEffort !== null && $options->reasoningEffort !== '') {
-            $payload['reasoning_effort'] = $options->reasoningEffort;
+        if ($options?->toolChoice !== null && $options->toolChoice !== '' && $options->toolChoice !== []) {
+            $payload['toolChoice'] = self::mapToolChoice($options->toolChoice);
         }
 
         if ($options?->promptMode !== null && $options->promptMode !== '') {
-            $payload['prompt_mode'] = $options->promptMode;
+            $payload['promptMode'] = $options->promptMode;
+        }
+
+        if ($options?->reasoningEffort !== null && $options->reasoningEffort !== '') {
+            $payload['reasoningEffort'] = $options->reasoningEffort;
         }
 
         if (self::shouldUsePromptCaching($options)) {
-            $payload['prompt_cache_key'] = $options?->sessionId;
+            $payload['promptCacheKey'] = $options?->sessionId;
         }
 
         return $payload;
+    }
+
+    /**
+     * Upstream's `mapToolChoice()`: the four names as they are, anything else `{type: "function",
+     * function: {name}}` — the object form, which names one tool.
+     *
+     * @param string|array{type?: string, function: array{name: string}} $choice
+     * @return string|array{type: string, function: array{name: mixed}}
+     */
+    private static function mapToolChoice(string|array $choice): string|array
+    {
+        if (in_array($choice, ['auto', 'none', 'any', 'required'], true)) {
+            return $choice;
+        }
+
+        $function = is_array($choice) ? ($choice['function'] ?? null) : null;
+
+        return ['type' => 'function', 'function' => ['name' => is_array($function) ? ($function['name'] ?? null) : null]];
+    }
+
+    /**
+     * Upstream's `toMistralWirePayload()`: the SDK-style camelCase names `onPayload` sees, renamed to
+     * the wire's — each renamed key moved to the end, in this order — and the messages and their
+     * content chunks likewise (`toMistralWireMessage()`, `toMistralWireContentChunk()`).
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    private static function toMistralWirePayload(array $payload): array
+    {
+        $wirePayload = $payload;
+
+        foreach ([
+            ['topP', 'top_p'],
+            ['maxTokens', 'max_tokens'],
+            ['randomSeed', 'random_seed'],
+            ['responseFormat', 'response_format'],
+            ['toolChoice', 'tool_choice'],
+            ['presencePenalty', 'presence_penalty'],
+            ['frequencyPenalty', 'frequency_penalty'],
+            ['parallelToolCalls', 'parallel_tool_calls'],
+            ['reasoningEffort', 'reasoning_effort'],
+            ['promptMode', 'prompt_mode'],
+            ['promptCacheKey', 'prompt_cache_key'],
+            ['safePrompt', 'safe_prompt'],
+        ] as [$source, $target]) {
+            self::remapMistralProperty($wirePayload, $source, $target);
+        }
+
+        $wirePayload['messages'] = array_map(self::toMistralWireMessage(...), is_array($payload['messages'] ?? null) ? $payload['messages'] : []);
+        $responseFormat = $wirePayload['response_format'] ?? null;
+
+        if (is_array($responseFormat) && !array_is_list($responseFormat)) {
+            self::remapMistralProperty($responseFormat, 'jsonSchema', 'json_schema');
+            $jsonSchema = $responseFormat['json_schema'] ?? null;
+
+            if (is_array($jsonSchema) && !array_is_list($jsonSchema)) {
+                self::remapMistralProperty($jsonSchema, 'schemaDefinition', 'schema');
+                $responseFormat['json_schema'] = $jsonSchema;
+            }
+
+            $wirePayload['response_format'] = $responseFormat;
+        }
+
+        return $wirePayload;
+    }
+
+    /** Upstream's `toMistralWireMessage()`. */
+    private static function toMistralWireMessage(mixed $message): mixed
+    {
+        if (!is_array($message)) {
+            return $message;
+        }
+
+        self::remapMistralProperty($message, 'toolCalls', 'tool_calls');
+        self::remapMistralProperty($message, 'toolCallId', 'tool_call_id');
+
+        if (is_array($message['content'] ?? null)) {
+            $message['content'] = array_map(self::toMistralWireContentChunk(...), $message['content']);
+        }
+
+        return $message;
+    }
+
+    /** Upstream's `toMistralWireContentChunk()`. */
+    private static function toMistralWireContentChunk(mixed $chunk): mixed
+    {
+        if (!is_array($chunk)) {
+            return $chunk;
+        }
+
+        foreach ([
+            ['imageUrl', 'image_url'],
+            ['documentUrl', 'document_url'],
+            ['documentName', 'document_name'],
+            ['fileId', 'file_id'],
+            ['referenceIds', 'reference_ids'],
+            ['inputAudio', 'input_audio'],
+        ] as [$source, $target]) {
+            self::remapMistralProperty($chunk, $source, $target);
+        }
+
+        return $chunk;
+    }
+
+    /**
+     * Upstream's `remapMistralProperty()`: `record[target] = record[source]; delete record[source]` —
+     * the value moves to the end, or stays where `target` already was.
+     *
+     * @param array<string, mixed> $record
+     */
+    private static function remapMistralProperty(array &$record, string $source, string $target): void
+    {
+        if (!array_key_exists($source, $record)) {
+            return;
+        }
+
+        $value = $record[$source];
+        unset($record[$source]);
+        $record[$target] = $value;
     }
 
     /**
@@ -397,21 +624,27 @@ final class Mistral
     }
 
     /**
-     * Upstream's `toChatMessages()`, in the wire's names. The system prompt is pig's
-     * `Context::$systemPrompt` where upstream's is the leading system message.
+     * Upstream's `toChatMessages()`, in the wire's names. The leading system message is the whole
+     * prompt and a later one an update; either goes as a `system` message when it has text.
      *
      * @param list<mixed> $messages
      * @return list<array<string, mixed>>
      */
-    private static function toChatMessages(?string $systemPrompt, array $messages, bool $supportsImages): array
+    private static function toChatMessages(array $messages, bool $supportsImages): array
     {
         $result = [];
 
-        if ($systemPrompt !== null && $systemPrompt !== '') {
-            $result[] = ['role' => 'system', 'content' => Utf8::sanitize($systemPrompt)];
-        }
+        foreach ($messages as $index => $msg) {
+            if ($msg instanceof SystemMessage) {
+                $text = $index === 0 ? Text::getSystemMessageText($msg) : Text::renderSystemMessageUpdate($msg);
 
-        foreach ($messages as $msg) {
+                if ($text !== '') {
+                    $result[] = ['role' => 'system', 'content' => Utf8::sanitize($text)];
+                }
+
+                continue;
+            }
+
             if ($msg instanceof UserMessage) {
                 $hadImages = false;
                 $content = [];
@@ -421,7 +654,7 @@ final class Mistral
                         $hadImages = true;
 
                         if ($supportsImages) {
-                            $content[] = ['type' => 'image_url', 'image_url' => "data:{$item->mimeType};base64,{$item->data}"];
+                            $content[] = ['type' => 'image_url', 'imageUrl' => "data:{$item->mimeType};base64,{$item->data}"];
                         }
 
                         continue;
@@ -490,7 +723,7 @@ final class Mistral
                 }
 
                 if ($toolCalls !== []) {
-                    $assistantMessage['tool_calls'] = $toolCalls;
+                    $assistantMessage['toolCalls'] = $toolCalls;
                 }
 
                 if ($contentParts !== [] || $toolCalls !== []) {
@@ -519,7 +752,7 @@ final class Mistral
 
             foreach ($msg->content as $part) {
                 if ($supportsImages && $part instanceof ImageContent) {
-                    $toolContent[] = ['type' => 'image_url', 'image_url' => "data:{$part->mimeType};base64,{$part->data}"];
+                    $toolContent[] = ['type' => 'image_url', 'imageUrl' => "data:{$part->mimeType};base64,{$part->data}"];
                 }
             }
 
@@ -527,7 +760,7 @@ final class Mistral
                 'role' => 'tool',
                 'name' => $msg->toolName,
                 'content' => $toolContent,
-                'tool_call_id' => $msg->toolCallId,
+                'toolCallId' => $msg->toolCallId,
             ];
         }
 
@@ -567,12 +800,18 @@ final class Mistral
      * @param iterable<string> $body
      * @return iterable<array<string, mixed>>
      */
-    private static function readMistralEvents(iterable $body): iterable
+    private static function readMistralEvents(iterable $body, ?AbortSignal $signal = null): iterable
     {
         $buffer = '';
+        $decoder = new TextDecoder();
 
         foreach ($body as $chunk) {
-            $buffer .= $chunk;
+            // `if (signal?.aborted) throw signal.reason`, after each read.
+            if ($signal?->aborted() ?? false) {
+                throw new AbortError($signal->reason());
+            }
+
+            $buffer .= $decoder->decode($chunk);
 
             while (preg_match(self::EVENT_BOUNDARY, $buffer, $match, PREG_OFFSET_CAPTURE) === 1) {
                 [$boundary, $index] = $match[0];
@@ -589,7 +828,25 @@ final class Mistral
             }
         }
 
-        if (trim($buffer) !== '') {
+        // The `done` read: `decoder.decode()` flushes what was held.
+        $buffer .= $decoder->decode('', false);
+
+        while (preg_match(self::EVENT_BOUNDARY, $buffer, $match, PREG_OFFSET_CAPTURE) === 1) {
+            [$boundary, $index] = $match[0];
+            $event = self::parseMistralEvent(substr($buffer, 0, $index));
+            $buffer = substr($buffer, $index + strlen($boundary));
+
+            if ($event === true) {
+                return;
+            }
+
+            if ($event !== null) {
+                yield $event;
+            }
+        }
+
+        // `if (buffer.trim())` — JavaScript's trim.
+        if (JsJson::trim($buffer) !== '') {
             $event = self::parseMistralEvent($buffer);
 
             if (is_array($event)) {
@@ -645,6 +902,8 @@ final class Mistral
         AssistantMessageBuilder $builder,
         AssistantMessageEventStream $stream,
         iterable $events,
+        Model $model,
+        ?\Closure $onProviderStreamEvent = null,
     ): void {
         // The text or thinking block being written, as [content index, kind].
         $currentBlock = null;
@@ -664,6 +923,10 @@ final class Mistral
         };
 
         foreach ($events as $chunk) {
+            if ($onProviderStreamEvent !== null) {
+                $onProviderStreamEvent($chunk, $model);
+            }
+
             // "Mistral's streamed CompletionChunk carries an id field. Keep the first non-empty one,
             // mirroring how OpenAI-style streaming exposes a stable response identifier per stream."
             if (($builder->responseId() ?? '') === '' && is_string($chunk['id'] ?? null) && $chunk['id'] !== '') {

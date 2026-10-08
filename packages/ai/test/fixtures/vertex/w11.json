@@ -1,0 +1,328 @@
+{
+ "scenario": {
+  "now": 1767323045000,
+  "simple": false,
+  "model": {
+   "id": "gemini-2.5-pro",
+   "name": "gemini-2.5-pro",
+   "api": "google-vertex",
+   "provider": "google-vertex",
+   "baseUrl": "SERVER",
+   "reasoning": true,
+   "input": [
+    "text",
+    "image"
+   ],
+   "cost": {
+    "input": 0.3,
+    "output": 2.5,
+    "cacheRead": 0.03,
+    "cacheWrite": 0
+   },
+   "contextWindow": 1048576,
+   "maxTokens": 65536
+  },
+  "context": {
+   "systemPrompt": "Be brief.",
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "look"
+      },
+      {
+       "type": "image",
+       "data": "iVBORw0KGgpmYWtlaW1hZ2U=",
+       "mimeType": "image/png"
+      }
+     ],
+     "timestamp": 1
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "thinking",
+       "thinking": "hmm",
+       "thinkingSignature": "c2ln"
+      },
+      {
+       "type": "text",
+       "text": "Reading"
+      },
+      {
+       "type": "toolCall",
+       "id": "read_1",
+       "name": "read",
+       "arguments": {
+        "path": "a"
+       },
+       "thoughtSignature": "c2ln"
+      }
+     ],
+     "api": "google-vertex",
+     "provider": "google-vertex",
+     "model": "gemini-2.5-flash",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "toolUse",
+     "timestamp": 2
+    },
+    {
+     "role": "toolResult",
+     "toolCallId": "read_1",
+     "toolName": "read",
+     "content": [
+      {
+       "type": "text",
+       "text": "body"
+      },
+      {
+       "type": "image",
+       "data": "iVBORw0KGgpmYWtlaW1hZ2U=",
+       "mimeType": "image/png"
+      }
+     ],
+     "isError": false,
+     "timestamp": 3
+    },
+    {
+     "role": "user",
+     "content": "next",
+     "timestamp": 4
+    }
+   ],
+   "tools": [
+    {
+     "name": "read",
+     "description": "Read a file",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    }
+   ]
+  },
+  "options": {
+   "apiKey": "<authenticated>",
+   "project": "p",
+   "location": "us-east1"
+  },
+  "env": {
+   "GOOGLE_APPLICATION_CREDENTIALS": "FIXTURES/gcp/user.json"
+  },
+  "responses": [
+   {
+    "headers": {
+     "content-type": "application/json"
+    },
+    "chunks": [
+     "{\"access_token\":\"ya29.TOKEN\",\"expires_in\":3599,\"token_type\":\"Bearer\"}"
+    ]
+   },
+   {
+    "chunks": [
+     {
+      "responseId": "rid",
+      "candidates": [
+       {
+        "content": {
+         "role": "model",
+         "parts": [
+          {
+           "text": "think",
+           "thought": true,
+           "thoughtSignature": "TS1"
+          }
+         ]
+        }
+       }
+      ]
+     },
+     {
+      "candidates": [
+       {
+        "content": {
+         "role": "model",
+         "parts": [
+          {
+           "text": "Hi"
+          },
+          {
+           "functionCall": {
+            "name": "read",
+            "args": {
+             "path": "a"
+            }
+           },
+           "thoughtSignature": "TS2"
+          }
+         ]
+        },
+        "finishReason": "STOP"
+       }
+      ],
+      "usageMetadata": {
+       "promptTokenCount": 50,
+       "cachedContentTokenCount": 10,
+       "candidatesTokenCount": 5,
+       "thoughtsTokenCount": 3,
+       "totalTokenCount": 58
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "upstream": {
+  "requests": [
+   {
+    "path": "/token",
+    "originalUrl": "https://oauth2.googleapis.com/token",
+    "body": {
+     "refresh_token": "1//refresh",
+     "client_id": "cid.apps.googleusercontent.com",
+     "client_secret": "csecret",
+     "grant_type": "refresh_token"
+    },
+    "headers": {
+     "content-type": "application/x-www-form-urlencoded;charset=UTF-8"
+    },
+    "userAgent": "google-api-nodejs-client/10.9.1"
+   },
+   {
+    "path": "/v1/publishers/google/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+    "originalUrl": "http://127.0.0.1:36915/v1/publishers/google/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+    "body": "{\"contents\":[{\"parts\":[{\"text\":\"look\"},{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"iVBORw0KGgpmYWtlaW1hZ2U=\"}}],\"role\":\"user\"},{\"parts\":[{\"text\":\"hmm\"},{\"text\":\"Reading\"},{\"functionCall\":{\"name\":\"read\",\"args\":{\"path\":\"a\"}}}],\"role\":\"model\"},{\"parts\":[{\"functionResponse\":{\"name\":\"read\",\"response\":{\"output\":\"body\"}}}],\"role\":\"user\"},{\"parts\":[{\"text\":\"Tool result image:\"},{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"iVBORw0KGgpmYWtlaW1hZ2U=\"}}],\"role\":\"user\"},{\"parts\":[{\"text\":\"next\"}],\"role\":\"user\"}],\"systemInstruction\":{\"parts\":[{\"text\":\"Be brief.\"}],\"role\":\"user\"},\"tools\":[{\"functionDeclarations\":[{\"name\":\"read\",\"description\":\"Read a file\",\"parametersJsonSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}]}],\"generationConfig\":{}}",
+    "headers": {
+     "authorization": "Bearer ya29.TOKEN",
+     "x-goog-user-project": "qp-user",
+     "content-type": "application/json"
+    },
+    "userAgent": "pi (linux 6.18.44-fc-v80; x64)"
+   }
+  ],
+  "events": [
+   [
+    "start",
+    null,
+    null
+   ],
+   [
+    "thinking_start",
+    0,
+    null
+   ],
+   [
+    "thinking_delta",
+    0,
+    "think"
+   ],
+   [
+    "thinking_end",
+    0,
+    null
+   ],
+   [
+    "text_start",
+    1,
+    null
+   ],
+   [
+    "text_delta",
+    1,
+    "Hi"
+   ],
+   [
+    "text_end",
+    1,
+    null
+   ],
+   [
+    "toolcall_start",
+    2,
+    null
+   ],
+   [
+    "toolcall_delta",
+    2,
+    "{\"path\":\"a\"}"
+   ],
+   [
+    "toolcall_end",
+    2,
+    null
+   ],
+   [
+    "done",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "think",
+     "thinkingSignature": "TS1"
+    },
+    {
+     "type": "text",
+     "text": "Hi"
+    },
+    {
+     "type": "toolCall",
+     "id": "read_1767323045000_1",
+     "name": "read",
+     "arguments": {
+      "path": "a"
+     },
+     "thoughtSignature": "TS2"
+    }
+   ],
+   "api": "google-vertex",
+   "provider": "google-vertex",
+   "model": "gemini-2.5-pro",
+   "usage": {
+    "input": 40,
+    "output": 8,
+    "cacheRead": 10,
+    "cacheWrite": 0,
+    "reasoning": 3,
+    "totalTokens": 58,
+    "cost": {
+     "input": 1.2e-05,
+     "output": 2e-05,
+     "cacheRead": 3e-07,
+     "cacheWrite": 0,
+     "total": 3.2300000000000006e-05
+    }
+   },
+   "stopReason": "toolUse",
+   "responseId": "rid",
+   "rawStopReason": "STOP"
+  }
+ }
+}

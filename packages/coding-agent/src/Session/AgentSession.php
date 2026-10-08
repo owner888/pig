@@ -9,12 +9,14 @@ use Pig\Agent\Agent;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentEvent;
+use Pig\Agent\AgentLoopTurnUpdate;
 use Pig\Agent\AgentStartEvent;
 use Pig\Agent\AgentState;
 use Pig\Agent\AgentToolResult;
 use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\MessageUpdateEvent;
+use Pig\Agent\PrepareNextTurnContext;
 use Pig\Agent\QueueMode;
 use Pig\Agent\ThinkingLevel;
 use Pig\Agent\TurnEndEvent;
@@ -31,11 +33,16 @@ use Pig\Ai\ReasoningEffort;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StopReason;
 use Pig\Ai\Stream;
+use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
+use Pig\Ai\Timestamp;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
+use Pig\Ai\TranscriptContext;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\Overflow;
+use Pig\Ai\Utils\Retry;
+use Pig\Ai\Utils\Transcript;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
@@ -64,12 +71,9 @@ use Pig\CodingAgent\Hooks\Events\SessionSwitchEvent;
 use Pig\CodingAgent\Hooks\Events\SessionTreeEvent;
 use Pig\CodingAgent\Hooks\Events\TurnEndEvent as HookTurnEnd;
 use Pig\CodingAgent\Hooks\Events\AfterProviderResponseEvent;
-use Pig\CodingAgent\Hooks\Events\BeforeRetryEvent;
+use Pig\CodingAgent\Hooks\Events\ProviderStreamEvent;
 use Pig\CodingAgent\Hooks\Events\ModelSelectEvent;
 use Pig\CodingAgent\Hooks\Events\ThinkingLevelSelectEvent;
-use Pig\Ai\Http\HttpClient;
-use Pig\Ai\Http\Request;
-use Pig\Ai\Http\Response;
 use Pig\CodingAgent\Hooks\Events\TurnStartEvent as HookTurnStart;
 use Pig\CodingAgent\Hooks\HookError;
 use Pig\CodingAgent\Hooks\HookRunner;
@@ -77,6 +81,7 @@ use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\ModelResolver;
 use Pig\CodingAgent\Prompt\FileCommand;
 use Pig\CodingAgent\Prompt\SlashCommands;
+use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\Agent\AgentTool;
@@ -209,6 +214,60 @@ final class AgentSession
         // identity is the file's, so a session that is not written down has none.
         $this->agent->sessionId = $store?->id;
 
+        // Upstream's `createAgentSession()` builds the agent with the extension provider hooks as
+        // its `onPayload` / `onResponse` / `onProviderStreamEvent`, `maxRetryDelayMs` from the
+        // provider retry settings, and a `streamFn` that adds the request options
+        // (`buildRequestOptions()`). pig's agent is built before the session, so the session puts
+        // them on it here. Each reads `$this->hooks` when it runs, so a `/reload` that swaps the
+        // runner is picked up.
+        $this->agent->onPayload = fn (mixed $payload, Model $model): mixed => $this->hooks?->hasHandlers('before_provider_request') === true
+            ? $this->hooks->emitBeforeProviderRequest($payload)
+            : $payload;
+        $this->agent->onResponse = function (array $response, Model $model): void {
+            if ($this->hooks?->hasHandlers('after_provider_response') === true) {
+                $this->hooks->emit(new AfterProviderResponseEvent($response['status'], $response['headers']));
+            }
+        };
+        $this->agent->onProviderStreamEvent = function (mixed $data, Model $model): void {
+            if ($this->hooks?->hasHandlers('provider_stream_event') === true) {
+                $this->hooks->emit(new ProviderStreamEvent($model->provider, $model->api->value, $model->id, $data));
+            }
+        };
+        $this->agent->maxRetryDelayMs = $this->settings?->providerRetrySettings()['maxRetryDelayMs'] ?? 60_000;
+        $inner = $this->agent->streamFunction;
+        $this->agent->streamFunction = function (Model $model, TranscriptContext $context, ?SimpleStreamOptions $options) use ($inner): mixed {
+            $requestOptions = $this->buildRequestOptions($options ?? new SimpleStreamOptions());
+
+            return $inner !== null ? $inner($model, $context, $requestOptions) : Stream::simple($model, $context, $requestOptions);
+        };
+
+        // Upstream's `_installAgentNextTurnRefresh()`: before each turn after the first, the prompt
+        // sections the loadout wants now are diffed against the ones the transcript has, and a
+        // change goes in as a system message before the next request — the prompt follows a tool
+        // that `tool_search` loaded mid-run, or a `setActiveTools()`, without waiting for the next
+        // prompt. The tool declarations themselves are the loop's (`declareToolChanges()`). A
+        // previous hook on the agent is asked first, as upstream chains it.
+        $previousPrepareNextTurn = $this->agent->prepareNextTurnWithContext;
+        $previousPrepareNextTurnWithoutContext = $this->agent->prepareNextTurn;
+        $this->agent->prepareNextTurnWithContext = function (PrepareNextTurnContext $turn, ?AbortSignal $signal) use ($previousPrepareNextTurn, $previousPrepareNextTurnWithoutContext): ?AgentLoopTurnUpdate {
+            $previous = $previousPrepareNextTurn !== null
+                ? $previousPrepareNextTurn($turn, $signal)
+                : ($previousPrepareNextTurnWithoutContext !== null ? $previousPrepareNextTurnWithoutContext($signal) : null);
+            $context = $previous?->context ?? $turn->context;
+            $update = $this->preparePromptUpdate($context->messages);
+
+            if ($update === null) {
+                return $previous;
+            }
+
+            return new AgentLoopTurnUpdate(
+                $previous?->context,
+                [...($previous?->messages ?? []), $update],
+                $previous?->model,
+                $previous?->thinkingLevel,
+            );
+        };
+
         // What was chosen last time, applied here rather than by whoever built the agent: this
         // is the class that holds both the agent and the settings, and `setQueueMode()` right
         // below writes the setting through the same pair. A caller passing it into
@@ -220,10 +279,8 @@ final class AgentSession
 
         // `HookRunner::setSession()` existed and nothing called it, so `$ctx->session` was null
         // in every handler — a `HookContext` field documented and wired at one end only. The
-        // session is the thing that holds the runner, so it is the thing that tells the runner.
-        // Through `setHooks()`, which is also what installs the provider-traffic observer; the
-        // constructor's hooks going one way and a later `setHooks()` the other is the same field
-        // wired at one end only, one line down.
+        // session is the thing that holds the runner, so it is the thing that tells the runner,
+        // through `setHooks()`, which a later `/reload` goes through too.
         $this->setHooks($this->hooks);
     }
 
@@ -237,22 +294,6 @@ final class AgentSession
     {
         $this->hooks = $hooks;
         $hooks?->setSession($this);
-
-        // Every provider's bytes go through `HttpClient::send()`, and that is where
-        // `before_provider_request` and `after_provider_response` are fired from — but only when
-        // a hook is listening, so a session with none pays nothing per request. The closures
-        // read `$this->hooks` at call time rather than capturing `$hooks`, so a `/reload` that
-        // swaps the runner is picked up without re-observing.
-        if ($hooks !== null && $hooks->listensToProviderTraffic()) {
-            HttpClient::observe(
-                fn (Request $request): ?Request => $this->hooks?->emitBeforeProviderRequest($request),
-                function (Response $response, Request $request): void {
-                    $this->hooks?->emit(new AfterProviderResponseEvent($response->status, $response->headers, $request));
-                },
-            );
-        } else {
-            HttpClient::observe(null, null);
-        }
     }
 
     /** @param list<FileCommand> $fileCommands */
@@ -409,19 +450,6 @@ final class AgentSession
 
     private function onAgentEvent(AgentEvent $event): void
     {
-        if ($event instanceof AgentEndEvent) {
-            $event = $this->normaliseAgentEnd($event);
-        }
-
-        if ($event instanceof MessageEndEvent) {
-            $message = $this->normaliseFinalMessage($event->message);
-
-            if ($message !== $event->message) {
-                $this->replaceLastMessage($event->message, $message);
-                $event = new MessageEndEvent($message);
-            }
-        }
-
         $this->tellHooks($event);
 
         // A queued message leaves the queue *before* the event goes out, so a listener
@@ -436,8 +464,25 @@ final class AgentSession
             $this->store?->append($event->message);
         }
 
+        // Upstream emits to extensions first and then, to its own listeners, `agent_end` with
+        // `willRetry` filled in (`_willRetryAfterAgentEnd()`).
+        $forListeners = $event instanceof AgentEndEvent
+            ? new AgentEndEvent($event->messages, $this->willRetryAfterAgentEnd($event))
+            : $event;
+
         foreach ($this->listeners as $listener) {
-            $listener($event);
+            $listener($forListeners);
+        }
+
+        // Upstream: "Reset retry counter immediately on successful assistant response. This
+        // prevents accumulation across multiple LLM calls within a turn."
+        if ($event instanceof MessageEndEvent
+            && $event->message instanceof AssistantMessage
+            && $event->message->stopReason !== StopReason::Error
+            && $this->attempt > 0) {
+            $attempts = $this->attempt;
+            $this->attempt = 0;
+            $this->announce(new RetryEndEvent(true, $attempts));
         }
 
         // Nothing is decided here about what comes after the run — retry, summary, the queue.
@@ -445,64 +490,6 @@ final class AgentSession
         // has it. Deciding it here, inside the run's own fan-out, is what made `agent_settled` a
         // per-*run* event: it went out on every end that did not start a retry, including the
         // ones with a queued message or a hook's turn about to run.
-    }
-
-    private function normaliseAgentEnd(AgentEndEvent $event): AgentEndEvent
-    {
-        $messages = [];
-        $changed = false;
-
-        foreach ($event->messages as $message) {
-            $normalised = $this->normaliseFinalMessage($message);
-            $messages[] = $normalised;
-            $changed = $changed || $normalised !== $message;
-        }
-
-        return $changed ? new AgentEndEvent($messages) : $event;
-    }
-
-    private function normaliseFinalMessage(mixed $message): mixed
-    {
-        if (!$message instanceof AssistantMessage || $message->stopReason !== StopReason::Error || $message->errorMessage === null) {
-            return $message;
-        }
-
-        $error = Retry::quotaMessage($message->errorMessage);
-
-        if ($error === null) {
-            return $message;
-        }
-
-        return new AssistantMessage(
-            $message->content,
-            $message->api,
-            $message->provider,
-            $message->model,
-            $message->usage,
-            $message->stopReason,
-            $error,
-            $message->timestamp,
-            $message->rawStopReason,
-            $message->responseId,
-            $message->responseModel,
-            $message->endTurn,
-            $message->diagnostics,
-            $message->providerThinkingLevel,
-            $message->deferred,
-        );
-    }
-
-    private function replaceLastMessage(mixed $old, mixed $new): void
-    {
-        $messages = $this->messages();
-        $last = $messages === [] ? null : $messages[count($messages) - 1];
-
-        if ($last !== $old) {
-            return;
-        }
-
-        $messages[count($messages) - 1] = $new;
-        $this->agent->replaceMessages($messages);
     }
 
     /**
@@ -678,10 +665,41 @@ final class AgentSession
         return !$this->isStreaming() && $this->compacting === null;
     }
 
-    /** The system prompt the next request carries. Upstream's `ctx.getSystemPrompt()`. */
+    /**
+     * The current effective system prompt, including changes not yet sent to the model —
+     * upstream's `session.systemPrompt` (`ctx.getSystemPrompt()`): what the loadout would have the
+     * prompt be, or, for a session with no loadout, what the transcript's system messages replay to.
+     */
     public function systemPrompt(): string
     {
-        return $this->agent->state->systemPrompt;
+        return $this->loadout?->systemPrompt() ?? $this->agent->state->systemPrompt();
+    }
+
+    /**
+     * The system message that brings the transcript's prompt in line with the loadout's, or null
+     * when it already is — upstream's `_preparePromptAndToolLoadout()`: "returns a system message
+     * patching the prompt sections the model currently has (replayed from `messages`), or
+     * undefined when the prompt is unchanged. Tool changes are declared by the agent loop before
+     * the request." The first one a session sends declares every section, so it is the
+     * transcript's leading system message and the session file's first.
+     *
+     * Null for a session with no loadout: nothing here knows what its prompt should be, and the
+     * transcript's own system messages stand.
+     *
+     * @param list<mixed>|null $messages the transcript to diff against; the agent's when null
+     */
+    private function preparePromptUpdate(?array $messages = null): ?SystemMessage
+    {
+        if ($this->loadout === null) {
+            return null;
+        }
+
+        $sections = SystemPrompt::diffSections(
+            Transcript::getCurrentSystemMessage($messages ?? $this->agent->state->messages)?->sections ?? [],
+            $this->loadout->systemPromptSections(),
+        );
+
+        return $sections !== null ? new SystemMessage('', $sections) : null;
     }
 
     /**
@@ -1124,16 +1142,17 @@ final class AgentSession
         // Held-back `!` commands go in before the prompt, as upstream's `prompt()` flushes them.
         $this->flushBash();
 
+        // Upstream's `updateMessage`, put in front of the prompt (`messages.unshift(updateMessage)`):
+        // the prompt sections that changed since the transcript last said them, in the transcript
+        // and the session file before what the person typed.
+        $update = $this->preparePromptUpdate();
+        $messages = $note === null || trim($note->text) === ''
+            ? [new UserMessage([new TextContent($text), ...$images])]
+            : [new UserMessage($note->text), new UserMessage([new TextContent($text), ...$images])];
+
         // Returns when the prompt has settled — after its retries, its summary and whatever was
         // queued behind it — so `bin/pig -p` exits with the answer and not with the 503 before it.
-        if ($note === null || trim($note->text) === '') {
-            $this->runAgentPrompt(fn () => $this->agent->prompt($text, $images));
-        } else {
-            $this->runAgentPrompt(fn () => $this->agent->prompt([
-                new UserMessage($note->text),
-                new UserMessage([new TextContent($text), ...$images]),
-            ]));
-        }
+        $this->runAgentPrompt(fn () => $this->agent->prompt($update !== null ? [$update, ...$messages] : $messages));
     }
 
     /**
@@ -1587,7 +1606,11 @@ final class AgentSession
             $this->writeTo($fresh);
         }
 
+        // Upstream's `_refreshFinalizedContext()` reads the new, empty file: nothing, not even the
+        // prompt — `reset()` alone keeps the replayed prompt and tool baseline. The next prompt
+        // declares both again, so the new file starts with them as the old one did.
         $this->agent->reset();
+        $this->agent->clearMessages();
         $this->hooks?->emit(new SessionSwitchEvent('new', $previous));
         $this->tellSwitched('new', $previous);
 
@@ -1640,7 +1663,10 @@ final class AgentSession
         $this->hooks?->emit(new SessionSwitchEvent('resume', $previous));
         $this->tellSwitched('resume', $previous);
 
-        return new SessionSwitch(switched: true, previous: $previous, messages: count($opened->messages()));
+        // The messages somebody would count: a system message is prompt state, not something said.
+        $said = array_filter($opened->messages(), static fn (mixed $message): bool => !$message instanceof SystemMessage);
+
+        return new SessionSwitch(switched: true, previous: $previous, messages: count($said));
     }
 
     /**
@@ -1812,6 +1838,7 @@ final class AgentSession
             BranchSummarization::request($messages, $instructions),
             $signal,
             BranchSummarization::MAX_TOKENS,
+            source: 'branchSummary',
         );
 
         return $text === null ? false : new BranchSummary($text, $read, $modified, $oldLeaf);
@@ -1908,13 +1935,14 @@ final class AgentSession
     }
 
     /**
-     * The run is over. Is there more of this prompt to run? Upstream's `_handlePostAgentRun()`.
+     * The run is over. Is there more of this prompt to run? Upstream's `_handlePostAgentRun()`, in
+     * its order.
      *
-     * Three things can carry a prompt on, told apart by how the run ended. A 503 means try again,
-     * after a sleep. "Prompt is too long" means the request itself was the problem, and sending
-     * it again unchanged is the one thing guaranteed not to work — that one is summarised first.
-     * And a message queued after the loop last looked — by an `agent_end` handler, or a key
-     * pressed as the run was ending — is the rest of the same request.
+     * Three things can carry a prompt on, told apart by how the run ended. A transient failure
+     * (`isRetryableError()`) means try again, after a sleep. "Prompt is too long" means the request
+     * itself was the problem — never retryable, it is summarised instead. And a message queued
+     * after the loop last looked — by an `agent_end` handler, or a key pressed as the run was
+     * ending — is the rest of the same request.
      *
      * @return bool true to `continue()` the agent
      */
@@ -1933,31 +1961,31 @@ final class AgentSession
             return $this->agent->hasQueuedMessages();
         }
 
-        $window = $this->model()?->contextWindow;
+        if ($this->isRetryableError($last) && $this->prepareRetry($last)) {
+            if ($this->runAbortRequested) {
+                $this->finishCancelledRetry();
+            }
 
-        // Before the retry check, where upstream has `_checkCompaction()` after it: pig's
-        // `Retry::worthRetrying()` does not exclude an overflow the way upstream's
-        // `_isRetryableError()` does, so the order is what keeps a too-long prompt from being
-        // sent again unchanged.
-        if (Overflow::happened($last, $window)) {
-            return $this->compactForOverflow($last) && !$this->runAbortRequested;
+            return !$this->runAbortRequested;
         }
 
-        if ($this->retryEnabled() && Retry::worthRetrying($last, $window)) {
-            if ($this->prepareRetry($last)) {
-                return !$this->runAbortRequested;
-            }
+        if ($this->runAbortRequested) {
+            $this->finishCancelledRetry();
 
-            if ($this->runAbortRequested) {
-                return false;
-            }
-        } elseif ($this->attempt > 0) {
-            // The run after a retry, and not one to retry again: it worked — or it failed in a way
-            // a retry does not fix, which upstream reports as the retrying's failure.
+            return false;
+        }
+
+        // The retrying's failure: the last attempt failed in a way that is not retried again, or
+        // the budget ran out.
+        if ($last->stopReason === StopReason::Error && $this->attempt > 0) {
             $attempts = $this->attempt;
             $this->attempt = 0;
-            $failed = $last->stopReason === StopReason::Error;
-            $this->announce(new RetryEndEvent(!$failed, $attempts, $failed ? $last->errorMessage : null));
+            $this->announce(new RetryEndEvent(false, $attempts, $last->errorMessage));
+        }
+
+        // Upstream's `_checkCompaction()` for the overflow case.
+        if (Overflow::happened($last, $this->model()?->contextWindow)) {
+            return $this->compactForOverflow($last) && !$this->runAbortRequested;
         }
 
         // The loop drains both queues before `agent_end`; anything queued after that needs a
@@ -1966,83 +1994,101 @@ final class AgentSession
     }
 
     /**
-     * Wait, then say to send the same turn again. Upstream's `_prepareRetry()`.
+     * Upstream's `_isRetryableError()`: "Context overflow is handled by compaction, not retry", and
+     * otherwise `isRetryableAssistantError()` — the error's text against upstream's pattern lists.
+     */
+    /**
+     * Whether the post-run step will send this run's failed turn again — upstream's
+     * `_willRetryAfterAgentEnd()`: not after escape, not with retries off or used up, and otherwise
+     * whether the run's last assistant message is a retryable error.
+     */
+    private function willRetryAfterAgentEnd(AgentEndEvent $event): bool
+    {
+        if ($this->runAbortRequested) {
+            return false;
+        }
+
+        $settings = $this->retrySettings();
+
+        if (!$settings['enabled'] || $this->attempt >= $settings['maxRetries']) {
+            return false;
+        }
+
+        for ($i = count($event->messages) - 1; $i >= 0; $i--) {
+            if ($event->messages[$i] instanceof AssistantMessage) {
+                return $this->isRetryableError($event->messages[$i]);
+            }
+        }
+
+        return false;
+    }
+
+    private function isRetryableError(AssistantMessage $message): bool
+    {
+        if (Overflow::happened($message, $this->model()?->contextWindow)) {
+            return false;
+        }
+
+        return Retry::isRetryableAssistantError($message);
+    }
+
+    /**
+     * Wait, then say to send the same turn again. Upstream's `_prepareRetry()`, line for line.
      *
-     * The failed message is taken off the agent's state before the wait — it is an error, not an
-     * answer, and leaving it there would have the model reading its own failure as the
-     * conversation. It stays in the session file, because it happened.
+     * The settings decide (`retry.enabled`, `retry.maxRetries`, `retry.baseDelayMs`,
+     * `retry.maxAgentDelayMs`): an attempt past the budget is not counted, so the post-run step can
+     * report the attempts that were made; the wait is `retryDelayMs()` — doubling from the base,
+     * capped. The failed message is taken off the agent's state before the wait (upstream's
+     * `_omitRecoveryAttempt()`) and stays in the session file, because it happened.
      *
-     * @return bool true when the sleep ran out and the turn should go again; false when the retry
-     *              was given up, cancelled by a hook, or called off by escape — each of which has
-     *              already announced its `RetryEndEvent`
+     * @return bool true when the sleep ran out and the turn should go again
      */
     private function prepareRetry(AssistantMessage $failed): bool
     {
+        $settings = $this->retrySettings();
+
+        if (!$settings['enabled']) {
+            return false;
+        }
+
         $this->attempt++;
 
-        $max = $this->settings?->retryMaxAttempts(Retry::MAX_ATTEMPTS) ?? Retry::MAX_ATTEMPTS;
-        $error = $failed->errorMessage ?? 'Unknown error';
+        if ($this->attempt > $settings['maxRetries']) {
+            // "Preserve the completed attempt count so post-run handling can emit the final failure."
+            $this->attempt--;
 
-        // What the provider asked for, when it said so, and the doubling otherwise. A 429 whose
-        // body names the moment its quota resets is the one case where guessing is strictly
-        // worse: the guess is too early three times over and then the turn is gone.
-        $delay = Retry::statedDelay($error) ?? Retry::delayFor(
+            return false;
+        }
+
+        $delayMs = Retry::retryDelayMs($settings['baseDelayMs'], $this->attempt, $settings['maxAgentDelayMs']);
+
+        $this->announce(new RetryStartEvent(
             $this->attempt,
-            $this->settings?->retryBaseDelay(Retry::BASE_DELAY) ?? Retry::BASE_DELAY,
-        );
+            $settings['maxRetries'],
+            $delayMs / 1000,
+            $failed->errorMessage !== null && $failed->errorMessage !== '' ? $failed->errorMessage : 'Unknown error',
+        ));
 
-        // A hook may change the terms before the count is checked: an extension holding several
-        // accounts for one provider switches on a 429 and asks to go again at once with the
-        // count reset, because a fresh account's quota is a fresh set of attempts. That used to
-        // be an Antigravity special case written into this method; it is the extension's now.
-        $decision = $this->hooks?->emitBeforeRetry(new BeforeRetryEvent($failed, $error, $this->attempt, $max, $delay));
+        $this->dropLastAssistantMessage();
 
-        if ($decision?->cancel === true) {
-            $this->attempt = 0;
-            $this->announce(new RetryEndEvent(false, $max, $decision->reason ?? $error));
-
-            return false;
-        }
-
-        if ($decision?->resetAttempts === true) {
-            $this->attempt = 1;
-        }
-
-        $delay = $decision?->delaySeconds ?? $delay;
-        $error = $decision?->reason ?? $error;
-
-        if ($this->attempt > $max) {
-            $this->attempt = 0;
-            $this->announce(new RetryEndEvent(false, $max, $error));
-
-            return false;
-        }
-
-        // The controller exists for the announcement and the sleep both, so `isRetrying()` is
-        // true from the moment anything has been told a retry is happening until it is over.
+        // Wait with exponential backoff (abortable).
         $this->retrying = new AbortController();
 
         try {
-            $this->announce(new RetryStartEvent($this->attempt, $max, $delay, $error));
-            $this->dropLastAssistantMessage();
+            if (!$this->sleep($delayMs / 1000, $this->retrying->signal)) {
+                // "Aborted during sleep - emit end event so UI can clean up".
+                $this->finishCancelledRetry();
 
-            if ($this->sleep($delay, $this->retrying->signal)) {
-                return true;
+                return false;
             }
         } finally {
             $this->retrying = null;
         }
 
-        // Escape, during the sleep — or before it, from a `RetryStartEvent` listener.
-        $attempts = $this->attempt;
-        $this->attempt = 0;
-        $this->announce(new RetryEndEvent(false, $attempts, 'Retrying was cancelled.'));
-
-        return false;
+        return true;
     }
 
     /**
-     * A retry that escape stopped from outside the sleep — the run of a retried turn, aborted.
      * Upstream's `_finishCancelledRetry()`: whoever drew "Retrying (2/3)" hears that it is over.
      */
     private function finishCancelledRetry(): void
@@ -2053,7 +2099,52 @@ final class AgentSession
 
         $attempts = $this->attempt;
         $this->attempt = 0;
-        $this->announce(new RetryEndEvent(false, $attempts, 'Retrying was cancelled.'));
+        $this->announce(new RetryEndEvent(false, $attempts, 'Retry cancelled'));
+    }
+
+    /**
+     * Upstream's `getRetrySettings()`, with its defaults when there is no settings file.
+     *
+     * @return array{enabled: bool, maxRetries: int, baseDelayMs: float, maxAgentDelayMs: float}
+     */
+    private function retrySettings(): array
+    {
+        return $this->settings?->retrySettings()
+            ?? ['enabled' => true, 'maxRetries' => 3, 'baseDelayMs' => 2000.0, 'maxAgentDelayMs' => (float) Retry::DEFAULT_MAX_AGENT_RETRY_DELAY_MS];
+    }
+
+    /**
+     * Upstream's `buildRequestOptions()` (`createAgentSession()`), which every request of the agent
+     * goes through: `timeoutMs` (the request's, else `retry.provider.timeoutMs`, else
+     * `httpIdleTimeoutMs` — 0 meaning `2147483647`), `maxRetries` (the request's, else
+     * `retry.provider.maxRetries`), `maxRetryDelayMs` (the request's, else
+     * `retry.provider.maxRetryDelayMs`), and the request's headers through the
+     * `before_provider_headers` handlers when there are any (`transformHeaders`).
+     *
+     * Not ported: upstream's provider attribution headers (`mergeProviderAttributionHeaders()`,
+     * OpenRouter/NVIDIA/Cloudflare/OpenCode identification sent behind its install-telemetry
+     * setting) and `websocketConnectTimeoutMs` (no WebSocket transport).
+     */
+    private function buildRequestOptions(SimpleStreamOptions $options): SimpleStreamOptions
+    {
+        $provider = $this->settings?->providerRetrySettings() ?? ['timeoutMs' => null, 'maxRetries' => null, 'maxRetryDelayMs' => 60_000];
+        $httpIdleTimeoutMs = $this->settings?->httpIdleTimeoutMs() ?? 300_000;
+        $effectiveTimeoutMs = $httpIdleTimeoutMs === 0 ? 2_147_483_647 : $httpIdleTimeoutMs;
+        $headers = $options->headers;
+
+        if ($this->hooks?->hasHandlers('before_provider_headers') === true) {
+            $headers = $this->hooks->emitBeforeProviderHeaders($headers ?? []);
+        }
+
+        return new SimpleStreamOptions(...[
+            ...$options->baseArgs(),
+            'reasoning' => $options->reasoning,
+            'toolChoice' => $options->toolChoice,
+            'timeoutMs' => $options->timeoutMs ?? $provider['timeoutMs'] ?? $effectiveTimeoutMs,
+            'maxRetries' => $options->maxRetries ?? $provider['maxRetries'],
+            'maxRetryDelayMs' => $options->maxRetryDelayMs ?? $provider['maxRetryDelayMs'],
+            'headers' => $headers,
+        ]);
     }
 
     /**
@@ -2159,11 +2250,6 @@ final class AgentSession
         } finally {
             $signal->removeListener($listener);
         }
-    }
-
-    private function retryEnabled(): bool
-    {
-        return $this->settings?->retryEnabled() ?? true;
     }
 
     /**
@@ -2303,7 +2389,7 @@ final class AgentSession
         $this->hookCancelledCompaction = false;
 
         try {
-            $summary = $this->summariseAndSwapIn($instructions, $this->compacting->signal);
+            $summary = $this->summariseAndSwapIn($instructions, $this->compacting->signal, $reason);
         } catch (Throwable $problem) {
             // Upstream's `session_compact_failed`, beside `session_compact` so a hook reacting to
             // one is not left guessing about the other. A hook's own cancel is an abort, as
@@ -2356,7 +2442,7 @@ final class AgentSession
     }
 
     /** The body of `compact()`, with the signal already settled. */
-    private function summariseAndSwapIn(?string $instructions, AbortSignal $signal): ?CompactionSummary
+    private function summariseAndSwapIn(?string $instructions, AbortSignal $signal, string $reason = 'manual'): ?CompactionSummary
     {
         $model = $this->model();
 
@@ -2384,8 +2470,30 @@ final class AgentSession
             throw new AgentError('Nothing to compact (session too small)');
         }
 
-        $older = array_slice($messages, 0, $cut);
-        $kept = array_slice($messages, $cut);
+        // Upstream's `getMessagesFromProjectedEntryForCompaction()`: "System messages are prompt
+        // state, not conversation; the compaction entry carries their replay." So the summariser
+        // never reads the prompt, the kept part loses its system messages, and the state they all
+        // replay to goes on the compaction (`systemMessage`), in front of the summary.
+        $notSystem = static fn (mixed $message): bool => !$message instanceof SystemMessage;
+        $older = array_values(array_filter(array_slice($messages, 0, $cut), $notSystem));
+        $kept = array_values(array_filter(array_slice($messages, $cut), $notSystem));
+
+        // Upstream's `prepareCompaction()` answers undefined when there is nothing to summarise —
+        // which, with the prompt leading the transcript, is a cut that leaves only system messages
+        // behind it.
+        if ($older === []) {
+            throw new AgentError('Nothing to compact (session too small)');
+        }
+        $compactedAt = Timestamp::nowMs();
+        $systemState = Transcript::getCurrentSystemMessage($messages);
+        // pi's `appendCompaction()`: `{...systemMessage, timestamp: <the entry's>}`.
+        $systemMessage = $systemState === null ? null : new SystemMessage(
+            $systemState->content,
+            $systemState->sections,
+            $systemState->toolsAdded,
+            $systemState->toolsRemoved,
+            $compactedAt,
+        );
         [$read, $modified] = Compaction::files($older);
         $request = Compaction::request($older, Compaction::previousSummary($older), $instructions);
 
@@ -2416,32 +2524,34 @@ final class AgentSession
                 $answer->compaction->modifiedFiles,
                 $answer->compaction->tokensBefore,
                 $firstKept,
-                $cut,
+                count($older),
+                $compactedAt,
                 // Marked as the hook's, which is pi's own field on this entry. It keeps the next
                 // compaction from carrying these file lists forward as though pig had found them,
                 // and it is what tells pi — reading the same file — who wrote this summary.
                 fromHook: true,
+                systemMessage: $systemMessage,
             );
 
-            $this->agent->replaceMessages([$summary, ...$kept]);
+            $this->agent->replaceMessages([...($systemMessage !== null ? [$systemMessage] : []), $summary, ...$kept]);
             $this->store?->append($summary);
             $this->hooks?->emit(new SessionCompactEvent($summary, fromHook: true));
 
             return $summary;
         }
 
-        $text = $this->summarise($model, $request, $signal);
+        $text = $this->summarise($model, $request, $signal, source: 'compaction', reason: $reason);
 
         if ($text === null) {
             return null;
         }
 
-        // `$cut` twice over, as two different facts: which entry the kept part starts at,
-        // which is what the file stores, and how many messages that came to, which is only
-        // ever a line on a screen. Reading the file back derives the second from the first.
-        $summary = new CompactionSummary($text, $read, $modified, $this->contextTokens(), $firstKept, $cut);
+        // The cut as two different facts: which entry the kept part starts at, which is what the
+        // file stores, and how many messages that came to, which is only ever a line on a screen.
+        // Reading the file back derives the second from the first.
+        $summary = new CompactionSummary($text, $read, $modified, $this->contextTokens(), $firstKept, count($older), $compactedAt, systemMessage: $systemMessage);
 
-        $this->agent->replaceMessages([$summary, ...$kept]);
+        $this->agent->replaceMessages([...($systemMessage !== null ? [$systemMessage] : []), $summary, ...$kept]);
         $this->store?->append($summary);
         $this->hooks?->emit(new SessionCompactEvent($summary));
 
@@ -2449,32 +2559,68 @@ final class AgentSession
     }
 
     /**
-     * One request, outside the agent loop, with no tools and nothing to steer.
+     * One request, outside the agent loop, with no tools and nothing to steer — upstream's
+     * `completeSummarization()`, the one choke point for compaction and branch summaries.
      *
+     * Through the agent's own stream function, as upstream passes `this.agent.streamFunction`, so
+     * the request carries the session's request options (`buildRequestOptions()`: the timeout, the
+     * provider retries, the header hooks). "Avoid cache writes for one-off summaries":
+     * `cacheRetention: none`, and a routing id of its own each time. And wrapped in
+     * `Retry::retryAssistantCall()` with the session's retry settings, "so transient stream drops
+     * honor the configured retry policy instead of failing the whole compaction on the first
+     * attempt"; each retry is announced (`SummarizationRetryEvent`).
+     *
+     * @param string      $source `compaction` or `branchSummary`, for the retry events
+     * @param string|null $reason a compaction's `manual`, `threshold` or `overflow`
      * @return string|null null when it was cancelled
      */
-    private function summarise(Model $model, string $request, ?AbortSignal $signal, ?int $maxTokens = null): ?string
+    private function summarise(Model $model, string $request, ?AbortSignal $signal, ?int $maxTokens = null, string $source = 'compaction', ?string $reason = null): ?string
     {
-        $options = $this->agent->options();
-
         $stream = new SimpleStreamOptions(
             maxTokens: $maxTokens ?? (int) (0.8 * $this->reserveTokens()),
             signal: $signal,
             apiKey: $this->keyFor($model),
             reasoning: ReasoningEffort::High,
+            cacheRetention: 'none',
+            sessionId: self::routingId(),
         );
 
-        $context = new Context([new UserMessage($request)], Compaction::SYSTEM_PROMPT);
+        // Normalized here, as upstream's `completeSimple()` does on its way in: the stream function
+        // is the agent's, and it is handed transcripts (`TranscriptContext`).
+        $context = Transcript::normalizeContext(new Context([new UserMessage($request)], Compaction::SYSTEM_PROMPT));
+        $streamFunction = $this->agent->streamFunction;
 
-        $response = $options->streamFn !== null
-            ? ($options->streamFn)($model, $context, $stream)
-            : Stream::simple($model, $context, $stream);
+        $produce = static function () use ($model, $context, $stream, $streamFunction): mixed {
+            $response = $streamFunction !== null
+                ? $streamFunction($model, $context, $stream)
+                : Stream::simple($model, $context, $stream);
 
-        foreach ($response as $ignored) {
-            // Nothing streams anywhere: a summary is only useful whole.
-        }
+            foreach ($response as $ignored) {
+                // Nothing streams anywhere: a summary is only useful whole.
+            }
 
-        $message = $response->result()->await();
+            $message = $response->result()->await();
+
+            if (!$message instanceof AssistantMessage) {
+                throw new AgentError('The summariser answered with something that was not a message.');
+            }
+
+            return $message;
+        };
+
+        $message = Retry::retryAssistantCall($produce, $this->retrySettings(), $signal, [
+            'onRetryScheduled' => fn (int $attempt, int $maxAttempts, float $delayMs, string $error) => $this->announce(new SummarizationRetryEvent(
+                SummarizationRetryEvent::SCHEDULED,
+                $source,
+                $reason,
+                $attempt,
+                $maxAttempts,
+                $delayMs / 1000,
+                $error,
+            )),
+            'onRetryAttemptStart' => fn () => $this->announce(new SummarizationRetryEvent(SummarizationRetryEvent::ATTEMPT_START, $source, $reason)),
+            'onRetryFinished' => fn () => $this->announce(new SummarizationRetryEvent(SummarizationRetryEvent::FINISHED, $source, $reason)),
+        ]);
 
         if (!$message instanceof AssistantMessage) {
             throw new AgentError('The summariser answered with something that was not a message.');
@@ -2501,6 +2647,24 @@ final class AgentSession
         }
 
         return trim($text);
+    }
+
+    /** A fresh routing id for a one-off request — upstream's `uuidv7()` in `completeSummarization()`. */
+    private static function routingId(): string
+    {
+        // 48 bits of Unix milliseconds, then randomness, with the version (7) and variant bits set.
+        $millis = (int) (microtime(true) * 1000);
+        $bytes = substr(pack('J', $millis), 2, 6) . random_bytes(10);
+        $bytes[6] = chr(ord($bytes[6]) & 0x0F | 0x70);
+        $bytes[8] = chr(ord($bytes[8]) & 0x3F | 0x80);
+
+        return implode('-', [
+            bin2hex(substr($bytes, 0, 4)),
+            bin2hex(substr($bytes, 4, 2)),
+            bin2hex(substr($bytes, 6, 2)),
+            bin2hex(substr($bytes, 8, 2)),
+            bin2hex(substr($bytes, 10, 6)),
+        ]);
     }
 
     // ---- thinking ----------------------------------------------------------------

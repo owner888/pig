@@ -43,6 +43,27 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.36] - 2026-10-08
+
+### New Features
+
+- **Amazon Bedrock & Google Vertex AI Zero-Dependency Native Emulation (`Providers\Bedrock`, `Providers\GoogleVertex`, `Utils\Aws`, `Utils\GoogleAuth`)**:
+  - Implemented pure PHP native protocol support for Amazon Bedrock and Google Cloud Vertex AI without external SDK packages, verified byte-for-byte against upstream pi test fixtures recorded via Node.js oracle runners.
+  - Implemented SigV4 signing engine (`SignatureV4`), AWS binary event framing (`EventStream`), AWS default credential chain (`CredentialChain`, covering environment, `~/.aws` profiles, STS AssumeRole, WebIdentity, and IMDS), and Google ADC credential discovery with RS256 JWT tokens.
+- **Transcript Context Architecture with First-Class `SystemMessage` (`TranscriptContext`, `SystemMessage`, `AgentLoop`, `AgentSession`)**:
+  - Aligned context architecture with upstream pi: embedded system prompts and tools into conversation history via initial `SystemMessage` instances and incremental delta updates (`toolsAdded`, `toolsRemoved`, prompt section diffs), guaranteeing consistent compaction and replay across sessions.
+- **Dual-Layer Provider & Session Retry Engine (`Pig\Ai\Utils\Retry`, `ProviderRetry`)**:
+  - Ported upstream pi's text-pattern-based retry classifier (`RETRYABLE_PROVIDER_ERROR_PATTERN`), decoupling retry decisions from internal HTTP status guesswork.
+  - Added native provider-level retries (`retryProviderRequest`) with `retry-after` header adherence, and expanded session retry countdown with dynamic seconds ticks and localized interrupt key hints.
+- **Provider Request Options & Lifecycle Decoupling (`StreamOptions`, `HookRunner`)**:
+  - Decoupled provider extension events (`onPayload`, `transformHeaders`, `onResponse`, `onProviderStreamEvent`) from global HTTP client observers onto per-request option lifecycles.
+  - Replaced hardcoded 60s HTTP read timeouts with upstream pi's 300s default idle timeout (`HttpClient::useIdleTimeout()`).
+
+### Fixed
+
+- **Antigravity Protocol Enhancements (`AntigravityApi`)**:
+  - Automatically re-requested empty responses up to twice with backoff, supported runtime model fallback to older designations on 404, and aligned error diagnostic text with `pi-antigravity`.
+
 ## [0.4.35] - 2026-10-08
 
 ### New Features

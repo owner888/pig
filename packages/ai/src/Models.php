@@ -56,6 +56,13 @@ final class Models
 
     public const string COPILOT = 'github-copilot';
 
+    public const string GOOGLE_VERTEX = 'google-vertex';
+
+    public const string AMAZON_BEDROCK = 'amazon-bedrock';
+
+    /** Upstream's generator `VERTEX_BASE_URL`, a template `Providers\GoogleVertex` fills from the location. */
+    private const string VERTEX_BASE_URL = 'https://{location}-aiplatform.googleapis.com';
+
     private const string ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 
     /**
@@ -93,8 +100,13 @@ final class Models
      * first time somebody moved a `foreach`.
      *
      * OpenRouter is the next one to belong here, whenever its 236 arrive.
+     *
+     * **Vertex AI is here for the same reason**: it serves Google's Gemini models under Google's own
+     * ids, so `gemini-2.5-flash` names two things again and the bare id stays the Gemini API's; Vertex's
+     * is `google-vertex/gemini-2.5-flash`. Bedrock is not — its ids carry their vendor
+     * (`anthropic.claude-…`) and collide with nobody's.
      */
-    private const array RESOLD = [self::COPILOT];
+    private const array RESOLD = [self::COPILOT, self::GOOGLE_VERTEX];
 
     /**
      * Upstream's generator `GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES`, copied with its comment:
@@ -227,23 +239,23 @@ final class Models
      */
     private const array ANTHROPIC_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'claude-fable-5' => ['Claude Fable 5', 1_000_000, 128_000, true, 10.0, 50.0, 1.0, 12.5],
-        'claude-fable-5-1' => ['Claude Fable 5.1', 1_000_000, 128_000, true, 10.0, 50.0, 0.25, 12.5],
+        'claude-fable-5' => ['Claude Fable 5', 1_000_000, 128_000, true, 10.0, 50.0, 1.0, 12.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-fable-5-1' => ['Claude Fable 5.1', 1_000_000, 128_000, true, 10.0, 50.0, 0.25, 12.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-haiku-4-5' => ['Claude Haiku 4.5 (latest)', 200_000, 64_000, true, 1.0, 5.0, 0.1, 1.25],
         'claude-haiku-4-5-20251001' => ['Claude Haiku 4.5', 200_000, 64_000, true, 1.0, 5.0, 0.1, 1.25],
-        'claude-haiku-5-5' => ['Claude Haiku 5.5', 1_000_000, 128_000, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],
-        'claude-opus-4-5' => ['Claude Opus 4.5 (latest)', 200_000, 64_000, true, 5.0, 25.0, 0.5, 6.25],
-        'claude-opus-4-5-20251101' => ['Claude Opus 4.5', 200_000, 64_000, true, 5.0, 25.0, 0.5, 6.25],
-        'claude-opus-4-6' => ['Claude Opus 4.6', 1_000_000, 128_000, true, 5.0, 25.0, 0.5, 6.25],
-        'claude-opus-4-7' => ['Claude Opus 4.7', 1_000_000, 128_000, true, 5.0, 25.0, 0.5, 6.25],
-        'claude-opus-4-8' => ['Claude Opus 4.8', 1_000_000, 128_000, true, 5.0, 25.0, 0.5, 6.25],
-        'claude-opus-5' => ['Claude Opus 5', 1_000_000, 128_000, true, 5.0, 25.0, 0.5, 6.25],
-        'claude-opus-5-5' => ['Claude Opus 5.5', 1_000_000, 128_000, true, 4.0, 20.0, 0.2, 5.0],
-        'claude-sonnet-4-5' => ['Claude Sonnet 4.5 (latest)', 1_000_000, 64_000, true, 3.0, 15.0, 0.3, 3.75],
-        'claude-sonnet-4-5-20250929' => ['Claude Sonnet 4.5', 1_000_000, 64_000, true, 3.0, 15.0, 0.3, 3.75],
-        'claude-sonnet-4-6' => ['Claude Sonnet 4.6', 1_000_000, 128_000, true, 3.0, 15.0, 0.3, 3.75],
-        'claude-sonnet-5' => ['Claude Sonnet 5', 1_000_000, 128_000, true, 2.0, 10.0, 0.2, 2.5],
-        'claude-sonnet-5-5' => ['Claude Sonnet 5.5', 1_000_000, 128_000, true, 2.0, 10.0, 0.2, 2.5],
+        'claude-haiku-5-5' => ['Claude Haiku 5.5', 1_000_000, 128_000, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-opus-4-5' => ['Claude Opus 4.5 (latest)', 200_000, 64_000, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'claude-opus-4-5-20251101' => ['Claude Opus 4.5', 200_000, 64_000, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'claude-opus-4-6' => ['Claude Opus 4.6', 1_000_000, 128_000, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'claude-opus-4-7' => ['Claude Opus 4.7', 1_000_000, 128_000, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-opus-4-8' => ['Claude Opus 4.8', 1_000_000, 128_000, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-opus-5' => ['Claude Opus 5', 1_000_000, 128_000, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-opus-5-5' => ['Claude Opus 5.5', 1_000_000, 128_000, true, 4.0, 20.0, 0.2, 5.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-sonnet-4-5' => ['Claude Sonnet 4.5 (latest)', 200_000, 64_000, true, 3.0, 15.0, 0.3, 3.75],
+        'claude-sonnet-4-5-20250929' => ['Claude Sonnet 4.5', 200_000, 64_000, true, 3.0, 15.0, 0.3, 3.75],
+        'claude-sonnet-4-6' => ['Claude Sonnet 4.6', 1_000_000, 128_000, true, 3.0, 15.0, 0.3, 3.75, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'claude-sonnet-5' => ['Claude Sonnet 5', 1_000_000, 128_000, true, 2.0, 10.0, 0.2, 2.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-sonnet-5-5' => ['Claude Sonnet 5.5', 1_000_000, 128_000, true, 2.0, 10.0, 0.1, 2.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         // <<< generated
     ];
 
@@ -252,8 +264,8 @@ final class Models
      */
     private const array CEREBRAS_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'gpt-oss-120b' => ['GPT OSS 120B', 131_072, 40_960, true, false, 0.35, 0.75, 0.0, 0.0],
-        'qwen-3.8-27b' => ['Qwen3.8 27B', 131_072, 40_960, true, true, 0.99, 1.49, 0.99, 0.0],
+        'gpt-oss-120b' => ['GPT OSS 120B', 131_072, 40_960, true, false, 0.35, 0.75, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'qwen-3.8-27b' => ['Qwen3.8 27B', 131_072, 40_960, true, true, 0.99, 1.49, 0.99, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         // <<< generated
     ];
 
@@ -264,11 +276,11 @@ final class Models
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
         'llama-3.1-8b-instant' => ['Llama 3.1 8B', 131_072, 131_072, false, false, 0.05, 0.08, 0.0, 0.0],
         'llama-3.3-70b-versatile' => ['Llama 3.3 70B', 131_072, 32_768, false, false, 0.59, 0.79, 0.0, 0.0],
-        'openai/gpt-oss-120b' => ['GPT OSS 120B', 131_072, 65_536, true, false, 0.15, 0.6, 0.075, 0.0],
-        'openai/gpt-oss-20b' => ['GPT OSS 20B', 131_072, 65_536, true, false, 0.075, 0.3, 0.0375, 0.0],
-        'openai/gpt-oss-safeguard-20b' => ['Safety GPT OSS 20B', 131_072, 65_536, true, false, 0.075, 0.3, 0.0, 0.0],
-        'qwen/qwen3.6-27b' => ['Qwen3.6 27B', 131_072, 16_384, true, true, 0.6, 3.0, 0.3, 0.0],
-        'qwen/qwen3.8-27b' => ['Qwen3.8 27B', 131_042, 16_384, true, true, 0.8, 4.0, 0.0, 0.0],
+        'openai/gpt-oss-120b' => ['GPT OSS 120B', 131_072, 65_536, true, false, 0.15, 0.6, 0.075, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'openai/gpt-oss-20b' => ['GPT OSS 20B', 131_072, 65_536, true, false, 0.075, 0.3, 0.0375, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'openai/gpt-oss-safeguard-20b' => ['Safety GPT OSS 20B', 131_072, 65_536, true, false, 0.075, 0.3, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'qwen/qwen3.6-27b' => ['Qwen3.6 27B', 131_072, 16_384, true, true, 0.6, 3.0, 0.3, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => null, 'xhigh' => null, 'max' => null]],
+        'qwen/qwen3.8-27b' => ['Qwen3.8 27B', 131_042, 16_384, true, true, 0.8, 4.0, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         // <<< generated
     ];
 
@@ -285,30 +297,46 @@ final class Models
      */
     private const array MISTRAL_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        'codestral-2508' => ['Codestral 25.08', 256_000, 8_192, false, false, 0.3, 0.9, 0.03, 0.0],
         'codestral-latest' => ['Codestral (latest)', 256_000, 4_096, false, false, 0.3, 0.9, 0.03, 0.0],
-        'magistral-medium-latest' => ['Magistral Medium (latest)', 128_000, 16_384, true, false, 2.0, 5.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'ministral-3b-latest' => ['Ministral 3B (latest)', 128_000, 128_000, false, false, 0.04, 0.04, 0.0, 0.0],
-        'ministral-8b-latest' => ['Ministral 8B (latest)', 128_000, 128_000, false, false, 0.1, 0.1, 0.0, 0.0],
-        'mistral-large-2411' => ['Mistral Large 2.1', 131_072, 16_384, false, false, 2.0, 6.0, 0.0, 0.0],
+        'devstral-2512' => ['Devstral 2', 262_144, 262_144, false, false, 0.4, 2.0, 0.04, 0.0],
+        'devstral-latest' => ['Devstral 2', 262_144, 262_144, false, false, 0.4, 2.0, 0.04, 0.0],
+        'devstral-medium-2507' => ['Devstral Medium', 128_000, 128_000, false, false, 0.4, 2.0, 0.04, 0.0],
+        'devstral-medium-latest' => ['Devstral 2 (latest)', 262_144, 262_144, false, false, 0.4, 2.0, 0.04, 0.0],
+        'devstral-small-2505' => ['Devstral Small 2505', 128_000, 128_000, false, false, 0.1, 0.3, 0.01, 0.0],
+        'devstral-small-2507' => ['Devstral Small', 128_000, 128_000, false, false, 0.1, 0.3, 0.01, 0.0],
+        'glm-5-2' => ['GLM-5.2', 1_048_576, 131_072, true, false, 1.4, 4.4, 0.14, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'labs-devstral-small-2512' => ['Devstral Small 2', 256_000, 256_000, false, true, 0.0, 0.0, 0.0, 0.0],
+        'labs-leanstral-1-5-1' => ['Leanstral 1.5', 262_144, 128_000, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'magistral-medium-latest' => ['Magistral Medium (latest)', 262_144, 16_384, true, true, 2.0, 5.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'ministral-14b-2512' => ['Ministral 3 14B', 262_144, 262_144, false, true, 0.2, 0.2, 0.02, 0.0],
+        'ministral-3b-2512' => ['Ministral 3 3B', 131_072, 262_144, false, true, 0.1, 0.1, 0.01, 0.0],
+        'ministral-3b-latest' => ['Ministral 3B (latest)', 131_072, 128_000, false, true, 0.04, 0.04, 0.004, 0.0],
+        'ministral-8b-2512' => ['Ministral 3 8B', 262_144, 262_144, false, true, 0.15, 0.15, 0.015, 0.0],
+        'ministral-8b-latest' => ['Ministral 8B (latest)', 262_144, 128_000, false, true, 0.1, 0.1, 0.01, 0.0],
+        'mistral-large-2411' => ['Mistral Large 2.1', 131_072, 16_384, false, false, 2.0, 6.0, 0.2, 0.0],
         'mistral-large-2512' => ['Mistral Large 3', 262_144, 262_144, false, true, 0.5, 1.5, 0.05, 0.0],
+        'mistral-large-4' => ['Mistral Large 4', 1_048_576, 262_144, true, true, 0.68, 2.09, 0.07, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'mistral-large-latest' => ['Mistral Large (latest)', 262_144, 262_144, false, true, 0.5, 1.5, 0.05, 0.0],
-        'mistral-medium-2505' => ['Mistral Medium 3', 131_072, 131_072, false, true, 0.4, 2.0, 0.0, 0.0],
-        'mistral-medium-2508' => ['Mistral Medium 3.1', 262_144, 262_144, false, true, 0.4, 2.0, 0.0, 0.0],
+        'mistral-medium-2505' => ['Mistral Medium 3', 131_072, 131_072, false, true, 0.4, 2.0, 0.04, 0.0],
+        'mistral-medium-2508' => ['Mistral Medium 3.1', 262_144, 262_144, false, true, 0.4, 2.0, 0.04, 0.0],
         'mistral-medium-2604' => ['Mistral Medium 3.5', 262_144, 262_144, true, true, 1.5, 7.5, 0.15, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'mistral-medium-3.5' => ['Mistral Medium 3.5', 262_144, 262_144, true, true, 1.5, 7.5, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'mistral-medium-latest' => ['Mistral Medium (latest)', 262_144, 262_144, true, true, 1.5, 7.5, 0.15, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'mistral-nemo' => ['Mistral Nemo', 128_000, 128_000, false, false, 0.15, 0.15, 0.0, 0.0],
-        'mistral-small-2506' => ['Mistral Small 3.2', 128_000, 16_384, false, true, 0.1, 0.3, 0.0, 0.0],
-        'mistral-small-2603' => ['Mistral Small 4', 256_000, 256_000, true, true, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'mistral-small-latest' => ['Mistral Small (latest)', 256_000, 256_000, true, true, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'open-mistral-7b' => ['Mistral 7B', 8_000, 8_000, false, false, 0.25, 0.25, 0.0, 0.0],
-        'open-mixtral-8x22b' => ['Mixtral 8x22B', 64_000, 64_000, false, false, 2.0, 6.0, 0.0, 0.0],
-        'open-mixtral-8x7b' => ['Mixtral 8x7B', 32_000, 32_000, false, false, 0.7, 0.7, 0.0, 0.0],
-        'pixtral-12b' => ['Pixtral 12B', 128_000, 128_000, false, true, 0.15, 0.15, 0.0, 0.0],
-        'pixtral-large-latest' => ['Pixtral Large (latest)', 128_000, 128_000, false, true, 2.0, 6.0, 0.0, 0.0],
-        'voxtral-small-latest' => ['Voxtral Small (latest)', 32_000, 32_000, false, false, 0.1, 0.3, 0.0, 0.0],
-        'zai-glm-5-2' => ['GLM-5.2', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.14, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'zai-glm-5-3' => ['GLM-5.3', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.14, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'mistral-nemo' => ['Mistral Nemo', 128_000, 128_000, false, false, 0.15, 0.15, 0.015, 0.0],
+        'mistral-small-2506' => ['Mistral Small 3.2', 128_000, 16_384, false, true, 0.1, 0.3, 0.01, 0.0],
+        'mistral-small-2603' => ['Mistral Small 4', 262_144, 256_000, true, true, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'mistral-small-latest' => ['Mistral Small (latest)', 262_144, 256_000, true, true, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'open-mistral-7b' => ['Mistral 7B', 8_000, 8_000, false, false, 0.25, 0.25, 0.025, 0.0],
+        'open-mistral-nemo' => ['Open Mistral Nemo', 128_000, 128_000, false, false, 0.15, 0.15, 0.015, 0.0],
+        'open-mixtral-8x22b' => ['Mixtral 8x22B', 64_000, 64_000, false, false, 2.0, 6.0, 0.2, 0.0],
+        'open-mixtral-8x7b' => ['Mixtral 8x7B', 32_000, 32_000, false, false, 0.7, 0.7, 0.07, 0.0],
+        'pixtral-12b' => ['Pixtral 12B', 128_000, 128_000, false, true, 0.15, 0.15, 0.015, 0.0],
+        'pixtral-large-latest' => ['Pixtral Large (latest)', 128_000, 128_000, false, true, 2.0, 6.0, 0.2, 0.0],
+        'voxtral-small-2507' => ['Voxtral Small', 32_768, 32_000, false, false, 0.1, 0.4, 0.01, 0.0],
+        'voxtral-small-latest' => ['Voxtral Small (latest)', 32_768, 32_000, false, false, 0.1, 0.3, 0.01, 0.0],
+        'zai-glm-5-2' => ['GLM-5.2', 1_048_576, 131_072, true, false, 1.4, 4.4, 0.14, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'zai-glm-5-3' => ['GLM-5.3', 1_048_576, 131_072, true, false, 1.4, 4.4, 0.14, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         // <<< generated
     ];
 
@@ -317,10 +345,10 @@ final class Models
      */
     private const array XAI_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'grok-4.3' => ['Grok 4.3', 1_000_000, 30_000, true, true, 1.25, 2.5, 0.2, 0.0],
-        'grok-4.5' => ['Grok 4.5', 500_000, 500_000, true, true, 2.0, 6.0, 0.3, 0.0],
-        'grok-4.6' => ['Grok 4.6', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0],
-        'grok-4.7' => ['Grok 4.7', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0],
+        'grok-4.3' => ['Grok 4.3', 1_000_000, 30_000, true, true, 1.25, 2.5, 0.2, 0.0, 'tiers' => [[200_000, 2.5, 5.0, 0.4, 0.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'grok-4.5' => ['Grok 4.5', 500_000, 500_000, true, true, 2.0, 6.0, 0.3, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 0.6, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'grok-4.6' => ['Grok 4.6', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'grok-4.7' => ['Grok 4.7', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         // <<< generated
     ];
 
@@ -335,24 +363,13 @@ final class Models
      */
     private const array ZAI_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'glm-4.5' => ['GLM-4.5', 131_072, 98_304, true, false, 0.6, 2.2, 0.11, 0.0],
-        'glm-4.5-air' => ['GLM-4.5-Air', 131_072, 98_304, true, false, 0.2, 1.1, 0.03, 0.0],
-        'glm-4.5-flash' => ['GLM-4.5-Flash', 131_072, 98_304, true, false, 0.0, 0.0, 0.0, 0.0],
-        'glm-4.5v' => ['GLM-4.5V', 64_000, 16_384, true, true, 0.6, 1.8, 0.0, 0.0],
-        'glm-4.6' => ['GLM-4.6', 204_800, 131_072, true, false, 0.6, 2.2, 0.11, 0.0],
-        'glm-4.6v' => ['GLM-4.6V', 128_000, 32_768, true, true, 0.3, 0.9, 0.0, 0.0],
-        'glm-4.6v-flash' => ['GLM-4.6V-Flash', 128_000, 32_768, true, true, 0.0, 0.0, 0.0, 0.0],
         'glm-4.7' => ['GLM-4.7', 204_800, 131_072, true, false, 0.6, 2.2, 0.11, 0.0],
-        'glm-4.7-flash' => ['GLM-4.7-Flash', 200_000, 131_072, true, false, 0.0, 0.0, 0.0, 0.0],
-        'glm-4.7-flashx' => ['GLM-4.7-FlashX', 200_000, 131_072, true, false, 0.07, 0.4, 0.01, 0.0],
-        'glm-5' => ['GLM-5', 204_800, 131_072, true, false, 1.0, 3.2, 0.2, 0.0],
         'glm-5-turbo' => ['GLM-5-Turbo', 200_000, 131_072, true, false, 1.2, 4.0, 0.24, 0.0],
-        'glm-5.1' => ['GLM-5.1', 200_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0],
-        'glm-5.2' => ['GLM-5.2', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0],
-        'glm-5.3' => ['GLM-5.3', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0],
-        'glm-5.3-flash' => ['GLM-5.3-Flash', 1_000_000, 131_072, true, true, 0.15, 0.5, 0.03, 0.0],
-        'glm-5.3-flashx' => ['GLM-5.3-FlashX', 1_000_000, 131_072, true, true, 0.37, 1.25, 0.075, 0.0],
-        'glm-5v-turbo' => ['GLM-5V-Turbo', 200_000, 131_072, true, true, 1.2, 4.0, 0.24, 0.0],
+        'glm-5.2' => ['GLM-5.2', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'glm-5.2-highspeed' => ['GLM-5.2 Highspeed', 1_000_000, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'glm-5.3' => ['GLM-5.3', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'glm-5.3-flash' => ['GLM-5.3-Flash', 1_000_000, 131_072, true, true, 0.15, 0.5, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'glm-5.3-highspeed' => ['GLM-5.3 Highspeed', 1_000_000, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         // <<< generated
     ];
 
@@ -368,41 +385,51 @@ final class Models
      */
     private const array OPENAI_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        'gpt-4' => ['GPT-4', 8_192, 8_192, false, false, 30.0, 60.0, 0.0, 0.0],
+        'gpt-4-turbo' => ['GPT-4 Turbo', 128_000, 4_096, false, true, 10.0, 30.0, 0.0, 0.0],
         'gpt-4.1' => ['GPT-4.1', 1_047_576, 32_768, false, true, 2.0, 8.0, 0.5, 0.0],
         'gpt-4.1-mini' => ['GPT-4.1 mini', 1_047_576, 32_768, false, true, 0.4, 1.6, 0.1, 0.0],
+        'gpt-4.1-nano' => ['GPT-4.1 nano', 1_047_576, 32_768, false, true, 0.1, 0.4, 0.025, 0.0],
         'gpt-4o' => ['GPT-4o', 128_000, 16_384, false, true, 2.5, 10.0, 1.25, 0.0],
+        'gpt-4o-2024-05-13' => ['GPT-4o (2024-05-13)', 128_000, 4_096, false, true, 5.0, 15.0, 0.0, 0.0],
         'gpt-4o-2024-08-06' => ['GPT-4o (2024-08-06)', 128_000, 16_384, false, true, 2.5, 10.0, 1.25, 0.0],
         'gpt-4o-2024-11-20' => ['GPT-4o (2024-11-20)', 128_000, 16_384, false, true, 2.5, 10.0, 1.25, 0.0],
         'gpt-4o-mini' => ['GPT-4o mini', 128_000, 16_384, false, true, 0.15, 0.6, 0.075, 0.0],
-        'gpt-5' => ['GPT-5', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0],
+        'gpt-5' => ['GPT-5', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gpt-5-chat-latest' => ['GPT-5 Chat Latest', 128_000, 16_384, false, true, 1.25, 10.0, 0.125, 0.0],
-        'gpt-5-mini' => ['GPT-5 Mini', 400_000, 128_000, true, true, 0.25, 2.0, 0.025, 0.0],
-        'gpt-5-nano' => ['GPT-5 Nano', 400_000, 128_000, true, true, 0.05, 0.4, 0.005, 0.0],
-        'gpt-5-pro' => ['GPT-5 Pro', 400_000, 128_000, true, true, 15.0, 120.0, 0.0, 0.0],
-        'gpt-5.1' => ['GPT-5.1', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0],
-        'gpt-5.2' => ['GPT-5.2', 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0],
-        'gpt-5.2-pro' => ['GPT-5.2 Pro', 400_000, 128_000, true, true, 21.0, 168.0, 0.0, 0.0],
-        'gpt-5.3-codex' => ['GPT-5.3 Codex', 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0],
-        'gpt-5.3-codex-spark' => ['GPT-5.3 Codex Spark', 128_000, 32_000, true, true, 1.75, 14.0, 0.175, 0.0],
-        'gpt-5.4' => ['GPT-5.4', 272_000, 128_000, true, true, 2.5, 15.0, 0.25, 0.0, 'tiers' => [[272_000, 5.0, 22.5, 0.5, 0.0]]],
-        'gpt-5.4-mini' => ['GPT-5.4 mini', 400_000, 128_000, true, true, 0.75, 4.5, 0.075, 0.0],
-        'gpt-5.4-nano' => ['GPT-5.4 nano', 400_000, 128_000, true, true, 0.2, 1.25, 0.02, 0.0],
-        'gpt-5.4-pro' => ['GPT-5.4 Pro', 1_050_000, 128_000, true, true, 30.0, 180.0, 0.0, 0.0, 'tiers' => [[272_000, 60.0, 270.0, 0.0, 0.0]]],
-        'gpt-5.5' => ['GPT-5.5', 272_000, 128_000, true, true, 5.0, 30.0, 0.5, 0.0, 'tiers' => [[272_000, 10.0, 45.0, 1.0, 0.0]]],
-        'gpt-5.5-pro' => ['GPT-5.5 Pro', 1_050_000, 128_000, true, true, 30.0, 180.0, 0.0, 0.0, 'tiers' => [[272_000, 60.0, 270.0, 0.0, 0.0]]],
-        'gpt-5.6' => ['GPT-5.6', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0],
-        'gpt-5.6-luna' => ['GPT-5.6 Luna', 272_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'tiers' => [[272_000, 0.4, 1.8, 0.04, 0.5]]],
-        'gpt-5.6-sol' => ['GPT-5.6 Sol', 272_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]]],
-        'gpt-5.6-terra' => ['GPT-5.6 Terra', 272_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]]],
-        'gpt-6-astra' => ['GPT-6 Astra', 272_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]]],
-        'gpt-6-luna' => ['GPT-6 Luna', 272_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]]],
-        'gpt-6-sol' => ['GPT-6 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]]],
-        'gpt-6.1-sol' => ['GPT-6.1 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]]],
-        'gpt-daybreak-blue-latest' => ['Daybreak Blue', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0],
-        'gpt-daybreak-red-latest' => ['Daybreak Red', 400_000, 128_000, true, true, 12.5, 75.0, 1.25, 15.625],
-        'gpt-realtime-2.1' => ['GPT-Realtime-2.1', 128_000, 32_000, true, true, 4.0, 24.0, 0.4, 0.0],
-        'o3' => ['o3', 200_000, 100_000, true, true, 2.0, 8.0, 0.5, 0.0],
-        'o3-pro' => ['o3-pro', 200_000, 100_000, true, true, 20.0, 80.0, 0.0, 0.0],
+        'gpt-5-mini' => ['GPT-5 Mini', 400_000, 128_000, true, true, 0.25, 2.0, 0.025, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gpt-5-nano' => ['GPT-5 Nano', 400_000, 128_000, true, true, 0.05, 0.4, 0.005, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gpt-5-pro' => ['GPT-5 Pro', 400_000, 128_000, true, true, 15.0, 120.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gpt-5.1' => ['GPT-5.1', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gpt-5.2' => ['GPT-5.2', 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.2-chat-latest' => ['GPT-5.2 Chat', 128_000, 16_384, true, true, 1.75, 14.0, 0.175, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => null, 'xhigh' => null, 'max' => null]],
+        'gpt-5.2-pro' => ['GPT-5.2 Pro', 400_000, 128_000, true, true, 21.0, 168.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.3-chat-latest' => ['GPT-5.3 Chat (latest)', 128_000, 16_384, false, true, 1.75, 14.0, 0.175, 0.0],
+        'gpt-5.3-codex' => ['GPT-5.3 Codex', 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.3-codex-spark' => ['GPT-5.3 Codex Spark', 128_000, 32_000, true, true, 1.75, 14.0, 0.175, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.4' => ['GPT-5.4', 272_000, 128_000, true, true, 2.5, 15.0, 0.25, 0.0, 'tiers' => [[272_000, 5.0, 22.5, 0.5, 0.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.4-mini' => ['GPT-5.4 mini', 400_000, 128_000, true, true, 0.75, 4.5, 0.075, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.4-nano' => ['GPT-5.4 nano', 400_000, 128_000, true, true, 0.2, 1.25, 0.02, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.4-pro' => ['GPT-5.4 Pro', 1_050_000, 128_000, true, true, 30.0, 180.0, 0.0, 0.0, 'tiers' => [[272_000, 60.0, 270.0, 0.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.5' => ['GPT-5.5', 272_000, 128_000, true, true, 5.0, 30.0, 0.5, 0.0, 'tiers' => [[272_000, 10.0, 45.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.5-pro' => ['GPT-5.5 Pro', 1_050_000, 128_000, true, true, 30.0, 180.0, 0.0, 0.0, 'tiers' => [[272_000, 60.0, 270.0, 0.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.6' => ['GPT-5.6', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-5.6-luna' => ['GPT-5.6 Luna', 272_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'tiers' => [[272_000, 0.4, 1.8, 0.04, 0.5]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-5.6-sol' => ['GPT-5.6 Sol', 272_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-5.6-terra' => ['GPT-5.6 Terra', 272_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-6-astra' => ['GPT-6 Astra', 272_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-6-luna' => ['GPT-6 Luna', 272_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-6-sol' => ['GPT-6 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-6.1-sol' => ['GPT-6.1 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-daybreak-blue-latest' => ['Daybreak Blue', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-daybreak-red-latest' => ['Daybreak Red', 400_000, 128_000, true, true, 12.5, 75.0, 1.25, 15.625, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-realtime-2.1' => ['GPT-Realtime-2.1', 128_000, 32_000, true, true, 4.0, 24.0, 0.4, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'o1' => ['o1', 200_000, 100_000, true, true, 15.0, 60.0, 7.5, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'o1-pro' => ['o1-pro', 200_000, 100_000, true, true, 150.0, 600.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'o3' => ['o3', 200_000, 100_000, true, true, 2.0, 8.0, 0.5, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'o3-mini' => ['o3-mini', 200_000, 100_000, true, false, 1.1, 4.4, 0.55, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'o3-pro' => ['o3-pro', 200_000, 100_000, true, true, 20.0, 80.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'o4-mini' => ['o4-mini', 200_000, 100_000, true, true, 1.1, 4.4, 0.275, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         // <<< generated
     ];
 
@@ -423,18 +450,19 @@ final class Models
      */
     private const array GOOGLE_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'deep-research-max-preview-04-2026' => ['Deep Research Max Preview (Apr-21-2026)', 131_072, 65_536, true, true, 2.0, 12.0, 0.2, 0.0],
-        'deep-research-preview-04-2026' => ['Deep Research Preview (Apr-21-2026)', 131_072, 65_536, true, true, 2.0, 12.0, 0.2, 0.0],
-        'gemini-2.5-computer-use-preview-10-2025' => ['Gemini 2.5 Computer Use Preview 10-2025', 128_000, 64_000, true, true, 1.25, 10.0, 0.0, 0.0],
+        'deep-research-max-preview-04-2026' => ['Deep Research Max Preview (Apr-21-2026)', 131_072, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, 'tiers' => [[200_000, 4.0, 18.0, 0.4, 0.0]]],
+        'deep-research-preview-04-2026' => ['Deep Research Preview (Apr-21-2026)', 131_072, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, 'tiers' => [[200_000, 4.0, 18.0, 0.4, 0.0]]],
+        'gemini-2.5-computer-use-preview-10-2025' => ['Gemini 2.5 Computer Use Preview 10-2025', 128_000, 64_000, true, true, 1.25, 10.0, 0.0, 0.0, 'tiers' => [[200_000, 2.5, 15.0, 0.0, 0.0]]],
         'gemini-2.5-flash' => ['Gemini 2.5 Flash', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0],
         'gemini-2.5-flash-lite' => ['Gemini 2.5 Flash-Lite', 1_048_576, 65_536, true, true, 0.1, 0.4, 0.01, 0.0],
-        'gemini-2.5-pro' => ['Gemini 2.5 Pro', 1_048_576, 65_536, true, true, 1.25, 10.0, 0.125, 0.0],
+        'gemini-2.5-pro' => ['Gemini 2.5 Pro', 1_048_576, 65_536, true, true, 1.25, 10.0, 0.125, 0.0, 'tiers' => [[200_000, 2.5, 15.0, 0.25, 0.0]]],
         'gemini-3-flash-preview' => ['Gemini 3 Flash Preview', 1_048_576, 65_536, true, true, 0.5, 3.0, 0.05, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-3.1-flash-lite' => ['Gemini 3.1 Flash Lite', 1_048_576, 65_536, true, true, 0.25, 1.5, 0.025, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-3.1-flash-lite-image' => ['Nano Banana 2 Lite', 65_536, 4_096, true, true, 0.25, 30.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.1-flash-lite-preview' => ['Gemini 3.1 Flash Lite Preview', 1_048_576, 65_536, true, true, 0.25, 1.5, 0.025, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-3.1-flash-live-preview' => ['Gemini 3.1 Flash Live Preview', 131_072, 65_536, true, true, 0.75, 4.5, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'gemini-3.1-pro-preview' => ['Gemini 3.1 Pro Preview', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'gemini-3.1-pro-preview-customtools' => ['Gemini 3.1 Pro Preview Custom Tools', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.1-pro-preview' => ['Gemini 3.1 Pro Preview', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'tiers' => [[200_000, 4.0, 18.0, 0.4, 0.0]]],
+        'gemini-3.1-pro-preview-customtools' => ['Gemini 3.1 Pro Preview Custom Tools', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'tiers' => [[200_000, 4.0, 18.0, 0.4, 0.0]]],
         'gemini-3.5-flash' => ['Gemini 3.5 Flash', 1_048_576, 65_536, true, true, 1.5, 9.0, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-3.5-flash-lite' => ['Gemini 3.5 Flash Lite', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-3.6-flash' => ['Gemini 3.6 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
@@ -444,6 +472,260 @@ final class Models
         'gemini-flash-lite-latest' => ['Gemini Flash-Lite Latest', 1_048_576, 65_536, true, true, 0.25, 1.5, 0.025, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemma-4-26b-a4b-it' => ['Gemma 4 26B A4B IT', 262_144, 32_768, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'MINIMAL', 'low' => null, 'medium' => null, 'high' => 'HIGH']],
         'gemma-4-31b-it' => ['Gemma 4 31B IT', 262_144, 32_768, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'MINIMAL', 'low' => null, 'medium' => null, 'high' => 'HIGH']],
+        // <<< generated
+    ];
+
+    /**
+     * Gemini on Vertex AI (`Providers\GoogleVertex`), as upstream's generator writes the `google-vertex`
+     * provider (`processGoogleModels()`'s second half): "The google-vertex models.dev catalog also
+     * includes Claude, OpenAI, and other MaaS models that do not use the @google/genai Gemini streaming
+     * path", so only the `gemini-` ids that take tools, `gemini-3.1-flash-lite-preview` left out; the
+     * two `-latest` aliases read the models they alias; the map is `getGoogleThinkingLevelMap()`; and the
+     * cost is the input, output and cache-read rates alone — no tiers, no cache writes, and 0.03 for
+     * Gemini 2.5 Flash's cache reads, "models.dev reports Vertex cache_read/cache_write values for
+     * Gemini 2.5 Flash that do not match the official Gemini API standard pricing table".
+     *
+     * Every row is served at `https://{location}-aiplatform.googleapis.com`, a template the provider
+     * fills from the location (`resolveCustomBaseUrl()` treats it as no base URL at all).
+     *
+     * The rows were written from upstream's published catalogue (`@earendil-works/pi-ai` 1.1.0, which
+     * its generator built from models.dev), as models.dev was not reachable to regenerate.
+     *
+     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float, thinkingLevelMap?: array<string, string|null>}>
+     */
+    private const array GOOGLE_VERTEX_MODELS = [
+        // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        'gemini-2.5-flash' => ['Gemini 2.5 Flash', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0],
+        'gemini-2.5-flash-lite' => ['Gemini 2.5 Flash-Lite', 1_048_576, 65_535, true, true, 0.1, 0.4, 0.01, 0.0],
+        'gemini-2.5-pro' => ['Gemini 2.5 Pro', 1_048_576, 65_536, true, true, 1.25, 10.0, 0.125, 0.0],
+        'gemini-3-flash-preview' => ['Gemini 3 Flash Preview', 1_048_576, 65_536, true, true, 0.5, 3.0, 0.05, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.1-flash-lite' => ['Gemini 3.1 Flash Lite', 1_048_576, 65_536, true, true, 0.25, 1.5, 0.025, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.1-pro-preview' => ['Gemini 3.1 Pro Preview', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.1-pro-preview-customtools' => ['Gemini 3.1 Pro Preview Custom Tools', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.5-flash' => ['Gemini 3.5 Flash', 1_048_576, 65_536, true, true, 1.5, 9.0, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.5-flash-lite' => ['Gemini 3.5 Flash Lite', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.6-flash' => ['Gemini 3.6 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.7-flash' => ['Gemini 3.7 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.8-flash' => ['Gemini 3.8 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-flash-latest' => ['Gemini Flash Latest', 1_048_576, 65_536, true, true, 1.5, 9.0, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-flash-lite-latest' => ['Gemini Flash-Lite Latest', 1_048_576, 65_536, true, true, 0.25, 1.5, 0.025, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        // <<< generated
+    ];
+
+    /**
+     * Amazon Bedrock's (`Providers\Bedrock`), as upstream's generator writes the `amazon-bedrock`
+     * provider: every model models.dev lists that takes tools, except the ones only an inference
+     * profile serves (`BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS`, `anthropic.claude-opus-5`), AI21's
+     * Jamba ("These models doesn't support tool use in streaming mode") and Mistral 7B Instruct v0
+     * ("These models doesn't support system messages"); priced with models.dev's tiers; and
+     * `compat: {supportsStrictMode: true}` — the row's `strictMode` — where models.dev says
+     * `structured_output`. The thinking maps are not in the rows: upstream's generator writes them from
+     * the ids (`applyThinkingLevelMetadata()`), which is `thinkingLevelMap()` below.
+     *
+     * The base URL is per row, upstream's `getBedrockBaseUrl()`: `eu.` inference profiles at
+     * `bedrock-runtime.eu-central-1.amazonaws.com`, everything else at `us-east-1`'s — which the provider
+     * only pins when no region or profile is configured.
+     *
+     * The rows were written from upstream's published catalogue (`@earendil-works/pi-ai` 1.1.0), as
+     * models.dev was not reachable to regenerate.
+     *
+     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float, tiers?: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>, strictMode?: true}>
+     */
+    private const array AMAZON_BEDROCK_MODELS = [
+        // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        'amazon.nova-2-lite-v1:0' => ['Nova 2 Lite', 1_000_000, 65_535, true, true, 0.33, 2.75, 0.0825, 0.33],
+        'amazon.nova-lite-v1:0' => ['Nova Lite', 300_000, 10_000, false, true, 0.06, 0.24, 0.015, 0.06],
+        'amazon.nova-micro-v1:0' => ['Nova Micro', 128_000, 10_000, false, false, 0.035, 0.14, 0.00875, 0.035],
+        'amazon.nova-pro-v1:0' => ['Nova Pro', 300_000, 10_000, false, true, 0.8, 3.2, 0.2, 0.8],
+        'anthropic.claude-fable-5' => ['Claude Fable 5', 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5],
+        'anthropic.claude-fable-5-1' => ['Claude Fable 5.1', 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5],
+        'anthropic.claude-haiku-4-5-20251001-v1:0' => ['Claude Haiku 4.5', 200_000, 64_000, true, true, 1.0, 5.0, 0.1, 1.25, 'strictMode' => true],
+        'anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5', 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],
+        'anthropic.claude-opus-4-1-20250805-v1:0' => ['Claude Opus 4.1', 200_000, 32_000, true, true, 15.0, 75.0, 1.5, 18.75],
+        'anthropic.claude-opus-4-5-20251101-v1:0' => ['Claude Opus 4.5', 200_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25, 'strictMode' => true],
+        'anthropic.claude-opus-4-6-v1' => ['Claude Opus 4.6', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'anthropic.claude-opus-4-7' => ['Claude Opus 4.7', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25],
+        'anthropic.claude-opus-4-8' => ['Claude Opus 4.8', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25],
+        'anthropic.claude-opus-5-5' => ['Claude Opus 5.5', 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0],
+        'anthropic.claude-sonnet-4-5-20250929-v1:0' => ['Claude Sonnet 4.5', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75, 'strictMode' => true],
+        'anthropic.claude-sonnet-4-6' => ['Claude Sonnet 4.6', 1_000_000, 128_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
+        'anthropic.claude-sonnet-5' => ['Claude Sonnet 5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5],
+        'anthropic.claude-sonnet-5-5' => ['Claude Sonnet 5.5', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5],
+        'apac.amazon.nova-lite-v1:0' => ['Nova Lite (APAC)', 300_000, 10_000, false, true, 0.063, 0.252, 0.01575, 0.063],
+        'apac.amazon.nova-micro-v1:0' => ['Nova Micro (APAC)', 128_000, 10_000, false, false, 0.037, 0.148, 0.00925, 0.037],
+        'apac.amazon.nova-pro-v1:0' => ['Nova Pro (APAC)', 300_000, 10_000, false, true, 0.84, 3.36, 0.21, 0.84],
+        'apac.anthropic.claude-sonnet-4-20250514-v1:0' => ['Claude Sonnet 4 (APAC)', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75],
+        'au.anthropic.claude-haiku-4-5-20251001-v1:0' => ['Claude Haiku 4.5 (AU)', 200_000, 64_000, true, true, 1.1, 5.5, 0.11, 1.375, 'strictMode' => true],
+        'au.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (AU)', 1_000_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[100_000, 0.55, 2.75, 0.055, 0.6875]]],
+        'au.anthropic.claude-opus-4-6-v1' => ['AU Anthropic Claude Opus 4.6', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'au.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (AU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
+        'au.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (AU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
+        'au.anthropic.claude-opus-5' => ['Claude Opus 5 (AU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
+        'au.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (AU)', 1_000_000, 128_000, true, true, 4.4, 22.0, 0.22, 5.5],
+        'au.anthropic.claude-sonnet-4-5-20250929-v1:0' => ['Claude Sonnet 4.5 (AU)', 200_000, 64_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
+        'au.anthropic.claude-sonnet-4-6' => ['AU Anthropic Claude Sonnet 4.6', 1_000_000, 128_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
+        'au.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (AU)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75],
+        'ca.amazon.nova-lite-v1:0' => ['Nova Lite (CA)', 300_000, 10_000, false, true, 0.064, 0.256, 0.016, 0.064],
+        'deepseek.v3-v1:0' => ['DeepSeek-V3.1', 163_840, 81_920, true, false, 0.58, 1.68, 0.0, 0.0, 'strictMode' => true],
+        'deepseek.v3.2' => ['DeepSeek V3.2', 163_840, 81_920, true, false, 0.62, 1.85, 0.0, 0.0, 'strictMode' => true],
+        'eu.amazon.nova-2-lite-v1:0' => ['Nova 2 Lite (EU)', 1_000_000, 65_535, true, true, 0.374, 3.157, 0.0935, 0.374],
+        'eu.amazon.nova-lite-v1:0' => ['Nova Lite (EU)', 300_000, 10_000, false, true, 0.069, 0.276, 0.01725, 0.069],
+        'eu.amazon.nova-micro-v1:0' => ['Nova Micro (EU)', 128_000, 10_000, false, false, 0.04, 0.16, 0.01, 0.04],
+        'eu.amazon.nova-pro-v1:0' => ['Nova Pro (EU)', 300_000, 10_000, false, true, 0.92, 3.68, 0.23, 0.92],
+        'eu.anthropic.claude-fable-5' => ['Claude Fable 5 (EU)', 1_000_000, 128_000, true, true, 11.0, 55.0, 1.1, 13.75],
+        'eu.anthropic.claude-haiku-4-5-20251001-v1:0' => ['Claude Haiku 4.5 (EU)', 200_000, 64_000, true, true, 1.1, 5.5, 0.11, 1.375, 'strictMode' => true],
+        'eu.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (EU)', 1_000_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[100_000, 0.55, 2.75, 0.055, 0.6875]]],
+        'eu.anthropic.claude-opus-4-5-20251101-v1:0' => ['Claude Opus 4.5 (EU)', 200_000, 64_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'eu.anthropic.claude-opus-4-6-v1' => ['Claude Opus 4.6 (EU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'eu.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (EU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
+        'eu.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (EU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
+        'eu.anthropic.claude-opus-5' => ['Claude Opus 5 (EU)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
+        'eu.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (EU)', 1_000_000, 128_000, true, true, 4.4, 22.0, 0.22, 5.5],
+        'eu.anthropic.claude-sonnet-4-20250514-v1:0' => ['Claude Sonnet 4 (EU)', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75],
+        'eu.anthropic.claude-sonnet-4-5-20250929-v1:0' => ['Claude Sonnet 4.5 (EU)', 200_000, 64_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
+        'eu.anthropic.claude-sonnet-4-6' => ['Claude Sonnet 4.6 (EU)', 1_000_000, 128_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
+        'eu.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (EU)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75],
+        'eu.anthropic.claude-sonnet-5-5' => ['Claude Sonnet 5.5 (EU)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.11, 2.75],
+        'eu.mistral.pixtral-large-2502-v1:0' => ['Pixtral Large (25.02) (EU)', 128_000, 8_192, false, true, 2.0, 6.0, 0.0, 0.0],
+        'global.amazon.nova-2-lite-v1:0' => ['Nova 2 Lite (Global)', 1_000_000, 65_535, true, true, 0.3, 2.5, 0.075, 0.3],
+        'global.anthropic.claude-fable-5' => ['Claude Fable 5 (Global)', 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5],
+        'global.anthropic.claude-fable-5-1' => ['Claude Fable 5.1 (Global)', 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5],
+        'global.anthropic.claude-haiku-4-5-20251001-v1:0' => ['Claude Haiku 4.5 (Global)', 200_000, 64_000, true, true, 1.0, 5.0, 0.1, 1.25, 'strictMode' => true],
+        'global.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (Global)', 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],
+        'global.anthropic.claude-opus-4-5-20251101-v1:0' => ['Claude Opus 4.5 (Global)', 200_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25, 'strictMode' => true],
+        'global.anthropic.claude-opus-4-6-v1' => ['Claude Opus 4.6 (Global)', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25, 'strictMode' => true],
+        'global.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (Global)', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25],
+        'global.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (Global)', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25],
+        'global.anthropic.claude-opus-5' => ['Claude Opus 5 (Global)', 1_000_000, 128_000, true, true, 5.0, 25.0, 0.5, 6.25],
+        'global.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (Global)', 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0],
+        'global.anthropic.claude-sonnet-4-20250514-v1:0' => ['Claude Sonnet 4 (Global)', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75],
+        'global.anthropic.claude-sonnet-4-5-20250929-v1:0' => ['Claude Sonnet 4.5 (Global)', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75, 'strictMode' => true],
+        'global.anthropic.claude-sonnet-4-6' => ['Claude Sonnet 4.6 (Global)', 1_000_000, 128_000, true, true, 3.0, 15.0, 0.3, 3.75, 'strictMode' => true],
+        'global.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (Global)', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5],
+        'global.anthropic.claude-sonnet-5-5' => ['Claude Sonnet 5.5 (Global)', 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5],
+        'global.moonshotai.kimi-k3' => ['Kimi K3 (Global)', 1_048_576, 128_000, true, true, 3.0, 15.0, 0.3, 3.75, 'strictMode' => true],
+        'global.openai.gpt-5.6-luna' => ['GPT-5.6 Luna (Global)', 1_050_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'tiers' => [[272_000, 0.4, 1.8, 0.04, 0.5]], 'strictMode' => true],
+        'global.openai.gpt-5.6-sol' => ['GPT-5.6 Sol (Global)', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]]],
+        'global.openai.gpt-5.6-terra' => ['GPT-5.6 Terra (Global)', 1_050_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]]],
+        'global.openai.gpt-6-astra' => ['GPT-6 Astra (Global)', 1_050_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]], 'strictMode' => true],
+        'global.openai.gpt-6-luna' => ['GPT-6 Luna (Global)', 1_050_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]], 'strictMode' => true],
+        'global.openai.gpt-6-sol' => ['GPT-6 Sol (Global)', 1_050_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]], 'strictMode' => true],
+        'global.openai.gpt-6.1-sol' => ['GPT-6.1 Sol (Global)', 1_050_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]], 'strictMode' => true],
+        'global.xai.grok-4.6' => ['Grok 4.6 (Global)', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0],
+        'global.xai.grok-4.7' => ['Grok 4.7 (Global)', 500_000, 500_000, true, true, 2.0, 6.0, 0.5, 0.0, 'strictMode' => true],
+        'global.zai.glm-5.3' => ['GLM-5.3 (Global)', 1_000_000, 128_000, true, false, 1.68, 5.28, 0.312, 2.1, 'strictMode' => true],
+        'google.gemma-4-26b-a4b' => ['Gemma 4 26B A4B IT', 262_144, 32_768, true, true, 0.13, 0.4, 0.0, 0.0, 'strictMode' => true],
+        'google.gemma-4-31b' => ['Gemma 4 31B IT', 262_144, 32_768, true, true, 0.14, 0.4, 0.0, 0.0, 'strictMode' => true],
+        'google.gemma-4-e2b' => ['Gemma 4 E2B IT', 131_072, 8_192, true, true, 0.04, 0.08, 0.0, 0.0, 'strictMode' => true],
+        'in.anthropic.claude-haiku-4-5-20251001-v1:0' => ['Claude Haiku 4.5 (India)', 200_000, 64_000, true, true, 1.1, 5.5, 0.11, 1.375],
+        'in.anthropic.claude-opus-5' => ['Claude Opus 5 (India)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
+        'in.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (India)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75],
+        'in.openai.gpt-5.6-luna' => ['GPT-5.6 Luna (India)', 1_050_000, 128_000, true, true, 0.22, 1.32, 0.022, 0.275, 'tiers' => [[272_000, 0.44, 1.98, 0.044, 0.55]], 'strictMode' => true],
+        'in.openai.gpt-5.6-terra' => ['GPT-5.6 Terra (India)', 1_050_000, 128_000, true, true, 2.2, 13.2, 0.22, 2.75, 'tiers' => [[272_000, 4.4, 19.8, 0.44, 5.5]]],
+        'jp.amazon.nova-2-lite-v1:0' => ['Nova 2 Lite (JP)', 1_000_000, 65_535, true, true, 0.396, 3.311, 0.099, 0.396],
+        'jp.anthropic.claude-haiku-4-5-20251001-v1:0' => ['Claude Haiku 4.5 (JP)', 200_000, 64_000, true, true, 1.1, 5.5, 0.11, 1.375, 'strictMode' => true],
+        'jp.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (JP)', 1_000_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[100_000, 0.55, 2.75, 0.055, 0.6875]]],
+        'jp.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (JP)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
+        'jp.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (JP)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
+        'jp.anthropic.claude-opus-5' => ['Claude Opus 5 (JP)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
+        'jp.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (JP)', 1_000_000, 128_000, true, true, 4.4, 22.0, 0.22, 5.5],
+        'jp.anthropic.claude-sonnet-4-5-20250929-v1:0' => ['Claude Sonnet 4.5 (JP)', 200_000, 64_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
+        'jp.anthropic.claude-sonnet-4-6' => ['Claude Sonnet 4.6 (JP)', 1_000_000, 128_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
+        'jp.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (JP)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75],
+        'meta.llama3-1-70b-instruct-v1:0' => ['Llama 3.1 70B Instruct', 128_000, 4_096, false, false, 0.72, 0.72, 0.0, 0.0],
+        'meta.llama3-1-8b-instruct-v1:0' => ['Llama 3.1 8B Instruct', 128_000, 4_096, false, false, 0.22, 0.22, 0.0, 0.0],
+        'meta.llama3-3-70b-instruct-v1:0' => ['Llama 3.3 70B Instruct', 128_000, 4_096, false, false, 0.72, 0.72, 0.0, 0.0],
+        'meta.llama4-maverick-17b-instruct-v1:0' => ['Llama 4 Maverick 17B Instruct', 1_000_000, 8_192, false, true, 0.24, 0.97, 0.0, 0.0],
+        'meta.llama4-scout-17b-instruct-v1:0' => ['Llama 4 Scout 17B Instruct', 10_000_000, 8_192, false, true, 0.17, 0.66, 0.0, 0.0],
+        'minimax.minimax-m2' => ['MiniMax-M2', 204_608, 128_000, true, false, 0.3, 1.2, 0.0, 0.0, 'strictMode' => true],
+        'minimax.minimax-m2.1' => ['MiniMax-M2.1', 196_608, 131_072, true, false, 0.3, 1.2, 0.0, 0.0, 'strictMode' => true],
+        'minimax.minimax-m2.5' => ['MiniMax-M2.5', 196_608, 98_304, true, false, 0.3, 1.2, 0.0, 0.0, 'strictMode' => true],
+        'mistral.devstral-2-123b' => ['Devstral 2 123B', 262_144, 8_192, false, false, 0.4, 2.0, 0.0, 0.0, 'strictMode' => true],
+        'mistral.magistral-small-2509' => ['Magistral Small 1.2', 128_000, 40_000, true, true, 0.5, 1.5, 0.0, 0.0, 'strictMode' => true],
+        'mistral.ministral-3-14b-instruct' => ['Ministral 14B 3.0', 128_000, 4_096, false, true, 0.2, 0.2, 0.0, 0.0, 'strictMode' => true],
+        'mistral.ministral-3-3b-instruct' => ['Ministral 3 3B', 256_000, 8_192, false, true, 0.1, 0.1, 0.0, 0.0, 'strictMode' => true],
+        'mistral.ministral-3-8b-instruct' => ['Ministral 3 8B', 128_000, 4_096, false, true, 0.15, 0.15, 0.0, 0.0, 'strictMode' => true],
+        'mistral.mistral-large-3-675b-instruct' => ['Mistral Large 3', 262_144, 8_192, false, true, 0.5, 1.5, 0.0, 0.0, 'strictMode' => true],
+        'mistral.pixtral-large-2502-v1:0' => ['Pixtral Large (25.02)', 128_000, 8_192, false, true, 2.0, 6.0, 0.0, 0.0],
+        'mistral.voxtral-mini-3b-2507' => ['Voxtral Mini 3B 2507', 32_768, 4_096, false, false, 0.04, 0.04, 0.0, 0.0, 'strictMode' => true],
+        'mistral.voxtral-small-24b-2507' => ['Voxtral Small 24B 2507', 32_768, 8_192, false, false, 0.1, 0.3, 0.0, 0.0, 'strictMode' => true],
+        'moonshot.kimi-k2-thinking' => ['Kimi K2 Thinking', 262_144, 16_000, true, false, 0.6, 2.5, 0.0, 0.0, 'strictMode' => true],
+        'moonshotai.kimi-k2.5' => ['Kimi K2.5', 262_144, 16_384, true, true, 0.6, 3.0, 0.0, 0.0, 'strictMode' => true],
+        'nvidia.nemotron-nano-12b-v2' => ['NVIDIA Nemotron Nano 12B v2 VL BF16', 131_072, 8_192, false, true, 0.2, 0.6, 0.0, 0.0, 'strictMode' => true],
+        'nvidia.nemotron-nano-3-30b' => ['NVIDIA Nemotron Nano 3 30B', 262_144, 8_192, true, false, 0.06, 0.24, 0.0, 0.0, 'strictMode' => true],
+        'nvidia.nemotron-nano-9b-v2' => ['NVIDIA Nemotron Nano 9B v2', 131_072, 8_192, false, false, 0.06, 0.23, 0.0, 0.0, 'strictMode' => true],
+        'nvidia.nemotron-super-3-120b' => ['NVIDIA Nemotron 3 Super 120B A12B', 262_144, 131_072, true, false, 0.15, 0.65, 0.0, 0.0, 'strictMode' => true],
+        'openai.gpt-5.4' => ['GPT-5.4', 1_000_000, 128_000, true, true, 2.75, 16.5, 0.275, 0.0, 'strictMode' => true],
+        'openai.gpt-5.5' => ['GPT-5.5', 1_000_000, 128_000, true, true, 5.5, 33.0, 0.55, 0.0, 'strictMode' => true],
+        'openai.gpt-5.6-luna' => ['GPT-5.6 Luna', 1_050_000, 128_000, true, true, 0.22, 1.32, 0.022, 0.275, 'tiers' => [[272_000, 0.44, 1.98, 0.044, 0.55]], 'strictMode' => true],
+        'openai.gpt-5.6-sol' => ['GPT-5.6 Sol', 1_050_000, 128_000, true, true, 4.4, 22.0, 0.44, 5.5, 'tiers' => [[272_000, 8.8, 33.0, 0.88, 11.0]], 'strictMode' => true],
+        'openai.gpt-5.6-terra' => ['GPT-5.6 Terra', 1_050_000, 128_000, true, true, 2.2, 13.2, 0.22, 2.75, 'tiers' => [[272_000, 4.4, 19.8, 0.44, 5.5]], 'strictMode' => true],
+        'openai.gpt-6-astra' => ['GPT-6 Astra', 1_050_000, 128_000, true, true, 11.0, 55.0, 1.1, 13.75, 'tiers' => [[272_000, 22.0, 82.5, 2.2, 27.5]], 'strictMode' => true],
+        'openai.gpt-6-luna' => ['GPT-6 Luna', 1_050_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[272_000, 0.22, 0.825, 0.022, 0.275]], 'strictMode' => true],
+        'openai.gpt-6-sol' => ['GPT-6 Sol', 1_050_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75, 'tiers' => [[272_000, 4.4, 16.5, 0.44, 5.5]], 'strictMode' => true],
+        'openai.gpt-6.1-sol' => ['GPT-6.1 Sol', 1_050_000, 128_000, true, true, 2.2, 11.0, 0.11, 2.75, 'tiers' => [[272_000, 4.4, 16.5, 0.22, 5.5]], 'strictMode' => true],
+        'openai.gpt-oss-120b' => ['gpt-oss-120b', 131_072, 131_072, true, false, 0.15, 0.6, 0.0, 0.0, 'strictMode' => true],
+        'openai.gpt-oss-120b-1:0' => ['gpt-oss-120b', 131_072, 128_000, true, false, 0.15, 0.6, 0.0, 0.0, 'strictMode' => true],
+        'openai.gpt-oss-20b' => ['gpt-oss-20b', 131_072, 131_072, true, false, 0.07, 0.3, 0.0, 0.0, 'strictMode' => true],
+        'openai.gpt-oss-20b-1:0' => ['gpt-oss-20b', 131_072, 128_000, true, false, 0.07, 0.3, 0.0, 0.0, 'strictMode' => true],
+        'openai.gpt-oss-safeguard-120b' => ['GPT OSS Safeguard 120B', 128_000, 16_384, true, false, 0.15, 0.6, 0.0, 0.0, 'strictMode' => true],
+        'openai.gpt-oss-safeguard-20b' => ['GPT OSS Safeguard 20B', 128_000, 16_384, true, false, 0.07, 0.2, 0.0, 0.0, 'strictMode' => true],
+        'qwen.qwen3-235b-a22b-2507-v1:0' => ['Qwen3 235B-A22B Instruct 2507', 262_144, 131_072, false, false, 0.22, 0.88, 0.0, 0.0, 'strictMode' => true],
+        'qwen.qwen3-32b-v1:0' => ['Qwen3 32B', 32_768, 16_384, true, false, 0.15, 0.6, 0.0, 0.0, 'strictMode' => true],
+        'qwen.qwen3-coder-30b-a3b-v1:0' => ['Qwen3-Coder 30B-A3B Instruct', 262_144, 131_072, false, false, 0.15, 0.6, 0.0, 0.0, 'strictMode' => true],
+        'qwen.qwen3-coder-480b-a35b-v1:0' => ['Qwen3-Coder 480B-A35B Instruct', 131_072, 65_536, false, false, 0.45, 1.8, 0.0, 0.0, 'strictMode' => true],
+        'qwen.qwen3-coder-next' => ['Qwen3 Coder Next', 262_144, 65_536, false, false, 0.5, 1.2, 0.0, 0.0, 'strictMode' => true],
+        'qwen.qwen3-next-80b-a3b' => ['Qwen3-Next 80B-A3B Instruct', 262_144, 262_000, false, false, 0.15, 1.2, 0.0, 0.0, 'strictMode' => true],
+        'qwen.qwen3-vl-235b-a22b' => ['Qwen3 VL 235B A22B Instruct', 262_144, 262_000, false, true, 0.53, 2.66, 0.0, 0.0, 'strictMode' => true],
+        'us-gov.openai.gpt-oss-120b-1:0' => ['gpt-oss-120b (GovCloud)', 128_000, 16_384, true, false, 0.18, 0.72, 0.0, 0.0, 'strictMode' => true],
+        'us-gov.openai.gpt-oss-20b-1:0' => ['gpt-oss-20b (GovCloud)', 128_000, 16_384, true, false, 0.084, 0.36, 0.0, 0.0, 'strictMode' => true],
+        'us.amazon.nova-2-lite-v1:0' => ['Nova 2 Lite (US)', 1_000_000, 65_535, true, true, 0.33, 2.75, 0.0825, 0.33],
+        'us.amazon.nova-lite-v1:0' => ['Nova Lite (US)', 300_000, 10_000, false, true, 0.06, 0.24, 0.015, 0.06],
+        'us.amazon.nova-micro-v1:0' => ['Nova Micro (US)', 128_000, 10_000, false, false, 0.035, 0.14, 0.00875, 0.035],
+        'us.amazon.nova-premier-v1:0' => ['Nova Premier (US)', 1_000_000, 10_000, false, true, 2.5, 12.5, 0.625, 2.5],
+        'us.amazon.nova-pro-v1:0' => ['Nova Pro (US)', 300_000, 10_000, false, true, 0.8, 3.2, 0.2, 0.8],
+        'us.anthropic.claude-fable-5' => ['Claude Fable 5 (US)', 1_000_000, 128_000, true, true, 11.0, 55.0, 1.1, 13.75],
+        'us.anthropic.claude-fable-5-1' => ['Claude Fable 5.1 (US)', 1_000_000, 128_000, true, true, 11.0, 55.0, 0.275, 13.75],
+        'us.anthropic.claude-haiku-4-5-20251001-v1:0' => ['Claude Haiku 4.5 (US)', 200_000, 64_000, true, true, 1.1, 5.5, 0.11, 1.375, 'strictMode' => true],
+        'us.anthropic.claude-haiku-5-5' => ['Claude Haiku 5.5 (US)', 1_000_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[100_000, 0.55, 2.75, 0.055, 0.6875]]],
+        'us.anthropic.claude-opus-4-1-20250805-v1:0' => ['Claude Opus 4.1 (US)', 200_000, 32_000, true, true, 15.0, 75.0, 1.5, 18.75],
+        'us.anthropic.claude-opus-4-5-20251101-v1:0' => ['Claude Opus 4.5 (US)', 200_000, 64_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'us.anthropic.claude-opus-4-6-v1' => ['Claude Opus 4.6 (US)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875, 'strictMode' => true],
+        'us.anthropic.claude-opus-4-7' => ['Claude Opus 4.7 (US)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
+        'us.anthropic.claude-opus-4-8' => ['Claude Opus 4.8 (US)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
+        'us.anthropic.claude-opus-5' => ['Claude Opus 5 (US)', 1_000_000, 128_000, true, true, 5.5, 27.5, 0.55, 6.875],
+        'us.anthropic.claude-opus-5-5' => ['Claude Opus 5.5 (US)', 1_000_000, 128_000, true, true, 4.4, 22.0, 0.22, 5.5],
+        'us.anthropic.claude-sonnet-4-20250514-v1:0' => ['Claude Sonnet 4 (US)', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75],
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0' => ['Claude Sonnet 4.5 (US)', 200_000, 64_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
+        'us.anthropic.claude-sonnet-4-6' => ['Claude Sonnet 4.6 (US)', 1_000_000, 128_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
+        'us.anthropic.claude-sonnet-5' => ['Claude Sonnet 5 (US)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75],
+        'us.anthropic.claude-sonnet-5-5' => ['Claude Sonnet 5.5 (US)', 1_000_000, 128_000, true, true, 2.2, 11.0, 0.11, 2.75],
+        'us.meta.llama3-1-70b-instruct-v1:0' => ['Llama 3.1 70B Instruct (US)', 128_000, 4_096, false, false, 0.72, 0.72, 0.0, 0.0],
+        'us.meta.llama3-1-8b-instruct-v1:0' => ['Llama 3.1 8B Instruct (US)', 128_000, 4_096, false, false, 0.22, 0.22, 0.0, 0.0],
+        'us.meta.llama3-3-70b-instruct-v1:0' => ['Llama 3.3 70B Instruct (US)', 128_000, 4_096, false, false, 0.72, 0.72, 0.0, 0.0],
+        'us.meta.llama4-maverick-17b-instruct-v1:0' => ['Llama 4 Maverick 17B Instruct (US)', 1_000_000, 8_192, false, true, 0.24, 0.97, 0.0, 0.0],
+        'us.meta.llama4-scout-17b-instruct-v1:0' => ['Llama 4 Scout 17B Instruct (US)', 10_000_000, 8_192, false, true, 0.17, 0.66, 0.0, 0.0],
+        'us.mistral.pixtral-large-2502-v1:0' => ['Pixtral Large (25.02) (US)', 128_000, 8_192, false, true, 2.0, 6.0, 0.0, 0.0],
+        'us.moonshotai.kimi-k3' => ['Kimi K3 (US)', 1_048_576, 128_000, true, true, 3.3, 16.5, 0.33, 4.125, 'strictMode' => true],
+        'us.openai.gpt-5.6-luna' => ['GPT-5.6 Luna (US)', 1_050_000, 128_000, true, true, 0.22, 1.32, 0.022, 0.275, 'tiers' => [[272_000, 0.44, 1.98, 0.044, 0.55]], 'strictMode' => true],
+        'us.openai.gpt-5.6-sol' => ['GPT-5.6 Sol (US)', 1_050_000, 128_000, true, true, 4.4, 22.0, 0.44, 5.5, 'tiers' => [[272_000, 8.8, 33.0, 0.88, 11.0]]],
+        'us.openai.gpt-5.6-terra' => ['GPT-5.6 Terra (US)', 1_050_000, 128_000, true, true, 2.2, 13.2, 0.22, 2.75, 'tiers' => [[272_000, 4.4, 19.8, 0.44, 5.5]]],
+        'us.openai.gpt-6-astra' => ['GPT-6 Astra (US)', 1_050_000, 128_000, true, true, 11.0, 55.0, 1.1, 13.75, 'tiers' => [[272_000, 22.0, 82.5, 2.2, 27.5]], 'strictMode' => true],
+        'us.openai.gpt-6-luna' => ['GPT-6 Luna (US)', 1_050_000, 128_000, true, true, 0.11, 0.55, 0.011, 0.1375, 'tiers' => [[272_000, 0.22, 0.825, 0.022, 0.275]], 'strictMode' => true],
+        'us.openai.gpt-6-sol' => ['GPT-6 Sol (US)', 1_050_000, 128_000, true, true, 2.2, 11.0, 0.22, 2.75, 'tiers' => [[272_000, 4.4, 16.5, 0.44, 5.5]], 'strictMode' => true],
+        'us.openai.gpt-6.1-sol' => ['GPT-6.1 Sol (US)', 1_050_000, 128_000, true, true, 2.2, 11.0, 0.11, 2.75, 'tiers' => [[272_000, 4.4, 16.5, 0.22, 5.5]], 'strictMode' => true],
+        'us.writer.palmyra-x4-v1:0' => ['Palmyra X4 (US)', 122_880, 8_192, true, false, 2.5, 10.0, 0.0, 0.0],
+        'us.writer.palmyra-x5-v1:0' => ['Palmyra X5 (US)', 1_040_000, 8_192, true, false, 0.6, 6.0, 0.0, 0.0],
+        'us.xai.grok-4.6' => ['Grok 4.6 (US)', 500_000, 500_000, true, true, 2.2, 6.6, 0.55, 0.0],
+        'us.xai.grok-4.7' => ['Grok 4.7 (US)', 500_000, 500_000, true, true, 2.2, 6.6, 0.55, 0.0, 'strictMode' => true],
+        'us.zai.glm-5.3' => ['GLM-5.3 (US)', 1_000_000, 128_000, true, false, 1.848, 5.808, 0.3432, 2.31, 'strictMode' => true],
+        'writer.palmyra-x4-v1:0' => ['Palmyra X4', 122_880, 8_192, true, false, 2.5, 10.0, 0.0, 0.0],
+        'writer.palmyra-x5-v1:0' => ['Palmyra X5', 1_040_000, 8_192, true, false, 0.6, 6.0, 0.0, 0.0],
+        'xai.grok-4.3' => ['Grok 4.3', 1_000_000, 131_072, true, true, 1.25, 2.5, 0.2, 0.0, 'strictMode' => true],
+        'xai.grok-4.6' => ['Grok 4.6', 500_000, 500_000, true, true, 2.2, 6.6, 0.55, 0.0, 'strictMode' => true],
+        'zai.glm-4.7' => ['GLM-4.7', 202_752, 131_072, true, false, 0.6, 2.2, 0.0, 0.0, 'strictMode' => true],
+        'zai.glm-4.7-flash' => ['GLM-4.7-Flash', 202_752, 131_072, true, false, 0.07, 0.4, 0.0, 0.0, 'strictMode' => true],
+        'zai.glm-5' => ['GLM-5', 202_752, 131_072, true, false, 1.0, 3.2, 0.0, 0.0, 'strictMode' => true],
         // <<< generated
     ];
 
@@ -468,40 +750,41 @@ final class Models
      */
     private const array COPILOT_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'claude-fable-5' => ['Claude Fable 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5],
-        'claude-fable-5.1' => ['Claude Fable 5.1', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5],
+        'claude-fable-5' => ['Claude Fable 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-fable-5.1' => ['Claude Fable 5.1', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'claude-haiku-4.5' => ['Claude Haiku 4.5 (latest)', Api::AnthropicMessages, 200_000, 64_000, true, true, 1.0, 5.0, 0.1, 1.25],
-        'claude-opus-4.7' => ['Claude Opus 4.7', Api::AnthropicMessages, 1_000_000, 32_000, true, true, 5.0, 25.0, 0.5, 6.25],
-        'claude-opus-4.8' => ['Claude Opus 4.8', Api::AnthropicMessages, 1_000_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25],
-        'claude-opus-5' => ['Claude Opus 5', Api::AnthropicMessages, 1_000_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25],
-        'claude-opus-5.5' => ['Claude Opus 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0],
-        'claude-sonnet-4.6' => ['Claude Sonnet 4.6', Api::AnthropicMessages, 1_000_000, 32_000, true, true, 3.0, 15.0, 0.3, 3.75],
-        'claude-sonnet-5' => ['Claude Sonnet 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5],
-        'claude-sonnet-5.5' => ['Claude Sonnet 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5],
-        'gemini-3.5-flash' => ['Gemini 3.5 Flash', Api::OpenAiCompletions, 200_000, 64_000, true, true, 1.5, 9.0, 0.15, 0.0],
-        'gemini-3.6-flash' => ['Gemini 3.6 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 0.75, 3.75, 0.075, 0.0],
-        'gemini-3.7-flash' => ['Gemini 3.7 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 0.75, 3.75, 0.075, 0.0],
-        'gemini-3.8-flash' => ['Gemini 3.8 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 0.75, 3.75, 0.075, 0.0],
-        'gpt-5-mini' => ['GPT-5 Mini', Api::OpenAiResponses, 264_000, 64_000, true, true, 0.25, 2.0, 0.025, 0.0],
-        'gpt-5.3-codex' => ['GPT-5.3 Codex', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0],
-        'gpt-5.4' => ['GPT-5.4', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 2.5, 15.0, 0.25, 0.0, 'tiers' => [[272_000, 5.0, 22.5, 0.5, 0.0]]],
-        'gpt-5.4-mini' => ['GPT-5.4 mini', Api::OpenAiResponses, 400_000, 128_000, true, true, 0.75, 4.5, 0.075, 0.0],
+        'claude-haiku-5.5' => ['Claude Haiku 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-opus-4.7' => ['Claude Opus 4.7', Api::AnthropicMessages, 1_000_000, 32_000, true, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-opus-4.8' => ['Claude Opus 4.8', Api::AnthropicMessages, 1_000_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-opus-5' => ['Claude Opus 5', Api::AnthropicMessages, 1_000_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-opus-5.5' => ['Claude Opus 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-sonnet-4.6' => ['Claude Sonnet 4.6', Api::AnthropicMessages, 1_000_000, 32_000, true, true, 3.0, 15.0, 0.3, 3.75, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'claude-sonnet-5' => ['Claude Sonnet 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'claude-sonnet-5.5' => ['Claude Sonnet 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gemini-3.5-flash' => ['Gemini 3.5 Flash', Api::OpenAiCompletions, 200_000, 64_000, true, true, 1.5, 9.0, 0.15, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.6-flash' => ['Gemini 3.6 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 0.75, 3.75, 0.075, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.7-flash' => ['Gemini 3.7 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 0.75, 3.75, 0.075, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.8-flash' => ['Gemini 3.8 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 0.75, 3.75, 0.075, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gpt-5-mini' => ['GPT-5 Mini', Api::OpenAiResponses, 264_000, 64_000, true, true, 0.25, 2.0, 0.025, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gpt-5.3-codex' => ['GPT-5.3 Codex', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.4' => ['GPT-5.4', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 2.5, 15.0, 0.25, 0.0, 'tiers' => [[272_000, 5.0, 22.5, 0.5, 0.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.4-mini' => ['GPT-5.4 mini', Api::OpenAiResponses, 400_000, 128_000, true, true, 0.75, 4.5, 0.075, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'gpt-5.4-nano' => ['GPT-5.4 nano', Api::OpenAiResponses, 400_000, 128_000, true, true, 0.2, 1.25, 0.02, 0.0],
-        'gpt-5.5' => ['GPT-5.5', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 5.0, 30.0, 0.5, 0.0, 'tiers' => [[272_000, 10.0, 45.0, 1.0, 0.0]]],
-        'gpt-5.6-luna' => ['GPT-5.6 Luna', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'tiers' => [[200_000, 0.4, 1.8, 0.04, 0.5]]],
-        'gpt-5.6-sol' => ['GPT-5.6 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]]],
-        'gpt-5.6-terra' => ['GPT-5.6 Terra', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]]],
-        'gpt-6-astra' => ['GPT-6 Astra', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]]],
-        'gpt-6-luna' => ['GPT-6 Luna', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]]],
-        'gpt-6-sol' => ['GPT-6 Sol', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]]],
-        'gpt-6.1-sol' => ['GPT-6.1 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]]],
-        'grok-4.5' => ['Grok 4.5', Api::OpenAiResponses, 500_000, 128_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
-        'grok-4.6' => ['Grok 4.6', Api::OpenAiResponses, 500_000, 128_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
-        'grok-4.7' => ['Grok 4.7', Api::OpenAiResponses, 500_000, 128_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
+        'gpt-5.5' => ['GPT-5.5', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 5.0, 30.0, 0.5, 0.0, 'tiers' => [[272_000, 10.0, 45.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'gpt-5.6-luna' => ['GPT-5.6 Luna', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'tiers' => [[200_000, 0.4, 1.8, 0.04, 0.5]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-5.6-sol' => ['GPT-5.6 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-5.6-terra' => ['GPT-5.6 Terra', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-6-astra' => ['GPT-6 Astra', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-6-luna' => ['GPT-6 Luna', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-6-sol' => ['GPT-6 Sol', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]], 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'gpt-6.1-sol' => ['GPT-6.1 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'grok-4.5' => ['Grok 4.5', Api::OpenAiResponses, 500_000, 128_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'grok-4.6' => ['Grok 4.6', Api::OpenAiResponses, 500_000, 128_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'grok-4.7' => ['Grok 4.7', Api::OpenAiResponses, 500_000, 128_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'kimi-k2.7-code' => ['Kimi K2.7 Code', Api::OpenAiCompletions, 256_000, 32_000, true, true, 0.95, 4.0, 0.19, 0.0],
-        'kimi-k3' => ['Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0],
-        'mai-code-1-flash-picker' => ['MAI-Code-1-Flash', Api::OpenAiResponses, 256_000, 128_000, true, false, 0.75, 4.5, 0.075, 0.0],
-        'mai-code-1.1-flash' => ['MAI-Code-1.1-Flash', Api::OpenAiResponses, 256_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.0],
+        'kimi-k3' => ['Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'mai-code-1-flash-picker' => ['MAI-Code-1-Flash', Api::OpenAiResponses, 256_000, 128_000, true, false, 0.75, 4.5, 0.075, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'mai-code-1.1-flash' => ['MAI-Code-1.1-Flash', Api::OpenAiResponses, 256_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         // <<< generated
     ];
 
@@ -752,6 +1035,26 @@ final class Models
             );
         }
 
+        foreach (self::GOOGLE_VERTEX_MODELS as $id => $row) {
+            [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write] = $row;
+            $input = $images ? ['text', 'image'] : ['text'];
+
+            $models[self::GOOGLE_VERTEX . '/' . $id] = new Model(
+                $id,
+                $name,
+                Api::GoogleVertex,
+                self::GOOGLE_VERTEX,
+                self::VERTEX_BASE_URL,
+                $window,
+                $maxTokens,
+                $reasoning,
+                $input,
+                self::pricing($in, $out, $read, $write),
+                thinkingLevelMap: self::thinkingLevelMap(self::GOOGLE_VERTEX, Api::GoogleVertex, $id, $row['thinkingLevelMap'] ?? []),
+                inputLimits: self::inputLimits(self::GOOGLE_VERTEX, $input, $window),
+            );
+        }
+
         // In the order the tables have always been listed in, which is the order `--list-models`
         // and `/model` show them: Mistral sits between Groq and xAI though it is no longer one of the
         // OpenAI-compatible ones.
@@ -798,6 +1101,28 @@ final class Models
                     inputLimits: self::inputLimits($provider, $input, $window),
                 );
             }
+        }
+
+        foreach (self::AMAZON_BEDROCK_MODELS as $id => $row) {
+            [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write] = $row;
+            $input = $images ? ['text', 'image'] : ['text'];
+
+            $models[self::AMAZON_BEDROCK . '/' . $id] = new Model(
+                $id,
+                $name,
+                Api::BedrockConverseStream,
+                self::AMAZON_BEDROCK,
+                // Upstream's generator `getBedrockBaseUrl()`.
+                str_starts_with($id, 'eu.') ? 'https://bedrock-runtime.eu-central-1.amazonaws.com' : 'https://bedrock-runtime.us-east-1.amazonaws.com',
+                $window,
+                $maxTokens,
+                $reasoning,
+                $input,
+                self::pricing($in, $out, $read, $write, $row['tiers'] ?? []),
+                compat: ($row['strictMode'] ?? false) === true ? new BedrockCompat(supportsStrictMode: true) : null,
+                thinkingLevelMap: self::thinkingLevelMap(self::AMAZON_BEDROCK, Api::BedrockConverseStream, $id),
+                inputLimits: self::inputLimits(self::AMAZON_BEDROCK, $input, $window),
+            );
         }
 
         // Last, so the table reads direct providers first — which is not what decides a bare
@@ -1045,7 +1370,7 @@ final class Models
      * then its own laid over it, as `OpenAiCompat::resolve()` does — says `thinkingFormat: "openai"`
      * and `supportsReasoningEffort`. Any other API is false.
      */
-    private static function supportsDirectReasoningEffort(Api $api, string $provider, string $baseUrl, string $id, OpenAiCompat|AnthropicCompat|null $compat): bool
+    private static function supportsDirectReasoningEffort(Api $api, string $provider, string $baseUrl, string $id, OpenAiCompat|AnthropicCompat|BedrockCompat|null $compat): bool
     {
         if ($api === Api::AnthropicMessages) {
             return $compat instanceof AnthropicCompat && $compat->forceAdaptiveThinking === true;
@@ -1070,8 +1395,8 @@ final class Models
      * Upstream's generator `applyImageInputMetadata()`, for a built-in model: nothing for a model that
      * takes no images; otherwise the provider's limits — Anthropic `{maxRequestBytes: 32 MiB, images:
      * {maxPerRequest: 100 at a 200,000 window, else 600}}`, OpenAI `{maxRequestBytes: 512 MiB, images:
-     * {maxPerRequest: 1500}}`, Google `{maxRequestBytes: 20 MiB, images: {maxPerRequest: 3600}}` (and
-     * Bedrock's, which pig has no provider for) — with `DEFAULT_IMAGE_RESIZE` as the images' `resize`
+     * {maxPerRequest: 1500}}`, Google `{maxRequestBytes: 20 MiB, images: {maxPerRequest: 3600}}`, Amazon
+     * Bedrock `{images: {maxPerMessage: 20}}` — with `DEFAULT_IMAGE_RESIZE` as the images' `resize`
      * on every one: "Keep the generated default no less restrictive than coding-agent's historical
      * image preprocessing. Provider limits can narrow this profile, but unknown providers retain the
      * cache-safe 2000px / 4.5 MiB behavior."
@@ -1090,7 +1415,7 @@ final class Models
 
         $providerLimits = match ($provider) {
             self::ANTHROPIC => ['maxRequestBytes' => 32 * 1024 * 1024, 'images' => ['maxPerRequest' => $contextWindow === 200_000 ? 100 : 600]],
-            'amazon-bedrock' => ['images' => ['maxPerMessage' => 20]],
+            self::AMAZON_BEDROCK => ['images' => ['maxPerMessage' => 20]],
             'openai' => ['maxRequestBytes' => 512 * 1024 * 1024, 'images' => ['maxPerRequest' => 1500]],
             'google' => ['maxRequestBytes' => 20 * 1024 * 1024, 'images' => ['maxPerRequest' => 3600]],
             default => [],

@@ -28,15 +28,14 @@ use Pig\Ai\Tool;
 use Pig\Ai\ToolCall;
 use Pig\Ai\Usage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\TranscriptContext;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Extensions\ExtensionApi;
-use Pig\CodingAgent\Hooks\Events\BeforeRetryEvent;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
-use Pig\CodingAgent\Hooks\Results\BeforeRetryResult;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\HookMessage;
 use Pig\CodingAgent\Session\RetryStartEvent;
@@ -196,20 +195,20 @@ final class AgentSettledTest extends TestCase
         $this->assertSettledOnceAtTheEnd();
     }
 
-    public function testBeforeRetryResettingTheCountWithAShortDelaySettlesOnce(): void
+    public function testARetryBudgetSpentToTheLastAttemptSettlesOnce(): void
     {
-        $quota = ['error' => 'Antigravity returned 429: RESOURCE_EXHAUSTED quota'];
-        $rotations = 0;
-        $session = $this->start([$quota, $quota, $quota, 'on the third account'], static function (HookApi $pi) use (&$rotations): void {
-            $pi->on('before_retry', static function (BeforeRetryEvent $event) use (&$rotations): ?BeforeRetryResult {
-                return $rotations++ < 2 ? new BeforeRetryResult(delaySeconds: 0.001, resetAttempts: true) : null;
-            });
-        });
+        // Three retryable failures and then an answer: every retry the budget allows, each its own
+        // run, and still one `agent_settled` for the prompt. (This used to go through pig's own
+        // `before_retry` hook, which upstream has no counterpart of and pig no longer has.)
+        $overloaded = ['error' => 'Anthropic returned 503: overloaded'];
+        $session = $this->start([$overloaded, $overloaded, $overloaded, 'on the fourth attempt'], settings: Settings::inMemory([
+            'retry' => ['baseDelayMs' => 1],
+        ]));
 
         Async::run(static fn () => $session->prompt('hi'));
         self::settle();
 
-        $this->assertSame('on the third account', self::textOf($session->messages()[count($session->messages()) - 1]));
+        $this->assertSame('on the fourth attempt', self::textOf($session->messages()[count($session->messages()) - 1]));
         $this->assertSettledOnceAtTheEnd();
     }
 
@@ -434,7 +433,7 @@ final class AgentSettledTest extends TestCase
         return $session;
     }
 
-    private function provider(Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream
+    private function provider(Model $model, TranscriptContext $context, SimpleStreamOptions $options): AssistantMessageEventStream
     {
         $turn = $this->script[$this->calls++] ?? throw new RuntimeException('out of scripted turns');
         $stream = new AssistantMessageEventStream();

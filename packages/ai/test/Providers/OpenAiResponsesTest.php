@@ -29,6 +29,7 @@ use Pig\Ai\Utils\ShortHash;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
+use Pig\Ai\Utils\Transcript;
 
 /**
  * OpenAI's Responses API, against a server answering from a script.
@@ -514,7 +515,7 @@ final class OpenAiResponsesTest extends TestCase
         $this->server = new CannedServer();
         $url = $this->server->start(["HTTP/1.1 503 Service Unavailable\r\nContent-Length: 4\r\n\r\nbusy"]);
         $message = Async::run(fn (): AssistantMessage => (new OpenAiResponses())
-            ->stream($this->model(baseUrl: $url, provider: 'my-gateway'), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'k'))
+            ->stream($this->model(baseUrl: $url, provider: 'my-gateway'), Transcript::normalizeContext(new Context([new UserMessage('hi')])), new OpenAiOptions(apiKey: 'k'))
             ->result()->await());
         $this->assertSame('my-gateway API error (503): 503 busy', $message->errorMessage);
 
@@ -714,7 +715,7 @@ final class OpenAiResponsesTest extends TestCase
         $message = Async::run(function () use ($url) {
             $stream = (new OpenAiResponses())->stream(
                 $this->model(baseUrl: $url),
-                new Context([new UserMessage('hi')]),
+                Transcript::normalizeContext(new Context([new UserMessage('hi')])),
                 new OpenAiOptions(apiKey: 'test-key', toolChoice: 'none', serviceTier: 'priority'),
             );
 
@@ -1309,7 +1310,7 @@ final class OpenAiResponsesTest extends TestCase
         [$deltas, $message] = Async::run(function () use ($url): array {
             $stream = (new OpenAiResponses())->stream(
                 $this->model($url, compat: new OpenAiCompat(grammarTools: true)),
-                new Context([new UserMessage('patch it')], tools: [self::grammarTool()]),
+                Transcript::normalizeContext(new Context([new UserMessage('patch it')], tools: [self::grammarTool()])),
                 new OpenAiOptions(apiKey: 'test-key'),
             );
             $deltas = [];
@@ -1400,7 +1401,7 @@ final class OpenAiResponsesTest extends TestCase
         ]);
 
         [$started, $message] = Async::run(function () use ($url): array {
-            $stream = (new OpenAiResponses())->stream($this->model(baseUrl: $url), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'k'));
+            $stream = (new OpenAiResponses())->stream($this->model(baseUrl: $url), Transcript::normalizeContext(new Context([new UserMessage('hi')])), new OpenAiOptions(apiKey: 'k'));
             $started = null;
 
             foreach ($stream as $event) {
@@ -1460,7 +1461,7 @@ final class OpenAiResponsesTest extends TestCase
         return Async::run(function () use ($url, $context): array {
             $stream = (new OpenAiResponses())->stream(
                 $this->model(baseUrl: $url),
-                $context,
+                Transcript::normalizeContext($context),
                 new OpenAiOptions(apiKey: 'test-key'),
             );
             $types = [];
@@ -1715,7 +1716,7 @@ final class OpenAiResponsesTest extends TestCase
         ]);
 
         [$deltas, $message] = Async::run(function () use ($url): array {
-            $stream = (new OpenAiResponses())->stream($this->model(baseUrl: $url), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'test-key'));
+            $stream = (new OpenAiResponses())->stream($this->model(baseUrl: $url), Transcript::normalizeContext(new Context([new UserMessage('hi')])), new OpenAiOptions(apiKey: 'test-key'));
             $deltas = [];
 
             foreach ($stream as $event) {
@@ -1903,9 +1904,11 @@ final class OpenAiResponsesTest extends TestCase
                 new Pricing(),
             );
 
-            // An empty key on purpose: with one, `endpoint()` asks `GithubCopilot::baseUrl()` where
-            // to go and the request leaves for the real Copilot API instead of the canned server.
-            $stream = (new OpenAiResponses())->stream($model, $context, new OpenAiOptions(apiKey: ''));
+            // No key on purpose: with one, `endpoint()` asks `GithubCopilot::baseUrl()` where to go
+            // and the request leaves for the real Copilot API instead of the canned server. The
+            // bearer goes as header-owned auth, which upstream's `getClientApiKey()` accepts (an
+            // empty key and no auth header is refused before anything is sent).
+            $stream = (new OpenAiResponses())->stream($model, Transcript::normalizeContext($context), new OpenAiOptions(headers: ['Authorization' => 'Bearer copilot-token']));
 
             foreach ($stream as $ignored) {
                 // Drain it; what is under test is what went out.
@@ -1945,7 +1948,7 @@ final class OpenAiResponsesTest extends TestCase
                 // The compat too — the same hazard as `OpenAiCompletionsTest::send()`'s field-by-field
                 // copy: a field left off here makes the feature look broken in whichever test needs it.
                 $this->model($url, $model->reasoning, $model->acceptsImages(), $model->id, $model->compat),
-                $context,
+                Transcript::normalizeContext($context),
                 new OpenAiOptions(temperature: $temperature, apiKey: 'test-key', reasoning: $reasoning),
             );
 
@@ -2010,7 +2013,7 @@ final class OpenAiResponsesTest extends TestCase
         );
 
         Async::run(function () use ($model, $context, $options): void {
-            $stream = (new OpenAiResponses())->stream($model, $context, $options ?? new OpenAiOptions(apiKey: 'test-key'));
+            $stream = (new OpenAiResponses())->stream($model, Transcript::normalizeContext($context), $options ?? new OpenAiOptions(apiKey: 'test-key'));
 
             foreach ($stream as $ignored) {
             }

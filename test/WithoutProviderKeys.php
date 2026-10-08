@@ -33,6 +33,11 @@ trait WithoutProviderKeys
             'COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN',
             'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GROQ_API_KEY', 'CEREBRAS_API_KEY',
             'XAI_API_KEY', 'OPENROUTER_API_KEY', 'ZAI_API_KEY', 'MISTRAL_API_KEY',
+            // Vertex: its key, and the ADC file with the project and location that make ADC count.
+            'GOOGLE_CLOUD_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GCLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION',
+            // Bedrock: every AWS source the ambient check accepts.
+            'AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_BEARER_TOKEN_BEDROCK',
+            'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI', 'AWS_CONTAINER_CREDENTIALS_FULL_URI', 'AWS_WEB_IDENTITY_TOKEN_FILE',
         ];
     }
 

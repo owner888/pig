@@ -145,6 +145,25 @@ final class JsJson
         return (string) preg_replace('/^' . self::JS_SPACE . '+|' . self::JS_SPACE . '+$/u', '', self::decodeUtf8($text));
     }
 
+    /**
+     * `Number.parseFloat()`: the longest decimal literal at the start of the string after JavaScript
+     * white space — `"2.5s"` is 2.5, `"Infinity"` is INF — and NaN when there is none.
+     */
+    public static function parseFloat(string $text): float
+    {
+        if (preg_match('/^[+-]?(?:Infinity|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/', self::trimStart($text), $match) !== 1) {
+            return NAN;
+        }
+
+        $literal = $match[0];
+
+        if (str_ends_with($literal, 'Infinity')) {
+            return str_starts_with($literal, '-') ? -INF : INF;
+        }
+
+        return (float) $literal;
+    }
+
     /** `String.prototype.trimStart()`, with `trim()`'s idea of white space. */
     public static function trimStart(string $text): string
     {

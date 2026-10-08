@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
-use Pig\Ai\Context;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\ToolResultMessage;
+use Pig\Ai\TranscriptContext;
 use Pig\Ai\UserMessage;
 
 /**
@@ -29,7 +29,7 @@ final class Copilot
      *
      * @return array<string, string>
      */
-    public static function headers(Model $model, Context $context): array
+    public static function headers(Model $model, TranscriptContext $context): array
     {
         if ($model->provider !== 'github-copilot') {
             return [];

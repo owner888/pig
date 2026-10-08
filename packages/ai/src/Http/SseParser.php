@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Http;
 
+use Pig\Ai\Utils\JsJson;
+
 /**
  * Incremental `text/event-stream` parser, following the WHATWG event stream rules.
  *
@@ -13,10 +15,18 @@ namespace Pig\Ai\Http;
  *
  * Every provider's streaming API is this format, so a bug here shows up as tokens
  * going missing rather than as an error.
+ *
+ * The bytes are read as upstream's readers decode them (`TextDecoder`, which is also the event
+ * stream spec's "UTF-8 decode"): one byte-order mark at the very start of the stream is dropped,
+ * and malformed UTF-8 in a line becomes U+FFFD. A line ending is ASCII, so a whole line is always
+ * whole characters.
  */
 final class SseParser
 {
     private string $buffer = '';
+
+    /** Whether the stream's first bytes have been looked at for a byte-order mark. */
+    private bool $started = false;
 
     private string $type = '';
 
@@ -34,6 +44,19 @@ final class SseParser
     {
         $this->buffer .= $bytes;
         $events = [];
+
+        if (!$this->started) {
+            // Too few bytes yet to tell a mark from text.
+            if (strlen($this->buffer) < 3 && str_starts_with("\u{FEFF}", $this->buffer)) {
+                return [];
+            }
+
+            $this->started = true;
+
+            if (str_starts_with($this->buffer, "\u{FEFF}")) {
+                $this->buffer = substr($this->buffer, 3);
+            }
+        }
 
         while (($line = $this->takeLine()) !== null) {
             if ($line === '') {
@@ -148,6 +171,6 @@ final class SseParser
         $line = substr($this->buffer, 0, $at);
         $this->buffer = substr($this->buffer, $at + $terminatorLength);
 
-        return $line;
+        return JsJson::decodeUtf8($line);
     }
 }

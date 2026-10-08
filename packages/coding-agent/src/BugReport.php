@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
+use Pig\Ai\Utils\Retry;
+
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\StopReason;
 use Pig\CodingAgent\Doctor\Doctor;
@@ -238,16 +240,12 @@ final class BugReport
     /**
      * Whether an error is worth suggesting `/bug` for.
      *
-     * Upstream's `maybeSuggestBugReport`: not a retryable one (busy providers are not bugs),
-     * and not an abort (the person did that). A quota wall is retryable and so is left out.
+     * Upstream's `maybeSuggestBugReport`: not a retryable one (`isRetryableAssistantError()` —
+     * busy providers are not bugs), and not an abort (the person did that).
      */
-    public static function worthReporting(AssistantMessage $message, ?int $contextWindow = null): bool
+    public static function worthReporting(AssistantMessage $message): bool
     {
-        if ($message->stopReason !== StopReason::Error) {
-            return false;
-        }
-
-        if (Session\Retry::worthRetrying($message, $contextWindow)) {
+        if ($message->stopReason !== StopReason::Error || Retry::isRetryableAssistantError($message)) {
             return false;
         }
 

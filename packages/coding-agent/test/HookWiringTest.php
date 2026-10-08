@@ -21,6 +21,7 @@ use Pig\Ai\TextContent;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\TranscriptContext;
 use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -102,6 +103,9 @@ final class HookWiringTest extends TestCase
                 'turn_start',
                 'message_start',
                 'message_end',
+                // Upstream's `transformHeaders`: a hook listening for `before_provider_headers` is
+                // asked for every request's headers, just before the request goes.
+                'before_provider_headers',
                 'message_start',
                 'message_end',
                 'turn_end',
@@ -262,7 +266,7 @@ final class HookWiringTest extends TestCase
 
         $agent = new Agent(new AgentOptions(
             transformContext: static fn (array $messages): array => $hooks->emitContext($messages),
-            streamFn: function (Model $model, Context $context, SimpleStreamOptions $options) use (&$asked) {
+            streamFn: function (Model $model, TranscriptContext $context, SimpleStreamOptions $options) use (&$asked) {
                 $asked = $context;
 
                 return $this->replay('ok');
@@ -581,7 +585,7 @@ final class HookWiringTest extends TestCase
         $agent = new Agent(new AgentOptions(
             streamFn: function (
                 Model $model,
-                Context $context,
+                TranscriptContext $context,
                 SimpleStreamOptions $options,
             ) use ($answers, &$index): AssistantMessageEventStream {
                 // A real provider answers an already-aborted request with an aborted

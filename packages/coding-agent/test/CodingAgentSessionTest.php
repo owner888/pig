@@ -770,8 +770,10 @@ final class CodingAgentSessionTest extends TestCase
         $this->assertSame(ThinkingLevel::High, $agent->state->thinkingLevel);
         // The working directory in the prompt as well as in the tools, which is the whole of what
         // `create()` adds — and a project's own instructions inside it.
-        $this->assertStringContainsString($this->cwd, (string) $agent->state->systemPrompt);
-        $this->assertStringContainsString('Use tabs, obviously.', (string) $agent->state->systemPrompt);
+        // The session's prompt (upstream's `session.systemPrompt`): the agent's transcript is empty
+        // until the first prompt writes it in as a system message.
+        $this->assertStringContainsString($this->cwd, $started->session->systemPrompt());
+        $this->assertStringContainsString('Use tabs, obviously.', $started->session->systemPrompt());
     }
 
     public function testReadOnlyLeavesOutTheToolsThatWrite(): void

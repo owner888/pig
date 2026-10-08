@@ -23,6 +23,7 @@ use Pig\CodingAgent\Tools\LsTool;
 use Pig\CodingAgent\Tools\ReadTool;
 use Pig\CodingAgent\Tools\WriteTool;
 use Pig\Test\CannedServer;
+use Pig\Ai\Utils\Transcript;
 
 /**
  * The built-in tools' strict sampling, end to end: what they declare, what a provider that has
@@ -69,7 +70,7 @@ final class StrictToolSamplingTest extends ToolTestCase
         );
 
         Async::run(static function () use ($model, $context): void {
-            $stream = (new Google())->stream($model, $context, new GoogleOptions(apiKey: 'test-key'));
+            $stream = (new Google())->stream($model, Transcript::normalizeContext($context), new GoogleOptions(apiKey: 'test-key'));
 
             foreach ($stream as $ignored) {
                 // Drain it; what is under test is what went out.

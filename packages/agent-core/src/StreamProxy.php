@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Pig\Agent;
 
 use Pig\Ai\AnthropicCompat;
-use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
@@ -23,15 +22,17 @@ use Pig\Ai\TextStartEvent;
 use Pig\Ai\ThinkingDeltaEvent;
 use Pig\Ai\ThinkingEndEvent;
 use Pig\Ai\ThinkingStartEvent;
-use Pig\Ai\Tool;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolCallDeltaEvent;
 use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
+use Pig\Ai\TranscriptContext;
 use Pig\Ai\Usage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\MessageJson;
+use Pig\Ai\Utils\TextDecoder;
+use Pig\Async\AbortError;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Throwable;
@@ -85,7 +86,7 @@ final class StreamProxy
      * The signature is `AgentOptions::$streamFn`'s, so `$proxy->stream(...)` is the whole of the
      * wiring. A provider's own `stream()` looks the same on purpose.
      */
-    public function stream(Model $model, Context $context, ?SimpleStreamOptions $options = null): AssistantMessageEventStream
+    public function stream(Model $model, TranscriptContext $context, ?SimpleStreamOptions $options = null): AssistantMessageEventStream
     {
         $stream = new AssistantMessageEventStream();
 
@@ -99,7 +100,7 @@ final class StreamProxy
     private function run(
         AssistantMessageEventStream $stream,
         Model $model,
-        Context $context,
+        TranscriptContext $context,
         ?SimpleStreamOptions $options,
     ): void {
         // Upstream reaches into `pi-ai/dist/utils/json-parse.js` here with a comment saying it is
@@ -110,6 +111,7 @@ final class StreamProxy
         // Upstream's partial starts at `stopReason: "pending"`; only `done` or `error` replace it.
         $builder->setStopReason(StopReason::Pending);
         $signal = $options?->signal;
+        $reading = false;
 
         try {
             $response = $this->http->send($this->request($model, $context, $options), $signal);
@@ -119,6 +121,7 @@ final class StreamProxy
             }
 
             $stream->push(new StartEvent($builder->snapshot()));
+            $reading = true;
 
             $finished = false;
 
@@ -133,7 +136,11 @@ final class StreamProxy
                 }
             }
 
-            $signal?->throwIfAborted();
+            // `if (options.signal?.aborted) throw new Error("Request aborted by user")` — the reader
+            // was cancelled with that reason, so its last read came back done.
+            if ($signal?->aborted() ?? false) {
+                throw new AgentError('Request aborted by user');
+            }
 
             // A gateway that stopped without a `done` left a turn half-finished. Upstream's words:
             // "A clean EOF without a done/error event means the server dropped the response
@@ -149,7 +156,12 @@ final class StreamProxy
         } catch (Throwable $error) {
             // Upstream's catch, and every provider's here: a stream function never throws at its
             // caller, the failure is the stream's result.
-            $builder->fail($error->getMessage(), $signal?->aborted() ?? false);
+            // An abort before the response is the fetch's own rejection, the DOMException "This
+            // operation was aborted"; one while the body is read is "Request aborted by user".
+            $builder->fail(
+                $error instanceof AbortError ? ($reading ? 'Request aborted by user' : 'This operation was aborted') : $error->getMessage(),
+                $signal?->aborted() ?? false,
+            );
             $failed = $builder->snapshot();
             $stream->push(new ErrorEvent($failed->stopReason, $failed));
             $stream->end();
@@ -159,19 +171,18 @@ final class StreamProxy
     /**
      * The request, in upstream's shape.
      *
-     * `options` is upstream's `buildProxyRequestOptions()`, the fields of it pig's options have —
-     * `temperature`, `maxTokens`, `reasoning` (the enum's own string, upstream's word for the same
-     * level), `cacheRetention`, `sessionId` and `metadata` — each left out when unset, as
+     * `options` is upstream's `buildProxyRequestOptions()`, the fields of it pig's options have, in
+     * its order — `temperature`, `maxTokens`, `reasoning` (the enum's own string, upstream's word for
+     * the same level), `cacheRetention`, `sessionId`, `headers` (nulls and all: a null deletes a
+     * header on the server's side), `metadata` and `maxRetryDelayMs` — each left out when unset, as
      * `JSON.stringify` leaves out an `undefined`.
      *
-     * The other five are not sent because nothing in pig has a value for them. Upstream's coding
-     * agent does set them: `transport`, `thinkingBudgets` and `maxRetryDelayMs` from its settings
-     * (`settingsManager.getTransport()`, `.getThinkingBudgets()`, `.getProviderRetrySettings()`) on
-     * every request, `headers` from the provider's resolved auth, and `samplingParams` from the
-     * model's own. pig has no transport choice (no WebSocket), no thinking-budget setting, no retry
-     * inside a provider (its retry is `Session\Retry`, around the whole turn), no per-request auth
-     * headers (a model's headers travel on `model.headers`), and no sampling parameters on a model.
-     * Each field arrives with the setting or model field that would fill it.
+     * The other three are not sent because nothing in pig has a value for them: `transport` (no
+     * WebSocket), `thinkingBudgets` (no thinking-budget setting) and `samplingParams` (no sampling
+     * parameters on a model).
+     *
+     * The request's own headers are upstream's two, `Authorization` and `Content-Type`; it sends no
+     * `Accept`.
      *
      * `JSON_INVALID_UTF8_SUBSTITUTE` because a conversation holds whatever the tools read, and
      * `read` and `bash` hand back a file's own bytes. Without it one latin-1 log made
@@ -186,7 +197,7 @@ final class StreamProxy
      * The `=== false` guard stays for what the flag does not cover — a recursive structure, or
      * a float that is not a number.
      */
-    private function request(Model $model, Context $context, ?SimpleStreamOptions $options): Request
+    private function request(Model $model, TranscriptContext $context, ?SimpleStreamOptions $options): Request
     {
         $body = json_encode([
             'model' => self::encodeModel($model),
@@ -197,7 +208,9 @@ final class StreamProxy
                 'reasoning' => $options?->reasoning?->value,
                 'cacheRetention' => $options?->cacheRetention,
                 'sessionId' => $options?->sessionId,
+                'headers' => $options?->headers,
                 'metadata' => $options?->metadata,
+                'maxRetryDelayMs' => $options?->maxRetryDelayMs,
             ], static fn (mixed $value): bool => $value !== null),
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
 
@@ -211,7 +224,6 @@ final class StreamProxy
             [
                 'Authorization' => 'Bearer ' . $this->authToken,
                 'Content-Type' => 'application/json',
-                'Accept' => 'text/event-stream',
             ],
             $body,
         );
@@ -355,40 +367,19 @@ final class StreamProxy
     }
 
     /**
-     * The context as upstream sends it: a `TranscriptContext`, `{messages}`, whose first message is
-     * upstream's `createInitialSystemMessage()` — `{role: "system", content: <system prompt>,
-     * toolsAdded: <tools>, timestamp: 0}`, there only when there is a prompt or a tool, `toolsAdded`
-     * only when there are tools. pig keeps the two on `Context`, and used to send them as
-     * `systemPrompt` and `tools` beside the messages: a gateway reading upstream's shape saw neither.
-     *
-     * A tool is upstream's `Tool`: name, description, parameters, and `constrainedSampling` when it
-     * has one — without it a proxied tool that asked for strict or grammar sampling got neither.
+     * The context as upstream sends it: the `TranscriptContext` itself, `{messages}`, whose system
+     * messages — the leading one with the prompt and `toolsAdded`, and any later ones that change
+     * them — go as the session file writes them (`MessageJson`). A tool is upstream's `Tool`: name,
+     * description, parameters, and `constrainedSampling` when it has one.
      *
      * @return array<string, mixed>
      */
-    private static function encodeContext(Context $context): array
+    private static function encodeContext(TranscriptContext $context): array
     {
-        $messages = array_values(array_filter(array_map(
+        return ['messages' => array_values(array_filter(array_map(
             MessageJson::encode(...),
             $context->messages,
-        ), static fn (?array $message): bool => $message !== null));
-        $systemPrompt = $context->systemPrompt ?? '';
-
-        if ($systemPrompt !== '' || $context->tools !== []) {
-            array_unshift($messages, [
-                'role' => 'system',
-                'content' => $systemPrompt,
-                ...($context->tools === [] ? [] : ['toolsAdded' => array_map(static fn (Tool $tool): array => [
-                    'name' => $tool->name,
-                    'description' => $tool->description,
-                    'parameters' => $tool->parameters,
-                    ...($tool->constrainedSampling === null ? [] : ['constrainedSampling' => $tool->constrainedSampling]),
-                ], $context->tools)]),
-                'timestamp' => 0,
-            ]);
-        }
-
-        return ['messages' => $messages];
+        ), static fn (?array $message): bool => $message !== null))];
     }
 
     /**
@@ -416,23 +407,38 @@ final class StreamProxy
     private function lines(iterable $body, ?AbortSignal $signal): iterable
     {
         $buffer = '';
+        // `decoder.decode(value, {stream: true})`: a leading byte-order mark dropped, a character cut
+        // between reads held back, malformed bytes U+FFFD.
+        $decoder = new TextDecoder();
 
-        foreach ($body as $chunk) {
-            $signal?->throwIfAborted();
-            $buffer .= $chunk;
-            $pieces = explode("\n", $buffer);
-            $buffer = (string) array_pop($pieces);
+        try {
+            foreach ($body as $chunk) {
+                // "if (options.signal?.aborted) throw new Error("Request aborted by user")", after
+                // each read.
+                if ($signal?->aborted() ?? false) {
+                    throw new AgentError('Request aborted by user');
+                }
 
-            foreach ($pieces as $line) {
-                $data = self::payload($line);
+                $buffer .= $decoder->decode($chunk);
+                $pieces = explode("\n", $buffer);
+                $buffer = (string) array_pop($pieces);
 
-                if ($data !== null) {
-                    yield $data;
+                foreach ($pieces as $line) {
+                    $data = self::payload($line);
+
+                    if ($data !== null) {
+                        yield $data;
+                    }
                 }
             }
+        } catch (AbortError) {
+            // The abort handler cancels the reader, so the pending read comes back done rather
+            // than failing; the check after the loop says why.
+            return;
         }
 
-        // The last line, for a server that ends without a newline.
+        // The last line, for a server that ends without a newline: `buffer += decoder.decode()`.
+        $buffer .= $decoder->decode('', false);
         $data = self::payload($buffer);
 
         if ($data !== null) {

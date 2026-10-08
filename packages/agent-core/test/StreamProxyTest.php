@@ -42,6 +42,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
 use RuntimeException;
+use Pig\Ai\Utils\Transcript;
 
 /** The tool the gateway asks for in the loop case, so the arguments it was handed can be checked. */
 final class GatewayTool implements AgentTool
@@ -159,7 +160,7 @@ final class StreamProxyTest extends TestCase
         $context = $context ?? new Context([new UserMessage([new TextContent('hi')])], 'be brief');
 
         return Async::run(static function () use ($proxy, $model, $context, $options): array {
-            $stream = $proxy->stream($model, $context, $options);
+            $stream = $proxy->stream($model, Transcript::normalizeContext($context), $options);
             $seen = [];
 
             foreach ($stream as $event) {
@@ -234,7 +235,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         Async::run(static function () use ($proxy, $model, $context): void {
-            foreach ($proxy->stream($model, $context) as $ignored) {
+            foreach ($proxy->stream($model, Transcript::normalizeContext($context)) as $ignored) {
                 // Drain.
             }
         });
@@ -280,7 +281,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         Async::run(static function () use ($proxy, $model, $context): void {
-            foreach ($proxy->stream($model, $context) as $ignored) {
+            foreach ($proxy->stream($model, Transcript::normalizeContext($context)) as $ignored) {
                 // Drain.
             }
         });
@@ -310,7 +311,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         Async::run(static function () use ($proxy, $model, $context): void {
-            foreach ($proxy->stream($model, $context) as $ignored) {
+            foreach ($proxy->stream($model, Transcript::normalizeContext($context)) as $ignored) {
                 // Drain.
             }
         });
@@ -329,7 +330,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         Async::run(static function () use ($proxy, $model, $context): void {
-            foreach ($proxy->stream($model, $context) as $ignored) {
+            foreach ($proxy->stream($model, Transcript::normalizeContext($context)) as $ignored) {
                 // Drain.
             }
         });
@@ -350,7 +351,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         Async::run(static function () use ($proxy, $model, $context): void {
-            foreach ($proxy->stream($model, $context) as $ignored) {
+            foreach ($proxy->stream($model, Transcript::normalizeContext($context)) as $ignored) {
                 // Drain.
             }
         });
@@ -359,6 +360,32 @@ final class StreamProxyTest extends TestCase
             ['supportsMidConvoSystemMessages' => true, 'supportsMidConvoToolChanges' => false],
             $this->server->receivedJson()['model']['compat'],
         );
+    }
+
+    public function testALaterSystemMessageGoesOverTheWireInItsPlace(): void
+    {
+        // Upstream sends the `TranscriptContext` whole: a system message that changes the prompt
+        // and the tools mid-conversation travels where it stands, for the gateway's provider to
+        // render. pig used to have nothing but the leading one to send.
+        $context = new Context([
+            new UserMessage([new TextContent('hi')]),
+            new \Pig\Ai\SystemMessage('also this', ['rules' => '- be kind', 'gone' => null], [new Tool('write', 'Write', ['type' => 'object'])], [new \Pig\Ai\ToolReference('read')], 7),
+            new UserMessage([new TextContent('now')]),
+        ], 'be brief');
+
+        $this->turn([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]], $context);
+
+        $sent = $this->server->receivedJson()['context']['messages'];
+
+        $this->assertSame(['system', 'user', 'system', 'user'], array_column($sent, 'role'));
+        $this->assertSame([
+            'role' => 'system',
+            'content' => 'also this',
+            'sections' => ['rules' => '- be kind', 'gone' => null],
+            'toolsAdded' => [['name' => 'write', 'description' => 'Write', 'parameters' => ['type' => 'object']]],
+            'toolsRemoved' => [['name' => 'read']],
+            'timestamp' => 7,
+        ], $sent[2]);
     }
 
     public function testTheContextGoesOverTheWireAsTheSessionFileWritesIt(): void
@@ -445,7 +472,7 @@ final class StreamProxyTest extends TestCase
         $proxy = new StreamProxy(rtrim($url, '/'), 't');
 
         Async::run(static function () use ($proxy, $model): void {
-            foreach ($proxy->stream($model, new Context([new UserMessage([new TextContent('hi')])])) as $ignored) {
+            foreach ($proxy->stream($model, Transcript::normalizeContext(new Context([new UserMessage([new TextContent('hi')])]))) as $ignored) {
             }
         });
 
@@ -476,7 +503,7 @@ final class StreamProxyTest extends TestCase
         $proxy = new StreamProxy(rtrim($url, '/'), 't');
 
         Async::run(static function () use ($proxy, $model): void {
-            foreach ($proxy->stream($model, new Context([new UserMessage([new TextContent('hi')])])) as $ignored) {
+            foreach ($proxy->stream($model, Transcript::normalizeContext(new Context([new UserMessage([new TextContent('hi')])]))) as $ignored) {
             }
         });
 
@@ -530,6 +557,24 @@ final class StreamProxyTest extends TestCase
             ['cacheRetention' => 'long', 'sessionId' => 's-9', 'metadata' => ['user_id' => 'u']],
             $this->server->receivedJson()['options'],
         );
+    }
+
+    public function testTheRequestHeadersAndTheRetryCapTravelAndNoAcceptIsSent(): void
+    {
+        // Upstream's `buildProxyRequestOptions()` sends `headers` (nulls and all) and
+        // `maxRetryDelayMs`, which pig's options did not have; and its `fetch` sends only
+        // `Authorization` and `Content-Type`.
+        $this->turn(
+            [['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]],
+            null,
+            new SimpleStreamOptions(sessionId: 's', headers: ['X-Trace' => 'abc', 'User-Agent' => null], maxRetryDelayMs: 5000),
+        );
+
+        $this->assertSame(
+            ['sessionId' => 's', 'headers' => ['X-Trace' => 'abc', 'User-Agent' => null], 'maxRetryDelayMs' => 5000],
+            $this->server->receivedJson()['options'],
+        );
+        $this->assertStringNotContainsStringIgnoringCase("\r\naccept:", $this->server->receivedHead());
     }
 
     public function testTheOptionsGoOverAsThreeFields(): void
@@ -815,7 +860,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         $message = Async::run(static function () use ($proxy, $model, $context): AssistantMessage {
-            $stream = $proxy->stream($model, $context);
+            $stream = $proxy->stream($model, Transcript::normalizeContext($context));
 
             foreach ($stream as $ignored) {
                 // Drain.
@@ -837,7 +882,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         $message = Async::run(static function () use ($proxy, $model, $context): AssistantMessage {
-            $stream = $proxy->stream($model, $context);
+            $stream = $proxy->stream($model, Transcript::normalizeContext($context));
 
             foreach ($stream as $ignored) {
                 // Drain.
@@ -937,7 +982,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         $message = Async::run(static function () use ($proxy, $model, $context): AssistantMessage {
-            $stream = $proxy->stream($model, $context);
+            $stream = $proxy->stream($model, Transcript::normalizeContext($context));
 
             foreach ($stream as $ignored) {
                 // Drain.
@@ -969,7 +1014,7 @@ final class StreamProxyTest extends TestCase
         $controller = new AbortController();
 
         $message = Async::run(static function () use ($proxy, $model, $context, $controller): AssistantMessage {
-            $stream = $proxy->stream($model, $context, new SimpleStreamOptions(signal: $controller->signal));
+            $stream = $proxy->stream($model, Transcript::normalizeContext($context), new SimpleStreamOptions(signal: $controller->signal));
 
             Loop::get()->delay(0.05, static fn () => $controller->abort('stopped'));
 
@@ -991,7 +1036,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         Async::run(static function () use ($proxy, $model, $context): void {
-            foreach ($proxy->stream($model, $context) as $ignored) {
+            foreach ($proxy->stream($model, Transcript::normalizeContext($context)) as $ignored) {
                 // Drain.
             }
         });
@@ -1051,7 +1096,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         $message = Async::run(static function () use ($proxy, $model, $context): AssistantMessage {
-            $stream = $proxy->stream($model, $context);
+            $stream = $proxy->stream($model, Transcript::normalizeContext($context));
 
             foreach ($stream as $ignored) {
                 // Drain.
@@ -1084,7 +1129,7 @@ final class StreamProxyTest extends TestCase
             $context = new Context([new UserMessage([new TextContent('hi')])]);
 
             $message = Async::run(static function () use ($proxy, $model, $context): AssistantMessage {
-                $stream = $proxy->stream($model, $context);
+                $stream = $proxy->stream($model, Transcript::normalizeContext($context));
 
                 foreach ($stream as $ignored) {
                     // Drain.
@@ -1113,7 +1158,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         $message = Async::run(static function () use ($proxy, $model, $context): AssistantMessage {
-            $stream = $proxy->stream($model, $context);
+            $stream = $proxy->stream($model, Transcript::normalizeContext($context));
 
             foreach ($stream as $ignored) {
                 // Drain.
@@ -1150,7 +1195,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         $message = Async::run(static function () use ($proxy, $model, $context): AssistantMessage {
-            $stream = $proxy->stream($model, $context);
+            $stream = $proxy->stream($model, Transcript::normalizeContext($context));
 
             foreach ($stream as $ignored) {
                 // Drain.
@@ -1177,7 +1222,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         $message = Async::run(static function () use ($proxy, $model, $context): AssistantMessage {
-            $stream = $proxy->stream($model, $context);
+            $stream = $proxy->stream($model, Transcript::normalizeContext($context));
 
             foreach ($stream as $ignored) {
                 // Drain.
@@ -1204,7 +1249,7 @@ final class StreamProxyTest extends TestCase
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         $message = Async::run(static function () use ($proxy, $model, $context): AssistantMessage {
-            $stream = $proxy->stream($model, $context);
+            $stream = $proxy->stream($model, Transcript::normalizeContext($context));
 
             foreach ($stream as $ignored) {
                 // Drain.
@@ -1247,12 +1292,15 @@ final class StreamProxyTest extends TestCase
         $messages = Async::run(static function () use ($proxy, $model, $tool): array {
             $stream = AgentLoop::start(
                 [new UserMessage([new TextContent('what does a.txt say?')])],
-                new AgentContext([], 'be brief', [$tool]),
+                new AgentContext([Transcript::createInitialSystemMessage('be brief', [Transcript::toToolDeclaration($tool->definition())])], [$tool]),
                 new AgentLoopConfig(
                     model: $model,
+                    // Upstream's `defaultConvertToLlm()`, which keeps the system messages: they carry
+                    // the prompt and the tool declarations now.
                     convertToLlm: static fn (array $messages): array => array_values(array_filter(
                         $messages,
-                        static fn ($m): bool => $m instanceof UserMessage
+                        static fn ($m): bool => $m instanceof \Pig\Ai\SystemMessage
+                            || $m instanceof UserMessage
                             || $m instanceof AssistantMessage
                             || $m instanceof ToolResultMessage,
                     )),

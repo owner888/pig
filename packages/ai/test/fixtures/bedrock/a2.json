@@ -1,0 +1,171 @@
+{
+ "scenario": {
+  "env": {
+   "AWS_BEDROCK_SKIP_AUTH": "1",
+   "AWS_BEDROCK_FORCE_HTTP1": "1"
+  },
+  "model": {
+   "id": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+   "name": "Claude Sonnet 4.5",
+   "api": "bedrock-converse-stream",
+   "provider": "amazon-bedrock",
+   "baseUrl": "SERVER",
+   "reasoning": true,
+   "input": [
+    "text",
+    "image"
+   ],
+   "cost": {
+    "input": 3,
+    "output": 15,
+    "cacheRead": 0.3,
+    "cacheWrite": 3.75
+   },
+   "contextWindow": 200000,
+   "maxTokens": 64000
+  },
+  "context": {
+   "systemPrompt": "Be brief.",
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi",
+     "timestamp": 0
+    }
+   ]
+  },
+  "options": {
+   "maxTokens": 1000
+  },
+  "response": {
+   "frames": [
+    {
+     "headers": {
+      ":event-type": "messageStart",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"p\":\"abc\",\"role\":\"assistant\"}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockDelta",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\":0,\"delta\":{\"text\":\"Hel\"},\"p\":\"x\"}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockDelta",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\":0,\"delta\":{\"text\":\"lo\"}}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockStop",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\":0}"
+    },
+    {
+     "headers": {
+      ":event-type": "messageStop",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"stopReason\":\"end_turn\"}"
+    },
+    {
+     "headers": {
+      ":event-type": "metadata",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"usage\":{\"inputTokens\":10,\"outputTokens\":3,\"totalTokens\":13},\"metrics\":{\"latencyMs\":5}}"
+    }
+   ]
+  }
+ },
+ "upstream": {
+  "request": {
+   "line": "POST /model/anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream",
+   "headers": {
+    "amz-sdk-request": "attempt=1; max=3",
+    "authorization": "AWS4-HMAC-SHA256 Credential=dummy-access-key/D/us-east-1/bedrock/aws4_request, SignedHeaders=amz-sdk-invocation-id;amz-sdk-request;content-length;content-type;host;x-amz-content-sha256;x-amz-date;x-amz-user-agent",
+    "content-length": "193",
+    "content-type": "application/json",
+    "user-agent": "aws-sdk-js/3.1126.0 ua/2.1 lang/js api/bedrock-runtime#3.1126.0 m/N,E,e",
+    "x-amz-content-sha256": "b7502a4cbbf4c15f76340fa178a06afdfcbee32df933ebd4118f55b8d3337df5",
+    "x-amz-user-agent": "aws-sdk-js/3.1126.0"
+   },
+   "body": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"text\":\"hi\"},{\"cachePoint\":{\"type\":\"default\"}}]}],\"system\":[{\"text\":\"Be brief.\"},{\"cachePoint\":{\"type\":\"default\"}}],\"inferenceConfig\":{\"maxTokens\":1000}}"
+  },
+  "attempts": [
+   "attempt=1; max=3"
+  ],
+  "events": [
+   [
+    "start",
+    null,
+    null
+   ],
+   [
+    "text_start",
+    0,
+    null
+   ],
+   [
+    "text_delta",
+    0,
+    "Hel"
+   ],
+   [
+    "text_delta",
+    0,
+    "lo"
+   ],
+   [
+    "text_end",
+    0,
+    null
+   ],
+   [
+    "done",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "Hello"
+    }
+   ],
+   "api": "bedrock-converse-stream",
+   "provider": "amazon-bedrock",
+   "model": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+   "usage": {
+    "input": 10,
+    "output": 3,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 13,
+    "cost": {
+     "input": 3e-05,
+     "output": 4.5e-05,
+     "cacheRead": 0,
+     "cacheWrite": 0,
+     "total": 7.500000000000001e-05
+    }
+   },
+   "stopReason": "stop",
+   "rawStopReason": "end_turn"
+  }
+ }
+}

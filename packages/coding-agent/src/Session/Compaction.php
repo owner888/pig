@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Session;
 
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\StopReason;
+use Pig\Ai\SystemMessage;
 use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
 use Pig\Ai\ThinkingContent;
@@ -13,6 +14,7 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\MessageJson;
 
 /**
  * Deciding what to throw away, and writing down what it said.
@@ -110,6 +112,11 @@ final class Compaction
     public static function estimateTokens(mixed $message): int
     {
         $characters = match (true) {
+            // Upstream's `estimateTokens()` `system` arm: the content, every section that is not a
+            // removal, and the JSON of the tools it adds.
+            $message instanceof SystemMessage => (is_string($message->content) ? strlen($message->content) : self::textLength($message->content))
+                + array_sum(array_map(static fn (?string $section): int => $section === null ? 0 : strlen($section), $message->sections ?? []))
+                + ($message->toolsAdded === null ? 0 : strlen((string) json_encode(array_map(MessageJson::encodeTool(...), $message->toolsAdded), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE))),
             $message instanceof UserMessage => self::textLength($message->content),
             $message instanceof AssistantMessage => self::assistantLength($message),
             $message instanceof ToolResultMessage => self::textLength($message->content),
@@ -145,8 +152,10 @@ final class Compaction
     {
         $allowed = [];
 
+        // Upstream's `isCutPointMessage()`: a tool result is not one, and neither is a system
+        // message — it is prompt state, which the compaction carries itself.
         foreach ($messages as $index => $message) {
-            if (!$message instanceof ToolResultMessage) {
+            if (!$message instanceof ToolResultMessage && !$message instanceof SystemMessage) {
                 $allowed[] = $index;
             }
         }

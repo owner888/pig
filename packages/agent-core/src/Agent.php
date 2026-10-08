@@ -9,12 +9,14 @@ use Pig\Ai\AssistantMessage;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\StopReason;
+use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\ThinkingContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\Transcript;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Deferred;
@@ -41,6 +43,47 @@ final class Agent
      * to the session file's id; null sends none.
      */
     public ?string $sessionId = null;
+
+    /**
+     * Upstream's `Agent.streamFunction`: what every request goes through — `AgentOptions::$streamFn`
+     * to start with, `Stream::simple()` when that is null. Public and mutable as upstream's is, so
+     * the session can wrap it with its request options.
+     *
+     * The loop hands it a normalized transcript (`TranscriptContext`): the system prompt and the tool
+     * declarations are the transcript's system messages, as upstream's `StreamFn` contract says.
+     *
+     * @var (Closure(\Pig\Ai\Model, \Pig\Ai\TranscriptContext, \Pig\Ai\SimpleStreamOptions): \Pig\Ai\Utils\AssistantMessageEventStream)|null
+     */
+    public ?Closure $streamFunction;
+
+    /** Upstream's `Agent.onPayload`, handed to every request. */
+    public ?Closure $onPayload;
+
+    /** Upstream's `Agent.onResponse`, handed to every request. */
+    public ?Closure $onResponse;
+
+    /** Upstream's `Agent.onProviderStreamEvent`, handed to every request. */
+    public ?Closure $onProviderStreamEvent;
+
+    /** Upstream's `Agent.maxRetryDelayMs`, handed to every request. */
+    public ?int $maxRetryDelayMs;
+
+    /**
+     * Upstream's `Agent.prepareNextTurn`: asked, with the run's signal, before each turn after the
+     * first; what it answers replaces the context, model or thinking level for the rest of the run,
+     * and its messages go in before the next request.
+     *
+     * @var (Closure(?AbortSignal): ?AgentLoopTurnUpdate)|null
+     */
+    public ?Closure $prepareNextTurn;
+
+    /**
+     * Upstream's `Agent.prepareNextTurnWithContext`: the same, told about the turn that just
+     * completed. Wins over `$prepareNextTurn` when both are set, as upstream's does.
+     *
+     * @var (Closure(PrepareNextTurnContext, ?AbortSignal): ?AgentLoopTurnUpdate)|null
+     */
+    public ?Closure $prepareNextTurnWithContext;
 
     /** @var array<int, Closure(AgentEvent): void> */
     private array $listeners = [];
@@ -79,6 +122,13 @@ final class Agent
         $this->transformContext = $options->transformContext;
         $this->steeringMode = $options->steeringMode;
         $this->followUpMode = $options->followUpMode;
+        $this->streamFunction = $options->streamFn;
+        $this->onPayload = $options->onPayload;
+        $this->onResponse = $options->onResponse;
+        $this->onProviderStreamEvent = $options->onProviderStreamEvent;
+        $this->maxRetryDelayMs = $options->maxRetryDelayMs;
+        $this->prepareNextTurn = $options->prepareNextTurn;
+        $this->prepareNextTurnWithContext = $options->prepareNextTurnWithContext;
     }
 
     /**
@@ -109,11 +159,6 @@ final class Agent
         };
     }
 
-    public function setSystemPrompt(string $prompt): void
-    {
-        $this->state->systemPrompt = $prompt;
-    }
-
     public function setModel(Model $model): void
     {
         $this->state->model = $model;
@@ -124,7 +169,12 @@ final class Agent
         $this->state->thinkingLevel = $level;
     }
 
-    /** @param list<AgentTool> $tools */
+    /**
+     * The tools the runtime can execute — upstream's `state.tools = …`. Differences from the tools the
+     * transcript declares are announced to the model with a system message before the next request.
+     *
+     * @param list<AgentTool> $tools
+     */
     public function setTools(array $tools): void
     {
         $this->state->tools = $tools;
@@ -231,10 +281,15 @@ final class Agent
         return $this->running?->future ?? Future::complete(null);
     }
 
-    /** Forget the conversation and everything queued. The configuration stays. */
+    /**
+     * Clear the conversation and the queues while keeping the replayed prompt and tool baseline —
+     * upstream's `reset()`: the transcript becomes the one system message `getCurrentSystemMessage()`
+     * replays from it, or nothing when it had none.
+     */
     public function reset(): void
     {
-        $this->state->messages = [];
+        $baseline = Transcript::getCurrentSystemMessage($this->state->messages);
+        $this->state->messages = $baseline !== null ? [$baseline] : [];
         $this->state->isStreaming = false;
         $this->state->streamMessage = null;
         $this->state->pendingToolCalls = [];
@@ -276,7 +331,11 @@ final class Agent
         // so the caller saw nothing thrown and the conversation got a fabricated failed assistant
         // turn instead, which is a misuse of this method written into somebody's session file.
         // Upstream checks before the loop for the same reason.
-        if ($this->state->messages === []) {
+        // Upstream's `!lastMessage || every message is a system message`: a transcript holding only
+        // the prompt has nothing to answer.
+        $onlySystem = array_filter($this->state->messages, static fn (mixed $message): bool => !$message instanceof SystemMessage) === [];
+
+        if ($this->state->messages === [] || $onlySystem) {
             throw new AgentError('No messages to continue from');
         }
 
@@ -346,7 +405,7 @@ final class Agent
         $this->state->streamMessage = null;
         $this->state->error = null;
 
-        $context = new AgentContext($this->state->messages, $this->state->systemPrompt, $this->state->tools);
+        $context = new AgentContext($this->state->messages, $this->state->tools);
         $config = $this->config($model);
         $partial = null;
 
@@ -362,8 +421,8 @@ final class Agent
 
         try {
             $stream = $prompts !== null
-                ? AgentLoop::start($prompts, $context, $config, $this->controller->signal, $this->options->streamFn, $emit)
-                : AgentLoop::continue($context, $config, $this->controller->signal, $this->options->streamFn, $emit);
+                ? AgentLoop::start($prompts, $context, $config, $this->controller->signal, $this->streamFunction, $emit)
+                : AgentLoop::continue($context, $config, $this->controller->signal, $this->streamFunction, $emit);
 
             $stream->result()->await();
 
@@ -421,7 +480,23 @@ final class Agent
             getApiKey: $this->options->getApiKey,
             apiKey: $this->options->apiKey,
             getTools: fn (): array => $this->state->tools,
+            // Upstream's `createLoopConfig()`: the loop's one `prepareNextTurn(context)`, answered by
+            // `prepareNextTurnWithContext` when it is set and by `prepareNextTurn` otherwise, both
+            // given this run's signal.
+            prepareNextTurn: $this->prepareNextTurnWithContext !== null || $this->prepareNextTurn !== null
+                ? function (PrepareNextTurnContext $turn): ?AgentLoopTurnUpdate {
+                    if ($this->prepareNextTurnWithContext !== null) {
+                        return ($this->prepareNextTurnWithContext)($turn, $this->signal());
+                    }
+
+                    return $this->prepareNextTurn !== null ? ($this->prepareNextTurn)($this->signal()) : null;
+                }
+                : null,
             sessionId: $this->sessionId,
+            onPayload: $this->onPayload,
+            onResponse: $this->onResponse,
+            onProviderStreamEvent: $this->onProviderStreamEvent,
+            maxRetryDelayMs: $this->maxRetryDelayMs,
         );
     }
 
@@ -575,7 +650,8 @@ final class Agent
     }
 
     /**
-     * Keep what the model understands and drop the rest.
+     * Keep what the model understands and drop the rest — system messages included, since they carry
+     * the prompt and the tool declarations.
      *
      * @param list<mixed> $messages
      * @return list<mixed>
@@ -584,7 +660,8 @@ final class Agent
     {
         return array_values(array_filter(
             $messages,
-            static fn (mixed $message): bool => $message instanceof UserMessage
+            static fn (mixed $message): bool => $message instanceof SystemMessage
+                || $message instanceof UserMessage
                 || $message instanceof AssistantMessage
                 || $message instanceof ToolResultMessage,
         ));

@@ -397,6 +397,44 @@ final class GenerateModelsTest extends TestCase
         self::fail("no row for {$id} in the dry run");
     }
 
+    public function testVertexRowsAreUpstreamsGeminiOnlyVertexRows(): void
+    {
+        // The end of upstream's `processGoogleModels()`: "The google-vertex models.dev catalog also
+        // includes Claude, OpenAI, and other MaaS models that do not use the @google/genai Gemini
+        // streaming path" — `gemini-` ids only, not `gemini-3.1-flash-lite-preview`; no tiers, no
+        // cache-write price, and Gemini 2.5 Flash's cache read pinned to 0.03.
+        $output = $this->generated();
+
+        self::assertStringContainsString("'gemini-2.5-flash' => ['Gemini 2.5 Flash', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0],", $output);
+        self::assertStringContainsString(
+            "'gemini-3.5-flash' => ['Gemini 3.5 Flash', 1_048_576, 65_536, true, true, 1.5, 9.0, 0.15, 0.0, "
+            . "'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],",
+            $output,
+        );
+        // The alias reads the model it names, under its own name.
+        self::assertStringContainsString("'gemini-flash-latest' => ['Gemini Flash Latest', 1_048_576, 65_536, true, true, 1.5, 9.0, 0.15, 0.0, 'thinkingLevelMap'", $output);
+        self::assertStringNotContainsString("'claude-on-vertex' => [", $output);
+        self::assertStringNotContainsString("'gemini-3.1-flash-lite-preview' => [", $output);
+    }
+
+    public function testBedrockRowsAreUpstreamsBedrockRows(): void
+    {
+        // Upstream's Amazon Bedrock arm: models.dev's tiers, `compat: {supportsStrictMode: true}`
+        // where it says `structured_output`, and not the ids it names as unusable.
+        $output = $this->generated();
+
+        self::assertStringContainsString(
+            "'anthropic.claude-x-v1:0' => ['Claude X', 200_000, 64_000, true, true, 3.0, 15.0, 0.3, 3.75, 'tiers' => [[200_000, 6.0, 22.5, 0.3, 3.75]], 'strictMode' => true],",
+            $output,
+        );
+        self::assertStringContainsString("'amazon.nova-x-v1:0' => ['Nova X', 300_000, 10_000, false, true, 0.8, 3.2, 0.2, 0.0],", $output);
+        self::assertStringNotContainsString("'ai21.jamba-x' => [", $output);
+        self::assertStringNotContainsString("'mistral.mistral-7b-instruct-v0:2' => [", $output);
+        // `BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS`.
+        self::assertStringContainsString('amazon-bedrock/anthropic.claude-opus-5 is listed and not offered', $output);
+        self::assertStringNotContainsString("'anthropic.claude-opus-5' => [", $output);
+    }
+
     public function testADryRunWritesNothing(): void
     {
         $before = (string) file_get_contents(__DIR__ . '/../src/Models.php');
@@ -672,6 +710,68 @@ final class GenerateModelsTest extends TestCase
                     'name' => 'GLM API Only', 'tool_call' => true,
                     'limit' => ['context' => 131_072, 'output' => 98_304],
                     'cost' => $priced(1, 2),
+                ],
+            ]],
+            'google-vertex' => ['models' => [
+                // models.dev's Vertex figures for 2.5 Flash, which upstream overrides.
+                'gemini-2.5-flash' => [
+                    'name' => 'Gemini 2.5 Flash', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 1_048_576, 'output' => 65_536],
+                    'cost' => ['input' => 0.3, 'output' => 2.5, 'cache_read' => 0.075, 'cache_write' => 0.383],
+                    'modalities' => ['input' => ['text', 'image']],
+                ],
+                'gemini-3.5-flash' => [
+                    'name' => 'Gemini 3.5 Flash', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 1_048_576, 'output' => 65_536],
+                    'cost' => ['input' => 1.5, 'output' => 9, 'cache_read' => 0.15, 'tiers' => [['tier' => ['type' => 'context', 'size' => 200_000], 'input' => 3]]],
+                    'modalities' => ['input' => ['text', 'image']],
+                    'reasoning_options' => [['type' => 'effort', 'values' => ['minimal', 'low', 'medium', 'high']]],
+                ],
+                'gemini-flash-latest' => [
+                    'name' => 'Gemini Flash Latest', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 1_048_576, 'output' => 65_536],
+                    'cost' => ['input' => 0.75, 'output' => 3.75],
+                    'modalities' => ['input' => ['text', 'image']],
+                ],
+                'gemini-3.1-flash-lite-preview' => [
+                    'name' => 'Gemini 3.1 Flash Lite Preview', 'tool_call' => true,
+                    'limit' => ['context' => 1_048_576, 'output' => 65_536],
+                    'modalities' => ['input' => ['text', 'image']],
+                ],
+                // A MaaS model on Vertex, which the Gemini path does not serve.
+                'claude-on-vertex' => [
+                    'name' => 'Claude on Vertex', 'tool_call' => true,
+                    'limit' => ['context' => 200_000, 'output' => 64_000],
+                    'modalities' => ['input' => ['text', 'image']],
+                ],
+            ]],
+            'amazon-bedrock' => ['models' => [
+                'anthropic.claude-x-v1:0' => [
+                    'name' => 'Claude X', 'tool_call' => true, 'reasoning' => true, 'structured_output' => true,
+                    'limit' => ['context' => 200_000, 'output' => 64_000],
+                    'cost' => ['input' => 3, 'output' => 15, 'cache_read' => 0.3, 'cache_write' => 3.75, 'tiers' => [
+                        ['tier' => ['type' => 'context', 'size' => 200_000], 'input' => 6, 'output' => 22.5],
+                    ]],
+                    'modalities' => ['input' => ['text', 'image']],
+                ],
+                'amazon.nova-x-v1:0' => [
+                    'name' => 'Nova X', 'tool_call' => true, 'structured_output' => false,
+                    'limit' => ['context' => 300_000, 'output' => 10_000],
+                    'cost' => ['input' => 0.8, 'output' => 3.2, 'cache_read' => 0.2],
+                    'modalities' => ['input' => ['text', 'image']],
+                ],
+                'anthropic.claude-opus-5' => [
+                    'name' => 'Claude Opus 5', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 1_000_000, 'output' => 128_000],
+                    'modalities' => ['input' => ['text', 'image']],
+                ],
+                'ai21.jamba-x' => [
+                    'name' => 'Jamba X', 'tool_call' => true,
+                    'limit' => ['context' => 256_000, 'output' => 4_096],
+                ],
+                'mistral.mistral-7b-instruct-v0:2' => [
+                    'name' => 'Mistral 7B Instruct', 'tool_call' => true,
+                    'limit' => ['context' => 32_000, 'output' => 8_192],
                 ],
             ]],
             'github-copilot' => ['models' => [

@@ -11,16 +11,19 @@ use Pig\Ai\Cost;
 use Pig\Ai\DiagnosticErrorInfo;
 use Pig\Ai\ImageContent;
 use Pig\Ai\StopReason;
+use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\ThinkingContent;
+use Pig\Ai\Tool;
 use Pig\Ai\ToolCall;
+use Pig\Ai\ToolReference;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use stdClass;
 
 /**
- * The three message types of `Pig\Ai`, to JSON and back.
+ * The four message types of `Pig\Ai`, to JSON and back.
  *
  * Upstream needs none of this: a message there is a plain object and `JSON.stringify` is the whole
  * of its persistence layer. PHP objects do not survive that trip, so the shapes are written out by
@@ -39,16 +42,29 @@ use stdClass;
  * schemas; twice is a pattern, so it moved here instead.
  *
  * `CodingAgent\Session\SessionCodec` still owns the roles that only pig has — a compaction
- * summary, a branch summary, a bash execution — and delegates these three.
+ * summary, a branch summary, a bash execution — and delegates these four.
  */
 final class MessageJson
 {
     /**
-     * @return array<string, mixed>|null null for anything that is not one of the three
+     * @return array<string, mixed>|null null for anything that is not one of the four
      */
     public static function encode(mixed $message): ?array
     {
         return match (true) {
+            // Upstream's `SystemMessage` as `JSON.stringify` writes it: the optional fields only
+            // when set, `content` as the string or the blocks it was.
+            $message instanceof SystemMessage => [
+                'role' => 'system',
+                'content' => is_string($message->content) ? $message->content : self::encodeContent($message->content),
+                ...($message->sections === null ? [] : ['sections' => $message->sections === [] ? new stdClass() : $message->sections]),
+                ...($message->toolsAdded === null ? [] : ['toolsAdded' => array_map(self::encodeTool(...), $message->toolsAdded)]),
+                ...($message->toolsRemoved === null ? [] : ['toolsRemoved' => array_map(
+                    static fn (ToolReference $tool): array => ['name' => $tool->name],
+                    $message->toolsRemoved,
+                )]),
+                'timestamp' => $message->timestamp,
+            ],
             $message instanceof UserMessage => [
                 'role' => 'user',
                 'content' => self::encodeContent($message->content),
@@ -80,13 +96,28 @@ final class MessageJson
 
     /**
      * @param array<string, mixed> $entry
-     * @return UserMessage|AssistantMessage|ToolResultMessage|null null for any other role
+     * @return SystemMessage|UserMessage|AssistantMessage|ToolResultMessage|null null for any other role
      */
     public static function decode(array $entry): mixed
     {
         $timestamp = isset($entry['timestamp']) ? (int) $entry['timestamp'] : null;
 
         return match ($entry['role'] ?? null) {
+            // Upstream's `sessionEntryToContextMessages()`: "Session files are parsed without
+            // validation", so a null or missing `content` reads as "".
+            'system' => new SystemMessage(
+                is_array($entry['content'] ?? null) ? self::decodeContent($entry['content']) : (string) ($entry['content'] ?? ''),
+                is_array($entry['sections'] ?? null) ? self::decodeSections($entry['sections']) : null,
+                is_array($entry['toolsAdded'] ?? null) ? array_values(array_filter(array_map(
+                    static fn (mixed $tool): ?Tool => is_array($tool) ? self::decodeTool($tool) : null,
+                    $entry['toolsAdded'],
+                ))) : null,
+                is_array($entry['toolsRemoved'] ?? null) ? array_values(array_map(
+                    static fn (mixed $tool): ToolReference => new ToolReference((string) (is_array($tool) ? ($tool['name'] ?? '') : '')),
+                    $entry['toolsRemoved'],
+                )) : null,
+                $timestamp ?? 0,
+            ),
             'user' => new UserMessage(self::decodeContent($entry['content'] ?? []), $timestamp),
             'assistant' => new AssistantMessage(
                 self::decodeContent($entry['content'] ?? []),
@@ -115,6 +146,101 @@ final class MessageJson
             ),
             default => null,
         };
+    }
+
+    /**
+     * A tool declaration as upstream's `JSON.stringify` writes a `Tool`: name, description,
+     * parameters, and `constrainedSampling` when it has one. The one shape for a tool on every
+     * wire pig writes — the session file's `toolsAdded`, `Agent\StreamProxy`'s request, the
+     * estimate of what the declarations cost.
+     *
+     * @return array<string, mixed>
+     */
+    public static function encodeTool(Tool $tool): array
+    {
+        return [
+            'name' => $tool->name,
+            'description' => $tool->description,
+            'parameters' => $tool->parameters === [] ? new stdClass() : $tool->parameters,
+        ] + ($tool->constrainedSampling === null ? [] : ['constrainedSampling' => $tool->constrainedSampling]);
+    }
+
+    /**
+     * A tool declaration back from JSON.
+     *
+     * **Empty objects are put back where a schema has one**, which upstream never has to think
+     * about: a session line is decoded into PHP arrays, where `{}` and `[]` are the same thing,
+     * and a declaration replayed from the file is what the provider is sent. An MCP tool with no
+     * arguments declares `"properties": {}`, and sent back as `"properties": []` the request is
+     * refused. `schemaObjects()` restores the object for the keywords whose value is one.
+     *
+     * @param array<string, mixed> $tool
+     */
+    public static function decodeTool(array $tool): Tool
+    {
+        $constrainedSampling = $tool['constrainedSampling'] ?? null;
+
+        return new Tool(
+            (string) ($tool['name'] ?? ''),
+            (string) ($tool['description'] ?? ''),
+            is_array($tool['parameters'] ?? null) ? self::schemaObjects($tool['parameters']) : [],
+            is_array($constrainedSampling) || $constrainedSampling === false ? $constrainedSampling : null,
+        );
+    }
+
+    /**
+     * @param array<mixed> $schema
+     * @return array<mixed>
+     */
+    private static function schemaObjects(array $schema): array
+    {
+        foreach ($schema as $key => $value) {
+            if (!is_array($value)) {
+                continue;
+            }
+
+            if (in_array($key, ['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas'], true)) {
+                $schema[$key] = $value === [] ? new stdClass() : array_map(
+                    static fn (mixed $child): mixed => is_array($child) ? ($child === [] ? new stdClass() : self::schemaObjects($child)) : $child,
+                    $value,
+                );
+
+                continue;
+            }
+
+            if (in_array($key, ['items', 'additionalProperties', 'not', 'if', 'then', 'else', 'contains', 'propertyNames'], true)) {
+                $schema[$key] = $value === [] ? new stdClass() : (array_is_list($value) ? array_map(
+                    static fn (mixed $child): mixed => is_array($child) ? self::schemaObjects($child) : $child,
+                    $value,
+                ) : self::schemaObjects($value));
+
+                continue;
+            }
+
+            if (in_array($key, ['anyOf', 'oneOf', 'allOf', 'prefixItems'], true) && array_is_list($value)) {
+                $schema[$key] = array_map(
+                    static fn (mixed $child): mixed => is_array($child) ? ($child === [] ? new stdClass() : self::schemaObjects($child)) : $child,
+                    $value,
+                );
+            }
+        }
+
+        return $schema;
+    }
+
+    /**
+     * @param array<mixed> $sections
+     * @return array<string, string|null>
+     */
+    private static function decodeSections(array $sections): array
+    {
+        $out = [];
+
+        foreach ($sections as $name => $value) {
+            $out[(string) $name] = $value === null ? null : (string) $value;
+        }
+
+        return $out;
     }
 
     /**

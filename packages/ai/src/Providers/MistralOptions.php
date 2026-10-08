@@ -11,28 +11,34 @@ use Pig\Async\AbortSignal;
 final readonly class MistralOptions extends StreamOptions
 {
     /**
-     * @param string|null $toolChoice      `auto`, `none`, `any` or `required`, sent as `tool_choice`
-     *        (upstream also takes `{type: "function", function: {name}}`, which nothing in pig asks for)
+     * @param string|array{type: 'function', function: array{name: string}}|null $toolChoice `auto`,
+     *        `none`, `any` or `required`, or upstream's object form `{type: "function", function:
+     *        {name}}` naming one tool; sent as `tool_choice` (`mapToolChoice()`)
      * @param string|null $promptMode      `reasoning`, sent as `prompt_mode` — how a reasoning model with
      *        no effort levels (Magistral) is asked to think
      * @param string|null $reasoningEffort `none`, `low`, `medium`, `high` or `max`, sent as
      *        `reasoning_effort` — what a model whose `thinkingLevelMap` names its efforts is sent
-     * @param int|null $timeoutMs upstream's `timeoutMs`: how long to wait for the response headers,
-     *        60,000 when unset. Only the headers — a long stream is never cut off by it
      */
     public function __construct(
         ?float $temperature = null,
         ?int $maxTokens = null,
         ?AbortSignal $signal = null,
         ?string $apiKey = null,
-        public ?string $toolChoice = null,
+        public string|array|null $toolChoice = null,
         public ?string $promptMode = null,
         public ?string $reasoningEffort = null,
         ?string $cacheRetention = null,
         ?string $sessionId = null,
         ?array $metadata = null,
-        public ?int $timeoutMs = null,
+        ?int $timeoutMs = null,
+        ?array $headers = null,
+        ?int $maxRetries = null,
+        ?int $maxRetryDelayMs = null,
+        ?\Closure $onPayload = null,
+        ?\Closure $onResponse = null,
+        ?\Closure $onProviderStreamEvent = null,
+        ?array $env = null,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env);
     }
 }

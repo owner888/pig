@@ -74,6 +74,7 @@ pig
 ```
 
 - **配置 API Key**：启动时通过环境变量传入 `ANTHROPIC_API_KEY=sk-... pig`，或使用 `--api-key <key>` 为当前运行单独设置而不写入磁盘。
+- **Google Vertex AI 与 Amazon Bedrock**：与 pi 一致，云平台自己的凭据在场时无需 Key。Vertex 读 `GOOGLE_CLOUD_API_KEY`，或 Application Default Credentials（`gcloud auth application-default login`、`GOOGLE_APPLICATION_CREDENTIALS` 指向的服务账号文件、或元数据服务器），并需 `GOOGLE_CLOUD_PROJECT` 与 `GOOGLE_CLOUD_LOCATION`。Bedrock 读 `AWS_BEARER_TOKEN_BEDROCK`，或 AWS SDK 的凭据链——`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`、`AWS_PROFILE` 与 `~/.aws`（assume role、`credential_process`、SSO）、web identity、ECS/EKS 与 EC2 角色——区域取 `AWS_REGION` 或 profile。选模型写作 `google-vertex/gemini-2.5-pro` 或 `amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0`。
 - **订阅账号直接登录**：在对话中输入 `/login`，支持免配置 Key 直接登录 Claude Pro/Max、GitHub Copilot 或 Google Antigravity。Claude 登录与 pi 1.0 一致提供两种方式：浏览器回调到 `localhost:53692`（默认），或在无浏览器的机器上从 Anthropic 页面复制代码粘贴。凭据自动安全持久化于 `~/.pig/agent/auth.json`（或与 `~/.pi/agent/auth.json` 互通共享）。
 - **恢复与续接历史会话**：
   - `pig -c` / `pig --continue`：毫秒级秒开接上当前目录下最新修改的历史会话。
@@ -150,7 +151,7 @@ pig --mode rpc
 
 | 扩展组件 | 命名空间 / 路径 | 核心能力说明 |
 | :--- | :--- | :--- |
-| **`pig-antigravity`** | `extensions/pig-antigravity/` | **完整的 Antigravity provider**——模型表、线路协议、Google 登录、模型路由——通过 `registerProvider()` 注册进核心，与 pi 0.71 删除内置后社区 `pi-antigravity` 扩展的做法一致。另含多账号管理、429 自动换号（`before_retry`）、`/antigravity.usage`、`/antigravity.accounts` 与 `generate_image` 工具。 |
+| **`pig-antigravity`** | `extensions/pig-antigravity/` | **完整的 Antigravity provider**——模型表、线路协议、Google 登录、模型路由——通过 `registerProvider()` 注册进核心，与 pi 0.71 删除内置后社区 `pi-antigravity` 扩展的做法一致。另含多账号管理、429 配额墙时在请求内自动换号（与 pi-antigravity 一致）、`/antigravity.usage`、`/antigravity.accounts` 与 `generate_image` 工具。 |
 | **`pig-web-search`** | `extensions/pig-web-search/` | 实时网络搜索（`web_search`）、网页文本抓取（`fetch_web_page`）、无头 Chrome 动态渲染（`browse_web_page`）、`/search <query>` 命令。 |
 | **`pig-computer`** | `extensions/pig-computer/` | 防检测无头浏览器自动化（鼠标移动、点击、滚轮、键盘键入、高清截图与持久化 Cookie）。 |
 | **`pig-codemode`** | `extensions/pig-codemode/` | 在安全沙箱子进程（`open_basedir`, `disable_functions`）中批量并行执行多工具代码，节省巨量上下文。 |
@@ -164,7 +165,7 @@ pig --mode rpc
 | :--- | :--- |
 | **自带 provider** | `registerProvider(new Provider(id, name, models, api: StreamApi, oauth: OauthFlow, envKeys, resold))`——模型进注册表、协议挂在 `Api::Extension` 后面、登录进 `/login` 列表。`unregisterProvider()` 收回。 |
 | **工具、命令、渲染器** | `registerTool()`、`removeTools()`、`registerCommand()`、`registerMessageRenderer()`、`registerLocale()`。 |
-| **事件** | `on('…')`：会话生命周期、agent 循环、工具调用与结果、`context`，以及新增的 `before_provider_request`（改写 header 或 body）、`after_provider_response`（状态码与 header）、`before_retry`（改等待时长、重置计数或取消）、`model_select`、`thinking_level_select`。 |
+| **事件** | `on('…')`：会话生命周期、agent 循环、工具调用与结果、`context`，以及与上游一致的 provider 事件——`before_provider_request`（替换请求 payload）、`before_provider_headers`（原地改 header）、`after_provider_response`（状态码与 header）、`provider_stream_event`（每个原始流事件）——还有 `model_select`、`thinking_level_select`。 |
 | **命令行参数** | `registerFlag('name', 'boolean'|'string', 说明, 默认值)` 声明 `--name`；handler 里用 `getFlag()` 读。 |
 | **会话** | `getSettings()`、`getModel()`、`setModel()`、`getThinkingLevel()`、`setThinkingLevel()`、`sendUserMessage(text, 'steer'|'followUp')`、`sendMessage()`、`setLabel()`、`getCommands()`、`exec()`。 |
 | **Web UI** | `registerHttpRoute('/api/prefix', fn (path, req) => ['status', 'body'])` 在 `pig web` 里应答请求——Antigravity 账号面板就是这样接进去的。 |
@@ -231,7 +232,7 @@ Logger::timeEnd('benchmark');
 `pig` 在 `packages/` 目录下按清晰的职责分层组织：
 
 - `packages/async/` (`Pig\Async\`): 协程运行时、非阻塞 TLS Socket、Future、Deferred 与基于 Fiber 的事件循环。
-- `packages/ai/` (`Pig\Ai\`): 统一 LLM 协议驱动（Anthropic、OpenAI Completions、OpenAI Responses、Gemini），以及 `Pig\Ai\Extension\`——扩展自带 provider 时实现的 `Provider`/`StreamApi`/`OauthFlow`。
+- `packages/ai/` (`Pig\Ai\`): 统一 LLM 协议驱动（Anthropic、OpenAI Completions、OpenAI Responses、Gemini、Vertex AI、Mistral、Amazon Bedrock ConverseStream——SigV4 签名与 AWS 凭据链均为纯 PHP 实现），以及 `Pig\Ai\Extension\`——扩展自带 provider 时实现的 `Provider`/`StreamApi`/`OauthFlow`。
 - `packages/agent-core/` (`Pig\Agent\`): Agent 核心循环、工具生命周期与 JSON Schema 参数校验。
 - `packages/tui/` (`Pig\Tui\`): 差异化终端渲染引擎、ANSI 样式与键盘输入事件解析器。
 - `packages/coding-agent/` (`Pig\CodingAgent\`): CLI 调度器、会话树、自动上下文压缩、Web 守护进程与核心工具集。

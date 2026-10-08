@@ -8,6 +8,7 @@ use Pig\Ai\AssistantMessage;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\StopReason;
+use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\ThinkingContent;
 use Pig\Ai\ToolCall;
@@ -289,11 +290,16 @@ final class TransformMessages
      * instead of dropping it. Results are invented before the next assistant or user message
      * **and at the end of the conversation**, which is where an interrupted turn leaves one.
      *
-     * Where pig differs: upstream also holds back a `system` message that falls between a call
-     * and its results, emitting it after them. pig's message union has no system message — the
-     * prompt is `Context::$systemPrompt`, and `convertToLlm` reduces everything else to user,
-     * assistant and result messages before this runs — so there is nothing to hold, and every message that is
-     * not a result closes the turn, as upstream's user and assistant arms do.
+     * **System messages are transparent to tool-call accounting**: one that lands between a tool
+     * call and its results is held back and emitted after the results (synthetic ones included), so
+     * it never causes a duplicate result for a call that is answered later — upstream's
+     * `heldSystemMessages`. It is released wherever the pending calls are closed: before the next
+     * assistant or user message, or at the end.
+     *
+     * Where pig differs: upstream lets any other role through without closing the turn; pig's
+     * `convertToLlm` has already reduced everything to the four LLM roles before this runs, so the
+     * only other thing that can arrive is a message type nothing here knows, and it closes the
+     * turn as a user message does.
      *
      * @param list<mixed> $messages
      * @return list<mixed>
@@ -303,8 +309,9 @@ final class TransformMessages
         $out = [];
         $pending = [];
         $answered = [];
+        $held = [];
 
-        $flush = static function () use (&$out, &$pending, &$answered): void {
+        $flush = static function () use (&$out, &$pending, &$answered, &$held): void {
             foreach ($pending as $call) {
                 if (!isset($answered[$call->id])) {
                     $out[] = new ToolResultMessage(
@@ -318,6 +325,9 @@ final class TransformMessages
 
             $pending = [];
             $answered = [];
+
+            array_push($out, ...$held);
+            $held = [];
         };
 
         foreach ($messages as $message) {
@@ -328,7 +338,17 @@ final class TransformMessages
                 continue;
             }
 
-            // Anything that is not a result closes the turn the calls were made in.
+            if ($message instanceof SystemMessage) {
+                if ($pending !== []) {
+                    $held[] = $message;
+                } else {
+                    $out[] = $message;
+                }
+
+                continue;
+            }
+
+            // Anything else closes the turn the calls were made in.
             $flush();
 
             if ($message instanceof AssistantMessage

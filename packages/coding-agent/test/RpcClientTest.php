@@ -382,8 +382,10 @@ final class RpcClientTest extends TestCase
 
         $roles = array_map(static fn (array $m): string => (string) ($m['role'] ?? ''), $messages);
 
-        $this->assertSame(['user', 'assistant'], $roles);
-        $this->assertSame('a question', $messages[0]['content'][0]['text'] ?? null);
+        // Upstream's `session.messages` leads with the system message that holds the prompt and
+        // the tools (`agent.state.messages`), and `get_messages` hands it over as it is.
+        $this->assertSame(['system', 'user', 'assistant'], $roles);
+        $this->assertSame('a question', $messages[1]['content'][0]['text'] ?? null);
     }
 
     // ---- the commands that need no model -------------------------------------------------------

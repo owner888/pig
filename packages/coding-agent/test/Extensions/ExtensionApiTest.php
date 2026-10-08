@@ -15,11 +15,14 @@ use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\Pricing;
 use Pig\Ai\UserMessage;
+use Pig\Ai\TranscriptContext;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Hooks\Events\AfterProviderResponseEvent;
+use Pig\CodingAgent\Hooks\Events\BeforeProviderHeadersEvent;
 use Pig\CodingAgent\Hooks\Events\BeforeProviderRequestEvent;
+use Pig\CodingAgent\Hooks\Events\ProviderStreamEvent;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
 use Pig\CodingAgent\Hooks\Results\BeforeProviderRequestResult;
@@ -48,7 +51,6 @@ final class ExtensionApiTest extends TestCase
         ProviderRegistry::forget();
         ExtensionApi::forgetFlags();
         ExtensionApi::forgetHttpRoutes();
-        HttpClient::observe(null, null);
         $this->server = new CannedServer();
     }
 
@@ -59,7 +61,6 @@ final class ExtensionApiTest extends TestCase
         ExtensionApi::forgetFlags();
         ExtensionApi::forgetHttpRoutes();
         ExtensionApi::useSettings(null);
-        HttpClient::observe(null, null);
         Models::forgetRegistered();
     }
 
@@ -81,54 +82,103 @@ final class ExtensionApiTest extends TestCase
 
     // ---- provider traffic ---------------------------------------------------------------
 
-    public function testAHookSeesEveryRequestAndMayChangeItAndSeesTheAnswer(): void
+    public function testTheProviderHooksSeeThePayloadTheHeadersTheResponseAndEachStreamEvent(): void
     {
-        // `before_provider_request` is chained — each handler gets what the last one returned —
-        // and `after_provider_response` sees the status and headers before the body is read.
+        // Upstream wires its extension provider events through the request's options:
+        // `before_provider_request` is `onPayload` (chained, each handler given what the last one
+        // returned, the answer replacing the body), `before_provider_headers` is `transformHeaders`
+        // (handlers mutate the headers in place), `after_provider_response` is `onResponse` (status
+        // and headers before the body is read) and `provider_stream_event` is
+        // `onProviderStreamEvent` (each parsed event). pig used to observe every `HttpClient`
+        // request process-wide instead, sign-ins included, with a `Request` object for a payload.
         $api = new ExtensionApi('/work', 'probe.php', 'probe');
-        $seen = [];
+        $seen = ['events' => []];
         $api->on('before_provider_request', static fn (BeforeProviderRequestEvent $e): BeforeProviderRequestResult
-            => new BeforeProviderRequestResult(new Request($e->request->method, $e->request->url, [...$e->request->headers, 'x-first' => '1'], $e->request->body)));
+            => new BeforeProviderRequestResult([...$e->payload, 'max_tokens' => 77]));
         $api->on('before_provider_request', static function (BeforeProviderRequestEvent $e) use (&$seen): BeforeProviderRequestResult {
-            $seen['chained'] = $e->request->headers['x-first'] ?? null;
+            $seen['chained'] = $e->payload['max_tokens'] ?? null;
 
-            return new BeforeProviderRequestResult(new Request($e->request->method, $e->request->url, [...$e->request->headers, 'x-second' => '2'], $e->request->body));
+            return new BeforeProviderRequestResult([...$e->payload, 'metadata' => ['user_id' => 'hooked']]);
+        });
+        $api->on('before_provider_headers', static function (BeforeProviderHeadersEvent $e): void {
+            $e->headers['x-trace'] = 'abc';
         });
         $api->on('after_provider_response', static function (AfterProviderResponseEvent $e) use (&$seen): void {
             $seen['status'] = $e->status;
             $seen['header'] = $e->headers['x-answered'] ?? null;
         });
+        $api->on('provider_stream_event', static function (ProviderStreamEvent $e) use (&$seen): void {
+            $seen['events'][] = [$e->provider, $e->api, $e->model, $e->data['type'] ?? null];
+        });
 
-        $url = $this->server->start(["HTTP/1.1 200 OK\r\nx-answered: yes\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok"]);
+        $events = [
+            ['message_start', ['message' => ['id' => 'msg_1', 'model' => 'claude-sonnet-4-5', 'usage' => ['input_tokens' => 1, 'output_tokens' => 0]]]],
+            ['content_block_start', ['index' => 0, 'content_block' => ['type' => 'text', 'text' => '']]],
+            ['content_block_delta', ['index' => 0, 'delta' => ['type' => 'text_delta', 'text' => 'ok']]],
+            ['content_block_stop', ['index' => 0]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => ['output_tokens' => 1]]],
+            ['message_stop', []],
+        ];
+        $pieces = ["HTTP/1.1 200 OK\r\nx-answered: yes\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"];
+
+        foreach ($events as [$type, $data]) {
+            $body = "event: {$type}\ndata: " . json_encode(['type' => $type] + $data) . "\n\n";
+            $pieces[] = sprintf("%x\r\n%s\r\n", strlen($body), $body);
+        }
+
+        $pieces[] = "0\r\n\r\n";
+        $url = $this->server->start($pieces);
+
+        $agent = new Agent(new AgentOptions(apiKey: 'test-key'));
+        $sonnet = Models::get('claude-sonnet-4-5') ?? throw new \RuntimeException('no sonnet');
+        $agent->setModel(new Model($sonnet->id, $sonnet->name, $sonnet->api, $sonnet->provider, rtrim($url, '/'), $sonnet->contextWindow, $sonnet->maxTokens, $sonnet->reasoning, $sonnet->input, $sonnet->pricing, $sonnet->headers, $sonnet->compat, $sonnet->thinkingLevelMap));
+        $hooks = new HookRunner([new LoadedHook('probe.php', 'probe.php', $api)], '/work');
+        $session = new AgentSession($agent, '/work', null, Settings::inMemory(), $hooks);
+
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $head = $this->server->receivedHead();
+        $body = $this->server->receivedJson();
+        $this->assertStringContainsString("x-trace: abc\r\n", $head);
+        $this->assertSame(77, $body['max_tokens']);
+        $this->assertSame(['user_id' => 'hooked'], $body['metadata']);
+        $this->assertSame(77, $seen['chained'], 'the second handler saw the first one\'s payload');
+        $this->assertSame(200, $seen['status']);
+        $this->assertSame('yes', $seen['header']);
+        $this->assertSame(
+            ['message_start', 'content_block_start', 'content_block_delta', 'content_block_stop', 'message_delta', 'message_stop'],
+            array_column($seen['events'], 3),
+        );
+        $this->assertSame(['anthropic', 'anthropic-messages', 'claude-sonnet-4-5'], array_slice($seen['events'][0], 0, 3));
+
+        $session->dispose();
+    }
+
+    public function testAHttpRequestOutsideAProviderCallIsNotSeenByTheProviderHooks(): void
+    {
+        // Upstream's provider events are per request, through the stream options; a sign-in's
+        // token exchange, or any other `HttpClient` call, is not a provider request.
+        $api = new ExtensionApi('/work', 'probe.php', 'probe');
+        $seen = false;
+        $api->on('before_provider_request', static function () use (&$seen): null {
+            $seen = true;
+
+            return null;
+        });
+        $api->on('after_provider_response', static function () use (&$seen): void {
+            $seen = true;
+        });
         $session = $this->session(new HookRunner([new LoadedHook('probe.php', 'probe.php', $api)], '/work'));
+
+        $url = $this->server->start(["HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok"]);
 
         Async::run(function () use ($url): void {
             (new HttpClient())->send(new Request('GET', $url))->body->all();
         });
 
-        $head = $this->server->receivedHead();
-        $this->assertStringContainsString('x-first: 1', $head);
-        $this->assertStringContainsString('x-second: 2', $head);
-        $this->assertSame('1', $seen['chained'], 'the second handler saw the first one\'s header');
-        $this->assertSame(200, $seen['status']);
-        $this->assertSame('yes', $seen['header']);
+        $this->assertFalse($seen);
 
         $session->dispose();
-    }
-
-    public function testWithNobodyListeningTheClientIsNotObserved(): void
-    {
-        // A session with no provider hooks pays nothing per request: the observer is only
-        // installed when a hook asked for one.
-        $api = new ExtensionApi('/work', 'probe.php', 'probe');
-        $api->on('agent_start', static fn (): null => null);
-        $runner = new HookRunner([new LoadedHook('probe.php', 'probe.php', $api)], '/work');
-
-        $this->assertFalse($runner->listensToProviderTraffic());
-
-        $api->on('after_provider_response', static fn (): null => null);
-
-        $this->assertTrue($runner->listensToProviderTraffic());
     }
 
     // ---- flags --------------------------------------------------------------------------
@@ -213,7 +263,7 @@ final class ExtensionApiTest extends TestCase
     private function session(HookRunner $hooks): AgentSession
     {
         $agent = new Agent(new AgentOptions(
-            streamFn: static function (Model $model, Context $context): \Pig\Ai\Utils\AssistantMessageEventStream {
+            streamFn: static function (Model $model, TranscriptContext $context): \Pig\Ai\Utils\AssistantMessageEventStream {
                 $stream = new \Pig\Ai\Utils\AssistantMessageEventStream();
                 $builder = new \Pig\Ai\Providers\AssistantMessageBuilder($model);
                 Async::spawn(static function () use ($stream, $builder): void {

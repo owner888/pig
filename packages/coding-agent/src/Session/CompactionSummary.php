@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Session;
 
+use Pig\Ai\SystemMessage;
 use Pig\Ai\Timestamp;
 
 /**
@@ -57,6 +58,13 @@ final readonly class CompactionSummary
      *                       and **pi reading this file can tell** — a compaction pig wrote for a hook
      *                       used to be indistinguishable from one it wrote itself. `BranchSummary`
      *                       has had the flag all along, which is what made the omission visible.
+     * @param SystemMessage|null $systemMessage upstream's `CompactionEntry.systemMessage`: "Complete
+     *                       prompt and tool state at this compaction boundary" — every system
+     *                       message before the cut replayed into one (`Transcript::
+     *                       getCurrentSystemMessage()`), stamped with the compaction's time. The
+     *                       conversation after a compaction starts with it, in front of the
+     *                       summary, so the prompt and the tools survive the messages that
+     *                       declared them being summarised away.
      */
     public function __construct(
         public string $summary,
@@ -67,6 +75,7 @@ final readonly class CompactionSummary
         public int $replaced = 0,
         ?int $timestamp = null,
         public bool $fromHook = false,
+        public ?SystemMessage $systemMessage = null,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();
     }

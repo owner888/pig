@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Doctor;
 
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Stream;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Theme\Themes;
@@ -49,7 +50,7 @@ final class Doctor
         $authValid = $authReadable && $auth->problems() === [];
 
         $providersList = [];
-        $knownProviders = ['anthropic', 'openai', 'google', 'github-copilot', 'xai', 'groq', 'deepseek'];
+        $knownProviders = ['anthropic', 'openai', 'google', 'google-vertex', 'amazon-bedrock', 'github-copilot', 'xai', 'groq', 'deepseek'];
         $discovered = array_unique([...$auth->providers(), ...$knownProviders]);
 
         foreach ($discovered as $p) {
@@ -59,6 +60,12 @@ final class Doctor
 
             $detail = 'API key / token present';
             $type = 'api_key';
+
+            // Vertex's Application Default Credentials and Bedrock's AWS sources are credentials
+            // that are not a key: `Stream::envApiKey()` answers the ambient marker for them.
+            if (!$auth->has($p) && Stream::envApiKey($p) === Stream::AMBIENT_AUTH_MARKER) {
+                $detail = $p === 'amazon-bedrock' ? 'AWS credentials in the environment' : 'Application Default Credentials';
+            }
 
             // The built-in enum or an extension's flow — `Auth::signIn()` knows both.
             if (Auth::signIn($p) !== null) {

@@ -8,11 +8,11 @@ use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\AssistantMessageDiagnostic;
-use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
+use Pig\Ai\Http\Response;
 use Pig\Ai\Http\SseEvent;
 use Pig\Ai\Http\SseParser;
 use Pig\Ai\ImageContent;
@@ -20,6 +20,7 @@ use Pig\Ai\Model;
 use Pig\Ai\ProviderError;
 use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
+use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\TextDeltaEvent;
 use Pig\Ai\TextEndEvent;
@@ -35,11 +36,19 @@ use Pig\Ai\ToolCallDeltaEvent;
 use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
 use Pig\Ai\ToolResultMessage;
+use Pig\Ai\TranscriptContext;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
+use Pig\Ai\Utils\Headers;
+use Pig\Ai\Utils\JsJson;
+use Pig\Ai\Utils\ProviderHttpError;
+use Pig\Ai\Utils\ProviderRetry;
+use Pig\Ai\Utils\SdkHeaders;
+use Pig\Ai\Utils\Text;
+use Pig\Ai\Utils\Transcript;
 use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\JsonRepair;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
@@ -68,6 +77,29 @@ final class Anthropic
     private const string THINKING_BINDING_CONTROLS_BETA = 'thinking-binding-controls-2026-08-01';
 
     private const string SERVER_SIDE_FALLBACK_BETA = 'server-side-fallback-2026-07-01';
+
+    private const string INLINE_TOOLS_BETA = 'inline-tools-2026-09-15';
+
+    /**
+     * Upstream's `DEFERRED_TOOL_PLACEHOLDER`: "Stable deferred tool declared whenever native tool
+     * changes are in use. Anthropic adds hidden prompt scaffolding for mid-conversation tool
+     * changes; declaring this placeholder from the first request keeps that scaffolding in the
+     * cached prefix, so the first tool change does not invalidate the cache (measured: full miss
+     * without it). It is never activated and the model cannot see it."
+     *
+     * A method rather than a constant only because `new \stdClass()` is not allowed in one.
+     *
+     * @return array<string, mixed>
+     */
+    private static function deferredToolPlaceholder(): array
+    {
+        return [
+            'name' => '__pi_deferred_placeholder__',
+            'description' => 'Reserved placeholder. Never available. Never call this.',
+            'input_schema' => ['type' => 'object', 'properties' => new \stdClass(), 'required' => []],
+            'defer_loading' => true,
+        ];
+    }
 
     /** Upstream's `isAnthropicEffort()`: the effort names a managed-effort turn can be replayed with. */
     private const array ANTHROPIC_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
@@ -121,7 +153,7 @@ final class Anthropic
     }
 
     /** Returns at once; the response fills in as it arrives. */
-    public function stream(Model $model, Context $context, ?AnthropicOptions $options = null): AssistantMessageEventStream
+    public function stream(Model $model, TranscriptContext $context, ?AnthropicOptions $options = null): AssistantMessageEventStream
     {
         $stream = new AssistantMessageEventStream();
 
@@ -135,9 +167,14 @@ final class Anthropic
     private function run(
         AssistantMessageEventStream $stream,
         Model $model,
-        Context $context,
+        TranscriptContext $context,
         ?AnthropicOptions $options,
     ): void {
+        // Upstream's `resolveTranscript(context, compat.supportsMidConvoSystemMessages)`: later system
+        // messages stay in place for a model that takes them, and are folded into the leading one
+        // otherwise. Everything below sees only the result.
+        $context = Transcript::resolveTranscript($context, self::compat($model)?->supportsMidConvoSystemMessages ?? false);
+        $currentTools = Transcript::getCurrentTools($context->messages);
         $builder = new AssistantMessageBuilder($model);
         // Upstream's `stopReason: "pending"` on the output from the start: only `message_delta`'s
         // `stop_reason` replaces it, so a stream that never sends one can be told from one that did.
@@ -151,16 +188,67 @@ final class Anthropic
         // A subscription token's tools go out under Claude Code's names and come back under
         // them too, so the name on a `tool_use` block is mapped back to the tool this request
         // declared. Decided once here, because `dispatch()` has no options to ask.
-        $tools = ClaudeCode::isToken($options?->apiKey ?? '') ? $context->tools : [];
+        $isOAuth = $model->provider !== 'github-copilot' && ClaudeCode::isToken($options?->apiKey ?? '');
+        $tools = $isOAuth ? $currentTools : [];
         // What the API says it rewrote in the request, from `message_start` or a later
         // `message_delta` — the last one wins, as upstream's single variable does.
         $transformations = null;
 
         try {
-            $response = $this->http->send($this->request($model, $context, $options), $signal);
+            // Upstream: `getAnthropicFederation()`, and without it `assertRequestAuth()` — a key or an
+            // auth header in `options.headers` (header-owned auth) is what lets a request go.
+            $apiKey = $options?->apiKey;
+            $federation = AnthropicFederation::config($model, $apiKey, $options?->headers, $options?->env);
 
-            if (!$response->isSuccessful()) {
-                throw new ProviderError($this->explain($response->status, $response->body->all()));
+            if ($federation === null && !AnthropicFederation::hasRequestAuth($apiKey, $options?->headers)) {
+                throw new ProviderError("No API key for provider: {$model->provider}");
+            }
+
+            $federationClient = $federation !== null
+                ? AnthropicFederation::client($this->endpoint($model, $apiKey ?? ''), $federation, $this->http)
+                : null;
+
+            // `buildParams()`, then `onPayload` — whose answer replaces the params, `{...next, stream:
+            // true}`.
+            $params = $this->params($model, $context, $options, $isOAuth);
+            $nextParams = $options?->onPayload !== null ? ($options->onPayload)($params, $model) : null;
+
+            if ($nextParams !== null) {
+                $params = (array) $nextParams;
+                $params['stream'] = true;
+            }
+
+            // `retryProviderRequest(() => client.beta.messages.create(params, {signal, timeout,
+            // maxRetries: 0}).asResponse(), {maxRetries, maxRetryDelayMs, signal})`.
+            $timeoutMs = $options?->timeoutMs ?? SdkHeaders::STAINLESS_DEFAULT_TIMEOUT_MS;
+            $response = ProviderRetry::retryProviderRequest(
+                function () use ($model, $context, $options, $params, $isOAuth, $federationClient, $timeoutMs, $signal): Response {
+                    try {
+                        return SdkRequest::send(
+                            $this->http,
+                            $this->request($model, $context, $options, $params, $isOAuth, $federationClient?->getToken(), $timeoutMs),
+                            $signal,
+                            $timeoutMs,
+                            $this->explain(...),
+                        );
+                    } catch (ProviderHttpError $error) {
+                        // The SDK's `shouldRetry()`: a 401 from a request the token cache
+                        // authenticated invalidates the token (with `maxRetries: 0` the retry
+                        // itself never happens, but the next request exchanges afresh).
+                        if ($error->status === 401) {
+                            $federationClient?->invalidate();
+                        }
+
+                        throw $error;
+                    }
+                },
+                $options?->maxRetries,
+                $options?->maxRetryDelayMs,
+                $signal,
+            );
+
+            if ($options?->onResponse !== null) {
+                ($options->onResponse)(['status' => $response->status, 'headers' => $response->headers], $model);
             }
 
             $stream->push(new StartEvent($builder->snapshot()));
@@ -185,17 +273,28 @@ final class Anthropic
                     }
 
                     $data = self::parseEvent($event);
+
+                    if ($options?->onProviderStreamEvent !== null) {
+                        ($options->onProviderStreamEvent)($data, $model);
+                    }
+
                     $type = is_array($data) ? ($data['type'] ?? null) : null;
                     $sawMessageStart = $sawMessageStart || $type === 'message_start';
                     $sawMessageEnd = $sawMessageEnd || $type === 'message_stop';
                     $transformations = $this->dispatch($event, $data, $model, $builder, $stream, $tools) ?? $transformations;
                 }
+
+                // `iterateSseMessages()`: `if (signal?.aborted) throw new Error("Request was aborted")`
+                // before each read.
+                if ($signal?->aborted() ?? false) {
+                    throw new ProviderError('Request was aborted');
+                }
             }
 
-            // An abort mid-stream ends the body quietly; say so rather than reporting success.
-            // Before the two checks below because upstream's reader throws "Request was aborted"
-            // from inside the loop, so an aborted turn never reaches them.
-            $signal?->throwIfAborted();
+            // Upstream's check after the loop, before the two below.
+            if ($signal?->aborted() ?? false) {
+                throw new ProviderError('Request was aborted');
+            }
 
             if ($sawMessageStart && !$sawMessageEnd) {
                 throw new ProviderError('Anthropic stream ended before message_stop');
@@ -226,8 +325,13 @@ final class Anthropic
             $stream->push(new DoneEvent($message->stopReason, $message));
             $stream->end();
         } catch (Throwable $error) {
-            // A provider never throws at its caller: the failure is the stream's result.
-            $builder->fail($error->getMessage(), $signal?->aborted() ?? false);
+            // A provider never throws at its caller: the failure is the stream's result. An abort
+            // that lands while the body is being read is the fetch's own rejection, the
+            // DOMException "This operation was aborted".
+            $builder->fail(
+                SdkRequest::errorMessage($error),
+                $signal?->aborted() ?? false,
+            );
             $failed = $builder->snapshot();
             $stream->push(new ErrorEvent($failed->stopReason, $failed));
             $stream->end();
@@ -569,81 +673,179 @@ final class Anthropic
         return ErrorBody::anthropicApiError($status, $body);
     }
 
-    private function request(Model $model, Context $context, ?AnthropicOptions $options): Request
+    /**
+     * Upstream's `buildParams()`: the body, with `betas` (when there are any) after `stream`, where
+     * upstream's params object carries it — so `onPayload` sees what upstream's sees. The SDK takes
+     * `betas` back out as the `anthropic-beta` header (`request()`).
+     *
+     * @return array<string, mixed>
+     */
+    private function params(Model $model, TranscriptContext $context, ?AnthropicOptions $options, bool $isOAuth): array
     {
-        $apiKey = $options?->apiKey ?? '';
-        // Upstream's `createClient()` tries Copilot first: its Claude models speak this API, and
-        // the key is a Copilot token sent as a bearer — never a Claude Code subscription, whatever
-        // it happens to look like.
-        $isCopilot = $model->provider === 'github-copilot';
-        // A subscription token authenticates as Claude Code: a bearer header, Claude Code's
-        // user agent, and the two betas in front — see `ClaudeCode`.
-        $isOAuth = !$isCopilot && ClaudeCode::isToken($apiKey);
+        // "Native tool changes keep the request-level tool list fixed and define every later tool
+        // by value in a `tool_addition` block, which also expresses same-name redefinitions.
+        // Anthropic rejects a tool list where every tool is deferred, so there must be an initial
+        // active tool to anchor the placeholder. Otherwise the current tool list is sent."
+        $compat = self::compat($model);
+        $initialTools = Transcript::getInitialSystemMessage($context->messages)?->toolsAdded ?? [];
+        $nativeToolChanges = ($compat?->supportsMidConvoSystemMessages ?? false)
+            && ($compat?->supportsMidConvoToolChanges ?? false)
+            && $initialTools !== [];
+        $body = $this->body($model, $context, $options, $isOAuth, $nativeToolChanges);
+        $betas = $this->betaFeatures($model, $context, $isOAuth, $nativeToolChanges, $options);
 
-        // Upstream's `createClient()` API-key arm only (not Copilot, not a subscription token): the
-        // session id as a header when caching is on and the model's compat asks for it —
-        // `sendSessionAffinityHeaders` (default: OpenRouter), named `x-session-id` for the
-        // `openrouter` format and `x-session-affinity` otherwise. Merged before the model's own
-        // headers, as upstream merges it.
-        $sessionAffinityHeaders = [];
-        $cacheSessionId = $options?->resolvedCacheRetention() === 'none' ? null : $options?->sessionId;
+        if ($betas === []) {
+            return $body;
+        }
 
-        if (!$isCopilot && !$isOAuth && $cacheSessionId !== null && $cacheSessionId !== '') {
-            $isOpenRouter = $model->provider === 'openrouter' || str_contains($model->baseUrl, 'openrouter.ai');
-            $compat = self::compat($model);
+        $params = [];
 
-            if ($compat?->sendSessionAffinityHeaders ?? $isOpenRouter) {
-                $format = $compat?->sessionAffinityFormat ?? ($isOpenRouter ? 'openrouter' : null);
-                $sessionAffinityHeaders[$format === 'openrouter' ? 'x-session-id' : 'x-session-affinity'] = $cacheSessionId;
+        foreach ($body as $key => $value) {
+            $params[$key] = $value;
+
+            if ($key === 'stream') {
+                $params['betas'] = $betas;
             }
         }
 
-        $headers = [
-            // Upstream's `createClient()` default headers, in all three of its arms (Copilot, a
-            // subscription token, an API key): `accept` and `anthropic-dangerous-direct-browser-access:
-            // true` — the SDK refuses to run in a browser without the second, and upstream sends it
-            // from everywhere. The SDK adds the other two itself.
-            // Upstream's `mergeClientHeaders()`: `User-Agent: pig (…)` under everything else, so a
-            // subscription token's `user-agent: claude-cli/…` and a model's own replace it.
-            'User-Agent' => PigUserAgent::get(),
-            'accept' => 'application/json',
+        return $params;
+    }
+
+    /**
+     * One attempt's request, as `client.beta.messages.create(params, …)` builds it with upstream's
+     * `createClient()` options: `POST <baseURL>/v1/messages?beta=true`, and the SDK's
+     * `buildHeaders()` over its five sources, in order —
+     *
+     * 1. the SDK's own: `Accept`, its `User-Agent`, the `X-Stainless-*` set (`SdkHeaders`),
+     *    `anthropic-dangerous-direct-browser-access: true` (upstream passes
+     *    `dangerouslyAllowBrowser`) and `anthropic-version`;
+     * 2. auth: `X-Api-Key` for an API key, `Authorization: Bearer` for Copilot's token, a
+     *    subscription token, or the federated access token; nothing for header-owned auth;
+     * 3. upstream's `defaultHeaders`, `mergeClientHeaders()`: `User-Agent: pig (…)`, `accept` and the
+     *    browser header, then per arm the Claude Code identity, the session-affinity header, the
+     *    model's headers, Copilot's dynamic headers, and `options.headers` last;
+     * 4. the JSON body's `content-type`;
+     * 5. the call's own: `anthropic-beta` from `betas` (and `anthropic-user-profile-id` /
+     *    `anthropic-workspace-id` from those params, which only an `onPayload` could set).
+     *
+     * A later source replaces an earlier header of the same name, any case, and a null removes it.
+     * A federated request then gets `oauth-2025-04-20` appended to its betas (`prepareRequest()`).
+     * With neither `x-api-key` nor `authorization` left, and neither explicitly removed, the SDK's
+     * `validateHeaders()` refuses.
+     *
+     * @param array<string, mixed> $params
+     */
+    private function request(Model $model, TranscriptContext $context, ?AnthropicOptions $options, array $params, bool $isOAuth, ?string $federationToken, int $timeoutMs): Request
+    {
+        $apiKey = $options?->apiKey;
+        $isCopilot = $model->provider === 'github-copilot';
+        $optionsHeaders = $options?->headers ?? [];
+
+        // `const { betas, user_profile_id, workspace_id, ...body } = params`.
+        $betas = $params['betas'] ?? null;
+        $userProfileId = $params['user_profile_id'] ?? null;
+        $workspaceId = $params['workspace_id'] ?? null;
+        unset($params['betas'], $params['user_profile_id'], $params['workspace_id']);
+
+        $sdkDefaults = [
+            ...SdkHeaders::stainless('Anthropic/JS ' . SdkHeaders::ANTHROPIC_SDK_VERSION, SdkHeaders::ANTHROPIC_SDK_VERSION, $timeoutMs),
             'anthropic-dangerous-direct-browser-access' => 'true',
-            'content-type' => 'application/json',
             'anthropic-version' => self::VERSION,
-            // Copilot: upstream's `authToken: apiKey`, which the SDK sends as a bearer.
-            ...match (true) {
-                $isCopilot => ['authorization' => 'Bearer ' . $apiKey],
-                $isOAuth => ClaudeCode::headers($apiKey),
-                default => ['x-api-key' => $apiKey],
-            },
-            ...$sessionAffinityHeaders,
-            ...$model->headers,
-            // After the model's own, as upstream merges them (`model.headers, dynamicHeaders`):
-            // `X-Initiator`, `Openai-Intent` and `Copilot-Vision-Request`, the same three the two
-            // OpenAI providers send. Empty for every other provider.
-            ...Copilot::headers($model, $context),
         ];
 
-        // Upstream sends the betas as the request's `betas`, which the SDK writes as `anthropic-beta`
-        // over any default header of that name — so one header, whatever case the model's own was
-        // written in, and none at all when the list is empty.
-        $headers = array_filter(
-            $headers,
-            static fn (string|int $name): bool => strtolower((string) $name) !== 'anthropic-beta',
-            ARRAY_FILTER_USE_KEY,
-        );
-        $betas = $this->betaFeatures($model, $context, $isOAuth, $options);
+        $clientDefaults = ['accept' => 'application/json', 'anthropic-dangerous-direct-browser-access' => 'true'];
 
-        if ($betas !== []) {
-            $headers['anthropic-beta'] = implode(',', $betas);
+        if ($isCopilot) {
+            // `authToken: apiKey ?? null`.
+            $auth = $apiKey !== null ? ['Authorization' => "Bearer {$apiKey}"] : [];
+            $defaultHeaders = self::mergeClientHeaders($clientDefaults, $model->headers, Copilot::headers($model, $context), $optionsHeaders);
+        } elseif ($isOAuth) {
+            $auth = ['Authorization' => "Bearer {$apiKey}"];
+            $defaultHeaders = self::mergeClientHeaders(
+                [...$clientDefaults, 'user-agent' => 'claude-cli/' . ClaudeCode::VERSION, 'x-app' => 'cli'],
+                $model->headers,
+                $optionsHeaders,
+            );
+        } else {
+            // Upstream's API-key arm: the session id as a header when caching is on and the
+            // model's compat asks for it — `x-session-id` for the `openrouter` format,
+            // `x-session-affinity` otherwise.
+            $sessionAffinityHeaders = [];
+            $cacheSessionId = $options?->resolvedCacheRetention() === 'none' ? null : $options?->sessionId;
+
+            if ($cacheSessionId !== null && $cacheSessionId !== '') {
+                $isOpenRouter = $model->provider === 'openrouter' || str_contains($model->baseUrl, 'openrouter.ai');
+                $compat = self::compat($model);
+
+                if ($compat?->sendSessionAffinityHeaders ?? $isOpenRouter) {
+                    $format = $compat?->sessionAffinityFormat ?? ($isOpenRouter ? 'openrouter' : null);
+                    $sessionAffinityHeaders[$format === 'openrouter' ? 'x-session-id' : 'x-session-affinity'] = $cacheSessionId;
+                }
+            }
+
+            $auth = match (true) {
+                $federationToken !== null => ['Authorization' => "Bearer {$federationToken}"],
+                $apiKey !== null => ['X-Api-Key' => $apiKey],
+                default => [],
+            };
+            $defaultHeaders = self::mergeClientHeaders($clientDefaults, $sessionAffinityHeaders, $model->headers, $optionsHeaders);
+        }
+
+        $callHeaders = [];
+
+        if ($betas !== null) {
+            $callHeaders['anthropic-beta'] = is_array($betas) ? implode(',', array_map(JsJson::toString(...), $betas)) : JsJson::toString($betas);
+        }
+
+        if ($userProfileId !== null) {
+            $callHeaders['anthropic-user-profile-id'] = JsJson::toString($userProfileId);
+        }
+
+        if ($workspaceId !== null) {
+            $callHeaders['anthropic-workspace-id'] = JsJson::toString($workspaceId);
+        }
+
+        $built = Headers::build($sdkDefaults, $auth, $defaultHeaders, ['content-type' => 'application/json'], $callHeaders);
+        $headers = $built['values'];
+
+        if ($federationToken !== null) {
+            // `prepareRequest()`: the token's beta joins whatever betas the request already has.
+            $existing = isset($headers['anthropic-beta']) ? array_map(trim(...), explode(',', $headers['anthropic-beta'])) : [];
+
+            if (!in_array(AnthropicFederation::OAUTH_API_BETA_HEADER, $existing, true)) {
+                $headers['anthropic-beta'] = implode(',', [...$existing, AnthropicFederation::OAUTH_API_BETA_HEADER]);
+            }
+        } elseif (($headers['x-api-key'] ?? '') === '' && ($headers['authorization'] ?? '') === ''
+            && !isset($built['nulls']['x-api-key']) && !isset($built['nulls']['authorization'])) {
+            throw new ProviderError('Could not resolve authentication method. Expected one of apiKey, authToken, credentials, config, or profile to be set. Or for one of the "X-Api-Key" or "Authorization" headers to be explicitly omitted');
         }
 
         return new Request(
             'POST',
-            $this->endpoint($model, $apiKey) . '/v1/messages',
+            $this->endpoint($model, $apiKey ?? '') . '/v1/messages?beta=true',
             $headers,
-            $this->encode($this->body($model, $context, $options, $isOAuth)),
+            $this->encode($params),
         );
+    }
+
+    /**
+     * Upstream's `mergeClientHeaders()`: `mergeHeaders({"User-Agent": getPiUserAgent()}, ...)`, an
+     * `Object.assign` — exact-name keys replaced in place, nulls kept for the SDK to act on.
+     *
+     * @param array<string, string|null> ...$headerSources
+     * @return array<string, string|null>
+     */
+    private static function mergeClientHeaders(array ...$headerSources): array
+    {
+        $merged = ['User-Agent' => PigUserAgent::get()];
+
+        foreach ($headerSources as $headers) {
+            foreach ($headers as $name => $value) {
+                $merged[(string) $name] = $value;
+            }
+        }
+
+        return $merged;
     }
 
     /**
@@ -657,21 +859,24 @@ final class Anthropic
      * `interleaved-thinking` for a non-adaptive thinking turn; and the two managed-effort betas for a
      * `supportsMidConvoEffort` model.
      *
-     * `server-side-fallback` goes with a model whose compat lists `allowedFallbackModels`. Not
-     * ported: `inline-tools` (native mid-conversation tool changes — pig's transcript has no system
-     * messages after the first). Upstream also reads `options.headers`; pig's options carry none.
+     * `server-side-fallback` goes with a model whose compat lists `allowedFallbackModels`, and
+     * `inline-tools` with a request that makes native mid-conversation tool changes (`params()`).
+     * An `anthropic-beta` in `options.headers` counts as the model's does, read after it.
      *
      * @return list<string>
      */
-    private function betaFeatures(Model $model, Context $context, bool $isOAuth, ?AnthropicOptions $options): array
+    private function betaFeatures(Model $model, TranscriptContext $context, bool $isOAuth, bool $nativeToolChanges, ?AnthropicOptions $options): array
     {
         $configured = false;
         $configuredFeatures = null;
 
-        foreach ($model->headers as $name => $value) {
-            if (strtolower((string) $name) === 'anthropic-beta') {
-                $configured = true;
-                $configuredFeatures = $value;
+        // `for (const headers of [model.headers, options?.headers])` — the request's own wins.
+        foreach ([$model->headers, $options?->headers ?? []] as $headers) {
+            foreach ($headers as $name => $value) {
+                if (strtolower((string) $name) === 'anthropic-beta') {
+                    $configured = true;
+                    $configuredFeatures = $value;
+                }
             }
         }
 
@@ -696,7 +901,7 @@ final class Anthropic
         }
 
         // Upstream's `shouldUseFineGrainedToolStreamingBeta()`.
-        if ($context->tools !== [] && !($compat?->supportsEagerToolInputStreaming ?? true)) {
+        if (Transcript::getCurrentTools($context->messages) !== [] && !($compat?->supportsEagerToolInputStreaming ?? true)) {
             $features[] = self::FINE_GRAINED_TOOL_STREAMING_BETA;
         }
 
@@ -718,6 +923,10 @@ final class Anthropic
         if ($compat?->supportsMidConvoEffort === true) {
             $features[] = self::MID_CONVERSATION_OUTPUT_CONFIG_BETA;
             $features[] = self::THINKING_BINDING_CONTROLS_BETA;
+        }
+
+        if ($nativeToolChanges) {
+            $features[] = self::INLINE_TOOLS_BETA;
         }
 
         return array_values(array_unique($features));
@@ -758,7 +967,7 @@ final class Anthropic
     }
 
     /** @return array<string, mixed> */
-    private function body(Model $model, Context $context, ?AnthropicOptions $options, bool $isOAuth): array
+    private function body(Model $model, TranscriptContext $context, ?AnthropicOptions $options, bool $isOAuth, bool $nativeToolChanges = false): array
     {
         $compat = self::compat($model);
         $midConvoEffort = $compat?->supportsMidConvoEffort === true;
@@ -766,9 +975,21 @@ final class Anthropic
         // system message that closes the conversation.
         $activeEffort = $options?->effort ?? 'high';
         $cacheControl = self::cacheControl($model, $options);
+        // Upstream's `buildParams()`: the leading system message is the `system` field, and the
+        // rest of the transcript is the conversation.
+        $initialSystemMessage = Transcript::getInitialSystemMessage($context->messages);
+        $initialSystemText = $initialSystemMessage !== null ? Text::getSystemMessageText($initialSystemMessage) : '';
+        $supportsStrictTools = $compat?->strictTools ?? false;
+        $supportsEagerToolInputStreaming = $compat?->supportsEagerToolInputStreaming ?? true;
+        $convertToolDefinitions = $nativeToolChanges
+            ? fn (array $tools): array => array_map(
+                fn (Tool $tool): array => $this->tool($tool, $isOAuth, $supportsEagerToolInputStreaming, $supportsStrictTools),
+                $tools,
+            )
+            : null;
         $body = [
             'model' => $model->id,
-            'messages' => $this->messages($context, $model, $isOAuth, $midConvoEffort ? $activeEffort : null, $cacheControl),
+            'messages' => $this->messages($context, $model, $isOAuth, $midConvoEffort ? $activeEffort : null, $cacheControl, $initialSystemMessage !== null, $convertToolDefinitions),
             // Upstream's `max_tokens: options?.maxTokens ?? model.maxTokens`: the model's own ceiling
             // when nobody said. `Stream::simple()` always says — the ceiling clamped to the room the
             // context leaves, and on a budget-thinking turn raised by the budget — so this default
@@ -777,7 +998,7 @@ final class Anthropic
             'stream' => true,
         ];
 
-        $system = $this->system($context, $isOAuth, $cacheControl);
+        $system = $this->system($initialSystemText, $isOAuth, $cacheControl);
 
         if ($system !== []) {
             $body['system'] = $system;
@@ -794,22 +1015,37 @@ final class Anthropic
             $body['temperature'] = $options->temperature;
         }
 
-        if ($context->tools !== []) {
-            // Upstream's `supportsStrictTools: model.compat?.supportsStrictTools ?? false`, which its
-            // generated catalogue sets on every `anthropic` provider model (`Models` does the same),
-            // and `supportsEagerToolInputStreaming ?? true`.
-            $supportsStrictTools = $compat?->strictTools ?? false;
-            $supportsEagerToolInputStreaming = $compat?->supportsEagerToolInputStreaming ?? true;
-            $body['tools'] = array_map(
+        // Upstream's `supportsStrictTools: model.compat?.supportsStrictTools ?? false`, which its
+        // generated catalogue sets on every `anthropic` provider model (`Models` does the same),
+        // and `supportsEagerToolInputStreaming ?? true`.
+        $toolCacheControl = ($compat?->supportsCacheControlOnTools ?? true) ? $cacheControl : null;
+        $convertTools = function (array $tools) use ($isOAuth, $supportsEagerToolInputStreaming, $supportsStrictTools, $toolCacheControl): array {
+            $converted = array_map(
                 fn (Tool $tool): array => $this->tool($tool, $isOAuth, $supportsEagerToolInputStreaming, $supportsStrictTools),
-                $context->tools,
+                $tools,
             );
 
             // Upstream's `convertTools(…, toolCacheControl)`: the cache breakpoint on the **last**
             // tool, so the tool list is part of the cached prefix — unless the model's compat says
             // its endpoint refuses the field there (`supportsCacheControlOnTools`, default true).
-            if ($cacheControl !== null && ($compat?->supportsCacheControlOnTools ?? true)) {
-                $body['tools'][count($body['tools']) - 1]['cache_control'] = $cacheControl;
+            if ($toolCacheControl !== null && $converted !== []) {
+                $converted[count($converted) - 1]['cache_control'] = $toolCacheControl;
+            }
+
+            return $converted;
+        };
+
+        if ($nativeToolChanges) {
+            // "Initial tools stay active with the cache breakpoint on the last one, followed by the
+            // placeholder. The list never changes afterwards: later tools are defined by value in
+            // `tool_addition` blocks and withdrawn by `tool_removal`, so the cached prefix survives
+            // every tool change."
+            $body['tools'] = [...$convertTools($initialSystemMessage->toolsAdded ?? []), self::deferredToolPlaceholder()];
+        } else {
+            $tools = Transcript::getCurrentTools($context->messages);
+
+            if ($tools !== []) {
+                $body['tools'] = $convertTools($tools);
             }
         }
 
@@ -904,7 +1140,7 @@ final class Anthropic
      * @param array<string, string>|null $cacheControl see `cacheControl()`
      * @return list<array<string, mixed>>
      */
-    private function system(Context $context, bool $isOAuth, ?array $cacheControl): array
+    private function system(string $initialSystemText, bool $isOAuth, ?array $cacheControl): array
     {
         $blocks = [];
 
@@ -913,8 +1149,8 @@ final class Anthropic
             $blocks[] = $this->cachedText(ClaudeCode::IDENTITY, $cacheControl);
         }
 
-        if ($context->systemPrompt !== null && $context->systemPrompt !== '') {
-            $blocks[] = $this->cachedText(Utf8::sanitize($context->systemPrompt), $cacheControl);
+        if ($initialSystemText !== '') {
+            $blocks[] = $this->cachedText(Utf8::sanitize($initialSystemText), $cacheControl);
         }
 
         return $blocks;
@@ -1008,21 +1244,82 @@ final class Anthropic
      * asked for now at the end. The thinking each earlier turn did stays bound to the effort it was
      * done at, and the effort can change mid-conversation without a 400.
      *
-     * @param array<string, string>|null $cacheControl the breakpoint for the last user block — see
-     *        `cacheControl()`; null marks nothing
+     * **A later system message** (`SystemMessage`) reaches here only when the model takes them
+     * natively — otherwise the transcript was collapsed into the leading message before this — and
+     * goes as a `system` turn: its update text (`Text::renderSystemMessageUpdate()`), and for a
+     * request with native tool changes (`$convertToolDefinitions`) a `tool_removal` per removed tool
+     * that is not redefined and a `tool_addition` per added one. Upstream's comment: "Later system
+     * messages are held back and emitted directly before the next assistant message (or at the end
+     * of the transcript). Anthropic requires `tool_result` blocks to immediately follow their
+     * `tool_use`, so a system message between them is rejected; this also mirrors where the
+     * managed-effort system messages are inserted. As a result an update placed before a user
+     * message in the transcript lands after it on the wire."
+     *
+     * @param array<string, string>|null $cacheControl the breakpoint for the last user or system
+     *        block — see `cacheControl()`; null marks nothing
+     * @param bool $dropInitialSystemMessage the transcript leads with the system prompt, which goes
+     *        in the `system` field instead (`transformedMessages.slice(1)`)
+     * @param (\Closure(list<Tool>): list<array<string, mixed>>)|null $convertToolDefinitions converts
+     *        tool definitions for native `tool_addition` blocks; null when tool changes are not native
      * @return list<array<string, mixed>>
      */
-    private function messages(Context $context, Model $model, bool $isOAuth = false, ?string $activeEffort = null, ?array $cacheControl = null): array
+    private function messages(TranscriptContext $context, Model $model, bool $isOAuth = false, ?string $activeEffort = null, ?array $cacheControl = null, bool $dropInitialSystemMessage = false, ?\Closure $convertToolDefinitions = null): array
     {
         $allowEmptySignature = self::compat($model)?->allowEmptySignature ?? false;
         $out = [];
         // Upstream's `assistantLevels`: the index in `$out` of each such earlier turn, and its effort.
         $assistantLevels = [];
         $messages = TransformMessages::apply($context->messages, $model, self::normalizeToolCallId(...));
+
+        if ($dropInitialSystemMessage) {
+            $messages = array_slice($messages, 1);
+        }
+
         $count = count($messages);
+        $pendingSystemMessages = [];
+        $flushPendingSystemMessages = static function () use (&$out, &$pendingSystemMessages): void {
+            array_push($out, ...$pendingSystemMessages);
+            $pendingSystemMessages = [];
+        };
 
         for ($i = 0; $i < $count; $i++) {
             $message = $messages[$i];
+
+            if ($message instanceof SystemMessage) {
+                $text = Text::renderSystemMessageUpdate($message);
+                $blocks = [];
+
+                if ($text !== '') {
+                    $blocks[] = ['type' => 'text', 'text' => Utf8::sanitize($text)];
+                }
+
+                if ($convertToolDefinitions !== null) {
+                    $added = $message->toolsAdded ?? [];
+                    $redefined = array_flip(array_map(static fn (Tool $tool): string => $tool->name, $added));
+
+                    foreach ($message->toolsRemoved ?? [] as $tool) {
+                        // "A new definition under the same name replaces the old one, so no removal is needed."
+                        if (isset($redefined[$tool->name])) {
+                            continue;
+                        }
+
+                        $blocks[] = [
+                            'type' => 'tool_removal',
+                            'tool' => ['type' => 'tool_reference', 'name' => $isOAuth ? ClaudeCode::nameOut($tool->name) : $tool->name],
+                        ];
+                    }
+
+                    foreach ($convertToolDefinitions($added) as $definition) {
+                        $blocks[] = ['type' => 'tool_addition', 'tool' => ['type' => 'tool_definition', 'definition' => $definition]];
+                    }
+                }
+
+                if ($blocks !== []) {
+                    $pendingSystemMessages[] = ['role' => 'system', 'content' => $blocks];
+                }
+
+                continue;
+            }
 
             if ($message instanceof UserMessage) {
                 $blocks = $this->userBlocks($message, $model);
@@ -1035,6 +1332,7 @@ final class Anthropic
             }
 
             if ($message instanceof AssistantMessage) {
+                $flushPendingSystemMessages();
                 $blocks = $this->assistantBlocks($message, $isOAuth, $allowEmptySignature);
 
                 if ($blocks !== []) {
@@ -1065,6 +1363,7 @@ final class Anthropic
             }
         }
 
+        $flushPendingSystemMessages();
         $this->cacheLastUserBlock($out, $cacheControl);
 
         if ($activeEffort === null) {
@@ -1239,7 +1538,9 @@ final class Anthropic
 
     /**
      * Mark the end of the conversation so the prefix can be cached next turn — with upstream's
-     * `cacheControl`, so `cacheRetention: none` marks nothing and `long` marks it for an hour.
+     * `cacheControl`, so `cacheRetention: none` marks nothing and `long` marks it for an hour. The
+     * last message is a user turn or, since a held system update goes at the end, a system one;
+     * its last block is marked when it is text, an image, a result or a tool change.
      *
      * @param list<array<string, mixed>> $messages
      * @param array<string, string>|null $cacheControl
@@ -1248,14 +1549,14 @@ final class Anthropic
     {
         $last = count($messages) - 1;
 
-        if ($cacheControl === null || $last < 0 || $messages[$last]['role'] !== 'user' || !is_array($messages[$last]['content'])) {
+        if ($cacheControl === null || $last < 0 || !in_array($messages[$last]['role'], ['user', 'system'], true) || !is_array($messages[$last]['content'])) {
             return;
         }
 
         $blocks = $messages[$last]['content'];
         $lastBlock = count($blocks) - 1;
 
-        if ($lastBlock >= 0 && in_array($blocks[$lastBlock]['type'], ['text', 'image', 'tool_result'], true)) {
+        if ($lastBlock >= 0 && in_array($blocks[$lastBlock]['type'], ['text', 'image', 'tool_result', 'tool_addition', 'tool_removal'], true)) {
             $blocks[$lastBlock]['cache_control'] = $cacheControl;
             $messages[$last]['content'] = $blocks;
         }

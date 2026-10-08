@@ -18,6 +18,7 @@ use Pig\Ai\UserMessage;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
+use Pig\Ai\Utils\Transcript;
 
 /**
  * What goes out on the wire, which is all this provider is.
@@ -110,7 +111,7 @@ final class AntigravityApiTest extends TestCase
         Async::run(function () use ($url): void {
             $stream = (new Antigravity())->stream(
                 $this->model($url),
-                new Context([new UserMessage('hello')]),
+                Transcript::normalizeContext(new Context([new UserMessage('hello')])),
                 new GoogleOptions(apiKey: self::key(), thinkingEnabled: false, thinkingLevel: 'high'),
             );
 
@@ -259,31 +260,138 @@ final class AntigravityApiTest extends TestCase
         $this->assertStringContainsString('gemini-3-flash', $this->server->receivedJson()['model']);
     }
 
-    public function testA429IsNotRetriedOnTheOtherHost(): void
+    public function testAQuotaWallIsNotTriedOnTheOtherHostAndIsSaidInPiAntigravitysWords(): void
     {
-        // The quota answering, not the host refusing us — asking the other one gets the same
-        // answer, and waiting it out belongs a level up.
+        // pi-antigravity's request loop stops at a 429 that is a quota wall — every endpoint would
+        // answer it the same way — and words it so that it matches none of the session's retryable
+        // patterns: the turn ends at once, saying how long to wait. (pig used to name it "out of
+        // quota" here and have the session read the wait out of it and rewrite it.)
         $quota = new CannedServer();
-        $url = $quota->start([self::refusal(429, 'RESOURCE_EXHAUSTED: out of quota for today')]);
+        $url = $quota->start([self::refusal(429, 'Individual quota reached. Resets in 2h3m.')]);
 
         $second = new CannedServer();
         $secondUrl = $second->start([self::refusal(200, 'unused')]);
 
         $message = $this->drain(new Antigravity(fallback: $secondUrl), $this->model($url), 'gemini-3-flash', 'low', new Context([new UserMessage('hi')]));
 
-        $this->assertStringContainsString('out of quota', (string) $message);
+        $this->assertSame('Quota reached. Please wait 2h3m. Next: switch models or try again after reset.', $message);
         $this->assertSame('', $second->receivedHead(), 'the second host was never asked');
     }
 
-    public function testAQuotaRefusalIsNamedAsOneRatherThanLeftAsJson(): void
+    public function testATransient429IsTriedOnTheOtherHostAndThenReadsAsThrottling(): void
     {
-        $server = new CannedServer();
-        $url = $server->start([self::refusal(429, 'RESOURCE_EXHAUSTED: slow down')]);
+        // `[403, 404, 429, 500, 502, 503, 504]` move on to the next endpoint; generic
+        // RESOURCE_EXHAUSTED is throttling, worded so that the session's backoff engages.
+        $first = new CannedServer();
+        $url = $first->start([self::refusal(429, 'RESOURCE_EXHAUSTED: slow down')]);
 
-        $message = $this->drain(new Antigravity(), $this->model($url), 'gemini-3-flash', 'low', new Context([new UserMessage('hi')]));
+        $second = new CannedServer();
+        $secondUrl = $second->start([self::refusal(429, 'RESOURCE_EXHAUSTED: slow down')]);
 
-        $this->assertStringContainsString('out of quota', (string) $message);
-        $this->assertStringContainsString('slow down', (string) $message);
+        $message = $this->drain(new Antigravity(fallback: $secondUrl), $this->model($url), 'gemini-3-flash', 'low', new Context([new UserMessage('hi')]));
+
+        // pi-antigravity's own shape for every refusal that is not a quota wall:
+        // `Antigravity API error (<status>, <diagnostics>): <friendly>`.
+        $this->assertStringStartsWith('Antigravity API error (429, endpoint=' . $secondUrl, (string) $message);
+        $this->assertStringEndsWith('): Rate limited by Antigravity (429 ResourceExhausted). Next: retrying automatically; if it persists, switch models.', (string) $message);
+        $this->assertTrue(\Pig\Ai\Utils\Retry::isRetryableAssistantError(new \Pig\Ai\AssistantMessage([], \Pig\Ai\Api::Extension, 'antigravity', 'm', new \Pig\Ai\Usage(), \Pig\Ai\StopReason::Error, (string) $message)), 'still throttling to the session');
+        $this->assertNotSame('', $second->receivedHead(), 'the second host was asked');
+    }
+
+    public function testAQuotaWallFailsOverToTheNextAccountAndSendsAgain(): void
+    {
+        // pi-antigravity's `failoverToNextAccount()`: the next account not yet tried, inside the
+        // same request. pig used to do this from the session's `before_retry` hook.
+        $tried = [];
+        $failover = static function (array $tokens) use (&$tried): ?string {
+            $tried[] = $tokens;
+
+            return count($tried) === 1 ? (string) json_encode(['token' => 'second-token', 'projectId' => 'second-project']) : null;
+        };
+
+        $replies = [
+            [self::refusal(429, 'Individual quota reached. Resets in 5m.')],
+            $this->okPieces([['response' => ['candidates' => [['content' => ['parts' => [['text' => 'ok']]], 'finishReason' => 'STOP']]]]]),
+        ];
+        $url = $this->server->startSequence($replies);
+
+        $message = $this->drain(new Antigravity(fallback: $url, failover: $failover), $this->model($url), 'gemini-3-flash', 'low', new Context([new UserMessage('hi')]));
+
+        $this->assertNull($message);
+        $this->assertCount(1, $tried);
+        $this->assertSame(2, $this->server->connections());
+        $this->assertStringContainsString('authorization: Bearer second-token', $this->server->received());
+        $this->assertStringContainsString('"project":"second-project"', $this->server->received());
+    }
+
+    public function testAnEmptyResponseIsAskedForAgainBeforeTheTurnFails(): void
+    {
+        // pi-antigravity's `emptyAttempt` loop: a 200 with no text, thinking or call in it is asked
+        // for again (after 500 ms, then 1 s) — the stream says nothing until something arrives.
+        $empty = $this->okPieces([['response' => ['candidates' => [['content' => ['parts' => []], 'finishReason' => 'STOP']]]]]);
+        $url = $this->server->startSequence([
+            $empty,
+            $this->okPieces([['response' => ['candidates' => [['content' => ['parts' => [['text' => 'there it is']]], 'finishReason' => 'STOP']]]]]),
+        ]);
+
+        $events = [];
+        $message = Async::run(function () use ($url, &$events): AssistantMessage {
+            $stream = (new Antigravity(fallback: $url))->stream($this->model($url), Transcript::normalizeContext(new Context([new UserMessage('hi')])), new GoogleOptions(apiKey: self::key()));
+
+            foreach ($stream as $event) {
+                $events[] = (new \ReflectionClass($event))->getShortName();
+            }
+
+            return $stream->result()->await();
+        });
+
+        $this->assertSame(2, $this->server->connections());
+        $this->assertSame('there it is', $message->content[0]->text ?? null);
+        $this->assertSame('StartEvent', $events[0], 'one start, for the attempt that said something');
+        $this->assertSame(1, count(array_keys($events, 'StartEvent', true)));
+
+        // Three empty answers in a row is the turn failing with pi-antigravity's sentence.
+        $this->server = new CannedServer();
+        $url = $this->server->startSequence([$empty, $empty, $empty]);
+        $failure = $this->drain(new Antigravity(fallback: $url), $this->model($url), 'gemini-3-flash', 'low', new Context([new UserMessage('hi')]));
+
+        $this->assertSame('Antigravity API returned an empty response', $failure);
+        $this->assertSame(3, $this->server->connections());
+    }
+
+    public function testARuntimeModelThatIsNotThereFallsBackToTheOlderOne(): void
+    {
+        // pi-antigravity's `getFallbackRuntimeModel()`: a 404 on Gemini 3.8 Flash's runtime model
+        // is tried again on 3.7's, under its own enum.
+        $url = $this->server->startSequence([
+            [self::refusal(404, 'Requested entity was not found.')],
+            $this->okPieces([['response' => ['candidates' => [['content' => ['parts' => [['text' => 'from 3.7']]], 'finishReason' => 'STOP']]]]]),
+        ]);
+
+        // One host, so the second answer is the fallback model's and not the other endpoint's.
+        $failure = $this->drain(new Antigravity(fallback: rtrim($url, '/')), $this->model($url), 'gemini-3.8-flash', 'medium', new Context([new UserMessage('hi')]));
+
+        $this->assertNull($failure);
+        $this->assertSame(2, $this->server->connections());
+        $this->assertStringContainsString('"model":"gemini-3.7-flash-medium"', $this->server->received());
+        $this->assertStringContainsString('"model_enum":"' . \PigAntigravity\Routing::enumOf('gemini-3.7-flash-medium') . '"', $this->server->received());
+        $this->assertSame('gemini-3.7-flash-low', \PigAntigravity\Routing::fallback('gemini-3.8-flash', null));
+        $this->assertSame('gemini-3.6-flash-low', \PigAntigravity\Routing::fallback('gemini-3.7-flash', null));
+        $this->assertNull(\PigAntigravity\Routing::fallback('gemini-3.6-flash-low', null));
+    }
+
+    public function testEveryStatusIsWordedAsPiAntigravityWordsIt(): void
+    {
+        $friendly = \PigAntigravity\AntigravityApi::friendlyAntigravityError(...);
+
+        $this->assertSame('Antigravity authentication failed. Next: run /login antigravity, then retry.', $friendly(401, '{}'));
+        $this->assertSame('This model has no capacity right now. Next: retry later or switch to another model.', $friendly(503, '{"error":{"message":"No capacity available for model"}}'));
+        $this->assertSame('Antigravity is temporarily unavailable. Next: retry in a moment or switch models.', $friendly(503, 'down'));
+        $this->assertSame('Antigravity rejected an invalid function-call message boundary. Next: update the extension or start a new session, then retry; re-login is not required.', $friendly(400, '{"error":{"message":"Please ensure that function call turn comes immediately after a user turn or after a function response turn."}}'));
+        $this->assertSame('Antigravity denied this request. Next: re-login or try another model. Backend said: nope', $friendly(403, 'nope'));
+        $this->assertSame('Antigravity access was denied for this account or project. Next: try another model, re-login, or use an account with access.', $friendly(403, 'PERMISSION_DENIED'));
+        $this->assertSame('Antigravity timed out upstream. Next: retry in a moment.', $friendly(504, ''));
+        $this->assertSame('teapot [redacted-access-token]', $friendly(418, 'teapot ya29.abcdef'));
     }
 
     public function testAnOrdinaryFailureIsNotCalledAQuotaOne(): void
@@ -293,7 +401,10 @@ final class AntigravityApiTest extends TestCase
 
         $message = $this->drain(new Antigravity(), $this->model($url), 'gemini-3-flash', 'low', new Context([new UserMessage('hi')]));
 
-        $this->assertStringContainsString('returned 400', (string) $message);
+        // pi-antigravity's `friendlyAntigravityError()` for a 400, in its error envelope. This test
+        // asserted pig's own `antigravity returned 400: …`, which pi-antigravity never says.
+        $this->assertStringStartsWith('Antigravity API error (400, endpoint=', (string) $message);
+        $this->assertStringContainsString('Bad request from Antigravity. Next: retry once, then run /login antigravity if it keeps failing. Backend said: contents is empty', (string) $message);
         $this->assertStringNotContainsString('quota', (string) $message);
     }
 
@@ -308,7 +419,7 @@ final class AntigravityApiTest extends TestCase
         ]);
 
         $message = Async::run(function () use ($url): AssistantMessage {
-            $stream = (new Antigravity())->stream($this->model($url), new Context([new UserMessage('hi')]), new GoogleOptions(apiKey: self::key(), thinkingEnabled: false));
+            $stream = (new Antigravity())->stream($this->model($url), Transcript::normalizeContext(new Context([new UserMessage('hi')])), new GoogleOptions(apiKey: self::key(), thinkingEnabled: false));
 
             foreach ($stream as $ignored) {
             }
@@ -411,7 +522,7 @@ final class AntigravityApiTest extends TestCase
                     ['text', 'image'],
                     new Pricing(),
                 ),
-                $context,
+                Transcript::normalizeContext($context),
                 // Both, the way `Stream` sets them: a level and the flag that says it counts.
                 new GoogleOptions(
                     apiKey: $key ?? self::key(),
@@ -458,8 +569,11 @@ final class AntigravityApiTest extends TestCase
         return "HTTP/1.1 {$status} Refused\r\nContent-Length: " . strlen($body) . "\r\n\r\n" . $body;
     }
 
-    /** @param list<array<string, mixed>> $chunks */
-    private function serve(array $chunks): string
+    /**
+     * @param list<array<string, mixed>> $chunks
+     * @return list<string>
+     */
+    private function okPieces(array $chunks): array
     {
         $pieces = ["HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"];
 
@@ -470,6 +584,12 @@ final class AntigravityApiTest extends TestCase
 
         $pieces[] = "0\r\n\r\n";
 
-        return $this->server->start($pieces);
+        return $pieces;
+    }
+
+    /** @param list<array<string, mixed>> $chunks */
+    private function serve(array $chunks): string
+    {
+        return $this->server->start($this->okPieces($chunks));
     }
 }

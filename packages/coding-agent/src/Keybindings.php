@@ -196,6 +196,23 @@ final class Keybindings
     }
 
     /**
+     * Every key of $action, as upstream's `keyText()` writes them into a status line: the key ids as
+     * they are bound, joined by `/`, with `alt` said as `option` on a Mac and nothing capitalised —
+     * `escape` for the default interrupt key, which is what upstream's retry and summary loaders
+     * say (`(escape to cancel)`). Empty when nothing is bound.
+     */
+    public function keyText(string $action): string
+    {
+        return implode('/', array_map(
+            static fn (string $key): string => implode('+', array_map(
+                static fn (string $part): string => PHP_OS_FAMILY === 'Darwin' && strtolower($part) === 'alt' ? 'option' : $part,
+                explode('+', $key),
+            )),
+            $this->keysFor($action),
+        ));
+    }
+
+    /**
      * The first key of $action as a hint names it — upstream's `keyDisplayText()`: each part
      * capitalised, and `alt` said as `option` on a Mac, because that is what is printed on the key.
      * `label()` is the help table's spelling and this is the one for a sentence on screen.

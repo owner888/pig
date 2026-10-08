@@ -4,21 +4,21 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Hooks\Events;
 
-use Pig\Ai\Http\Request;
 use Pig\CodingAgent\Hooks\HookEvent;
 
 /**
- * A request is about to go to a provider.
+ * Upstream's `before_provider_request`: "Fired before a provider request is sent. Can replace the
+ * payload."
  *
- * Upstream's `before_provider_request` and `before_provider_headers` as one event, because pig
- * has one `Request` object where upstream has a payload and a headers map built by two SDK
- * layers. A handler answers `BeforeProviderRequestResult` with a replacement, or null to let it
- * go as it is. Fired from `HttpClient::send()`, so it sees every provider's bytes — including a
- * sign-in's token exchange, which is why `request->url` is there to filter on.
+ * `$payload` is the request body as the provider built it — upstream's params object, which for
+ * Anthropic and the OpenAI APIs is the JSON body (Anthropic's with its `betas`), for Gemini the
+ * SDK's `{model, contents, config}` and for Mistral the camelCase payload. A handler answers
+ * `BeforeProviderRequestResult` with a replacement, or null to leave it; handlers are chained,
+ * each given what the last one returned. Wired through the request's `onPayload`.
  */
 final readonly class BeforeProviderRequestEvent implements HookEvent
 {
-    public function __construct(public Request $request)
+    public function __construct(public mixed $payload)
     {
     }
 

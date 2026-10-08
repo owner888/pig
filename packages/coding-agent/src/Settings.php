@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
+use Pig\Ai\Utils\Retry;
+
 use Pig\Agent\QueueMode;
 use Pig\Agent\ThinkingLevel;
 
@@ -410,31 +412,91 @@ final class Settings
     }
 
     /**
-     * How many times a failed turn is tried again.
+     * Upstream's `getRetrySettings()`: `retry.enabled` (true), `retry.maxRetries` (3),
+     * `retry.baseDelayMs` (2,000) and `retry.maxAgentDelayMs` (60,000), each the setting when it is a
+     * number and the default otherwise — `settings.retry?.maxRetries ?? 3`, so 0 means no retries.
      *
-     * **The key is `retry.maxRetries`, which is upstream's spelling, and it used to be
-     * `retry.maxAttempts` here.** Its sibling `retry.baseDelayMs` was upstream's all along, and one
-     * of two keys under the same object matching is the shape that gave this away — a `settings.json`
-     * written for pi had its `maxRetries` silently ignored and got the built-in three. CLAUDE.md said
-     * these were "upstream's keys" while one of the three was not. See CLAUDE.md.
-     *
-     * The method keeps the name `retryMaxAttempts`, because attempts is what the number counts and
-     * `Retry::MAX_ATTEMPTS` is what it falls back to. The file speaks upstream's dialect; the code
-     * speaks its own.
+     * @return array{enabled: bool, maxRetries: int, baseDelayMs: float, maxAgentDelayMs: float}
      */
-    public function retryMaxAttempts(int $fallback): int
+    public function retrySettings(): array
     {
-        $value = $this->get('retry.maxRetries');
+        $maxRetries = $this->get('retry.maxRetries');
+        $baseDelayMs = $this->get('retry.baseDelayMs');
+        $maxAgentDelayMs = $this->get('retry.maxAgentDelayMs');
 
-        return is_int($value) && $value > 0 ? $value : $fallback;
+        return [
+            'enabled' => $this->retryEnabled(),
+            'maxRetries' => is_int($maxRetries) || is_float($maxRetries) ? (int) $maxRetries : 3,
+            'baseDelayMs' => is_int($baseDelayMs) || is_float($baseDelayMs) ? (float) $baseDelayMs : 2000.0,
+            'maxAgentDelayMs' => is_int($maxAgentDelayMs) || is_float($maxAgentDelayMs) ? (float) $maxAgentDelayMs : (float) Retry::DEFAULT_MAX_AGENT_RETRY_DELAY_MS,
+        ];
     }
 
-    /** Seconds, though the setting is written in milliseconds as upstream writes it. */
-    public function retryBaseDelay(float $fallback): float
+    /**
+     * Upstream's `getProviderRetrySettings()`: `retry.provider.timeoutMs` and `.maxRetries` (unset
+     * unless given) and `.maxRetryDelayMs` (60,000) — the retries a provider makes of one request,
+     * as opposed to the session's of a whole turn. The legacy `retry.maxDelayMs` counts as
+     * `retry.provider.maxRetryDelayMs` when that is unset, which is what upstream's load-time
+     * migration of the file makes of it.
+     *
+     * @return array{timeoutMs: int|null, maxRetries: int|null, maxRetryDelayMs: int}
+     */
+    public function providerRetrySettings(): array
     {
-        $value = $this->get('retry.baseDelayMs');
+        $number = static fn (mixed $value): ?int => is_int($value) || is_float($value) ? (int) $value : null;
+        $legacy = $number($this->get('retry.maxDelayMs'));
 
-        return is_int($value) && $value > 0 ? $value / 1000 : $fallback;
+        return [
+            'timeoutMs' => $number($this->get('retry.provider.timeoutMs')),
+            'maxRetries' => $number($this->get('retry.provider.maxRetries')),
+            'maxRetryDelayMs' => $number($this->get('retry.provider.maxRetryDelayMs')) ?? $legacy ?? 60_000,
+        ];
+    }
+
+    /**
+     * Upstream's `getHttpIdleTimeoutMs()`: `httpIdleTimeoutMs`, a non-negative number of
+     * milliseconds or `"disabled"` (0), 300,000 when unset (`DEFAULT_HTTP_IDLE_TIMEOUT_MS`); a value
+     * that is neither is refused, `Invalid httpIdleTimeoutMs setting: <value>`. It is the default
+     * request `timeoutMs` the session hands every provider.
+     */
+    public function httpIdleTimeoutMs(): int
+    {
+        $value = $this->get('httpIdleTimeoutMs');
+        $parsed = self::parseHttpIdleTimeoutMs($value);
+
+        if ($parsed !== null) {
+            return $parsed;
+        }
+
+        if ($value !== null) {
+            throw new \RuntimeException('Invalid httpIdleTimeoutMs setting: ' . \Pig\Ai\Utils\JsJson::toString($value));
+        }
+
+        return 300_000;
+    }
+
+    /** Upstream's `parseHttpIdleTimeoutMs()`. */
+    private static function parseHttpIdleTimeoutMs(mixed $value): ?int
+    {
+        if (is_string($value)) {
+            $trimmed = \Pig\Ai\Utils\JsJson::trim($value);
+
+            if (strtolower($trimmed) === 'disabled') {
+                return 0;
+            }
+
+            if ($trimmed === '') {
+                return null;
+            }
+
+            return is_numeric($trimmed) ? self::parseHttpIdleTimeoutMs((float) $trimmed) : null;
+        }
+
+        if (!(is_int($value) || is_float($value)) || !is_finite((float) $value) || $value < 0) {
+            return null;
+        }
+
+        return (int) floor((float) $value);
     }
 
     /**

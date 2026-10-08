@@ -19,11 +19,34 @@ final class PigUserAgent
 
     public static function get(): string
     {
-        return self::$value ??= 'pig (' . self::platform() . ' ' . php_uname('r') . '; ' . self::arch() . ')';
+        return self::$value ??= 'pig (' . self::platform() . ' ' . self::release() . '; ' . self::arch() . ')';
+    }
+
+    /**
+     * Node's `os.release()`. On Windows Node answers `major.minor.build` (`10.0.22631`, libuv's
+     * `RtlGetVersion()`), where PHP's `php_uname('r')` stops at `10.0` and keeps the build in
+     * `php_uname('v')` (`build 22631 (Windows 11 …)`); everywhere else both are `uname -r`.
+     */
+    public static function release(): string
+    {
+        return self::releaseFrom(PHP_OS_FAMILY, php_uname('r'), php_uname('v'));
+    }
+
+    /**
+     * `release()` from what PHP reports — the OS family, `php_uname('r')` and `php_uname('v')` —
+     * separate so the Windows arm can be tested on a machine that is not Windows.
+     */
+    public static function releaseFrom(string $osFamily, string $release, string $version): string
+    {
+        if ($osFamily === 'Windows' && preg_match('/\bbuild (\d+)/i', $version, $match) === 1) {
+            return "{$release}.{$match[1]}";
+        }
+
+        return $release;
     }
 
     /** Node's `os.platform()`. */
-    private static function platform(): string
+    public static function platform(): string
     {
         return match (PHP_OS_FAMILY) {
             'Darwin' => 'darwin',
@@ -35,7 +58,7 @@ final class PigUserAgent
     }
 
     /** Node's `os.arch()`. */
-    private static function arch(): string
+    public static function arch(): string
     {
         $machine = strtolower(php_uname('m'));
 

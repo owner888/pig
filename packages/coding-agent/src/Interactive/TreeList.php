@@ -8,6 +8,7 @@ use Closure;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\ImageContent;
 use Pig\Ai\StopReason;
+use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
@@ -455,6 +456,7 @@ final class TreeList implements Component, InputHandler
             $message instanceof ModelChange => 'model ' . $message->provider . ' ' . $message->modelId,
             $message instanceof ThinkingLevelChange => 'thinking ' . $message->level,
             $message instanceof Label => 'label ' . $message->label,
+            $message instanceof SystemMessage => 'system',
             default => '',
         };
 
@@ -609,6 +611,8 @@ final class TreeList implements Component, InputHandler
                 '[label: ' . ($message->label ?? '(cleared)') . ']',
             ),
             $message instanceof CustomEntry => Themes::theme()->fg('dim', "[{$message->customType}]"),
+            // Upstream's tree has no arm of its own for one: any other role is `[<role>]`, dim.
+            $message instanceof SystemMessage => Themes::theme()->fg('dim', '[system]'),
             default => Themes::theme()->fg('dim', '[' . get_debug_type($message) . ']'),
         };
     }

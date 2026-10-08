@@ -39,6 +39,12 @@ final readonly class AgentLoopConfig
      * @param string|null $sessionId upstream's `AgentLoopConfig.sessionId`, passed on as the
      *        request's `sessionId` — the key Anthropic's session affinity and the Responses API's
      *        `prompt_cache_key` use
+     * @param Closure|null $onPayload upstream's `AgentLoopConfig.onPayload` (a `SimpleStreamOptions`
+     *        field, spread into every request with `...config`), as are the next three
+     * @param (Closure(PrepareNextTurnContext): ?AgentLoopTurnUpdate)|null $prepareNextTurn
+     *        upstream's `AgentLoopConfig.prepareNextTurn`: "Called after `turn_end` when the loop will
+     *        continue, immediately before the next turn starts. Return replacement
+     *        context/model/thinking state or messages to append to affect that turn."
      */
     public function __construct(
         public Model $model,
@@ -53,6 +59,35 @@ final readonly class AgentLoopConfig
         public ?int $maxTokens = null,
         public ?Closure $getTools = null,
         public ?string $sessionId = null,
+        public ?Closure $onPayload = null,
+        public ?Closure $onResponse = null,
+        public ?Closure $onProviderStreamEvent = null,
+        public ?int $maxRetryDelayMs = null,
+        public ?Closure $prepareNextTurn = null,
     ) {
+    }
+
+    /** A copy with the model and the reasoning level replaced, for an `AgentLoopTurnUpdate`. */
+    public function withModel(Model $model, ?ReasoningEffort $reasoning): self
+    {
+        return new self(
+            $model,
+            $this->convertToLlm,
+            $reasoning,
+            $this->transformContext,
+            $this->getSteeringMessages,
+            $this->getFollowUpMessages,
+            $this->getApiKey,
+            $this->apiKey,
+            $this->temperature,
+            $this->maxTokens,
+            $this->getTools,
+            $this->sessionId,
+            $this->onPayload,
+            $this->onResponse,
+            $this->onProviderStreamEvent,
+            $this->maxRetryDelayMs,
+            $this->prepareNextTurn,
+        );
     }
 }

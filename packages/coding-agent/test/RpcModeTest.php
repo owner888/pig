@@ -25,6 +25,7 @@ use Pig\Ai\TextStartEvent;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\TranscriptContext;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CustomTools\CustomTool;
@@ -198,7 +199,7 @@ final class RpcModeTest extends TestCase
         $this->mode->start();
     }
 
-    private function provider(Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream
+    private function provider(Model $model, TranscriptContext $context, SimpleStreamOptions $options): AssistantMessageEventStream
     {
         $text = array_shift($this->answers) ?? throw new RuntimeException('out of scripted answers');
         $stream = new AssistantMessageEventStream();
@@ -507,7 +508,8 @@ final class RpcModeTest extends TestCase
         $stats = $this->data(['type' => 'get_session_stats']);
         $this->assertSame(1, $stats['userMessages']);
         $this->assertSame(1, $stats['assistantMessages']);
-        $this->assertSame(2, $stats['totalMessages']);
+        // Upstream counts every message entry, and the leading system message is one now.
+        $this->assertSame(3, $stats['totalMessages']);
     }
 
     public function testGetLastAssistantTextIsTheAnswerWithoutTheEvents(): void
@@ -526,11 +528,13 @@ final class RpcModeTest extends TestCase
         $messages = $this->data(['type' => 'get_messages'])['messages'];
 
         // The same shape the session file holds, because it is the same encoder. A host
-        // reading these and a `--continue` reading the file see one conversation.
-        $this->assertSame('user', $messages[0]['role']);
-        $this->assertSame('hi', $messages[0]['content'][0]['text']);
-        $this->assertSame('assistant', $messages[1]['role']);
-        $this->assertSame('hello', $messages[1]['content'][0]['text']);
+        // reading these and a `--continue` reading the file see one conversation. Upstream's
+        // `session.messages` leads with the system message holding the prompt and the tools.
+        $this->assertSame('system', $messages[0]['role']);
+        $this->assertSame('user', $messages[1]['role']);
+        $this->assertSame('hi', $messages[1]['content'][0]['text']);
+        $this->assertSame('assistant', $messages[2]['role']);
+        $this->assertSame('hello', $messages[2]['content'][0]['text']);
     }
 
     // ---- prompting ---------------------------------------------------------------------
@@ -921,9 +925,12 @@ final class RpcModeTest extends TestCase
         $this->send(['type' => 'prompt', 'message' => 'second']);
 
         $points = $this->data(['type' => 'get_branch'])['points'];
-        $this->assertCount(4, $points);
-        $this->assertIsString($points[0]['entryId']);
-        $this->assertSame('first', $points[0]['message']['content'][0]['text']);
+        // The system message the session was started with is an entry like any other, as it is
+        // upstream, and the first one.
+        $this->assertCount(5, $points);
+        $this->assertSame('system', $points[0]['message']['role']);
+        $this->assertIsString($points[1]['entryId']);
+        $this->assertSame('first', $points[1]['message']['content'][0]['text']);
     }
 
     public function testGoingBackMovesTheLeafAndSaysSo(): void
@@ -933,12 +940,14 @@ final class RpcModeTest extends TestCase
         $this->send(['type' => 'prompt', 'message' => 'second']);
 
         $points = $this->data(['type' => 'get_branch'])['points'];
-        $jump = $this->data(['type' => 'go_to', 'entryId' => $points[1]['entryId']]);
+        // The first answer: behind it the system message and the first question
+        // (upstream's `messageCount: session.messages.length` counts the system message).
+        $jump = $this->data(['type' => 'go_to', 'entryId' => $points[2]['entryId']]);
 
         $this->assertTrue($jump['moved']);
         $this->assertFalse($jump['aborted']);
         $this->assertNull($jump['summary']);
-        $this->assertSame(2, $this->data(['type' => 'get_state'])['messageCount']);
+        $this->assertSame(3, $this->data(['type' => 'get_state'])['messageCount']);
     }
 
     public function testGoingBackInASessionThatIsNotSavedIsAnError(): void
@@ -967,8 +976,9 @@ final class RpcModeTest extends TestCase
         // `--continue` found them spliced into one.
         $this->send(['type' => 'prompt', 'message' => 'second']);
         $this->assertCount(2, SessionManager::listFor($this->cwd));
-        $this->assertCount(2, SessionManager::open($first)->messages());
-        $this->assertCount(2, SessionManager::open($second)->messages());
+        // Each file: its system message, the question and the answer.
+        $this->assertCount(3, SessionManager::open($first)->messages());
+        $this->assertCount(3, SessionManager::open($second)->messages());
     }
 
     public function testSwitchingSessionsRestoresTheOtherConversation(): void
@@ -982,7 +992,8 @@ final class RpcModeTest extends TestCase
 
         $this->assertSame($first, $back['sessionFile']);
         $this->assertSame(2, $back['messageCount']);
-        $this->assertSame('first', $this->data(['type' => 'get_messages'])['messages'][0]['content'][0]['text']);
+        // Behind the system message the conversation starts with.
+        $this->assertSame('first', $this->data(['type' => 'get_messages'])['messages'][1]['content'][0]['text']);
     }
 
     public function testExportWritesTheHtmlBesideTheSession(): void

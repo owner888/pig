@@ -100,14 +100,15 @@ final readonly class OpenAiCompat
      * @param int|float|null $vllmPriority vLLM's scheduler priority, sent as the top-level `priority`
      *        field; only the model's own (never detected)
      * @param bool|null   $supportsMidConvoSystemMessages the model takes a system message after the
-     *        conversation has started (both APIs; default false). Carried and sent on — pig's
-     *        transcript has no mid-conversation system messages for it to decide anything about
+     *        conversation has started (both APIs; default false). When false, later system messages
+     *        are folded into the leading one (`Utils\Transcript::resolveTranscript()`)
      * @param bool|null   $supportsMidConvoToolAdditions such a message may add tools (completions;
-     *        default false). Carried, for the same reason
+     *        default false; needs the one above) — sent as Kimi's `{role: "system", tools}` message
      * @param bool|null   $supportsToolSearch the model takes client-executed tool search (Responses;
-     *        default false). Carried — pig has no tool search
+     *        default false): tools added mid-conversation are loaded with a `tool_search_call` and
+     *        its `tool_search_output`
      * @param bool|null   $supportsAdditionalTools the model takes message-anchored `additional_tools`
-     *        items (Responses; default false). Carried — pig has no mid-conversation tool additions
+     *        items (Responses; default false), which win over tool search
      */
     public function __construct(
         public ?bool $store = null,

@@ -21,6 +21,7 @@ use Pig\Ai\Utils\Overflow;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
+use Pig\Ai\Utils\Transcript;
 
 /**
  * Did the conversation outgrow the window?
@@ -178,7 +179,7 @@ final class OverflowTest extends TestCase
         );
 
         return Async::run(static function () use ($model): AssistantMessage {
-            $stream = (new OpenAiCompletions())->stream($model, new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'k'));
+            $stream = (new OpenAiCompletions())->stream($model, Transcript::normalizeContext(new Context([new UserMessage('hi')])), new OpenAiOptions(apiKey: 'k'));
 
             foreach ($stream as $ignored) {
                 // Drain it; the failure is the result.

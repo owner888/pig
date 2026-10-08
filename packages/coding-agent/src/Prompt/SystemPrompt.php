@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Prompt;
 
+use Pig\Ai\SystemMessage;
+use Pig\Ai\Utils\Text;
 use Pig\CodingAgent\Tools\ToolSet;
 
 /**
@@ -21,6 +23,9 @@ final class SystemPrompt
         . 'files, executing commands, editing code, and writing new files.';
 
     /**
+     * The prompt as one string — upstream's `buildSystemPrompt()`: "rendered exactly as the
+     * transcript's system message replays it", which is `sections()` joined by blank lines.
+     *
      * @param list<string>           $tools        tool names, as ToolSet knows them
      * @param string|null            $custom       replaces the default prompt entirely
      * @param string|null            $append       added after it, whichever was used
@@ -40,25 +45,102 @@ final class SystemPrompt
         array $toolSnippets = [],
         array $toolGuidelines = [],
     ): string {
-        $contextFiles ??= ContextFiles::load($cwd);
-        $prompt = $custom ?? self::instructions($tools, $toolSnippets, $toolGuidelines);
+        return Text::getSystemMessageText(new SystemMessage(
+            '',
+            self::sections($cwd, $tools, $custom, $append, $contextFiles, $skills, $toolSnippets, $toolGuidelines),
+        ));
+    }
 
-        if ($append !== null && trim($append) !== '') {
-            $prompt .= "\n\n" . $append;
+    /**
+     * The ordered, independently replaceable sections of the prompt — upstream's
+     * `buildSystemPromptSections()`, which become `SystemMessage::$sections` in the transcript. A
+     * later change to one of them reaches the model as a system message that replaces that section
+     * alone (`diffSections()`), rather than as a second copy of the whole prompt.
+     *
+     * The names are upstream's — `preamble`, `tools`, `rules`, `addendum`, `project_context`,
+     * `skills`, `cwd` — and the text is pig's own: upstream wraps every section but the preamble in a
+     * tag of its name, and pig's prompt has always been the plain text below, so the sections hold
+     * that text verbatim and render, joined by blank lines, to exactly the prompt pig sent before.
+     * pig's `cwd` section carries the date and time beside the directory; upstream's has the
+     * directory alone.
+     *
+     * @param list<string>           $tools
+     * @param list<ContextFile>|null $contextFiles
+     * @param list<Skill>            $skills
+     * @param array<string, string>  $toolSnippets
+     * @param list<string>           $toolGuidelines
+     * @return array<string, string>
+     */
+    public static function sections(
+        string $cwd,
+        array $tools = ToolSet::CODING,
+        ?string $custom = null,
+        ?string $append = null,
+        ?array $contextFiles = null,
+        array $skills = [],
+        array $toolSnippets = [],
+        array $toolGuidelines = [],
+    ): array {
+        $contextFiles ??= ContextFiles::load($cwd);
+        $sections = [];
+
+        if ($custom !== null) {
+            $sections['preamble'] = $custom;
+        } else {
+            [$sections['preamble'], $sections['tools'], $sections['rules']] = self::instructions($tools, $toolSnippets, $toolGuidelines);
         }
 
-        $prompt .= self::context($contextFiles);
+        if ($append !== null && trim($append) !== '') {
+            $sections['addendum'] = $append;
+        }
+
+        $context = self::context($contextFiles);
+
+        if ($context !== '') {
+            $sections['project_context'] = substr($context, 2);
+        }
 
         // After the project's own instructions: a skill is a thing to reach for, and the
         // rules about how to work here apply whichever one is reached for.
-        $prompt .= Skills::forPrompt($skills);
+        $skillsPrompt = Skills::forPrompt($skills);
+
+        if ($skillsPrompt !== '') {
+            $sections['skills'] = substr($skillsPrompt, 2);
+        }
 
         // Last, because they are facts rather than instructions and the model should not
         // have to read past them to reach the part that tells it what to do.
-        $prompt .= "\n\nCurrent date and time: " . date('l, j F Y, H:i:s T');
-        $prompt .= "\nCurrent working directory: {$cwd}";
+        $sections['cwd'] = 'Current date and time: ' . date('l, j F Y, H:i:s T') . "\nCurrent working directory: {$cwd}";
 
-        return $prompt;
+        return $sections;
+    }
+
+    /**
+     * Diff the sections the model currently has (replayed from the transcript, so never null)
+     * against the desired ones — upstream's `diffSystemPromptSections()`. Returns a
+     * `SystemMessage::$sections` patch, or null when nothing changed.
+     *
+     * @param array<string, string|null> $previous
+     * @param array<string, string>      $current
+     * @return array<string, string|null>|null
+     */
+    public static function diffSections(array $previous, array $current): ?array
+    {
+        $patch = [];
+
+        foreach ($current as $name => $text) {
+            if (($previous[$name] ?? null) !== $text) {
+                $patch[(string) $name] = $text;
+            }
+        }
+
+        foreach (array_keys($previous) as $name) {
+            if (!array_key_exists($name, $current)) {
+                $patch[(string) $name] = null;
+            }
+        }
+
+        return $patch !== [] ? $patch : null;
     }
 
     /**
@@ -84,11 +166,14 @@ final class SystemPrompt
     }
 
     /**
+     * The default prompt's three sections: the role, the tool list, and the rules.
+     *
      * @param list<string> $tools the built-ins
      * @param array<string, string> $toolSnippets extension tools with something to say in the list, name => line
      * @param list<string> $toolGuidelines rules those tools add
+     * @return array{0: string, 1: string, 2: string}
      */
-    private static function instructions(array $tools, array $toolSnippets = [], array $toolGuidelines = []): string
+    private static function instructions(array $tools, array $toolSnippets = [], array $toolGuidelines = []): array
     {
         $lines = array_map(static fn (string $name): string => "- {$name}: " . ToolSet::describe($name), $tools);
 
@@ -110,7 +195,7 @@ final class SystemPrompt
             array_keys($all),
         ));
 
-        return self::ROLE . "\n\nAvailable tools:\n{$list}\n\nGuidelines:\n{$guidelines}";
+        return [self::ROLE, "Available tools:\n{$list}", "Guidelines:\n{$guidelines}"];
     }
 
     /**

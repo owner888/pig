@@ -11,7 +11,6 @@ use Pig\Agent\AgentEndEvent;
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentEvent;
 use Pig\Agent\AgentOptions;
-use Pig\Agent\MessageEndEvent;
 use Pig\Agent\MessageStartEvent;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Api;
@@ -33,13 +32,13 @@ use Pig\CodingAgent\Auth;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\TranscriptContext;
+use Pig\Ai\Utils\Transcript;
 use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CodingAgent;
-use Pig\CodingAgent\Hooks\Events\BeforeRetryEvent;
-use Pig\CodingAgent\Hooks\Results\BeforeRetryResult;
 use Pig\CodingAgent\Hooks\HookApi;
 use Pig\CodingAgent\Hooks\HookRunner;
 use Pig\CodingAgent\Hooks\LoadedHook;
@@ -527,7 +526,7 @@ final class AgentSessionTest extends TestCase
 
     public function testCancellingTheSummariserLeavesTheConversationAlone(): void
     {
-        $session = $this->session([], null, null, static function (Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream {
+        $session = $this->session([], null, null, static function (Model $model, TranscriptContext $context, SimpleStreamOptions $options): AssistantMessageEventStream {
             $stream = new AssistantMessageEventStream();
             $cancelled = new AssistantMessage(
                 [],
@@ -559,7 +558,7 @@ final class AgentSessionTest extends TestCase
 
     public function testASummariserThatFailsSaysSoRatherThanCompactingIntoNothing(): void
     {
-        $session = $this->session([], null, null, static function (Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream {
+        $session = $this->session([], null, null, static function (Model $model, TranscriptContext $context, SimpleStreamOptions $options): AssistantMessageEventStream {
             $stream = new AssistantMessageEventStream();
             $failed = new AssistantMessage(
                 [],
@@ -593,7 +592,7 @@ final class AgentSessionTest extends TestCase
     public function testWhatTheSummariserIsAskedIsTheConversationAndNotTheTools(): void
     {
         $asked = null;
-        $session = $this->session([], null, null, function (Model $model, Context $context, SimpleStreamOptions $options) use (&$asked): AssistantMessageEventStream {
+        $session = $this->session([], null, null, function (Model $model, TranscriptContext $context, SimpleStreamOptions $options) use (&$asked): AssistantMessageEventStream {
             $asked = $context;
 
             return $this->replay('the summary');
@@ -605,11 +604,13 @@ final class AgentSessionTest extends TestCase
 
         Async::run(static fn () => $session->compact('the parser bug'));
 
-        $this->assertInstanceOf(Context::class, $asked);
-        $this->assertCount(1, $asked->messages);
-        $this->assertSame([], $asked->tools, 'a summariser with tools is an agent, not a summariser');
-        $this->assertStringContainsString('summarization assistant', (string) $asked->systemPrompt);
-        $this->assertStringContainsString('Additional focus: the parser bug', self::textOf($asked->messages[0]));
+        // A transcript now, as every stream function is handed: the summariser's prompt is its
+        // leading system message, and nothing in it declares a tool.
+        $this->assertInstanceOf(TranscriptContext::class, $asked);
+        $this->assertCount(2, $asked->messages);
+        $this->assertSame([], Transcript::getCurrentTools($asked->messages), 'a summariser with tools is an agent, not a summariser');
+        $this->assertStringContainsString('summarization assistant', Transcript::getCurrentSystemPrompt($asked->messages));
+        $this->assertStringContainsString('Additional focus: the parser bug', self::textOf($asked->messages[1]));
     }
 
     // ---- switching models ------------------------------------------------------------
@@ -960,11 +961,16 @@ final class AgentSessionTest extends TestCase
         $this->assertNotContains(RetryStartEvent::class, $seen);
     }
 
-    public function testAQuotaTenMinutesAwayEndsTheTurnInPisWordsInsteadOfPretendingToRetry(): void
+    public function testAProvidersQuotaWallIsNotRetriedAndItsSentenceIsKept(): void
     {
+        // Upstream's session reads no stated wait: a quota wall is the provider's to word so that
+        // it matches none of the retryable patterns — pi-antigravity's "Quota reached. …" — and the
+        // turn ends on it as written. pig used to parse "reset after 10m15s" here and rewrite the
+        // message into that sentence itself.
+        $wall = 'Quota reached. Please wait 10m15s. Next: switch models or retry later.';
         $session = $this->session(
             [],
-            streamFn: $this->flaky([['error' => 'google returned 429: Your quota will reset after 10m15s']]),
+            streamFn: $this->flaky([['error' => $wall]]),
             settings: self::quickRetries(),
         );
 
@@ -978,32 +984,13 @@ final class AgentSessionTest extends TestCase
         });
         self::settle();
 
-        // No countdown, because a ten-minute countdown is a screen that looks like a hang.
         $this->assertNotContains(RetryStartEvent::class, array_map('get_class', $seen));
 
-        $expected = 'Quota reached. Please wait 10m15s. Next: switch models or try again after reset.';
         $messages = $session->messages();
         $last = $messages[count($messages) - 1];
 
         $this->assertInstanceOf(AssistantMessage::class, $last);
-        $this->assertSame($expected, $last->errorMessage);
-
-        $messageEnd = array_values(array_filter(
-            $seen,
-            static fn (AgentEvent $event): bool => $event instanceof MessageEndEvent
-                && $event->message instanceof AssistantMessage,
-        ))[0] ?? null;
-        $agentEnd = array_values(array_filter($seen, static fn (AgentEvent $event): bool => $event instanceof AgentEndEvent))[0] ?? null;
-
-        $this->assertInstanceOf(MessageEndEvent::class, $messageEnd);
-        $this->assertInstanceOf(AgentEndEvent::class, $agentEnd);
-        $ended = array_values(array_filter(
-            $agentEnd->messages,
-            static fn (mixed $message): bool => $message instanceof AssistantMessage,
-        ))[0] ?? null;
-        $this->assertInstanceOf(AssistantMessage::class, $ended);
-        $this->assertSame($expected, $messageEnd->message->errorMessage);
-        $this->assertSame($expected, $ended->errorMessage);
+        $this->assertSame($wall, $last->errorMessage);
     }
 
     public function testRetryingCanBeTurnedOff(): void
@@ -1099,16 +1086,16 @@ final class AgentSessionTest extends TestCase
         $this->assertSame(1, $settled);
     }
 
-    public function testAQuotaThatSaysWhenItResetsIsWaitedOutForThatLongAndNotTwoSeconds(): void
+    public function testA429ThatNamesItsResetIsWaitedOutOnTheDoublingLikeAnyOther(): void
     {
-        // Code Assist's free tier answers a 429 with the moment its quota comes back. The
-        // doubling would send three more requests inside the window it just named.
+        // Upstream's `_prepareRetry()` waits `retryDelayMs(settings, attempt)` whatever the
+        // message says. pig used to wait the stated thirty seconds plus one instead.
         $session = $this->session(
             [],
             streamFn: $this->flaky(array_fill(0, 4, [
                 'error' => 'google returned 429: Your quota will reset after 30s',
             ])),
-            settings: self::quickRetries(),
+            settings: self::quickRetries(['baseDelayMs' => 40_000]),
         );
 
         $starts = [];
@@ -1123,7 +1110,7 @@ final class AgentSessionTest extends TestCase
         self::startTurnAndParkOnTheRetry($session);
 
         $this->assertCount(1, $starts);
-        $this->assertSame(31.0, $starts[0]->delaySeconds, 'thirty seconds as asked, plus the clock-skew second');
+        $this->assertSame(40.0, $starts[0]->delaySeconds, 'the base delay, not the thirty seconds the message names');
 
         $session->abortRetry();
         self::settle();
@@ -1334,48 +1321,6 @@ final class AgentSessionTest extends TestCase
         $this->assertFileDoesNotExist((string) $session->store()?->path);
     }
 
-    public function testARetryCalledOffAsItIsAnnouncedNeverSleeps(): void
-    {
-        $session = $this->session(
-            [],
-            streamFn: $this->flaky(array_fill(0, 4, ['error' => 'Anthropic returned 503: overloaded'])),
-            settings: self::quickRetries(['baseDelayMs' => 30_000]),
-        );
-
-        $starts = $ends = [];
-        $session->subscribe(static function (AgentEvent $event) use ($session, &$starts, &$ends): void {
-            if ($event instanceof RetryStartEvent) {
-                $starts[] = $event;
-
-                // The earliest escape can land: the retry is announced and its sleep not yet
-                // armed. This used to be a tick of its own — the retry was decided in the run's
-                // fan-out and slept in a fiber spawned from there — and is now the announcement
-                // itself, since the sleep follows it in the prompt's own fiber.
-                $session->abortRetry();
-            }
-
-            if ($event instanceof RetryEndEvent) {
-                $ends[] = $event;
-            }
-        });
-
-        Async::run(static function () use ($session): void {
-            Async::spawn(static fn () => $session->prompt('hi'));
-        });
-
-        for ($tick = 0; $tick < 50; $tick++) {
-            self::tickWithoutWaiting();
-        }
-
-        // Never slept: the controller the announcement was made under is the one escape reached,
-        // so the half-minute timer was not armed against a controller nobody holds.
-        $this->assertCount(1, $starts);
-        $this->assertCount(1, $ends);
-        $this->assertStringContainsString('cancelled', $ends[0]->error ?? '');
-        $this->assertFalse($session->isRetrying());
-        $this->assertTrue($session->isIdle());
-    }
-
     public function testAbortingWhenNothingIsBeingRetriedIsHarmless(): void
     {
         $session = $this->session(['hello']);
@@ -1385,86 +1330,100 @@ final class AgentSessionTest extends TestCase
         $this->assertFalse($session->isRetrying());
     }
 
-    // ---- the overflow half --------------------------------------------------------------
-
-    public function testAHookCanChangeTheTermsOfARetryBeforeItWaits(): void
+    public function testNoRetriesInTheSettingsMeansNone(): void
     {
-        // `before_retry`: what the Antigravity extension's 429 failover goes through. It used to
-        // be an `if provider === 'antigravity'` inside this class; now any extension holding
-        // several accounts for a provider can switch and ask to go again at once, count reset.
-        $seen = [];
-        $hooks = $this->hooks([
-            'before_retry' => static function (BeforeRetryEvent $event) use (&$seen): BeforeRetryResult {
-                $seen[] = [$event->attempt, $event->delaySeconds];
-
-                return new BeforeRetryResult(delaySeconds: 0.01, resetAttempts: true, reason: 'Switched to account 2.');
-            },
-        ]);
-
+        // `settings.retry?.maxRetries ?? 3` takes 0 at its word: the first attempt is past the
+        // budget, so nothing is announced and the failure stands.
         $session = $this->session(
             [],
-            streamFn: $this->flaky([
-                ['error' => 'zzp returned 429: Resource has been exhausted (quota exceeded)'],
-                'Recovered with account 2!',
-            ]),
-            settings: self::quickRetries(['baseDelayMs' => 5_000]),
-            hooks: $hooks,
+            streamFn: $this->flaky([['error' => 'Anthropic returned 503: overloaded'], 'never sent']),
+            settings: self::quickRetries(['maxRetries' => 0]),
         );
 
-        $started = [];
-        $session->subscribe(static function (object $event) use (&$started): void {
+        $events = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$events): void {
+            if ($event instanceof RetryStartEvent || $event instanceof RetryEndEvent) {
+                $events[] = $event;
+            }
+        });
+
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $this->assertSame([], $events);
+        $last = $session->messages()[count($session->messages()) - 1];
+        $this->assertInstanceOf(AssistantMessage::class, $last);
+        $this->assertSame('Anthropic returned 503: overloaded', $last->errorMessage);
+    }
+
+    public function testARetryBudgetThatRunsOutReportsTheAttemptsThatWereMade(): void
+    {
+        // Upstream's `_prepareRetry()` does not count the attempt past the budget ("Preserve the
+        // completed attempt count"), and the post-run step reports the failure with that count and
+        // the last error.
+        $session = $this->session(
+            [],
+            streamFn: $this->flaky(array_fill(0, 3, ['error' => 'Anthropic returned 503: overloaded'])),
+            settings: self::quickRetries(['maxRetries' => 2]),
+        );
+
+        $starts = $ends = [];
+        $session->subscribe(static function (AgentEvent $event) use (&$starts, &$ends): void {
             if ($event instanceof RetryStartEvent) {
-                $started[] = [$event->attempt, $event->delaySeconds, $event->error];
+                $starts[] = [$event->attempt, $event->maxAttempts, $event->delaySeconds];
             }
-        });
 
-        $began = microtime(true);
-        Async::run(static function () use ($session): void {
-            $session->prompt('hi');
-        });
-
-        // The hook saw the session's own terms and replaced them: the screen shows the hook's
-        // reason and the hook's wait, not five seconds of backoff.
-        $this->assertSame([[1, 5.0]], array_map(static fn (array $one): array => [$one[0], round($one[1], 1)], $seen));
-        $this->assertCount(1, $started);
-        $this->assertSame([1, 0.01, 'Switched to account 2.'], $started[0]);
-        $this->assertLessThan(2.0, microtime(true) - $began, 'the hook\'s wait, not the backoff');
-
-        $messages = $session->messages();
-        $this->assertCount(2, $messages);
-        $this->assertSame('Recovered with account 2!', $messages[1]->content[0]->text);
-    }
-
-    public function testAHookCanCallARetryOff(): void
-    {
-        $hooks = $this->hooks([
-            'before_retry' => static fn (): BeforeRetryResult => new BeforeRetryResult(cancel: true, reason: 'Not worth it.'),
-        ]);
-
-        $session = $this->session(
-            [],
-            streamFn: $this->flaky([['error' => 'zzp returned 503: overloaded'], 'never sent']),
-            settings: self::quickRetries(['baseDelayMs' => 10]),
-            hooks: $hooks,
-        );
-
-        $ended = [];
-        $session->subscribe(static function (object $event) use (&$ended): void {
             if ($event instanceof RetryEndEvent) {
-                $ended[] = [$event->succeeded, $event->error];
+                $ends[] = [$event->succeeded, $event->attempts, $event->error];
             }
         });
 
-        Async::run(static function () use ($session): void {
-            $session->prompt('hi');
-        });
+        Async::run(static fn () => $session->prompt('hi'));
 
-        $this->assertSame([[false, 'Not worth it.']], $ended);
-        // The failed turn stays, as it does when the count runs out: the turn fails as it stands.
-        $messages = $session->messages();
-        $this->assertCount(2, $messages);
-        $this->assertSame(StopReason::Error, $messages[1]->stopReason);
+        $this->assertSame([[1, 2, 0.001], [2, 2, 0.002]], $starts);
+        $this->assertSame([[false, 2, 'Anthropic returned 503: overloaded']], $ends);
     }
+
+    public function testEveryRequestCarriesTheProviderRequestOptions(): void
+    {
+        // Upstream's `buildRequestOptions()`: `timeoutMs` from `retry.provider.timeoutMs`, else
+        // `httpIdleTimeoutMs` (300 s; `disabled` is 2147483647), `maxRetries` and
+        // `maxRetryDelayMs` from `retry.provider`, and the agent's provider hooks on every request.
+        $captured = [];
+        $capture = function (Model $model, TranscriptContext $context, SimpleStreamOptions $options) use (&$captured): AssistantMessageEventStream {
+            $captured[] = $options;
+
+            return $this->replay('ok');
+        };
+
+        $session = $this->session([], streamFn: $capture, settings: Settings::inMemory());
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $this->assertSame(300_000, $captured[0]->timeoutMs);
+        $this->assertNull($captured[0]->maxRetries);
+        $this->assertSame(60_000, $captured[0]->maxRetryDelayMs);
+        $this->assertNotNull($captured[0]->onPayload);
+        $this->assertNotNull($captured[0]->onResponse);
+        $this->assertNotNull($captured[0]->onProviderStreamEvent);
+
+        $session = $this->session([], streamFn: $capture, settings: Settings::inMemory([
+            'httpIdleTimeoutMs' => 'disabled',
+            'retry' => ['provider' => ['maxRetries' => 2, 'maxRetryDelayMs' => 5000]],
+        ]));
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $this->assertSame(2_147_483_647, $captured[1]->timeoutMs);
+        $this->assertSame(2, $captured[1]->maxRetries);
+        $this->assertSame(5000, $captured[1]->maxRetryDelayMs);
+
+        $session = $this->session([], streamFn: $capture, settings: Settings::inMemory([
+            'retry' => ['provider' => ['timeoutMs' => 1234]],
+        ]));
+        Async::run(static fn () => $session->prompt('hi'));
+
+        $this->assertSame(1234, $captured[2]->timeoutMs);
+    }
+
+    // ---- the overflow half --------------------------------------------------------------
 
     public function testAPromptTooLongIsSummarisedAndSentAgainRatherThanRetried(): void
     {
@@ -1657,7 +1616,7 @@ final class AgentSessionTest extends TestCase
             [],
             streamFn: function (
                 Model $model,
-                Context $context,
+                TranscriptContext $context,
                 SimpleStreamOptions $options,
             ) use (&$at): AssistantMessageEventStream {
                 $at++;
@@ -2416,7 +2375,7 @@ final class AgentSessionTest extends TestCase
     {
         $index = 0;
 
-        return function (Model $model, Context $context, SimpleStreamOptions $options) use (
+        return function (Model $model, TranscriptContext $context, SimpleStreamOptions $options) use (
             $answers,
             $hook,
             &$index,
@@ -2437,7 +2396,7 @@ final class AgentSessionTest extends TestCase
      */
     private static function parksUntilAborted(): Closure
     {
-        return static function (Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream {
+        return static function (Model $model, TranscriptContext $context, SimpleStreamOptions $options): AssistantMessageEventStream {
             $stream = new AssistantMessageEventStream();
             $partial = new AssistantMessage(
                 [new TextContent('half of an ans')],

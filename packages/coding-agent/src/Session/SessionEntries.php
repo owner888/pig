@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Session;
 
 use Pig\Ai\Timestamp;
+use Pig\Ai\Utils\MessageJson;
 
 /**
  * A line of a session file, in pi's shape.
@@ -124,6 +125,9 @@ final class SessionEntries
                     'readFiles' => $item->readFiles,
                     'modifiedFiles' => $item->modifiedFiles,
                 ],
+                // pi's `systemMessage`, written only when there is one, as `JSON.stringify` drops
+                // an undefined field.
+                ...($item->systemMessage === null ? [] : ['systemMessage' => MessageJson::encode($item->systemMessage)]),
             ];
         }
 
@@ -231,6 +235,9 @@ final class SessionEntries
                 // if pi-generated". A file written before this field existed reads as pig's own,
                 // which is what it was.
                 ($line['fromHook'] ?? false) === true,
+                is_array($line['systemMessage'] ?? null) && ($line['systemMessage']['role'] ?? null) === 'system'
+                    ? MessageJson::decode($line['systemMessage'])
+                    : null,
             ),
 
             'branch_summary' => new BranchSummary(

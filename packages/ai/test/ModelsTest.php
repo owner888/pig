@@ -7,6 +7,7 @@ namespace Pig\Ai\Test;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
+use Pig\Ai\BedrockCompat;
 use Pig\Ai\Cost;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
@@ -92,6 +93,8 @@ final class ModelsTest extends TestCase
                     Api::OpenAiResponses,
                     Api::GoogleGenerativeAi,
                     Api::MistralConversations,
+                    Api::GoogleVertex,
+                    Api::BedrockConverseStream,
                 ],
                 $model->id . ' speaks ' . $model->api->value,
             );
@@ -117,10 +120,14 @@ final class ModelsTest extends TestCase
         // being true: it serves OpenAI's and Google's models under their own names. So the rule
         // is written down instead — `Models::RESOLD` — and this is what it buys. The id is found
         // rather than named, because which ids Copilot resells is the catalogue's business.
-        [$id, $direct] = self::sharedId();
+        [$id, $direct, $reseller] = self::sharedId();
 
         $this->assertSame($direct, Models::get($id)?->provider, $id);
-        $this->assertSame('github-copilot', Models::find('github-copilot', $id)?->provider, $id);
+        $this->assertSame($reseller, Models::find($reseller, $id)?->provider, $id);
+
+        // Vertex AI serves Google's ids too, and is on the list for it.
+        $this->assertSame('google', Models::get('gemini-2.5-flash')?->provider);
+        $this->assertSame('google-vertex', Models::find('google-vertex', 'gemini-2.5-flash')?->provider);
     }
 
     public function testEveryDuplicatedIdIsOneOfTheResoldOnes(): void
@@ -260,15 +267,68 @@ final class ModelsTest extends TestCase
                 'anthropic',
                 'openai',
                 'google',
+                'google-vertex',
                 'cerebras',
                 'groq',
                 'mistral',
                 'xai',
                 'zai',
+                'amazon-bedrock',
                 'github-copilot',
             ],
             Models::providers(),
         );
+    }
+
+    public function testVertexRowsAreUpstreamsCatalogueRows(): void
+    {
+        // Pinned from upstream's published catalogue (`google-vertex.json`, pi-ai 1.1.0): the base
+        // URL is the location template the provider fills, and 2.5 Flash's cache read is upstream's
+        // correction of models.dev's.
+        $model = Models::find(Models::GOOGLE_VERTEX, 'gemini-2.5-flash');
+
+        $this->assertNotNull($model);
+        $this->assertSame(Api::GoogleVertex, $model->api);
+        $this->assertSame('https://{location}-aiplatform.googleapis.com', $model->baseUrl);
+        $this->assertSame([0.3, 2.5, 0.03, 0.0], [$model->pricing->input, $model->pricing->output, $model->pricing->cacheRead, $model->pricing->cacheWrite]);
+        $this->assertSame(['images' => ['resize' => ['maxWidth' => 2000, 'maxHeight' => 2000, 'maxBytes' => 4_718_592, 'jpegQuality' => 80]]], $model->inputLimits);
+        $this->assertCount(14, self::of(Models::GOOGLE_VERTEX));
+    }
+
+    public function testBedrockRowsAreUpstreamsCatalogueRows(): void
+    {
+        // Pinned from upstream's published catalogue (`amazon-bedrock.json`, pi-ai 1.1.0).
+        $this->assertCount(193, self::of(Models::AMAZON_BEDROCK));
+
+        $opus = Models::find(Models::AMAZON_BEDROCK, 'global.anthropic.claude-opus-4-6-v1');
+        $this->assertNotNull($opus);
+        $this->assertSame(Api::BedrockConverseStream, $opus->api);
+        $this->assertSame('https://bedrock-runtime.us-east-1.amazonaws.com', $opus->baseUrl);
+        $this->assertInstanceOf(BedrockCompat::class, $opus->compat);
+        $this->assertTrue($opus->compat->supportsStrictMode);
+        // `applyThinkingLevelMetadata()`: Opus 4.6 takes adaptive thinking up to `max`.
+        $this->assertSame('max', $opus->thinkingLevelMap['max'] ?? null);
+        $this->assertSame(['images' => ['maxPerMessage' => 20, 'resize' => ['maxWidth' => 2000, 'maxHeight' => 2000, 'maxBytes' => 4_718_592, 'jpegQuality' => 80]]], $opus->inputLimits);
+
+        // `getBedrockBaseUrl()`: an `eu.` profile is served from Frankfurt.
+        $eu = Models::find(Models::AMAZON_BEDROCK, 'eu.anthropic.claude-opus-4-6-v1');
+        $this->assertNotNull($eu);
+        $this->assertSame('https://bedrock-runtime.eu-central-1.amazonaws.com', $eu->baseUrl);
+
+        // Without `structured_output` there is no compat at all.
+        $nova = Models::find(Models::AMAZON_BEDROCK, 'amazon.nova-pro-v1:0');
+        $this->assertNotNull($nova);
+        $this->assertNull($nova->compat);
+        $this->assertSame([], $nova->thinkingLevelMap);
+
+        // The tier upstream's catalogue carries.
+        $haiku = Models::find(Models::AMAZON_BEDROCK, 'anthropic.claude-haiku-5-5');
+        $this->assertNotNull($haiku);
+        $this->assertCount(1, $haiku->pricing->tiers);
+        $this->assertSame(100_000, $haiku->pricing->tiers[0]->inputTokensAbove);
+
+        // `BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS`.
+        $this->assertNull(Models::find(Models::AMAZON_BEDROCK, 'anthropic.claude-opus-5'));
     }
 
     public function testAProviderAndIdTogetherFindExactlyOneModel(): void
@@ -329,8 +389,8 @@ final class ModelsTest extends TestCase
     public function testZaisModelsSayTheirThinkingFormatAndStreamTheirToolCalls(): void
     {
         // Upstream's `processZaiModels()` compat: no `developer` role, the `zai` thinking format,
-        // and `zaiToolStream` for every model but the four GLM-4.5 ones, whose endpoint does not
-        // take `tool_stream`.
+        // and `zaiToolStream` for every model but the GLM-4.5 ones (no longer listed), whose endpoint
+        // does not take `tool_stream`.
         $glm = Models::find('zai', 'glm-4.7');
         $this->assertNotNull($glm);
         $this->assertInstanceOf(OpenAiCompat::class, $glm->compat);
@@ -339,11 +399,6 @@ final class ModelsTest extends TestCase
         $this->assertFalse($glm->compat->developerRole);
         // No verified efforts on the row, so `reasoning_effort` stays off as detection has it.
         $this->assertNull($glm->compat->reasoningEffort);
-
-        $old = Models::find('zai', 'glm-4.5');
-        $this->assertNotNull($old);
-        $this->assertInstanceOf(OpenAiCompat::class, $old->compat);
-        $this->assertNull($old->compat->zaiToolStream);
     }
 
     public function testCostIsPerMillionTokens(): void
@@ -470,17 +525,17 @@ final class ModelsTest extends TestCase
         // so `off` was offered on gpt-5 (which cannot be switched off) and xhigh came from an id
         // list that named three models.
         foreach ([
-            ['openai', 'gpt-5', ['off' => null]],
-            ['openai', 'gpt-5.1', ['off' => 'none']],
-            ['openai', 'gpt-5.2', ['off' => 'none', 'xhigh' => 'xhigh']],
-            ['openai', 'gpt-5.5', ['off' => 'none', 'xhigh' => 'xhigh', 'minimal' => null]],
-            ['openai', 'gpt-5.5-pro', ['off' => null, 'xhigh' => 'xhigh', 'minimal' => null, 'low' => null]],
-            ['openai', 'gpt-5.6-sol', ['off' => 'none', 'xhigh' => 'xhigh', 'max' => 'max']],
+            ['openai', 'gpt-5', ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+            ['openai', 'gpt-5.1', ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+            ['openai', 'gpt-5.2', ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+            ['openai', 'gpt-5.5', ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+            ['openai', 'gpt-5.5-pro', ['off' => null, 'minimal' => null, 'low' => null, 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+            ['openai', 'gpt-5.6-sol', ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
             ['openai', 'gpt-6-astra', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
             ['openai', 'gpt-6-sol', ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-            ['openai', 'o3', []],
-            [Models::COPILOT, 'gpt-5-mini', ['off' => null, 'minimal' => 'low']],
-            [Models::COPILOT, 'gpt-5.4', ['off' => null, 'minimal' => 'low', 'xhigh' => 'xhigh']],
+            ['openai', 'o3', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+            [Models::COPILOT, 'gpt-5-mini', ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+            [Models::COPILOT, 'gpt-5.4', ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
             [Models::COPILOT, 'gpt-6-sol', ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
             [Models::COPILOT, 'gpt-6.1-sol', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         ] as [$provider, $id, $map]) {
@@ -722,14 +777,14 @@ final class ModelsTest extends TestCase
     {
         foreach ([
             [Models::ANTHROPIC, 'claude-sonnet-4-5', []],
-            [Models::ANTHROPIC, 'claude-opus-4-6', ['max' => 'max']],
-            [Models::ANTHROPIC, 'claude-opus-4-7', ['xhigh' => 'xhigh', 'max' => 'max']],
-            [Models::ANTHROPIC, 'claude-opus-5', ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::ANTHROPIC, 'claude-opus-4-6', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+            [Models::ANTHROPIC, 'claude-opus-4-7', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::ANTHROPIC, 'claude-opus-5', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
             [Models::ANTHROPIC, 'claude-opus-5-5', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
-            [Models::ANTHROPIC, 'claude-fable-5', ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
-            [Models::COPILOT, 'claude-sonnet-4.6', ['max' => 'max', 'minimal' => 'low']],
-            [Models::COPILOT, 'claude-opus-4.7', ['xhigh' => 'xhigh', 'max' => 'max', 'minimal' => 'low']],
-            [Models::COPILOT, 'claude-opus-5', ['xhigh' => 'xhigh', 'max' => 'max', 'minimal' => 'low']],
+            [Models::ANTHROPIC, 'claude-fable-5', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::COPILOT, 'claude-sonnet-4.6', ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+            [Models::COPILOT, 'claude-opus-4.7', ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::COPILOT, 'claude-opus-5', ['off' => null, 'minimal' => 'low', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         ] as [$provider, $id, $map]) {
             $model = Models::find($provider, $id);
             $this->assertNotNull($model, "{$provider}/{$id}");
@@ -742,32 +797,30 @@ final class ModelsTest extends TestCase
     }
 
     /**
-     * Upstream's generator marks `off` as no level at all — `{off: null}` — on the Claude models
-     * that cannot be told not to think: every `fable-5` id, the managed-effort ones
-     * (`supportsAnthropicMidConvoEffort`, `anthropic` provider), and the 5.5 overrides. Needed now
-     * that a turn without thinking says `{type: "disabled"}`: without the mark Fable would be sent
-     * an off it does not have. Everything else keeps an empty map, so `off` stays offered.
+     * `off` is no level at all — `{off: null}` — on every Claude whose models.dev entry lists its
+     * efforts without `none` (`getEffortThinkingLevelMap()`, merged where
+     * `supportsDirectReasoningEffort()` holds), on the managed-effort ones, and on the 5.5
+     * overrides. Needed now that a turn without thinking says `{type: "disabled"}`: without the
+     * mark such a model would be sent an off it does not have. A model with no effort list, such as
+     * Haiku 4.5, keeps an empty map, so `off` stays offered.
      */
     public function testTheClaudeModelsThatCannotStopThinkingSaySo(): void
     {
         foreach ([
             [Models::ANTHROPIC, 'claude-fable-5'], [Models::ANTHROPIC, 'claude-fable-5-1'],
             [Models::ANTHROPIC, 'claude-opus-5'], [Models::ANTHROPIC, 'claude-opus-5-5'],
-            [Models::ANTHROPIC, 'claude-sonnet-5-5'],
+            [Models::ANTHROPIC, 'claude-sonnet-5-5'], [Models::ANTHROPIC, 'claude-sonnet-4-6'],
+            [Models::ANTHROPIC, 'claude-sonnet-5'],
             [Models::COPILOT, 'claude-fable-5'], [Models::COPILOT, 'claude-fable-5.1'],
-            [Models::COPILOT, 'claude-opus-5.5'],
+            [Models::COPILOT, 'claude-opus-5.5'], [Models::COPILOT, 'claude-opus-5'],
+            [Models::COPILOT, 'claude-sonnet-5.5'],
         ] as [$provider, $id]) {
             $model = Models::find($provider, $id);
             $this->assertNotNull($model, "{$provider}/{$id}");
             $this->assertFalse($model->hasThinkingLevel('off'), "{$provider}/{$id}");
         }
 
-        foreach ([
-            [Models::ANTHROPIC, 'claude-sonnet-4-6'], [Models::ANTHROPIC, 'claude-sonnet-5'],
-            [Models::ANTHROPIC, 'claude-haiku-4-5'],
-            // Copilot is not a managed-effort provider upstream, so its Opus 5 can be switched off.
-            [Models::COPILOT, 'claude-opus-5'], [Models::COPILOT, 'claude-sonnet-5.5'],
-        ] as [$provider, $id]) {
+        foreach ([[Models::ANTHROPIC, 'claude-haiku-4-5'], [Models::ANTHROPIC, 'claude-sonnet-4-5']] as [$provider, $id]) {
             $model = Models::find($provider, $id);
             $this->assertNotNull($model, "{$provider}/{$id}");
             $this->assertTrue($model->hasThinkingLevel('off'), "{$provider}/{$id}");
@@ -898,9 +951,9 @@ final class ModelsTest extends TestCase
     }
 
     /**
-     * An id a reseller and a direct provider both claim, and whose the direct one is.
+     * An id a reseller and a direct provider both claim, whose the direct one is, and the reseller.
      *
-     * @return array{0: string, 1: string}
+     * @return array{0: string, 1: string, 2: string}
      */
     private static function sharedId(): array
     {
@@ -914,7 +967,7 @@ final class ModelsTest extends TestCase
 
         foreach (Models::all() as $model) {
             if (Models::isResold($model->provider) && isset($direct[$model->id])) {
-                return [$model->id, $direct[$model->id]];
+                return [$model->id, $direct[$model->id], $model->provider];
             }
         }
 

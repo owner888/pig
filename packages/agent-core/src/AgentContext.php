@@ -10,6 +10,11 @@ namespace Pig\Agent;
  * Distinct from `Pig\Ai\Context`: that one holds only what the LLM understands, and the
  * loop produces it from this one on every turn, via `convertToLlm`.
  *
+ * Upstream's `AgentContext` is `{messages, tools}`: the system prompt is no longer a field beside
+ * the conversation but the transcript's own system messages (`Pig\Ai\SystemMessage`), and the
+ * tools here are what the runtime can execute — the loop declares any difference from what the
+ * transcript says to the model before the next request.
+ *
  * @phpstan-import-type Message from \Pig\Ai\Context
  * @phpstan-type Entry Message|AgentMessage
  */
@@ -24,7 +29,6 @@ final class AgentContext
      */
     public function __construct(
         public array $messages = [],
-        public string $systemPrompt = '',
         public array $tools = [],
     ) {
     }

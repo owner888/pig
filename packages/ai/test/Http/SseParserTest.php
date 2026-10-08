@@ -138,6 +138,29 @@ final class SseParserTest extends TestCase
         $this->assertSame('content_block_delta|{"delta":{"text":"Hel"}}', $atOnce[1]);
     }
 
+    public function testALeadingByteOrderMarkIsDroppedEvenSplitAcrossFeeds(): void
+    {
+        // `TextDecoder` (and the spec's UTF-8 decode) drops one BOM at the start of the stream;
+        // without it the first field name is "\u{FEFF}event" and the first event loses its type.
+        $parser = new SseParser();
+        $events = [];
+
+        foreach (["\xEF", "\xBB", "\xBFevent: ping\ndata: 1\n\n", "\u{FEFF}data: 2\n\n"] as $piece) {
+            array_push($events, ...$parser->feed($piece));
+        }
+
+        // Only at the very start: a later one is part of a line, whose field name it spoils, so the
+        // second event has no data field and is not dispatched.
+        $this->assertSame(['ping|1'], array_map($this->describe(...), $events));
+    }
+
+    public function testMalformedUtf8InALineIsAReplacementCharacter(): void
+    {
+        $events = (new SseParser())->feed("data: caf\xE9!\n\n");
+
+        $this->assertSame("caf\u{FFFD}!", $events[0]->data);
+    }
+
     private function describe(SseEvent $event): string
     {
         return "{$event->type}|{$event->data}";

@@ -304,6 +304,16 @@ if (isset($options['no-proxy'])) {
 
 Timings::mark('proxy');
 
+// Upstream's `configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs())`: how long a request
+// may sit with nothing arriving — its response head, or the next piece of its body — before it
+// fails. 300 seconds unless `httpIdleTimeoutMs` says otherwise; `disabled` (0) waits forever. A
+// setting that is not a duration says so and keeps the default.
+try {
+    HttpClient::useIdleTimeout($settings->httpIdleTimeoutMs() / 1000);
+} catch (\RuntimeException $error) {
+    fwrite(STDERR, Style::yellow('settings: ' . $error->getMessage() . "\n"));
+}
+
 // Before `Auth::discover()`, because that is what these are for: a pi install left mid-upgrade
 // keeps its credentials in an `oauth.json` nothing here reads, and its conversations in files
 // `--resume` cannot see. Not affected by `--no-save` for the same reason `Auth` is not — the flag

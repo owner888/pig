@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Pig\Ai\Providers;
 
 use Pig\Ai\AssistantMessage;
-use Pig\Ai\Context;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\ProviderError;
@@ -25,10 +24,12 @@ use Pig\Ai\ToolCallDeltaEvent;
 use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
 use Pig\Ai\ToolResultMessage;
+use Pig\Ai\TranscriptContext;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
+use Pig\Ai\Utils\Transcript;
 use Pig\Ai\Utils\Utf8;
 use stdClass;
 
@@ -56,20 +57,23 @@ final class GoogleShared
     // ---- the request ---------------------------------------------------------------------
 
     /**
-     * The conversation, as Gemini's `contents`.
+     * The conversation, as Gemini's `contents` — upstream's `convertMessages()`. "Gemini has no
+     * mid-conversation system messages; the leading prompt is sent as systemInstruction": the
+     * transcript is collapsed and its leading system message left out.
      *
      * @return list<array<string, mixed>>
      */
-    public static function contents(Model $model, Context $context): array
+    public static function contents(Model $model, TranscriptContext $context): array
     {
         $contents = [];
+        $conversation = Transcript::withoutInitialSystemMessage(Transcript::collapseSystemMessages($context)->messages);
 
         // Upstream's local `normalizeToolCallId`: only a model that is sent ids has them made safe.
         $normalizeToolCallId = static fn (string $id): string => self::requiresToolCallId($model->id)
             ? substr((string) preg_replace('/[^a-zA-Z0-9_-]/', '_', $id), 0, 64)
             : $id;
 
-        foreach (TransformMessages::apply($context->messages, $model, $normalizeToolCallId) as $message) {
+        foreach (TransformMessages::apply($conversation, $model, $normalizeToolCallId) as $message) {
             if ($message instanceof UserMessage) {
                 $parts = self::parts($message->content, $model);
 

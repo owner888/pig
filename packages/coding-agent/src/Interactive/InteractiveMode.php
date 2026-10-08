@@ -87,6 +87,7 @@ use Pig\CodingAgent\Session\AutoCompactionEndEvent;
 use Pig\CodingAgent\Session\AutoCompactionStartEvent;
 use Pig\CodingAgent\Session\RetryEndEvent;
 use Pig\CodingAgent\Session\RetryStartEvent;
+use Pig\CodingAgent\Session\SummarizationRetryEvent;
 use Pig\CodingAgent\Session\BashExecution;
 use Pig\CodingAgent\Session\BranchSummary;
 use Pig\CodingAgent\Session\CompactionSummary;
@@ -4657,6 +4658,7 @@ final class InteractiveMode
             $event instanceof RetryEndEvent => $this->onRetryEnd($event),
             $event instanceof AutoCompactionStartEvent => $this->onOverflow(),
             $event instanceof AutoCompactionEndEvent => $this->onOverflowHandled($event),
+            $event instanceof SummarizationRetryEvent => $this->onSummarizationRetry($event),
 
             default => null,
         };
@@ -4822,7 +4824,7 @@ final class InteractiveMode
                     $this->sayError($said);
                 }
 
-                if (BugReport::worthReporting($event->message, $this->session->model()?->contextWindow)) {
+                if (BugReport::worthReporting($event->message)) {
                     $this->suggestBugReport();
                 }
             }
@@ -4878,7 +4880,7 @@ final class InteractiveMode
      * happening, not a thing that happened, and it has to say escape works — eight seconds
      * that look like a hang are eight seconds someone spends deciding whether to kill pig.
      *
-     * Upstream's wording (`Retrying (1/3) in 30s... (esc to cancel)`), and not the error with
+     * Upstream's wording (`Retrying (1/3) in 30s... (escape to cancel)`), and not the error with
      * the countdown after it, which this used to say: the reason is already a red line in the
      * transcript by the time the retry starts, and in the prompt's border — where this is drawn
      * now — an 80-column terminal cut the error off before the one word that matters, which is
@@ -4886,13 +4888,76 @@ final class InteractiveMode
      */
     private function onRetryStart(RetryStartEvent $event): void
     {
-        $seconds = rtrim(rtrim(number_format($event->delaySeconds, 1), '0'), '.');
+        // Upstream's `RetryStatusIndicator`: `Retrying (n/max) in <s>s... (${keyText("app.interrupt")}
+        // to cancel)` — `escape` with the default bindings — the seconds rounded up
+        // (`Math.ceil(delayMs / 1000)`) and counted down once a second (`CountdownTimer`) until the
+        // retry starts.
+        $key = $this->keybindings->keyText('app.interrupt');
+        $message = static fn (int $seconds): string => "Retrying ({$event->attempt}/{$event->maxAttempts}) in {$seconds}s... ({$key} to cancel)";
+        $remaining = (int) ceil($event->delaySeconds);
+        $loader = $this->showLoader($message($remaining));
+        $this->stopRetryCountdown();
 
-        $this->showLoader("Retrying ({$event->attempt}/{$event->maxAttempts}) in {$seconds}s... (esc to stop)");
+        $tick = function () use (&$tick, &$remaining, $loader, $message): void {
+            $this->retryCountdown = null;
+            $remaining--;
+
+            if ($this->working !== $loader) {
+                return;
+            }
+
+            $loader->setMessage($message(max(0, $remaining)));
+            $this->tui->requestRender();
+
+            if ($remaining > 0) {
+                $this->retryCountdown = Loop::get()->delay(1.0, $tick);
+            }
+        };
+
+        if ($remaining > 0) {
+            $this->retryCountdown = Loop::get()->delay(1.0, $tick);
+        }
+    }
+
+    /** The retry countdown's next tick, while one is counting. */
+    private ?string $retryCountdown = null;
+
+    private function stopRetryCountdown(): void
+    {
+        if ($this->retryCountdown !== null) {
+            Loop::get()->cancel($this->retryCountdown);
+            $this->retryCountdown = null;
+        }
+    }
+
+    /**
+     * A summary's request is being tried again — upstream's `summarization_retry_*` arms: the
+     * error, and the retry countdown in place of the summary's own loader; then the summary's
+     * loader back when the retry starts (`summarization_retry_attempt_start`). The end needs
+     * nothing here: the summary's own caller takes its loader down.
+     */
+    private function onSummarizationRetry(SummarizationRetryEvent $event): void
+    {
+        if ($event->phase === SummarizationRetryEvent::SCHEDULED) {
+            $this->sayError($event->error ?? 'Unknown error');
+            $this->onRetryStart(new RetryStartEvent($event->attempt, $event->maxAttempts, $event->delaySeconds, $event->error ?? ''));
+
+            return;
+        }
+
+        if ($event->phase === SummarizationRetryEvent::ATTEMPT_START) {
+            $this->stopRetryCountdown();
+            $this->showLoader(match (true) {
+                $event->source === 'branchSummary' => 'Summarising the branch...',
+                $event->reason === 'overflow' => 'Context is full — summarising, then trying again.',
+                default => 'Summarising the conversation...',
+            }, timer: true);
+        }
     }
 
     private function onRetryEnd(RetryEndEvent $event): void
     {
+        $this->stopRetryCountdown();
         $this->hideLoader();
 
         if ($event->succeeded) {

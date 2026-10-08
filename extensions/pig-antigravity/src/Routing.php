@@ -230,6 +230,37 @@ final class Routing
     }
 
     /**
+     * The runtime model to try when $runtime is answered 404 — pi-antigravity's
+     * `getFallbackRuntimeModel()`: a Gemini 3.8 Flash runtime falls back to the 3.7 one of the same
+     * suffix (plain 3.8 to `gemini-3.7-flash-low`), a 3.7 one to 3.6 (plain 3.7 to
+     * `gemini-3.6-flash-low`, the tiered one to what 3.6 Flash resolves to at this level), and
+     * nothing else falls back.
+     *
+     * Null as well for a fallback these tables have no enum for: pi-antigravity sends whatever id it
+     * computed, and pig's envelope cannot carry a runtime model it has no enum to name.
+     */
+    public static function fallback(string $runtime, ?string $level): ?string
+    {
+        $candidate = match (true) {
+            str_starts_with($runtime, 'gemini-3.8-flash-') => 'gemini-3.7-flash-' . substr($runtime, strlen('gemini-3.8-flash-')),
+            $runtime === 'gemini-3.8-flash' => 'gemini-3.7-flash-low',
+            $runtime === 'gemini-3.7-flash-tiered' => isset(self::routing()['gemini-3.6-flash']) ? self::resolve('gemini-3.6-flash', $level)[0] : null,
+            str_starts_with($runtime, 'gemini-3.7-flash-') => 'gemini-3.6-flash-' . substr($runtime, strlen('gemini-3.7-flash-')),
+            $runtime === 'gemini-3.7-flash' => 'gemini-3.6-flash-low',
+            default => null,
+        };
+
+        return $candidate !== null && isset(self::enums()[$candidate]) ? $candidate : null;
+    }
+
+    /** The enum a runtime model id goes out as. */
+    public static function enumOf(string $runtime): string
+    {
+        return self::enums()[$runtime]
+            ?? throw new ProviderError("Antigravity runtime model '{$runtime}' has no enum. The routing and enum tables disagree; regenerate both.");
+    }
+
+    /**
      * How many tokens of thinking to ask for, by runtime id and level.
      *
      * **Hand-tuned and not from the catalogue**, which carries no budgets — ported as-is from a

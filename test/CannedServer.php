@@ -34,6 +34,11 @@ final class CannedServer
 
     private string $received = '';
 
+    /** @var list<list<string>>|null see `startSequence()` */
+    private ?array $sequence = null;
+
+    private int $connections = 0;
+
     public function __destruct()
     {
         $this->stop();
@@ -87,13 +92,38 @@ final class CannedServer
 
             stream_set_blocking($connection, false);
             $this->open[] = $connection;
-            $this->replyOnce($connection, $pieces, $closeAfter);
+            // A sequence answers its nth connection with its nth reply, the last one repeated.
+            $reply = $this->sequence !== null
+                ? $this->sequence[min($this->connections, count($this->sequence) - 1)]
+                : $pieces;
+            $this->connections++;
+            $this->replyOnce($connection, $reply, $closeAfter);
         });
 
         $name = (string) stream_socket_get_name($server, false);
         $separator = strrpos($name, ':');
 
         return 'http://' . substr($name, 0, (int) $separator) . ':' . substr($name, (int) $separator + 1) . '/';
+    }
+
+    /**
+     * Like `start()`, but each connection gets the next reply — a refusal and then an answer, for a
+     * request that is retried.
+     *
+     * @param non-empty-list<list<string>> $replies
+     * @return string base URL with a trailing slash
+     */
+    public function startSequence(array $replies): string
+    {
+        $this->sequence = $replies;
+
+        return $this->start($replies[0]);
+    }
+
+    /** How many connections the server has accepted. */
+    public function connections(): int
+    {
+        return $this->connections;
     }
 
     /** Everything the client sent, head and body. */

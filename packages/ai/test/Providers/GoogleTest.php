@@ -31,6 +31,7 @@ use Pig\Ai\Utils\PigUserAgent;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
+use Pig\Ai\Utils\Transcript;
 
 /**
  * Gemini, against a server answering from a script.
@@ -1022,12 +1023,24 @@ final class GoogleTest extends TestCase
 
     // ---- thinking, which is said two different ways -------------------------------------------
 
-    public function testNotAskingToThinkMeansAskingForNone(): void
+    public function testAskingForNoThinkingSendsAZeroBudget(): void
     {
+        $this->send(new Context([new UserMessage('hi')]), $this->model(reasoning: true), new GoogleOptions(apiKey: 'test-key', thinkingEnabled: false));
+
+        // Gemini thinks by default, so saying no has to be said.
+        $this->assertSame(0, $this->server->receivedJson()['generationConfig']['thinkingConfig']['thinkingBudget']);
+    }
+
+    public function testOptionsThatSayNothingAboutThinkingSendNoThinkingConfig(): void
+    {
+        // Upstream's `buildParams()` sends a `thinkingConfig` only when `options.thinking` is there —
+        // the asked-for one when enabled, the disabled one when not — so options with no `thinking`
+        // leave the model to its default. This test asserted the disabled config for that case,
+        // which upstream does not send; `Stream::simple()` always says, so the agent's requests are
+        // unchanged.
         $this->send(new Context([new UserMessage('hi')]), $this->model(reasoning: true));
 
-        // Gemini thinks by default, so saying nothing is not the same as saying no.
-        $this->assertSame(0, $this->server->receivedJson()['generationConfig']['thinkingConfig']['thinkingBudget']);
+        $this->assertArrayNotHasKey('thinkingConfig', $this->server->receivedJson()['generationConfig'] ?? []);
     }
 
     public function testGeminiTwoPointFiveIsGivenABudgetInTokens(): void
@@ -1199,7 +1212,7 @@ final class GoogleTest extends TestCase
             $this->assertNotNull($model, $id);
 
             $this->server = new CannedServer();
-            $this->send(new Context([new UserMessage('hi')]), $model);
+            $this->send(new Context([new UserMessage('hi')]), $model, new GoogleOptions(apiKey: 'test-key', thinkingEnabled: false));
 
             $this->assertSame($config, $this->server->receivedJson()['generationConfig']['thinkingConfig'], $id);
         }
@@ -1253,7 +1266,7 @@ final class GoogleTest extends TestCase
         $method = new \ReflectionMethod(Stream::class, 'translate');
         // The conversation is the third argument now: upstream's `buildBaseOptions()` clamps the
         // answer's ceiling to the room the context leaves, so the translation needs to see it.
-        $options = $method->invoke(null, $model, new \Pig\Ai\Context([]), new SimpleStreamOptions(apiKey: 'k', reasoning: $effort));
+        $options = $method->invoke(null, $model, new \Pig\Ai\TranscriptContext([]), new SimpleStreamOptions(apiKey: 'k', reasoning: $effort));
 
         $this->assertInstanceOf(GoogleOptions::class, $options);
 
@@ -1317,7 +1330,7 @@ final class GoogleTest extends TestCase
         return Async::run(function () use ($url, $context): array {
             $stream = (new Google())->stream(
                 $this->model(baseUrl: $url),
-                $context,
+                Transcript::normalizeContext($context),
                 new GoogleOptions(apiKey: 'test-key'),
             );
             $types = [];
@@ -1379,7 +1392,7 @@ final class GoogleTest extends TestCase
         Async::run(function () use ($url, $context, $model, $options): void {
             $stream = (new Google())->stream(
                 $this->model($url, $model->reasoning, $model->acceptsImages(), $model->id, $model->thinkingLevelMap),
-                $context,
+                Transcript::normalizeContext($context),
                 $options,
             );
 

@@ -71,12 +71,11 @@ final readonly class AnthropicCompat
      *        is billed at. Absent or empty sends no `fallbacks`, which Anthropic requires then
      * @param bool|null $supportsMidConvoSystemMessages the model takes system-role messages inside
      *        the conversation — upstream's `supportsMidConvoSystemMessages` (default false; when
-     *        false, later system messages are folded into the top-level system prompt). Carried
-     *        for `models.json`, the generator and the proxy wire: pig's transcript has no system
-     *        message after the first, so nothing here reads it yet
+     *        false, later system messages are folded into the top-level system prompt)
      * @param bool|null $supportsMidConvoToolChanges the model takes mid-conversation `tool_addition` and
-     *        `tool_removal` blocks — upstream's `supportsMidConvoToolChanges` (default false; needs
-     *        `supportsMidConvoSystemMessages`). Carried the same way, read by nothing yet
+     *        `tool_removal` blocks with inline tool definitions (`inline-tools-2026-09-15`) —
+     *        upstream's `supportsMidConvoToolChanges` (default false; needs
+     *        `supportsMidConvoSystemMessages`)
      */
     public function __construct(
         public ?bool $forceAdaptiveThinking = null,

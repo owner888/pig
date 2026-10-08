@@ -23,6 +23,7 @@ use Pig\Ai\TextContent;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\TranscriptContext;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CodingAgent;
@@ -542,7 +543,7 @@ final class HookMessagesTest extends TestCase
         );
     }
 
-    private function provider(Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream
+    private function provider(Model $model, TranscriptContext $context, SimpleStreamOptions $options): AssistantMessageEventStream
     {
         // Once, at the top of the first turn: the only moment `isStreaming()` is true and a test
         // still has control.

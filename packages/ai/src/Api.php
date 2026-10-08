@@ -16,6 +16,10 @@ enum Api: string
     case OpenAiResponses = 'openai-responses';
     case AnthropicMessages = 'anthropic-messages';
     case GoogleGenerativeAi = 'google-generative-ai';
+    /** Gemini on Vertex AI (`Providers\GoogleVertex`), upstream's `google-vertex`. */
+    case GoogleVertex = 'google-vertex';
+    /** Amazon Bedrock's ConverseStream (`Providers\Bedrock`), upstream's `bedrock-converse-stream`. */
+    case BedrockConverseStream = 'bedrock-converse-stream';
     /** Mistral's own chat API (`Providers\Mistral`), upstream's `mistral-conversations`. */
     case MistralConversations = 'mistral-conversations';
 

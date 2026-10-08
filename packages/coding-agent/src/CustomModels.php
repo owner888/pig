@@ -6,6 +6,7 @@ namespace Pig\CodingAgent;
 
 use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
+use Pig\Ai\BedrockCompat;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\OpenAiCompat;
@@ -59,6 +60,8 @@ final readonly class CustomModels
         'anthropic-messages' => Api::AnthropicMessages,
         'google-generative-ai' => Api::GoogleGenerativeAi,
         'mistral-conversations' => Api::MistralConversations,
+        'google-vertex' => Api::GoogleVertex,
+        'bedrock-converse-stream' => Api::BedrockConverseStream,
     ];
 
     /**
@@ -783,13 +786,19 @@ final readonly class CustomModels
      *
      * @param array<mixed>|null $compat
      */
-    private static function compat(?array $compat, Api $api): OpenAiCompat|AnthropicCompat|null
+    private static function compat(?array $compat, Api $api): OpenAiCompat|AnthropicCompat|BedrockCompat|null
     {
         if ($compat === null || $compat === []) {
             return null;
         }
 
         $flag = static fn (string $key): ?bool => is_bool($compat[$key] ?? null) ? $compat[$key] : null;
+
+        // Upstream's `BedrockCompatSchema`, a `bedrock-converse-stream` model's block: one key,
+        // "Whether the model supports Bedrock strict tool schemas."
+        if ($api === Api::BedrockConverseStream) {
+            return new BedrockCompat(supportsStrictMode: $flag('supportsStrictMode'));
+        }
 
         // Upstream types `compat` by the model's API, and an `anthropic-messages` model's block is
         // `AnthropicMessagesCompat`: `forceAdaptiveThinking` is how a proxy serving an adaptive-only

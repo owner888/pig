@@ -15,6 +15,7 @@ use Pig\Ai\Tool;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\Estimate;
+use Pig\Ai\Utils\Transcript;
 
 /**
  * Upstream's `estimateContextTokens()`, which `Stream::simple()` now reads to cut the answer's
@@ -31,7 +32,7 @@ final class EstimateTest extends TestCase
             'be nice',
         );
 
-        $this->assertSame(2 + 1_382, Estimate::contextTokens($context));
+        $this->assertSame(2 + 1_382, Estimate::contextTokens(Transcript::normalizeContext($context)));
     }
 
     public function testTheToolsAreCountedAsTheirJson(): void
@@ -39,7 +40,7 @@ final class EstimateTest extends TestCase
         $tool = new Tool('read', 'Read', ['type' => 'object']);
         $json = '[{"name":"read","description":"Read","parameters":{"type":"object"}}]';
 
-        $this->assertSame((int) ceil(strlen($json) / 3.5), Estimate::contextTokens(new Context([], null, [$tool])));
+        $this->assertSame((int) ceil(strlen($json) / 3.5), Estimate::contextTokens(Transcript::normalizeContext(new Context([], null, [$tool]))));
     }
 
     public function testTheLastFinishedTurnsUsageIsTheMeasureOfEverythingBeforeIt(): void
@@ -54,14 +55,14 @@ final class EstimateTest extends TestCase
         ]);
 
         // 5,000 + 'b'×35 (10) + the errored turn's own text (2 characters → 1).
-        $this->assertSame(5_011, Estimate::contextTokens($context));
+        $this->assertSame(5_011, Estimate::contextTokens(Transcript::normalizeContext($context)));
     }
 
     public function testLengthsAreUtf16CodeUnitsAsJavaScriptCountsThem(): void
     {
         // Seven characters outside the BMP, two code units each: 14 / 3.5 → 4 — where counting
         // characters would say 2 and counting bytes 8.
-        $this->assertSame(4, Estimate::contextTokens(new Context([new UserMessage(str_repeat('😀', 7))])));
+        $this->assertSame(4, Estimate::contextTokens(Transcript::normalizeContext(new Context([new UserMessage(str_repeat('😀', 7))]))));
     }
 
     private function turn(Usage $usage, StopReason $stop, int $timestamp): AssistantMessage

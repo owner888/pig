@@ -38,7 +38,15 @@ final readonly class OpenAiOptions extends StreamOptions
         ?string $sessionId = null,
         ?array $metadata = null,
         public ?string $reasoningSummary = null,
+        ?array $headers = null,
+        ?int $timeoutMs = null,
+        ?int $maxRetries = null,
+        ?int $maxRetryDelayMs = null,
+        ?\Closure $onPayload = null,
+        ?\Closure $onResponse = null,
+        ?\Closure $onProviderStreamEvent = null,
+        ?array $env = null,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata, $headers, $timeoutMs, $maxRetries, $maxRetryDelayMs, $onPayload, $onResponse, $onProviderStreamEvent, $env);
     }
 }

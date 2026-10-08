@@ -35,10 +35,22 @@ final class StreamTest extends TestCase
         Loop::reset();
         $this->server = new CannedServer();
 
-        foreach (['ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN', 'OPENAI_API_KEY'] as $name) {
+        foreach ([
+            'ANTHROPIC_API_KEY', 'ANTHROPIC_OAUTH_TOKEN', 'OPENAI_API_KEY',
+            'GOOGLE_CLOUD_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GCLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION',
+            'AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_BEARER_TOKEN_BEDROCK',
+            'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI', 'AWS_CONTAINER_CREDENTIALS_FULL_URI', 'AWS_WEB_IDENTITY_TOKEN_FILE', 'HOME',
+        ] as $name) {
             $this->savedEnv[$name] = getenv($name);
             putenv($name);
         }
+    }
+
+    /** Every test puts the environment back, and this catches the one that failed before it could. */
+    #[\Override]
+    protected function tearDown(): void
+    {
+        $this->restoreEnv();
     }
 
     public function testAnOauthTokenWinsOverAnApiKey(): void
@@ -48,6 +60,43 @@ final class StreamTest extends TestCase
 
         putenv('ANTHROPIC_OAUTH_TOKEN=sk-ant-oat-abc');
         $this->assertSame('sk-ant-oat-abc', Stream::envApiKey('anthropic'));
+
+        $this->restoreEnv();
+    }
+
+    public function testVertexIsSignedInByItsKeyOrByAdcWithAProjectAndALocation(): void
+    {
+        // Upstream's `getEnvApiKey()`: "Vertex AI supports either an explicit API key or Application
+        // Default Credentials" — the key itself, or the ambient marker, which is never sent.
+        $this->assertSame('K', Stream::envApiKey('google-vertex', ['GOOGLE_CLOUD_API_KEY' => 'K']));
+
+        $file = (string) tempnam(sys_get_temp_dir(), 'adc-');
+        $adc = ['GOOGLE_APPLICATION_CREDENTIALS' => $file, 'GOOGLE_CLOUD_PROJECT' => 'p', 'GOOGLE_CLOUD_LOCATION' => 'us-central1'];
+        $this->assertSame(Stream::AMBIENT_AUTH_MARKER, Stream::envApiKey('google-vertex', $adc));
+        $this->assertSame(Stream::AMBIENT_AUTH_MARKER, Stream::envApiKey('google-vertex', [...$adc, 'GOOGLE_CLOUD_PROJECT' => '', 'GCLOUD_PROJECT' => 'p']));
+        $this->assertNull(Stream::envApiKey('google-vertex', [...$adc, 'GOOGLE_CLOUD_LOCATION' => '']));
+        $this->assertNull(Stream::envApiKey('google-vertex', [...$adc, 'GOOGLE_APPLICATION_CREDENTIALS' => $file . '.missing']));
+        unlink($file);
+
+        $this->restoreEnv();
+    }
+
+    public function testBedrockIsSignedInByAnyOfItsAwsSources(): void
+    {
+        $this->assertNull(Stream::envApiKey('amazon-bedrock', []));
+        // A key id is half a pair.
+        $this->assertNull(Stream::envApiKey('amazon-bedrock', ['AWS_ACCESS_KEY_ID' => 'a']));
+
+        foreach ([
+            ['AWS_PROFILE' => 'work'],
+            ['AWS_ACCESS_KEY_ID' => 'a', 'AWS_SECRET_ACCESS_KEY' => 's'],
+            ['AWS_BEARER_TOKEN_BEDROCK' => 'token'],
+            ['AWS_CONTAINER_CREDENTIALS_RELATIVE_URI' => '/v2/credentials'],
+            ['AWS_CONTAINER_CREDENTIALS_FULL_URI' => 'http://localhost/creds'],
+            ['AWS_WEB_IDENTITY_TOKEN_FILE' => '/var/run/token'],
+        ] as $env) {
+            $this->assertSame(Stream::AMBIENT_AUTH_MARKER, Stream::envApiKey('amazon-bedrock', $env), (string) json_encode($env));
+        }
 
         $this->restoreEnv();
     }

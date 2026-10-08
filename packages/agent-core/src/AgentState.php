@@ -6,6 +6,8 @@ namespace Pig\Agent;
 
 use Pig\Ai\Model;
 use Pig\Ai\Models;
+use Pig\Ai\SystemMessage;
+use Pig\Ai\Utils\Transcript;
 
 /**
  * Everything a UI needs to draw the agent.
@@ -43,16 +45,24 @@ final class AgentState
     public const string DEFAULT_MODEL = 'gemini-2.5-flash-lite';
 
     /**
+     * Upstream's `createMutableAgentState()`: `$systemPrompt` and `$tools` become the leading system
+     * message (`Transcript::createInitialSystemMessage()`, the tools as declarations) unless
+     * `$messages` already starts with one. The prompt is not kept beside the transcript any more —
+     * `systemPrompt()` replays it from there.
+     *
+     * @param string          $systemPrompt      seeds the leading system message
      * @param Model|null      $model             null takes the default above; still nullable
      *        afterwards, because a default that has left the registry resolves to null and
      *        `Agent::prompt()` has to say "No model configured" rather than fail deeper down
-     * @param list<AgentTool> $tools
-     * @param list<mixed>     $messages          the conversation, app messages included
+     * @param list<AgentTool> $tools             what the runtime can execute; differences from the
+     *        tools the transcript declares are announced with a system message before the next request
+     * @param list<mixed>     $messages          the conversation, app messages included; its system
+     *        messages carry the prompt and the tool declarations
      * @param mixed           $streamMessage     the assistant message still arriving, or null
      * @param list<string>    $pendingToolCalls  ids of tools running right now
      */
     public function __construct(
-        public string $systemPrompt = '',
+        string $systemPrompt = '',
         public ?Model $model = null,
         public ThinkingLevel $thinkingLevel = ThinkingLevel::Off,
         public array $tools = [],
@@ -63,5 +73,23 @@ final class AgentState
         public ?string $error = null,
     ) {
         $this->model ??= Models::find(self::DEFAULT_PROVIDER, self::DEFAULT_MODEL);
+        $initial = Transcript::createInitialSystemMessage(
+            $systemPrompt,
+            array_map(static fn (AgentTool $tool): \Pig\Ai\Tool => Transcript::toToolDeclaration($tool->definition()), $tools),
+        );
+
+        if (!(($this->messages[0] ?? null) instanceof SystemMessage) && $initial !== null) {
+            array_unshift($this->messages, $initial);
+        }
+    }
+
+    /**
+     * Current system prompt, replayed from the transcript's system messages — upstream's read-only
+     * `state.systemPrompt`. A method because PHP 8.3 has no property hooks: to change the prompt,
+     * append a system message with `content` or `sections`.
+     */
+    public function systemPrompt(): string
+    {
+        return Transcript::getCurrentSystemPrompt($this->messages);
     }
 }

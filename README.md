@@ -74,6 +74,7 @@ pig
 ```
 
 - **Set API Key**: Run with `ANTHROPIC_API_KEY=sk-... pig` or use `--api-key <key>` for a single run without persisting.
+- **Google Vertex AI and Amazon Bedrock**: no key needed when the cloud's own credentials are there, as in pi. Vertex takes `GOOGLE_CLOUD_API_KEY`, or Application Default Credentials (`gcloud auth application-default login`, a service-account file in `GOOGLE_APPLICATION_CREDENTIALS`, or the metadata server) with `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`. Bedrock takes `AWS_BEARER_TOKEN_BEDROCK`, or the AWS SDK's credential chain — `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE` and `~/.aws` (assumed roles, `credential_process`, SSO), web identity, ECS/EKS and EC2 roles — with the region from `AWS_REGION` or the profile. Pick a model as `google-vertex/gemini-2.5-pro` or `amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0`.
 - **Subscription Login**: Run `/login` inside pig to sign in with Claude Pro/Max, GitHub Copilot, or Google Antigravity. Claude offers two ways in, as pi 1.0 does: a browser that comes back to `localhost:53692` (the default), or copying the code off Anthropic's page for a headless machine. Tokens are saved in `~/.pig/agent/auth.json` (or shared with `~/.pi/agent/auth.json`).
 - **Resume Sessions**:
   - `pig -c` / `pig --continue`: Instantly resume the most recently modified session in the current directory.
@@ -150,7 +151,7 @@ All extensions in `pig` are **100% pure native PHP** with zero external npm or c
 
 | Extension | Namespace / Location | Capabilities |
 | :--- | :--- | :--- |
-| **`pig-antigravity`** | `extensions/pig-antigravity/` | **The whole Antigravity provider** — models, wire protocol, Google sign-in, model routing — registered through `registerProvider()`, as pi's community `pi-antigravity` does since pi 0.71 dropped it from the core. Plus multi-account management, auto 429 failover (`before_retry`), `/antigravity.usage`, `/antigravity.accounts`, and the `generate_image` tool. |
+| **`pig-antigravity`** | `extensions/pig-antigravity/` | **The whole Antigravity provider** — models, wire protocol, Google sign-in, model routing — registered through `registerProvider()`, as pi's community `pi-antigravity` does since pi 0.71 dropped it from the core. Plus multi-account management, 429 failover to the next account inside the request (as pi-antigravity does), `/antigravity.usage`, `/antigravity.accounts`, and the `generate_image` tool. |
 | **`pig-web-search`** | `extensions/pig-web-search/` | Real-time web search (`web_search`), readable article extraction (`fetch_web_page`), headless Chrome DOM rendering (`browse_web_page`), `/search <query>`. |
 | **`pig-computer`** | `extensions/pig-computer/` | Anti-detection browser automation (mouse move, click, scroll, typing, screenshots, persistent cookies). |
 | **`pig-codemode`** | `extensions/pig-codemode/` | Fast multi-tool execution in a sandboxed child PHP process (`open_basedir`, `disable_functions`). |
@@ -164,7 +165,7 @@ An extension is a PHP file (or a folder with `index.php`) returning `function (E
 | :--- | :--- |
 | **Bring a provider** | `registerProvider(new Provider(id, name, models, api: StreamApi, oauth: OauthFlow, envKeys, resold))` — the models go into the registry, the protocol behind `Api::Extension`, the sign-in into `/login`. `unregisterProvider()` takes it back. |
 | **Tools, commands, renderers** | `registerTool()`, `removeTools()`, `registerCommand()`, `registerMessageRenderer()`, `registerLocale()`. |
-| **Events** | `on('…')` for the session lifecycle, the agent loop, tool calls and results, `context`, and now `before_provider_request` (rewrite headers or body), `after_provider_response` (status and headers), `before_retry` (change the wait, reset the count, or cancel), `model_select`, `thinking_level_select`. |
+| **Events** | `on('…')` for the session lifecycle, the agent loop, tool calls and results, `context`, and upstream's provider events — `before_provider_request` (replace the payload), `before_provider_headers` (edit the headers in place), `after_provider_response` (status and headers), `provider_stream_event` (each raw stream event) — plus `model_select`, `thinking_level_select`. |
 | **Flags** | `registerFlag('name', 'boolean'|'string', description, default)` declares `--name`; `getFlag()` reads it from a handler. |
 | **The session** | `getSettings()`, `getModel()`, `setModel()`, `getThinkingLevel()`, `setThinkingLevel()`, `sendUserMessage(text, 'steer'|'followUp')`, `sendMessage()`, `setLabel()`, `getCommands()`, `exec()`. |
 | **The web UI** | `registerHttpRoute('/api/prefix', fn (path, req) => ['status', 'body'])` answers requests in `pig web` — how the Antigravity accounts panel is served. |
@@ -231,7 +232,7 @@ Tokens are renewed automatically when they expire; the file is the same one pi r
 `pig` is organized as clean decoupled namespaces under `packages/`:
 
 - `packages/async/` (`Pig\Async\`): Coroutine runtime, non-blocking TLS Socket, Futures, Deferreds, and event loop.
-- `packages/ai/` (`Pig\Ai\`): Unified LLM protocol adapters (Anthropic, OpenAI Completions, OpenAI Responses, Gemini), and `Pig\Ai\Extension\` — the `Provider`/`StreamApi`/`OauthFlow` an extension implements to bring a provider of its own.
+- `packages/ai/` (`Pig\Ai\`): Unified LLM protocol adapters (Anthropic, OpenAI Completions, OpenAI Responses, Gemini, Vertex AI, Mistral, Amazon Bedrock ConverseStream — with SigV4 and the AWS credential chain in plain PHP), and `Pig\Ai\Extension\` — the `Provider`/`StreamApi`/`OauthFlow` an extension implements to bring a provider of its own.
 - `packages/agent-core/` (`Pig\Agent\`): Agent loop, tool lifecycle, and JSON schema validation.
 - `packages/tui/` (`Pig\Tui\`): Differential terminal rendering engine, ANSI styling, and key parser.
 - `packages/coding-agent/` (`Pig\CodingAgent\`): CLI harness, session tree, auto-compaction, Web daemon, and tools.

@@ -203,7 +203,7 @@ final class ProbeApi implements StreamApi
     }
 
     #[\Override]
-    public function stream(Model $model, Context $context, StreamOptions $options): AssistantMessageEventStream
+    public function stream(Model $model, \Pig\Ai\TranscriptContext $context, StreamOptions $options): AssistantMessageEventStream
     {
         $this->streamedWith = $options instanceof ProbeOptions ? $options : new ProbeOptions($options->apiKey, null);
         $stream = new AssistantMessageEventStream();

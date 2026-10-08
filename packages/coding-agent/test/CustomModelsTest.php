@@ -8,6 +8,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
+use Pig\Ai\BedrockCompat;
 use Pig\Ai\Models;
 use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
@@ -186,6 +187,31 @@ final class CustomModelsTest extends TestCase
 
         $this->assertSame(Api::OpenAiCompletions, $custom->models[0]->api);
         $this->assertSame(Api::AnthropicMessages, $custom->models[1]->api);
+    }
+
+    public function testVertexAndBedrockAreApisAModelCanSpeak(): void
+    {
+        // Upstream's `api` values for the two, so a `models.json` written for pi — a Gemini on a
+        // private Vertex endpoint, a Bedrock inference profile behind a gateway — works unchanged.
+        $custom = $this->load(self::provider(['models' => [
+            self::model(['id' => 'gemini-private', 'api' => 'google-vertex']),
+            self::model(['id' => 'us.anthropic.claude-x', 'api' => 'bedrock-converse-stream']),
+        ]]));
+
+        $this->assertSame(Api::GoogleVertex, $custom->models[0]->api);
+        $this->assertSame(Api::BedrockConverseStream, $custom->models[1]->api);
+    }
+
+    public function testABedrockModelsCompatBlockIsUpstreamsBedrockCompat(): void
+    {
+        // `BedrockCompatSchema`: one key, "Whether the model supports Bedrock strict tool schemas."
+        // The OpenAI keys mean nothing to a Bedrock model and are not read as if they did.
+        $model = $this->load(self::provider(['api' => 'bedrock-converse-stream', 'models' => [
+            self::model(['compat' => ['supportsStrictMode' => true, 'supportsStore' => false]]),
+        ]]))->models[0];
+
+        $this->assertInstanceOf(BedrockCompat::class, $model->compat);
+        $this->assertTrue($model->compat->supportsStrictMode);
     }
 
     public function testHeadersMergeWithTheModelsOwnWinning(): void

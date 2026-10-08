@@ -4,19 +4,29 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
-use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
+use Pig\Ai\Http\Response;
 use Pig\Ai\Model;
 use Pig\Ai\ProviderError;
 use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
+use Pig\Ai\TranscriptContext;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ErrorBody;
+use Pig\Ai\Utils\Headers;
 use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\PigUserAgent;
+use Pig\Ai\Utils\ProviderHttpError;
+use Pig\Ai\Utils\ProviderRetry;
+use Pig\Ai\Utils\SdkHeaders;
+use Pig\Ai\Utils\TextDecoder;
+use Pig\Ai\Utils\Text;
+use Pig\Ai\Utils\Transcript;
+use Pig\Ai\Utils\Utf8;
+use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Throwable;
 
@@ -51,7 +61,7 @@ final class Google
     }
 
     /** Returns at once; the response fills in as it arrives. */
-    public function stream(Model $model, Context $context, ?GoogleOptions $options = null): AssistantMessageEventStream
+    public function stream(Model $model, TranscriptContext $context, ?GoogleOptions $options = null): AssistantMessageEventStream
     {
         $stream = new AssistantMessageEventStream();
 
@@ -65,7 +75,7 @@ final class Google
     private function run(
         AssistantMessageEventStream $stream,
         Model $model,
-        Context $context,
+        TranscriptContext $context,
         ?GoogleOptions $options,
     ): void {
         $builder = new AssistantMessageBuilder($model);
@@ -75,20 +85,39 @@ final class Google
         $open = null;
 
         try {
-            $response = $this->http->send($this->request($model, $context, $options), $signal);
+            $apiKey = $options?->apiKey;
 
-            if (!$response->isSuccessful()) {
-                throw new ProviderError(ErrorBody::genaiApiError(
-                    $response->status,
-                    $response->reason,
-                    $response->header('content-type'),
-                    $response->body->all(),
-                ));
+            if ($apiKey === null || $apiKey === '') {
+                throw new ProviderError("No API key for provider: {$model->provider}");
             }
+
+            // `buildParams()` — the SDK's `GenerateContentParameters` — then `onPayload`, whose answer
+            // replaces them; the SDK turns what is left into the request body (`paramsToWire()`).
+            $params = $this->params($model, $context, $options);
+            $nextParams = $options?->onPayload !== null ? ($options->onPayload)($params, $model) : null;
+
+            if ($nextParams !== null) {
+                $params = (array) $nextParams;
+            }
+
+            $request = $this->request($model, $apiKey, $options, self::paramsToWire($params));
+
+            // `retryGoogleRequest(() => client.models.generateContentStream(params), options)`: the
+            // SDK's `ApiError` has a status and no headers, which is enough for the shared policy.
+            $response = ProviderRetry::retryProviderRequest(
+                fn (): Response => $this->send($request, $signal),
+                $options?->maxRetries,
+                $options?->maxRetryDelayMs,
+                $signal,
+            );
 
             $stream->push(new StartEvent($builder->snapshot()));
 
             foreach (self::sdkChunks($response->body) as $data) {
+                if ($options?->onProviderStreamEvent !== null) {
+                    ($options->onProviderStreamEvent)($data, $model);
+                }
+
                 if (is_array($data)) {
                     // Upstream keeps the first non-empty `responseId` of the stream. Here and
                     // not in `GoogleShared`, because `google-generative-ai.ts` is where upstream
@@ -103,7 +132,10 @@ final class Google
             }
 
             GoogleShared::close($builder, $stream, $open);
-            $signal?->throwIfAborted();
+
+            if ($signal?->aborted() ?? false) {
+                throw new ProviderError('Request was aborted');
+            }
 
             // Upstream's checks after the stream: a body that ended without a `finishReason` is a
             // cut connection, not an answer — it used to come back as a clean `stop`; and an error
@@ -122,12 +154,44 @@ final class Google
             $stream->push(new DoneEvent($message->stopReason, $message));
             $stream->end();
         } catch (Throwable $error) {
-            // A provider never throws at its caller: the failure is the stream's result.
-            $builder->fail($error->getMessage(), $signal?->aborted() ?? false);
+            // A provider never throws at its caller: the failure is the stream's result. An abort
+            // while the body is read is the fetch's DOMException, "This operation was aborted".
+            $builder->fail(
+                SdkRequest::errorMessage($error),
+                $signal?->aborted() ?? false,
+            );
             $failed = $builder->snapshot();
             $stream->push(new ErrorEvent($failed->stopReason, $failed));
             $stream->end();
         }
+    }
+
+    /**
+     * The SDK's `streamApiCall()` for one attempt: a failed fetch is Node's `TypeError: fetch
+     * failed`, which carries no status and so is not retried; a response that is not ok is the
+     * SDK's `ApiError` (`throwErrorIfNotOK()`), with its status — and, after `retryGoogleRequest()`
+     * has added it, an undefined `headers`.
+     */
+    private function send(Request $request, ?AbortSignal $signal): Response
+    {
+        try {
+            $response = $this->http->send($request, $signal);
+        } catch (Throwable $error) {
+            if ($signal?->aborted() ?? false) {
+                throw $error;
+            }
+
+            throw new ProviderError('fetch failed', previous: $error);
+        }
+
+        if (!$response->isSuccessful()) {
+            throw new ProviderHttpError(
+                ErrorBody::genaiApiError($response->status, $response->reason, $response->header('content-type'), $response->body->all()),
+                $response->status,
+            );
+        }
+
+        return $response;
     }
 
     /**
@@ -147,17 +211,21 @@ final class Google
      * pig used to read this body with its own SSE parser and skip what did not decode, so a garbled
      * chunk went missing from the answer instead of failing the turn the way upstream's does.
      *
+     * Public for `GoogleVertex`, which reads the same SDK's same stream.
+     *
+     * @internal
      * @param iterable<string> $body
      * @return iterable<mixed> each payload, decoded with objects as arrays
      */
-    private static function sdkChunks(iterable $body): iterable
+    public static function sdkChunks(iterable $body): iterable
     {
         $buffer = '';
-        // `TextDecoder.decode(value, {stream: true})`: a character cut between two reads waits here.
-        $pending = '';
+        // `decoder.decode(value, {stream: true})`: a character cut between two reads waits, and a
+        // byte-order mark at the start of the body is dropped.
+        $decoder = new TextDecoder();
 
         foreach ($body as $bytes) {
-            [$chunkString, $pending] = self::decodeStreaming($pending . $bytes);
+            $chunkString = $decoder->decode($bytes);
 
             try {
                 $chunkJson = JsJson::parse($chunkString, false);
@@ -211,38 +279,6 @@ final class Google
         }
     }
 
-    /**
-     * The complete UTF-8 characters at the front of `$bytes` (anything malformed as U+FFFD), and
-     * the start of a character still being read at the end.
-     *
-     * @return array{0: string, 1: string}
-     */
-    private static function decodeStreaming(string $bytes): array
-    {
-        $length = strlen($bytes);
-
-        // A lead byte in the last three whose sequence runs past the end is held back.
-        for ($back = 1; $back <= min(3, $length); $back++) {
-            $byte = ord($bytes[$length - $back]);
-
-            if ($byte < 0x80) {
-                break;
-            }
-
-            if ($byte >= 0xC0) {
-                $needs = $byte >= 0xF0 ? 4 : ($byte >= 0xE0 ? 3 : 2);
-
-                if ($needs > $back) {
-                    return [JsJson::decodeUtf8(substr($bytes, 0, $length - $back)), substr($bytes, $length - $back)];
-                }
-
-                break;
-            }
-        }
-
-        return [JsJson::decodeUtf8($bytes), ''];
-    }
-
     /** JavaScript's `ToNumber` for a decoded JSON value, null where it is `NaN`. */
     private static function jsNumber(mixed $value): ?float
     {
@@ -257,21 +293,167 @@ final class Google
 
     // ---- the request ---------------------------------------------------------------------
 
-    private function request(Model $model, Context $context, ?GoogleOptions $options): Request
+    /**
+     * The request `client.models.generateContentStream()` sends with upstream's `createClient()`:
+     * `POST <baseUrl>/models/<model>:streamGenerateContent?alt=sse` (`apiVersion: ""` — the base URL
+     * already has it), and the headers the SDK builds — its defaults (`User-Agent` and
+     * `x-goog-api-client` both `SdkHeaders::googleApiClient()`, `Content-Type`), `Object.assign`ed
+     * with upstream's `httpOptions.headers` (`providerHeadersToRecord({"User-Agent": getPiUserAgent(),
+     * ...model.headers, ...options.headers})`), appended one by one into a `Headers` — so two
+     * spellings of one name are joined with ", " — and `x-goog-api-key` last unless already there.
+     * No `Accept`: the SDK sends none for this call.
+     *
+     * @param array<string, mixed> $body
+     */
+    private function request(Model $model, string $apiKey, ?GoogleOptions $options, array $body): Request
     {
-        $headers = [
-            'accept' => 'text/event-stream',
-            'content-type' => 'application/json',
-            'x-goog-api-key' => $options?->apiKey ?? '',
-            // Upstream's `createClient()`: `{"User-Agent": getPiUserAgent(), ...model.headers}`.
-            'User-Agent' => PigUserAgent::get(),
-            ...$model->headers,
+        $merged = ['User-Agent' => PigUserAgent::get()];
+
+        foreach ([$model->headers, $options?->headers ?? []] as $source) {
+            foreach ($source as $name => $value) {
+                $merged[(string) $name] = $value;
+            }
+        }
+
+        $httpHeaders = Headers::providerHeadersToRecord($merged) ?? [];
+        $sdkHeaders = [
+            'User-Agent' => SdkHeaders::googleApiClient(),
+            'x-goog-api-client' => SdkHeaders::googleApiClient(),
+            'Content-Type' => 'application/json',
         ];
+
+        foreach ($httpHeaders as $name => $value) {
+            $sdkHeaders[$name] = $value;
+        }
+
+        $headers = [];
+
+        foreach ($sdkHeaders as $name => $value) {
+            $name = strtolower($name);
+            $headers[$name] = isset($headers[$name]) ? "{$headers[$name]}, {$value}" : $value;
+        }
+
+        $headers['x-goog-api-key'] ??= $apiKey;
 
         // `alt=sse` is what turns this from one enormous JSON array into a stream.
         $url = rtrim($model->baseUrl, '/') . '/models/' . rawurlencode($model->id) . ':streamGenerateContent?alt=sse';
 
-        return new Request('POST', $url, $headers, $this->encode($this->body($model, $context, $options)));
+        return new Request('POST', $url, $headers, $this->encode($body));
+    }
+
+    /**
+     * Upstream's `buildParams()`: the SDK's `GenerateContentParameters`, `{model, contents, config}`
+     * — what `onPayload` is shown. An already-aborted signal is refused here, as upstream's is.
+     *
+     * @return array<string, mixed>
+     */
+    private function params(Model $model, TranscriptContext $context, ?GoogleOptions $options): array
+    {
+        // Upstream's `normalizedContext = collapseSystemMessages(context)` in `stream()`: Gemini has
+        // no mid-conversation system messages, so the replayed prompt is the `systemInstruction`
+        // and the replayed tool set is `tools`.
+        $context = Transcript::collapseSystemMessages($context);
+        $initialSystemMessage = Transcript::getInitialSystemMessage($context->messages);
+        $currentTools = Transcript::getCurrentTools($context->messages);
+        $config = [];
+
+        if ($options?->temperature !== null) {
+            $config['temperature'] = $options->temperature;
+        }
+
+        if ($options?->maxTokens !== null) {
+            $config['maxOutputTokens'] = $options->maxTokens;
+        }
+
+        $systemInstruction = $initialSystemMessage !== null ? Text::getSystemMessageText($initialSystemMessage) : '';
+
+        if ($systemInstruction !== '') {
+            $config['systemInstruction'] = Utf8::sanitize($systemInstruction);
+        }
+
+        // Upstream's `buildParams()`: Gemini 3+ takes strict tools, and a strict tool makes the
+        // calling mode `VALIDATED` unless the caller said `none` or `any`. The schema goes as
+        // `parametersJsonSchema`, full JSON Schema as written (`convertTools(tools, false, …)`).
+        $supportsStrictMode = GoogleShared::supportsGoogleStrictToolSampling($model->id);
+        $functionCallingMode = $currentTools !== []
+            ? GoogleShared::resolveGoogleFunctionCallingMode($currentTools, $options?->toolChoice, $supportsStrictMode)
+            : null;
+
+        if ($currentTools !== []) {
+            $config['tools'] = GoogleShared::convertTools($currentTools, false, $supportsStrictMode);
+        }
+
+        if ($functionCallingMode !== null) {
+            $config['toolConfig'] = ['functionCallingConfig' => ['mode' => $functionCallingMode]];
+        }
+
+        // Upstream: `options.thinking?.enabled && model.reasoning` sends the asked-for config, and
+        // `model.reasoning && options.thinking && !options.thinking.enabled` the disabled one — so
+        // options with no `thinking` at all send no `thinkingConfig`.
+        if ($model->reasoning && $options?->thinkingEnabled !== null) {
+            $config['thinkingConfig'] = $this->thinking($model, $options);
+        }
+
+        if ($options?->signal?->aborted() ?? false) {
+            throw new ProviderError('Request aborted');
+        }
+
+        return [
+            'model' => $model->id,
+            'contents' => GoogleShared::contents($model, $context),
+            'config' => $config,
+        ];
+    }
+
+    /**
+     * The SDK's `generateContentParametersToMldev()` for the fields a request carries: `contents`,
+     * then what `generateContentConfigToMldev()` lifts out of `config` to the top level
+     * (`serviceTier`, `systemInstruction` — a string becomes `{parts: [{text}], role: "user"}`, as
+     * `tContent()` makes it — `safetySettings`, `tools`, `toolConfig`, `cachedContent`), and
+     * `generationConfig` with the rest. Keys the SDK does not know stay out, as they do there;
+     * the parts and schemas themselves are sent as they are, which is the shape they already have.
+     *
+     * @param array<string, mixed> $params
+     * @return array<string, mixed>
+     */
+    private static function paramsToWire(array $params): array
+    {
+        $wire = [];
+
+        if (($params['contents'] ?? null) !== null) {
+            $wire['contents'] = $params['contents'];
+        }
+
+        $config = $params['config'] ?? null;
+
+        if (!is_array($config)) {
+            return $wire;
+        }
+
+        $generation = [];
+
+        foreach ($config as $key => $value) {
+            if ($value === null) {
+                continue;
+            }
+
+            match ($key) {
+                'systemInstruction' => $wire['systemInstruction'] = is_string($value)
+                    ? ['parts' => [['text' => $value]], 'role' => 'user']
+                    : $value,
+                'serviceTier', 'safetySettings', 'tools', 'toolConfig', 'cachedContent' => $wire[$key] = $value,
+                'temperature', 'topP', 'topK', 'candidateCount', 'maxOutputTokens', 'stopSequences',
+                'responseLogprobs', 'logprobs', 'presencePenalty', 'frequencyPenalty', 'seed',
+                'responseMimeType', 'responseSchema', 'responseJsonSchema', 'responseModalities',
+                'mediaResolution', 'speechConfig', 'audioTimestamp', 'thinkingConfig', 'imageConfig',
+                'enableEnhancedCivicAnswers' => $generation[$key] = $value,
+                default => null,
+            };
+        }
+
+        $wire['generationConfig'] = $generation === [] ? new \stdClass() : $generation;
+
+        return $wire;
     }
 
     /** @param array<string, mixed> $body */
@@ -286,56 +468,11 @@ final class Google
         return $json;
     }
 
-    /** @return array<string, mixed> */
-    private function body(Model $model, Context $context, ?GoogleOptions $options): array
-    {
-        $body = ['contents' => GoogleShared::contents($model, $context)];
-        $config = [];
-
-        if ($options?->temperature !== null) {
-            $config['temperature'] = $options->temperature;
-        }
-
-        if ($options?->maxTokens !== null) {
-            $config['maxOutputTokens'] = $options->maxTokens;
-        }
-
-        if ($context->systemPrompt !== null && $context->systemPrompt !== '') {
-            $body['systemInstruction'] = GoogleShared::systemInstruction($context->systemPrompt);
-        }
-
-        // Upstream's `buildParams()`: Gemini 3+ takes strict tools, and a strict tool makes the
-        // calling mode `VALIDATED` unless the caller said `none` or `any`. The schema goes as
-        // `parametersJsonSchema`, full JSON Schema as written (`convertTools(tools, false, …)`).
-        $supportsStrictMode = GoogleShared::supportsGoogleStrictToolSampling($model->id);
-        $functionCallingMode = $context->tools !== []
-            ? GoogleShared::resolveGoogleFunctionCallingMode($context->tools, $options?->toolChoice, $supportsStrictMode)
-            : null;
-
-        if ($context->tools !== []) {
-            $body['tools'] = GoogleShared::convertTools($context->tools, false, $supportsStrictMode);
-        }
-
-        if ($functionCallingMode !== null) {
-            $body['toolConfig'] = ['functionCallingConfig' => ['mode' => $functionCallingMode]];
-        }
-
-        if ($model->reasoning) {
-            $config['thinkingConfig'] = $this->thinking($model, $options);
-        }
-
-        if ($config !== []) {
-            $body['generationConfig'] = $config;
-        }
-
-        return $body;
-    }
-
     /**
      * What to tell Gemini about thinking.
      *
-     * Saying nothing is not the same as saying no: Gemini thinks by default, so a turn
-     * that did not ask for it has to ask for none — upstream's `getDisabledGoogleThinkingConfig()`,
+     * Saying no is not saying nothing: Gemini thinks by default, so a turn that asked for no
+     * thinking has to ask for none — upstream's `getDisabledGoogleThinkingConfig()`,
      * which is a zero budget except for a level model that has no `off`, which gets the lowest
      * level it has. A level model takes a level and ignores a budget; 2.5 takes a budget.
      * `Stream` works out which; this sends whichever arrived.
@@ -344,7 +481,7 @@ final class Google
      */
     private function thinking(Model $model, ?GoogleOptions $options): array
     {
-        if ($options === null || !$options->thinkingEnabled) {
+        if ($options === null || $options->thinkingEnabled !== true) {
             return GoogleShared::disabledGoogleThinkingConfig($model);
         }
 

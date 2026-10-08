@@ -16,7 +16,9 @@ use Pig\Agent\QueueMode;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
-use Pig\Ai\Context;
+use Pig\Ai\SystemMessage;
+use Pig\Ai\TranscriptContext;
+use Pig\Ai\Utils\Transcript;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\Model;
 use Pig\Ai\ReasoningEffort;
@@ -40,7 +42,7 @@ final class AgentTest extends TestCase
     /** @var list<SimpleStreamOptions> every options object the provider was called with */
     private array $options = [];
 
-    /** @var list<Context> every context the provider was called with */
+    /** @var list<TranscriptContext> every context the provider was called with */
     private array $contexts = [];
 
     /**
@@ -203,16 +205,17 @@ final class AgentTest extends TestCase
             }
         };
 
-        $agent->setSystemPrompt('be brief');
+        // No `setSystemPrompt()` any more: upstream's `state.systemPrompt` is read-only, replayed from
+        // the transcript's system messages, so the prompt is set by a system message.
         $agent->setThinkingLevel(ThinkingLevel::High);
         $agent->setTools([$tool]);
-        $agent->replaceMessages([new UserMessage('one')]);
+        $agent->replaceMessages([new SystemMessage('be brief'), new UserMessage('one')]);
         $agent->appendMessage(new UserMessage('two'));
 
-        $this->assertSame('be brief', $agent->state->systemPrompt);
+        $this->assertSame('be brief', $agent->state->systemPrompt());
         $this->assertSame(ThinkingLevel::High, $agent->state->thinkingLevel);
         $this->assertSame([$tool], $agent->state->tools);
-        $this->assertCount(2, $agent->state->messages);
+        $this->assertCount(3, $agent->state->messages);
 
         $agent->clearMessages();
 
@@ -254,8 +257,10 @@ final class AgentTest extends TestCase
         Async::run(fn () => $agent->prompt('hi'));
 
         $this->assertCount(2, $this->contexts);
-        $this->assertSame([], $this->contexts[0]->tools, 'nothing declared on the first request');
-        $this->assertSame(['found_later'], array_map(static fn ($t) => $t->name, $this->contexts[1]->tools), 'and declared on the second, in the same run');
+        // Declared by a system message the loop puts in before the second request
+        // (`declareToolChanges()`), so the transcript's replayed tools are what each request had.
+        $this->assertSame([], Transcript::getCurrentTools($this->contexts[0]->messages), 'nothing declared on the first request');
+        $this->assertSame(['found_later'], array_map(static fn ($t) => $t->name, Transcript::getCurrentTools($this->contexts[1]->messages)), 'and declared on the second, in the same run');
     }
 
     public function testReplacingMessagesTakesACopyAndReindexesIt(): void
@@ -436,17 +441,93 @@ final class AgentTest extends TestCase
         $this->assertNull($agent->state->error);
     }
 
+    public function testTheInitialPromptAndToolsBecomeTheLeadingSystemMessage(): void
+    {
+        $tool = new class implements \Pig\Agent\AgentTool {
+            public function definition(): \Pig\Ai\Tool
+            {
+                return new \Pig\Ai\Tool('read', 'Read', ['type' => 'object']);
+            }
+
+            public function label(): string
+            {
+                return 'Read';
+            }
+
+            public function execute(string $toolCallId, array $arguments, ?\Pig\Async\AbortSignal $signal = null, ?Closure $onUpdate = null): \Pig\Agent\AgentToolResult
+            {
+                return new \Pig\Agent\AgentToolResult([]);
+            }
+        };
+
+        // Upstream's `createMutableAgentState()`: unless the messages already start with one.
+        $state = new \Pig\Agent\AgentState('be brief', tools: [$tool]);
+
+        $this->assertCount(1, $state->messages);
+        $this->assertInstanceOf(SystemMessage::class, $state->messages[0]);
+        $this->assertSame(0, $state->messages[0]->timestamp);
+        $this->assertSame(['read'], array_map(static fn ($t) => $t->name, $state->messages[0]->toolsAdded ?? []));
+        $this->assertSame('be brief', $state->systemPrompt());
+
+        $kept = new SystemMessage('already');
+        $this->assertSame([$kept], (new \Pig\Agent\AgentState('ignored', messages: [$kept]))->messages);
+        $this->assertSame([], (new \Pig\Agent\AgentState())->messages, 'neither prompt nor tools is no message');
+    }
+
+    public function testATranscriptOfOnlySystemMessagesHasNothingToContinueFrom(): void
+    {
+        $agent = $this->agent([]);
+        $agent->replaceMessages([new SystemMessage('be brief')]);
+
+        $this->assertThrows(
+            AgentError::class,
+            static fn () => Async::run(static fn () => $agent->continue()),
+            'No messages to continue from',
+        );
+    }
+
+    public function testTheDefaultConversionSendsTheSystemMessages(): void
+    {
+        $agent = $this->agent(['ok']);
+        $agent->replaceMessages([new SystemMessage('be brief')]);
+
+        Async::run(static fn () => $agent->prompt('hi'));
+
+        $this->assertInstanceOf(SystemMessage::class, $this->contexts[0]->messages[0]);
+        $this->assertSame('be brief', Transcript::getCurrentSystemPrompt($this->contexts[0]->messages));
+    }
+
+    public function testPrepareNextTurnWithContextIsAskedBetweenTurnsWithTheRunsSignal(): void
+    {
+        $asked = [];
+        $agent = $this->agent(['first', 'second'], $this->queuesOneFollowUpOnce(), [
+            'prepareNextTurnWithContext' => static function (\Pig\Agent\PrepareNextTurnContext $turn, ?\Pig\Async\AbortSignal $signal) use (&$asked): \Pig\Agent\AgentLoopTurnUpdate {
+                $asked[] = [$turn->message->content[0]->text ?? null, $signal !== null];
+
+                return new \Pig\Agent\AgentLoopTurnUpdate(messages: [new SystemMessage('', ['note' => 'between turns'])]);
+            },
+        ]);
+
+        Async::run(static fn () => $agent->prompt('hi'));
+
+        $this->assertSame([['first', true]], $asked);
+        $this->assertSame(['note' => 'between turns'], Transcript::getCurrentSystemMessage($this->contexts[1]->messages)?->sections);
+    }
+
     public function testResetForgetsTheConversationButKeepsTheSetup(): void
     {
         $agent = $this->agent(['ok']);
-        $agent->setSystemPrompt('be brief');
+        $agent->replaceMessages([new SystemMessage('be brief')]);
 
         Async::run(static fn () => $agent->prompt('hi'));
         $agent->followUp(new UserMessage('later'));
         $agent->reset();
 
-        $this->assertSame([], $agent->state->messages);
-        $this->assertSame('be brief', $agent->state->systemPrompt);
+        // Upstream's `reset()` keeps "the replayed prompt/tool baseline": the one system message
+        // `getCurrentSystemMessage()` replays from the transcript.
+        $this->assertCount(1, $agent->state->messages);
+        $this->assertInstanceOf(SystemMessage::class, $agent->state->messages[0]);
+        $this->assertSame('be brief', $agent->state->systemPrompt());
         $this->assertNotNull($agent->state->model);
     }
 
@@ -488,7 +569,7 @@ final class AgentTest extends TestCase
     {
         $index = 0;
 
-        return function (Model $model, Context $context, SimpleStreamOptions $options) use (
+        return function (Model $model, TranscriptContext $context, SimpleStreamOptions $options) use (
             $answers,
             $hook,
             &$index,
@@ -501,6 +582,21 @@ final class AgentTest extends TestCase
             }
 
             return $this->replay($answers[$index++] ?? throw new RuntimeException('out of scripted answers'));
+        };
+    }
+
+    /** @return Closure(Agent): void */
+    private function queuesOneFollowUpOnce(): Closure
+    {
+        $queued = false;
+
+        return static function (Agent $agent) use (&$queued): void {
+            if ($queued) {
+                return;
+            }
+
+            $queued = true;
+            $agent->followUp(new UserMessage('and this'));
         };
     }
 

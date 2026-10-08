@@ -25,6 +25,7 @@ use Pig\Ai\ThinkingContent;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\TranscriptContext;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\CustomTools\CustomTool;
@@ -161,7 +162,7 @@ final class PrintModeTest extends TestCase
         return (int) Async::run(static fn (): int => $printing->run($messages, $images));
     }
 
-    private function provider(Model $model, Context $context, SimpleStreamOptions $options): AssistantMessageEventStream
+    private function provider(Model $model, TranscriptContext $context, SimpleStreamOptions $options): AssistantMessageEventStream
     {
         $text = array_shift($this->answers) ?? throw new RuntimeException('out of scripted answers');
         $stream = new AssistantMessageEventStream();

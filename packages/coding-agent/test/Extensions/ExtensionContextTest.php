@@ -462,7 +462,9 @@ PHP);
     {
         $agent = new Agent(new AgentOptions(streamFn: static fn () => new AssistantMessageEventStream(), apiKey: 'k'));
         $agent->setModel(new Model('test', 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000));
-        $agent->setSystemPrompt('You are a test pig.');
+        // The prompt is the transcript's system message now (upstream's read-only
+        // `state.systemPrompt`), so it is set by one.
+        $agent->replaceMessages([new \Pig\Ai\SystemMessage('You are a test pig.')]);
 
         $session = new AgentSession($agent, '/workspace', null, null, projectTrusted: false);
         $session->setMode('tui');

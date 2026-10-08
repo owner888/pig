@@ -1,0 +1,324 @@
+{
+ "scenario": {
+  "env": {
+   "AWS_ACCESS_KEY_ID": "AKID",
+   "AWS_SECRET_ACCESS_KEY": "SECRET",
+   "AWS_REGION": "us-west-2",
+   "AWS_BEDROCK_FORCE_HTTP1": "1"
+  },
+  "response": {
+   "frames": [
+    {
+     "headers": {
+      ":event-type": "messageStart",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"p\":\"abc\",\"role\":\"assistant\"}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockDelta",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\":0,\"delta\":{\"text\":\"Hel\"},\"p\":\"x\"}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockDelta",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\":0,\"delta\":{\"text\":\"lo\"}}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockStop",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\":0}"
+    },
+    {
+     "headers": {
+      ":event-type": "messageStop",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"stopReason\":\"end_turn\"}"
+    },
+    {
+     "headers": {
+      ":event-type": "metadata",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"usage\":{\"inputTokens\":10,\"outputTokens\":3,\"totalTokens\":13},\"metrics\":{\"latencyMs\":5}}"
+    }
+   ]
+  },
+  "model": {
+   "id": "global.openai.gpt-6-sol",
+   "name": "GPT-6 Sol",
+   "api": "bedrock-converse-stream",
+   "provider": "amazon-bedrock",
+   "baseUrl": "SERVER",
+   "reasoning": true,
+   "input": [
+    "text",
+    "image"
+   ],
+   "cost": {
+    "input": 1,
+    "output": 2,
+    "cacheRead": 0.1,
+    "cacheWrite": 1.25
+   },
+   "contextWindow": 200000,
+   "maxTokens": 64000,
+   "thinkingLevelMap": {
+    "off": "none"
+   }
+  },
+  "context": {
+   "systemPrompt": "sys",
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "   "
+      },
+      {
+       "type": "image",
+       "data": "/9j/anBlZ2RhdGE=",
+       "mimeType": "image/jpeg"
+      },
+      {
+       "type": "text",
+       "text": "look"
+      }
+     ],
+     "timestamp": 1
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "thinking",
+       "thinking": "unsigned thought"
+      },
+      {
+       "type": "thinking",
+       "thinking": "   ",
+       "thinkingSignature": "S"
+      },
+      {
+       "type": "text",
+       "text": ""
+      },
+      {
+       "type": "toolCall",
+       "id": "call|abc/def+ghi=",
+       "name": "read",
+       "arguments": {
+        "path": "x"
+       }
+      },
+      {
+       "type": "toolCall",
+       "id": "c2",
+       "name": "noargs",
+       "arguments": {}
+      }
+     ],
+     "api": "anthropic-messages",
+     "provider": "other",
+     "model": "other-model",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "toolUse",
+     "timestamp": 2
+    },
+    {
+     "role": "toolResult",
+     "toolCallId": "call|abc/def+ghi=",
+     "toolName": "read",
+     "content": [
+      {
+       "type": "text",
+       "text": "body"
+      }
+     ],
+     "isError": true,
+     "timestamp": 3
+    },
+    {
+     "role": "toolResult",
+     "toolCallId": "c2",
+     "toolName": "noargs",
+     "content": [
+      {
+       "type": "image",
+       "data": "iVBORw0KGgpmYWtlaW1hZ2U=",
+       "mimeType": "image/webp"
+      }
+     ],
+     "isError": false,
+     "timestamp": 4
+    },
+    {
+     "role": "assistant",
+     "content": [],
+     "api": "anthropic-messages",
+     "provider": "other",
+     "model": "other-model",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "toolUse",
+     "timestamp": 2
+    },
+    {
+     "role": "user",
+     "content": "go on",
+     "timestamp": 5
+    }
+   ],
+   "tools": [
+    {
+     "name": "read",
+     "description": "Read",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    },
+    {
+     "name": "noargs",
+     "description": "No args",
+     "parameters": {
+      "type": "object",
+      "properties": {}
+     }
+    }
+   ]
+  },
+  "options": {
+   "reasoning": "minimal",
+   "toolChoice": "none",
+   "temperature": 0.2
+  },
+  "now": 1767323045000
+ },
+ "upstream": {
+  "request": {
+   "line": "POST /model/global.openai.gpt-6-sol/converse-stream",
+   "headers": {
+    "amz-sdk-request": "attempt=1; max=3",
+    "authorization": "AWS4-HMAC-SHA256 Credential=AKID/D/us-west-2/bedrock/aws4_request, SignedHeaders=amz-sdk-invocation-id;amz-sdk-request;content-length;content-type;host;x-amz-content-sha256;x-amz-date;x-amz-user-agent",
+    "content-length": "756",
+    "content-type": "application/json",
+    "user-agent": "aws-sdk-js/3.1126.0 ua/2.1 lang/js api/bedrock-runtime#3.1126.0 m/N,E,e",
+    "x-amz-content-sha256": "1bafd9c2ea452a7021b42d7af7704db8c4c548ea5a55acf8f71501a66fd8326b",
+    "x-amz-user-agent": "aws-sdk-js/3.1126.0"
+   },
+   "body": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"image\":{\"format\":\"jpeg\",\"source\":{\"bytes\":\"/9j/anBlZ2RhdGE=\"}}},{\"text\":\"look\"}]},{\"role\":\"assistant\",\"content\":[{\"text\":\"unsigned thought\"},{\"toolUse\":{\"toolUseId\":\"call_abc_def_ghi_\",\"name\":\"read\",\"input\":{\"path\":\"x\"}}},{\"toolUse\":{\"toolUseId\":\"c2\",\"name\":\"noargs\",\"input\":{}}}]},{\"role\":\"user\",\"content\":[{\"toolResult\":{\"toolUseId\":\"call_abc_def_ghi_\",\"content\":[{\"text\":\"body\"}],\"status\":\"error\"}},{\"toolResult\":{\"toolUseId\":\"c2\",\"content\":[{\"image\":{\"format\":\"webp\",\"source\":{\"bytes\":\"iVBORw0KGgpmYWtlaW1hZ2U=\"}}}],\"status\":\"success\"}}]},{\"role\":\"user\",\"content\":[{\"text\":\"go on\"}]}],\"system\":[{\"text\":\"sys\"}],\"inferenceConfig\":{\"temperature\":0.2},\"additionalModelRequestFields\":{\"reasoning\":{\"effort\":\"low\"}}}"
+  },
+  "attempts": [
+   "attempt=1; max=3"
+  ],
+  "events": [
+   [
+    "start",
+    null,
+    null
+   ],
+   [
+    "text_start",
+    0,
+    null
+   ],
+   [
+    "text_delta",
+    0,
+    "Hel"
+   ],
+   [
+    "text_delta",
+    0,
+    "lo"
+   ],
+   [
+    "text_end",
+    0,
+    null
+   ],
+   [
+    "done",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "Hello"
+    }
+   ],
+   "api": "bedrock-converse-stream",
+   "provider": "amazon-bedrock",
+   "model": "global.openai.gpt-6-sol",
+   "usage": {
+    "input": 10,
+    "output": 3,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 13,
+    "cost": {
+     "input": 9.999999999999999e-06,
+     "output": 6e-06,
+     "cacheRead": 0,
+     "cacheWrite": 0,
+     "total": 1.6e-05
+    }
+   },
+   "stopReason": "stop",
+   "rawStopReason": "end_turn"
+  }
+ }
+}

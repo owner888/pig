@@ -14,6 +14,7 @@ use Pig\Async\AbortController;
 use Pig\Async\AbortError;
 use Pig\Async\Async;
 use Pig\Async\Loop;
+use Pig\Async\SocketError;
 use Pig\Test\AssertsThrows;
 use Pig\Test\CannedServer;
 
@@ -28,6 +29,12 @@ final class HttpClientTest extends TestCase
     {
         Loop::reset();
         $this->server = new CannedServer();
+    }
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        HttpClient::useIdleTimeout(HttpClient::DEFAULT_IDLE_TIMEOUT);
     }
 
     public function testReadsStatusHeadersAndBody(): void
@@ -351,6 +358,38 @@ final class HttpClientTest extends TestCase
             HttpError::class,
             static fn () => Async::run(static fn () => (new HttpClient(5.0))->send(new Request('GET', $url))),
             'Connection closed before the response head was complete',
+        );
+    }
+
+    public function testTheIdleTimeoutIsFiveMinutesUnlessTheSettingSaysOtherwise(): void
+    {
+        // Upstream's `DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000`. pig used to give a streaming body
+        // 60 seconds between two reads, so a model that thought for longer than a minute before
+        // its next token failed with "Socket timed out after 60.0s".
+        $this->assertSame(300.0, HttpClient::DEFAULT_IDLE_TIMEOUT);
+        $this->assertSame(300.0, HttpClient::idleTimeout());
+
+        HttpClient::useIdleTimeout(-1);
+        $this->assertSame(0.0, HttpClient::idleTimeout(), 'nothing below 0, which is "disabled"');
+    }
+
+    public function testAClientWithoutATimeoutOfItsOwnWaitsBetweenReadsAsLongAsTheSettingSays(): void
+    {
+        $url = $this->server->start([
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+            "5\r\nHello\r\n",
+            // …and then nothing, ever.
+        ], closeAfter: false);
+        HttpClient::useIdleTimeout(0.1);
+
+        $this->assertThrows(
+            SocketError::class,
+            static fn () => Async::run(static function () use ($url): void {
+                foreach ((new HttpClient())->send(new Request('GET', $url))->body as $piece) {
+                    // The first chunk arrives; the wait for the second is the idle timeout.
+                }
+            }),
+            'Socket timed out after 0.1s',
         );
     }
 }

@@ -9,7 +9,7 @@ use Pig\Ai\Utils\MessageJson;
 /**
  * Session entries to JSON and back.
  *
- * The three message types of `Pig\Ai` are `Ai\Utils\MessageJson`'s, and this delegates them: the
+ * The four message types of `Pig\Ai` are `Ai\Utils\MessageJson`'s, and this delegates them: the
  * same shape goes to a session file, to an RPC host and to `Agent\StreamProxy`'s gateway, and
  * `agent-core` cannot reach into this package to get it. What is left here is the app's own roles
  * — a compaction summary, a branch summary, a hook message, a bash execution — plus the `encodeContent()`,
@@ -40,6 +40,7 @@ final class SessionCodec
                 'tokensBefore' => $message->tokensBefore,
                 'firstKeptEntryId' => $message->firstKeptEntryId,
                 'fromHook' => $message->fromHook,
+                ...($message->systemMessage === null ? [] : ['systemMessage' => MessageJson::encode($message->systemMessage)]),
                 'timestamp' => $message->timestamp,
             ],
             $message instanceof BranchSummary => [
@@ -99,6 +100,9 @@ final class SessionCodec
                 (int) ($entry['replaced'] ?? 0),
                 $timestamp,
                 ($entry['fromHook'] ?? false) === true,
+                is_array($entry['systemMessage'] ?? null) && ($entry['systemMessage']['role'] ?? null) === 'system'
+                    ? MessageJson::decode($entry['systemMessage'])
+                    : null,
             ),
             'branchSummary' => new BranchSummary(
                 (string) ($entry['summary'] ?? ''),

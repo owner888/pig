@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Extension;
 
-use Pig\Ai\Context;
 use Pig\Ai\Model;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StreamOptions;
+use Pig\Ai\TranscriptContext;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 
 /**
@@ -30,6 +30,11 @@ interface StreamApi
      */
     public function translate(Model $model, ?SimpleStreamOptions $options, string $apiKey): StreamOptions;
 
-    /** Returns at once; the response fills in as it arrives. */
-    public function stream(Model $model, Context $context, StreamOptions $options): AssistantMessageEventStream;
+    /**
+     * Returns at once; the response fills in as it arrives.
+     *
+     * The context is a transcript, as upstream's custom APIs receive: the prompt and the tools are
+     * its system messages (`Utils\Transcript`), not fields beside them.
+     */
+    public function stream(Model $model, TranscriptContext $context, StreamOptions $options): AssistantMessageEventStream;
 }

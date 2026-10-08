@@ -1,0 +1,463 @@
+{
+ "scenario": {
+  "now": 1767323045000,
+  "env": {
+   "AWS_ACCESS_KEY_ID": "AKIDEXAMPLE",
+   "AWS_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+   "AWS_SESSION_TOKEN": "SESSIONTOKEN",
+   "AWS_REGION": "us-west-2",
+   "AWS_BEDROCK_FORCE_HTTP1": "1"
+  },
+  "model": {
+   "id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+   "name": "Claude Sonnet 4.5 (US)",
+   "api": "bedrock-converse-stream",
+   "provider": "amazon-bedrock",
+   "baseUrl": "SERVER",
+   "reasoning": true,
+   "input": [
+    "text",
+    "image"
+   ],
+   "cost": {
+    "input": 3,
+    "output": 15,
+    "cacheRead": 0.3,
+    "cacheWrite": 3.75
+   },
+   "contextWindow": 200000,
+   "maxTokens": 64000,
+   "compat": {
+    "supportsStrictMode": true
+   }
+  },
+  "context": {
+   "systemPrompt": "You are terse.",
+   "tools": [
+    {
+     "name": "read",
+     "description": "Read a file",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path"
+      ]
+     }
+    },
+    {
+     "name": "strict_one",
+     "description": "Strict",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "v": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "v"
+      ]
+     },
+     "constrainedSampling": {
+      "type": "json_schema",
+      "strict": "require"
+     }
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "look"
+      },
+      {
+       "type": "image",
+       "data": "iVBORw0KGgpmYWtlaW1hZ2U=",
+       "mimeType": "image/png"
+      }
+     ],
+     "timestamp": 1
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "thinking",
+       "thinking": "hmm",
+       "thinkingSignature": "SIG1"
+      },
+      {
+       "type": "thinking",
+       "thinking": "",
+       "thinkingSignature": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJw==",
+       "redacted": true
+      },
+      {
+       "type": "text",
+       "text": "Reading."
+      },
+      {
+       "type": "toolCall",
+       "id": "toolu_01|weird id!",
+       "name": "read",
+       "arguments": {
+        "path": "a.txt",
+        "": "x"
+       }
+      }
+     ],
+     "api": "bedrock-converse-stream",
+     "provider": "amazon-bedrock",
+     "model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+     "usage": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 0,
+      "cost": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "total": 0
+      }
+     },
+     "stopReason": "toolUse",
+     "timestamp": 2
+    },
+    {
+     "role": "toolResult",
+     "toolCallId": "toolu_01|weird id!",
+     "toolName": "read",
+     "content": [
+      {
+       "type": "text",
+       "text": "file body"
+      },
+      {
+       "type": "image",
+       "data": "iVBORw0KGgpmYWtlaW1hZ2U=",
+       "mimeType": "image/png"
+      }
+     ],
+     "isError": false,
+     "timestamp": 3
+    },
+    {
+     "role": "user",
+     "content": "thanks",
+     "timestamp": 4
+    }
+   ]
+  },
+  "simple": true,
+  "options": {
+   "reasoning": "medium",
+   "maxTokens": 4000,
+   "temperature": 0.5,
+   "cacheRetention": "long",
+   "toolChoice": "auto"
+  },
+  "response": {
+   "headers": {
+    "content-type": "application/vnd.amazon.eventstream",
+    "x-amzn-requestid": "rid-b2"
+   },
+   "frames": [
+    {
+     "headers": {
+      ":event-type": "messageStart",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"role\": \"assistant\", \"p\": \"ab\"}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockDelta",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 0, \"delta\": {\"reasoningContent\": {\"text\": \"Let me \"}}}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockDelta",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 0, \"delta\": {\"reasoningContent\": {\"text\": \"think.\"}}}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockDelta",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 0, \"delta\": {\"reasoningContent\": {\"signature\": \"SIGPART1\"}}}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockDelta",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 0, \"delta\": {\"reasoningContent\": {\"signature\": \"SIGPART2\"}}}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockStop",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 0}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockDelta",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 1, \"delta\": {\"reasoningContent\": {\"redactedContent\": \"YWJjZGVmZw==\"}}}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockDelta",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 1, \"delta\": {\"reasoningContent\": {\"redactedContent\": \"aGlq\"}}}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockStop",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 1}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockDelta",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 2, \"delta\": {\"text\": \"Sure.\"}}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockStop",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 2}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockStart",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 3, \"start\": {\"toolUse\": {\"toolUseId\": \"tooluse_X\", \"name\": \"read\"}}}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockDelta",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 3, \"delta\": {\"toolUse\": {\"input\": \"{\\\"pa\"}}}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockDelta",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 3, \"delta\": {\"toolUse\": {\"input\": \"th\\\":\\\"b.txt\\\"}\"}}}"
+    },
+    {
+     "headers": {
+      ":event-type": "contentBlockStop",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"contentBlockIndex\": 3}"
+    },
+    {
+     "headers": {
+      ":event-type": "messageStop",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"stopReason\": \"tool_use\"}"
+    },
+    {
+     "headers": {
+      ":event-type": "metadata",
+      ":content-type": "application/json",
+      ":message-type": "event"
+     },
+     "payload": "{\"usage\": {\"inputTokens\": 100, \"outputTokens\": 20, \"cacheReadInputTokens\": 30, \"cacheWriteInputTokens\": 40, \"totalTokens\": 190, \"cacheDetails\": [{\"ttl\": \"1h\", \"inputTokens\": 25}, {\"ttl\": \"5m\", \"inputTokens\": 15}]}, \"metrics\": {\"latencyMs\": 12}}"
+    }
+   ]
+  }
+ },
+ "upstream": {
+  "request": {
+   "line": "POST /model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream",
+   "headers": {
+    "amz-sdk-request": "attempt=1; max=3",
+    "authorization": "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/D/us-west-2/bedrock/aws4_request, SignedHeaders=amz-sdk-invocation-id;amz-sdk-request;content-length;content-type;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-user-agent",
+    "content-length": "1439",
+    "content-type": "application/json",
+    "user-agent": "aws-sdk-js/3.1126.0 ua/2.1 lang/js api/bedrock-runtime#3.1126.0 m/N,E,e",
+    "x-amz-content-sha256": "78759da71f18126b6a4335374b4550c6e630d410234ca53469a73445075f46ed",
+    "x-amz-security-token": "SESSIONTOKEN",
+    "x-amz-user-agent": "aws-sdk-js/3.1126.0"
+   },
+   "body": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"text\":\"look\"},{\"image\":{\"format\":\"png\",\"source\":{\"bytes\":\"iVBORw0KGgpmYWtlaW1hZ2U=\"}}}]},{\"role\":\"assistant\",\"content\":[{\"reasoningContent\":{\"reasoningText\":{\"text\":\"hmm\",\"signature\":\"SIG1\"}}},{\"reasoningContent\":{\"redactedContent\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJw==\"}},{\"text\":\"Reading.\"},{\"toolUse\":{\"toolUseId\":\"toolu_01|weird id!\",\"name\":\"read\",\"input\":{\"path\":\"a.txt\"}}}]},{\"role\":\"user\",\"content\":[{\"toolResult\":{\"toolUseId\":\"toolu_01|weird id!\",\"content\":[{\"text\":\"file body\"},{\"image\":{\"format\":\"png\",\"source\":{\"bytes\":\"iVBORw0KGgpmYWtlaW1hZ2U=\"}}}],\"status\":\"success\"}}]},{\"role\":\"user\",\"content\":[{\"text\":\"thanks\"},{\"cachePoint\":{\"type\":\"default\",\"ttl\":\"1h\"}}]}],\"system\":[{\"text\":\"You are terse.\"},{\"cachePoint\":{\"type\":\"default\",\"ttl\":\"1h\"}}],\"inferenceConfig\":{\"maxTokens\":12192,\"temperature\":0.5},\"toolConfig\":{\"tools\":[{\"toolSpec\":{\"name\":\"read\",\"inputSchema\":{\"json\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},\"description\":\"Read a file\"}},{\"toolSpec\":{\"name\":\"strict_one\",\"inputSchema\":{\"json\":{\"type\":\"object\",\"properties\":{\"v\":{\"type\":\"string\"}},\"required\":[\"v\"],\"additionalProperties\":false}},\"description\":\"Strict\",\"strict\":true}}],\"toolChoice\":{\"auto\":{}}},\"additionalModelRequestFields\":{\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":8192,\"display\":\"summarized\"},\"anthropic_beta\":[\"interleaved-thinking-2025-05-14\"]}}"
+  },
+  "attempts": [
+   "attempt=1; max=3"
+  ],
+  "events": [
+   [
+    "start",
+    null,
+    null
+   ],
+   [
+    "thinking_start",
+    0,
+    null
+   ],
+   [
+    "thinking_delta",
+    0,
+    "Let me "
+   ],
+   [
+    "thinking_delta",
+    0,
+    "think."
+   ],
+   [
+    "thinking_end",
+    0,
+    null
+   ],
+   [
+    "thinking_start",
+    1,
+    null
+   ],
+   [
+    "thinking_delta",
+    1,
+    "[Reasoning redacted]"
+   ],
+   [
+    "thinking_end",
+    1,
+    null
+   ],
+   [
+    "text_start",
+    2,
+    null
+   ],
+   [
+    "text_delta",
+    2,
+    "Sure."
+   ],
+   [
+    "text_end",
+    2,
+    null
+   ],
+   [
+    "toolcall_start",
+    3,
+    null
+   ],
+   [
+    "toolcall_delta",
+    3,
+    "{\"pa"
+   ],
+   [
+    "toolcall_delta",
+    3,
+    "th\":\"b.txt\"}"
+   ],
+   [
+    "toolcall_end",
+    3,
+    null
+   ],
+   [
+    "done",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "Let me think.",
+     "thinkingSignature": "SIGPART1SIGPART2"
+    },
+    {
+     "type": "thinking",
+     "thinking": "[Reasoning redacted]",
+     "thinkingSignature": "YWJjZGVmZ2hpag==",
+     "redacted": true
+    },
+    {
+     "type": "text",
+     "text": "Sure."
+    },
+    {
+     "type": "toolCall",
+     "id": "tooluse_X",
+     "name": "read",
+     "arguments": {
+      "path": "b.txt"
+     }
+    }
+   ],
+   "api": "bedrock-converse-stream",
+   "provider": "amazon-bedrock",
+   "model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+   "usage": {
+    "input": 100,
+    "output": 20,
+    "cacheRead": 30,
+    "cacheWrite": 40,
+    "totalTokens": 190,
+    "cost": {
+     "input": 0.00030000000000000003,
+     "output": 0.00030000000000000003,
+     "cacheRead": 9e-06,
+     "cacheWrite": 0.00020625,
+     "total": 0.00081525
+    },
+    "cacheWrite1h": 25
+   },
+   "stopReason": "toolUse",
+   "rawStopReason": "tool_use"
+  }
+ }
+}

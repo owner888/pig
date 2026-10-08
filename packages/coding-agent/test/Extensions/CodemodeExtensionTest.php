@@ -123,7 +123,7 @@ final class CodemodeExtensionTest extends TestCase
         $started = $this->start(['fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'direct']]);
 
         $this->assertSame(['bash', 'edit', 'mcp__fixture__echo', 'read', 'write'], self::toolNames($started));
-        $this->assertStringNotContainsString('- codemode:', $started->session->agent->state->systemPrompt);
+        $this->assertStringNotContainsString('- codemode:', $started->session->systemPrompt());
         $this->stop($started);
     }
 
@@ -134,7 +134,7 @@ final class CodemodeExtensionTest extends TestCase
         // The MCP tool is not on the model; codemode is, and it is the way to the MCP tool.
         $this->assertSame(['bash', 'codemode', 'edit', 'read', 'write'], self::toolNames($started));
 
-        $prompt = $started->session->agent->state->systemPrompt;
+        $prompt = $started->session->systemPrompt();
         $this->assertStringContainsString('- codemode: Run PHP that calls other tools', $prompt, "upstream's promptSnippet, in the Available tools list");
         $this->assertStringContainsString('- Use codemode to batch independent tool calls (parallel_settled), chain them, or filter large output', $prompt, "and its guideline");
 

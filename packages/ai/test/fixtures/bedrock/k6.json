@@ -1,0 +1,133 @@
+{
+ "scenario": {
+  "env": {
+   "AWS_BEDROCK_FORCE_HTTP1": "1",
+   "AWS_PROFILE": "missing",
+   "AWS_REGION": "us-west-2"
+  },
+  "model": {
+   "id": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+   "name": "Claude Sonnet 4.5",
+   "api": "bedrock-converse-stream",
+   "provider": "amazon-bedrock",
+   "baseUrl": "SERVER",
+   "reasoning": true,
+   "input": [
+    "text",
+    "image"
+   ],
+   "cost": {
+    "input": 3,
+    "output": 15,
+    "cacheRead": 0.3,
+    "cacheWrite": 3.75
+   },
+   "contextWindow": 200000,
+   "maxTokens": 64000
+  },
+  "context": {
+   "systemPrompt": "Be brief.",
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi",
+     "timestamp": 0
+    }
+   ]
+  },
+  "options": {
+   "maxTokens": 1000
+  },
+  "now": 1767323045000,
+  "awsConfigFile": "FIXTURES/aws2/config",
+  "awsCredentialsFile": "FIXTURES/aws2/credentials",
+  "responses": [
+   {
+    "frames": [
+     {
+      "headers": {
+       ":event-type": "messageStart",
+       ":content-type": "application/json",
+       ":message-type": "event"
+      },
+      "payload": "{\"p\":\"abc\",\"role\":\"assistant\"}"
+     },
+     {
+      "headers": {
+       ":event-type": "contentBlockDelta",
+       ":content-type": "application/json",
+       ":message-type": "event"
+      },
+      "payload": "{\"contentBlockIndex\":0,\"delta\":{\"text\":\"Hel\"},\"p\":\"x\"}"
+     },
+     {
+      "headers": {
+       ":event-type": "contentBlockDelta",
+       ":content-type": "application/json",
+       ":message-type": "event"
+      },
+      "payload": "{\"contentBlockIndex\":0,\"delta\":{\"text\":\"lo\"}}"
+     },
+     {
+      "headers": {
+       ":event-type": "contentBlockStop",
+       ":content-type": "application/json",
+       ":message-type": "event"
+      },
+      "payload": "{\"contentBlockIndex\":0}"
+     },
+     {
+      "headers": {
+       ":event-type": "messageStop",
+       ":content-type": "application/json",
+       ":message-type": "event"
+      },
+      "payload": "{\"stopReason\":\"end_turn\"}"
+     },
+     {
+      "headers": {
+       ":event-type": "metadata",
+       ":content-type": "application/json",
+       ":message-type": "event"
+      },
+      "payload": "{\"usage\":{\"inputTokens\":10,\"outputTokens\":3,\"totalTokens\":13},\"metrics\":{\"latencyMs\":5}}"
+     }
+    ]
+   }
+  ]
+ },
+ "upstream": {
+  "request": null,
+  "attempts": [],
+  "events": [
+   [
+    "error",
+    null,
+    null
+   ]
+  ],
+  "message": {
+   "role": "assistant",
+   "content": [],
+   "api": "bedrock-converse-stream",
+   "provider": "amazon-bedrock",
+   "model": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+   "usage": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 0,
+    "cost": {
+     "input": 0,
+     "output": 0,
+     "cacheRead": 0,
+     "cacheWrite": 0,
+     "total": 0
+    }
+   },
+   "stopReason": "error",
+   "errorMessage": "Could not load credentials from any providers"
+  }
+ }
+}
