@@ -43,6 +43,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.37] - 2026-10-08
+
+### Changed
+
+- **Retired Outdated Gemini 3.x Overrides in Model Generator (`scripts/generate-models.php`)**:
+  - Removed superseded manual `fix` overrides for Gemini 3.x models (`gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-pro-preview`, `gemini-3.1-pro-preview-customtools`) as models.dev now natively catalogs their verified reasoning effort options and constructs identical `thinkingLevelMap` instances.
+  - Streamlined `GenerateModelsTest` to align with the retired overrides while maintaining full test coverage.
+
 ## [0.4.36] - 2026-10-08
 
 ### New Features

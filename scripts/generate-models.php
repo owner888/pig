@@ -219,20 +219,12 @@ const EFFORT_THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'ma
  *
  * Upstream's own corrections, ported with their reasons rather than their values alone, because a
  * number with no reason beside it is a number nobody can ever retire. Each is keyed
- * `provider/id`; `fix` adjusts a row models.dev does carry, `add` supplies one it does not.
+ * `provider/id`; each `add` supplies a row models.dev does not carry yet, and is dropped once it does.
  *
- * **The first `fix` here was retired by the mechanism rather than by anybody re-deriving it**,
- * which is the whole point of reporting a correction that changes nothing. It adjusted
- * `anthropic/claude-opus-4-5`'s cache pricing, which models.dev reported at three times the real
- * figure — 1.5/18.75 against 0.5/6.25 — and on the *second* regeneration the run said `the
- * override for anthropic/claude-opus-4-5 changes nothing any more`, because models.dev had fixed
- * its own number. Gone, in one line, with no guessing about whether it was still needed.
- *
- * **Copilot's extended windows used to be four `fix` entries here**, the ids that were both
- * listed and short at the time. Upstream keeps them as a set applied to every Copilot row
- * (`GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS`, `copilotTemporaryOverrides()`), which also catches an
- * id models.dev lists later, and five ids it listed at 1,050,000 rather than GitHub's 1,000,000 —
- * so they are a rule now, like upstream's, and not corrections.
+ * **Corrections used to live here too, and were retired.** Copilot's extended windows are a rule
+ * now, like upstream's (`GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS`, `copilotTemporaryOverrides()`);
+ * Opus 4.5's cache pricing and the five Gemini 3.x refused-level measurements were retired when
+ * models.dev started saying the same thing.
  *
  * @var array<string, array{kind: string, why: string, row: array<string, mixed>}>
  */
@@ -278,39 +270,6 @@ const OVERRIDES = [
             'input' => 1.5, 'out' => 7.5, 'cacheRead' => 0.0, 'cacheWrite' => 0.0,
             'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null],
         ],
-    ],
-    // Measured against the public endpoint on 2026-10-01, one request per model and level —
-    // see CLAUDE.md, "Gemini 3.x on the public endpoint". models.dev says nothing about which
-    // levels a model refuses, and the refusal is a 400 on every turn: `thinkingBudget: 0` is
-    // "Budget 0 is invalid. This model only works in thinking mode" on the Pro models and
-    // "invalid argument" on 3.5 Flash Lite; 3.7 and 3.8 Flash accept it and think anyway; and
-    // MINIMAL is "not supported for this model" on five of the nine. The map makes `off` and
-    // `minimal` clamp to `low` *before* a request is built, which is `ThinkingLevel::clampedFor()`'s
-    // job and the only place it can be done without a round trip to find out.
-    'google/gemini-3.8-flash' => [
-        'kind' => 'fix',
-        'why' => 'always thinks (budget 0 is accepted and ignored); MINIMAL is refused',
-        'row' => ['thinkingLevelMap' => ['off' => null, 'minimal' => null]],
-    ],
-    'google/gemini-3.7-flash' => [
-        'kind' => 'fix',
-        'why' => 'always thinks (budget 0 is accepted and ignored); MINIMAL is refused',
-        'row' => ['thinkingLevelMap' => ['off' => null, 'minimal' => null]],
-    ],
-    'google/gemini-3.5-flash-lite' => [
-        'kind' => 'fix',
-        'why' => 'budget 0 is refused as an invalid argument',
-        'row' => ['thinkingLevelMap' => ['off' => null]],
-    ],
-    'google/gemini-3.1-pro-preview' => [
-        'kind' => 'fix',
-        'why' => 'only works in thinking mode, and MINIMAL is refused',
-        'row' => ['thinkingLevelMap' => ['off' => null, 'minimal' => null]],
-    ],
-    'google/gemini-3.1-pro-preview-customtools' => [
-        'kind' => 'fix',
-        'why' => 'only works in thinking mode, and MINIMAL is refused',
-        'row' => ['thinkingLevelMap' => ['off' => null, 'minimal' => null]],
     ],
     // Upstream's own hand-added row: "Add Claude Haiku 5.5 until models.dev includes it. Prompts
     // over 100k input tokens are billed at 5x for the whole request."
@@ -874,41 +833,6 @@ function applyOverrides(array $rows, string $provider): array
         [$who, $id] = explode('/', $key, 2);
 
         if ($who !== $provider) {
-            continue;
-        }
-
-        if ($override['kind'] === 'fix') {
-            if (!isset($rows[$id])) {
-                // The override outlived what it was correcting, which is worth saying rather
-                // than carrying for ever.
-                printf("  ! the override for %s has nothing to correct any more\n", $key);
-
-                continue;
-            }
-
-            $fixed = [...$rows[$id], ...$override['row']];
-
-            // A level map merges into the one the row already has — upstream's
-            // `mergeThinkingLevelMap()` — rather than replacing it: the catalogue's verified
-            // efforts stay, and the measurement says only what it measured.
-            if (isset($rows[$id]['thinkingLevelMap'], $override['row']['thinkingLevelMap'])) {
-                $fixed['thinkingLevelMap'] = [...$rows[$id]['thinkingLevelMap'], ...$override['row']['thinkingLevelMap']];
-            }
-
-            // **A correction that changes nothing is the interesting case**, and the first
-            // version of this could not see it: a blind merge reports "corrected" whether or not
-            // the catalogue still has it wrong, so the day models.dev fixes its own figure this
-            // row becomes a no-op nobody retires. The `add` arm below already says when the
-            // catalogue has caught up; this is the same sentence for the other kind.
-            if ($fixed === $rows[$id]) {
-                printf("  ! the override for %s changes nothing any more: %s\n", $key, $override['why']);
-
-                continue;
-            }
-
-            $rows[$id] = $fixed;
-            printf("  · %s corrected: %s\n", $key, $override['why']);
-
             continue;
         }
 

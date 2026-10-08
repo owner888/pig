@@ -141,24 +141,6 @@ final class GenerateModelsTest extends TestCase
         self::assertStringContainsString("'gpt-6-sol' => ['GPT-6 Sol (catalogue)', Api::OpenAiResponses,", $output);
     }
 
-    public function testALevelTheEndpointRefusesIsMergedIntoTheRowsThinkingLevelMap(): void
-    {
-        $output = $this->generated();
-
-        // The measurement lives in the override; the row carries it under `thinkingLevelMap`, the
-        // key `Models` reads — merged over whatever the catalogue gave, as `mergeThinkingLevelMap()`.
-        self::assertStringContainsString('google/gemini-3.1-pro-preview corrected: only works in thinking mode', $output);
-        self::assertStringContainsString(
-            "'gemini-3.1-pro-preview' => ['Gemini 3.1 Pro Preview', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null]],",
-            $output,
-        );
-        // And a row with nothing to say keeps its nine cells.
-        self::assertStringContainsString(
-            "'gemini-plain' => ['Gemini Plain', 1_048_576, 65_536, false, true, 0.1, 0.4, 0.0, 0.0],",
-            $output,
-        );
-    }
-
     public function testGoogleRowsTakeUpstreamsGoogleThinkingLevelMap(): void
     {
         // `getGoogleThinkingLevelMap()`: the verified efforts when models.dev lists any — a Gemini
@@ -315,28 +297,6 @@ final class GenerateModelsTest extends TestCase
 
         // And the exclusion is per provider, so the rest of xAI is untouched.
         self::assertStringContainsString("'grok-x' => ['Grok X',", $output);
-    }
-
-    public function testACorrectionThatChangesNothingSaysSoRatherThanClaimingToCorrect(): void
-    {
-        // The day models.dev fixes its own figure, a blind merge would go on reporting
-        // "corrected" for ever and nobody would retire the override.
-        // Exactly what happened on the second real regeneration: the first `fix` here corrected
-        // Anthropic's cache pricing, models.dev fixed its own figure, the run said so, and the
-        // override was retired in one line rather than re-derived.
-        // The live case: models.dev now lists Gemini 3.1 Pro's efforts, and the map built from them
-        // already says what the measurement said.
-        $catalogue = self::catalogue();
-        $catalogue['google']['models']['gemini-3.1-pro-preview']['reasoning_options'] = [['type' => 'effort', 'values' => ['low', 'medium', 'high']]];
-        file_put_contents($this->fixture, (string) json_encode($catalogue));
-
-        $output = $this->generated();
-
-        self::assertStringContainsString(
-            'the override for google/gemini-3.1-pro-preview changes nothing any more',
-            $output,
-        );
-        self::assertStringNotContainsString('gemini-3.1-pro-preview corrected', $output);
     }
 
     public function testModelsDevsVerifiedEffortsAreWrittenAsTheRowsEffortLevelMap(): void

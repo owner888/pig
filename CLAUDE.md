@@ -10803,9 +10803,9 @@ Three things came out of it, and the first is worse than the question that was a
   and 3.5 Flash Lite, ignored on 3.7/3.8, honoured on the rest. So it is **data, per row**: the
   Google rows carry a `thinkingLevelMap` — the same machinery the Antigravity rows already use — and
   `ThinkingLevel::clampedFor()` moves `off` and `minimal` up to `low` *before* a request is built.
-  The measured refusals are `scripts/generate-models.php`'s `OVERRIDES`, each with the measurement
-  as its `why`, merged into the map the generator builds from models.dev's verified efforts
-  (upstream's `getGoogleThinkingLevelMap()`), so a regeneration does not lose them. A row with
+  The measured refusals were `scripts/generate-models.php` overrides until models.dev listed the
+  same efforts; the map is now built from them (upstream's `getGoogleThinkingLevelMap()`), and a
+  regeneration keeps it. A row with
   nothing to say keeps its nine cells.
 
 **And the generator's own report was lying about it**, which is worth more than the fix: the first
@@ -10820,8 +10820,7 @@ Verified end to end through `bin/pig -p` against the real endpoint: 3.1 Pro with
 answers (clamped to low), 3.8 Flash with `--thinking high` answers, 3.5 Flash with thinking off
 answers with no thoughts. Regression tests:
 `GoogleTest::testEveryGemini3ModelInTheTableTakesALevelAndNoneABudget`,
-`testAModelThatRefusesALevelSaysSoInItsRowRatherThanAtTheProvider`, and
-`GenerateModelsTest::testALevelTheEndpointRefusesIsWrittenAsATenthCellAndOnlyThere`.
+and `testAModelThatRefusesALevelSaysSoInItsRowRatherThanAtTheProvider`.
 
 ### Verified against the real deployment
 
