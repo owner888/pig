@@ -413,20 +413,66 @@ final class CustomModelsTest extends TestCase
         $this->assertNull($plain->compat->vercelGatewayRouting);
     }
 
+    /** Upstream's `supportsOpenAIGrammarTools`, the flag that sends a grammar tool as an OpenAI custom tool. */
+    public function testTheGrammarToolsFlagIsReadUnderUpstreamsName(): void
+    {
+        $model = $this->load(self::provider(['compat' => ['supportsOpenAIGrammarTools' => true]]))->models[0];
+
+        $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
+        $this->assertTrue($model->compat->grammarTools);
+    }
+
+    /**
+     * Upstream sends `openRouterRouting` as the request's `provider` field exactly as the file wrote
+     * it. Decoded into PHP arrays, a nested `{}` became `[]` — `"max_price": {}` went out as
+     * `"max_price": []`, which is neither what the file said nor a shape OpenRouter documents. The
+     * routing values are now read from an object-preserving decode, so the wire JSON is the file's.
+     */
+    public function testANestedEmptyObjectInARoutingValueStaysAnObjectOnTheWire(): void
+    {
+        $model = $this->load(self::provider([
+            'compat' => ['openRouterRouting' => ['max_price' => new \stdClass(), 'only' => []]],
+            'models' => [self::model(['compat' => ['openRouterRouting' => ['sort' => ['by' => 'price', 'partition' => new \stdClass()]]]])],
+        ]))->models[0];
+
+        $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
+        // An empty list stays a list, and an empty object an object, at every depth.
+        $this->assertSame(
+            '{"max_price":{},"only":[],"sort":{"by":"price","partition":{}}}',
+            json_encode($model->compat->openRouterRouting),
+        );
+
+        // The value itself is still the array every reader expects, `[]` when it is `{}`.
+        $empty = $this->load(self::provider(['compat' => ['openRouterRouting' => new \stdClass()]]))->models[0];
+        $this->assertInstanceOf(OpenAiCompat::class, $empty->compat);
+        $this->assertSame([], $empty->compat->openRouterRouting);
+    }
+
     /**
      * An `anthropic-messages` model's block is upstream's `AnthropicMessagesCompat`: the way to say
-     * a proxied Claude takes adaptive thinking only, now that nothing at request time reads the id.
+     * a proxied Claude takes adaptive thinking only, now that nothing at request time reads the id —
+     * and, under upstream's names, the three keys the Anthropic provider now reads besides:
+     * `supportsTemperature`, `supportsEagerToolInputStreaming` and `supportsMidConvoEffort`.
      */
     public function testAnAnthropicModelsCompatBlockIsAnthropicsOwn(): void
     {
         $model = $this->load(self::provider([
             'api' => 'anthropic-messages',
-            'models' => [self::model(['compat' => ['forceAdaptiveThinking' => true, 'supportsStrictTools' => true]])],
+            'models' => [self::model(['compat' => [
+                'forceAdaptiveThinking' => true,
+                'supportsStrictTools' => true,
+                'supportsTemperature' => false,
+                'supportsEagerToolInputStreaming' => false,
+                'supportsMidConvoEffort' => true,
+            ]])],
         ]))->models[0];
 
         $this->assertInstanceOf(AnthropicCompat::class, $model->compat);
         $this->assertTrue($model->compat->forceAdaptiveThinking);
         $this->assertTrue($model->compat->strictTools);
+        $this->assertFalse($model->compat->supportsTemperature);
+        $this->assertFalse($model->compat->supportsEagerToolInputStreaming);
+        $this->assertTrue($model->compat->supportsMidConvoEffort);
     }
 
     // ---- the key ---------------------------------------------------------------------------

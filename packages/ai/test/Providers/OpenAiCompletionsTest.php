@@ -1306,6 +1306,88 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertStringContainsString('copilot-vision-request: true', $head);
     }
 
+    // ---- grammar (custom) tools --------------------------------------------------------------
+
+    public function testAGrammarToolGoesOutAsACustomToolWhenTheCompatSaysTheEndpointTakesThem(): void
+    {
+        // Upstream's `convertTools()` grammar arm for chat completions — off unless a model's compat
+        // says `supportsOpenAIGrammarTools`, as nothing built in does for this API.
+        $this->send(new Context([new UserMessage('hi')], tools: [self::grammarTool()]), $this->model(compat: new OpenAiCompat(grammarTools: true)));
+
+        $this->assertSame([
+            'type' => 'custom',
+            'custom' => [
+                'name' => 'apply_patch',
+                'description' => 'Apply a patch',
+                'format' => ['type' => 'grammar', 'grammar' => ['syntax' => 'regex', 'definition' => '[a-z]+']],
+            ],
+        ], $this->server->receivedJson()['tools'][0]);
+
+        // And without the flag it is an ordinary function tool.
+        $this->server = new CannedServer();
+        $this->send(new Context([new UserMessage('hi')], tools: [self::grammarTool()]));
+        $this->assertSame('function', $this->server->receivedJson()['tools'][0]['type']);
+    }
+
+    public function testACustomToolCallDeltaBecomesArgumentsInTheToolsInputProperty(): void
+    {
+        // Upstream's `custom?.input` arm: the raw input accumulates into `{<property>: <input>}`, and
+        // the JSON deltas pig streams close with `"}` when the call ends.
+        $url = $this->serve([
+            ['choices' => [['delta' => ['tool_calls' => [['index' => 0, 'id' => 'call_1', 'type' => 'custom', 'custom' => ['name' => 'apply_patch', 'input' => 'ab']]]]]]],
+            ['choices' => [['delta' => ['tool_calls' => [['index' => 0, 'custom' => ['input' => 'c']]]]]]],
+            ['choices' => [['delta' => [], 'finish_reason' => 'tool_calls']]],
+        ]);
+
+        [$deltas, $message] = Async::run(function () use ($url): array {
+            $stream = (new OpenAiCompletions())->stream(
+                $this->model($url, compat: new OpenAiCompat(grammarTools: true)),
+                new Context([new UserMessage('patch it')], tools: [self::grammarTool()]),
+                new OpenAiOptions(apiKey: 'test-key'),
+            );
+            $deltas = [];
+
+            foreach ($stream as $event) {
+                if ($event instanceof \Pig\Ai\ToolCallDeltaEvent) {
+                    $deltas[] = $event->delta;
+                }
+            }
+
+            return [$deltas, $stream->result()->await()];
+        });
+
+        $this->assertSame(['{"patch":"ab', 'c', '"}'], $deltas);
+        $this->assertSame(['patch' => 'abc'], $message->toolCalls()[0]->arguments);
+        $this->assertSame('apply_patch', $message->toolCalls()[0]->name);
+    }
+
+    public function testAGrammarToolsCallGoesBackAsACustomToolCall(): void
+    {
+        $this->send(
+            new Context([
+                new UserMessage('patch it'),
+                $this->assistant([new ToolCall('call_1', 'apply_patch', ['patch' => 'abc'])]),
+                new ToolResultMessage('call_1', 'apply_patch', [new TextContent('done')], false),
+            ], tools: [self::grammarTool()]),
+            $this->model(compat: new OpenAiCompat(grammarTools: true)),
+        );
+
+        $this->assertSame(
+            [['id' => 'call_1', 'type' => 'custom', 'custom' => ['name' => 'apply_patch', 'input' => 'abc']]],
+            $this->server->receivedJson()['messages'][1]['tool_calls'],
+        );
+    }
+
+    private static function grammarTool(): Tool
+    {
+        return new Tool(
+            'apply_patch',
+            'Apply a patch',
+            ['type' => 'object', 'properties' => ['patch' => ['type' => 'string']], 'required' => ['patch']],
+            ['type' => 'grammar', 'variants' => ['openai_regex' => '[a-z]+']],
+        );
+    }
+
     // ---- scaffolding ---------------------------------------------------------------------
 
     /** @param list<mixed> $content */

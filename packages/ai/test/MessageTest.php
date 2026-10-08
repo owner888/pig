@@ -143,6 +143,9 @@ final class MessageTest extends TestCase
                     new DiagnosticErrorInfo('socket closed', 'Error', null, 'ECONNRESET'),
                 ),
             ],
+            // Upstream's `providerThinkingLevel`, which a managed-effort Anthropic model replays in
+            // front of this turn on every later request — lost on resume, the replay is lost.
+            'xhigh',
         );
 
         // Through a real JSON string, as a session file is, not just the array.
@@ -169,6 +172,7 @@ final class MessageTest extends TestCase
         $this->assertSame('socket closed', $decoded->diagnostics[1]->error?->message);
         $this->assertSame('ECONNRESET', $decoded->diagnostics[1]->error?->code);
         $this->assertNull($decoded->diagnostics[1]->details);
+        $this->assertSame('xhigh', $decoded->providerThinkingLevel);
 
         // And the absent parts of a diagnostic stay absent, as upstream's undefined ones do.
         $this->assertArrayNotHasKey('error', $encoded['diagnostics'][0]);
@@ -183,7 +187,7 @@ final class MessageTest extends TestCase
         // all of them unknown rather than zero or false.
         $encoded = MessageJson::encode($this->assistant([new ThinkingContent('hm', 'SIG'), new TextContent('hi')]));
 
-        foreach (['responseId', 'responseModel', 'endTurn', 'diagnostics'] as $key) {
+        foreach (['responseId', 'responseModel', 'endTurn', 'diagnostics', 'providerThinkingLevel'] as $key) {
             $this->assertArrayNotHasKey($key, $encoded);
         }
 

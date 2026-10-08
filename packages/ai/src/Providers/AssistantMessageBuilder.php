@@ -52,6 +52,8 @@ final class AssistantMessageBuilder
     /** @var list<AssistantMessageDiagnostic>|null */
     private ?array $diagnostics = null;
 
+    private ?string $providerThinkingLevel = null;
+
     private readonly int $timestamp;
 
     public function __construct(private readonly Model $model)
@@ -312,6 +314,12 @@ final class AssistantMessageBuilder
         return $this->responseModel;
     }
 
+    /** Upstream's `output.providerThinkingLevel`: the native effort this response was asked for. */
+    public function setProviderThinkingLevel(?string $level): void
+    {
+        $this->providerThinkingLevel = $level;
+    }
+
     /** Upstream's `appendAssistantMessageDiagnostic()`. */
     public function addDiagnostic(AssistantMessageDiagnostic $diagnostic): void
     {
@@ -340,6 +348,7 @@ final class AssistantMessageBuilder
             $this->responseModel,
             null,
             $this->diagnostics,
+            $this->providerThinkingLevel,
         );
     }
 

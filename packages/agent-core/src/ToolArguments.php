@@ -40,14 +40,29 @@ final class ToolArguments
             $arguments = $call->arguments;
         }
 
-        // Upstream's next two steps: `Value.Convert(tool.parameters, args)`, then — for a schema that
-        // is not a TypeBox one — `coerceWithJsonSchema(args, tool.parameters)`. Every pig schema is a
-        // plain JSON-schema array, so the second is the one that applies, and it is ported below
-        // line for line. `Value.Convert` is TypeBox's own and is not: pig has no TypeBox, and on a
-        // plain schema upstream runs both, the second being pi's re-statement of the first for
-        // schemas TypeBox did not build. Both convert the same primitives (a numeric string to a
-        // number, "true"/"false" to a boolean, a number or boolean to a string); where TypeBox's goes
-        // further, pig does not follow.
+        // Upstream's next step: `Value.Convert(tool.parameters, args)`, TypeBox's own conversion,
+        // which converts only the schema nodes TypeBox built — so for upstream's built-in tools
+        // (`Type.Object(…)`) it does real work, and for a plain JSON schema (an extension's, an MCP
+        // server's) it does nothing. pig has no TypeBox; `Tool::$typeBox` marks the built-ins, and
+        // `valueConvert()` below is the part of `Value.Convert` their schemas reach. It is not the
+        // same as the coercion after it: a null for a required string becomes "null" here and ""
+        // there, an empty string for a number becomes 0, "TRUE" and "1" are booleans, and a lone
+        // value where an array belongs is wrapped in one — measured against typebox 1.3.27, the
+        // version upstream pins. Its return value is ignored upstream (it mutates `args` in place);
+        // PHP arrays are values, so the result is kept instead.
+        if ($tool->typeBox) {
+            $converted = self::valueConvert($tool->parameters, $arguments);
+
+            if (is_array($converted)) {
+                $arguments = $converted;
+            }
+        }
+
+        // Then `coerceWithJsonSchema(args, tool.parameters)` "for a schema that is not a TypeBox
+        // one" — upstream's test is `Object.getOwnPropertySymbols(tool.parameters).includes(
+        // Symbol.for("TypeBox.Kind"))`, and typebox 1.x marks its schemas with a hidden `~kind`
+        // string property instead of that symbol, so the test is never true and **every** schema,
+        // the built-ins' included, goes through it. Ported line for line below.
         //
         // Upstream's non-object branch (`return validator.Check(coerced) ? coerced : args`, no
         // throw) cannot be reached here: the arguments are always an array, and no coercion turns an
@@ -149,6 +164,190 @@ final class ToolArguments
         }
 
         return $value;
+    }
+
+    // ---- TypeBox's `Value.Convert`, for the schemas the built-in tools use -----------------------
+
+    /**
+     * typebox 1.3.27's `Value.Convert` (`value/convert/*`), for the kinds pig's built-in tool schemas
+     * are made of: `Object`, `Array`, `String`, `Number`, `Integer`, `Boolean` and `Null`, each
+     * recognised here by its `type` (TypeBox recognises its own `~kind`, which a PHP array does not
+     * carry). Any other node — a union, a literal, an enum, a `$ref` — is left as it is, which is
+     * also what TypeBox does with a node it did not build. Each kind is its `From*` and `Try*`
+     * pair; a `Try*` that fails leaves the value unchanged.
+     */
+    private static function valueConvert(mixed $schema, mixed $value): mixed
+    {
+        if (!is_array($schema)) {
+            return $value;
+        }
+
+        return match ($schema['type'] ?? null) {
+            'object' => self::convertObject($schema, $value),
+            'array' => self::convertArray($schema, $value),
+            'string' => self::tryString($value) ?? $value,
+            'number' => self::tryNumber($value) ?? $value,
+            // `FromInteger`: `Math.trunc()` of what `TryNumber` gives.
+            'integer' => ($number = self::tryNumber($value)) === null ? $value : self::truncate($number),
+            'boolean' => ($boolean = self::tryBoolean($value)) === null ? $value : $boolean['value'],
+            'null' => self::tryNull($value) ? null : $value,
+            default => $value,
+        };
+    }
+
+    /**
+     * `FromObject`: an object's declared properties that it has, each converted against its own
+     * schema; then, when `additionalProperties` is a schema, the keys no property names. TypeBox
+     * matches keys with `new RegExp(`^${key}$`)`, which for the built-ins' plain names is equality.
+     * Anything that is not an object comes back unchanged.
+     *
+     * @param array<string, mixed> $schema
+     */
+    private static function convertObject(array $schema, mixed $value): mixed
+    {
+        if (!is_array($value) || (array_is_list($value) && $value !== [])) {
+            return $value;
+        }
+
+        $properties = is_array($schema['properties'] ?? null) ? $schema['properties'] : [];
+
+        foreach ($properties as $key => $property) {
+            if (array_key_exists((string) $key, $value)) {
+                $value[(string) $key] = self::valueConvert($property, $value[(string) $key]);
+            }
+        }
+
+        $additional = $schema['additionalProperties'] ?? null;
+
+        if (is_array($additional)) {
+            foreach ($value as $key => $propertyValue) {
+                if (!array_key_exists((string) $key, $properties)) {
+                    $value[$key] = self::valueConvert($additional, $propertyValue);
+                }
+            }
+        }
+
+        return $value;
+    }
+
+    /**
+     * `FromArray`: `TryArray` — an array as it is, **anything else wrapped in one** — then every
+     * item converted against `items`.
+     *
+     * @param array<string, mixed> $schema
+     * @return list<mixed>
+     */
+    private static function convertArray(array $schema, mixed $value): array
+    {
+        $items = is_array($value) && array_is_list($value) ? $value : [$value];
+
+        return array_map(static fn (mixed $item): mixed => self::valueConvert($schema['items'] ?? null, $item), $items);
+    }
+
+    /** `TryString`: a number or boolean as JS prints it, null as "null", a string as itself. */
+    private static function tryString(mixed $value): ?string
+    {
+        return match (true) {
+            is_bool($value) => $value ? 'true' : 'false',
+            is_int($value), is_float($value) => self::jsString($value),
+            $value === null => 'null',
+            is_string($value) => $value,
+            default => null,
+        };
+    }
+
+    /**
+     * `TryNumber`: a boolean as 1 or 0, a finite number as itself (`Guard.IsNumber` is
+     * `Number.isFinite`), null as 0, and a string by JS's unary `+` (so "" and "  " are 0), else
+     * "false"/"true" in any case, else a `123n` BigInt literal in the safe-integer range.
+     */
+    private static function tryNumber(mixed $value): int|float|null
+    {
+        if (is_bool($value)) {
+            return $value ? 1 : 0;
+        }
+
+        if (is_int($value) || is_float($value)) {
+            return is_finite((float) $value) ? $value : null;
+        }
+
+        if ($value === null) {
+            return 0;
+        }
+
+        if (!is_string($value)) {
+            return null;
+        }
+
+        // `+value`: JS's `Number()`, whose empty (or all-whitespace) string is 0.
+        $coerced = preg_match('/^[\s\x{00A0}\x{FEFF}]*$/u', $value) === 1 ? 0 : self::jsNumber($value);
+
+        if ($coerced !== null && is_finite((float) $coerced)) {
+            return $coerced;
+        }
+
+        $lowercase = strtolower($value);
+
+        if ($lowercase === 'false') {
+            return 0;
+        }
+
+        if ($lowercase === 'true') {
+            return 1;
+        }
+
+        // `TryBigInt`'s string arm; its integer and decimal patterns are numbers `+value` already
+        // took, so only the `n` suffix is left to match.
+        if (preg_match('/^-?(0|[1-9]\d*)n$/', $value) === 1) {
+            $digits = substr($value, 0, -1);
+
+            return abs((float) $digits) <= 9007199254740991 ? (int) $digits : null;
+        }
+
+        return null;
+    }
+
+    /**
+     * `TryBoolean`: 0 and 1 (numbers or the strings "0"/"1"), "false"/"true" in any case, null as
+     * false. Wrapped so that "failed" and `false` are different answers.
+     *
+     * @return array{value: bool}|null
+     */
+    private static function tryBoolean(mixed $value): ?array
+    {
+        return match (true) {
+            is_bool($value) => ['value' => $value],
+            (is_int($value) || is_float($value)) && $value == 0 => ['value' => false],
+            (is_int($value) || is_float($value)) && $value == 1 => ['value' => true],
+            $value === null => ['value' => false],
+            is_string($value) && strtolower($value) === 'false', $value === '0' => ['value' => false],
+            is_string($value) && strtolower($value) === 'true', $value === '1' => ['value' => true],
+            default => null,
+        };
+    }
+
+    /** `TryNull`: false, 0, null, and the strings "undefined", "null" (any case), "" and "0". */
+    private static function tryNull(mixed $value): bool
+    {
+        return match (true) {
+            is_bool($value) => $value === false,
+            is_int($value), is_float($value) => $value == 0,
+            $value === null => true,
+            is_string($value) => in_array(strtolower($value), ['undefined', 'null'], true) || $value === '' || $value === '0',
+            default => false,
+        };
+    }
+
+    /** `Math.trunc()`, as an int where the result fits in one. */
+    private static function truncate(int|float $number): int|float
+    {
+        if (is_int($number)) {
+            return $number;
+        }
+
+        $truncated = $number < 0 ? ceil($number) : floor($number);
+
+        return abs($truncated) < PHP_INT_MAX ? (int) $truncated : $truncated;
     }
 
     // ---- coercion: upstream's `coerceWithJsonSchema()` and its helpers ---------------------------

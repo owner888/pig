@@ -265,6 +265,7 @@ final class TransformMessages
             $message->responseModel,
             $message->endTurn,
             $message->diagnostics,
+            $message->providerThinkingLevel,
         );
     }
 

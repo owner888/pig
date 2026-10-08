@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Agent\Test;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Agent\InvalidToolArguments;
 use Pig\Agent\ToolArguments;
@@ -27,8 +28,79 @@ final class ToolArgumentsTest extends TestCase
         // Only an *optional* parameter's null means "left out". A required one is kept — and then
         // coerced like any other value: upstream's `coercePrimitiveByType(null, "string")` is "".
         // This test used to expect "path: must be string"; that was before the coercion step was
-        // ported, and upstream does not refuse it either.
+        // ported, and upstream does not refuse it either. A plain JSON schema — an extension's, an
+        // MCP server's — and so no `Value.Convert` first; a built-in tool's gives "null" instead,
+        // see `testABuiltInToolsArgumentsAreConvertedTheWayTypeBoxConvertsThem`.
         $this->assertSame(['path' => ''], $this->validate(['path' => null]));
+    }
+
+    /**
+     * Upstream's built-in tools are TypeBox schemas, and `validateToolArguments()` runs
+     * `Value.Convert` over their arguments before anything else touches them; that conversion is not
+     * `coerceWithJsonSchema()`'s, and pig used to give the built-ins the latter only. Every expected
+     * value here is what upstream's own `validateToolArguments()` returned under typebox 1.3.27 (the
+     * version it pins) for the same schema built with `Type.Object(…)`.
+     *
+     * @param array<string, mixed> $arguments
+     * @param array<string, mixed>|string $expected the arguments, or the line of the error
+     */
+    #[DataProvider('typeBoxConversions')]
+    public function testABuiltInToolsArgumentsAreConvertedTheWayTypeBoxConvertsThem(array $arguments, array|string $expected): void
+    {
+        $tool = new Tool('t', 'A built-in', [
+            'type' => 'object',
+            'properties' => [
+                'pattern' => ['type' => 'string'],
+                'ignoreCase' => ['type' => 'boolean'],
+                'context' => ['type' => 'number'],
+                'whole' => ['type' => 'integer'],
+                'tags' => ['type' => 'array', 'items' => ['type' => 'string']],
+                'gone' => ['type' => 'null'],
+            ],
+            'required' => ['pattern'],
+        ], typeBox: true);
+
+        if (is_string($expected)) {
+            $this->expectException(InvalidToolArguments::class);
+            $this->expectExceptionMessage($expected);
+        }
+
+        $this->assertSame($expected, ToolArguments::validate($tool, new ToolCall('c1', 't', $arguments)));
+    }
+
+    /** @return iterable<string, array{0: array<string, mixed>, 1: array<string, mixed>|string}> */
+    public static function typeBoxConversions(): iterable
+    {
+        // `TryString`: null is "null" — not the "" the plain-schema coercion makes of it.
+        yield 'required string null' => [['pattern' => null], ['pattern' => 'null']];
+        yield 'string from int' => [['pattern' => 5], ['pattern' => '5']];
+        yield 'string from float' => [['pattern' => 1.5], ['pattern' => '1.5']];
+        yield 'string from false' => [['pattern' => false], ['pattern' => 'false']];
+        // `TryNumber`: JS's unary `+`, so "" is 0; then "true"/"false" in any case; then `123n`.
+        yield 'number from empty' => [['pattern' => 'x', 'context' => ''], ['pattern' => 'x', 'context' => 0]];
+        yield 'number from padded' => [['pattern' => 'x', 'context' => ' 10 '], ['pattern' => 'x', 'context' => 10]];
+        yield 'number from hex' => [['pattern' => 'x', 'context' => '0x10'], ['pattern' => 'x', 'context' => 16]];
+        yield 'number from exponent' => [['pattern' => 'x', 'context' => '1e3'], ['pattern' => 'x', 'context' => 1000.0]];
+        yield 'number from TRUE' => [['pattern' => 'x', 'context' => 'TRUE'], ['pattern' => 'x', 'context' => 1]];
+        yield 'number from bigint' => [['pattern' => 'x', 'context' => '12n'], ['pattern' => 'x', 'context' => 12]];
+        yield 'number from true' => [['pattern' => 'x', 'context' => true], ['pattern' => 'x', 'context' => 1]];
+        // `FromInteger`: `Math.trunc()`.
+        yield 'integer from decimal string' => [['pattern' => 'x', 'whole' => '2.7'], ['pattern' => 'x', 'whole' => 2]];
+        yield 'integer from float' => [['pattern' => 'x', 'whole' => 2.7], ['pattern' => 'x', 'whole' => 2]];
+        yield 'integer from negative' => [['pattern' => 'x', 'whole' => '-2.7'], ['pattern' => 'x', 'whole' => -2]];
+        // `TryBoolean`: "true"/"false" in any case, and "1"/"0" and 1/0.
+        yield 'boolean from TRUE' => [['pattern' => 'x', 'ignoreCase' => 'TRUE'], ['pattern' => 'x', 'ignoreCase' => true]];
+        yield 'boolean from "1"' => [['pattern' => 'x', 'ignoreCase' => '1'], ['pattern' => 'x', 'ignoreCase' => true]];
+        yield 'boolean from "0"' => [['pattern' => 'x', 'ignoreCase' => '0'], ['pattern' => 'x', 'ignoreCase' => false]];
+        yield 'boolean from 1' => [['pattern' => 'x', 'ignoreCase' => 1], ['pattern' => 'x', 'ignoreCase' => true]];
+        yield 'boolean from 2' => [['pattern' => 'x', 'ignoreCase' => 2], 'ignoreCase: must be boolean'];
+        yield 'boolean from yes' => [['pattern' => 'x', 'ignoreCase' => 'yes'], 'ignoreCase: must be boolean'];
+        // `TryArray`: a lone value is wrapped, then each item converted.
+        yield 'array from a lone value' => [['pattern' => 'x', 'tags' => 'one'], ['pattern' => 'x', 'tags' => ['one']]];
+        yield 'array items converted' => [['pattern' => 'x', 'tags' => [1, true]], ['pattern' => 'x', 'tags' => ['1', 'true']]];
+        // `TryNull`.
+        yield 'null from NULL' => [['pattern' => 'x', 'gone' => 'NULL'], ['pattern' => 'x', 'gone' => null]];
+        yield 'null from 0' => [['pattern' => 'x', 'gone' => 0], ['pattern' => 'x', 'gone' => null]];
     }
 
     public function testAValueNoCoercionCanFixIsStillAnError(): void

@@ -483,6 +483,7 @@ final class AgentSession
             $message->responseModel,
             $message->endTurn,
             $message->diagnostics,
+            $message->providerThinkingLevel,
         );
     }
 

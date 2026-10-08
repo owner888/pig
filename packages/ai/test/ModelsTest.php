@@ -363,12 +363,14 @@ final class ModelsTest extends TestCase
 
             // The generator's rule, because Copilot's catalogue does not say which shape a model
             // speaks: Claude 4.x/5.x on Anthropic's Messages API (upstream's `isCopilotClaude`),
-            // `gpt-5…` and `oswe…` on Responses, the rest on completions. The Claude arm is new:
-            // they were on completions, where their tools went out with OpenAI's `strict` and
-            // their thinking and caching were not Anthropic's.
+            // then upstream's `needsResponsesApi` — `gpt-`, `grok-`, `oswe`, `mai-` — on Responses,
+            // the rest on completions. pig's Responses rule used to be `gpt-5` and `oswe` only, so
+            // `gpt-6…`, `grok-…` and `mai-…`, which Copilot serves through /responses alone, were
+            // sent to /chat/completions.
             $expected = match (true) {
                 preg_match('/^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/', $model->id) === 1 => Api::AnthropicMessages,
-                str_starts_with($model->id, 'gpt-5') || str_starts_with($model->id, 'oswe') => Api::OpenAiResponses,
+                str_starts_with($model->id, 'gpt-') || str_starts_with($model->id, 'grok-')
+                    || str_starts_with($model->id, 'oswe') || str_starts_with($model->id, 'mai-') => Api::OpenAiResponses,
                 default => Api::OpenAiCompletions,
             };
 
@@ -383,23 +385,59 @@ final class ModelsTest extends TestCase
     }
 
     /**
-     * A Copilot Claude carries what upstream's generator gives one: `forceAdaptiveThinking` by the
-     * same id list as Anthropic's own models, no `supportsStrictTools` (that is `provider ===
-     * "anthropic"` only), and Copilot's headers like every Copilot row.
+     * A Copilot Claude carries what upstream's generator gives one: `forceAdaptiveThinking` and
+     * `supportsTemperature: false` by the same id rules as Anthropic's own models, no
+     * `supportsStrictTools` (that is `provider === "anthropic"` only) and no `supportsMidConvoEffort`
+     * (`anthropic`/`openrouter` only), and Copilot's headers like every Copilot row.
      */
     public function testCopilotsClaudeModelsCarryAnthropicsCompatTheWayUpstreamsGeneratorWritesIt(): void
     {
         $sonnet = Models::find(Models::COPILOT, 'claude-sonnet-4.6');
         $haiku = Models::find(Models::COPILOT, 'claude-haiku-4.5');
+        $opus = Models::find(Models::COPILOT, 'claude-opus-5');
 
         $this->assertNotNull($sonnet);
         $this->assertNotNull($haiku);
+        $this->assertNotNull($opus);
         $this->assertInstanceOf(AnthropicCompat::class, $sonnet->compat);
         $this->assertTrue($sonnet->compat->forceAdaptiveThinking);
         $this->assertNull($sonnet->compat->strictTools);
-        // Haiku 4.5 thinks on a budget, so upstream writes no compat at all.
-        $this->assertNull($haiku->compat);
+        $this->assertNull($sonnet->compat->supportsTemperature, 'Sonnet 4.6 still takes a temperature');
+        // Haiku 4.5 thinks on a budget; its one flag is the eager-streaming refusal upstream lists.
+        $this->assertNull($haiku->compat?->forceAdaptiveThinking);
+        $this->assertFalse($haiku->compat?->supportsEagerToolInputStreaming);
+        $this->assertFalse($opus->compat?->supportsTemperature);
+        $this->assertNull($opus->compat?->supportsMidConvoEffort);
         $this->assertSame('vscode-chat', $sonnet->headers['Copilot-Integration-Id'] ?? null);
+    }
+
+    /**
+     * Upstream's generator writes each Claude's whole `thinkingLevelMap`, not only its `off`: `max`
+     * on the adaptive 4.6 models, `xhigh` and `max` from Opus 4.7 on, the full map on the 5.5
+     * models, and Copilot's measured `minimal: "low"` overrides. pig carried `{off: null}` alone, so
+     * `xhigh` was never offered on a Claude that has it.
+     */
+    public function testEveryClaudeCarriesUpstreamsWholeThinkingLevelMap(): void
+    {
+        foreach ([
+            [Models::ANTHROPIC, 'claude-sonnet-4-5', []],
+            [Models::ANTHROPIC, 'claude-opus-4-6', ['max' => 'max']],
+            [Models::ANTHROPIC, 'claude-opus-4-7', ['xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::ANTHROPIC, 'claude-opus-5', ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::ANTHROPIC, 'claude-opus-5-5', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::ANTHROPIC, 'claude-fable-5', ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::COPILOT, 'claude-sonnet-4.6', ['max' => 'max', 'minimal' => 'low']],
+            [Models::COPILOT, 'claude-opus-4.7', ['xhigh' => 'xhigh', 'max' => 'max', 'minimal' => 'low']],
+            [Models::COPILOT, 'claude-opus-5', ['xhigh' => 'xhigh', 'max' => 'max', 'minimal' => 'low']],
+        ] as [$provider, $id, $map]) {
+            $model = Models::find($provider, $id);
+            $this->assertNotNull($model, "{$provider}/{$id}");
+            $this->assertSame($map, $model->thinkingLevelMap, "{$provider}/{$id}");
+        }
+
+        // What the map is for: xhigh offered where it is named, and refused where it is not.
+        $this->assertTrue(Models::find(Models::ANTHROPIC, 'claude-opus-4-7')?->supportsXhigh());
+        $this->assertFalse(Models::find(Models::ANTHROPIC, 'claude-opus-4-6')?->supportsXhigh());
     }
 
     /**
@@ -447,9 +485,22 @@ final class ModelsTest extends TestCase
         $this->assertFalse($model->compat->reasoningEffort);
     }
 
-    public function testCopilotsResponsesModelsHaveNoCompatBecauseItWouldMeanNothing(): void
+    public function testCopilotsResponsesModelsSayOnlyThatGptFiveAndLaterTakeGrammarTools(): void
     {
-        $this->assertNull(self::copilotSpeaking(Api::OpenAiResponses)->compat);
+        // Upstream's generator writes one thing into a Copilot Responses model's compat:
+        // `supportsOpenAIGrammarTools`, for `gpt-<n>` with n >= 5. Everything else is left to the
+        // Responses runtime's defaults — so `grok-…` and `mai-…` carry no compat at all.
+        foreach (self::of(Models::COPILOT) as $model) {
+            if ($model->api !== Api::OpenAiResponses) {
+                continue;
+            }
+
+            if (preg_match('/^gpt-(\d+)/', $model->id, $match) === 1 && (int) $match[1] >= 5) {
+                $this->assertEquals(new OpenAiCompat(grammarTools: true), $model->compat, $model->id);
+            } else {
+                $this->assertNull($model->compat, $model->id);
+            }
+        }
     }
 
     public function testACopilotConversationCostsNothingToReport(): void

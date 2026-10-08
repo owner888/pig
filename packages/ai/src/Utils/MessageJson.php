@@ -102,6 +102,7 @@ final class MessageJson
                 isset($entry['responseModel']) ? (string) $entry['responseModel'] : null,
                 isset($entry['endTurn']) ? (bool) $entry['endTurn'] : null,
                 is_array($entry['diagnostics'] ?? null) ? self::decodeDiagnostics($entry['diagnostics']) : null,
+                isset($entry['providerThinkingLevel']) ? (string) $entry['providerThinkingLevel'] : null,
             ),
             'toolResult' => new ToolResultMessage(
                 (string) ($entry['toolCallId'] ?? ''),
@@ -117,7 +118,7 @@ final class MessageJson
 
     /**
      * The optional fields — `rawStopReason`, `responseId`, `responseModel`, `endTurn`,
-     * `diagnostics` — each one present or not there at all.
+     * `diagnostics`, `providerThinkingLevel` — each one present or not there at all.
      *
      * Upstream's fields are optional and `JSON.stringify` drops an undefined one, so a message
      * without them is written without the keys rather than with nulls — the shape a session file
@@ -135,6 +136,7 @@ final class MessageJson
             'diagnostics' => $message->diagnostics === null
                 ? null
                 : array_map(self::encodeDiagnostic(...), $message->diagnostics),
+            'providerThinkingLevel' => $message->providerThinkingLevel,
         ], static fn (mixed $value): bool => $value !== null);
     }
 

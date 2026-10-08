@@ -240,6 +240,9 @@ final class StreamProxy
             $encoded['compat'] = array_filter([
                 'forceAdaptiveThinking' => $model->compat->forceAdaptiveThinking,
                 'supportsStrictTools' => $model->compat->strictTools,
+                'supportsTemperature' => $model->compat->supportsTemperature,
+                'supportsEagerToolInputStreaming' => $model->compat->supportsEagerToolInputStreaming,
+                'supportsMidConvoEffort' => $model->compat->supportsMidConvoEffort,
             ], static fn (mixed $value): bool => $value !== null);
         } elseif ($model->compat !== null) {
             // Upstream's key names, one per pig field, and
@@ -265,6 +268,7 @@ final class StreamProxy
                 'chatTemplateArgs' => $model->compat->chatTemplateArgs === [] ? new \stdClass() : $model->compat->chatTemplateArgs,
                 'openRouterRouting' => $model->compat->openRouterRouting === [] ? new \stdClass() : $model->compat->openRouterRouting,
                 'vercelGatewayRouting' => $model->compat->vercelGatewayRouting === [] ? new \stdClass() : $model->compat->vercelGatewayRouting,
+                'supportsOpenAIGrammarTools' => $model->compat->grammarTools,
             ], static fn (mixed $value): bool => $value !== null);
         }
 

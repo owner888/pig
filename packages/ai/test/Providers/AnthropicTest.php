@@ -355,7 +355,10 @@ final class AnthropicTest extends TestCase
         $this->assertStringContainsString('POST /v1/messages HTTP/1.1', $head);
         $this->assertStringContainsString('anthropic-version: 2023-06-01', $head);
         $this->assertStringContainsString('x-api-key: test-key', $head);
-        $this->assertStringContainsString('fine-grained-tool-streaming', $head);
+        // Upstream streams a tool's input with `eager_input_streaming` on the tool now, not with the
+        // `fine-grained-tool-streaming` beta on every request — see `testToolsAskForEagerInputStreamingInsteadOfTheFineGrainedBeta`.
+        $this->assertStringNotContainsString('fine-grained-tool-streaming', $head);
+        $this->assertStringContainsString('anthropic-dangerous-direct-browser-access: true', $head);
 
         $this->assertSame('claude-sonnet-4-5', $body['model']);
         $this->assertTrue($body['stream']);
@@ -844,7 +847,125 @@ final class AnthropicTest extends TestCase
         [$head] = $this->capture($this->model(), new Context([new UserMessage('hi')]), $this->options());
 
         $this->assertStringNotContainsString('interleaved-thinking', $head);
-        $this->assertStringContainsString('fine-grained-tool-streaming', $head);
+        // And no beta at all is left for such a request: the fine-grained one used to be sent on
+        // every request and upstream sends it only for tools on a model without eager streaming.
+        $this->assertStringNotContainsString('anthropic-beta', $head);
+    }
+
+    // ---- betas, eager input streaming, temperature -------------------------------------------
+
+    public function testToolsAskForEagerInputStreamingInsteadOfTheFineGrainedBeta(): void
+    {
+        // Upstream's `convertTools()` puts `eager_input_streaming: true` on each tool (after the
+        // description, before the schema) and `getBetaFeatures()` sends `fine-grained-tool-streaming`
+        // only where a model does not take that field. pig sent the beta on every request and the
+        // field never.
+        $tool = new Tool('read', 'Read a file', ['type' => 'object', 'properties' => ['path' => ['type' => 'string']], 'required' => ['path']]);
+        [$head, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')], tools: [$tool]), $this->options());
+
+        $this->assertSame(['name', 'description', 'eager_input_streaming', 'input_schema'], array_keys($body['tools'][0]));
+        $this->assertTrue($body['tools'][0]['eager_input_streaming']);
+        $this->assertStringNotContainsString('fine-grained-tool-streaming', $head);
+    }
+
+    public function testAModelWithoutEagerStreamingGetsTheFineGrainedBetaForItsTools(): void
+    {
+        // `supportsEagerToolInputStreaming: false` — upstream's generator writes it on three Copilot
+        // Claudes. Tools then stream under the old beta, and the field is left off.
+        $tool = new Tool('read', 'Read a file', ['type' => 'object', 'properties' => []]);
+        $model = $this->model(compat: new AnthropicCompat(supportsEagerToolInputStreaming: false));
+        [$head, $body] = $this->capture($model, new Context([new UserMessage('hi')], tools: [$tool]), $this->options());
+
+        $this->assertStringContainsString('anthropic-beta: fine-grained-tool-streaming-2025-05-14', $head);
+        $this->assertArrayNotHasKey('eager_input_streaming', $body['tools'][0]);
+
+        // And with no tools there is nothing to stream, so no beta either.
+        $this->server = new CannedServer();
+        [$head] = $this->capture($model, new Context([new UserMessage('hi')]), $this->options());
+        $this->assertStringNotContainsString('anthropic-beta', $head);
+
+        $this->assertFalse(Models::find(Models::COPILOT, 'claude-haiku-4.5')?->compat?->supportsEagerToolInputStreaming);
+    }
+
+    public function testAModelsOwnAnthropicBetaHeaderIsTheWholeList(): void
+    {
+        // Upstream's `getBetaFeatures()`: an `anthropic-beta` among the model's headers, in any case,
+        // replaces the computed list — split, trimmed, de-duplicated — and goes out once. pig sent
+        // its own header and then the model's beside it.
+        $model = new Model('claude-sonnet-4-5', 'S', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000, true, headers: ['Anthropic-Beta' => ' a, b,,a ']);
+        [$head] = $this->capture($model, new Context([new UserMessage('hi')]), new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true));
+
+        $this->assertSame(1, substr_count(strtolower($head), 'anthropic-beta:'));
+        $this->assertStringContainsString('anthropic-beta: a,b', $head);
+        $this->assertStringNotContainsString('interleaved-thinking', $head);
+    }
+
+    public function testTemperatureIsLeftOutWhileThinkingAndForAModelThatRefusesIt(): void
+    {
+        // Upstream: "Temperature is incompatible with extended thinking and unsupported on Claude
+        // Opus 4.7+." pig sent whatever temperature it was given, and the API refused the request.
+        [, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')]), new AnthropicOptions(temperature: 0.3, apiKey: 'test-key'));
+        $this->assertSame(0.3, $body['temperature']);
+
+        $this->server = new CannedServer();
+        [, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')]), new AnthropicOptions(temperature: 0.3, apiKey: 'test-key', thinkingEnabled: true));
+        $this->assertArrayNotHasKey('temperature', $body);
+
+        $opus = Models::find(Models::ANTHROPIC, 'claude-opus-4-7');
+        $this->assertNotNull($opus);
+        $this->assertFalse($opus->compat?->supportsTemperature);
+        $this->server = new CannedServer();
+        [, $body] = $this->capture($opus, new Context([new UserMessage('hi')]), new AnthropicOptions(temperature: 0.3, apiKey: 'test-key', thinkingEnabled: false));
+        $this->assertArrayNotHasKey('temperature', $body);
+    }
+
+    public function testAManagedEffortModelThinksAdaptivelyAndSaysItsEffortInSystemMessages(): void
+    {
+        // Upstream's `supportsMidConvoEffort` arm: always adaptive thinking with `block_binding`,
+        // `output_config.effort: "high"` at the top, the two managed-effort betas, no temperature —
+        // and an effort-only system message before each earlier turn of this provider that recorded
+        // its effort, plus one with the effort asked for now at the end. pig had none of it, so an
+        // Opus 5 turn said `thinking: {type: "disabled"}`-free adaptive thinking with no binding.
+        $earlier = new AssistantMessage([new TextContent('first answer')], Api::AnthropicMessages, 'anthropic', 'claude-opus-5', new Usage(), StopReason::Stop, providerThinkingLevel: 'low');
+        $foreign = new AssistantMessage([new TextContent('other answer')], Api::AnthropicMessages, 'github-copilot', 'claude-opus-5', new Usage(), StopReason::Stop, providerThinkingLevel: 'medium');
+        $opus = Models::find(Models::ANTHROPIC, 'claude-opus-5');
+        $this->assertNotNull($opus);
+        $this->assertTrue($opus->compat?->supportsMidConvoEffort);
+
+        [$head, $body] = $this->capture(
+            $opus,
+            new Context([new UserMessage('q1'), $earlier, new UserMessage('q2'), $foreign, new UserMessage('q3')]),
+            new AnthropicOptions(temperature: 0.5, apiKey: 'test-key', thinkingEnabled: true, effort: 'xhigh'),
+        );
+
+        $this->assertSame(['type' => 'adaptive', 'display' => 'summarized', 'block_binding' => ['prefix_mismatch_behavior' => 'drop_block']], $body['thinking']);
+        $this->assertSame(['effort' => 'high'], $body['output_config']);
+        $this->assertArrayNotHasKey('temperature', $body);
+        $this->assertStringContainsString('mid-conversation-output-config-2026-07-01,thinking-binding-controls-2026-08-01', $head);
+        $this->assertSame(
+            ['user', 'system', 'assistant', 'user', 'assistant', 'user', 'system'],
+            array_column($body['messages'], 'role'),
+        );
+        $this->assertSame(['role' => 'system', 'content' => [], 'output_config' => ['effort' => 'low']], $body['messages'][1]);
+        $this->assertSame(['role' => 'system', 'content' => [], 'output_config' => ['effort' => 'xhigh']], $body['messages'][6]);
+        // The cache breakpoint stays on the last user turn, set before the system messages go in.
+        $this->assertSame('ephemeral', $body['messages'][5]['content'][0]['cache_control']['type']);
+    }
+
+    public function testAManagedEffortTurnRecordsTheEffortItWasAskedFor(): void
+    {
+        // Upstream's `providerThinkingLevel = options?.effort ?? "high"` on the output — what the
+        // next request replays in front of this turn.
+        $url = $this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]]);
+        $base = Models::find(Models::ANTHROPIC, 'claude-opus-5');
+        $this->assertNotNull($base);
+        $opus = new Model($base->id, $base->name, $base->api, $base->provider, rtrim($url, '/'), $base->contextWindow, $base->maxTokens, $base->reasoning, $base->input, $base->pricing, compat: $base->compat);
+
+        $message = Async::run(fn (): AssistantMessage => $this->anthropic()->stream($opus, new Context([new UserMessage('hi')]), new AnthropicOptions(apiKey: 'test-key', effort: 'medium'))->result()->await());
+        $this->assertSame('medium', $message->providerThinkingLevel);
+
+        $plain = Async::run(fn (): AssistantMessage => $this->anthropic()->stream($this->model($this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]])), new Context([new UserMessage('hi')]), new AnthropicOptions(apiKey: 'test-key', effort: 'medium'))->result()->await());
+        $this->assertNull($plain->providerThinkingLevel);
     }
 
     // ---- redacted thinking ----------------------------------------------------------------

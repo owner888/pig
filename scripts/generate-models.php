@@ -236,11 +236,10 @@ const EXCLUDED = [
  * Upstream's rule, by id, because Copilot serves three shapes and the catalogue does not say
  * which. **Claude 4.x and 5.x go to Anthropic's Messages API** — upstream's `isCopilotClaude`,
  * `/^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/`, copied — so they get Anthropic's thinking
- * and caching, and no OpenAI `strict` on their tools. `oswe` is VS Code's own preview model.
- *
- * The Responses half is still pig's older prefix list (`gpt-5`, `oswe`): upstream's is now
- * `gpt-`, `grok-`, `oswe`, `mai-`, which would move `gpt-6…`, `grok-…` and `mai-…` off completions.
- * Left as it is on purpose — this change is about Claude, and moving those is its own decision.
+ * and caching, and no OpenAI `strict` on their tools. Then upstream's `needsResponsesApi`: "GPT,
+ * Grok, OSWE, and MAI-Code models are only served through the Copilot /responses endpoint" — the
+ * prefixes `gpt-`, `grok-`, `oswe` and `mai-`, with no exception for an older `gpt-4…` id. Anything
+ * else (Gemini, Kimi) is on completions.
  */
 function copilotApi(string $id): Api
 {
@@ -248,9 +247,12 @@ function copilotApi(string $id): Api
         return Api::AnthropicMessages;
     }
 
-    return str_starts_with($id, 'gpt-5') || str_starts_with($id, 'oswe')
-        ? Api::OpenAiResponses
-        : Api::OpenAiCompletions;
+    $needsResponsesApi = str_starts_with($id, 'gpt-')
+        || str_starts_with($id, 'grok-')
+        || str_starts_with($id, 'oswe')
+        || str_starts_with($id, 'mai-');
+
+    return $needsResponsesApi ? Api::OpenAiResponses : Api::OpenAiCompletions;
 }
 
 /** @return array<string, mixed> the models.dev document */

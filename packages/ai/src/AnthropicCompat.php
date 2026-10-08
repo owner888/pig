@@ -6,27 +6,59 @@ namespace Pig\Ai;
 
 /**
  * What an `anthropic-messages` model says about its endpoint — upstream's `AnthropicMessagesCompat`,
- * the two keys of it pig reads.
+ * the keys of it pig reads.
  *
- * Both are **metadata, not detection**: upstream's runtime reads `model.compat?.x` with a default of
- * false and never looks at the model id, and its model generator writes the flags onto the built-in
- * models that have them. `Models` does that here; a `models.json` model says them in its `compat`
- * block under upstream's names. Null means not said, which is false.
+ * Every key is **metadata, not detection**: upstream's runtime reads `model.compat?.x` with its
+ * default and never looks at the model id, and its model generator writes the flags onto the
+ * built-in models that have them. `Models` does that here, with the id rules below copied from the
+ * generator; a `models.json` model says them in its `compat` block under upstream's names. Null
+ * means not said, which is the runtime default (written beside each key).
  *
  * @see OpenAiCompat the same idea for `openai-completions`, which also detects
  */
 final readonly class AnthropicCompat
 {
     /**
+     * Upstream's generator `EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS`, keyed
+     * `provider:id`: the Copilot Claudes that refuse per-tool `eager_input_streaming`.
+     */
+    private const array EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED = [
+        'github-copilot:claude-haiku-4.5',
+        'github-copilot:claude-sonnet-4',
+        'github-copilot:claude-sonnet-4.5',
+    ];
+
+    /** Upstream's generator `VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS`. */
+    private const array MID_CONVO_EFFORT_PROVIDERS = ['anthropic', 'openrouter'];
+
+    /** Upstream's generator `MID_CONVO_EFFORT_UNSUPPORTED_ANTHROPIC_MODELS`, keyed `provider:id`. */
+    private const array MID_CONVO_EFFORT_UNSUPPORTED = ['openrouter:anthropic/claude-opus-5'];
+
+    /**
      * @param bool|null $forceAdaptiveThinking `thinking: {type: "adaptive"}` plus `output_config.effort`
-     *        instead of a token budget — upstream's `forceAdaptiveThinking`, which its generator sets
-     *        from the model id (`isAnthropicAdaptiveThinkingModel()`) on every built-in model of this API
+     *        instead of a token budget — upstream's `forceAdaptiveThinking` (default false), which its
+     *        generator sets from the model id (`isAnthropicAdaptiveThinkingModel()`) on every built-in
+     *        model of this API
      * @param bool|null $strictTools a tool asking for strict sampling is sent strict — upstream's
-     *        `supportsStrictTools`, which its generator sets on every `anthropic` provider model
+     *        `supportsStrictTools` (default false), which its generator sets on every `anthropic`
+     *        provider model
+     * @param bool|null $supportsTemperature the request may carry `temperature` — upstream's
+     *        `supportsTemperature` (default true). Claude Opus 4.7+ rejects a non-default one, and
+     *        the generator writes false by `isTemperatureUnsupportedModel()`
+     * @param bool|null $supportsEagerToolInputStreaming each tool is sent `eager_input_streaming:
+     *        true` — upstream's `supportsEagerToolInputStreaming` (default true). False sends the
+     *        older `fine-grained-tool-streaming-2025-05-14` beta instead, on a request with tools
+     * @param bool|null $supportsMidConvoEffort the managed-effort models — upstream's
+     *        `supportsMidConvoEffort` (default false): always adaptive thinking with
+     *        `block_binding`, the effort said by effort-only system messages around the turns, and
+     *        no `temperature`. See `Anthropic::body()`
      */
     public function __construct(
         public ?bool $forceAdaptiveThinking = null,
         public ?bool $strictTools = null,
+        public ?bool $supportsTemperature = null,
+        public ?bool $supportsEagerToolInputStreaming = null,
+        public ?bool $supportsMidConvoEffort = null,
     ) {
     }
 
@@ -46,5 +78,69 @@ final readonly class AnthropicCompat
         }
 
         return false;
+    }
+
+    /**
+     * Upstream's generator `isAnthropicTemperatureUnsupportedModel()`, copied: lower-cased, then
+     * these substrings. Used when a built-in model is made, never at request time.
+     */
+    public static function isTemperatureUnsupportedModel(string $modelId): bool
+    {
+        $id = strtolower($modelId);
+
+        foreach ([
+            'opus-4-7', 'opus-4.7', 'opus-4-8', 'opus-4.8', 'opus-5', 'opus.5',
+            'sonnet-5-5', 'sonnet-5.5', 'haiku-5-5', 'haiku-5.5',
+        ] as $needle) {
+            if (str_contains($id, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Upstream's generator `supportsAnthropicMidConvoEffort()`, copied: the id lower-cased and
+     * stripped of an `anthropic/` (or `~anthropic/`) prefix, then three patterns.
+     */
+    public static function supportsMidConvoEffortModel(string $modelId): bool
+    {
+        $id = (string) preg_replace('#^~?anthropic/#', '', strtolower($modelId));
+
+        return preg_match('/^claude-opus-(?:5|5[.-]5)(?:-\d{8})?$/', $id) === 1
+            || preg_match('/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/', $id) === 1
+            || preg_match('/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/', $id) === 1;
+    }
+
+    /**
+     * Upstream's generator `getAnthropicMessagesCompat()`, the keys of it pig has, plus the two
+     * `applyThinkingLevelMetadata()` writes (`forceAdaptiveThinking`, `supportsTemperature: false`)
+     * and `applyStrictToolCompatMetadata()`'s `supportsStrictTools` — everything upstream's generator
+     * writes into a built-in `anthropic-messages` model's `compat`. Null when it writes nothing, as
+     * upstream leaves `compat` off such a model.
+     *
+     * Not ported: `supportsMidConvoSystemMessages`/`supportsMidConvoToolChanges` (pig's transcript has
+     * no mid-conversation system messages), `allowEmptySignature` (xiaomi/opencode only) and
+     * `allowedFallbackModels` (server-side fallback) — see CLAUDE.md.
+     */
+    public static function forBuiltIn(string $provider, string $modelId): ?self
+    {
+        $key = "{$provider}:{$modelId}";
+        $midConvoEffort = in_array($provider, self::MID_CONVO_EFFORT_PROVIDERS, true)
+            && self::supportsMidConvoEffortModel($modelId)
+            && !in_array($key, self::MID_CONVO_EFFORT_UNSUPPORTED, true);
+
+        $compat = new self(
+            forceAdaptiveThinking: self::isAdaptiveThinkingModel($modelId) ? true : null,
+            strictTools: $provider === 'anthropic' ? true : null,
+            supportsTemperature: self::isTemperatureUnsupportedModel($modelId) ? false : null,
+            supportsEagerToolInputStreaming: in_array($key, self::EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED, true) ? false : null,
+            supportsMidConvoEffort: $midConvoEffort ? true : null,
+        );
+
+        // `!==` per key and not `==` on the objects: loose comparison counts a `false` as equal to
+        // the null of "not said", which would drop exactly the flags that switch something off.
+        return array_filter(get_object_vars($compat), static fn (?bool $flag): bool => $flag !== null) === [] ? null : $compat;
     }
 }

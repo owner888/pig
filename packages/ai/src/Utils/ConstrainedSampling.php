@@ -11,12 +11,14 @@ use Pig\Ai\Tool;
  * JSON-schema constrained sampling ("strict" tools): whether a tool is sent strict, and the
  * strict form of its schema.
  *
- * Ported from upstream's `api/constrained-sampling.ts` — the `json_schema` half only. The grammar
- * half (`resolveGrammarConstrainedSampling()` and the custom-tool input buffers) serves OpenAI's
- * grammar tools, which pig does not send.
+ * Ported from upstream's `api/constrained-sampling.ts`, both halves. The `json_schema` half decides
+ * strict tools; the grammar half (`resolveGrammarConstrainedSampling()` and the custom-tool input
+ * buffer) serves OpenAI's custom grammar tools, which `OpenAiResponses` and `OpenAiCompletions` send
+ * where the model's compat says `supportsOpenAIGrammarTools` (`OpenAiCompat::$grammarTools`).
  *
  * A tool opts in through `Tool::$constrainedSampling` (`['type' => 'json_schema', 'strict' =>
- * 'prefer'|'require']`); a tool that says nothing is never strict. Every provider asks it, each
+ * 'prefer'|'require']`, or `['type' => 'grammar', 'variants' => ['openai_lark' => …,
+ * 'openai_regex' => …]]`); a tool that says nothing is never strict. Every provider asks it, each
  * with its own idea of whether strict mode is there: Anthropic (the `anthropic` provider's models,
  * with its own refused keywords), OpenAI Completions and Responses (`OpenAiCompat::$strictMode`),
  * and Gemini 3+ (`GoogleShared::resolveGoogleFunctionCallingMode()`). The built-in bash, edit,
@@ -278,5 +280,185 @@ final class ConstrainedSampling
 
         $schema['required'] = $propertyNames;
         $schema['additionalProperties'] = false;
+    }
+
+    // ---- the grammar half --------------------------------------------------------------------
+
+    /**
+     * Upstream's `getGrammarToolInput()`: the one string a grammar tool call carries, out of the
+     * arguments object pig keeps it in.
+     *
+     * @param array<string, mixed> $arguments
+     */
+    public static function getGrammarToolInput(string $toolName, array $arguments, string $inputProperty): string
+    {
+        $input = $arguments[$inputProperty] ?? null;
+
+        if (!is_string($input)) {
+            throw new ProviderError("Grammar tool call \"{$toolName}\" requires argument \"{$inputProperty}\" to be a string.");
+        }
+
+        return $input;
+    }
+
+    /**
+     * A fresh upstream `GrammarToolInputJsonBuffer`: `{input: "", started: false, closed: false}`.
+     *
+     * @return array{input: string, started: bool, closed: bool}
+     */
+    public static function newGrammarToolInputJsonBuffer(): array
+    {
+        return ['input' => '', 'started' => false, 'closed' => false];
+    }
+
+    /**
+     * Upstream's `appendGrammarToolInputJsonDelta()`: a custom tool call streams raw text, and the
+     * stream pig hands on carries JSON argument deltas — so the text is re-said as the growing JSON
+     * object `{"<property>":"<text so far>`, closed by `"}` once the input is done. Null when there
+     * is nothing to say. The buffer is upstream's mutable object, here passed by reference.
+     *
+     * @param array{input: string, started: bool, closed: bool} $buffer
+     */
+    public static function appendGrammarToolInputJsonDelta(array &$buffer, string $inputProperty, string $nextInput, bool $close): ?string
+    {
+        if ($buffer['closed']) {
+            if ($close && $nextInput === $buffer['input']) {
+                return null;
+            }
+
+            throw new ProviderError("grammar tool input for property \"{$inputProperty}\" changed after it was closed");
+        }
+
+        if (!str_starts_with($nextInput, $buffer['input'])) {
+            throw new ProviderError("grammar tool input for property \"{$inputProperty}\" changed non-monotonically");
+        }
+
+        $inputDelta = substr($nextInput, strlen($buffer['input']));
+
+        if (!$close && $inputDelta === '') {
+            return null;
+        }
+
+        $delta = '';
+
+        if (!$buffer['started']) {
+            $delta .= '{' . self::jsonString($inputProperty) . ':"';
+            $buffer['started'] = true;
+        }
+
+        // `JSON.stringify(inputDelta).slice(1, -1)`: the text escaped as a JSON string's inside.
+        $delta .= substr(self::jsonString($inputDelta), 1, -1);
+        $buffer['input'] = $nextInput;
+
+        if ($close) {
+            $delta .= '"}';
+            $buffer['closed'] = true;
+        }
+
+        return $delta;
+    }
+
+    /**
+     * Upstream's `resolveGrammarConstrainedSampling()`: the grammar a tool is sent with, or null
+     * when it is not a grammar tool or the endpoint takes none (it then goes as a function tool).
+     * A grammar tool with no usable variant, or whose schema is not one required string property,
+     * is an error — the caller asked for something that cannot be sent.
+     *
+     * @return array{format: 'lark'|'regex', definition: string, inputProperty: string}|null
+     */
+    public static function resolveGrammarConstrainedSampling(Tool $tool, bool $supportsOpenAIGrammarTools): ?array
+    {
+        $config = $tool->constrainedSampling;
+
+        if (!is_array($config) || ($config['type'] ?? null) !== 'grammar') {
+            return null;
+        }
+
+        if (!$supportsOpenAIGrammarTools) {
+            return null;
+        }
+
+        $variants = is_array($config['variants'] ?? null) ? $config['variants'] : [];
+        $larkDefinition = $variants['openai_lark'] ?? null;
+        $regexDefinition = $variants['openai_regex'] ?? null;
+        $hasLarkDefinition = is_string($larkDefinition) && trim($larkDefinition) !== '';
+        $hasRegexDefinition = is_string($regexDefinition) && trim($regexDefinition) !== '';
+
+        if (!$hasLarkDefinition && !$hasRegexDefinition) {
+            throw new ProviderError("Tool \"{$tool->name}\" cannot use grammar constrained sampling: no supported grammar variant was provided.");
+        }
+
+        try {
+            return [
+                'format' => $hasLarkDefinition ? 'lark' : 'regex',
+                'definition' => $hasLarkDefinition ? $larkDefinition : $regexDefinition,
+                'inputProperty' => self::inferGrammarInputProperty($tool),
+            ];
+        } catch (ProviderError $error) {
+            throw new ProviderError("Tool \"{$tool->name}\" cannot use grammar constrained sampling: {$error->getMessage()}.");
+        }
+    }
+
+    /**
+     * Upstream's `createGrammarToolInputProperties()`: tool name => the property its grammar input
+     * lives in, for every tool that goes out as a grammar tool. Asked by name when a call arrives
+     * (`custom_tool_call`) and when one is replayed.
+     *
+     * @param list<Tool> $tools
+     * @return array<string, string>
+     */
+    public static function createGrammarToolInputProperties(array $tools, bool $supportsOpenAIGrammarTools): array
+    {
+        $properties = [];
+
+        foreach ($tools as $tool) {
+            $grammar = self::resolveGrammarConstrainedSampling($tool, $supportsOpenAIGrammarTools);
+
+            if ($grammar !== null) {
+                $properties[$tool->name] = $grammar['inputProperty'];
+            }
+        }
+
+        return $properties;
+    }
+
+    /** Upstream's `inferGrammarInputProperty()`: the schema's one required property, a string. */
+    private static function inferGrammarInputProperty(Tool $tool): string
+    {
+        $schema = $tool->parameters;
+
+        if (($schema['type'] ?? null) !== 'object') {
+            throw new ProviderError('grammar constrained sampling requires an object parameter schema');
+        }
+
+        $required = $schema['required'] ?? null;
+
+        if (!self::isList($required) || count($required) !== 1 || !is_string($required[0])) {
+            throw new ProviderError('grammar constrained sampling requires exactly one required string property');
+        }
+
+        $inputProperty = $required[0];
+        $property = $schema['properties'][$inputProperty] ?? null;
+
+        // `!schema.properties?.[inputProperty]`: absent, or a falsy value. A schema is an array
+        // here, and an empty one is still a schema (`{}` in JS is truthy).
+        if (!is_array($property)) {
+            throw new ProviderError("grammar constrained sampling requires a properties entry for {$inputProperty}");
+        }
+
+        if (($property['type'] ?? null) !== 'string') {
+            throw new ProviderError("grammar constrained sampling property {$inputProperty} must have type string");
+        }
+
+        return $inputProperty;
+    }
+
+    /** JS `JSON.stringify()` of a string: no `\/`, no `\uXXXX` for printable text or U+2028/2029. */
+    private static function jsonString(string $text): string
+    {
+        return (string) json_encode(
+            $text,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_LINE_TERMINATORS | JSON_INVALID_UTF8_SUBSTITUTE,
+        );
     }
 }

@@ -33,8 +33,12 @@ final readonly class AssistantMessage
      *        here sets it; it is carried so a session file that has it keeps it
      * @param list<AssistantMessageDiagnostic>|null $diagnostics what the provider or the runtime
      *        noticed about the turn, for `/bug`
+     * @param string|null            $providerThinkingLevel upstream's "exact provider-native effort
+     *        level used for this response" — set by `Anthropic` on a managed-effort model
+     *        (`AnthropicCompat::$supportsMidConvoEffort`), which replays it in front of this turn on
+     *        later requests. Null for every other response
      *
-     * The four after `rawStopReason` follow it for the same reason it is last: they are upstream's
+     * The five after `rawStopReason` follow it for the same reason it is last: they are upstream's
      * optional fields, absent from JSON when null, and appended so no positional call changes.
      */
     public function __construct(
@@ -51,6 +55,7 @@ final readonly class AssistantMessage
         public ?string $responseModel = null,
         public ?bool $endTurn = null,
         public ?array $diagnostics = null,
+        public ?string $providerThinkingLevel = null,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();
     }

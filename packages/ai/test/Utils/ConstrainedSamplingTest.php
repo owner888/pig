@@ -79,4 +79,67 @@ final class ConstrainedSamplingTest extends TestCase
         ));
         $this->assertSame($schema, ConstrainedSampling::getJsonSchemaToolParameters(new Tool('t', 'd', $schema), null));
     }
+
+    // ---- the grammar half ----------------------------------------------------------------
+
+    public function testAGrammarToolResolvesToItsLarkGrammarAndItsOneRequiredStringProperty(): void
+    {
+        $tool = new Tool('patch', 'd', ['type' => 'object', 'properties' => ['input' => ['type' => 'string']], 'required' => ['input']], [
+            'type' => 'grammar',
+            'variants' => ['openai_regex' => '.*', 'openai_lark' => 'start: "a"'],
+        ]);
+
+        // Lark wins when both are given; regex is the fallback.
+        $this->assertSame(
+            ['format' => 'lark', 'definition' => 'start: "a"', 'inputProperty' => 'input'],
+            ConstrainedSampling::resolveGrammarConstrainedSampling($tool, true),
+        );
+        // An endpoint without grammar tools sends it as a function tool: no grammar, no error.
+        $this->assertNull(ConstrainedSampling::resolveGrammarConstrainedSampling($tool, false));
+        $this->assertSame(['patch' => 'input'], ConstrainedSampling::createGrammarToolInputProperties([$tool], true));
+        $this->assertSame([], ConstrainedSampling::createGrammarToolInputProperties([$tool], false));
+    }
+
+    public function testAGrammarToolThatCannotBeSentIsAnErrorThatNamesTheTool(): void
+    {
+        // Upstream throws rather than sending something other than what the tool asked for.
+        foreach ([
+            [['type' => 'object', 'properties' => ['input' => ['type' => 'string']], 'required' => ['input']], ['openai_lark' => '  '], 'no supported grammar variant was provided.'],
+            [['type' => 'object', 'properties' => ['a' => ['type' => 'string'], 'b' => ['type' => 'string']], 'required' => ['a', 'b']], ['openai_regex' => 'x'], 'requires exactly one required string property.'],
+            [['type' => 'object', 'properties' => ['n' => ['type' => 'number']], 'required' => ['n']], ['openai_regex' => 'x'], 'property n must have type string.'],
+        ] as [$schema, $variants, $message]) {
+            try {
+                ConstrainedSampling::resolveGrammarConstrainedSampling(new Tool('patch', 'd', $schema, ['type' => 'grammar', 'variants' => $variants]), true);
+                $this->fail('expected an error ending ' . $message);
+            } catch (\Pig\Ai\ProviderError $error) {
+                $this->assertStringStartsWith('Tool "patch" cannot use grammar constrained sampling: ', $error->getMessage());
+                $this->assertStringEndsWith($message, $error->getMessage());
+            }
+        }
+    }
+
+    public function testRawInputIsReSaidAsTheGrowingJsonOfItsArgumentsObject(): void
+    {
+        // Upstream's `appendGrammarToolInputJsonDelta()`: the first delta opens the object, each
+        // delta is the new text escaped as JSON string content, and closing adds `"}` — so the
+        // deltas concatenate to the arguments' JSON.
+        $buffer = ConstrainedSampling::newGrammarToolInputJsonBuffer();
+
+        $this->assertSame('{"input":"a\\"', ConstrainedSampling::appendGrammarToolInputJsonDelta($buffer, 'input', 'a"', false));
+        $this->assertNull(ConstrainedSampling::appendGrammarToolInputJsonDelta($buffer, 'input', 'a"', false), 'nothing new, nothing said');
+        $this->assertSame('\\n/é"}', ConstrainedSampling::appendGrammarToolInputJsonDelta($buffer, 'input', "a\"\n/é", true));
+        $this->assertNull(ConstrainedSampling::appendGrammarToolInputJsonDelta($buffer, 'input', "a\"\n/é", true), 'closing twice with the same input is fine');
+
+        $this->expectExceptionMessage('grammar tool input for property "input" changed after it was closed');
+        ConstrainedSampling::appendGrammarToolInputJsonDelta($buffer, 'input', 'other', true);
+    }
+
+    public function testInputThatDoesNotGrowFromWhatWasSaidIsAnError(): void
+    {
+        $buffer = ConstrainedSampling::newGrammarToolInputJsonBuffer();
+        ConstrainedSampling::appendGrammarToolInputJsonDelta($buffer, 'input', 'abc', false);
+
+        $this->expectExceptionMessage('grammar tool input for property "input" changed non-monotonically');
+        ConstrainedSampling::appendGrammarToolInputJsonDelta($buffer, 'input', 'abX', false);
+    }
 }

@@ -98,6 +98,21 @@ final class Models
     private const array RESOLD = [self::COPILOT];
 
     /**
+     * Upstream's generator `GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES`, copied with its comment:
+     * "Checked manually against the authenticated GitHub Copilot /models endpoint on 2026-06-15.
+     * Keep this to narrow corrections over models.dev metadata instead of snapshotting Copilot's
+     * catalog."
+     *
+     * @var array<string, array<string, string|null>>
+     */
+    private const array COPILOT_THINKING_LEVEL_OVERRIDES = [
+        'claude-opus-4.7' => ['minimal' => 'low'],
+        'claude-opus-4.8' => ['minimal' => 'low'],
+        'claude-opus-5' => ['minimal' => 'low'],
+        'claude-sonnet-4.6' => ['minimal' => 'low', 'max' => 'max'],
+    ];
+
+    /**
      * provider => whether its built-in models take strict tools — upstream's generator, which
      * writes `supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia
      * && !isCerebras` into every built-in `openai-completions` model's `compat`, against a runtime
@@ -364,17 +379,17 @@ final class Models
         'gpt-5.6-luna' => ['GPT-5.6 Luna', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
         'gpt-5.6-sol' => ['GPT-5.6 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
         'gpt-5.6-terra' => ['GPT-5.6 Terra', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
-        'gpt-6-astra' => ['GPT-6 Astra', Api::OpenAiCompletions, 1_050_000, 128_000, true, true],
-        'gpt-6-luna' => ['GPT-6 Luna', Api::OpenAiCompletions, 1_050_000, 128_000, true, true],
-        'gpt-6-sol' => ['GPT-6 Sol', Api::OpenAiCompletions, 1_050_000, 128_000, true, true],
-        'gpt-6.1-sol' => ['GPT-6.1 Sol', Api::OpenAiCompletions, 1_050_000, 128_000, true, true],
-        'grok-4.5' => ['Grok 4.5', Api::OpenAiCompletions, 500_000, 128_000, true, true],
-        'grok-4.6' => ['Grok 4.6', Api::OpenAiCompletions, 500_000, 128_000, true, true],
-        'grok-4.7' => ['Grok 4.7', Api::OpenAiCompletions, 500_000, 128_000, true, true],
+        'gpt-6-astra' => ['GPT-6 Astra', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
+        'gpt-6-luna' => ['GPT-6 Luna', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
+        'gpt-6-sol' => ['GPT-6 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
+        'gpt-6.1-sol' => ['GPT-6.1 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
+        'grok-4.5' => ['Grok 4.5', Api::OpenAiResponses, 500_000, 128_000, true, true],
+        'grok-4.6' => ['Grok 4.6', Api::OpenAiResponses, 500_000, 128_000, true, true],
+        'grok-4.7' => ['Grok 4.7', Api::OpenAiResponses, 500_000, 128_000, true, true],
         'kimi-k2.7-code' => ['Kimi K2.7 Code', Api::OpenAiCompletions, 256_000, 32_000, true, true],
         'kimi-k3' => ['Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true],
-        'mai-code-1-flash-picker' => ['MAI-Code-1-Flash', Api::OpenAiCompletions, 256_000, 128_000, true, false],
-        'mai-code-1.1-flash' => ['MAI-Code-1.1-Flash', Api::OpenAiCompletions, 256_000, 128_000, true, true],
+        'mai-code-1-flash-picker' => ['MAI-Code-1-Flash', Api::OpenAiResponses, 256_000, 128_000, true, false],
+        'mai-code-1.1-flash' => ['MAI-Code-1.1-Flash', Api::OpenAiResponses, 256_000, 128_000, true, true],
         // <<< generated
     ];
 
@@ -553,12 +568,10 @@ final class Models
                 ['text', 'image'],
                 new Pricing($in, $out, $read, $write),
                 // Upstream's generator: `supportsStrictTools: true` on every `anthropic` provider
-                // model (`applyStrictToolCompatMetadata()`), and `forceAdaptiveThinking: true` on
-                // the ids `isAnthropicAdaptiveThinkingModel()` names — absent, not false, elsewhere.
-                compat: new AnthropicCompat(
-                    forceAdaptiveThinking: AnthropicCompat::isAdaptiveThinkingModel($id) ? true : null,
-                    strictTools: true,
-                ),
+                // model (`applyStrictToolCompatMetadata()`), `forceAdaptiveThinking` and
+                // `supportsTemperature: false` by id, `supportsMidConvoEffort` by id — absent, not
+                // false, where it writes nothing. See `AnthropicCompat::forBuiltIn()`.
+                compat: AnthropicCompat::forBuiltIn(self::ANTHROPIC, $id),
                 thinkingLevelMap: self::anthropicThinkingLevelMap(self::ANTHROPIC, $id),
             );
         }
@@ -576,8 +589,10 @@ final class Models
                 $images ? ['text', 'image'] : ['text'],
                 new Pricing($in, $out, $read, $write),
                 // Upstream's generator (`applyStrictToolCompatMetadata()`) gives every `openai`
-                // provider model on the Responses API `supportsStrictMode: true`.
-                compat: new OpenAiCompat(strictMode: true),
+                // provider model on the Responses API `supportsStrictMode: true`, and
+                // `applyOpenAIGrammarToolCompatMetadata()` gives `gpt-<n>` with n >= 5
+                // `supportsOpenAIGrammarTools: true`.
+                compat: new OpenAiCompat(strictMode: true, grammarTools: self::isGrammarToolModel($id) ? true : null),
             );
         }
 
@@ -644,14 +659,15 @@ final class Models
                 self::COPILOT_HEADERS,
                 match ($api) {
                     Api::OpenAiCompletions => self::copilotCompat(),
-                    // Upstream's generator for a Copilot Claude (`api: "anthropic-messages"`): its
-                    // `applyThinkingLevelMetadata()` writes `forceAdaptiveThinking` by the same id
-                    // list as on Anthropic's own models, and nothing else of `AnthropicCompat` that
-                    // pig has — `supportsStrictTools` is `provider === "anthropic"` only, so a
-                    // Copilot Claude's tools go out non-strict, as they do upstream.
-                    Api::AnthropicMessages => AnthropicCompat::isAdaptiveThinkingModel($id)
-                        ? new AnthropicCompat(forceAdaptiveThinking: true)
-                        : null,
+                    // Upstream's generator for a Copilot Claude (`api: "anthropic-messages"`):
+                    // `forceAdaptiveThinking` and `supportsTemperature: false` by the same id rules
+                    // as on Anthropic's own models, `supportsEagerToolInputStreaming: false` on the
+                    // three it lists — and no `supportsStrictTools` (that is `provider ===
+                    // "anthropic"` only) or `supportsMidConvoEffort` (`anthropic`/`openrouter` only).
+                    Api::AnthropicMessages => AnthropicCompat::forBuiltIn(self::COPILOT, $id),
+                    // `applyOpenAIGrammarToolCompatMetadata()`: Copilot passes OpenAI's custom
+                    // grammar tools through on the Responses API, for `gpt-<n>` with n >= 5.
+                    Api::OpenAiResponses => self::grammarToolsCompat($id),
                     default => null,
                 },
                 thinkingLevelMap: $api === Api::AnthropicMessages ? self::anthropicThinkingLevelMap(self::COPILOT, $id) : [],
@@ -673,32 +689,93 @@ final class Models
     }
 
     /**
-     * The `off` half of what upstream's generator writes into an `anthropic-messages` model's
-     * `thinkingLevelMap`: `{off: null}` — "this model cannot be told not to think" — on the ids it
-     * names, and nothing for the rest.
+     * What upstream's generator writes into a built-in `anthropic-messages` model's
+     * `thinkingLevelMap`, merge for merge and in its order (a later merge wins a key):
      *
-     * Ported because `Anthropic` now sends `thinking: {type: "disabled"}` for a turn without
-     * thinking unless the map says `off` is not a level, which is upstream's rule, and the rule is
-     * only safe with the metadata it reads. Upstream's sources, all three: `applyThinkingLevelMetadata()`
-     * (`id.includes("fable-5")`), `applyAnthropicMessagesCompatMetadata()` (`supportsMidConvoEffort`,
-     * i.e. `anthropic` or `openrouter` with `supportsAnthropicMidConvoEffort(id)`), and the temporary
-     * overrides for `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` and Copilot's
-     * `claude-opus-5.5`. **Only `off` is ported**: the rest of those maps (`minimal`, `xhigh`, `max`)
-     * says which effort names each model takes, which pig's Anthropic tables have never carried and
-     * which this change does not need.
+     * 1. the temporary 5.5 override in `generateModels()` — `anthropic/claude-opus-5-5`,
+     *    `claude-sonnet-5-5`, `claude-haiku-5-5` and Copilot's `claude-opus-5.5` get the whole map
+     *    `{off: null, minimal: null, low, medium, high, xhigh, max}`;
+     * 2. `applyAnthropicMessagesCompatMetadata()` — `{off: null}` on a `supportsMidConvoEffort` model;
+     * 3. `applyThinkingLevelMetadata()`'s Anthropic arms — `{max}` on Opus/Sonnet 4.6, `{xhigh, max}`
+     *    on Opus 4.7/4.8/5, Sonnet 5 and Haiku 5, `{off: null, xhigh, max}` on Fable 5 — and then
+     *    `GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES` for a Copilot id.
      *
-     * @return array<string, null>
+     * A string value is the effort name sent for that level (`Stream::anthropicEffort()`, upstream's
+     * `mapThinkingLevelToEffort()`), null means the model does not have the level, and a level the
+     * map leaves out is offered under its own name — except `xhigh`, which is offered only when the
+     * map names it (`Model::supportsXhigh()`, upstream's `getSupportedThinkingLevels()`). pig has no
+     * `max` thinking level, so the `max` entries are carried as upstream writes them and nothing
+     * reads them yet.
+     *
+     * models.dev's `reasoning_options` add nothing here upstream: `applyModelsDevReasoningOptionMetadata()`
+     * runs before `forceAdaptiveThinking` is written, so `supportsDirectReasoningEffort()` says no
+     * for every Claude.
+     *
+     * @return array<string, string|null>
      */
     private static function anthropicThinkingLevelMap(string $provider, string $id): array
     {
-        $midConvoEffort = in_array($provider, [self::ANTHROPIC, 'openrouter'], true)
-            && (preg_match('/^claude-opus-(?:5|5[.-]5)(?:-\d{8})?$/', $id) === 1
-                || preg_match('/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/', $id) === 1
-                || preg_match('/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/', $id) === 1);
-        $override = ($provider === self::ANTHROPIC && in_array($id, ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], true))
-            || ($provider === self::COPILOT && $id === 'claude-opus-5.5');
+        $map = [];
 
-        return str_contains($id, 'fable-5') || $midConvoEffort || $override ? ['off' => null] : [];
+        // 1. `// models.dev may list Opus 5.5, Sonnet 5.5, and Haiku 5.5 before their effort metadata is complete.`
+        if (($provider === self::ANTHROPIC && in_array($id, ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], true))
+            || ($provider === self::COPILOT && $id === 'claude-opus-5.5')) {
+            $map = [...$map, 'off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'];
+        }
+
+        // 2.
+        if (AnthropicCompat::forBuiltIn($provider, $id)?->supportsMidConvoEffort === true) {
+            $map = [...$map, 'off' => null];
+        }
+
+        // 3. `// - "max" is available on all adaptive-thinking Claude models.`
+        //    `// - "xhigh" is only available on Opus 4.7/4.8/5, Sonnet 5, Haiku 5.5, and Fable 5.`
+        if (self::containsAny($id, ['opus-4-6', 'opus-4.6', 'sonnet-4-6', 'sonnet-4.6'])) {
+            $map = [...$map, 'max' => 'max'];
+        }
+
+        if (self::containsAny($id, ['opus-4-7', 'opus-4.7', 'opus-4-8', 'opus-4.8', 'opus-5', 'opus.5', 'sonnet-5', 'sonnet.5', 'haiku-5', 'haiku.5'])) {
+            $map = [...$map, 'xhigh' => 'xhigh', 'max' => 'max'];
+        }
+
+        if (str_contains($id, 'fable-5')) {
+            $map = [...$map, 'off' => null, 'xhigh' => 'xhigh', 'max' => 'max'];
+        }
+
+        if ($provider === self::COPILOT) {
+            $map = [...$map, ...(self::COPILOT_THINKING_LEVEL_OVERRIDES[$id] ?? [])];
+        }
+
+        return $map;
+    }
+
+    /**
+     * Upstream's generator `applyOpenAIGrammarToolCompatMetadata()`, the id half: `/^gpt-(\d+)/` with
+     * the number at least 5 — "OpenAI rejects `type: "custom"` tools for pre-GPT-5 models (gpt-4.x,
+     * gpt-4o, o-series)". The provider half (`openai`, `github-copilot`, … on a Responses API) is
+     * where this is called from.
+     */
+    private static function isGrammarToolModel(string $id): bool
+    {
+        return preg_match('/^gpt-(\d+)/', $id, $match) === 1 && (int) $match[1] >= 5;
+    }
+
+    /** A Copilot Responses model's compat: only the grammar-tools flag, where it applies. */
+    private static function grammarToolsCompat(string $id): ?OpenAiCompat
+    {
+        return self::isGrammarToolModel($id) ? new OpenAiCompat(grammarTools: true) : null;
+    }
+
+    /** @param list<string> $needles */
+    private static function containsAny(string $haystack, array $needles): bool
+    {
+        foreach ($needles as $needle) {
+            if (str_contains($haystack, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

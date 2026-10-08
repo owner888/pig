@@ -46,6 +46,9 @@ final class LsTool implements AgentTool
                 ],
                 'required' => [],
             ],
+            // Upstream's schema is TypeBox's `Type.Object(…)`, so its arguments go through
+            // `Value.Convert` before validation — `Tool::$typeBox`, read by `ToolArguments`.
+            typeBox: true,
         );
     }
 

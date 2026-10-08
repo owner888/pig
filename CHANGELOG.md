@@ -43,6 +43,25 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.31] - 2026-10-08
+
+### New Features
+
+- **OpenAI Grammar Tools & Custom Constrained Sampling (`ConstrainedSampling`, `OpenAiResponses`)**:
+  - Implemented the grammar half of upstream pi's constrained sampling (`resolveGrammarConstrainedSampling`, `createGrammarToolInputProperties`, `getGrammarToolInput`, and `appendGrammarToolInputJsonDelta`), supporting custom tools with Lark or regex grammars on compatible endpoints (e.g. OpenAI `supportsOpenAIGrammarTools`).
+  - Added streaming support for `response.custom_tool_call_input.delta` and `.done` in `OpenAiResponses`, translating custom tool text into JSON argument deltas and replaying `custom_tool_call` and `custom_tool_call_output` in conversation history.
+- **TypeBox Value.Convert Parity for Built-in Tools (`Tool::$typeBox`, `ToolArguments::valueConvert()`)**:
+  - Added `typeBox: true` flag to all built-in tools (`bash`, `edit`, `find`, `grep`, `ls`, `read`, `write`), running `valueConvert()` matching upstream typebox 1.3.27 behavior (converting `"path": null` to `"null"`, `""` for numbers to `0`, `"1"`/`"TRUE"` to booleans, and scalar wrapping for array properties) prior to standard schema coercion.
+- **Anthropic Protocol Parity & Managed-Effort Support (`Anthropic`, `AnthropicCompat`, `AssistantMessage`)**:
+  - Extended `AnthropicCompat` with `supportsTemperature`, `supportsEagerToolInputStreaming`, and `supportsMidConvoEffort`, mapping models via `AnthropicCompat::forBuiltIn()`.
+  - Added support for managed-effort Claude models (Opus 5, Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.1): enforcing adaptive thinking with `block_binding`, sending managed-effort betas, persisting `providerThinkingLevel` on `AssistantMessage` and `MessageJson`, and inserting effort-only system messages across historical turns.
+  - Aligned header generation with upstream: omitting temperature when thinking or on temperature-unsupported models (Opus 4.7+), sending tools with `eager_input_streaming: true` (using `fine-grained-tool-streaming` only when unsupported), and appending `anthropic-dangerous-direct-browser-access: true`.
+  - Fully populated `Models::anthropicThinkingLevelMap()` including `xhigh`, `max`, and 5.5 overrides matching upstream's generator.
+- **Copilot Claude Model Routing & Token Endpoint Alignment (`Models`, `generate-models.php`, `Anthropic`)**:
+  - Updated generator pattern `needsResponsesApi` to match `gpt-`, `grok-`, `oswe`, and `mai-`, while routing all Copilot Claude 4.x/5.x models to `anthropic-messages`.
+- **Nested Empty Objects Preservation in Model Routing (`CustomModels::keepRoutingObjects()`)**:
+  - Maintained nested empty objects as `stdClass` instances in `openRouterRouting` and `vercelGatewayRouting` so wire payloads serialize as `{}` instead of `[]`.
+
 ## [0.4.30] - 2026-10-08
 
 ### New Features

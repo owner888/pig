@@ -54,6 +54,11 @@ final readonly class OpenAiCompat
      *        `max_price`, …), sent as the request's `provider` field. Passed through as written
      * @param array<string, mixed>|null $vercelGatewayRouting upstream's `vercelGatewayRouting`:
      *        `only` and `order`, sent as `providerOptions.gateway`
+     * @param bool|null   $grammarTools     a tool that asks for grammar sampling
+     *        (`Tool::$constrainedSampling` `['type' => 'grammar', …]`) is sent as an OpenAI custom tool
+     *        with a Lark or regex grammar — upstream's `supportsOpenAIGrammarTools`, default false;
+     *        otherwise it falls back to an ordinary function tool. Read by both OpenAI providers, as
+     *        upstream's completions and Responses compat both have the key
      */
     public function __construct(
         public ?bool $store = null,
@@ -71,6 +76,7 @@ final readonly class OpenAiCompat
         public ?array $chatTemplateArgs = null,
         public ?array $openRouterRouting = null,
         public ?array $vercelGatewayRouting = null,
+        public ?bool $grammarTools = null,
     ) {
     }
 
@@ -113,6 +119,7 @@ final readonly class OpenAiCompat
             // detection, which says `{}` anyway — and `vercelGatewayRouting ?? detected…`.
             openRouterRouting: $explicit->openRouterRouting ?? [],
             vercelGatewayRouting: $explicit->vercelGatewayRouting ?? $detected->vercelGatewayRouting,
+            grammarTools: $explicit->grammarTools ?? $detected->grammarTools,
         );
     }
 
@@ -223,6 +230,8 @@ final readonly class OpenAiCompat
             chatTemplateArgs: [],
             openRouterRouting: [],
             vercelGatewayRouting: [],
+            // Upstream: `supportsOpenAIGrammarTools: false`, and only its generator turns it on.
+            grammarTools: false,
         );
     }
 }

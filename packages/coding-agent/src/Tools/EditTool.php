@@ -69,6 +69,9 @@ final class EditTool implements AgentTool
             // provider has it, the schema as written where it does not. Under strict sampling an
             // optional parameter arrives as null, which `ToolArguments` drops before validation.
             ['type' => 'json_schema', 'strict' => 'prefer'],
+            // Upstream's schema is TypeBox's `Type.Object(…)`, so its arguments go through
+            // `Value.Convert` before validation — `Tool::$typeBox`, read by `ToolArguments`.
+            typeBox: true,
         );
     }
 

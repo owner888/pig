@@ -942,9 +942,9 @@ output at 4096 and cannot reason, so `--model claude-3-haiku-20240307` built a r
 provider rejects, from a flag that looked like it had worked.
 
 `Providers\OpenAiCompletions` is upstream's `openai-completions.ts`, and it is worth more than
-the one name on it: Groq, Cerebras, xAI, Zai, Mistral, OpenRouter and GitHub Copilot's non-Claude,
-non-`gpt-5` models all answer this shape (Copilot's Claude speaks `anthropic-messages`, as upstream
-routes it). Structurally it differs from `Anthropic` in one way that matters — **Anthropic
+the one name on it: Groq, Cerebras, xAI, Zai, Mistral, OpenRouter and GitHub Copilot's Gemini and
+Kimi models all answer this shape (Copilot's Claude speaks `anthropic-messages` and its `gpt-`,
+`grok-`, `oswe` and `mai-` models `openai-responses`, as upstream's generator routes them). Structurally it differs from `Anthropic` in one way that matters — **Anthropic
 numbers its content blocks and says when each opens and closes; this does not.** A block runs
 until something of a different kind arrives, so the boundaries are worked out in the provider,
 and that is the only real complexity in the file. `AssistantMessageBuilder` grew `nextWire()`
@@ -967,13 +967,29 @@ merged provider → model one level deep in `models.json` like the template valu
 (`qwen`), `chat_template_kwargs` / `chat_template_args` with `$var` placeholders (`chat-template`,
 `qwen-chat-template`, `baseten`) and the rest of upstream's list — in `OpenAiCompletions::thinking()`,
 arm for arm. An `anthropic-messages` model carries `AnthropicCompat` instead (`forceAdaptiveThinking`,
-`supportsStrictTools`), which is metadata `Models` writes on the built-ins as upstream's generator
-does; nothing at request time looks at a Claude model's id. An extension's models carry the compat
-the extension wrote and nothing derived from the id — upstream spreads the definition. A thinking
-turn sends `display: "summarized"` unless `AnthropicOptions::$thinkingDisplay` says otherwise, and a
-turn without thinking (`thinkingEnabled: false`, which `Stream::simple()` always says) sends
-`thinking: {type: "disabled"}` unless the model's `thinkingLevelMap` has `off: null` — which `Models`
-writes on Fable 5, the managed-effort Claudes and the 5.5 overrides, as upstream's generator does.
+`supportsStrictTools`, `supportsTemperature`, `supportsEagerToolInputStreaming`,
+`supportsMidConvoEffort`), which is metadata `Models` writes on the built-ins as upstream's generator
+does (`AnthropicCompat::forBuiltIn()`); nothing at request time looks at a Claude model's id. An
+extension's models carry the compat the extension wrote and nothing derived from the id — upstream
+spreads the definition. A thinking turn sends `display: "summarized"` unless
+`AnthropicOptions::$thinkingDisplay` says otherwise, and a turn without thinking (`thinkingEnabled:
+false`, which `Stream::simple()` always says) sends `thinking: {type: "disabled"}` unless the model's
+`thinkingLevelMap` has `off: null`. `Models::anthropicThinkingLevelMap()` writes each Claude's whole
+map as upstream's generator does — `max` on the adaptive 4.6 models, `xhigh`/`max` from Opus 4.7 on,
+`off: null` on Fable 5 and the managed-effort models, the full map on the 5.5 overrides, and
+Copilot's `minimal: "low"` overrides — so `xhigh` is offered exactly where upstream offers it (pig
+has no `max` level; those entries are carried and unread). `temperature` is left out of a thinking
+turn, of a managed-effort model's turn and of a model whose compat says `supportsTemperature: false`
+(Opus 4.7+). Each tool goes out with `eager_input_streaming: true`; the
+`fine-grained-tool-streaming` beta is sent only for a request with tools to a model whose compat
+says it does not take that field, and the `anthropic-beta` header is upstream's `getBetaFeatures()`
+list — or, when the model's own headers carry one, that list alone. Every request carries
+`anthropic-dangerous-direct-browser-access: true`, as the SDK's does upstream. A managed-effort model
+(`supportsMidConvoEffort`: Opus 5/5.5, Sonnet/Haiku 5.5, Fable 5.1 on `anthropic`) always thinks
+adaptively with `block_binding: {prefix_mismatch_behavior: "drop_block"}` and top-level effort
+`high`, sends the two managed-effort betas, records the effort it was asked for on the answer
+(`AssistantMessage::$providerThinkingLevel`), and gets an effort-only system message in front of
+each earlier turn of its provider that recorded one, plus one with the current effort at the end.
 
 `Providers\TransformMessages` (upstream's `api/transform-messages.ts`) is what makes `/model`
 safe across models. Three things get cleaned up before any provider sees the history. First,
@@ -2038,9 +2054,14 @@ tool's own schema still says `number`. **Then the arguments are coerced** — up
 `coerceWithJsonSchema()`, ported line for line in `ToolArguments`: `"10"` for a number is 10, `"true"`
 for a boolean is true, `5` for a string is `"5"`, a null for a required primitive is that type's zero
 (`""`, 0, false), through `allOf`/`anyOf`/`oneOf`, properties, `additionalProperties` and items. The
-error still prints the arguments the model sent. Upstream also runs TypeBox's `Value.Convert` first;
-pig has no TypeBox, so that step is not ported, and every pig schema — the built-in tools' too, which
-are TypeBox upstream and so only get `Value.Convert` there — goes through `coerceWithJsonSchema()`.
+error still prints the arguments the model sent. **A built-in tool is converted first** the way
+TypeBox's `Value.Convert` converts upstream's built-in (`Type.Object`) schemas — `Tool::$typeBox`
+marks them, `ToolArguments::valueConvert()` is the part of typebox 1.3.27's conversion their schemas
+reach: a null for a required string is `"null"`, `""` for a number is 0, `"TRUE"`/`"1"` are true, a
+lone value where an array belongs is wrapped. Upstream skips `coerceWithJsonSchema()` only for a
+schema carrying `Symbol.for("TypeBox.Kind")`, which typebox 1.x no longer sets (it marks schemas with
+a hidden `~kind`), so every schema, the built-ins' included, is coerced after that — pig does the
+same. A plain JSON schema (extension, MCP) gets no `Value.Convert` work, upstream or here.
 
 **An unknown keyword is ignored, never a failure.** That is the most important line in the file: a
 schema using something unimplemented has to keep working, or adding a keyword to a tool breaks the
@@ -11404,7 +11425,7 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 
 **避坑规则**：
 - 顺序固定：先 null 归一化，再转换，再校验；报错信息里打印模型原始参数。
-- 转换照 `coercePrimitiveByType()` 逐条抄：必填参数的 null 会变成该类型的零值（`""`、0、false），不再报错。
+- 普通 JSON schema（扩展、MCP）照 `coercePrimitiveByType()` 逐条抄：必填参数的 null 变成该类型的零值（`""`、0、false）。内置工具另见下面的 `Value.Convert` 一条。
 - 测试：`ToolArgumentsTest` 的 coercion 一节。
 
 ### 扩展工具的 constrainedSampling 被丢掉
@@ -11416,6 +11437,77 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 **避坑规则**：
 - `Tool` 的新字段要检查所有 `new Tool(...)`，包括 `WrappedCustomTool`。
 - 测试：`CustomToolsTest::testAWrappedToolKeepsTheConstrainedSamplingItAskedFor`。
+
+### Copilot 的 gpt-6 / grok / mai 模型被发到 chat completions
+
+**症状**：`github-copilot/gpt-6-*`、`grok-*`、`mai-*` 的请求发到 `/chat/completions`，而 Copilot 只在 `/responses` 上提供这些模型。
+
+**根因**：upstream 生成器的 `needsResponsesApi` 是前缀 `gpt-`、`grok-`、`oswe`、`mai-`（没有例外）；pig 的 `copilotApi()` 只认 `gpt-5`、`oswe`。
+
+**避坑规则**：
+- 改 `scripts/generate-models.php` 的 `copilotApi()` 时同步改 `Models.php` 的 `COPILOT_MODELS` 行。
+- 测试：`ModelsTest::testCopilotSpeaksThreeApisAndTheIdDecidesWhich`，`GenerateModelsTest::testCopilotsApiIsDecidedByTheIdBecauseTheCatalogueDoesNotSay`。
+
+### Anthropic：Opus 4.7+ 带 temperature 被拒、思考轮也带 temperature
+
+**症状**：设了 temperature 时，Opus 4.7/4.8/5、Sonnet/Haiku 5.5 的请求被 API 拒绝；开思考的轮次也带着 temperature 发出。
+
+**根因**：upstream 只在 `!thinkingEnabled && !supportsMidConvoEffort && compat.supportsTemperature` 时发 temperature，生成器按 `isAnthropicTemperatureUnsupportedModel()` 给这些模型写 `supportsTemperature: false`；pig 有就发。
+
+**避坑规则**：
+- 新 Claude 的元数据走 `AnthropicCompat::forBuiltIn()`（id 规则从 upstream 生成器抄），provider 只读标记。
+- 测试：`AnthropicTest::testTemperatureIsLeftOutWhileThinkingAndForAModelThatRefusesIt`。
+
+### Anthropic：工具流式用 eager_input_streaming，beta 头照 upstream 计算
+
+**症状**：每个请求都带 `fine-grained-tool-streaming` beta；模型自己的 `anthropic-beta` 头和 pig 的并排发出两份。
+
+**根因**：upstream 默认给每个工具 `eager_input_streaming: true`，只在模型不支持时（`supportsEagerToolInputStreaming: false`，Copilot 的三个 Claude）才发 fine-grained beta；模型头里的 `anthropic-beta` 就是整张列表。另外三个 `createClient()` 分支都发 `anthropic-dangerous-direct-browser-access: true`。
+
+**避坑规则**：
+- beta 列表只在 `Anthropic::betaFeatures()` 里算，发之前删掉其它大小写的 `anthropic-beta`。
+- 测试：`AnthropicTest::testToolsAskForEagerInputStreamingInsteadOfTheFineGrainedBeta`、`testAModelWithoutEagerStreamingGetsTheFineGrainedBetaForItsTools`、`testAModelsOwnAnthropicBetaHeaderIsTheWholeList`。
+
+### Claude 的 xhigh 选不到
+
+**症状**：Opus 4.7+、Sonnet 5、Fable 5 等支持 xhigh 的 Claude，思考级别里没有 xhigh。
+
+**根因**：upstream 生成器给每个 Claude 写完整的 `thinkingLevelMap`（`max`、`xhigh`、5.5 的整张表、Copilot 的 `minimal: "low"`），`getSupportedThinkingLevels()` 只在表里写了 xhigh 时才提供它；pig 只抄了 `off: null`。
+
+**避坑规则**：
+- `Models::anthropicThinkingLevelMap()` 按 upstream 的合并顺序写（5.5 覆盖 → managed-effort 的 off → `applyThinkingLevelMetadata()` → Copilot 覆盖）。pig 没有 `max` 级别，`max` 条目只是数据。
+- 测试：`ModelsTest::testEveryClaudeCarriesUpstreamsWholeThinkingLevelMap`。
+
+### Opus 5 / Fable 5.1 等 managed-effort 模型的请求形状不对
+
+**症状**：`anthropic/claude-opus-5`、`claude-opus-5-5`、`claude-sonnet-5-5`、`claude-fable-5-1` 中途换思考强度后，旧轮次的思考块和新 effort 不匹配，请求可能一直 400。
+
+**根因**：upstream 对 `supportsMidConvoEffort` 的模型总是发 adaptive + `block_binding: {prefix_mismatch_behavior: "drop_block"}`、顶层 effort `high`、两个 managed-effort beta，在每个记了 `providerThinkingLevel` 的本 provider 旧轮次前插一条只有 `output_config` 的 system 消息，末尾再插当前 effort；pig 没有这个分支，也不记 `providerThinkingLevel`。
+
+**避坑规则**：
+- `AssistantMessage::$providerThinkingLevel` 要随会话保存（`MessageJson`）；所有复制 `AssistantMessage` 的地方都要带上它。
+- 测试：`AnthropicTest::testAManagedEffortModelThinksAdaptivelyAndSaysItsEffortInSystemMessages`、`testAManagedEffortTurnRecordsTheEffortItWasAskedFor`，`MessageTest::testEveryNewOptionalFieldSurvivesTheTripToJsonAndBack`。
+
+### 内置工具的参数转换和 upstream 不一样
+
+**症状**：内置工具收到 `"path": null` 时 pig 变成 `""`，upstream 是 `"null"`；`"offset": ""` pig 报错，upstream 是 0；`"TRUE"`、`"1"` 的布尔值、单个值给数组参数等同理。
+
+**根因**：upstream 的内置工具是 TypeBox schema，`validateToolArguments()` 先跑 `Value.Convert`（只转换 TypeBox 建的节点），再跑 `coerceWithJsonSchema()`（它的 TypeBox 判断用 `Symbol.for("TypeBox.Kind")`，typebox 1.x 已不设这个 symbol，所以所有 schema 都会走）。pig 没有 `Value.Convert`。
+
+**避坑规则**：
+- 内置工具的 `Tool` 带 `typeBox: true`，`ToolArguments::valueConvert()` 只对它们跑；扩展、MCP 的普通 schema 不跑。
+- 期望值以 typebox 1.3.27 实测为准（upstream 锁定的版本），不要凭印象。
+- 测试：`ToolArgumentsTest::testABuiltInToolsArgumentsAreConvertedTheWayTypeBoxConvertsThem`，`StrictToolSamplingTest::testEveryBuiltInToolIsConvertedTheWayUpstreamsTypeBoxSchemasAre`。
+
+### models.json 路由值里的空对象发成了 `[]`
+
+**症状**：`"openRouterRouting": {"max_price": {}}` 之类，请求里变成 `"max_price": []`。
+
+**根因**：`json_decode(..., true)` 分不出 `{}` 和 `[]`；upstream 原样转发文件里的对象。
+
+**避坑规则**：
+- `CustomModels::load()` 对两个路由键用保留对象的第二次解码重建（嵌套的空对象留成 `stdClass`）；顶层值仍是数组。
+- 测试：`CustomModelsTest::testANestedEmptyObjectInARoutingValueStaysAnObjectOnTheWire`。
 
 ## Version floor: PHP >= 8.3
 

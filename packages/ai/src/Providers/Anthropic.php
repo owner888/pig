@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\Ai\Providers;
 
 use Pig\Ai\AnthropicCompat;
+use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\AssistantMessageDiagnostic;
 use Pig\Ai\Context;
@@ -55,9 +56,16 @@ final class Anthropic
 {
     private const string VERSION = '2023-06-01';
 
-    private const string FINE_GRAINED_STREAMING = 'fine-grained-tool-streaming-2025-05-14';
+    private const string FINE_GRAINED_TOOL_STREAMING_BETA = 'fine-grained-tool-streaming-2025-05-14';
 
-    private const string INTERLEAVED_THINKING = 'interleaved-thinking-2025-05-14';
+    private const string INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
+
+    private const string MID_CONVERSATION_OUTPUT_CONFIG_BETA = 'mid-conversation-output-config-2026-07-01';
+
+    private const string THINKING_BINDING_CONTROLS_BETA = 'thinking-binding-controls-2026-08-01';
+
+    /** Upstream's `isAnthropicEffort()`: the effort names a managed-effort turn can be replayed with. */
+    private const array ANTHROPIC_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
     /** Anthropic wants tool ids matching ^[a-zA-Z0-9_-]+$, at most 64 long, and rejects the request otherwise. */
     private const string ID_PATTERN = '/[^a-zA-Z0-9_-]/';
@@ -116,6 +124,11 @@ final class Anthropic
         ?AnthropicOptions $options,
     ): void {
         $builder = new AssistantMessageBuilder($model);
+        // Upstream: `providerThinkingLevel = model.compat?.supportsMidConvoEffort ? (options?.effort
+        // ?? "high") : undefined`, on the output from the start — so a failed turn records it too.
+        if (self::compat($model)?->supportsMidConvoEffort === true) {
+            $builder->setProviderThinkingLevel($options?->effort ?? 'high');
+        }
         $signal = $options?->signal;
         // A subscription token's tools go out under Claude Code's names and come back under
         // them too, so the name on a `tool_use` block is mapped back to the tool this request
@@ -434,29 +447,15 @@ final class Anthropic
         // user agent, and the two betas in front — see `ClaudeCode`.
         $isOAuth = !$isCopilot && ClaudeCode::isToken($apiKey);
 
-        $beta = [self::FINE_GRAINED_STREAMING];
-
-        // Upstream: `model.reasoning && options?.thinkingEnabled === true && (options.interleavedThinking
-        // ?? true) && model.compat?.forceAdaptiveThinking !== true` — adaptive thinking interleaves
-        // without the beta, and a turn that does not think has nothing to interleave.
-        $forceAdaptiveThinking = $model->compat instanceof AnthropicCompat && $model->compat->forceAdaptiveThinking === true;
-
-        if ($model->reasoning
-            && ($options?->thinkingEnabled ?? false) === true
-            && ($options->interleavedThinking ?? true)
-            && !$forceAdaptiveThinking) {
-            $beta[] = self::INTERLEAVED_THINKING;
-        }
-
-        if ($isOAuth) {
-            $beta = [...ClaudeCode::BETAS, ...$beta];
-        }
-
         $headers = [
+            // Upstream's `createClient()` default headers, in all three of its arms (Copilot, a
+            // subscription token, an API key): `accept` and `anthropic-dangerous-direct-browser-access:
+            // true` — the SDK refuses to run in a browser without the second, and upstream sends it
+            // from everywhere. The SDK adds the other two itself.
             'accept' => 'application/json',
+            'anthropic-dangerous-direct-browser-access' => 'true',
             'content-type' => 'application/json',
             'anthropic-version' => self::VERSION,
-            'anthropic-beta' => implode(',', $beta),
             // Copilot: upstream's `authToken: apiKey`, which the SDK sends as a bearer.
             ...match (true) {
                 $isCopilot => ['authorization' => 'Bearer ' . $apiKey],
@@ -470,12 +469,104 @@ final class Anthropic
             ...Copilot::headers($model, $context),
         ];
 
+        // Upstream sends the betas as the request's `betas`, which the SDK writes as `anthropic-beta`
+        // over any default header of that name — so one header, whatever case the model's own was
+        // written in, and none at all when the list is empty.
+        $headers = array_filter(
+            $headers,
+            static fn (string|int $name): bool => strtolower((string) $name) !== 'anthropic-beta',
+            ARRAY_FILTER_USE_KEY,
+        );
+        $betas = $this->betaFeatures($model, $context, $isOAuth, $options);
+
+        if ($betas !== []) {
+            $headers['anthropic-beta'] = implode(',', $betas);
+        }
+
         return new Request(
             'POST',
             $this->endpoint($model, $apiKey) . '/v1/messages',
             $headers,
             $this->encode($this->body($model, $context, $options, $isOAuth)),
         );
+    }
+
+    /**
+     * Upstream's `getBetaFeatures()`, line for line.
+     *
+     * An `anthropic-beta` the model's own headers carry is **the whole list**, split on commas — no
+     * Claude Code betas added, nothing else — and a null one means none at all. Otherwise: the two
+     * Claude Code betas for a subscription token; `fine-grained-tool-streaming` only for a request
+     * with tools to a model that does **not** take per-tool `eager_input_streaming` (which is the
+     * default, so this beta is normally gone — `tool()` asks for eager streaming instead);
+     * `interleaved-thinking` for a non-adaptive thinking turn; and the two managed-effort betas for a
+     * `supportsMidConvoEffort` model.
+     *
+     * Not ported, because pig has neither feature: `server-side-fallback` (`allowedFallbackModels`)
+     * and `inline-tools` (native mid-conversation tool changes). Upstream also reads `options.headers`;
+     * pig's options carry no headers.
+     *
+     * @return list<string>
+     */
+    private function betaFeatures(Model $model, Context $context, bool $isOAuth, ?AnthropicOptions $options): array
+    {
+        $configured = false;
+        $configuredFeatures = null;
+
+        foreach ($model->headers as $name => $value) {
+            if (strtolower((string) $name) === 'anthropic-beta') {
+                $configured = true;
+                $configuredFeatures = $value;
+            }
+        }
+
+        if ($configured && $configuredFeatures === null) {
+            return [];
+        }
+
+        if ($configured) {
+            $features = array_filter(
+                array_map(trim(...), explode(',', (string) $configuredFeatures)),
+                static fn (string $feature): bool => $feature !== '',
+            );
+
+            return array_values(array_unique($features));
+        }
+
+        $compat = self::compat($model);
+        $features = [];
+
+        if ($isOAuth) {
+            array_push($features, ...ClaudeCode::BETAS);
+        }
+
+        // Upstream's `shouldUseFineGrainedToolStreamingBeta()`.
+        if ($context->tools !== [] && !($compat?->supportsEagerToolInputStreaming ?? true)) {
+            $features[] = self::FINE_GRAINED_TOOL_STREAMING_BETA;
+        }
+
+        // `model.reasoning && options?.thinkingEnabled === true && (options.interleavedThinking ??
+        // true) && model.compat?.forceAdaptiveThinking !== true` — adaptive thinking interleaves
+        // without the beta, and a turn that does not think has nothing to interleave.
+        if ($model->reasoning
+            && $options?->thinkingEnabled === true
+            && $options->interleavedThinking
+            && $compat?->forceAdaptiveThinking !== true) {
+            $features[] = self::INTERLEAVED_THINKING_BETA;
+        }
+
+        if ($compat?->supportsMidConvoEffort === true) {
+            $features[] = self::MID_CONVERSATION_OUTPUT_CONFIG_BETA;
+            $features[] = self::THINKING_BINDING_CONTROLS_BETA;
+        }
+
+        return array_values(array_unique($features));
+    }
+
+    /** The model's `AnthropicCompat`, or null — a compat of another API's type says nothing here. */
+    private static function compat(Model $model): ?AnthropicCompat
+    {
+        return $model->compat instanceof AnthropicCompat ? $model->compat : null;
     }
 
     /**
@@ -509,10 +600,14 @@ final class Anthropic
     /** @return array<string, mixed> */
     private function body(Model $model, Context $context, ?AnthropicOptions $options, bool $isOAuth): array
     {
-        $compat = $model->compat instanceof AnthropicCompat ? $model->compat : null;
+        $compat = self::compat($model);
+        $midConvoEffort = $compat?->supportsMidConvoEffort === true;
+        // Upstream's `activeEffort = options?.effort ?? "high"`, said to a managed-effort model in the
+        // system message that closes the conversation.
+        $activeEffort = $options?->effort ?? 'high';
         $body = [
             'model' => $model->id,
-            'messages' => $this->messages($context, $model, $isOAuth),
+            'messages' => $this->messages($context, $model, $isOAuth, $midConvoEffort ? $activeEffort : null),
             'max_tokens' => $options?->maxTokens ?? intdiv($model->maxTokens, 3),
             'stream' => true,
         ];
@@ -523,24 +618,42 @@ final class Anthropic
             $body['system'] = $system;
         }
 
-        if ($options?->temperature !== null) {
+        // Upstream: "Temperature is incompatible with extended thinking and unsupported on Claude
+        // Opus 4.7+." — `options?.temperature !== undefined && !options?.thinkingEnabled &&
+        // model.compat?.supportsMidConvoEffort !== true && compat.supportsTemperature`, the last
+        // defaulting to true and written false by the generator for the models that refuse it.
+        if ($options?->temperature !== null
+            && $options->thinkingEnabled !== true
+            && !$midConvoEffort
+            && ($compat?->supportsTemperature ?? true)) {
             $body['temperature'] = $options->temperature;
         }
 
         if ($context->tools !== []) {
             // Upstream's `supportsStrictTools: model.compat?.supportsStrictTools ?? false`, which its
-            // generated catalogue sets on every `anthropic` provider model (`Models` does the same).
+            // generated catalogue sets on every `anthropic` provider model (`Models` does the same),
+            // and `supportsEagerToolInputStreaming ?? true`.
             $supportsStrictTools = $compat?->strictTools ?? false;
+            $supportsEagerToolInputStreaming = $compat?->supportsEagerToolInputStreaming ?? true;
             $body['tools'] = array_map(
-                fn (Tool $tool): array => $this->tool($tool, $isOAuth, $supportsStrictTools),
+                fn (Tool $tool): array => $this->tool($tool, $isOAuth, $supportsEagerToolInputStreaming, $supportsStrictTools),
                 $context->tools,
             );
         }
 
-        // Upstream's `buildParams()` thinking block, arm for arm (its `supportsMidConvoEffort` arm in
-        // front of these is not ported: pig has no managed-effort models). Only a reasoning model is
-        // told anything about thinking at all.
-        if ($model->reasoning) {
+        // Upstream's `buildParams()` thinking block, arm for arm. Only a reasoning model is told
+        // anything about thinking at all — except a managed-effort one, which upstream's comment
+        // explains: "Managed effort models always use adaptive thinking so prefix mismatches can be
+        // dropped instead of surfacing as persistent 400 responses." Its effort goes in the system
+        // messages `messages()` adds, so the top-level one is always `high`.
+        if ($midConvoEffort) {
+            $body['thinking'] = [
+                'type' => 'adaptive',
+                'display' => $options?->thinkingDisplay ?? 'summarized',
+                'block_binding' => ['prefix_mismatch_behavior' => 'drop_block'],
+            ];
+            $body['output_config'] = ['effort' => 'high'];
+        } elseif ($model->reasoning) {
             if ($options?->thinkingEnabled === true) {
                 // "Default to "summarized" so Opus 4.7 and Mythos Preview behave like older Claude 4
                 // models (whose API default is also "summarized")" — on both arms, adaptive and budget.
@@ -548,8 +661,7 @@ final class Anthropic
 
                 // Upstream's `model.compat?.forceAdaptiveThinking === true`, and nothing else: no
                 // model id is looked at here. The ids are upstream's generator list, applied once
-                // where the built-in models are made (`AnthropicCompat::isAdaptiveThinkingModel()`,
-                // `Models`).
+                // where the built-in models are made (`AnthropicCompat::forBuiltIn()`, `Models`).
                 if ($compat?->forceAdaptiveThinking === true) {
                     $body['thinking'] = ['type' => 'adaptive', 'display' => $display];
                     if ($options->effort !== null) {
@@ -600,7 +712,7 @@ final class Anthropic
     }
 
     /** @return array<string, mixed> */
-    private function tool(Tool $tool, bool $isOAuth, bool $supportsStrictTools): array
+    private function tool(Tool $tool, bool $isOAuth, bool $supportsEagerToolInputStreaming, bool $supportsStrictTools): array
     {
         // Upstream's `convertTools()`: a strict tool sends its whole strict schema with the legacy
         // three keys laid over it (`{ ...parameters, ...legacyInputSchema }`) and `strict: true`;
@@ -621,6 +733,13 @@ final class Anthropic
             'name' => $isOAuth ? ClaudeCode::nameOut($tool->name) : $tool->name,
             'description' => $tool->description,
         ];
+
+        // Upstream's `...(supportsEagerToolInputStreaming ? { eager_input_streaming: true } : {})`:
+        // the tool's input streams as the model writes it, which used to take the
+        // `fine-grained-tool-streaming` beta on every request and now is the default per tool.
+        if ($supportsEagerToolInputStreaming) {
+            $out['eager_input_streaming'] = true;
+        }
 
         if ($strict === true) {
             $out['strict'] = true;
@@ -664,11 +783,20 @@ final class Anthropic
      * turn leaves behind, is refused outright rather than ignored, so the next thing anybody typed
      * failed until the conversation was compacted past it.
      *
+     * **A managed-effort model** (`AnthropicCompat::$supportsMidConvoEffort`) gets `$activeEffort`, and
+     * then upstream's `insertThinkingLevelMessages()`: an effort-only system message (`{role:
+     * "system", content: [], output_config: {effort}}`) in front of every earlier turn of this
+     * provider on this API that recorded its `providerThinkingLevel`, and one more with the effort
+     * asked for now at the end. The thinking each earlier turn did stays bound to the effort it was
+     * done at, and the effort can change mid-conversation without a 400.
+     *
      * @return list<array<string, mixed>>
      */
-    private function messages(Context $context, Model $model, bool $isOAuth = false): array
+    private function messages(Context $context, Model $model, bool $isOAuth = false, ?string $activeEffort = null): array
     {
         $out = [];
+        // Upstream's `assistantLevels`: the index in `$out` of each such earlier turn, and its effort.
+        $assistantLevels = [];
         $messages = TransformMessages::apply($context->messages, $model, self::normalizeToolCallId(...));
         $count = count($messages);
 
@@ -689,6 +817,13 @@ final class Anthropic
                 $blocks = $this->assistantBlocks($message, $isOAuth);
 
                 if ($blocks !== []) {
+                    if ($activeEffort !== null
+                        && $message->api === Api::AnthropicMessages
+                        && $message->provider === $model->provider
+                        && in_array($message->providerThinkingLevel, self::ANTHROPIC_EFFORTS, true)) {
+                        $assistantLevels[count($out)] = $message->providerThinkingLevel;
+                    }
+
                     $out[] = ['role' => 'assistant', 'content' => $blocks];
                 }
 
@@ -711,7 +846,23 @@ final class Anthropic
 
         $this->cacheLastUserBlock($out);
 
-        return $out;
+        if ($activeEffort === null) {
+            return $out;
+        }
+
+        $messages = [];
+
+        foreach ($out as $index => $message) {
+            if (isset($assistantLevels[$index])) {
+                $messages[] = ['role' => 'system', 'content' => [], 'output_config' => ['effort' => $assistantLevels[$index]]];
+            }
+
+            $messages[] = $message;
+        }
+
+        $messages[] = ['role' => 'system', 'content' => [], 'output_config' => ['effort' => $activeEffort]];
+
+        return $messages;
     }
 
     /** @return list<array<string, mixed>> */

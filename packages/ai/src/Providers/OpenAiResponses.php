@@ -102,7 +102,11 @@ final class OpenAiResponses
         $open = null;
 
         try {
-            $response = $this->http->send($this->request($model, $context, $options), $signal);
+            // Upstream's `grammarToolInputProperties`: tool name => the property a grammar tool's raw
+            // input lives in, for the tools this request sends as OpenAI custom tools. Read when a
+            // `custom_tool_call` arrives and when one is replayed, so both directions agree.
+            $grammar = ConstrainedSampling::createGrammarToolInputProperties($context->tools, self::supportsGrammarTools($model));
+            $response = $this->http->send($this->request($model, $context, $options, $grammar), $signal);
 
             if (!$response->isSuccessful()) {
                 throw new ProviderError($this->explain($model, $response->status, $response->body->all()));
@@ -116,7 +120,7 @@ final class OpenAiResponses
                     $data = json_decode($event->data, true);
 
                     if (is_array($data)) {
-                        $open = $this->dispatch($data, $builder, $stream, $open);
+                        $open = $this->dispatch($data, $builder, $stream, $open, $grammar);
                     }
                 }
             }
@@ -136,20 +140,25 @@ final class OpenAiResponses
     }
 
     /**
+     * `$open` is `[index, kind]`, and for a custom (grammar) tool call a third entry: its input
+     * property and upstream's `GrammarToolInputJsonBuffer` — see `openedCustomCall()`.
+     *
      * @param array<string, mixed> $data
-     * @param array{0: int, 1: string}|null $open
-     * @return array{0: int, 1: string}|null
+     * @param array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}|null $open
+     * @param array<string, string> $grammar
+     * @return array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}|null
      */
     private function dispatch(
         array $data,
         AssistantMessageBuilder $builder,
         AssistantMessageEventStream $stream,
         ?array $open,
+        array $grammar = [],
     ): ?array {
         return match ($data['type'] ?? '') {
             // Upstream takes the response id from here and again from the terminal event.
             'response.created' => $this->onCreated($data, $builder, $open),
-            'response.output_item.added' => $this->onItemStart($data, $builder, $stream),
+            'response.output_item.added' => $this->onItemStart($data, $builder, $stream, $grammar),
             'response.output_item.done' => $this->onItemEnd($data, $builder, $stream, $open),
             'response.reasoning_summary_text.delta' => $this->onDelta($data, $builder, $stream, $open, 'thinking'),
             // One summary part ending and the next beginning is a paragraph break, and
@@ -160,6 +169,10 @@ final class OpenAiResponses
             'response.reasoning_text.delta' => $this->onDelta($data, $builder, $stream, $open, 'thinking'),
             'response.output_text.delta', 'response.refusal.delta' => $this->onDelta($data, $builder, $stream, $open, 'text'),
             'response.function_call_arguments.delta' => $this->onArguments($data, $builder, $stream, $open),
+            // Upstream's two custom-tool-call input events: the raw text a grammar tool writes,
+            // streamed, then whole.
+            'response.custom_tool_call_input.delta' => $this->onCustomInput($data, $builder, $stream, $open, false),
+            'response.custom_tool_call_input.done' => $this->onCustomInput($data, $builder, $stream, $open, true),
             // **Both terminal events, and `response.incomplete` is the one that was missing.** It
             // is what the Responses API sends when the answer was cut off — `max_output_tokens`
             // reached, most often — and without it here the stream simply ended: `onCompleted()`
@@ -180,7 +193,7 @@ final class OpenAiResponses
      * @param array<string, mixed> $data
      * @return array{0: int, 1: string}|null
      */
-    private function onItemStart(array $data, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream): ?array
+    private function onItemStart(array $data, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array $grammar = []): ?array
     {
         $item = $data['item'] ?? [];
         $wire = $builder->nextWire();
@@ -189,8 +202,100 @@ final class OpenAiResponses
             'reasoning' => $this->opened('thinking', $builder->startThinking($wire), $stream, $builder),
             'message' => $this->opened('text', $builder->startText($wire), $stream, $builder),
             'function_call' => $this->openedCall($item, $builder, $stream, $wire),
+            'custom_tool_call' => $this->openedCustomCall($item, $builder, $stream, $wire, $grammar),
             default => null,
         };
+    }
+
+    /**
+     * Upstream's `custom_tool_call` arm of `createSlot()`: a grammar tool's call, whose input is one
+     * raw string rather than JSON. pig keeps it as an ordinary tool call whose arguments are
+     * `{<property>: <input>}` — the property the tool's schema requires, `input` for a tool this
+     * request did not send as a grammar tool — and streams it as the JSON deltas of that object
+     * (`ConstrainedSampling::appendGrammarToolInputJsonDelta()`), so nothing downstream needs to know.
+     *
+     * @param array<string, mixed> $item
+     * @param array<string, string> $grammar
+     * @return array{0: int, 1: string, 2: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}
+     */
+    private function openedCustomCall(array $item, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, int $wire, array $grammar): array
+    {
+        $name = (string) ($item['name'] ?? '');
+        $property = $grammar[$name] ?? 'input';
+        $index = $builder->startToolCall(
+            $wire,
+            $this->joinIds((string) ($item['call_id'] ?? ''), (string) ($item['id'] ?? '')),
+            $name,
+        );
+
+        // `arguments: { [inputProperty]: item.input || "" }`, with the JSON buffer still empty: the
+        // input already on the item goes out with the first delta.
+        $input = $item['input'] ?? null;
+        $builder->setJson($index, self::customArguments($property, is_string($input) ? $input : ''));
+        $stream->push(new ToolCallStartEvent($index, $builder->snapshot()));
+
+        return [$index, 'toolCall', ['property' => $property, 'buffer' => ConstrainedSampling::newGrammarToolInputJsonBuffer()]];
+    }
+
+    /**
+     * Upstream's `response.custom_tool_call_input.delta` and `.done` arms: the input so far plus the
+     * delta, or the whole input, run through the JSON buffer, with a delta event when it says
+     * anything.
+     *
+     * @param array<string, mixed> $data
+     * @param array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}|null $open
+     * @return array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}|null
+     */
+    private function onCustomInput(array $data, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, ?array $open, bool $done): ?array
+    {
+        if ($open === null || $open[1] !== 'toolCall' || !isset($open[2])) {
+            return $open;
+        }
+
+        $next = $done
+            ? (string) ($data['input'] ?? '')
+            : self::customInput($builder, $open) . (string) ($data['delta'] ?? '');
+
+        return $this->appendCustomInput($builder, $stream, $open, $next, $done);
+    }
+
+    /**
+     * Upstream's `appendCustomToolCallInput()` plus `pushToolCallDelta()`.
+     *
+     * @param array{0: int, 1: string, 2: array{property: string, buffer: array{input: string, started: bool, closed: bool}}} $open
+     * @return array{0: int, 1: string, 2: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}
+     */
+    private function appendCustomInput(AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array $open, string $next, bool $close): array
+    {
+        $delta = ConstrainedSampling::appendGrammarToolInputJsonDelta($open[2]['buffer'], $open[2]['property'], $next, $close);
+        $builder->setJson($open[0], self::customArguments($open[2]['property'], $next));
+
+        if ($delta !== null) {
+            $stream->push(new ToolCallDeltaEvent($open[0], $delta, $builder->snapshot()));
+        }
+
+        return $open;
+    }
+
+    /**
+     * Upstream's `getCustomToolCallInput()`: the input so far, read back from the arguments.
+     *
+     * @param array{0: int, 1: string, 2: array{property: string, buffer: array{input: string, started: bool, closed: bool}}} $open
+     */
+    private static function customInput(AssistantMessageBuilder $builder, array $open): string
+    {
+        $value = $builder->toolCallOf($open[0])->arguments[$open[2]['property']] ?? null;
+
+        return is_string($value) ? $value : '';
+    }
+
+    /** `{ [property]: input }` as the JSON the builder keeps a call's arguments in. */
+    private static function customArguments(string $property, string $input): string
+    {
+        $object = new \stdClass();
+        $object->{$property} = $input;
+
+        return (string) json_encode($object, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
     }
 
     /** @return array{0: int, 1: string} */
@@ -372,6 +477,16 @@ final class OpenAiResponses
             $this->joinIds((string) ($item['call_id'] ?? ''), (string) ($item['id'] ?? '')),
             (string) ($item['name'] ?? ''),
         );
+
+        // Upstream's `custom_tool_call` arm: the item's own input closes the JSON (`item.input ??`
+        // the input so far), then the call ends like any other.
+        if (($item['type'] ?? null) === 'custom_tool_call' && isset($open[2])) {
+            $input = $item['input'] ?? null;
+            $this->appendCustomInput($builder, $stream, $open, is_string($input) ? $input : self::customInput($builder, $open), true);
+            $stream->push(new ToolCallEndEvent($index, $builder->toolCallOf($index), $builder->snapshot()));
+
+            return null;
+        }
 
         // The finished item's own arguments are the call, and they were being ignored: the deltas
         // are usually the same JSON, but a stream that sent none — which this API allows and a
@@ -555,7 +670,8 @@ final class OpenAiResponses
 
     // ---- the request ---------------------------------------------------------------------
 
-    private function request(Model $model, Context $context, ?OpenAiOptions $options): Request
+    /** @param array<string, string> $grammar see `run()` */
+    private function request(Model $model, Context $context, ?OpenAiOptions $options, array $grammar = []): Request
     {
         $headers = [
             'accept' => 'text/event-stream',
@@ -571,7 +687,7 @@ final class OpenAiResponses
             'POST',
             $this->endpoint($model, $options?->apiKey, '/responses'),
             $headers,
-            $this->encode($this->body($model, $context, $options)),
+            $this->encode($this->body($model, $context, $options, $grammar)),
         );
     }
 
@@ -587,10 +703,13 @@ final class OpenAiResponses
         return $json;
     }
 
-    /** @return array<string, mixed> */
-    private function body(Model $model, Context $context, ?OpenAiOptions $options): array
+    /**
+     * @param array<string, string> $grammar see `run()`
+     * @return array<string, mixed>
+     */
+    private function body(Model $model, Context $context, ?OpenAiOptions $options, array $grammar = []): array
     {
-        $input = $this->input($model, $context);
+        $input = $this->input($model, $context, $grammar);
 
         $body = [
             'model' => $model->id,
@@ -611,8 +730,9 @@ final class OpenAiResponses
             // OpenAI's own models, which carry it in their `compat` (`Models`), and off for every
             // other endpoint of this API unless its `compat` says so.
             $supportsStrictMode = $model->compat instanceof OpenAiCompat && ($model->compat->strictMode ?? false);
+            $supportsGrammarTools = self::supportsGrammarTools($model);
             $body['tools'] = array_map(
-                fn (Tool $tool): array => $this->tool($tool, $supportsStrictMode),
+                fn (Tool $tool): array => $this->tool($tool, $supportsStrictMode, $supportsGrammarTools),
                 $context->tools,
             );
         }
@@ -644,7 +764,19 @@ final class OpenAiResponses
     }
 
     /**
-     * Upstream's `convertResponsesTools()`, the JSON-schema arm (pig sends no grammar tools).
+     * Upstream's `supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false` —
+     * on for `gpt-5`-and-later models of `openai` and Copilot, which carry it in their `compat`
+     * (`Models`), and off for every other endpoint unless its `compat` says so.
+     */
+    private static function supportsGrammarTools(Model $model): bool
+    {
+        return $model->compat instanceof OpenAiCompat && ($model->compat->grammarTools ?? false);
+    }
+
+    /**
+     * Upstream's `convertResponsesTools()`. A grammar tool the endpoint takes goes out as an OpenAI
+     * custom tool, `{type: "custom", name, description, format: {type: "grammar", syntax,
+     * definition}}`; every other tool is a function tool.
      *
      * `strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode) ?? defaultStrict`, the
      * default being `false`; the field is sent only where strict mode is supported. pig used to send
@@ -652,8 +784,23 @@ final class OpenAiResponses
      *
      * @return array<string, mixed>
      */
-    private function tool(Tool $tool, bool $supportsStrictMode): array
+    private function tool(Tool $tool, bool $supportsStrictMode, bool $supportsGrammarTools = false): array
     {
+        $grammar = ConstrainedSampling::resolveGrammarConstrainedSampling($tool, $supportsGrammarTools);
+
+        if ($grammar !== null) {
+            return [
+                'type' => 'custom',
+                'name' => $tool->name,
+                'description' => $tool->description,
+                'format' => [
+                    'type' => 'grammar',
+                    'syntax' => $grammar['format'],
+                    'definition' => $grammar['definition'],
+                ],
+            ];
+        }
+
         $strict = ConstrainedSampling::resolveJsonSchemaStrictSampling($tool, $supportsStrictMode) ?? false;
         $function = [
             'type' => 'function',
@@ -672,9 +819,10 @@ final class OpenAiResponses
     /**
      * The conversation as a list of items.
      *
+     * @param array<string, string> $grammar see `run()`
      * @return list<array<string, mixed>>
      */
-    private function input(Model $model, Context $context): array
+    private function input(Model $model, Context $context, array $grammar = []): array
     {
         $items = [];
 
@@ -695,7 +843,7 @@ final class OpenAiResponses
             => $this->normalizeToolCallId($id, $model, $source);
 
         foreach (TransformMessages::apply($context->messages, $model, $normalizeToolCallId) as $message) {
-            $converted = $this->convert($message, $model, $msgIndex);
+            $converted = $this->convert($message, $model, $msgIndex, $grammar);
 
             foreach ($converted as $item) {
                 $items[] = $item;
@@ -714,13 +862,16 @@ final class OpenAiResponses
         return $items;
     }
 
-    /** @return list<array<string, mixed>> */
-    private function convert(mixed $message, Model $model, int $msgIndex): array
+    /**
+     * @param array<string, string> $grammar
+     * @return list<array<string, mixed>>
+     */
+    private function convert(mixed $message, Model $model, int $msgIndex, array $grammar = []): array
     {
         return match (true) {
             $message instanceof UserMessage => $this->user($message, $model),
-            $message instanceof AssistantMessage => $this->assistant($message, $model, $msgIndex),
-            $message instanceof ToolResultMessage => $this->toolResult($message, $model),
+            $message instanceof AssistantMessage => $this->assistant($message, $model, $msgIndex, $grammar),
+            $message instanceof ToolResultMessage => $this->toolResult($message, $model, $grammar),
             default => [],
         };
     }
@@ -766,9 +917,10 @@ final class OpenAiResponses
      * A turn that errored or was aborted never reaches here — `TransformMessages` drops it whole,
      * calls and all — so nothing in this arm asks how the turn ended.
      *
+     * @param array<string, string> $grammar
      * @return list<array<string, mixed>>
      */
-    private function assistant(AssistantMessage $message, Model $model, int $msgIndex): array
+    private function assistant(AssistantMessage $message, Model $model, int $msgIndex, array $grammar = []): array
     {
         $items = [];
         $textBlockIndex = 0;
@@ -821,13 +973,31 @@ final class OpenAiResponses
 
             if ($block instanceof ToolCall) {
                 [$callId, $itemId] = $this->splitIds($block->id);
+                $customInputProperty = $grammar[$block->name] ?? null;
 
                 // Upstream's comment: OpenAI tracks which item ids were paired with an `rs_…`
                 // reasoning item, and another model's reasoning is not sent back — so for a
                 // different model the id is left out, which avoids that pairing check the way a
-                // foreign call does. And an id that is not `fc_…` is refused outright.
-                if ($differentModel || $itemId === null || !str_starts_with($itemId, 'fc_')) {
+                // foreign call does. "Also drop ids that do not match the replayed item type:
+                // function_call ids must be fc_* and custom_tool_call ids must be ctc_*. Foreign tool
+                // call ids are normalized to fc_*, and a call can switch between the two types when
+                // grammar tool support differs."
+                $itemIdPrefix = $customInputProperty === null ? 'fc_' : 'ctc_';
+
+                if ($differentModel || $itemId === null || !str_starts_with($itemId, $itemIdPrefix)) {
                     $itemId = null;
+                }
+
+                if ($customInputProperty !== null) {
+                    $items[] = [
+                        'type' => 'custom_tool_call',
+                        ...($itemId === null ? [] : ['id' => $itemId]),
+                        'call_id' => $callId,
+                        'name' => $block->name,
+                        'input' => Utf8::sanitize(ConstrainedSampling::getGrammarToolInput($block->name, $block->arguments, $customInputProperty)),
+                    ];
+
+                    continue;
                 }
 
                 $items[] = [
@@ -845,8 +1015,14 @@ final class OpenAiResponses
         return $items;
     }
 
-    /** @return list<array<string, mixed>> */
-    private function toolResult(ToolResultMessage $message, Model $model): array
+    /**
+     * A grammar tool's result goes back as a `custom_tool_call_output`, the rest as a
+     * `function_call_output` — upstream's `grammarToolInputProperties.has(msg.toolName)`.
+     *
+     * @param array<string, string> $grammar
+     * @return list<array<string, mixed>>
+     */
+    private function toolResult(ToolResultMessage $message, Model $model, array $grammar = []): array
     {
         [$callId] = $this->splitIds($message->toolCallId);
 
@@ -864,7 +1040,7 @@ final class OpenAiResponses
         $joined = implode("\n", $text);
 
         return [[
-            'type' => 'function_call_output',
+            'type' => isset($grammar[$message->toolName]) ? 'custom_tool_call_output' : 'function_call_output',
             'call_id' => $callId,
             'output' => self::toolResultOutput($joined, $images, $model),
         ]];

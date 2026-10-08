@@ -283,7 +283,7 @@ final class StreamProxyTest extends TestCase
         // an `anthropic-messages` one, which before carried an `OpenAiCompat` or nothing.
         $url = $this->server->start([self::sse([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]])]);
         $proxy = new StreamProxy(rtrim($url, '/'), 't');
-        $model = self::model(new AnthropicCompat(forceAdaptiveThinking: true));
+        $model = self::model(new AnthropicCompat(forceAdaptiveThinking: true, supportsTemperature: false, supportsMidConvoEffort: true));
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         Async::run(static function () use ($proxy, $model, $context): void {
@@ -292,7 +292,12 @@ final class StreamProxyTest extends TestCase
             }
         });
 
-        $this->assertSame(['forceAdaptiveThinking' => true], $this->server->receivedJson()['model']['compat']);
+        // The newer keys travel too, under upstream's names — a `false` included, since that is
+        // what switches the temperature off on the other side.
+        $this->assertSame(
+            ['forceAdaptiveThinking' => true, 'supportsTemperature' => false, 'supportsMidConvoEffort' => true],
+            $this->server->receivedJson()['model']['compat'],
+        );
     }
 
     public function testTheContextGoesOverTheWireAsTheSessionFileWritesIt(): void

@@ -71,6 +71,13 @@ final class GenerateModelsTest extends TestCase
 
         self::assertStringContainsString("'gpt-5' => ['GPT-5', Api::OpenAiResponses,", $output);
         self::assertStringContainsString("'oswe-thing' => ['OSWE Thing', Api::OpenAiResponses,", $output);
+        // Upstream's `needsResponsesApi`: `gpt-`, `grok-`, `oswe` and `mai-` — "only served through
+        // the Copilot /responses endpoint". pig's rule was `gpt-5`/`oswe`, which put the other three
+        // on completions.
+        self::assertStringContainsString("'gpt-6-x' => ['GPT-6 X', Api::OpenAiResponses,", $output);
+        self::assertStringContainsString("'grok-x' => ['Grok X', Api::OpenAiResponses,", $output);
+        self::assertStringContainsString("'mai-code-x' => ['MAI X', Api::OpenAiResponses,", $output);
+        self::assertStringContainsString("'gemini-x' => ['Gemini X', Api::OpenAiCompletions,", $output);
         // Upstream's `isCopilotClaude`, `/^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/`: a
         // Claude 4.x or 5.x speaks Anthropic's Messages API on Copilot. An id the pattern does not
         // name (`claude-x`) stays on completions, as anything else does.
@@ -377,6 +384,28 @@ final class GenerateModelsTest extends TestCase
                 ],
                 'oswe-thing' => [
                     'name' => 'OSWE Thing', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 128_000, 'output' => 64_000],
+                    'modalities' => ['input' => ['text']],
+                ],
+                // Upstream's `needsResponsesApi` prefixes beyond `gpt-5`/`oswe`, and one that is none
+                // of them.
+                'gpt-6-x' => [
+                    'name' => 'GPT-6 X', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 128_000, 'output' => 64_000],
+                    'modalities' => ['input' => ['text']],
+                ],
+                'grok-x' => [
+                    'name' => 'Grok X', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 128_000, 'output' => 64_000],
+                    'modalities' => ['input' => ['text']],
+                ],
+                'mai-code-x' => [
+                    'name' => 'MAI X', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 128_000, 'output' => 64_000],
+                    'modalities' => ['input' => ['text']],
+                ],
+                'gemini-x' => [
+                    'name' => 'Gemini X', 'tool_call' => true, 'reasoning' => true,
                     'limit' => ['context' => 128_000, 'output' => 64_000],
                     'modalities' => ['input' => ['text']],
                 ],

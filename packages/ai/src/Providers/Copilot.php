@@ -7,6 +7,7 @@ namespace Pig\Ai\Providers;
 use Pig\Ai\Context;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
+use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 
 /**
@@ -44,7 +45,14 @@ final class Copilot
             'Openai-Intent' => 'conversation-edits',
         ];
 
+        // Upstream's `hasCopilotVisionInput()`: an image in a **user or tool-result** message, and
+        // nowhere else. pig used to look in every message's content, assistant turns included;
+        // upstream never sends the header for those.
         foreach ($context->messages as $message) {
+            if (!$message instanceof UserMessage && !$message instanceof ToolResultMessage) {
+                continue;
+            }
+
             foreach ($message->content as $block) {
                 if ($block instanceof ImageContent) {
                     $headers['Copilot-Vision-Request'] = 'true';

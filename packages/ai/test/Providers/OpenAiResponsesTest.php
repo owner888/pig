@@ -926,6 +926,147 @@ final class OpenAiResponsesTest extends TestCase
         $this->assertSame(['path'], $tools[0]['parameters']['required']);
     }
 
+    public function testOnlyAnImageInAUserOrToolResultMessageAsksCopilotForVision(): void
+    {
+        // Upstream's `hasCopilotVisionInput()` looks at user and toolResult messages and nothing
+        // else. pig looked at every message's content, so an image inside an assistant turn — which
+        // a session written elsewhere can hold — sent `Copilot-Vision-Request` upstream never sends.
+        $this->sendAsCopilot(new Context([
+            new UserMessage('hello'),
+            $this->assistant([new TextContent('here'), new ImageContent('AAA', 'image/png')]),
+            new UserMessage('thanks'),
+        ]));
+
+        $this->assertStringNotContainsString('copilot-vision-request', strtolower($this->server->receivedHead()));
+
+        // An image a tool returned is one the model is being shown, and counts.
+        $this->server = new CannedServer();
+        $this->sendAsCopilot(new Context([
+            new UserMessage('look'),
+            $this->assistant([new ToolCall('c1|fc_1', 'read', ['path' => 'a.png'])]),
+            new ToolResultMessage('c1|fc_1', 'read', [new ImageContent('AAA', 'image/png')], false),
+        ]));
+
+        $this->assertStringContainsString('copilot-vision-request: true', strtolower($this->server->receivedHead()));
+    }
+
+    // ---- grammar (custom) tools --------------------------------------------------------------
+
+    public function testAGrammarToolGoesOutAsAnOpenAiCustomToolWhereTheModelTakesThem(): void
+    {
+        // Upstream's `convertResponsesTools()` grammar arm: `{type: "custom", name, description,
+        // format: {type: "grammar", syntax, definition}}`, Lark preferred over regex. pig sent every
+        // tool as a function tool, so a grammar tool's constraint was never sent at all.
+        $this->send(new Context([new UserMessage('hi')], tools: [self::grammarTool()]), $this->model(compat: new OpenAiCompat(grammarTools: true)));
+
+        $this->assertSame([
+            'type' => 'custom',
+            'name' => 'apply_patch',
+            'description' => 'Apply a patch',
+            'format' => ['type' => 'grammar', 'syntax' => 'lark', 'definition' => 'start: "x"'],
+        ], $this->server->receivedJson()['tools'][0]);
+    }
+
+    public function testAGrammarToolFallsBackToAFunctionToolWhereTheModelTakesNone(): void
+    {
+        // `supportsOpenAIGrammarTools` defaults to false: "grammar-constrained tools fall back to
+        // normal function tools".
+        $this->send(new Context([new UserMessage('hi')], tools: [self::grammarTool()]));
+
+        $tool = $this->server->receivedJson()['tools'][0];
+        $this->assertSame('function', $tool['type']);
+        $this->assertSame(['patch'], $tool['parameters']['required']);
+    }
+
+    public function testACustomToolCallStreamsAsJsonArgumentsInTheToolsInputProperty(): void
+    {
+        // Upstream's `custom_tool_call` arm of `processResponsesStream()`: the raw input becomes the
+        // arguments `{<property>: <input>}`, and the deltas pig streams are that object's JSON. pig
+        // had no arm for the item, so a grammar tool's call vanished from the turn.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'output_index' => 0, 'item' => ['type' => 'custom_tool_call', 'id' => 'ctc_1', 'call_id' => 'call_1', 'name' => 'apply_patch', 'input' => '']],
+            ['type' => 'response.custom_tool_call_input.delta', 'output_index' => 0, 'delta' => '*** Begin'],
+            ['type' => 'response.custom_tool_call_input.delta', 'output_index' => 0, 'delta' => " \"x\"\n"],
+            ['type' => 'response.custom_tool_call_input.done', 'output_index' => 0, 'input' => "*** Begin \"x\"\n"],
+            ['type' => 'response.output_item.done', 'output_index' => 0, 'item' => ['type' => 'custom_tool_call', 'id' => 'ctc_1', 'call_id' => 'call_1', 'name' => 'apply_patch', 'input' => "*** Begin \"x\"\n"]],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [$deltas, $message] = Async::run(function () use ($url): array {
+            $stream = (new OpenAiResponses())->stream(
+                $this->model($url, compat: new OpenAiCompat(grammarTools: true)),
+                new Context([new UserMessage('patch it')], tools: [self::grammarTool()]),
+                new OpenAiOptions(apiKey: 'test-key'),
+            );
+            $deltas = [];
+
+            foreach ($stream as $event) {
+                if ($event instanceof \Pig\Ai\ToolCallDeltaEvent) {
+                    $deltas[] = $event->delta;
+                }
+            }
+
+            return [$deltas, $stream->result()->await()];
+        });
+
+        $this->assertSame(['{"patch":"*** Begin', ' \\"x\\"\\n', '"}'], $deltas);
+        $this->assertSame('{"patch":"*** Begin \\"x\\"\\n"}', implode('', $deltas), 'the deltas are one JSON object');
+        $this->assertSame(StopReason::ToolUse, $message->stopReason);
+        $call = $message->toolCalls()[0];
+        $this->assertSame('call_1|ctc_1', $call->id);
+        $this->assertSame('apply_patch', $call->name);
+        $this->assertSame(['patch' => "*** Begin \"x\"\n"], $call->arguments);
+    }
+
+    public function testACustomToolCallAndItsResultGoBackAsCustomItems(): void
+    {
+        // Upstream's replay: a grammar tool's call is a `custom_tool_call` carrying the raw input and
+        // its own `ctc_` item id, and its result a `custom_tool_call_output`. An `fc_` id on such a
+        // call is dropped, as a `ctc_` one is on a function call — "a call can switch between the
+        // two types when grammar tool support differs".
+        $this->send(
+            new Context([
+                new UserMessage('patch it'),
+                $this->assistant([
+                    new ToolCall('call_1|ctc_1', 'apply_patch', ['patch' => 'P']),
+                    new ToolCall('call_2|fc_2', 'apply_patch', ['patch' => 'Q']),
+                    new ToolCall('call_3|ctc_3', 'read', ['path' => 'a']),
+                ], StopReason::ToolUse),
+                new ToolResultMessage('call_1|ctc_1', 'apply_patch', [new TextContent('done')], false),
+                new ToolResultMessage('call_3|ctc_3', 'read', [new TextContent('body')], false),
+            ], tools: [self::grammarTool(), new Tool('read', 'Read', ['type' => 'object', 'properties' => ['path' => ['type' => 'string']], 'required' => ['path']])]),
+            $this->model(id: 'test-model', compat: new OpenAiCompat(grammarTools: true)),
+        );
+
+        $input = $this->server->receivedJson()['input'];
+
+        $this->assertSame(['type' => 'custom_tool_call', 'id' => 'ctc_1', 'call_id' => 'call_1', 'name' => 'apply_patch', 'input' => 'P'], $input[1]);
+        $this->assertSame(['type' => 'custom_tool_call', 'call_id' => 'call_2', 'name' => 'apply_patch', 'input' => 'Q'], $input[2]);
+        $this->assertSame('function_call', $input[3]['type']);
+        $this->assertArrayNotHasKey('id', $input[3], 'a ctc_ id does not fit a function call');
+        $this->assertSame(['type' => 'custom_tool_call_output', 'call_id' => 'call_1', 'output' => 'done'], $input[4]);
+        $this->assertSame('function_call_output', $input[5]['type']);
+    }
+
+    public function testCopilotAndOpenAiGptFiveModelsTakeGrammarTools(): void
+    {
+        // Upstream's `applyOpenAIGrammarToolCompatMetadata()`: a Responses model of `openai` or
+        // `github-copilot` whose id is `gpt-<n>` with n >= 5 — and nothing older.
+        $this->assertTrue(\Pig\Ai\Models::find('openai', 'gpt-5')?->compat?->grammarTools);
+        $this->assertTrue(\Pig\Ai\Models::find('github-copilot', 'gpt-5.4')?->compat?->grammarTools);
+        $this->assertNull(\Pig\Ai\Models::find('openai', 'gpt-4.1')?->compat?->grammarTools);
+    }
+
+    private static function grammarTool(): Tool
+    {
+        return new Tool(
+            'apply_patch',
+            'Apply a patch',
+            ['type' => 'object', 'properties' => ['patch' => ['type' => 'string']], 'required' => ['patch']],
+            ['type' => 'grammar', 'variants' => ['openai_lark' => 'start: "x"', 'openai_regex' => '.*']],
+        );
+    }
+
     // ---- scaffolding -------------------------------------------------------------------------
 
     /** @param list<mixed> $content */

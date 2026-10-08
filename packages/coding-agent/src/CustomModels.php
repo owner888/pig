@@ -114,6 +114,7 @@ final readonly class CustomModels
 
         try {
             $decoded = json_decode($raw, true, flags: JSON_THROW_ON_ERROR);
+            $decoded = self::keepRoutingObjects($decoded, json_decode($raw, false, flags: JSON_THROW_ON_ERROR));
         } catch (\JsonException $error) {
             return new self([], [], ["{$path} is not valid JSON: {$error->getMessage()}"]);
         }
@@ -403,6 +404,94 @@ final readonly class CustomModels
         return new Pricing($number('input'), $number('output'), $number('cacheRead'), $number('cacheWrite'));
     }
 
+    /** The `compat` keys whose value is sent on the wire as the file wrote it. */
+    private const array ROUTING_KEYS = ['openRouterRouting', 'vercelGatewayRouting'];
+
+    /**
+     * The routing objects, re-read from the document with **its objects kept as objects**.
+     *
+     * Upstream passes `openRouterRouting` through to the request's `provider` field exactly as the
+     * file wrote it. Decoded into PHP arrays, `{}` and `[]` are the same value, and a nested empty
+     * object — `"max_price": {}`, `"sort": {}` — went out as `[]`, which is not the JSON the file
+     * said and not a shape OpenRouter documents. So each routing value is taken from a second,
+     * object-preserving decode of the same text, where every non-empty object becomes an array
+     * again and an empty one stays an object (`stdClass`, which `json_encode` writes as `{}`).
+     * The value itself stays an array — `{}` there is `[]`, which every reader already treats as
+     * the empty object — so only what is inside it changes.
+     *
+     * @param array<mixed> $decoded the document as arrays
+     * @return array<mixed>
+     */
+    private static function keepRoutingObjects(mixed $decoded, mixed $objects): mixed
+    {
+        if (!is_array($decoded) || !is_array($decoded['providers'] ?? null) || !($objects instanceof \stdClass)) {
+            return $decoded;
+        }
+
+        foreach ($decoded['providers'] as $name => $provider) {
+            $providerObject = $objects->providers->{$name} ?? null;
+
+            if (!is_array($provider) || !$providerObject instanceof \stdClass) {
+                continue;
+            }
+
+            $decoded['providers'][$name] = self::withRoutingObjects($provider, $providerObject);
+
+            foreach (is_array($provider['models'] ?? null) ? $provider['models'] : [] as $index => $model) {
+                $modelObject = is_array($providerObject->models ?? null) ? ($providerObject->models[$index] ?? null) : null;
+
+                if (is_array($model) && $modelObject instanceof \stdClass) {
+                    $decoded['providers'][$name]['models'][$index] = self::withRoutingObjects($model, $modelObject);
+                }
+            }
+        }
+
+        return $decoded;
+    }
+
+    /**
+     * @param array<mixed> $entry a provider or a model, as arrays
+     * @return array<mixed>
+     */
+    private static function withRoutingObjects(array $entry, \stdClass $object): array
+    {
+        $compat = $object->compat ?? null;
+
+        if (!is_array($entry['compat'] ?? null) || !$compat instanceof \stdClass) {
+            return $entry;
+        }
+
+        foreach (self::ROUTING_KEYS as $key) {
+            $value = $compat->{$key} ?? null;
+
+            if ($value instanceof \stdClass) {
+                $entry['compat'][$key] = (array) self::emptyObjectsKept($value, top: true);
+            }
+        }
+
+        return $entry;
+    }
+
+    /** A decoded JSON value as arrays, except that an empty object below the top stays `{}`. */
+    private static function emptyObjectsKept(mixed $value, bool $top = false): mixed
+    {
+        if ($value instanceof \stdClass) {
+            $properties = get_object_vars($value);
+
+            if ($properties === [] && !$top) {
+                return new \stdClass();
+            }
+
+            return array_map(self::emptyObjectsKept(...), $properties);
+        }
+
+        if (is_array($value)) {
+            return array_map(self::emptyObjectsKept(...), $value);
+        }
+
+        return $value;
+    }
+
     /**
      * Upstream's `mergeCompat(base, override)`: the override's keys over the base's, and the
      * object-valued ones (`openRouterRouting`, `vercelGatewayRouting`, `chatTemplateKwargs`,
@@ -478,6 +567,9 @@ final readonly class CustomModels
             return new AnthropicCompat(
                 forceAdaptiveThinking: $flag('forceAdaptiveThinking'),
                 strictTools: $flag('supportsStrictTools'),
+                supportsTemperature: $flag('supportsTemperature'),
+                supportsEagerToolInputStreaming: $flag('supportsEagerToolInputStreaming'),
+                supportsMidConvoEffort: $flag('supportsMidConvoEffort'),
             );
         }
 
@@ -506,6 +598,7 @@ final readonly class CustomModels
             // template values. `{}` is said, and is sent as `{}`, as upstream sends it.
             openRouterRouting: self::templateValues($compat['openRouterRouting'] ?? null),
             vercelGatewayRouting: self::templateValues($compat['vercelGatewayRouting'] ?? null),
+            grammarTools: $flag('supportsOpenAIGrammarTools'),
         );
     }
 
