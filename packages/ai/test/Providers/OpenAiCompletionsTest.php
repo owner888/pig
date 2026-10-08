@@ -267,6 +267,44 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame(100 - $cacheRead, $message->usage->input);
     }
 
+    public function testUsageOnTheChoiceIsReadWhenTheChunkHasNoneOfItsOwn(): void
+    {
+        // Moonshot puts the usage on `choices[0]` rather than on the chunk. Upstream falls back
+        // to it; pig read only the chunk's, so every Moonshot turn was counted as free.
+        $url = $this->serve([
+            ['choices' => [['delta' => ['content' => 'hi']]]],
+            ['choices' => [[
+                'delta' => [],
+                'finish_reason' => 'stop',
+                'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 10, 'cached_tokens' => 30],
+            ]]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(70, $message->usage->input);
+        $this->assertSame(10, $message->usage->output);
+        $this->assertSame(30, $message->usage->cacheRead);
+    }
+
+    public function testTheChunksOwnUsageBeatsTheChoices(): void
+    {
+        // Only a fallback: a chunk that carries both is read from the chunk, as upstream's
+        // `!chunk.usage` guard has it.
+        $url = $this->serve([
+            ['choices' => [[
+                'delta' => ['content' => 'hi'],
+                'finish_reason' => 'stop',
+                'usage' => ['prompt_tokens' => 999, 'completion_tokens' => 999],
+            ]], 'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 10]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(100, $message->usage->input);
+        $this->assertSame(10, $message->usage->output);
+    }
+
     public function testCacheWritesAreTheirOwnCountAndAreNotSubtractedFromTheReads(): void
     {
         // OpenRouter-compatible providers report writes beside the reads. Both are inside
@@ -661,11 +699,15 @@ final class OpenAiCompletionsTest extends TestCase
 
     public function testAnEndpointWithNoThinkingFieldGetsItAsText(): void
     {
+        // Upstream's `requiresThinkingAsText` arm: every thought joined by a blank line into one
+        // text part, in front of the answer, with **no tags**. pig used to send one
+        // `<thinking>…</thinking>` part per thought — tags in the history teach the model to
+        // write them into its own answers, which is why upstream leaves them off.
         $compat = new OpenAiCompat(thinkingAsText: true);
         $context = new Context([
             new UserMessage('hi'),
             new AssistantMessage(
-                [new ThinkingContent('hmm', 'reasoning'), new TextContent('so')],
+                [new ThinkingContent('hmm', 'reasoning'), new TextContent('so'), new ThinkingContent('and then', 'reasoning')],
                 Api::OpenAiCompletions,
                 'test-provider',
                 'test-model',
@@ -679,8 +721,11 @@ final class OpenAiCompletionsTest extends TestCase
 
         $assistant = $this->server->receivedJson()['messages'][1];
 
-        $this->assertStringContainsString('<thinking>', $assistant['content'][0]['text']);
-        $this->assertSame('so', $assistant['content'][1]['text']);
+        $this->assertSame(
+            [['type' => 'text', 'text' => "hmm\n\nand then"], ['type' => 'text', 'text' => 'so']],
+            $assistant['content'],
+        );
+        $this->assertArrayNotHasKey('reasoning', $assistant, 'as text instead of the field, not as well as');
     }
 
     public function testAnExplicitCompatBeatsWhatTheUrlSuggests(): void

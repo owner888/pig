@@ -495,11 +495,15 @@ final class GoogleTest extends TestCase
         $this->assertFalse(array_key_exists('output', $response));
     }
 
-    public function testAThoughtWithNoSignatureGoesBackAsTextRatherThanBeingDropped(): void
+    public function testAnUnsignedThoughtFromThisModelGoesBackAsAThought(): void
     {
+        // Upstream's `convertMessages()`: a thought from the same provider and model goes back as
+        // `thought: true` whether or not it has a signature, and only the signature is left off.
+        // pig used to send it as `<thinking>…</thinking>` text instead, which upstream never does:
+        // tags in the history teach the model to write them into its own answers.
         $context = new Context([
             new UserMessage('hi'),
-            $this->assistant([new ThinkingContent('from another model', null), new TextContent('so')]),
+            $this->assistant([new ThinkingContent('mine', null), new TextContent('so')]),
             new UserMessage('go on'),
         ]);
 
@@ -507,17 +511,39 @@ final class GoogleTest extends TestCase
 
         $parts = $this->server->receivedJson()['contents'][1]['parts'];
 
-        // A thought without its signature is rejected as a thought, so it travels as
-        // tagged text instead of being lost.
-        $this->assertFalse(array_key_exists('thought', $parts[0]));
-        $this->assertStringContainsString('<thinking>', $parts[0]['text']);
+        $this->assertSame(['thought' => true, 'text' => 'mine'], $parts[0]);
+        $this->assertSame(['text' => 'so'], $parts[1]);
+    }
+
+    public function testAnotherModelsThoughtGoesBackAsPlainTextWithNoTags(): void
+    {
+        // The other arm: a thought from any other model is ordinary text, untagged — the
+        // signature is meaningless here, and the tags were pig's invention.
+        $context = new Context([
+            new UserMessage('hi'),
+            new AssistantMessage(
+                [new ThinkingContent('from another model', 'U0lHMQ==')],
+                Api::AnthropicMessages,
+                'anthropic',
+                'claude-sonnet-4-5',
+                new Usage(),
+                StopReason::Stop,
+            ),
+            new UserMessage('go on'),
+        ]);
+
+        $this->send($context);
+
+        $this->assertSame([['text' => 'from another model']], $this->server->receivedJson()['contents'][1]['parts']);
     }
 
     public function testASignedThoughtGoesBackAsAThought(): void
     {
+        // Base64, because that is what a real signature is and the only kind that goes back now:
+        // this used to say `SIG`, which Gemini's `TYPE_BYTES` field would refuse.
         $context = new Context([
             new UserMessage('hi'),
-            $this->assistant([new ThinkingContent('mine', 'SIG')]),
+            $this->assistant([new ThinkingContent('mine', 'U0lHMQ==')]),
             new UserMessage('go on'),
         ]);
 
@@ -526,14 +552,15 @@ final class GoogleTest extends TestCase
         $part = $this->server->receivedJson()['contents'][1]['parts'][0];
 
         $this->assertTrue($part['thought']);
-        $this->assertSame('SIG', $part['thoughtSignature']);
+        $this->assertSame('U0lHMQ==', $part['thoughtSignature']);
     }
 
     public function testACallsSignatureGoesBackWithTheCall(): void
     {
+        // Base64 for the same reason as above; this used to be `SIG-1`, which is not.
         $context = new Context([
             new UserMessage('hi'),
-            $this->assistant([new ToolCall('c1', 'read', ['path' => 'a.php'], 'SIG-1')]),
+            $this->assistant([new ToolCall('c1', 'read', ['path' => 'a.php'], 'U0lHLTE=')]),
             new UserMessage('go on'),
         ]);
 
@@ -544,7 +571,89 @@ final class GoogleTest extends TestCase
         // The other end of the signature that used to be dropped on the way in: this half was
         // written and could not be reached, because nothing ever produced a call that had one.
         $this->assertSame('read', $part['functionCall']['name']);
-        $this->assertSame('SIG-1', $part['thoughtSignature']);
+        $this->assertSame('U0lHLTE=', $part['thoughtSignature']);
+    }
+
+    public function testASignatureThatIsNotBase64IsLeftOffRatherThanSent(): void
+    {
+        // Upstream's `isValidThoughtSignature()`: Google declares the field `TYPE_BYTES`, so a
+        // signature that is not base64 — wrong length, or a character outside the alphabet — is a
+        // 400 for the whole request. The part still goes; only the signature is dropped.
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([
+                new ThinkingContent('mine', 'U0lHMQ'),
+                new TextContent('so', 'not-base64!'),
+                new ToolCall('c1', 'read', [], 'U0lH-TE='),
+            ]),
+            new ToolResultMessage('c1', 'read', [new TextContent('ok')]),
+        ]);
+
+        $this->send($context);
+
+        $parts = $this->server->receivedJson()['contents'][1]['parts'];
+
+        $this->assertSame(['thought' => true, 'text' => 'mine'], $parts[0]);
+        $this->assertSame(['text' => 'so'], $parts[1]);
+        $this->assertArrayNotHasKey('thoughtSignature', $parts[2]);
+    }
+
+    public function testATextBlocksSignatureGoesBackAsThePartsThoughtSignature(): void
+    {
+        // Gemini signs answer text too, and wants it back on the part it came on. pig dropped a
+        // text block's `textSignature` here — and an empty text part with nothing but a signature
+        // in it went with the empty-text rule. Upstream keeps that one: dropping it breaks the
+        // reasoning chain and the model intermittently ends a turn mid-task with nothing in it.
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new TextContent('so', 'U0lHMQ=='), new TextContent('', 'U0lHMg==')]),
+            new UserMessage('go on'),
+        ]);
+
+        $this->send($context);
+
+        $this->assertSame(
+            [['text' => 'so', 'thoughtSignature' => 'U0lHMQ=='], ['text' => '', 'thoughtSignature' => 'U0lHMg==']],
+            $this->server->receivedJson()['contents'][1]['parts'],
+        );
+    }
+
+    public function testAnotherModelOfTheSameProviderGetsNoSignatureBack(): void
+    {
+        // Upstream's `isSameProviderAndModel`: provider and model id. A signature is the model's
+        // own, so gemini-2.5-pro's means nothing to the model asked here even though both are
+        // `google`; `TransformMessages` strips them first, and this checks the two together.
+        $context = new Context([
+            new UserMessage('hi'),
+            new AssistantMessage(
+                [new TextContent('so', 'U0lHMQ=='), new ToolCall('c1', 'read', [], 'U0lHMg==')],
+                Api::GoogleGenerativeAi,
+                'google',
+                'gemini-2.5-pro',
+                new Usage(),
+                StopReason::ToolUse,
+            ),
+            new ToolResultMessage('c1', 'read', [new TextContent('ok')]),
+        ]);
+
+        $this->send($context);
+
+        $this->assertStringNotContainsString('thoughtSignature', (string) json_encode($this->server->receivedJson()['contents']));
+    }
+
+    public function testATextPartsSignatureIsKeptOnTheTextBlockAndALaterDeltaDoesNotWipeIt(): void
+    {
+        // The receiving half of the one above: upstream keeps a text part's `thoughtSignature` as
+        // the block's `textSignature`, through `retainThoughtSignature()`, so the next delta of the
+        // same block — which usually has none — does not lose it. pig kept only a thought's.
+        $url = $this->serve([
+            ['candidates' => [['content' => ['parts' => [['text' => 'the ', 'thoughtSignature' => 'U0lHMQ==']]]]]],
+            ['candidates' => [['content' => ['parts' => [['text' => 'answer']]], 'finishReason' => 'STOP']]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertEquals([new TextContent('the answer', 'U0lHMQ==')], $message->content);
     }
 
     public function testAnImageGoesInlineAndIsLeftOutForAModelThatCannotSeeOne(): void

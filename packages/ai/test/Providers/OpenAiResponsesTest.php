@@ -373,6 +373,26 @@ final class OpenAiResponsesTest extends TestCase
         $this->assertSame(['user', 'user'], $kinds);
     }
 
+    public function testATurnAbortedAfterItsReasoningDoesNotSendTheReasoningBackAlone(): void
+    {
+        // Escape after the reasoning item finished and before the answer started leaves a turn
+        // that is nothing but a signed reasoning item. The guard above is for `Error` only, so
+        // pig sent this one back on the next prompt, followed by the user turn — OpenAI's
+        // "reasoning was provided without its required following item" 400, upstream's reason for
+        // skipping a failed turn in `transformMessages()`, which `TransformMessages` now does.
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ThinkingContent('a whole thought', '{"type":"reasoning","id":"rs_1"}')], StopReason::Aborted),
+            new UserMessage('go on'),
+        ]);
+
+        $this->send($context);
+
+        $kinds = array_map(static fn (array $item): string => $item['type'] ?? $item['role'], $this->server->receivedJson()['input']);
+
+        $this->assertSame(['user', 'user'], $kinds);
+    }
+
     public function testATextBlockKeepsItsIdAcrossTurns(): void
     {
         $context = new Context([

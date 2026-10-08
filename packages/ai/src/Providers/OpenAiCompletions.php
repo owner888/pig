@@ -171,6 +171,12 @@ final class OpenAiCompletions
             return $open;
         }
 
+        // Upstream's fallback: some providers (Moonshot) put the usage on the choice instead
+        // of the chunk, and it is read from there only when the chunk has none of its own.
+        if (!is_array($data['usage'] ?? null) && is_array($choice['usage'] ?? null)) {
+            $builder->setUsage($this->usage($choice['usage']));
+        }
+
         if (is_string($choice['finish_reason'] ?? null)) {
             $builder->setRawStopReason($choice['finish_reason']);
             $builder->setStopReason($this->stopReason($choice['finish_reason']));
@@ -621,22 +627,24 @@ final class OpenAiCompletions
             }
         }
 
-        if ($compat->thinkingAsText && $thinking !== []) {
-            // Some endpoints have no field for it, so reasoning goes in front of the text
-            // it led to, tagged, rather than being dropped.
-            $tagged = array_map(
-                static fn (ThinkingContent $block): string => "<thinking>\n{$block->thinking}\n</thinking>",
-                $thinking,
-            );
-            $text = [...$tagged, ...$text];
-            $thinking = [];
-        }
-
         // Mistral rejects a null content and every endpoint rejects an assistant turn
         // that has neither content nor calls.
         $out = ['role' => 'assistant', 'content' => $compat->assistantAfterToolResult ? '' : null];
 
-        if ($text !== []) {
+        if ($compat->thinkingAsText && $thinking !== []) {
+            // Some endpoints have no field for it, so reasoning goes back as text rather than
+            // being dropped. Upstream's `requiresThinkingAsText` arm, literally: every thought
+            // joined by a blank line into **one** part, in front of the text parts, with no tags
+            // so the model does not learn to mimic them — and always as parts, Copilot or not.
+            $out['content'] = [
+                ['type' => 'text', 'text' => implode("\n\n", array_map(
+                    static fn (ThinkingContent $block): string => Utf8::sanitize($block->thinking),
+                    $thinking,
+                ))],
+                ...array_map(static fn (string $one): array => ['type' => 'text', 'text' => $one], $text),
+            ];
+            $thinking = [];
+        } elseif ($text !== []) {
             // Copilot answers an array by re-answering every earlier prompt, so its text
             // goes as one string.
             $out['content'] = $model->provider === 'github-copilot'

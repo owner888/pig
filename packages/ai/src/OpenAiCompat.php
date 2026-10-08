@@ -28,7 +28,7 @@ final readonly class OpenAiCompat
      * @param string $maxTokensField   `max_completion_tokens`, or the older `max_tokens`
      * @param bool   $toolResultName   a tool result carries the tool's name as well as its id
      * @param bool   $assistantAfterToolResult insert a filler turn between a result and a user message
-     * @param bool   $thinkingAsText   thinking goes back as `<thinking>` text rather than a field
+     * @param bool   $thinkingAsText   thinking goes back as untagged text, one part ahead of the answer, rather than a field
      * @param bool   $mistralToolIds   tool ids are cut and padded to exactly nine characters
      */
     public function __construct(

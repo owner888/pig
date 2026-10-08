@@ -75,7 +75,7 @@ final class GoogleShared
             }
 
             if ($message instanceof AssistantMessage) {
-                $parts = self::assistantParts($message);
+                $parts = self::assistantParts($message, $model);
 
                 if ($parts !== []) {
                     $contents[] = ['role' => 'model', 'parts' => $parts];
@@ -305,9 +305,14 @@ final class GoogleShared
 
         $builder->append($open[0], 'text', $text);
 
-        // The signature authenticates the thought and has to go back with it.
-        if ($kind === 'thinking' && is_string($part['thoughtSignature'] ?? null)) {
-            $builder->setSignature($open[0], $part['thoughtSignature']);
+        // The signature has to go back with the part it came on — a thought's, and a text part's
+        // too: Gemini signs answer text as well, and the text block keeps it as its
+        // `textSignature`. Upstream's `retainThoughtSignature()`: a later delta without one does
+        // not wipe the one an earlier delta brought.
+        $signature = $part['thoughtSignature'] ?? null;
+
+        if (is_string($signature) && $signature !== '') {
+            $builder->setSignature($open[0], $signature);
         }
 
         $stream->push($kind === 'thinking'
@@ -453,31 +458,72 @@ final class GoogleShared
         return $parts;
     }
 
-    /** @return list<array<string, mixed>> */
-    private static function assistantParts(AssistantMessage $message): array
+    /**
+     * Upstream's assistant arm of `convertMessages()` in `google-shared.ts`, literally.
+     *
+     * Signatures only go back to the provider **and** model that minted them, and only when they
+     * are base64 — Gemini declares the field `TYPE_BYTES`, so anything else is a 400. That is
+     * upstream's own `isSameProviderAndModel`, narrower than `TransformMessages`' check (it leaves
+     * the API out), and applied here on top of it the way upstream applies both.
+     *
+     * A thought from this same model goes back as a thought even without a signature, and a
+     * thought from any other model as plain text — no `<thinking>` tags, so the model does not
+     * learn to mimic them.
+     *
+     * Where pig differs: the call's `id` is always sent. Upstream sends it only where
+     * `requiresToolCallId()` says so (Claude, gpt-oss, Gemini 3+), and pig has no
+     * `normalizeToolCallId` to go with that.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private static function assistantParts(AssistantMessage $message, Model $model): array
     {
         $parts = [];
+        $sameProviderAndModel = $message->provider === $model->provider && $message->model === $model->id;
 
         foreach ($message->content as $block) {
             if ($block instanceof TextContent) {
-                // An empty text part upsets some models served through this API.
-                if (trim($block->text) !== '') {
-                    $parts[] = ['text' => Utf8::sanitize($block->text)];
+                $signature = self::resolveThoughtSignature($sameProviderAndModel, $block->textSignature);
+
+                // Skip empty text blocks — unless they carry a thought signature. Gemini can attach
+                // the signature to a part whose visible text is empty and requires it echoed back;
+                // dropping it breaks the reasoning chain (upstream's comment).
+                if (trim($block->text) === '' && $signature === null) {
+                    continue;
                 }
+
+                $part = ['text' => Utf8::sanitize($block->text)];
+
+                if ($signature !== null) {
+                    $part['thoughtSignature'] = $signature;
+                }
+
+                $parts[] = $part;
 
                 continue;
             }
 
             if ($block instanceof ThinkingContent) {
-                // A thought without its signature cannot be replayed as a thought — it
-                // is rejected — so it goes back as tagged text instead of being dropped.
-                $parts[] = $block->thinkingSignature !== null && $block->thinkingSignature !== ''
-                    ? [
-                        'thought' => true,
-                        'text' => Utf8::sanitize($block->thinking),
-                        'thoughtSignature' => $block->thinkingSignature,
-                    ]
-                    : ['text' => "<thinking>\n" . Utf8::sanitize($block->thinking) . "\n</thinking>"];
+                if ($sameProviderAndModel) {
+                    $signature = self::resolveThoughtSignature($sameProviderAndModel, $block->thinkingSignature);
+
+                    // Same rule as text: an empty thought is dropped only when it carries no signature.
+                    if (trim($block->thinking) === '' && $signature === null) {
+                        continue;
+                    }
+
+                    $part = ['thought' => true, 'text' => Utf8::sanitize($block->thinking)];
+
+                    if ($signature !== null) {
+                        $part['thoughtSignature'] = $signature;
+                    }
+
+                    $parts[] = $part;
+                } elseif (trim($block->thinking) !== '') {
+                    // Another provider's or model's thought: the signature is unusable, empty
+                    // blocks stay dropped, and the text goes back untagged.
+                    $parts[] = ['text' => Utf8::sanitize($block->thinking)];
+                }
 
                 continue;
             }
@@ -489,8 +535,10 @@ final class GoogleShared
                     'args' => $block->arguments === [] ? new stdClass() : $block->arguments,
                 ]];
 
-                if ($block->thoughtSignature !== null && $block->thoughtSignature !== '') {
-                    $part['thoughtSignature'] = $block->thoughtSignature;
+                $signature = self::resolveThoughtSignature($sameProviderAndModel, $block->thoughtSignature);
+
+                if ($signature !== null) {
+                    $part['thoughtSignature'] = $signature;
                 }
 
                 $parts[] = $part;
@@ -498,6 +546,26 @@ final class GoogleShared
         }
 
         return $parts;
+    }
+
+    /** Upstream's `resolveThoughtSignature()`: only the same provider and model's, and only base64. */
+    private static function resolveThoughtSignature(bool $sameProviderAndModel, ?string $signature): ?string
+    {
+        return $sameProviderAndModel && self::isValidThoughtSignature($signature) ? $signature : null;
+    }
+
+    /** Upstream's `isValidThoughtSignature()`: Google declares the field `TYPE_BYTES`, so base64. */
+    private static function isValidThoughtSignature(?string $signature): bool
+    {
+        if ($signature === null || $signature === '') {
+            return false;
+        }
+
+        if (strlen($signature) % 4 !== 0) {
+            return false;
+        }
+
+        return preg_match('#^[A-Za-z0-9+/]+={0,2}$#D', $signature) === 1;
     }
 
     /**

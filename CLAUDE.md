@@ -958,14 +958,20 @@ after you have sent it. A table per endpoint rather than one rule, for the same 
 archive names are a table — see that note above.
 
 `Providers\TransformMessages` (upstream's `api/transform-messages.ts`) is what makes `/model`
-safe across models. Two things get cleaned up before any provider sees the history. First,
+safe across models. Three things get cleaned up before any provider sees the history. First,
 **signatures only go back to the model that made them** — upstream's `isSameModel`, provider, API
 *and* model id all equal. For any other model, even another one of the same provider, a thinking
 block becomes plain text (no tags, so the model does not learn to mimic them), empty thinking and
 redacted thinking are dropped, a text block loses its `textSignature` and a tool call its
-`thoughtSignature`. Second, a **tool call with no result gets one invented** saying so, because an interrupted turn leaves a dangling call and every provider
-rejects the whole conversation rather than ignoring it. A stated "No result provided" is worse
-than the truth and far better than a request that cannot be sent at all.
+`thoughtSignature`. Second, **an assistant turn that errored or was aborted is not replayed at
+all**, its calls included: it is incomplete (reasoning with nothing after it, a call cut off
+mid-arguments) and the model retries from the last turn that finished. Third, a **tool call with
+no result gets one invented** (`No result provided`, `isError: true`) — before the next assistant
+or user message, and at the end of the conversation — because an interrupted turn leaves a
+dangling call and every provider rejects the whole conversation rather than ignoring it. A stated
+"No result provided" is worse than the truth and far better than a request that cannot be sent at
+all. Upstream also holds back a `system` message that lands between a call and its results; pig's
+message union has no system message, so there is nothing to hold.
 
 `Providers\OpenAiResponses` is upstream's `openai-responses.ts` — what gpt-5 and codex speak,
 and the third shape in three providers. A response is a list of *items* and the stream says
@@ -1026,6 +1032,15 @@ Three things about the split:
 - **Each provider keeps its own business**: where it sends, how it authenticates, how it words a
   failure, and the body it assembles around the shared pieces. `explain()` stayed behind in both
   for that last reason — the message names the provider.
+
+An assistant turn goes back as upstream's `convertMessages()` sends it: **a signature only goes
+back to the same provider and model** (upstream's `isSameProviderAndModel`, which leaves the API
+out) **and only when it is base64** — Gemini declares the field `TYPE_BYTES`, so anything else is a
+400 for the whole request. A text block's `textSignature` goes back as that part's
+`thoughtSignature`, and an empty text part is kept when it carries one. A thought from the same
+model is `thought: true` with or without a signature; from another model it is plain text, no
+tags. pig always sends a call's `id`, where upstream sends it only for `requiresToolCallId()`
+models.
 
 It was an extraction and nothing else, which is what `GoogleTest`'s thirty-one cases passing
 unchanged is the evidence for. A move that needed a test changed would have been a rewrite.
@@ -5868,18 +5883,17 @@ the file, so only `http(s)`, `mailto` and `ftp` become links at all.
 
 ### A tool result outliving the call it answers
 
-`OpenAiResponses` drops a tool call from a turn that ended in an error, because an aborted
-call has half-parsed arguments and asking the model to continue from one is worse than
-dropping it. `TransformMessages` runs *first* and, seeing a call with no result, invents one.
-Put together, the request carries a `function_call_output` addressed to a `call_id` that was
-never sent — which OpenAI rejects outright, so the conversation cannot be continued at all.
+A turn that ended in an error or was aborted is incomplete — half-parsed call arguments, a
+reasoning item with nothing after it — and asking the model to continue from one is worse than
+dropping it. `TransformMessages` drops the whole turn, as upstream's `transformMessages()` does,
+*before* it invents results for dangling calls, so no `No result provided` is made for a call that
+is never sent. Had it invented one first, the request would carry a `function_call_output`
+addressed to a `call_id` that was never sent — which OpenAI rejects outright, so the conversation
+could not be continued at all.
 
-Upstream has the same two halves and the same gap. Found here by building the case rather than
-by a 400: the shape is visible in the assembled request, which is why the provider tests assert
-on what went out and not only on what came back.
-
-The fix is in `input()`: it records the calls it actually emitted and drops a result whose call
-is not among them. Both halves of a dropped turn go, or neither.
+`OpenAiResponses::input()` keeps its own guard as well: it records the calls it actually emitted
+and drops a result whose call is not among them, which still covers a result left behind after a
+dropped turn. Both halves of a dropped turn go, or neither.
 
 Regression test: `OpenAiResponsesTest::testAnAbortedTurnsThinkingAndCallsAreNotSentBack`.
 
@@ -6552,11 +6566,9 @@ The file the contaminated row above said was unmeasurable. Re-run with clean tre
 not held down by anything. Writing four tests took that to **71 killed and 6 survivors, five of them
 genuinely equivalent**. Three findings, and the first is the one to remember.
 
-**The one place this file deliberately does more than upstream had no test.** The compaction section
-states it plainly: *"pig flushes pending calls at the end of the conversation as well as before each
-assistant or user message — upstream only inserts synthetic results when a later message arrives, so
-a conversation that ends on a dangling call is still unsendable there."* Deleting that trailing
-`$flush();` changed nothing in 2,480 tests. Every existing case put a user message *after* the
+**The flush at the end of the conversation had no test.** `fillOrphanedCalls()` answers pending
+calls once more after the loop — upstream's closing `closePendingToolCalls()` — and deleting that
+trailing `$flush();` changed nothing in 2,480 tests. Every existing case put a user message *after* the
 dangling call, which exercises the in-loop flush and says nothing about the end of the list — and
 the end of the list is exactly where an interrupted turn leaves one. Escape during a tool call, then
 `/model`, and the conversation goes out as it stands.
@@ -7886,11 +7898,9 @@ Both things that transform does are **refusals** on this API, not degradations:
 - A tool call with no result is what an interrupted turn leaves behind, and Anthropic refuses a
   `tool_use` with no matching `tool_result`. So the next thing anybody typed failed.
 
-One line, and both tests fail on the old code. Two differences from upstream in `TransformMessages`
-itself, both noted while reading it: pig flushes pending calls at the **end** of the conversation as
-well as before each assistant or user message — upstream only inserts synthetic results when a
-later message arrives, so a conversation that *ends* on a dangling call is still unsendable there —
-and pig treats any non-result message as closing the turn rather than listing the roles.
+One line, and both tests fail on the old code. One difference from upstream in `TransformMessages`
+itself: pig treats any non-result message as closing the turn rather than listing the roles —
+upstream holds a `system` message back instead, and pig's message union has none.
 
 ### The provider that talks to Copilot sent none of Copilot's headers
 
@@ -7975,9 +7985,9 @@ nothing could produce a call that had one; it has a test now, and so does the re
 
 **Two smaller things in the same read.** A Gemini `Part` is a one-of by convention rather than by
 schema, and upstream reads `text` and then `functionCall` from the same part; pig checked for the
-call first and returned, dropping any text that shared the part. And pig keeps the last non-null
-`thoughtSignature` on a thinking block where upstream assigns `part.thoughtSignature` every time,
-including `undefined` — which clears a signature an earlier part had set. pig's is kept.
+call first and returned, dropping any text that shared the part. And a later part with no
+`thoughtSignature` does not clear the one an earlier part of the same block set — upstream's
+`retainThoughtSignature()`, on text blocks (as `textSignature`) as well as thinking blocks.
 
 ### OpenRouter's encrypted reasoning was neither read nor sent
 
@@ -11099,6 +11109,18 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 - 用量字段逐行照 upstream：completions 是 `output = completion_tokens`、`cacheRead = details.cached_tokens ?? prompt_cache_hit_tokens ?? cached_tokens`（第一个存在的赢，0 也算）、`cacheWrite = details.cache_write_tokens`、`input = max(0, prompt - cacheRead - cacheWrite)`、total 由四项相加；Google 是 `input = prompt - cached`、`output = candidates + thoughts`、total 直接读 `totalTokenCount`。
 - `reasoning` 只是 `output` 的子集，不再加进任何计数；想给某个 provider 加修正，先在 upstream 找到对应分支再移植。
 - 测试固定在 `OpenAiCompletionsTest`（缓存字段的 data provider、cache write、推理不重复计）和 `GoogleTest::testThinkingTokensAreCountedAsOutputBecauseTheyAreBilledAsOutput`。
+- chunk 顶层没有 `usage` 时读 `choices[0].usage`（Moonshot 放在那里）；只读顶层的话 Moonshot 每一轮用量都是 0。测试：`OpenAiCompletionsTest::testUsageOnTheChoiceIsReadWhenTheChunkHasNoneOfItsOwn`。
+
+### 出错 / 被中断的 assistant 轮被原样重放
+
+**症状**：在 OpenAI Responses 模型（gpt-5 / codex）推理项结束、正文还没开始时按 Esc，下一次提问把只有一个签名推理项的那一轮发回去，后面紧跟用户消息——OpenAI 报 400 "reasoning was provided without its required following item"，会话卡死。其他 provider 也会收到半截正文和参数被截断的工具调用，外加一条为它编造的 `No result provided`。
+
+**根因**：upstream `transform-messages.ts` 在补齐悬空工具调用的那一遍里，`stopReason` 是 `error` 或 `aborted` 的 assistant 轮整轮跳过（先关掉之前挂着的调用，再跳过）；pig 的 `TransformMessages::fillOrphanedCalls()` 没有这一步，`OpenAiResponses` 自己的保护只认 `Error`、不认 `Aborted`。
+
+**避坑规则**：
+- 失败轮在 `TransformMessages` 里过滤，顺序照 upstream：先 `$flush()`，再跳过；provider 拿到的历史里已经没有失败轮，新 provider 不要靠自己再判断。
+- 失败轮的工具调用不进 `$pending`，不会为它编造结果。
+- 测试：`AnthropicTest::testAFailedTurnIsNotReplayedAndNeitherAreItsCalls`、`testCallsPendingFromBeforeAFailedTurnAreStillAnswered`，`OpenAiResponsesTest::testATurnAbortedAfterItsReasoningDoesNotSendTheReasoningBackAlone`。
 
 ## Version floor: PHP >= 8.3
 

@@ -6,6 +6,7 @@ namespace Pig\Ai\Providers;
 
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Model;
+use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\ThinkingContent;
 use Pig\Ai\ToolCall;
@@ -15,8 +16,8 @@ use Pig\Ai\UserMessage;
 /**
  * Making a conversation safe to send to a provider that did not produce it.
  *
- * `/model` can change provider mid-session, which leaves two kinds of wreckage in the
- * history. This cleans up both, before any provider sees it.
+ * `/model` can change provider mid-session, and a turn can be cut short, which leaves
+ * wreckage in the history. This cleans it up before any provider sees it.
  *
  * Ported from upstream's `api/transform-messages.ts`.
  */
@@ -172,13 +173,27 @@ final class TransformMessages
     }
 
     /**
-     * Give every tool call a result, inventing the missing ones.
+     * Upstream's second pass: drop failed turns, and give every tool call a result.
      *
-     * A call with no result is what an interrupted turn leaves behind, and every
-     * provider rejects the conversation outright rather than ignoring the dangling call.
-     * A stated "No result provided" is worse than the truth and far better than a request
-     * that cannot be sent at all — and it keeps the assistant message, signatures and
-     * all, instead of dropping it.
+     * **An assistant turn that ended in an error or was aborted is not replayed at all**, calls
+     * and all. It is an incomplete turn — reasoning with no message after it, a call whose
+     * arguments were cut off — and replaying it is what earns OpenAI's "reasoning without its
+     * following item" 400; the model retries from the last turn that finished instead. Any calls
+     * still pending from the turn before it are closed first, as upstream closes them before the
+     * check.
+     *
+     * A call with no result is what an interrupted turn leaves behind, and every provider rejects
+     * the conversation outright rather than ignoring the dangling call. A stated
+     * "No result provided" (`isError: true`) is worse than the truth and far better than a request
+     * that cannot be sent at all — and it keeps the assistant message, signatures and all,
+     * instead of dropping it. Results are invented before the next assistant or user message
+     * **and at the end of the conversation**, which is where an interrupted turn leaves one.
+     *
+     * Where pig differs: upstream also holds back a `system` message that falls between a call
+     * and its results, emitting it after them. pig's message union has no system message — the
+     * prompt is `Context::$systemPrompt`, and `convertToLlm` reduces everything else to user,
+     * assistant and result messages before this runs — so there is nothing to hold, and every message that is
+     * not a result closes the turn, as upstream's user and assistant arms do.
      *
      * @param list<mixed> $messages
      * @return list<mixed>
@@ -215,6 +230,12 @@ final class TransformMessages
 
             // Anything that is not a result closes the turn the calls were made in.
             $flush();
+
+            if ($message instanceof AssistantMessage
+                && ($message->stopReason === StopReason::Error || $message->stopReason === StopReason::Aborted)) {
+                continue;
+            }
+
             $out[] = $message;
 
             if ($message instanceof AssistantMessage) {
@@ -226,6 +247,7 @@ final class TransformMessages
             }
         }
 
+        // The conversation can end on unanswered calls; they are answered here.
         $flush();
 
         return $out;

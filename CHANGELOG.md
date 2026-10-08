@@ -43,6 +43,21 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.24] - 2026-10-08
+
+### Fixed
+
+- **Dropped Errored / Aborted Assistant Turns from Future Model Replays (`TransformMessages`)**:
+  - Aligned turn pruning with upstream pi: assistant turns ending in `StopReason::Error` or `StopReason::Aborted` are completely excluded from outgoing history replays.
+  - Eliminated OpenAI Responses API 400 error `reasoning was provided without its required following item` when continuing from interrupted thinking turns.
+  - Ensured dangling tool calls from prior completed turns are closed while calls originating from aborted turns are cleanly skipped without generating synthetic tool results.
+- **Google / Gemini Base64 Signature Validation and Untagged Cross-Model Thinking (`GoogleShared`)**:
+  - Added strict base64 validation (`isValidThoughtSignature`) on `thoughtSignature` before sending to Google API, avoiding 400 parameter errors caused by non-base64 tokens.
+  - Maintained `thoughtSignature` on empty text parts when present, preserving Gemini's reasoning continuity.
+  - Sent cross-model reasoning as untagged plain text, preventing models from mimicking thinking tags.
+- **Moonshot / Kimi Choice-Level Usage Fallback (`OpenAiCompletions`)**:
+  - Added fallback to inspect `choices[0].usage` when chunk root lacks `usage`, fixing zero-token accounting across Moonshot endpoints.
+
 ## [0.4.23] - 2026-10-08
 
 ### Fixed

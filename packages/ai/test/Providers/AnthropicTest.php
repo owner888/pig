@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Test\Providers;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
@@ -893,12 +894,10 @@ final class AnthropicTest extends TestCase
 
     public function testAConversationThatEndsOnADanglingCallGetsOneToo(): void
     {
-        // **The one place this file deliberately does more than upstream, and it had no test.**
-        // Upstream inserts a synthetic result only when a *later* message arrives, so a
-        // conversation that ends on a dangling call is unsendable there; `fillOrphanedCalls()`
-        // flushes once more after the loop. The mutation sweep deleted that trailing `$flush();`
-        // and nothing in the suite noticed — the case above has a user message after the call, so
-        // it goes through the in-loop flush and says nothing about the end of the list.
+        // Upstream's closing `closePendingToolCalls()` after the loop, which `fillOrphanedCalls()`
+        // has as its trailing `$flush();`. The mutation sweep deleted that line and nothing in the
+        // suite noticed — the case above has a user message after the call, so it goes through
+        // the in-loop flush and says nothing about the end of the list.
         //
         // How somebody gets here: escape during a tool call, then `/model`, which sends the
         // conversation exactly as it stands.
@@ -913,6 +912,49 @@ final class AnthropicTest extends TestCase
         $this->assertSame('tool_result', $last['content'][0]['type']);
         $this->assertSame('c1', $last['content'][0]['tool_use_id']);
         $this->assertTrue($last['content'][0]['is_error']);
+    }
+
+    /** @return iterable<string, array{StopReason}> */
+    public static function failedStops(): iterable
+    {
+        yield 'aborted' => [StopReason::Aborted];
+        yield 'error' => [StopReason::Error];
+    }
+
+    #[DataProvider('failedStops')]
+    public function testAFailedTurnIsNotReplayedAndNeitherAreItsCalls(StopReason $stop): void
+    {
+        // Upstream's `transformMessages()` skips an assistant turn that errored or was aborted,
+        // whole: it is incomplete — reasoning with nothing after it, a call cut off mid-arguments
+        // — and the model retries from the last turn that finished. pig replayed it, partial text
+        // and all, and invented a "No result provided" for a call the model never finished making.
+        $body = $this->sendAndCapture(new Context([
+            new UserMessage('hi'),
+            $this->fromAnthropic([new TextContent('half an ans'), new ToolCall('c1', 'read', ['pa' => ''])], $stop),
+            new UserMessage('try again'),
+        ]));
+
+        $this->assertSame(['user', 'user'], array_column($body['messages'], 'role'));
+        $this->assertStringNotContainsString('half an ans', (string) json_encode($body));
+        $this->assertStringNotContainsString('c1', (string) json_encode($body), 'no call, and so no invented result');
+    }
+
+    public function testCallsPendingFromBeforeAFailedTurnAreStillAnswered(): void
+    {
+        // Upstream closes the pending calls *before* it checks the stop reason, so skipping the
+        // failed turn does not skip the flush it triggers: the earlier turn's dangling call still
+        // gets its result, ahead of the next real message.
+        $body = $this->sendAndCapture(new Context([
+            new UserMessage('hi'),
+            $this->fromAnthropic([new ToolCall('c1', 'read', ['path' => 'a.php'])]),
+            $this->fromAnthropic([new TextContent('')], StopReason::Error),
+            new UserMessage('try again'),
+        ]));
+
+        $this->assertSame(['user', 'assistant', 'user', 'user'], array_column($body['messages'], 'role'));
+        $this->assertSame('tool_result', $body['messages'][2]['content'][0]['type']);
+        $this->assertSame('c1', $body['messages'][2]['content'][0]['tool_use_id']);
+        $this->assertTrue($body['messages'][2]['content'][0]['is_error']);
     }
 
     /** @param list<mixed> $content */
