@@ -91,9 +91,52 @@ const DIRECT = [
     'google' => ['GOOGLE_MODELS', Api::GoogleGenerativeAi, 'https://generativelanguage.googleapis.com/v1beta'],
     'cerebras' => ['CEREBRAS_MODELS', Api::OpenAiCompletions, 'https://api.cerebras.ai/v1'],
     'groq' => ['GROQ_MODELS', Api::OpenAiCompletions, 'https://api.groq.com/openai/v1'],
-    'mistral' => ['MISTRAL_MODELS', Api::OpenAiCompletions, 'https://api.mistral.ai/v1'],
+    'mistral' => ['MISTRAL_MODELS', Api::MistralConversations, 'https://api.mistral.ai'],
     'xai' => ['XAI_MODELS', Api::OpenAiCompletions, 'https://api.x.ai/v1'],
     'zai' => ['ZAI_MODELS', Api::OpenAiCompletions, 'https://api.z.ai/api/coding/paas/v4'],
+];
+
+/**
+ * provider => the models.dev entry its rows are read from, where that is not the provider's own name.
+ *
+ * Upstream's `processZaiModels()`: pig's `zai` is z.ai's **coding plan** endpoint
+ * (`api.z.ai/api/coding/paas/v4`), and models.dev lists that plan's models under
+ * `zai-coding-plan`, not under `zai` — whose list is the pay-as-you-go API's, with models the
+ * coding plan does not serve. The prices are still read from `zai` when it lists the model
+ * (`data.zai?.models[modelId]?.cost ?? m.cost`), the plan's own entry being the fallback.
+ */
+const SOURCE = [
+    'zai' => 'zai-coding-plan',
+];
+
+/**
+ * Upstream's `isGlm52` in `processZaiModels()`: the two GLM-5.2 ids whose effort map, when they
+ * have one, says `off: "none"`. (`ZAI_TOOL_STREAM_UNSUPPORTED_MODELS`, the other z.ai list, is read
+ * at run time by `Models`, which is where pig works out a built-in model's compat.)
+ */
+const ZAI_GLM52_IDS = ['glm-5.2', 'glm-5.2-highspeed'];
+
+/**
+ * Upstream's `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS`: "GitHub's 'Models with extended capabilities'
+ * table lists these Copilot models as supporting the extended 1 million token context window."
+ * Applied by `copilotTemporaryOverrides()` to every Copilot row whose id is listed, whatever the
+ * catalogue said — 200,000 for some, 400,000 for one, 1,050,000 for others.
+ */
+const GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS = [
+    'claude-fable-5',
+    'claude-opus-4.6',
+    'claude-opus-4.7',
+    'claude-opus-4.8',
+    'claude-opus-5',
+    'claude-opus-5.5',
+    'claude-sonnet-4.6',
+    'claude-sonnet-5',
+    'gpt-5.3-codex',
+    'gpt-5.4',
+    'gpt-5.5',
+    'gpt-6-astra',
+    'gpt-6-luna',
+    'gpt-6-sol',
 ];
 
 /**
@@ -156,8 +199,10 @@ const OPENAI_STANDARD_COSTS = [
  * The providers whose models.dev `reasoning_options` upstream records
  * (`recordModelsDevReasoningOptions()`) for `applyModelsDevReasoningOptionMetadata()`, among the
  * ones pig generates. Google and Mistral are not here because upstream does not record theirs:
- * its Google rows take `getGoogleThinkingLevelMap()` when they are built, and Mistral speaks its
- * own `mistral-conversations` API, which takes `getEffortThinkingLevelMap()` directly.
+ * their rows take a `thinkingLevelMap` where they are built — `getGoogleThinkingLevelMap()` and
+ * `getEffortThinkingLevelMap()` — which `rowsFor()` writes as the row's own `thinkingLevelMap`. z.ai
+ * is here *and* gets a built map, as upstream's `processZaiModels()` does both; its recorded options
+ * never apply, because `thinkingFormat: "zai"` fails `supportsDirectReasoningEffort()`.
  */
 const REASONING_OPTION_PROVIDERS = ['anthropic', 'openai', 'cerebras', 'groq', 'xai', 'zai', 'github-copilot'];
 
@@ -178,44 +223,56 @@ const EFFORT_THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'ma
  * override for anthropic/claude-opus-4-5 changes nothing any more`, because models.dev had fixed
  * its own number. Gone, in one line, with no guessing about whether it was still needed.
  *
- * **The Copilot windows are the live ones, and they are not cosmetic.** GitHub's own "models with
- * extended capabilities" table gives these the 1,000,000-token window; models.dev reports 200,000
- * for three of them and 400,000 for the fourth. A context window is **where compaction fires**, so
- * a fifth of the real figure means pig summarises a conversation that had four times the room —
- * paying for a summarisation and shortening the model's view for nothing. The list is upstream's
- * `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS` at HEAD, whose comment records checking it against
- * GitHub's published table; that check is inherited here and was not repeated, the same standing
- * as `EXCLUDED` below.
- *
- * One gap worth knowing rather than discovering: upstream keeps that as a **set**, so it also
- * covers ids models.dev does not carry for Copilot yet. These are per-id, so the entries are the
- * four that are currently both listed and short — which keeps every run's output about something
- * real instead of five lines saying "changes nothing". The cost is that a *new* Copilot model
- * arriving with a too-small window is not caught by itself; the tell is a Copilot row whose window
- * looks small next to its siblings, and upstream's set is where to check.
+ * **Copilot's extended windows used to be four `fix` entries here**, the ids that were both
+ * listed and short at the time. Upstream keeps them as a set applied to every Copilot row
+ * (`GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS`, `copilotTemporaryOverrides()`), which also catches an
+ * id models.dev lists later, and five ids it listed at 1,050,000 rather than GitHub's 1,000,000 —
+ * so they are a rule now, like upstream's, and not corrections.
  *
  * @var array<string, array{kind: string, why: string, row: array<string, mixed>}>
  */
 const OVERRIDES = [
-    'github-copilot/claude-opus-4.7' => [
-        'kind' => 'fix',
-        'why' => "GitHub gives it the extended window; models.dev reports a fifth of it",
-        'row' => ['context' => 1_000_000],
+    // Upstream's `missingCopilotModels`: "The authenticated Copilot catalog advertised these models
+    // on 2026-09-22, but models.dev did not include them yet." Added only when the catalogue lacks
+    // them, as upstream's `!allModels.some(...)` does. Copilot's GPT-6 rows are priced
+    // `withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id])`, written out here.
+    'github-copilot/claude-opus-5.5' => [
+        'kind' => 'add',
+        'why' => 'upstream adds it until models.dev lists it',
+        'row' => [
+            'name' => 'Claude Opus 5.5', 'reasoning' => true, 'images' => true,
+            'context' => 1_000_000, 'output' => 128_000,
+            'input' => 4.0, 'out' => 20.0, 'cacheRead' => 0.2, 'cacheWrite' => 5.0,
+            'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'],
+        ],
     ],
-    'github-copilot/claude-opus-4.8' => [
-        'kind' => 'fix',
-        'why' => "GitHub gives it the extended window; models.dev reports a fifth of it",
-        'row' => ['context' => 1_000_000],
+    'github-copilot/gpt-6-sol' => [
+        'kind' => 'add',
+        'why' => 'upstream adds it until models.dev lists it',
+        'row' => [
+            'name' => 'GPT-6 Sol', 'reasoning' => true, 'images' => true, 'context' => 1_000_000, 'output' => 128_000,
+            ...OPENAI_STANDARD_COSTS['gpt-6-sol'], 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]],
+        ],
     ],
-    'github-copilot/claude-sonnet-4.6' => [
-        'kind' => 'fix',
-        'why' => "GitHub gives it the extended window; models.dev reports a fifth of it",
-        'row' => ['context' => 1_000_000],
+    'github-copilot/gpt-6-luna' => [
+        'kind' => 'add',
+        'why' => 'upstream adds it until models.dev lists it',
+        'row' => [
+            'name' => 'GPT-6 Luna', 'reasoning' => true, 'images' => true, 'context' => 1_000_000, 'output' => 128_000,
+            ...OPENAI_STANDARD_COSTS['gpt-6-luna'], 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]],
+        ],
     ],
-    'github-copilot/gpt-5.3-codex' => [
-        'kind' => 'fix',
-        'why' => "GitHub gives it the extended window; models.dev reports 400,000",
-        'row' => ['context' => 1_000_000],
+    // Upstream: "Add missing Mistral Medium 3.5 model until models.dev includes it", with
+    // `getEffortThinkingLevelMap([{type: "effort", values: ["none", "high"]}])` and a 256k window.
+    'mistral/mistral-medium-3.5' => [
+        'kind' => 'add',
+        'why' => 'upstream adds it until models.dev lists it',
+        'row' => [
+            'name' => 'Mistral Medium 3.5', 'reasoning' => true, 'images' => true,
+            'context' => 262_144, 'output' => 262_144,
+            'input' => 1.5, 'out' => 7.5, 'cacheRead' => 0.0, 'cacheWrite' => 0.0,
+            'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null],
+        ],
     ],
     // Measured against the public endpoint on 2026-10-01, one request per model and level —
     // see CLAUDE.md, "Gemini 3.x on the public endpoint". models.dev says nothing about which
@@ -416,19 +473,34 @@ function catalogue(?string $file): array
  * One provider's rows, in the order the table keeps them.
  *
  * `tool_call !== true` is upstream's filter and it is not cosmetic: pig is an agent, so a model
- * that cannot be handed a tool cannot do the one thing it would be chosen for.
+ * that cannot be handed a tool cannot do the one thing it would be chosen for. A `deprecated` model
+ * is left out for Copilot alone, which is where upstream's generator leaves it out among the
+ * providers pig generates — Copilot marks a retired model rather than removing it.
+ *
+ * Per provider, what upstream's own processing of it does differently:
+ *
+ * - **google** (`processGoogleModels()`): `gemini-flash-latest` and `gemini-flash-lite-latest` read
+ *   everything but their name from the model they alias, `gemini-3.5-flash` and
+ *   `gemini-3.1-flash-lite` (when the catalogue lists it); and the row's `thinkingLevelMap` is
+ *   `getGoogleThinkingLevelMap()` — the verified efforts, or Gemma 4's fixed map.
+ * - **mistral**: the map is `getEffortThinkingLevelMap()` of the efforts — "Models with effort values
+ *   use `reasoning_effort` with these levels. Reasoning models without them (Magistral) use
+ *   `prompt_mode`" — a missing cache-read price is a tenth of the input price, and no tiers.
+ * - **zai** (`processZaiModels()`): the rows are `zai-coding-plan`'s (`SOURCE`), priced from `zai`'s
+ *   entry when it has one; the map is the efforts', with `off: "none"` for GLM-5.2.
  *
  * @param array<string, mixed> $catalogue
  * @return array<string, array<string, mixed>>
  */
 function rowsFor(array $catalogue, string $provider): array
 {
-    $models = $catalogue[$provider]['models'] ?? null;
+    $source = SOURCE[$provider] ?? $provider;
+    $models = $catalogue[$source]['models'] ?? null;
 
     if (!is_array($models)) {
         // Named, not skipped: a provider that has vanished from models.dev is either a rename
         // this script has to learn or an endpoint that is gone, and both need a person.
-        printf("  ! %s is not in this catalogue at all\n", $provider);
+        printf("  ! %s is not in this catalogue at all\n", $source);
 
         return [];
     }
@@ -445,7 +517,7 @@ function rowsFor(array $catalogue, string $provider): array
         }
 
         // Copilot marks a retired model rather than removing it.
-        if (($model['status'] ?? null) === 'deprecated') {
+        if ($provider === 'github-copilot' && ($model['status'] ?? null) === 'deprecated') {
             continue;
         }
 
@@ -455,8 +527,21 @@ function rowsFor(array $catalogue, string $provider): array
             continue;
         }
 
-        $input = $model['modalities']['input'] ?? [];
-        $tiers = tiers($model['cost'] ?? null);
+        // `gemini-flash-latest` is `gemini-3.5-flash` under another name, and models.dev's own
+        // entry for the alias lags behind — upstream reads the aliased model instead.
+        $from = $model;
+
+        if ($provider === 'google' && ($id === 'gemini-flash-latest' || $id === 'gemini-flash-lite-latest')) {
+            $aliased = $models[$id === 'gemini-flash-latest' ? 'gemini-3.5-flash' : 'gemini-3.1-flash-lite'] ?? null;
+            $from = is_array($aliased) ? $aliased : $model;
+        }
+
+        $input = $from['modalities']['input'] ?? [];
+        $cost = $provider === 'zai' && is_array($catalogue['zai']['models'][$id]['cost'] ?? null)
+            ? $catalogue['zai']['models'][$id]['cost']
+            : ($from['cost'] ?? null);
+        $tiers = $provider === 'mistral' ? [] : tiers($cost);
+        $reasoningOptions = is_array($from['reasoning_options'] ?? null) ? $from['reasoning_options'] : [];
         // Upstream's `recordModelsDevReasoningOptions(provider, id, m)`, read back by
         // `applyModelsDevReasoningOptionMetadata()`. That reader needs the model's api and compat
         // (`supportsDirectReasoningEffort()`), which pig works out in `Models::table()` and not
@@ -465,17 +550,28 @@ function rowsFor(array $catalogue, string $provider): array
         $effortLevelMap = in_array($provider, REASONING_OPTION_PROVIDERS, true) && is_array($model['reasoning_options'] ?? null)
             ? getEffortThinkingLevelMap($model['reasoning_options'])
             : null;
+        $thinkingLevelMap = match ($provider) {
+            'google' => getGoogleThinkingLevelMap($id, $reasoningOptions),
+            'mistral' => getEffortThinkingLevelMap($reasoningOptions),
+            'zai' => zaiThinkingLevelMap($id, $reasoningOptions),
+            default => null,
+        };
+        $in = (float) ($cost['input'] ?? 0);
 
         $rows[$id] = [
             'name' => is_string($model['name'] ?? null) && $model['name'] !== '' ? $model['name'] : $id,
-            'reasoning' => ($model['reasoning'] ?? null) === true,
+            'reasoning' => ($from['reasoning'] ?? null) === true,
             'images' => is_array($input) && in_array('image', $input, true),
-            'context' => (int) ($model['limit']['context'] ?? 0),
-            'output' => (int) ($model['limit']['output'] ?? 0),
-            'input' => (float) ($model['cost']['input'] ?? 0),
-            'out' => (float) ($model['cost']['output'] ?? 0),
-            'cacheRead' => (float) ($model['cost']['cache_read'] ?? 0),
-            'cacheWrite' => (float) ($model['cost']['cache_write'] ?? 0),
+            'context' => (int) ($from['limit']['context'] ?? 0),
+            'output' => (int) ($from['limit']['output'] ?? 0),
+            'input' => $in,
+            'out' => (float) ($cost['output'] ?? 0),
+            // Mistral: `m.cost?.cache_read ?? (m.cost?.input ? roundCost(m.cost.input * 0.1) : 0)`.
+            'cacheRead' => $provider === 'mistral' && !is_numeric($cost['cache_read'] ?? null)
+                ? ($in != 0.0 ? roundCost($in * 0.1) : 0.0)
+                : (float) ($cost['cache_read'] ?? 0),
+            'cacheWrite' => (float) ($cost['cache_write'] ?? 0),
+            ...($thinkingLevelMap === null ? [] : ['thinkingLevelMap' => $thinkingLevelMap]),
             ...($tiers === [] ? [] : ['tiers' => $tiers]),
             ...($effortLevelMap === null ? [] : ['effortLevelMap' => $effortLevelMap]),
         ];
@@ -484,6 +580,46 @@ function rowsFor(array $catalogue, string $provider): array
     ksort($rows);
 
     return $rows;
+}
+
+/**
+ * Upstream's `isGemma4Model()` and `getGoogleThinkingLevelMap()`: the verified efforts' map when
+ * models.dev lists any, else Gemma 4's — which takes only Google's `MINIMAL` and `HIGH` and cannot
+ * be switched off — else none.
+ *
+ * @param array<mixed> $reasoningOptions
+ * @return array<string, string|null>|null
+ */
+function getGoogleThinkingLevelMap(string $modelId, array $reasoningOptions): ?array
+{
+    $effortMap = getEffortThinkingLevelMap($reasoningOptions);
+
+    if ($effortMap !== null) {
+        return $effortMap;
+    }
+
+    if (preg_match('/gemma-?4/', strtolower($modelId)) === 1) {
+        return ['off' => null, 'minimal' => 'MINIMAL', 'low' => null, 'medium' => null, 'high' => 'HIGH'];
+    }
+
+    return null;
+}
+
+/**
+ * `processZaiModels()`'s map: the verified efforts', and for GLM-5.2 `off: "none"` on it.
+ *
+ * @param array<mixed> $reasoningOptions
+ * @return array<string, string|null>|null
+ */
+function zaiThinkingLevelMap(string $modelId, array $reasoningOptions): ?array
+{
+    $map = getEffortThinkingLevelMap($reasoningOptions);
+
+    if ($map !== null && in_array($modelId, ZAI_GLM52_IDS, true)) {
+        $map['off'] = 'none';
+    }
+
+    return $map;
 }
 
 /**
@@ -646,6 +782,26 @@ function openAiTemporaryOverrides(array $rows, string $provider): array
 }
 
 /**
+ * The `github-copilot` lines of upstream's "Temporary overrides until upstream model metadata is
+ * corrected" loop: every row in `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS` gets `contextWindow =
+ * 1000000`. A rule, applied every run and silently, as `openAiTemporaryOverrides()` is — after the
+ * hand-added rows, as upstream's loop runs after `missingCopilotModels`.
+ *
+ * @param array<string, array<string, mixed>> $rows
+ * @return array<string, array<string, mixed>>
+ */
+function copilotTemporaryOverrides(array $rows): array
+{
+    foreach ($rows as $id => $row) {
+        if (in_array($id, GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS, true)) {
+            $rows[$id]['context'] = 1_000_000;
+        }
+    }
+
+    return $rows;
+}
+
+/**
  * Upstream's defaults for a limit the catalogue left out.
  *
  * **Complained about rather than applied quietly.** Upstream writes `m.limit?.context || 4096`,
@@ -696,6 +852,13 @@ function applyOverrides(array $rows, string $provider): array
             }
 
             $fixed = [...$rows[$id], ...$override['row']];
+
+            // A level map merges into the one the row already has — upstream's
+            // `mergeThinkingLevelMap()` — rather than replacing it: the catalogue's verified
+            // efforts stay, and the measurement says only what it measured.
+            if (isset($rows[$id]['thinkingLevelMap'], $override['row']['thinkingLevelMap'])) {
+                $fixed['thinkingLevelMap'] = [...$rows[$id]['thinkingLevelMap'], ...$override['row']['thinkingLevelMap']];
+            }
 
             // **A correction that changes nothing is the interesting case**, and the first
             // version of this could not see it: a blind merge reports "corrected" whether or not
@@ -748,8 +911,11 @@ function money(float $value): string
  *
  * Three shapes, because the tables have three shapes and this writes what is there rather than
  * widening them: Anthropic has no images column (everything it sells takes images, and
- * `assertImages()` is what keeps that true), Copilot has an api column and no prices at all
- * (a subscription is not metered per token), and the other six are the full nine.
+ * `assertImages()` is what keeps that true), Copilot has an api column before the others, and the
+ * other seven are the full nine. Copilot's rows carry models.dev's list prices, as upstream's
+ * generator writes them (`cost: getModelsDevCost(m.cost)`); they used to carry none, on the grounds
+ * that a subscription is not metered per token, which made `/session` say $0.00 where pi says what
+ * the same tokens are worth.
  *
  * @param array<string, array<string, mixed>> $rows
  */
@@ -772,20 +938,18 @@ function render(array $rows, string $constant): string
             $cells[] = $row['images'] ? 'true' : 'false';
         }
 
-        if ($constant !== 'COPILOT_MODELS') {
-            foreach (['input', 'out', 'cacheRead', 'cacheWrite'] as $field) {
-                $cells[] = money((float) $row[$field]);
-            }
+        foreach (['input', 'out', 'cacheRead', 'cacheWrite'] as $field) {
+            $cells[] = money((float) $row[$field]);
         }
 
-        // A tenth cell only where an override supplied one, so every other row keeps its shape.
+        // The row's own level map — Google's, Mistral's and z.ai's from the catalogue, an
+        // override's measurement, a hand-added row's — under its own key, only where there is one.
         if (isset($row['thinkingLevelMap'])) {
-            $cells[] = levelMap($row['thinkingLevelMap']);
+            $cells[] = "'thinkingLevelMap' => " . levelMap($row['thinkingLevelMap']);
         }
 
-        // Tiers under their own key, in any table but Copilot's (which has no prices): positions
-        // after the fixed columns are already the Google map's.
-        if ($constant !== 'COPILOT_MODELS' && ($row['tiers'] ?? []) !== []) {
+        // Tiers under their own key, in any table.
+        if (($row['tiers'] ?? []) !== []) {
             $cells[] = "'tiers' => [" . implode(', ', array_map(
                 static fn (array $tier): string => sprintf('[%s, %s, %s, %s, %s]', grouped((int) $tier[0]), money((float) $tier[1]), money((float) $tier[2]), money((float) $tier[3]), money((float) $tier[4])),
                 $row['tiers'],
@@ -984,7 +1148,7 @@ foreach (DIRECT as $provider => [$constant]) {
 // Copilot's defaults are its own — upstream's 128000/8192 rather than 4096, because its
 // catalogue omits the limits far more often and 4096 there would truncate every answer.
 printf("github-copilot\n");
-$copilot = applyOverrides(fillLimits(rowsFor($catalogue, 'github-copilot'), 'github-copilot', 128_000, 8_192), 'github-copilot');
+$copilot = copilotTemporaryOverrides(applyOverrides(fillLimits(rowsFor($catalogue, 'github-copilot'), 'github-copilot', 128_000, 8_192), 'github-copilot'));
 
 if ($copilot !== []) {
     $rendered = render($copilot, 'COPILOT_MODELS');

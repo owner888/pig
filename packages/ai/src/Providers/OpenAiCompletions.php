@@ -36,6 +36,7 @@ use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
+use Pig\Ai\Utils\ErrorBody;
 use Pig\Ai\Utils\ShortHash;
 use Pig\Ai\Utils\Utf8;
 use Pig\Async\Async;
@@ -44,7 +45,7 @@ use Throwable;
 /**
  * The OpenAI chat-completions API, streamed — and the six other providers that speak it.
  *
- * Groq, Cerebras, xAI, Zai, Mistral and OpenRouter all answer this shape, which is why
+ * Groq, Cerebras, xAI, Zai and OpenRouter all answer this shape, which is why
  * it is worth more than the one provider in its name. Where they differ they differ
  * quietly, so the differences live in `OpenAiCompat` as a table rather than in `if`s here.
  *
@@ -69,11 +70,6 @@ final class OpenAiCompletions
 
     /** `JSON.stringify`'s output for what is stored and replayed: no escaped slashes or Unicode. */
     private const int JSON_FLAGS = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
-
-    /** Mistral wants tool ids exactly this long, alphanumeric, and rejects anything else. */
-    private const int MISTRAL_ID_LENGTH = 9;
-
-    private const string MISTRAL_PADDING = 'ABCDEFGHI';
 
     /** OpenAI's ceiling on a chat-completions tool call id. */
     private const int MAX_ID_LENGTH = 40;
@@ -101,7 +97,13 @@ final class OpenAiCompletions
         ?OpenAiOptions $options,
     ): void {
         $builder = new AssistantMessageBuilder($model);
+        // Upstream's `stopReason: "pending"`: only a `finish_reason` replaces it, and a stream
+        // that ends with it still pending is checked below rather than read as an answer.
+        $builder->setStopReason(StopReason::Pending);
         $signal = $options?->signal;
+        // Upstream's `hasFinishReason`.
+        $hasFinishReason = false;
+        $compat = OpenAiCompat::resolve($model);
 
         // The block that is open, as [index, kind, id]. Nothing in the protocol says a
         // block has ended, so it ends when the next thing is not the same kind.
@@ -123,7 +125,7 @@ final class OpenAiCompletions
             $response = $this->http->send($this->request($model, $context, $options, $grammar), $signal);
 
             if (!$response->isSuccessful()) {
-                throw new ProviderError($this->explain($model, $response->status, $response->body->all()));
+                throw new ProviderError($this->explain($response->status, $response->body->all()));
             }
 
             $stream->push(new StartEvent($builder->snapshot()));
@@ -139,7 +141,7 @@ final class OpenAiCompletions
                     $data = json_decode($event->data, true);
 
                     if (is_array($data)) {
-                        $open = $this->onChunk($data, $model, $builder, $stream, $open, $replay, $grammar);
+                        $open = $this->onChunk($data, $model, $builder, $stream, $open, $replay, $grammar, $hasFinishReason);
                     }
                 }
             }
@@ -152,6 +154,29 @@ final class OpenAiCompletions
             }
 
             $signal?->throwIfAborted();
+
+            // Upstream's checks after the stream, in its order.
+            if ($builder->stopReason() === StopReason::Aborted) {
+                throw new ProviderError('Request was aborted');
+            }
+
+            // An endpoint that never sends `finish_reason` (`supportsFinishReason: false`) is
+            // finished when its stream is, and the turn's calls say which kind of finished.
+            if (!$hasFinishReason && $compat->supportsFinishReason === false) {
+                $builder->setStopReason(self::hasToolCall($builder->snapshot()) ? StopReason::ToolUse : StopReason::Stop);
+            }
+
+            if ($builder->stopReason() === StopReason::Error) {
+                $message = $builder->errorMessage();
+
+                throw new ProviderError($message !== null && $message !== '' ? $message : 'Provider returned an error stop reason');
+            }
+
+            // A body that ended without `finish_reason` is a cut connection, not an answer. It used
+            // to come back as a clean `stop` with whatever half-message had streamed.
+            if (($compat->supportsFinishReason !== false && !$hasFinishReason) || $builder->stopReason() === StopReason::Pending) {
+                throw new ProviderError('Stream ended without finish_reason');
+            }
 
             $message = $builder->snapshot();
             $stream->push(new DoneEvent($message->stopReason, $message));
@@ -182,6 +207,7 @@ final class OpenAiCompletions
         ?array $open,
         array &$replay,
         array $grammar = [],
+        bool &$hasFinishReason = false,
     ): ?array {
         // Every chunk of one completion carries the same id; the first one that has it is kept,
         // as upstream's `||=` does. The model, likewise, but only when it is not the one asked
@@ -212,9 +238,17 @@ final class OpenAiCompletions
             $builder->setUsage($this->usage($choice['usage']));
         }
 
-        if (is_string($choice['finish_reason'] ?? null)) {
+        // `if (choice.finish_reason)`: a truthy one — an empty string is no finish reason.
+        if (is_string($choice['finish_reason'] ?? null) && $choice['finish_reason'] !== '') {
             $builder->setRawStopReason($choice['finish_reason']);
-            $builder->setStopReason($this->stopReason($choice['finish_reason']));
+            [$reason, $errorMessage] = self::mapStopReason($choice['finish_reason']);
+            $builder->setStopReason($reason);
+
+            if ($errorMessage !== null) {
+                $builder->setErrorMessage($errorMessage);
+            }
+
+            $hasFinishReason = true;
         }
 
         $delta = $choice['delta'] ?? null;
@@ -699,23 +733,59 @@ final class OpenAiCompletions
         );
     }
 
-    private function stopReason(string $reason): StopReason
+    /**
+     * Upstream's `mapStopReason()`: `stop` and `end` are `stop`, `length` is `length`, a call is
+     * `toolUse`, and **anything else is an error that says which** — `Provider finish_reason:
+     * <reason>`. pig used to read an unknown reason as a clean `stop` and `content_filter` as an
+     * error with no words in it.
+     *
+     * @return array{0: StopReason, 1: string|null}
+     */
+    private static function mapStopReason(string $reason): array
     {
         return match ($reason) {
-            'stop' => StopReason::Stop,
-            'length' => StopReason::Length,
-            'tool_calls', 'function_call' => StopReason::ToolUse,
-            'content_filter' => StopReason::Error,
-            default => StopReason::Stop,
+            'stop', 'end' => [StopReason::Stop, null],
+            'length' => [StopReason::Length, null],
+            'function_call', 'tool_calls' => [StopReason::ToolUse, null],
+            default => [StopReason::Error, "Provider finish_reason: {$reason}"],
         };
     }
 
-    private function explain(Model $model, int $status, string $body): string
+    private static function hasToolCall(AssistantMessage $message): bool
     {
-        $decoded = json_decode($body, true);
-        $message = is_array($decoded) ? ($decoded['error']['message'] ?? null) : null;
+        foreach ($message->content as $block) {
+            if ($block instanceof ToolCall) {
+                return true;
+            }
+        }
 
-        return "{$model->provider} returned {$status}: " . (is_string($message) ? $message : trim($body));
+        return false;
+    }
+
+    /**
+     * Upstream's `catch`: `formatProviderError(normalizeProviderError(error))` over the `openai`
+     * SDK's `APIError` — no prefix on this API, so `<status>: <the error object as JSON>` — and then
+     * `\n<error.metadata.raw>` when OpenRouter sent one the message does not already contain. It
+     * used to be pig's own `<provider> returned <status>: <error.message>`.
+     */
+    private function explain(int $status, string $body): string
+    {
+        $norm = ErrorBody::openAiApiError($status, $body);
+        $message = ErrorBody::format($norm);
+        $raw = $norm['error'] instanceof \stdClass && ($norm['error']->metadata ?? null) instanceof \stdClass
+            ? ($norm['error']->metadata->raw ?? null)
+            : null;
+
+        // `if (rawMetadata && !output.errorMessage.includes(String(rawMetadata)))`.
+        if ($raw !== null && $raw !== false && $raw !== '' && $raw !== 0) {
+            $text = is_string($raw) ? $raw : (is_scalar($raw) ? (string) $raw : '[object Object]');
+
+            if (!str_contains($message, $text)) {
+                $message .= "\n{$text}";
+            }
+        }
+
+        return $message;
     }
 
     // ---- the request ---------------------------------------------------------------------
@@ -803,7 +873,10 @@ final class OpenAiCompletions
             $body['prompt_cache_retention'] = '24h';
         }
 
-        $body['stream_options'] = ['include_usage' => true];
+        // `if (compat.supportsUsageInStreaming !== false)`.
+        if ($compat->supportsUsageInStreaming !== false) {
+            $body['stream_options'] = ['include_usage' => true];
+        }
 
         if ($compat->store) {
             $body['store'] = false;
@@ -819,6 +892,11 @@ final class OpenAiCompletions
 
         if ($context->tools !== []) {
             $body['tools'] = array_map(fn (Tool $tool): array => $this->tool($tool, $compat), $context->tools);
+
+            // z.ai streams tool-call deltas only when asked to.
+            if ($compat->zaiToolStream) {
+                $body['tool_stream'] = true;
+            }
         } elseif ($this->hasToolHistory($context->messages)) {
             // A conversation holding tool calls is rejected by some proxies unless the
             // tools field is present, even with nothing in it.
@@ -837,7 +915,24 @@ final class OpenAiCompletions
             $body['tool_choice'] = $options->toolChoice;
         }
 
-        $this->thinking($body, $model, $compat, $options?->reasoning?->value);
+        // vLLM's scheduler priority, the model's own and never detected.
+        if ($compat->vllmPriority !== null) {
+            $body['priority'] = $compat->vllmPriority;
+        }
+
+        $budget = $this->thinkingBudget($body, $model, $options?->reasoning?->value);
+        $this->thinking($body, $model, $compat, $options?->reasoning?->value, $budget);
+
+        // Upstream: "Cap reasoning with a top-level budget field. Independent of thinkingFormat: the
+        // same server can serve zai, qwen or chat-template models. Reasoning and the answer share
+        // max_tokens here, so an uncapped reasoning phase can consume the whole response and leave
+        // no answer and no tool call."
+        $budgetField = self::resolveThinkingTokenBudgetField($compat);
+
+        if ($budgetField !== null && $budget !== null) {
+            $body[$budgetField] = $budget;
+        }
+
         $this->routing($body, $model);
 
         return $body;
@@ -967,12 +1062,11 @@ final class OpenAiCompletions
      *
      * @param array<string, mixed> $body
      */
-    private function thinking(array &$body, Model $model, OpenAiCompat $compat, ?string $effort): void
+    private function thinking(array &$body, Model $model, OpenAiCompat $compat, ?string $effort, ?int $budget): void
     {
         $map = $model->thinkingLevelMap;
         $supportsReasoningEffort = (bool) $compat->reasoningEffort;
         $offIsNotNull = !array_key_exists('off', $map) || $map['off'] !== null;
-        $budget = $this->thinkingBudget($body, $model, $effort);
 
         if ($compat->thinkingFormat === 'zai' && $model->reasoning) {
             $body['thinking'] = $effort !== null ? ['type' => 'enabled', 'clear_thinking' => false] : ['type' => 'disabled'];
@@ -1069,12 +1163,24 @@ final class OpenAiCompletions
     }
 
     /**
+     * Upstream's `resolveThinkingTokenBudgetField()`: the compat's field, else
+     * `thinking_token_budget` for `supportsThinkingTokenBudget`, else none.
+     */
+    private static function resolveThinkingTokenBudgetField(OpenAiCompat $compat): ?string
+    {
+        if ($compat->thinkingTokenBudgetField !== null && $compat->thinkingTokenBudgetField !== '') {
+            return $compat->thinkingTokenBudgetField;
+        }
+
+        return $compat->supportsThinkingTokenBudget ? 'thinking_token_budget' : null;
+    }
+
+    /**
      * Upstream's `resolveClampedThinkingBudget()`: the default budget for the level (upstream's
      * `DEFAULT_THINKING_BUDGETS`, `xhigh` clamped to `high`), cut so 1,024 tokens of the response
      * ceiling are left for the answer, or null when that leaves nothing or thinking is off.
      * pig's `OpenAiOptions` carries no `thinkingBudgets` of the caller's own, so the defaults are
-     * all there is. Only `{"$var": "thinking.budget"}` reads it — pig does not port upstream's
-     * separate `thinkingTokenBudgetField`.
+     * all there is. Read by `{"$var": "thinking.budget"}` and by `thinkingTokenBudgetField`.
      *
      * @param array<string, mixed> $body
      */
@@ -1342,8 +1448,8 @@ final class OpenAiCompletions
             static fn (ThinkingContent $block): bool => trim($block->thinking) !== '',
         ));
 
-        // Mistral rejects a null content and every endpoint rejects an assistant turn
-        // that has neither content nor calls.
+        // Upstream: "Some providers don't accept null content, use empty string instead" — and
+        // every endpoint rejects an assistant turn that has neither content nor calls.
         $out = ['role' => 'assistant', 'content' => $compat->assistantAfterToolResult ? '' : null];
 
         if ($nonEmptyThinkingBlocks !== []) {
@@ -1398,7 +1504,7 @@ final class OpenAiCompletions
                 // `grammarToolInputProperties.get(tc.name)` arm — with its raw input.
                 fn (ToolCall $call): array => isset($grammar[$call->name])
                     ? [
-                        'id' => $this->toolId($call->id, $compat),
+                        'id' => $call->id,
                         'type' => 'custom',
                         'custom' => [
                             'name' => $call->name,
@@ -1406,7 +1512,7 @@ final class OpenAiCompletions
                         ],
                     ]
                     : [
-                        'id' => $this->toolId($call->id, $compat),
+                        'id' => $call->id,
                         'type' => 'function',
                         // `{}` and not `[]`: an empty PHP array is both, and `arguments` is an
                         // object. Anthropic's and Google's arms guard the same thing their own way.
@@ -1462,7 +1568,7 @@ final class OpenAiCompletions
         $result = [
             'role' => 'tool',
             'content' => Utf8::sanitize($joined !== '' ? $joined : ($images !== [] ? '(see attached image)' : '(no tool output)')),
-            'tool_call_id' => $this->toolId($message->toolCallId, $compat),
+            'tool_call_id' => $message->toolCallId,
         ];
 
         if ($compat->toolResultName && $message->toolName !== '') {
@@ -1527,26 +1633,6 @@ final class OpenAiCompletions
         }
 
         return $id;
-    }
-
-    /**
-     * A tool id the endpoint will accept.
-     *
-     * Mistral wants exactly nine alphanumeric characters. Padded deterministically rather
-     * than randomly, because the call and its result are shortened separately and have to
-     * come out the same.
-     */
-    private function toolId(string $id, OpenAiCompat $compat): string
-    {
-        if (!$compat->mistralToolIds) {
-            return $id;
-        }
-
-        $clean = (string) preg_replace('/[^a-zA-Z0-9]/', '', $id);
-
-        return strlen($clean) >= self::MISTRAL_ID_LENGTH
-            ? substr($clean, 0, self::MISTRAL_ID_LENGTH)
-            : $clean . substr(self::MISTRAL_PADDING, 0, self::MISTRAL_ID_LENGTH - strlen($clean));
     }
 
     /**

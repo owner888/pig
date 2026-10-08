@@ -411,6 +411,116 @@ final class OpenAiResponsesTest extends TestCase
         );
     }
 
+    public function testTwoItemsStreamingAtOnceEachGetTheirOwnDeltas(): void
+    {
+        // Upstream keeps a slot per `output_index` (`outputSlots`): the API may stream a reasoning
+        // item and a message, or two calls, at the same time, and every delta names its item. pig
+        // kept one open item and routed every delta to it — so here the message's text went into
+        // the reasoning, the first call's arguments into the second, and an `output_item.done`
+        // closed whichever item was open.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'output_index' => 0, 'item' => ['type' => 'function_call', 'id' => 'fc_a', 'call_id' => 'call_a', 'name' => 'read']],
+            ['type' => 'response.output_item.added', 'output_index' => 1, 'item' => ['type' => 'function_call', 'id' => 'fc_b', 'call_id' => 'call_b', 'name' => 'grep']],
+            ['type' => 'response.function_call_arguments.delta', 'output_index' => 0, 'delta' => '{"path":'],
+            ['type' => 'response.function_call_arguments.delta', 'output_index' => 1, 'delta' => '{"pattern":"x"}'],
+            ['type' => 'response.function_call_arguments.delta', 'output_index' => 0, 'delta' => '"a.txt"}'],
+            ['type' => 'response.output_item.done', 'output_index' => 1, 'item' => ['type' => 'function_call', 'id' => 'fc_b', 'call_id' => 'call_b', 'name' => 'grep']],
+            ['type' => 'response.output_item.done', 'output_index' => 0, 'item' => ['type' => 'function_call', 'id' => 'fc_a', 'call_id' => 'call_a', 'name' => 'read']],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::ToolUse, $message->stopReason);
+        $this->assertEquals([
+            new ToolCall('call_a|fc_a', 'read', ['path' => 'a.txt']),
+            new ToolCall('call_b|fc_b', 'grep', ['pattern' => 'x']),
+        ], $message->content);
+    }
+
+    public function testAnItemThatOnlyArrivesFinishedStillBecomesABlock(): void
+    {
+        // `getOrCreateSlot()`: an `output_item.done` with no `output_item.added` before it makes the
+        // block then and there — an endpoint that sends only finished items still produces an answer.
+        // pig dropped such an item, so the turn came back empty.
+        $url = $this->serve([
+            ['type' => 'response.output_item.done', 'output_index' => 0, 'item' => ['type' => 'message', 'id' => 'msg_1', 'content' => [['type' => 'output_text', 'text' => 'whole']]]],
+            ['type' => 'response.output_item.done', 'output_index' => 1, 'item' => ['type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'read', 'arguments' => '{"path":"b"}']],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(['StartEvent', 'TextStartEvent', 'TextEndEvent', 'ToolCallStartEvent', 'ToolCallEndEvent', 'DoneEvent'], $types);
+        $this->assertSame('whole', $message->content[0]->text);
+        $this->assertEquals(['path' => 'b'], $message->content[1]->arguments);
+        $this->assertSame(StopReason::ToolUse, $message->stopReason);
+    }
+
+    public function testAFinishedCallKeepsTheIdItWasOpenedWith(): void
+    {
+        // Upstream's `function_call` arm of `output_item.done` reads the arguments and the namespace
+        // off the finished item, and not the id or the name, which the slot was opened with.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'output_index' => 0, 'item' => ['type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'read']],
+            ['type' => 'response.output_item.done', 'output_index' => 0, 'item' => ['type' => 'function_call', 'id' => 'fc_other', 'call_id' => 'call_other', 'name' => 'other', 'arguments' => '{}']],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('call_1|fc_1', $message->content[0]->id);
+        $this->assertSame('read', $message->content[0]->name);
+    }
+
+    public function testAnEmptyDeltaIsStillADelta(): void
+    {
+        // Upstream appends `event.delta` and pushes the event whatever it holds; pig dropped an
+        // empty one, so a listener counting deltas — or rebuilding arguments from them — saw fewer
+        // events than upstream's.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'output_index' => 0, 'item' => ['type' => 'message']],
+            ['type' => 'response.output_text.delta', 'output_index' => 0, 'delta' => ''],
+            ['type' => 'response.output_text.delta', 'output_index' => 0, 'delta' => 'hi'],
+            ['type' => 'response.output_item.done', 'output_index' => 0, 'item' => ['type' => 'message', 'content' => [['type' => 'output_text', 'text' => 'hi']]]],
+            ['type' => 'response.output_item.added', 'output_index' => 1, 'item' => ['type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'read']],
+            ['type' => 'response.function_call_arguments.delta', 'output_index' => 1, 'delta' => ''],
+            ['type' => 'response.output_item.done', 'output_index' => 1, 'item' => ['type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'read', 'arguments' => '{}']],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [$types] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(2, count(array_keys($types, 'TextDeltaEvent', true)));
+        $this->assertSame(1, count(array_keys($types, 'ToolCallDeltaEvent', true)));
+    }
+
+    public function testARefusedRequestReadsAsUpstreamsSdkErrorDoes(): void
+    {
+        // `formatProviderError(normalizeProviderError(error), "<OpenAI | provider> API error")`: the
+        // status in brackets and the SDK's error object as JSON, code included — `OpenAI API error
+        // (400): {"message":…}`. pig wrote `openai returned 400: <message>`, which dropped the code.
+        $body = '{"error":{"message":"Invalid value","type":"invalid_request_error","code":"bad_param"}}';
+        $url = $this->server->start(["HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: " . strlen($body) . "\r\n\r\n" . $body]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('OpenAI API error (400): {"message":"Invalid value","type":"invalid_request_error","code":"bad_param"}', $message->errorMessage);
+
+        // Another provider on this API is named as itself; a body that is no JSON error is the
+        // SDK's own message behind the prefix.
+        $this->server = new CannedServer();
+        $url = $this->server->start(["HTTP/1.1 503 Service Unavailable\r\nContent-Length: 4\r\n\r\nbusy"]);
+        $message = Async::run(fn (): AssistantMessage => (new OpenAiResponses())
+            ->stream($this->model(baseUrl: $url, provider: 'my-gateway'), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'k'))
+            ->result()->await());
+        $this->assertSame('my-gateway API error (503): 503 busy', $message->errorMessage);
+
+        $this->server = new CannedServer();
+        $url = $this->server->start(["HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"]);
+        $this->assertSame('OpenAI API error (500): 500 status code (no body)', $this->collect($url, new Context([new UserMessage('hi')]))[1]->errorMessage);
+    }
+
     public function testCachedTokensAreTakenOutOfTheInputTheyWereCountedIn(): void
     {
         $url = $this->serve([
@@ -1638,8 +1748,13 @@ final class OpenAiResponsesTest extends TestCase
             "HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nContent-Length: " . strlen($body) . "\r\n\r\n" . $body,
         ]);
         [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
-        $this->assertStringContainsString('You have hit your usage limit.', (string) $message->errorMessage);
-        $this->assertStringEndsWith("\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage", (string) $message->errorMessage);
+        // The formatted message is the SDK's error object, code included, which is what upstream's
+        // check reads.
+        $this->assertSame(
+            'OpenAI API error (429): {"message":"You have hit your usage limit.","code":"subscription_sharing_usage_limit_exceeded"}'
+                . "\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage",
+            $message->errorMessage,
+        );
 
         $this->server = new CannedServer();
         $url = $this->serve([['type' => 'response.failed', 'response' => ['status' => 'failed', 'error' => [

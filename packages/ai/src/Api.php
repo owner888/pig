@@ -16,6 +16,8 @@ enum Api: string
     case OpenAiResponses = 'openai-responses';
     case AnthropicMessages = 'anthropic-messages';
     case GoogleGenerativeAi = 'google-generative-ai';
+    /** Mistral's own chat API (`Providers\Mistral`), upstream's `mistral-conversations`. */
+    case MistralConversations = 'mistral-conversations';
 
     /**
      * A protocol an extension brought: `Stream::start()` finds the implementation through

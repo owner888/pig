@@ -91,6 +91,7 @@ final class ModelsTest extends TestCase
                     Api::OpenAiCompletions,
                     Api::OpenAiResponses,
                     Api::GoogleGenerativeAi,
+                    Api::MistralConversations,
                 ],
                 $model->id . ' speaks ' . $model->api->value,
             );
@@ -289,11 +290,12 @@ final class ModelsTest extends TestCase
 
     public function testAnOpenAiCompatibleModelCarriesItsOwnEndpoint(): void
     {
-        // Each of the five has an endpoint of its own; a shared default would send every one of
-        // them to whichever was written first.
+        // Each of the four has an endpoint of its own; a shared default would send every one of
+        // them to whichever was written first. (Mistral was the fifth until it moved to its own
+        // API, as upstream's did — see the next test.)
         $urls = [];
 
-        foreach (['cerebras', 'groq', 'mistral', 'xai', 'zai'] as $provider) {
+        foreach (['cerebras', 'groq', 'xai', 'zai'] as $provider) {
             $model = self::anyFrom($provider);
 
             $this->assertSame(Api::OpenAiCompletions, $model->api, $provider);
@@ -302,7 +304,46 @@ final class ModelsTest extends TestCase
             $urls[$model->baseUrl] = true;
         }
 
-        $this->assertCount(5, $urls, 'two of the compatible providers share a base URL');
+        $this->assertCount(4, $urls, 'two of the compatible providers share a base URL');
+    }
+
+    public function testMistralsModelsSpeakMistralsOwnApiAsUpstreamsGeneratorRoutesThem(): void
+    {
+        // Upstream's generator: `api: "mistral-conversations"`, `baseUrl: "https://api.mistral.ai"`
+        // on every Mistral model. pig used to send them to `/v1` on the OpenAI-compatible API,
+        // with four Mistral rules upstream's completions provider no longer has.
+        foreach (self::of('mistral') as $model) {
+            $this->assertSame(Api::MistralConversations, $model->api, $model->id);
+            $this->assertSame('https://api.mistral.ai', $model->baseUrl, $model->id);
+            $this->assertNull($model->compat, $model->id);
+        }
+
+        // A reasoning model with verified efforts carries their map — `reasoning_effort` at run
+        // time (`MistralTest` pins the `prompt_mode` arm for one without).
+        $small = Models::find('mistral', 'mistral-small-latest');
+        $this->assertNotNull($small);
+        $this->assertSame('none', $small->thinkingLevelMap['off']);
+        $this->assertSame('high', $small->thinkingLevelMap['high']);
+    }
+
+    public function testZaisModelsSayTheirThinkingFormatAndStreamTheirToolCalls(): void
+    {
+        // Upstream's `processZaiModels()` compat: no `developer` role, the `zai` thinking format,
+        // and `zaiToolStream` for every model but the four GLM-4.5 ones, whose endpoint does not
+        // take `tool_stream`.
+        $glm = Models::find('zai', 'glm-4.7');
+        $this->assertNotNull($glm);
+        $this->assertInstanceOf(OpenAiCompat::class, $glm->compat);
+        $this->assertTrue($glm->compat->zaiToolStream);
+        $this->assertSame('zai', $glm->compat->thinkingFormat);
+        $this->assertFalse($glm->compat->developerRole);
+        // No verified efforts on the row, so `reasoning_effort` stays off as detection has it.
+        $this->assertNull($glm->compat->reasoningEffort);
+
+        $old = Models::find('zai', 'glm-4.5');
+        $this->assertNotNull($old);
+        $this->assertInstanceOf(OpenAiCompat::class, $old->compat);
+        $this->assertNull($old->compat->zaiToolStream);
     }
 
     public function testCostIsPerMillionTokens(): void
@@ -719,15 +760,22 @@ final class ModelsTest extends TestCase
 
     public function testCopilotsResponsesModelsSayOnlyThatGptFiveAndLaterTakeGrammarTools(): void
     {
-        // Upstream's generator writes one thing into a Copilot Responses model's compat:
-        // `supportsOpenAIGrammarTools`, for `gpt-<n>` with n >= 5. Everything else is left to the
-        // Responses runtime's defaults — so `grok-…` and `mai-…` carry no compat at all.
+        // Upstream's generator writes two things into a Copilot Responses model's compat:
+        // `supportsOpenAIGrammarTools`, for `gpt-<n>` with n >= 5, and — for the ids in its
+        // `OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS` — `supportsMidConvoSystemMessages` and
+        // `supportsAdditionalTools` (`applyOpenAIResponsesTranscriptMetadata()`; no tool search,
+        // which is "not verified through those proxies"). Everything else is left to the Responses
+        // runtime's defaults — so `grok-…` and `mai-…` carry no compat at all.
+        $transcript = ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-pro', 'gpt-5.5', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'];
+
         foreach (self::of(Models::COPILOT) as $model) {
             if ($model->api !== Api::OpenAiResponses) {
                 continue;
             }
 
-            if (preg_match('/^gpt-(\d+)/', $model->id, $match) === 1 && (int) $match[1] >= 5) {
+            if (in_array($model->id, $transcript, true)) {
+                $this->assertEquals(new OpenAiCompat(grammarTools: true, supportsMidConvoSystemMessages: true, supportsAdditionalTools: true), $model->compat, $model->id);
+            } elseif (preg_match('/^gpt-(\d+)/', $model->id, $match) === 1 && (int) $match[1] >= 5) {
                 $this->assertEquals(new OpenAiCompat(grammarTools: true), $model->compat, $model->id);
             } else {
                 $this->assertNull($model->compat, $model->id);
@@ -735,14 +783,59 @@ final class ModelsTest extends TestCase
         }
     }
 
-    public function testACopilotConversationCostsNothingToReport(): void
+    public function testOpenAisToolSearchModelsSayTheyTakeToolSearchAndTranscriptAdditions(): void
     {
-        foreach (self::of(Models::COPILOT) as $model) {
-            // A subscription, so the prices are zeroes across the board. `/session` saying
-            // $0.00 is the truth and not a column nobody filled in.
-            $this->assertSame(0.0, $model->pricing->input, $model->id);
-            $this->assertSame(0.0, $model->pricing->output, $model->id);
+        // `applyOpenAIToolSearchMetadata()` and `applyOpenAIResponsesTranscriptMetadata()` on direct
+        // OpenAI: tool search, additional tools and mid-conversation system messages, for the ids
+        // in `OPENAI_TOOL_SEARCH_MODEL_IDS` and no others. Carried for the session file and a
+        // gateway; pig has no tool search or mid-conversation tool additions to read them.
+        $search = Models::find('openai', 'gpt-5.5')?->compat;
+        $this->assertInstanceOf(OpenAiCompat::class, $search);
+        $this->assertTrue($search->supportsToolSearch);
+        $this->assertTrue($search->supportsAdditionalTools);
+        $this->assertTrue($search->supportsMidConvoSystemMessages);
+
+        $plain = Models::find('openai', 'gpt-5.2')?->compat;
+        $this->assertInstanceOf(OpenAiCompat::class, $plain);
+        $this->assertNull($plain->supportsToolSearch);
+        $this->assertNull($plain->supportsMidConvoSystemMessages);
+
+        // Copilot's Kimi K3 on completions: system text mid-conversation, and no tool additions,
+        // because "GitHub Copilot forwards K3 text but silently drops its tool-bearing message".
+        $kimi = Models::find(Models::COPILOT, 'kimi-k3')?->compat;
+        $this->assertInstanceOf(OpenAiCompat::class, $kimi);
+        $this->assertTrue($kimi->supportsMidConvoSystemMessages);
+        $this->assertNull($kimi->supportsMidConvoToolAdditions);
+    }
+
+    public function testACopilotConversationIsPricedAtModelsDevsListPricesAsUpstreamPricesIt(): void
+    {
+        // Upstream's generator writes models.dev's list prices on Copilot rows. pig used to price
+        // them at zero — "a subscription" — so `/session` said $0.00 where pi says what the same
+        // tokens are worth, and a Copilot conversation could not be compared with any other.
+        $gpt = Models::find(Models::COPILOT, 'gpt-5.5');
+        $this->assertNotNull($gpt);
+        $this->assertSame(5.0, $gpt->pricing->input);
+        $this->assertSame(30.0, $gpt->pricing->output);
+        $this->assertSame(0.5, $gpt->pricing->cacheRead);
+        $this->assertCount(1, $gpt->pricing->tiers);
+        $this->assertSame(272_000, $gpt->pricing->tiers[0]->inputTokensAbove);
+
+        $opus = Models::find(Models::COPILOT, 'claude-opus-5.5');
+        $this->assertNotNull($opus);
+        $this->assertSame([4.0, 20.0, 0.2, 5.0], [$opus->pricing->input, $opus->pricing->output, $opus->pricing->cacheRead, $opus->pricing->cacheWrite]);
+    }
+
+    public function testCopilotsExtendedWindowsAreUpstreamsOneMillionForEveryListedId(): void
+    {
+        // `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS`: GitHub's 1,000,000 for every id it lists. pig had
+        // five of them at models.dev's 1,050,000 — a window past the real one, where compaction
+        // fires too late — and the ids not on the list keep the catalogue's figure.
+        foreach (['claude-opus-4.7', 'claude-opus-4.8', 'claude-opus-5', 'claude-sonnet-4.6', 'claude-sonnet-5', 'claude-fable-5', 'claude-opus-5.5', 'gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'] as $id) {
+            $this->assertSame(1_000_000, Models::find(Models::COPILOT, $id)?->contextWindow, $id);
         }
+
+        $this->assertSame(1_050_000, Models::find(Models::COPILOT, 'gpt-6.1-sol')?->contextWindow);
     }
 
     // ---- finding a model to make a point with --------------------------------------------

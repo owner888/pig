@@ -90,18 +90,20 @@ final class OverflowTest extends TestCase
 
     public function testTheWordingPigItselfProducesForABodilessFourHundred(): void
     {
-        // The case above is the OpenAI SDK's wording, which is what upstream matches — and which
-        // **pig never writes**: its providers say "<who> returned <status>: <body>", so a 400 with
-        // an empty body ends at the colon. The ported pattern therefore could not fire, and an
-        // oversized prompt to Cerebras or Mistral was retried three times with backoff instead of
-        // being compacted and sent again.
+        // The case above is the OpenAI SDK's wording, which is what upstream matches — and which pig
+        // did not write until its OpenAI providers took upstream's error text (`Utils\ErrorBody`):
+        // they said "<who> returned <status>: <body>", so a 400 with an empty body ended at the
+        // colon and the ported pattern could not fire, and an oversized prompt to Cerebras was
+        // retried three times with backoff instead of being compacted and sent again. Anthropic and
+        // Google still write that shape, which `EMPTY_BODY` still catches.
         //
         // Through a real provider rather than by quoting the string, so the pattern and the message
         // that has to match it cannot drift apart.
         $message = $this->failedRequest(400, '');
 
-        $this->assertSame('cerebras returned 400: ', $message->errorMessage);
+        $this->assertSame('400 status code (no body)', $message->errorMessage);
         $this->assertTrue(Overflow::happened($message));
+        $this->assertTrue(Overflow::happened(self::failed('Anthropic returned 413: ')));
 
         $this->assertTrue(Overflow::happened($this->failedRequest(413, '')));
         $this->assertTrue(Overflow::happened($this->failedRequest(429, '')));

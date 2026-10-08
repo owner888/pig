@@ -1019,6 +1019,65 @@ final class AnthropicTest extends TestCase
         $this->assertSame('{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}', $message->errorMessage);
     }
 
+    public function testAnEventThatCannotBeParsedEndsTheTurnAndSaysWhatItWas(): void
+    {
+        // Upstream's `iterateAnthropicEvents()`: `parseJsonWithRepair(sse.data)`, and when even the
+        // repaired text is no JSON, `Could not parse Anthropic SSE event <event>: <why>; data=<data>;
+        // raw=<the lines, joined by a literal \n>`. pig decoded with `json_decode`, skipped what
+        // did not decode, and carried on — a corrupted delta simply went missing from the answer.
+        $body = "event: message_start\ndata: " . json_encode(['type' => 'message_start', 'message' => ['usage' => []]]) . "\n\n"
+            . ": keep-alive\nevent: content_block_delta\ndata: {\"type\": broken\n\n";
+        $url = $this->server->start([
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n",
+            $this->chunk($body),
+            "0\r\n\r\n",
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        // `<why>` is PHP's JSON error where upstream's is V8's; the rest is upstream's text.
+        $this->assertSame(
+            'Could not parse Anthropic SSE event content_block_delta: Syntax error; data={"type": broken; '
+                . 'raw=: keep-alive\\nevent: content_block_delta\\ndata: {"type": broken',
+            $message->errorMessage,
+        );
+    }
+
+    public function testARawControlCharacterInAnEventIsRepairedRatherThanFatal(): void
+    {
+        // `repairJson()`: a raw control character inside a string is escaped and the text parsed
+        // again — the part of `parseJsonWithRepair()` that keeps such an event from being the error
+        // above.
+        $delta = "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"a\tb\"}}\n\n";
+        $pieces = [
+            ['message_start', ['message' => ['usage' => []]]],
+            ['content_block_start', ['index' => 0, 'content_block' => ['type' => 'text']]],
+        ];
+        $body = '';
+
+        foreach ($pieces as [$type, $data]) {
+            $body .= "event: {$type}\ndata: " . json_encode(['type' => $type] + $data) . "\n\n";
+        }
+
+        $body .= $delta;
+
+        foreach ([['content_block_stop', ['index' => 0]], ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => ['output_tokens' => 1]]], ['message_stop', []]] as [$type, $data]) {
+            $body .= "event: {$type}\ndata: " . json_encode(['type' => $type] + $data) . "\n\n";
+        }
+
+        $url = $this->server->start([
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n",
+            $this->chunk($body),
+            "0\r\n\r\n",
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Stop, $message->stopReason);
+        $this->assertSame("a\tb", $message->content[0]->text);
+    }
+
     // ---- redacted thinking ----------------------------------------------------------------
 
     public function testARedactedThinkingBlockIsKeptAsThinkingWithItsPayloadInTheSignature(): void

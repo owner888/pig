@@ -43,6 +43,30 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.34] - 2026-10-08
+
+### New Features
+
+- **Dedicated Mistral Conversations Provider (`Providers\Mistral`, `Api::MistralConversations`)**:
+  - Fully ported upstream pi's `mistral-conversations.ts`, completely decoupling Mistral from `OpenAiCompletions`.
+  - Added native thinking stream chunk decoding, automatic 9-character alphanumeric tool call ID generation, runtime `reasoning_effort` versus `prompt_mode: "reasoning"` dispatch based on `thinkingLevelMap`, and native error formatting (`Mistral API error (<status>): <body>`).
+  - Removed deprecated `requiresMistralToolIds` and `mistral.ai` host quirks from `OpenAiCompat`.
+- **`StopReason::Deferred` Support across Agent & Session Persistence (`StopReason`, `AssistantMessage`, `MessageJson`)**:
+  - Added `StopReason::Deferred` and `AssistantMessage::$deferred` handle tracking for deferred turns, persisting handles across `.jsonl` session storage and `TransformMessages` history replay.
+- **Upstream Model Generator Parity for Copilot, Google, and Z.ai (`generate-models.php`, `Models`)**:
+  - Applied `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS` (1,000,000 context window) across all eligible Copilot models and populated models.dev list pricing.
+  - Built official `thinkingLevelMap` instances for Google (including Gemma 4 two-tier thinking) and Mistral models.
+  - Configured Z.ai models from `zai-coding-plan` with `zaiToolStream: true`.
+
+### Fixed
+
+- **OpenAI Responses Concurrent Slot Routing & Error Unwrapping (`OpenAiResponses`, `ErrorBody`)**:
+  - Re-architected item stream dispatching using `output_index` slots, eliminating delta cross-talk and corruption during interleaved reasoning and parallel tool calling outputs.
+  - Standardized error formatting via `Pig\Ai\Utils\ErrorBody` matching upstream pi's `formatProviderError()`.
+- **Provider Stream Disconnection & Error Safeguards (`Anthropic`, `OpenAiCompletions`, `Google`, `JsonRepair`)**:
+  - Converted unannounced stream drops lacking `finish_reason` in completions or `finishReason` in Google into explicit provider errors (`Stream ended without finish_reason` / `Google stream ended without a finish reason`).
+  - Integrated `JsonRepair::parse()` for Anthropic SSE events to repair control-character malformations and surface parse errors with full event debugging context instead of silently dropping chunks.
+
 ## [0.4.33] - 2026-10-08
 
 ### New Features

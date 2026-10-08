@@ -330,6 +330,9 @@ final readonly class Catalog
             $input === [] ? ['text'] : $input,
             self::pricing(is_array($entry['cost'] ?? null) ? $entry['cost'] : []),
             thinkingLevelMap: self::thinkingLevelMap($entry['thinkingLevelMap'] ?? null),
+            // As `Models::fallback()` does: upstream's generator default for a provider it has no
+            // limits for — the resize profile on an image-taking model.
+            inputLimits: \Pig\Ai\Models::inputLimits(Models::PROVIDER, $input === [] ? ['text'] : $input, $window),
         );
     }
 

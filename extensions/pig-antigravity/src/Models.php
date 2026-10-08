@@ -64,6 +64,10 @@ final class Models
                 $images ? ['text', 'image'] : ['text'],
                 new Pricing(),
                 thinkingLevelMap: $thinking,
+                // What upstream's generator (`applyImageInputMetadata()`) gives a model of a provider
+                // it has no limits for: an image-taking model the default resize profile, and
+                // nothing more; a text-only model nothing at all.
+                inputLimits: \Pig\Ai\Models::inputLimits(self::PROVIDER, $images ? ['text', 'image'] : ['text'], $window),
             );
         }
 

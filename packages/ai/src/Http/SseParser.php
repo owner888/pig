@@ -26,6 +26,9 @@ final class SseParser
 
     private ?int $retry = null;
 
+    /** @var list<string> the lines of the event being built — see `SseEvent::$raw` */
+    private array $raw = [];
+
     /** @return list<SseEvent> */
     public function feed(string $bytes): array
     {
@@ -42,6 +45,8 @@ final class SseParser
 
                 continue;
             }
+
+            $this->raw[] = $line;
 
             // A line starting with ':' is a comment. Providers send them as keep-alives.
             if (str_starts_with($line, ':')) {
@@ -79,8 +84,14 @@ final class SseParser
 
     private function dispatch(): ?SseEvent
     {
-        // An empty data buffer dispatches nothing — it only resets the event type.
+        // An empty data buffer dispatches nothing — it only resets the event type. The raw lines go
+        // with it when there was a type to reset (upstream's decoder flushes such an event), and
+        // otherwise carry over to the next event, as upstream's do.
         if ($this->data === '') {
+            if ($this->type !== '') {
+                $this->raw = [];
+            }
+
             $this->type = '';
 
             return null;
@@ -91,10 +102,12 @@ final class SseParser
             substr($this->data, 0, -1),
             $this->id,
             $this->retry,
+            $this->raw,
         );
 
         $this->type = '';
         $this->data = '';
+        $this->raw = [];
 
         return $event;
     }

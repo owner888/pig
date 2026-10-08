@@ -7,10 +7,9 @@ namespace Pig\Ai;
 /**
  * The ways an "OpenAI-compatible" endpoint is not.
  *
- * Seven providers speak `openai-completions`, and every one of them differs somewhere:
- * Mistral wants tool ids exactly nine alphanumeric characters, Grok rejects
- * `reasoning_effort`, Cerebras rejects `store`, Copilot wants assistant text as a string
- * rather than an array. None of that is in anyone's documentation as a difference; it is
+ * Several providers speak `openai-completions`, and every one of them differs somewhere:
+ * Grok rejects `reasoning_effort`, Cerebras rejects `store`, z.ai streams tool calls only when
+ * asked with `tool_stream`, Copilot wants assistant text as a string rather than an array. None of that is in anyone's documentation as a difference; it is
  * what a 400 looks like after you have sent it.
  *
  * A table per endpoint rather than one rule, for the reason the tool archive names are a
@@ -34,7 +33,6 @@ final readonly class OpenAiCompat
      * @param bool|null   $toolResultName   a tool result carries the tool's name as well as its id
      * @param bool|null   $assistantAfterToolResult insert a filler turn between a result and a user message
      * @param bool|null   $thinkingAsText   thinking goes back as untagged text, one part ahead of the answer, rather than a field
-     * @param bool|null   $mistralToolIds   tool ids are cut and padded to exactly nine characters
      * @param bool|null   $reasoningContentOnAssistantMessages every replayed assistant turn of a reasoning
      *        model carries `reasoning_content`, empty when there is none — upstream's
      *        `requiresReasoningContentOnAssistantMessages`, which DeepSeek needs
@@ -84,6 +82,32 @@ final readonly class OpenAiCompat
      * @param string|null $cacheControlFormat upstream's completions key: `anthropic` puts Anthropic's
      *        `cache_control` on the system prompt, the last tool and the last conversation text
      *        (detected: an OpenRouter `anthropic/…` model)
+     *
+     * The keys below are upstream's `OpenAICompletionsCompatSchema` keys that pig had no field for:
+     *
+     * @param bool|null   $supportsUsageInStreaming `stream_options: {include_usage: true}` is sent
+     *        (default true; only an explicit false leaves it out)
+     * @param bool|null   $supportsFinishReason streamed chunks carry `finish_reason` (default true).
+     *        When false, a stream that ends without one is `toolUse` if it made a call, else `stop`;
+     *        when true, a stream that ends without one is an error
+     * @param bool|null   $zaiToolStream     z.ai takes a top-level `tool_stream: true` to stream tool-call
+     *        deltas (default false; `Models` sets it on z.ai's models as upstream's generator does)
+     * @param string|null $thinkingTokenBudgetField the top-level field that caps reasoning tokens —
+     *        `thinking_token_budget` (vLLM), `thinking_budget` (Qwen, DashScope, SGLang) or
+     *        `thinking_budget_tokens` (llama.cpp); off by default and never set on a built-in model
+     * @param bool|null   $supportsThinkingTokenBudget upstream's alias for
+     *        `thinkingTokenBudgetField: "thinking_token_budget"`
+     * @param int|float|null $vllmPriority vLLM's scheduler priority, sent as the top-level `priority`
+     *        field; only the model's own (never detected)
+     * @param bool|null   $supportsMidConvoSystemMessages the model takes a system message after the
+     *        conversation has started (both APIs; default false). Carried and sent on — pig's
+     *        transcript has no mid-conversation system messages for it to decide anything about
+     * @param bool|null   $supportsMidConvoToolAdditions such a message may add tools (completions;
+     *        default false). Carried, for the same reason
+     * @param bool|null   $supportsToolSearch the model takes client-executed tool search (Responses;
+     *        default false). Carried — pig has no tool search
+     * @param bool|null   $supportsAdditionalTools the model takes message-anchored `additional_tools`
+     *        items (Responses; default false). Carried — pig has no mid-conversation tool additions
      */
     public function __construct(
         public ?bool $store = null,
@@ -93,7 +117,6 @@ final readonly class OpenAiCompat
         public ?bool $toolResultName = null,
         public ?bool $assistantAfterToolResult = null,
         public ?bool $thinkingAsText = null,
-        public ?bool $mistralToolIds = null,
         public ?bool $reasoningContentOnAssistantMessages = null,
         public ?bool $strictMode = null,
         public ?string $thinkingFormat = null,
@@ -108,6 +131,16 @@ final readonly class OpenAiCompat
         public ?bool $supportsMaxOutputTokens = null,
         public ?bool $sendSessionAffinityHeaders = null,
         public ?string $cacheControlFormat = null,
+        public ?bool $supportsUsageInStreaming = null,
+        public ?bool $supportsFinishReason = null,
+        public ?bool $zaiToolStream = null,
+        public ?string $thinkingTokenBudgetField = null,
+        public ?bool $supportsThinkingTokenBudget = null,
+        public int|float|null $vllmPriority = null,
+        public ?bool $supportsMidConvoSystemMessages = null,
+        public ?bool $supportsMidConvoToolAdditions = null,
+        public ?bool $supportsToolSearch = null,
+        public ?bool $supportsAdditionalTools = null,
     ) {
     }
 
@@ -139,7 +172,6 @@ final readonly class OpenAiCompat
             toolResultName: $explicit->toolResultName ?? $detected->toolResultName,
             assistantAfterToolResult: $explicit->assistantAfterToolResult ?? $detected->assistantAfterToolResult,
             thinkingAsText: $explicit->thinkingAsText ?? $detected->thinkingAsText,
-            mistralToolIds: $explicit->mistralToolIds ?? $detected->mistralToolIds,
             reasoningContentOnAssistantMessages: $explicit->reasoningContentOnAssistantMessages
                 ?? $detected->reasoningContentOnAssistantMessages,
             strictMode: $explicit->strictMode ?? $detected->strictMode,
@@ -157,6 +189,19 @@ final readonly class OpenAiCompat
             supportsMaxOutputTokens: $explicit->supportsMaxOutputTokens,
             sendSessionAffinityHeaders: $explicit->sendSessionAffinityHeaders ?? $detected->sendSessionAffinityHeaders,
             cacheControlFormat: $explicit->cacheControlFormat ?? $detected->cacheControlFormat,
+            supportsUsageInStreaming: $explicit->supportsUsageInStreaming ?? $detected->supportsUsageInStreaming,
+            supportsFinishReason: $explicit->supportsFinishReason ?? $detected->supportsFinishReason,
+            zaiToolStream: $explicit->zaiToolStream ?? $detected->zaiToolStream,
+            thinkingTokenBudgetField: $explicit->thinkingTokenBudgetField ?? $detected->thinkingTokenBudgetField,
+            supportsThinkingTokenBudget: $explicit->supportsThinkingTokenBudget ?? $detected->supportsThinkingTokenBudget,
+            // Upstream: `vllmPriority: model.compat.vllmPriority` — the one key besides
+            // `openRouterRouting` that detection has no value for.
+            vllmPriority: $explicit->vllmPriority,
+            supportsMidConvoSystemMessages: $explicit->supportsMidConvoSystemMessages ?? $detected->supportsMidConvoSystemMessages,
+            supportsMidConvoToolAdditions: $explicit->supportsMidConvoToolAdditions ?? $detected->supportsMidConvoToolAdditions,
+            // Responses keys, which completions detection says nothing about.
+            supportsToolSearch: $explicit->supportsToolSearch,
+            supportsAdditionalTools: $explicit->supportsAdditionalTools,
         );
     }
 
@@ -169,11 +214,10 @@ final readonly class OpenAiCompat
      * DeepSeek for every flag and not only for one. `$modelId` is for OpenRouter, whose
      * `anthropic/` and `openai/` models take the `developer` role and the rest do not.
      *
-     * **One thing here is pig's and not upstream's: Mistral.** Upstream moved Mistral to its own
-     * `mistral-conversations` API and its `detectCompat()` no longer names it; pig still reaches
-     * `api.mistral.ai` through `openai-completions`, so the rules upstream's detection had for it
-     * when it did — non-standard, `max_tokens`, the tool result's name, thinking as text, the
-     * nine-character tool ids — stay.
+     * Mistral is not here: it speaks its own `mistral-conversations` API (`Providers\Mistral`), as
+     * upstream's does, and upstream's `detectCompat()` no longer names it. pig used to keep the
+     * rules upstream's detection had for `api.mistral.ai` before the move — non-standard,
+     * `max_tokens`, the tool result's name, thinking as text, nine-character tool ids.
      */
     public static function detect(string $baseUrl, string $provider = '', string $modelId = ''): self
     {
@@ -192,8 +236,6 @@ final readonly class OpenAiCompat
         $isAntLing = $provider === 'ant-ling' || str_contains($baseUrl, 'api.ant-ling.com');
         $isCerebras = $provider === 'cerebras' || str_contains($baseUrl, 'cerebras.ai');
         $isDeepSeek = $provider === 'deepseek' || str_contains(strtolower($baseUrl), 'deepseek.com');
-        // pig's, see above: what upstream's detection said for Mistral before it moved.
-        $isMistral = str_contains($baseUrl, 'mistral.ai');
 
         $isNonStandard = $isNvidia
             || $isCerebras
@@ -208,8 +250,7 @@ final readonly class OpenAiCompat
             || str_contains($baseUrl, 'opencode.ai')
             || $isCloudflareWorkersAi
             || $isCloudflareAiGateway
-            || $isAntLing
-            || $isMistral;
+            || $isAntLing;
 
         // DeepSeek is here, and it is the one found by measurement rather than by a 400: it
         // **accepts** `max_completion_tokens` and ignores it, so nothing fails and every request
@@ -223,8 +264,7 @@ final readonly class OpenAiCompat
             || $isTogether
             || $isNvidia
             || $isAntLing
-            || $isZai
-            || $isMistral;
+            || $isZai;
 
         $isGrok = $provider === 'xai' || str_contains($baseUrl, 'api.x.ai');
         $isOpenRouterDeveloperRoleModel = $isOpenRouter
@@ -241,12 +281,11 @@ final readonly class OpenAiCompat
                 && !$isNvidia
                 && !$isAntLing,
             maxTokensField: $useMaxTokens ? 'max_tokens' : 'max_completion_tokens',
-            toolResultName: $isMistral,
+            toolResultName: false,
             // Upstream detects `false` for every endpoint. Kept as a flag because a `compat`
             // block can still ask for it.
             assistantAfterToolResult: false,
-            thinkingAsText: $isMistral,
-            mistralToolIds: $isMistral,
+            thinkingAsText: false,
             // Upstream's `requiresReasoningContentOnAssistantMessages: isDeepSeek`. DeepSeek's
             // thinking mode answers a replayed assistant turn without `reasoning_content` with a
             // 400 — and pig only ever writes that field when the turn had thinking to put in it.
@@ -273,6 +312,13 @@ final readonly class OpenAiCompat
             supportsLongCacheRetention: !($isTogether || $isCloudflareWorkersAi || $isCloudflareAiGateway || $isNvidia || $isAntLing),
             sendSessionAffinityHeaders: $isOpenRouter,
             cacheControlFormat: $provider === 'openrouter' && str_starts_with($modelId, 'anthropic/') ? 'anthropic' : null,
+            supportsUsageInStreaming: true,
+            supportsFinishReason: true,
+            zaiToolStream: false,
+            thinkingTokenBudgetField: null,
+            supportsThinkingTokenBudget: false,
+            supportsMidConvoSystemMessages: false,
+            supportsMidConvoToolAdditions: false,
         );
     }
 }

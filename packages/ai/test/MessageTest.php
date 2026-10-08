@@ -68,6 +68,26 @@ final class MessageTest extends TestCase
         $this->assertSame('call_2', $calls[1]->id);
     }
 
+    public function testADeferredTurnAndItsHandleSurviveTheSessionFile(): void
+    {
+        // Upstream's `stopReason: "deferred"` and `deferred: DeferredHandle` — what a session file
+        // written by pi, or a gateway, may carry. The value used to fall back to `stop` on reading
+        // and the handle was dropped, so the turn read as finished with nothing to fetch.
+        $handle = ['provider' => 'openai', 'modelId' => 'gpt-x', 'api' => 'openai-responses', 'id' => 'resp_1', 'expiresAt' => 1_800_000_000_000, 'data' => ['k' => 'v']];
+        $message = new AssistantMessage([], Api::OpenAiResponses, 'openai', 'gpt-x', new Usage(), StopReason::Deferred, deferred: $handle);
+
+        $encoded = json_decode((string) json_encode(MessageJson::encode($message)), true);
+        $this->assertSame('deferred', $encoded['stopReason']);
+        $this->assertSame($handle, $encoded['deferred']);
+
+        $decoded = MessageJson::decode($encoded);
+        $this->assertSame(StopReason::Deferred, $decoded->stopReason);
+        $this->assertSame($handle, $decoded->deferred);
+
+        // And a turn without one is written without the key, as `JSON.stringify` drops undefined.
+        $this->assertArrayNotHasKey('deferred', MessageJson::encode(new AssistantMessage([], Api::OpenAiResponses, 'openai', 'gpt-x', new Usage(), StopReason::Stop)));
+    }
+
     public function testToolCallsIsEmptyWhenThereAreNone(): void
     {
         $this->assertSame([], $this->assistant([new TextContent('just talking')])->toolCalls());

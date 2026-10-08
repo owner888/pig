@@ -39,6 +39,7 @@ use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
+use Pig\Ai\Utils\JsonRepair;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Utf8;
 use Pig\Async\Async;
@@ -68,6 +69,16 @@ final class Anthropic
 
     /** Upstream's `isAnthropicEffort()`: the effort names a managed-effort turn can be replayed with. */
     private const array ANTHROPIC_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+    /** Upstream's `ANTHROPIC_MESSAGE_EVENTS`: the SSE event names that carry a stream event. */
+    private const array MESSAGE_EVENTS = [
+        'message_start',
+        'message_delta',
+        'message_stop',
+        'content_block_start',
+        'content_block_delta',
+        'content_block_stop',
+    ];
 
     /** Anthropic wants tool ids matching ^[a-zA-Z0-9_-]+$, at most 64 long, and rejects the request otherwise. */
     private const string ID_PATTERN = '/[^a-zA-Z0-9_-]/';
@@ -165,10 +176,17 @@ final class Anthropic
                         throw new ProviderError($event->data);
                     }
 
-                    $type = json_decode($event->data, true)['type'] ?? null;
+                    // `if (!ANTHROPIC_MESSAGE_EVENTS.has(sse.event ?? "")) continue` — `ping` and any
+                    // event the protocol adds later are passed over unread.
+                    if (!in_array($event->type, self::MESSAGE_EVENTS, true)) {
+                        continue;
+                    }
+
+                    $data = self::parseEvent($event);
+                    $type = is_array($data) ? ($data['type'] ?? null) : null;
                     $sawMessageStart = $sawMessageStart || $type === 'message_start';
                     $sawMessageEnd = $sawMessageEnd || $type === 'message_stop';
-                    $transformations = $this->dispatch($event, $model, $builder, $stream, $tools) ?? $transformations;
+                    $transformations = $this->dispatch($event, $data, $model, $builder, $stream, $tools) ?? $transformations;
                 }
             }
 
@@ -215,13 +233,31 @@ final class Anthropic
     }
 
     /**
+     * Upstream's `parseJsonWithRepair(sse.data)` inside `iterateAnthropicEvents()`: an event whose
+     * data is not JSON even after the repair ends the turn with `Could not parse Anthropic SSE event
+     * <event>: <why>; data=<data>; raw=<the event's lines joined by a literal \n>`. pig used to drop
+     * such an event in silence and carry on, so a corrupted delta was simply missing from the answer.
+     * `<why>` is PHP's JSON error where upstream's is V8's.
+     */
+    private static function parseEvent(SseEvent $event): mixed
+    {
+        try {
+            return JsonRepair::parse($event->data);
+        } catch (\JsonException $error) {
+            throw new ProviderError(
+                "Could not parse Anthropic SSE event {$event->type}: {$error->getMessage()}; data={$event->data}; raw="
+                    . implode('\n', $event->raw),
+                previous: $error,
+            );
+        }
+    }
+
+    /**
      * @param list<Tool> $tools the request's tools when they went out under Claude Code's names, else empty
      * @return list<mixed>|null the event's `input_transformations`, when it carried a list of them
      */
-    private function dispatch(SseEvent $event, Model $model, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array $tools = []): ?array
+    private function dispatch(SseEvent $event, mixed $data, Model $model, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array $tools = []): ?array
     {
-        $data = json_decode($event->data, true);
-
         if (!is_array($data)) {
             return null;
         }

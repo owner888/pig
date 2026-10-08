@@ -21,6 +21,18 @@ enum StopReason: string
     case Error = 'error';
     case Aborted = 'aborted';
 
+    /**
+     * Upstream's `"deferred"`: the provider accepted the request and will finish it later — the
+     * message carries a handle (`AssistantMessage::$deferred`) to fetch the result with. A finished
+     * turn, not a failure: upstream's agent loop treats it as it treats `stop` — no tool calls, so
+     * the run ends — and pig's does the same through `isFailure()`. Nothing in pig produces one yet:
+     * upstream's deferred responses (`SimpleStreamOptions.deferred`, `fetchDeferred()`,
+     * `cancelDeferred()`) are implemented by no provider pig has, so what is ported is the value,
+     * the handle it carries, and what a session does with such a turn when one arrives (a gateway
+     * through `StreamProxy`, or a session file written by pi).
+     */
+    case Deferred = 'deferred';
+
     /** Error and Aborted end the agent loop; the rest let it continue. */
     public function isFailure(): bool
     {

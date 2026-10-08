@@ -9,6 +9,8 @@ use Pig\Ai\Providers\AnthropicOptions;
 use Pig\Ai\Providers\Google;
 use Pig\Ai\Providers\GoogleOptions;
 use Pig\Ai\Providers\GoogleShared;
+use Pig\Ai\Providers\Mistral;
+use Pig\Ai\Providers\MistralOptions;
 use Pig\Ai\Providers\OpenAiCompletions;
 use Pig\Ai\Providers\OpenAiOptions;
 use Pig\Ai\Providers\OpenAiResponses;
@@ -78,6 +80,7 @@ final class Stream
             Api::OpenAiCompletions => (new OpenAiCompletions())->stream($model, $context, self::openAi($options, $apiKey)),
             Api::OpenAiResponses => (new OpenAiResponses())->stream($model, $context, self::openAi($options, $apiKey)),
             Api::GoogleGenerativeAi => (new Google())->stream($model, $context, self::google($options, $apiKey)),
+            Api::MistralConversations => (new Mistral())->stream($model, $context, self::mistral($options, $apiKey)),
             // Still no `default`: this arm names the one case that is not a built-in, and the
             // registry is what answers for it. The options are already in the extension's own
             // dialect by the time they reach here — `translate()` asked it — or are what the
@@ -208,6 +211,7 @@ final class Stream
             ),
             Api::GoogleGenerativeAi => self::gemini($model, $options, $maxTokens, $apiKey),
             Api::AnthropicMessages => self::anthropicSimple($model, $context, $options, $maxTokens, $apiKey),
+            Api::MistralConversations => self::mistralSimple($model, $options, $maxTokens, $apiKey),
             Api::Extension => self::extensionApi($model)->translate($model, $options, $apiKey
                 ?? throw new ProviderError("No API key for provider: {$model->provider}")),
         };
@@ -377,20 +381,23 @@ final class Stream
      * flash. And saying nothing means *dynamic* thinking, not none — so a turn that did not ask
      * for thinking has to ask for none, which `Google` words per model.
      *
-     * Upstream clamps the level to the model here (`clampThinkingLevel`); pig's agent has already
-     * done that with `ThinkingLevel::clampedFor()` before a request is built, and this package
-     * cannot see that one, so what is left here is upstream's `xhigh` → `high` for Google.
+     * Upstream clamps the level to the model's own levels here (`clampThinkingLevel()`, which reads
+     * the `thinkingLevelMap` — Gemma 4's map has only `minimal` and `high`, so a `low` asked for
+     * goes out as `HIGH`), and `off` after the clamp is no thinking. The resolved level then comes
+     * through the map (`resolveGoogleThinkingLevel()`), which refuses `xhigh` by name unless the
+     * map turns it into one of Google's four. This used to cut `xhigh` to `high` and send the level
+     * unclamped, which is the agent's clamp (`ThinkingLevel::clampedFor()`) and not this package's.
      */
     private static function gemini(Model $model, ?SimpleStreamOptions $options, int $maxTokens, ?string $apiKey): GoogleOptions
     {
         $base = [$options?->temperature, $maxTokens, $options?->signal, $apiKey];
-        $effort = $options?->reasoning?->clampToHigh();
+        $clamped = $options?->reasoning !== null ? $model->clampThinkingLevel($options->reasoning->value) : 'off';
 
-        if ($effort === null) {
+        if ($clamped === 'off') {
             return new GoogleOptions(...$base, thinkingEnabled: false, cacheRetention: $options?->cacheRetention, sessionId: $options?->sessionId, metadata: $options?->metadata);
         }
 
-        $resolvedLevel = GoogleShared::resolveGoogleThinkingLevel($model, $effort->value);
+        $resolvedLevel = GoogleShared::resolveGoogleThinkingLevel($model, $clamped);
 
         // Upstream's `usesGoogleThinkingLevel()`, a regex over the id. It replaces
         // `str_contains($id, 'gemini-3')`, which matched every 3.x id but missed
@@ -425,6 +432,67 @@ final class Stream
 
         // A model with no published ceiling: -1 lets it decide, which beats a guess.
         return -1;
+    }
+
+    /**
+     * Upstream's `streamSimple()` in `mistral-conversations.ts`: the level clamped to the model's own
+     * (`clampThinkingLevel()`), `off` meaning none. "Models with a thinking level map use
+     * `reasoning_effort`; other reasoning models use `prompt_mode`": a reasoning model with a map
+     * sends the map's word for the level — `high` when the map has none for it — or, with thinking
+     * off, the map's `off` when it has one; a reasoning model without a map sends
+     * `prompt_mode: "reasoning"` when thinking is on and nothing when it is off.
+     */
+    private static function mistralSimple(Model $model, ?SimpleStreamOptions $options, int $maxTokens, ?string $apiKey): MistralOptions
+    {
+        $clamped = $options?->reasoning !== null ? $model->clampThinkingLevel($options->reasoning->value) : null;
+        $reasoning = $clamped === 'off' ? null : $clamped;
+        // `model.reasoning ? model.thinkingLevelMap : undefined` — pig's "no map" is an empty one.
+        $effortMap = $model->reasoning && $model->thinkingLevelMap !== [] ? $model->thinkingLevelMap : null;
+        $reasoningEffort = $effortMap !== null
+            ? ($reasoning !== null ? ($effortMap[$reasoning] ?? 'high') : ($effortMap['off'] ?? null))
+            : null;
+
+        return new MistralOptions(
+            $options?->temperature,
+            $maxTokens,
+            $options?->signal,
+            $apiKey,
+            toolChoice: $options?->toolChoice,
+            promptMode: $model->reasoning && $effortMap === null && $reasoning !== null ? 'reasoning' : null,
+            reasoningEffort: $reasoningEffort,
+            cacheRetention: $options?->cacheRetention,
+            sessionId: $options?->sessionId,
+            metadata: $options?->metadata,
+        );
+    }
+
+    /** The same shape as `anthropic()`: the key is resolved late, everything else is kept. */
+    private static function mistral(?StreamOptions $options, string $apiKey): MistralOptions
+    {
+        if ($options instanceof MistralOptions) {
+            return new MistralOptions(
+                $options->temperature,
+                $options->maxTokens,
+                $options->signal,
+                $apiKey,
+                $options->toolChoice,
+                $options->promptMode,
+                $options->reasoningEffort,
+                $options->cacheRetention,
+                $options->sessionId,
+                $options->metadata,
+            );
+        }
+
+        return new MistralOptions(
+            $options?->temperature,
+            $options?->maxTokens,
+            $options?->signal,
+            $apiKey,
+            cacheRetention: $options?->cacheRetention,
+            sessionId: $options?->sessionId,
+            metadata: $options?->metadata,
+        );
     }
 
     /** The key is resolved late; a caller's own Google options are otherwise kept whole. */

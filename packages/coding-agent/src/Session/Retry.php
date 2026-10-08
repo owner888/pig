@@ -55,8 +55,13 @@ final class Retry
      */
     private const array RETRYABLE_STATUSES = [408, 429, 500, 502, 503, 504, 529];
 
-    /** `Anthropic returned 429: rate limit exceeded` — the shape every provider here writes. */
-    private const string STATUS = '/\breturned (\d{3})\b/';
+    /**
+     * The shapes a refused request is written in: `Anthropic returned 429: rate limit exceeded`
+     * (Anthropic, Google), and upstream's `formatProviderError()` shapes the OpenAI and Mistral
+     * providers write — `OpenAI API error (429): {…}`, `Mistral API error (503): …`, and the
+     * completions API's unprefixed `429: {…}` / `429 status code (no body)`.
+     */
+    private const string STATUS = '/\breturned (\d{3})\b|\bAPI error \((\d{3})\)|^(\d{3})(?::| status code| )/';
 
     /**
      * What a failure with no status code looks like.
@@ -121,7 +126,8 @@ final class Retry
             return null;
         }
 
-        return (int) $match[1];
+        // Whichever alternative matched; the others' groups are empty.
+        return (int) ($match[1] !== '' ? $match[1] : (($match[2] ?? '') !== '' ? $match[2] : $match[3]));
     }
 
     /**

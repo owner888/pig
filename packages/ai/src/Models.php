@@ -39,9 +39,8 @@ namespace Pig\Ai;
  * Three shapes, and the generator writes what is there rather than widening them:
  * `ANTHROPIC_MODELS` has no images column, because everything Anthropic sells takes images — an
  * assumption the generator **checks and complains about** rather than leaving to be wrong one day;
- * `COPILOT_MODELS` carries an api per row and no prices, because a subscription is not metered per
- * token and Copilot serves three APIs (Anthropic's for its Claude models); the other six carry
- * the full nine columns.
+ * `COPILOT_MODELS` carries an api per row before the rest, because Copilot serves three APIs
+ * (Anthropic's for its Claude models); the other seven carry the full nine columns.
  *
  * Adding a provider is adding a table, one line in `table()` and one row in the generator's
  * `DIRECT` — not changing the rest.
@@ -162,14 +161,11 @@ final class Models
      * provider => whether its built-in models take strict tools — upstream's generator, which
      * writes `supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia
      * && !isCerebras` into every built-in `openai-completions` model's `compat`, against a runtime
-     * default of false. Cerebras is the one here it leaves out. Mistral is pig's: upstream reaches
-     * it through its own `mistral-conversations` API, which sends `strict: strict ?? false` on every
-     * tool — strict mode always on, which is what `true` here gives it.
+     * default of false. Cerebras is the one here it leaves out.
      */
     private const array STRICT_MODE = [
         'cerebras' => false,
         'groq' => true,
-        'mistral' => true,
         'xai' => true,
         'zai' => true,
     ];
@@ -178,9 +174,41 @@ final class Models
     private const array OPENAI_COMPATIBLE = [
         'cerebras' => 'https://api.cerebras.ai/v1',
         'groq' => 'https://api.groq.com/openai/v1',
-        'mistral' => 'https://api.mistral.ai/v1',
         'xai' => 'https://api.x.ai/v1',
         'zai' => 'https://api.z.ai/api/coding/paas/v4',
+    ];
+
+    /**
+     * Where Mistral's own API lives — upstream's generator writes `baseUrl: "https://api.mistral.ai"`
+     * and `api: "mistral-conversations"` on every Mistral model; `Providers\Mistral` adds
+     * `/v1/chat/completions`. pig used to send these models to `/v1` on the OpenAI-compatible API.
+     */
+    private const string MISTRAL_BASE_URL = 'https://api.mistral.ai';
+
+    /**
+     * Upstream's generator `ZAI_TOOL_STREAM_UNSUPPORTED_MODELS`: every other z.ai model gets
+     * `zaiToolStream: true` in its compat, so its tool calls stream (`tool_stream: true`).
+     */
+    private const array ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = ['glm-4.5', 'glm-4.5-air', 'glm-4.5-flash', 'glm-4.5v'];
+
+    /**
+     * Upstream's generator `OPENAI_TOOL_SEARCH_MODEL_IDS`, which is also its
+     * `OPENAI_ADDITIONAL_TOOLS_MODEL_IDS` and `OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS`: the OpenAI
+     * models that take client-executed tool search, message-anchored `additional_tools`, and system
+     * messages after the conversation has started. See `transcriptCompat()`.
+     */
+    private const array OPENAI_TOOL_SEARCH_MODEL_IDS = [
+        'gpt-5.4',
+        'gpt-5.4-mini',
+        'gpt-5.4-pro',
+        'gpt-5.5',
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-6-astra',
+        'gpt-6-sol',
+        'gpt-6-luna',
+        'gpt-6.1-sol',
     ];
 
     /**
@@ -245,12 +273,20 @@ final class Models
     ];
 
     /**
-     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float}>
+     * Mistral's own API, `mistral-conversations` (`Providers\Mistral`), as upstream's generator
+     * routes them. A reasoning row's `thinkingLevelMap` is its verified efforts — "Models with
+     * effort values use `reasoning_effort` with these levels. Reasoning models without them
+     * (Magistral) use `prompt_mode`." The maps and `mistral-medium-3.5` (upstream's hand-added row)
+     * were written from upstream's published catalogue (`@earendil-works/pi-ai` 1.1.0) as models.dev
+     * was not reachable; the rest of each row is the last regeneration's, so the generator's
+     * tenth-of-input cache-read price for a model models.dev gives none arrives with the next one.
+     *
+     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float, thinkingLevelMap?: array<string, string|null>}>
      */
     private const array MISTRAL_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
         'codestral-latest' => ['Codestral (latest)', 256_000, 4_096, false, false, 0.3, 0.9, 0.03, 0.0],
-        'magistral-medium-latest' => ['Magistral Medium (latest)', 128_000, 16_384, true, false, 2.0, 5.0, 0.0, 0.0],
+        'magistral-medium-latest' => ['Magistral Medium (latest)', 128_000, 16_384, true, false, 2.0, 5.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'ministral-3b-latest' => ['Ministral 3B (latest)', 128_000, 128_000, false, false, 0.04, 0.04, 0.0, 0.0],
         'ministral-8b-latest' => ['Ministral 8B (latest)', 128_000, 128_000, false, false, 0.1, 0.1, 0.0, 0.0],
         'mistral-large-2411' => ['Mistral Large 2.1', 131_072, 16_384, false, false, 2.0, 6.0, 0.0, 0.0],
@@ -258,20 +294,21 @@ final class Models
         'mistral-large-latest' => ['Mistral Large (latest)', 262_144, 262_144, false, true, 0.5, 1.5, 0.05, 0.0],
         'mistral-medium-2505' => ['Mistral Medium 3', 131_072, 131_072, false, true, 0.4, 2.0, 0.0, 0.0],
         'mistral-medium-2508' => ['Mistral Medium 3.1', 262_144, 262_144, false, true, 0.4, 2.0, 0.0, 0.0],
-        'mistral-medium-2604' => ['Mistral Medium 3.5', 262_144, 262_144, true, true, 1.5, 7.5, 0.15, 0.0],
-        'mistral-medium-latest' => ['Mistral Medium (latest)', 262_144, 262_144, true, true, 1.5, 7.5, 0.15, 0.0],
+        'mistral-medium-2604' => ['Mistral Medium 3.5', 262_144, 262_144, true, true, 1.5, 7.5, 0.15, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'mistral-medium-3.5' => ['Mistral Medium 3.5', 262_144, 262_144, true, true, 1.5, 7.5, 0.0, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'mistral-medium-latest' => ['Mistral Medium (latest)', 262_144, 262_144, true, true, 1.5, 7.5, 0.15, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'mistral-nemo' => ['Mistral Nemo', 128_000, 128_000, false, false, 0.15, 0.15, 0.0, 0.0],
         'mistral-small-2506' => ['Mistral Small 3.2', 128_000, 16_384, false, true, 0.1, 0.3, 0.0, 0.0],
-        'mistral-small-2603' => ['Mistral Small 4', 256_000, 256_000, true, true, 0.15, 0.6, 0.015, 0.0],
-        'mistral-small-latest' => ['Mistral Small (latest)', 256_000, 256_000, true, true, 0.15, 0.6, 0.015, 0.0],
+        'mistral-small-2603' => ['Mistral Small 4', 256_000, 256_000, true, true, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'mistral-small-latest' => ['Mistral Small (latest)', 256_000, 256_000, true, true, 0.15, 0.6, 0.015, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'open-mistral-7b' => ['Mistral 7B', 8_000, 8_000, false, false, 0.25, 0.25, 0.0, 0.0],
         'open-mixtral-8x22b' => ['Mixtral 8x22B', 64_000, 64_000, false, false, 2.0, 6.0, 0.0, 0.0],
         'open-mixtral-8x7b' => ['Mixtral 8x7B', 32_000, 32_000, false, false, 0.7, 0.7, 0.0, 0.0],
         'pixtral-12b' => ['Pixtral 12B', 128_000, 128_000, false, true, 0.15, 0.15, 0.0, 0.0],
         'pixtral-large-latest' => ['Pixtral Large (latest)', 128_000, 128_000, false, true, 2.0, 6.0, 0.0, 0.0],
         'voxtral-small-latest' => ['Voxtral Small (latest)', 32_000, 32_000, false, false, 0.1, 0.3, 0.0, 0.0],
-        'zai-glm-5-2' => ['GLM-5.2', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.14, 0.0],
-        'zai-glm-5-3' => ['GLM-5.3', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.14, 0.0],
+        'zai-glm-5-2' => ['GLM-5.2', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.14, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'zai-glm-5-3' => ['GLM-5.3', 1_000_000, 131_072, true, false, 1.4, 4.4, 0.14, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         // <<< generated
     ];
 
@@ -288,7 +325,13 @@ final class Models
     ];
 
     /**
-     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float}>
+     * z.ai's coding plan. The generator reads models.dev's `zai-coding-plan` entry for these (the
+     * plan's own list, priced from `zai` where that lists the model) and writes each one's verified
+     * efforts as its `thinkingLevelMap` — GLM-5.2's with `off: "none"`. The rows below are from before
+     * that, so they carry no maps and list the pay-as-you-go API's models; the next regeneration
+     * replaces them. `table()` gives a row with a map `supportsReasoningEffort`, as upstream does.
+     *
+     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float, thinkingLevelMap?: array<string, string|null>}>
      */
     private const array ZAI_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
@@ -366,11 +409,17 @@ final class Models
     /**
      * Google's, on the Generative Language API.
      *
-     * The optional tenth cell is a `thinkingLevelMap`, present only on rows whose endpoint
-     * refuses a level — supplied by the generator's overrides from a measurement, never by
-     * models.dev, which does not know.
+     * A row's `thinkingLevelMap` is the generator's `getGoogleThinkingLevelMap()`, upstream's: the
+     * verified efforts models.dev lists for the model, or Gemma 4's fixed map — only `MINIMAL` and
+     * `HIGH`, and no `off` — with the generator's measured corrections merged over it for the rows
+     * whose endpoint refuses a level (see `scripts/generate-models.php`). Until this round the
+     * generator wrote only the corrections, so Gemma 4 was offered `low` and `medium` and sent them.
+     * The maps here were written from upstream's published catalogue (`@earendil-works/pi-ai`
+     * 1.1.0, which its generator built from models.dev), as models.dev was not reachable to
+     * regenerate; the other columns are the last regeneration's. `gemini-flash-latest` and
+     * `gemini-flash-lite-latest` read their prices from the models they alias, as the generator does.
      *
-     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float, 9?: array<string, string|null>}>
+     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float, thinkingLevelMap?: array<string, string|null>, tiers?: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>}>
      */
     private const array GOOGLE_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
@@ -380,21 +429,21 @@ final class Models
         'gemini-2.5-flash' => ['Gemini 2.5 Flash', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0],
         'gemini-2.5-flash-lite' => ['Gemini 2.5 Flash-Lite', 1_048_576, 65_536, true, true, 0.1, 0.4, 0.01, 0.0],
         'gemini-2.5-pro' => ['Gemini 2.5 Pro', 1_048_576, 65_536, true, true, 1.25, 10.0, 0.125, 0.0],
-        'gemini-3-flash-preview' => ['Gemini 3 Flash Preview', 1_048_576, 65_536, true, true, 0.5, 3.0, 0.05, 0.0],
-        'gemini-3.1-flash-lite' => ['Gemini 3.1 Flash Lite', 1_048_576, 65_536, true, true, 0.25, 1.5, 0.025, 0.0],
-        'gemini-3.1-flash-lite-image' => ['Nano Banana 2 Lite', 65_536, 4_096, true, true, 0.25, 30.0, 0.0, 0.0],
-        'gemini-3.1-flash-live-preview' => ['Gemini 3.1 Flash Live Preview', 131_072, 65_536, true, true, 0.75, 4.5, 0.0, 0.0],
-        'gemini-3.1-pro-preview' => ['Gemini 3.1 Pro Preview', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, ['off' => null, 'minimal' => null]],
-        'gemini-3.1-pro-preview-customtools' => ['Gemini 3.1 Pro Preview Custom Tools', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, ['off' => null, 'minimal' => null]],
-        'gemini-3.5-flash' => ['Gemini 3.5 Flash', 1_048_576, 65_536, true, true, 1.5, 9.0, 0.15, 0.0],
-        'gemini-3.5-flash-lite' => ['Gemini 3.5 Flash Lite', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0, ['off' => null]],
-        'gemini-3.6-flash' => ['Gemini 3.6 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0],
-        'gemini-3.7-flash' => ['Gemini 3.7 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, ['off' => null, 'minimal' => null]],
-        'gemini-3.8-flash' => ['Gemini 3.8 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, ['off' => null, 'minimal' => null]],
-        'gemini-flash-latest' => ['Gemini Flash Latest', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0],
-        'gemini-flash-lite-latest' => ['Gemini Flash-Lite Latest', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0],
-        'gemma-4-26b-a4b-it' => ['Gemma 4 26B A4B IT', 262_144, 32_768, true, true, 0.0, 0.0, 0.0, 0.0],
-        'gemma-4-31b-it' => ['Gemma 4 31B IT', 262_144, 32_768, true, true, 0.0, 0.0, 0.0, 0.0],
+        'gemini-3-flash-preview' => ['Gemini 3 Flash Preview', 1_048_576, 65_536, true, true, 0.5, 3.0, 0.05, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.1-flash-lite' => ['Gemini 3.1 Flash Lite', 1_048_576, 65_536, true, true, 0.25, 1.5, 0.025, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.1-flash-lite-image' => ['Nano Banana 2 Lite', 65_536, 4_096, true, true, 0.25, 30.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.1-flash-live-preview' => ['Gemini 3.1 Flash Live Preview', 131_072, 65_536, true, true, 0.75, 4.5, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.1-pro-preview' => ['Gemini 3.1 Pro Preview', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.1-pro-preview-customtools' => ['Gemini 3.1 Pro Preview Custom Tools', 1_048_576, 65_536, true, true, 2.0, 12.0, 0.2, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.5-flash' => ['Gemini 3.5 Flash', 1_048_576, 65_536, true, true, 1.5, 9.0, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.5-flash-lite' => ['Gemini 3.5 Flash Lite', 1_048_576, 65_536, true, true, 0.3, 2.5, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.6-flash' => ['Gemini 3.6 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.7-flash' => ['Gemini 3.7 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-3.8-flash' => ['Gemini 3.8 Flash', 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-flash-latest' => ['Gemini Flash Latest', 1_048_576, 65_536, true, true, 1.5, 9.0, 0.15, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-flash-lite-latest' => ['Gemini Flash-Lite Latest', 1_048_576, 65_536, true, true, 0.25, 1.5, 0.025, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemma-4-26b-a4b-it' => ['Gemma 4 26B A4B IT', 262_144, 32_768, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'MINIMAL', 'low' => null, 'medium' => null, 'high' => 'HIGH']],
+        'gemma-4-31b-it' => ['Gemma 4 31B IT', 262_144, 32_768, true, true, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => 'MINIMAL', 'low' => null, 'medium' => null, 'high' => 'HIGH']],
         // <<< generated
     ];
 
@@ -406,49 +455,53 @@ final class Models
      * completions shape, and which it is is a fact about the model rather than about the provider
      * — the generator's `copilotApi()`, upstream's rule.
      *
-     * **No pricing column.** Copilot is a subscription, and `/session` says $0.00 for a Copilot
-     * conversation. This is pig's and no longer upstream's: upstream's generated Copilot rows now
-     * carry models.dev's list prices (gpt-5.5 at 5/30 with the 272k tier, for one), so its cost
-     * for the same conversation is not zero.
+     * **Priced at models.dev's list prices**, as upstream's generator writes them
+     * (`cost: getModelsDevCost(m.cost)`): Copilot is a subscription, and pig used to carry no price
+     * here, so `/session` said $0.00 for a conversation pi reports at what its tokens are worth.
+     * The windows are upstream's `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS` rule — 1,000,000 for the ids
+     * GitHub lists, whatever models.dev says (200,000, 400,000 or 1,050,000) — and `gpt-6-sol`,
+     * `gpt-6-luna` and `claude-opus-5.5` would be upstream's hand-added rows if models.dev dropped
+     * them. The prices were written from upstream's published catalogue (`@earendil-works/pi-ai`
+     * 1.1.0) as models.dev was not reachable; the other columns are the last regeneration's.
      *
-     * @var array<string, array{0: string, 1: Api, 2: int, 3: int, 4: bool, 5: bool, effortLevelMap?: array<string, string|null>}>
+     * @var array<string, array{0: string, 1: Api, 2: int, 3: int, 4: bool, 5: bool, 6: float, 7: float, 8: float, 9: float, thinkingLevelMap?: array<string, string|null>, tiers?: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>, effortLevelMap?: array<string, string|null>}>
      */
     private const array COPILOT_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
-        'claude-fable-5' => ['Claude Fable 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true],
-        'claude-fable-5.1' => ['Claude Fable 5.1', Api::AnthropicMessages, 1_000_000, 128_000, true, true],
-        'claude-haiku-4.5' => ['Claude Haiku 4.5 (latest)', Api::AnthropicMessages, 200_000, 64_000, true, true],
-        'claude-opus-4.7' => ['Claude Opus 4.7', Api::AnthropicMessages, 1_000_000, 32_000, true, true],
-        'claude-opus-4.8' => ['Claude Opus 4.8', Api::AnthropicMessages, 1_000_000, 64_000, true, true],
-        'claude-opus-5' => ['Claude Opus 5', Api::AnthropicMessages, 1_000_000, 64_000, true, true],
-        'claude-opus-5.5' => ['Claude Opus 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true],
-        'claude-sonnet-4.6' => ['Claude Sonnet 4.6', Api::AnthropicMessages, 1_000_000, 32_000, true, true],
-        'claude-sonnet-5' => ['Claude Sonnet 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true],
-        'claude-sonnet-5.5' => ['Claude Sonnet 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true],
-        'gemini-3.5-flash' => ['Gemini 3.5 Flash', Api::OpenAiCompletions, 200_000, 64_000, true, true],
-        'gemini-3.6-flash' => ['Gemini 3.6 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
-        'gemini-3.7-flash' => ['Gemini 3.7 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
-        'gemini-3.8-flash' => ['Gemini 3.8 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true],
-        'gpt-5-mini' => ['GPT-5 Mini', Api::OpenAiResponses, 264_000, 64_000, true, true],
-        'gpt-5.3-codex' => ['GPT-5.3 Codex', Api::OpenAiResponses, 1_000_000, 128_000, true, true],
-        'gpt-5.4' => ['GPT-5.4', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
-        'gpt-5.4-mini' => ['GPT-5.4 mini', Api::OpenAiResponses, 400_000, 128_000, true, true],
-        'gpt-5.4-nano' => ['GPT-5.4 nano', Api::OpenAiResponses, 400_000, 128_000, true, true],
-        'gpt-5.5' => ['GPT-5.5', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
-        'gpt-5.6-luna' => ['GPT-5.6 Luna', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
-        'gpt-5.6-sol' => ['GPT-5.6 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
-        'gpt-5.6-terra' => ['GPT-5.6 Terra', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
-        'gpt-6-astra' => ['GPT-6 Astra', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
-        'gpt-6-luna' => ['GPT-6 Luna', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
-        'gpt-6-sol' => ['GPT-6 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
-        'gpt-6.1-sol' => ['GPT-6.1 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true],
-        'grok-4.5' => ['Grok 4.5', Api::OpenAiResponses, 500_000, 128_000, true, true],
-        'grok-4.6' => ['Grok 4.6', Api::OpenAiResponses, 500_000, 128_000, true, true],
-        'grok-4.7' => ['Grok 4.7', Api::OpenAiResponses, 500_000, 128_000, true, true],
-        'kimi-k2.7-code' => ['Kimi K2.7 Code', Api::OpenAiCompletions, 256_000, 32_000, true, true],
-        'kimi-k3' => ['Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true],
-        'mai-code-1-flash-picker' => ['MAI-Code-1-Flash', Api::OpenAiResponses, 256_000, 128_000, true, false],
-        'mai-code-1.1-flash' => ['MAI-Code-1.1-Flash', Api::OpenAiResponses, 256_000, 128_000, true, true],
+        'claude-fable-5' => ['Claude Fable 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5],
+        'claude-fable-5.1' => ['Claude Fable 5.1', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 10.0, 50.0, 0.25, 12.5],
+        'claude-haiku-4.5' => ['Claude Haiku 4.5 (latest)', Api::AnthropicMessages, 200_000, 64_000, true, true, 1.0, 5.0, 0.1, 1.25],
+        'claude-opus-4.7' => ['Claude Opus 4.7', Api::AnthropicMessages, 1_000_000, 32_000, true, true, 5.0, 25.0, 0.5, 6.25],
+        'claude-opus-4.8' => ['Claude Opus 4.8', Api::AnthropicMessages, 1_000_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25],
+        'claude-opus-5' => ['Claude Opus 5', Api::AnthropicMessages, 1_000_000, 64_000, true, true, 5.0, 25.0, 0.5, 6.25],
+        'claude-opus-5.5' => ['Claude Opus 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0],
+        'claude-sonnet-4.6' => ['Claude Sonnet 4.6', Api::AnthropicMessages, 1_000_000, 32_000, true, true, 3.0, 15.0, 0.3, 3.75],
+        'claude-sonnet-5' => ['Claude Sonnet 5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5],
+        'claude-sonnet-5.5' => ['Claude Sonnet 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5],
+        'gemini-3.5-flash' => ['Gemini 3.5 Flash', Api::OpenAiCompletions, 200_000, 64_000, true, true, 1.5, 9.0, 0.15, 0.0],
+        'gemini-3.6-flash' => ['Gemini 3.6 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 0.75, 3.75, 0.075, 0.0],
+        'gemini-3.7-flash' => ['Gemini 3.7 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 0.75, 3.75, 0.075, 0.0],
+        'gemini-3.8-flash' => ['Gemini 3.8 Flash', Api::OpenAiCompletions, 1_000_000, 64_000, true, true, 0.75, 3.75, 0.075, 0.0],
+        'gpt-5-mini' => ['GPT-5 Mini', Api::OpenAiResponses, 264_000, 64_000, true, true, 0.25, 2.0, 0.025, 0.0],
+        'gpt-5.3-codex' => ['GPT-5.3 Codex', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0],
+        'gpt-5.4' => ['GPT-5.4', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 2.5, 15.0, 0.25, 0.0, 'tiers' => [[272_000, 5.0, 22.5, 0.5, 0.0]]],
+        'gpt-5.4-mini' => ['GPT-5.4 mini', Api::OpenAiResponses, 400_000, 128_000, true, true, 0.75, 4.5, 0.075, 0.0],
+        'gpt-5.4-nano' => ['GPT-5.4 nano', Api::OpenAiResponses, 400_000, 128_000, true, true, 0.2, 1.25, 0.02, 0.0],
+        'gpt-5.5' => ['GPT-5.5', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 5.0, 30.0, 0.5, 0.0, 'tiers' => [[272_000, 10.0, 45.0, 1.0, 0.0]]],
+        'gpt-5.6-luna' => ['GPT-5.6 Luna', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'tiers' => [[200_000, 0.4, 1.8, 0.04, 0.5]]],
+        'gpt-5.6-sol' => ['GPT-5.6 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]]],
+        'gpt-5.6-terra' => ['GPT-5.6 Terra', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]]],
+        'gpt-6-astra' => ['GPT-6 Astra', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]]],
+        'gpt-6-luna' => ['GPT-6 Luna', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]]],
+        'gpt-6-sol' => ['GPT-6 Sol', Api::OpenAiResponses, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]]],
+        'gpt-6.1-sol' => ['GPT-6.1 Sol', Api::OpenAiResponses, 1_050_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]]],
+        'grok-4.5' => ['Grok 4.5', Api::OpenAiResponses, 500_000, 128_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
+        'grok-4.6' => ['Grok 4.6', Api::OpenAiResponses, 500_000, 128_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
+        'grok-4.7' => ['Grok 4.7', Api::OpenAiResponses, 500_000, 128_000, true, true, 2.0, 6.0, 0.5, 0.0, 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
+        'kimi-k2.7-code' => ['Kimi K2.7 Code', Api::OpenAiCompletions, 256_000, 32_000, true, true, 0.95, 4.0, 0.19, 0.0],
+        'kimi-k3' => ['Kimi K3', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 3.0, 15.0, 0.3, 0.0],
+        'mai-code-1-flash-picker' => ['MAI-Code-1-Flash', Api::OpenAiResponses, 256_000, 128_000, true, false, 0.75, 4.5, 0.075, 0.0],
+        'mai-code-1.1-flash' => ['MAI-Code-1.1-Flash', Api::OpenAiResponses, 256_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.0],
         // <<< generated
     ];
 
@@ -666,6 +719,10 @@ final class Models
                     strictMode: true,
                     grammarTools: self::isGrammarToolModel($id) ? true : null,
                     supportsExplicitPromptCacheMode: $write > 0 ? true : null,
+                    // `applyOpenAIToolSearchMetadata()` and `applyOpenAIResponsesTranscriptMetadata()`.
+                    supportsMidConvoSystemMessages: in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true) ? true : null,
+                    supportsToolSearch: in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true) ? true : null,
+                    supportsAdditionalTools: in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true) ? true : null,
                 ),
                 // `supportsDirectReasoningEffort()` is true for every Responses model.
                 thinkingLevelMap: self::thinkingLevelMap('openai', Api::OpenAiResponses, $id, effortLevelMap: $row['effortLevelMap'] ?? null),
@@ -688,13 +745,16 @@ final class Models
                 $reasoning,
                 $input,
                 self::pricing($in, $out, $read, $write, $row['tiers'] ?? []),
-                // A tenth cell on the rows whose endpoint refuses a level — the generator's
-                // overrides put it there, from a measurement; see `scripts/generate-models.php`.
-                thinkingLevelMap: self::thinkingLevelMap('google', Api::GoogleGenerativeAi, $id, $row[9] ?? []),
+                // `getGoogleThinkingLevelMap()` with the measured corrections over it, as the
+                // generator writes it; see the table's docblock.
+                thinkingLevelMap: self::thinkingLevelMap('google', Api::GoogleGenerativeAi, $id, $row['thinkingLevelMap'] ?? []),
                 inputLimits: self::inputLimits('google', $input, $window),
             );
         }
 
+        // In the order the tables have always been listed in, which is the order `--list-models`
+        // and `/model` show them: Mistral sits between Groq and xAI though it is no longer one of the
+        // OpenAI-compatible ones.
         $compatible = [
             'cerebras' => self::CEREBRAS_MODELS,
             'groq' => self::GROQ_MODELS,
@@ -704,10 +764,18 @@ final class Models
         ];
 
         foreach ($compatible as $provider => $table) {
+            if ($provider === 'mistral') {
+                self::addMistralModels($models);
+
+                continue;
+            }
+
             foreach ($table as $id => $row) {
                 [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write] = $row;
                 $input = $images ? ['text', 'image'] : ['text'];
-                $compat = self::STRICT_MODE[$provider] ? new OpenAiCompat(strictMode: true) : null;
+                $compat = $provider === 'zai'
+                    ? self::zaiCompat($id, isset($row['thinkingLevelMap']))
+                    : (self::STRICT_MODE[$provider] ? new OpenAiCompat(strictMode: true) : null);
                 $models[$provider . '/' . $id] = new Model(
                     $id,
                     $name,
@@ -724,6 +792,7 @@ final class Models
                         $provider,
                         Api::OpenAiCompletions,
                         $id,
+                        $row['thinkingLevelMap'] ?? [],
                         effortLevelMap: self::supportsDirectReasoningEffort(Api::OpenAiCompletions, $provider, self::OPENAI_COMPATIBLE[$provider], $id, $compat) ? ($row['effortLevelMap'] ?? null) : null,
                     ),
                     inputLimits: self::inputLimits($provider, $input, $window),
@@ -734,10 +803,10 @@ final class Models
         // Last, so the table reads direct providers first — which is not what decides a bare
         // id (`RESOLD` is), but does decide the order `--list-models` and `/model` list them in.
         foreach (self::COPILOT_MODELS as $id => $row) {
-            [$name, $api, $window, $maxTokens, $reasoning, $images] = $row;
+            [$name, $api, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write] = $row;
             $input = $images ? ['text', 'image'] : ['text'];
             $compat = match ($api) {
-                Api::OpenAiCompletions => self::copilotCompat(),
+                Api::OpenAiCompletions => self::copilotCompat($id),
                 // Upstream's generator for a Copilot Claude (`api: "anthropic-messages"`):
                 // `forceAdaptiveThinking` and `supportsTemperature: false` by the same id rules
                 // as on Anthropic's own models, `supportsEagerToolInputStreaming: false` on the
@@ -745,8 +814,9 @@ final class Models
                 // "anthropic"` only) or `supportsMidConvoEffort` (`anthropic`/`openrouter` only).
                 Api::AnthropicMessages => AnthropicCompat::forBuiltIn(self::COPILOT, $id),
                 // `applyOpenAIGrammarToolCompatMetadata()`: Copilot passes OpenAI's custom
-                // grammar tools through on the Responses API, for `gpt-<n>` with n >= 5.
-                Api::OpenAiResponses => self::grammarToolsCompat($id),
+                // grammar tools through on the Responses API, for `gpt-<n>` with n >= 5; and
+                // `applyOpenAIResponsesTranscriptMetadata()`.
+                Api::OpenAiResponses => self::copilotResponsesCompat($id),
                 default => null,
             };
             $models[self::COPILOT . '/' . $id] = new Model(
@@ -759,13 +829,14 @@ final class Models
                 $maxTokens,
                 $reasoning,
                 $input,
-                new Pricing(),
+                self::pricing($in, $out, $read, $write, $row['tiers'] ?? []),
                 self::COPILOT_HEADERS,
                 $compat,
                 thinkingLevelMap: self::thinkingLevelMap(
                     self::COPILOT,
                     $api,
                     $id,
+                    $row['thinkingLevelMap'] ?? [],
                     effortLevelMap: self::supportsDirectReasoningEffort($api, self::COPILOT, self::COPILOT_BASE_URL, $id, $compat) ? ($row['effortLevelMap'] ?? null) : null,
                 ),
                 inputLimits: self::inputLimits(self::COPILOT, $input, $window),
@@ -787,9 +858,39 @@ final class Models
     }
 
     /**
+     * Mistral's own API. Upstream writes no `compat` on these (`MistralConversationsCompat` has only
+     * `supportsMidConvoSystemMessages`, which no built-in sets) and records no `reasoning_options`,
+     * so the row's own map is the whole of it.
+     *
+     * @param array<string, Model> $models
+     */
+    private static function addMistralModels(array &$models): void
+    {
+        foreach (self::MISTRAL_MODELS as $id => $row) {
+            [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write] = $row;
+            $input = $images ? ['text', 'image'] : ['text'];
+            $models['mistral/' . $id] = new Model(
+                $id,
+                $name,
+                Api::MistralConversations,
+                'mistral',
+                self::MISTRAL_BASE_URL,
+                $window,
+                $maxTokens,
+                $reasoning,
+                $input,
+                self::pricing($in, $out, $read, $write, $row['tiers'] ?? []),
+                thinkingLevelMap: self::thinkingLevelMap('mistral', Api::MistralConversations, $id, $row['thinkingLevelMap'] ?? []),
+                inputLimits: self::inputLimits('mistral', $input, $window),
+            );
+        }
+    }
+
+    /**
      * What upstream's generator writes into a built-in model's `thinkingLevelMap`, merge for merge
      * and in its order (a later merge wins a key), over `$base` — the map a generated row already
-     * carries (Google's measured overrides):
+     * carries (the `thinkingLevelMap` the generator builds for Google, Mistral and z.ai rows, with any
+     * measured correction merged in, and a hand-added row's own):
      *
      * 1. the temporary 5.5 override in `generateModels()` — `anthropic/claude-opus-5-5`,
      *    `claude-sonnet-5-5`, `claude-haiku-5-5` and Copilot's `claude-opus-5.5` get the whole map
@@ -973,10 +1074,13 @@ final class Models
      * image preprocessing. Provider limits can narrow this profile, but unknown providers retain the
      * cache-safe 2000px / 4.5 MiB behavior."
      *
+     * Public for the models a provider extension declares, which upstream's generator would have
+     * given the same treatment: `pig-antigravity`'s catalogue gets the default branch.
+     *
      * @param list<string> $input
      * @return array<string, mixed>|null
      */
-    private static function inputLimits(string $provider, array $input, int $contextWindow): ?array
+    public static function inputLimits(string $provider, array $input, int $contextWindow): ?array
     {
         if (!in_array('image', $input, true)) {
             return null;
@@ -1079,10 +1183,44 @@ final class Models
         return preg_match('/^gpt-(\d+)/', $id, $match) === 1 && (int) $match[1] >= 5;
     }
 
-    /** A Copilot Responses model's compat: only the grammar-tools flag, where it applies. */
-    private static function grammarToolsCompat(string $id): ?OpenAiCompat
+    /**
+     * A Copilot Responses model's compat: the grammar-tools flag where it applies, and upstream's
+     * `applyOpenAIResponsesTranscriptMetadata()` — "OpenCode Zen, OpenCode Go, and GitHub Copilot pass
+     * both those messages and `additional_tools` items through to OpenAI unchanged; tool search is not
+     * verified through those proxies" — so mid-conversation system messages and additional tools for
+     * the ids in `OPENAI_TOOL_SEARCH_MODEL_IDS`, and no tool search.
+     */
+    private static function copilotResponsesCompat(string $id): ?OpenAiCompat
     {
-        return self::isGrammarToolModel($id) ? new OpenAiCompat(grammarTools: true) : null;
+        $grammar = self::isGrammarToolModel($id);
+        $transcript = in_array($id, self::OPENAI_TOOL_SEARCH_MODEL_IDS, true);
+
+        if (!$grammar && !$transcript) {
+            return null;
+        }
+
+        return new OpenAiCompat(
+            grammarTools: $grammar ? true : null,
+            supportsMidConvoSystemMessages: $transcript ? true : null,
+            supportsAdditionalTools: $transcript ? true : null,
+        );
+    }
+
+    /**
+     * Upstream's `processZaiModels()` compat for a z.ai model: no `developer` role, the `zai` thinking
+     * format, `supportsReasoningEffort` when the row has verified efforts (its `thinkingLevelMap`), and
+     * `zaiToolStream` for every model but the four that do not take it — over the strict tools every
+     * built-in completions model of a strict provider gets (`STRICT_MODE`).
+     */
+    private static function zaiCompat(string $id, bool $hasThinkingLevelMap): OpenAiCompat
+    {
+        return new OpenAiCompat(
+            developerRole: false,
+            reasoningEffort: $hasThinkingLevelMap ? true : null,
+            strictMode: self::STRICT_MODE['zai'],
+            thinkingFormat: 'zai',
+            zaiToolStream: in_array($id, self::ZAI_TOOL_STREAM_UNSUPPORTED_MODELS, true) ? null : true,
+        );
     }
 
     /** @param list<string> $needles */
@@ -1106,10 +1244,18 @@ final class Models
      * an enterprise install answers at `copilot-api.<domain>`, which contains no
      * `githubcopilot.com` for a host check to find.
      */
-    private static function copilotCompat(): OpenAiCompat
+    private static function copilotCompat(string $id): OpenAiCompat
     {
         // `strictMode` is upstream's generated metadata rather than its Copilot block: detection
         // at generation time gives every Copilot completions model `supportsStrictMode: true`.
-        return new OpenAiCompat(store: false, developerRole: false, reasoningEffort: false, strictMode: true);
+        // `applyOpenAICompletionsTranscriptMetadata()`: "GitHub Copilot forwards K3 text but
+        // silently drops its tool-bearing message" — system text mid-conversation, no tool additions.
+        return new OpenAiCompat(
+            store: false,
+            developerRole: false,
+            reasoningEffort: false,
+            strictMode: true,
+            supportsMidConvoSystemMessages: $id === 'kimi-k3' ? true : null,
+        );
     }
 }

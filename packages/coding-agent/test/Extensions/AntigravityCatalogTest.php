@@ -68,6 +68,23 @@ final class AntigravityCatalogTest extends TestCase
         self::assertSame(0.4, $fresh->pricing->output);
     }
 
+    public function testAntigravitysModelsCarryTheInputLimitsUpstreamsGeneratorGivesSuchAProvider(): void
+    {
+        // `applyImageInputMetadata()`: a provider it has no limits for — every provider but
+        // Anthropic, Bedrock, OpenAI and Google itself, so `google-vertex`, the other way to Gemini,
+        // among them — gets the default resize profile on an image-taking model and nothing else;
+        // a text-only model gets nothing. Both the shipped rows and the catalogue's carried none.
+        $resize = ['maxWidth' => 2000, 'maxHeight' => 2000, 'maxBytes' => 4_718_592, 'jpegQuality' => 80];
+
+        self::assertSame(['images' => ['resize' => $resize]], Models::find('antigravity', 'gemini-3.8-flash')?->inputLimits);
+        self::assertNull(Models::find('antigravity', 'gpt-oss-120b')?->inputLimits);
+
+        $this->writeStore(['gemini-3.8-flash' => ['input' => ['text', 'image']]]);
+        Catalog::discover()->install();
+
+        self::assertSame(['images' => ['resize' => $resize]], Models::find('antigravity', 'gemini-3.8-flash')?->inputLimits);
+    }
+
     public function testTheCatalogueReplacesTheRowRatherThanSittingBesideIt(): void
     {
         $this->writeStore(['gemini-3.8-flash' => []]);

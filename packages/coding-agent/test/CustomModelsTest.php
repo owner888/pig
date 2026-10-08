@@ -229,11 +229,13 @@ final class CustomModelsTest extends TestCase
     }
 
     /**
-     * A price that is not a number is named, not read as free.
+     * A price that is not a number is named, not read as free — and a cost block says all four.
      *
      * `"input": "0.28"` with the quotes left on is the mistake to expect, and `/session`, the
      * footer and `--list-models` all report money — so a model that silently costs nothing
-     * misreports it every turn. Refused the way every other typed field here is refused.
+     * misreports it every turn. Checked as upstream's `ModelCostSchema` checks it and said in its
+     * words: the four rates are **required** when there is a block at all, so `{"input": 3}` — which
+     * used to price output and the cache at nothing — is refused, as upstream refuses it.
      */
     #[DataProvider('everyWayACostCanBeWrong')]
     public function testAPriceThatIsNotANumberIsRefusedRatherThanReadAsFree(mixed $cost, string $says): void
@@ -242,16 +244,29 @@ final class CustomModelsTest extends TestCase
 
         $this->assertSame([], $custom->models);
         $this->assertCount(1, $custom->problems);
-        $this->assertStringContainsString($says, $custom->problems[0]);
+        $this->assertStringEndsWith('model "qwen3-coder": invalid models.json schema: ' . $says, $custom->problems[0]);
     }
 
     /** @return iterable<string, array{0: mixed, 1: string}> */
     public static function everyWayACostCanBeWrong(): iterable
     {
-        yield 'a quoted number' => [['input' => '0.28'], '"cost.input" must be dollars per million'];
-        yield 'a negative price' => [['output' => -1.0], '"cost.output" must be dollars per million'];
-        yield 'null in a field' => [['cacheRead' => []], '"cost.cacheRead" must be dollars per million'];
-        yield 'not an object' => ['0.28', '"cost" must be an object'];
+        $full = ['input' => 1, 'output' => 2, 'cacheRead' => 0.1, 'cacheWrite' => 0];
+
+        yield 'a quoted number' => [[...$full, 'input' => '0.28'], 'providers.my-box.models.0.cost.input: must be number'];
+        yield 'null in a field' => [[...$full, 'cacheRead' => null], 'providers.my-box.models.0.cost.cacheRead: must be number'];
+        yield 'rates left out' => [['input' => 3], 'providers.my-box.models.0.cost.output: must have required properties output, cacheRead, cacheWrite'];
+        yield 'not an object' => ['0.28', 'providers.my-box.models.0.cost: must be object'];
+        // `[]` is a JSON array, not an object — told apart from `{}`, which upstream does too.
+        yield 'an empty list' => [[], 'providers.my-box.models.0.cost: must be object'];
+        yield 'an empty object' => [new \stdClass(), 'providers.my-box.models.0.cost.input: must have required properties input, output, cacheRead, cacheWrite'];
+    }
+
+    public function testANegativePriceIsWhatUpstreamsSchemaAllows(): void
+    {
+        // `Type.Number()` and no bound: pig used to refuse a negative rate on its own authority.
+        $model = $this->load(self::provider(['models' => [self::model(['cost' => ['input' => 1, 'output' => -1, 'cacheRead' => 0, 'cacheWrite' => 0]])]]))->models[0];
+
+        $this->assertSame(-1.0, $model->pricing->output);
     }
 
     public function testNoCompatBlockLeavesItToBeWorkedOutFromTheUrl(): void
@@ -282,7 +297,7 @@ final class CustomModelsTest extends TestCase
         $this->assertNull($model->compat->developerRole, 'unmentioned keys are left to detection');
     }
 
-    public function testTheFourKeysWithARequiresPrefixAreUpstreamsToo(): void
+    public function testTheKeysWithARequiresPrefixAreUpstreamsToo(): void
     {
         $model = $this->load(self::provider(['models' => [self::model(['compat' => [
             'requiresToolResultName' => true,
@@ -291,15 +306,43 @@ final class CustomModelsTest extends TestCase
             'requiresMistralToolIds' => true,
         ]])]]))->models[0];
 
-        // Read under pig's own shorter spellings, these four were silently ignored — and the one
-        // that matters most is the last: a Mistral-shaped endpoint rejects a tool id that is not
-        // exactly nine alphanumeric characters, so somebody who had configured it correctly for pi
-        // got a 400 with nothing on screen to connect it to.
-        $this->assertNotNull($model->compat);
+        // Read under pig's own shorter spellings, these were silently ignored. The fourth,
+        // `requiresMistralToolIds`, is gone from upstream's schema with Mistral's move to its own
+        // API — which makes its nine-character ids itself — and so from pig's: a file that still
+        // says it is not refused (extra keys are allowed), and it means nothing.
+        $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
         $this->assertTrue($model->compat->toolResultName);
         $this->assertTrue($model->compat->assistantAfterToolResult);
         $this->assertTrue($model->compat->thinkingAsText);
-        $this->assertTrue($model->compat->mistralToolIds);
+        $this->assertFalse(property_exists($model->compat, 'mistralToolIds'));
+    }
+
+    public function testTheCompletionsKeysPortedThisRoundAreReadUnderUpstreamsNames(): void
+    {
+        $model = $this->load(self::provider(['models' => [self::model(['compat' => [
+            'supportsUsageInStreaming' => false,
+            'supportsFinishReason' => false,
+            'zaiToolStream' => true,
+            'thinkingTokenBudgetField' => 'thinking_budget_tokens',
+            'supportsThinkingTokenBudget' => true,
+            'vllmPriority' => -2,
+            'supportsMidConvoSystemMessages' => true,
+            'supportsMidConvoToolAdditions' => true,
+        ]])]]))->models[0];
+
+        $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
+        $this->assertFalse($model->compat->supportsUsageInStreaming);
+        $this->assertFalse($model->compat->supportsFinishReason);
+        $this->assertTrue($model->compat->zaiToolStream);
+        $this->assertSame('thinking_budget_tokens', $model->compat->thinkingTokenBudgetField);
+        $this->assertTrue($model->compat->supportsThinkingTokenBudget);
+        $this->assertSame(-2, $model->compat->vllmPriority);
+        $this->assertTrue($model->compat->supportsMidConvoSystemMessages);
+        $this->assertTrue($model->compat->supportsMidConvoToolAdditions);
+
+        // And Mistral's own API is one a file may name, now that pig speaks it.
+        $mistral = $this->load(self::provider(['api' => 'mistral-conversations']))->models[0];
+        $this->assertSame(\Pig\Ai\Api::MistralConversations, $mistral->api);
     }
 
     public function testRequiresReasoningContentOnAssistantMessagesIsReadFromACompatBlock(): void
@@ -473,7 +516,7 @@ final class CustomModelsTest extends TestCase
         // Upstream's `cost.tiers`, which `Usage::withCost()` now prices by.
         $model = $this->load(self::provider([
             'models' => [self::model(['cost' => [
-                'input' => 1, 'output' => 2,
+                'input' => 1, 'output' => 2, 'cacheRead' => 0.1, 'cacheWrite' => 0,
                 'tiers' => [['inputTokensAbove' => 200_000, 'input' => 2, 'output' => 4, 'cacheRead' => 0.2, 'cacheWrite' => 0]],
             ]])],
         ]))->models[0];
@@ -510,8 +553,11 @@ final class CustomModelsTest extends TestCase
     public static function everyWayATierCanBeWrong(): iterable
     {
         yield 'not a list' => [['a' => 1], 'providers.my-box.models.0.cost.tiers: must be array'];
+        // `{}` is an object and not the empty list it decodes to in PHP — upstream says so.
+        yield 'an empty object' => [new \stdClass(), 'providers.my-box.models.0.cost.tiers: must be array'];
         yield 'a tier that is not an object' => [[5], 'providers.my-box.models.0.cost.tiers.0: must be object'];
-        yield 'an empty tier' => [[[]], 'providers.my-box.models.0.cost.tiers.0.inputTokensAbove: must have required properties inputTokensAbove, input, output, cacheRead, cacheWrite'];
+        yield 'a tier that is an empty list' => [[[]], 'providers.my-box.models.0.cost.tiers.0: must be object'];
+        yield 'an empty tier' => [[new \stdClass()], 'providers.my-box.models.0.cost.tiers.0.inputTokensAbove: must have required properties inputTokensAbove, input, output, cacheRead, cacheWrite'];
         yield 'rates left out' => [
             [['inputTokensAbove' => 200_000, 'input' => 6]],
             'providers.my-box.models.0.cost.tiers.0.output: must have required properties output, cacheRead, cacheWrite',
@@ -604,8 +650,7 @@ final class CustomModelsTest extends TestCase
                 'supportsCacheControlOnTools' => false,
                 'allowEmptySignature' => true,
                 'allowedFallbackModels' => [
-                    ['provider' => 'my-box', 'model' => 'backup', 'cost' => ['input' => 1, 'output' => 2]],
-                    ['model' => 'no provider, so left out'],
+                    ['provider' => 'my-box', 'model' => 'backup', 'cost' => ['input' => 1, 'output' => 2, 'cacheRead' => 0, 'cacheWrite' => 0]],
                 ],
             ]])],
         ]))->models[0];
@@ -619,6 +664,37 @@ final class CustomModelsTest extends TestCase
         $this->assertEquals(
             [['provider' => 'my-box', 'model' => 'backup', 'cost' => new Pricing(1.0, 2.0)]],
             $anthropic->compat->allowedFallbackModels,
+        );
+
+        // A fallback upstream's schema refuses refuses the model here too, said in its words — its
+        // cost checked as any cost is, tiers included. pig used to leave such an entry out and
+        // price a fallback's missing rate at nothing.
+        $refused = $this->load(self::provider([
+            'api' => 'anthropic-messages',
+            'models' => [self::model(['compat' => ['allowedFallbackModels' => [
+                ['model' => 'no provider'],
+                ['provider' => '', 'model' => 'm', 'cost' => ['input' => 1, 'output' => 2, 'cacheRead' => 0, 'cacheWrite' => 0, 'tiers' => [['inputTokensAbove' => 1, 'input' => 2]]]],
+            ]]])],
+        ]));
+        $this->assertSame([], $refused->models);
+        $this->assertStringEndsWith(
+            'invalid models.json schema: '
+            . 'providers.my-box.models.0.compat.allowedFallbackModels.0.provider: must have required properties provider, cost; '
+            . 'providers.my-box.models.0.compat.allowedFallbackModels.1.provider: must not have fewer than 1 characters; '
+            . 'providers.my-box.models.0.compat.allowedFallbackModels.1.cost.tiers.0.output: must have required properties output, cacheRead, cacheWrite',
+            $refused->problems[0],
+        );
+
+        // At most three, and a provider's own list is checked where it is written.
+        $entry = ['provider' => 'p', 'model' => 'm', 'cost' => ['input' => 1, 'output' => 1, 'cacheRead' => 0, 'cacheWrite' => 0]];
+        $refused = $this->load(self::provider([
+            'api' => 'anthropic-messages',
+            'compat' => ['allowedFallbackModels' => [$entry, $entry, $entry, $entry]],
+        ]));
+        $this->assertSame([], $refused->models);
+        $this->assertStringEndsWith(
+            'provider "my-box": invalid models.json schema: providers.my-box.compat.allowedFallbackModels: must not have more than 3 items',
+            $refused->problems[0],
         );
 
         $responses = $this->load(self::provider([

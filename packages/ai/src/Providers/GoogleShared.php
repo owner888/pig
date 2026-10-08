@@ -363,6 +363,7 @@ final class GoogleShared
         AssistantMessageBuilder $builder,
         AssistantMessageEventStream $stream,
         ?array $open,
+        bool $deferErrors = false,
     ): ?array {
         // A blocked prompt comes back as a 200 with nothing in it but the reason.
         $blocked = $data['promptFeedback']['blockReason'] ?? null;
@@ -404,7 +405,9 @@ final class GoogleShared
                 $reason = StopReason::ToolUse;
             }
 
-            if ($reason === StopReason::Error) {
+            // `google-generative-ai.ts` records the error reason and reads the rest of the stream; its
+            // end-of-stream check throws `Provider stopped with: <raw reason>` (`Google::run()`).
+            if ($reason === StopReason::Error && !$deferErrors) {
                 // Upstream throws `Provider stopped with: <raw reason>` here, and so does this:
                 // the chunk that carries one of these reasons carries no message of its own, so
                 // the reason is the only thing there is to say. `fail()` keeps the content, so

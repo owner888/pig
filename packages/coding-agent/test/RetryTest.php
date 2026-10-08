@@ -89,6 +89,19 @@ final class RetryTest extends TestCase
         $this->assertSame(502, Retry::statusOf('openai returned 502: bad gateway'));
     }
 
+    public function testTheStatusIsReadFromUpstreamsErrorShapesToo(): void
+    {
+        // The OpenAI and Mistral providers write upstream's `formatProviderError()` text now
+        // (`OpenAI API error (429): {…}`, the completions API's bare `503: {…}`, the SDK's
+        // `500 status code (no body)`), which has no "returned" in it; without these a 503 there
+        // was retried only if its body happened to contain one of the words.
+        $this->assertSame(429, Retry::statusOf('OpenAI API error (429): {"message":"slow down"}'));
+        $this->assertSame(503, Retry::statusOf('Mistral API error (503): Service Unavailable'));
+        $this->assertSame(500, Retry::statusOf('500: {"message":"oops","type":"server_error"}'));
+        $this->assertSame(502, Retry::statusOf('502 status code (no body)'));
+        $this->assertSame(504, Retry::statusOf('504 upstream timed out'));
+    }
+
     public function testAFailureThatNeverReachedHttpHasNoStatus(): void
     {
         $this->assertNull(Retry::statusOf('Connection reset by peer'));

@@ -866,6 +866,7 @@ final class SessionManager
                 $message->endTurn,
                 $message->diagnostics,
                 $message->providerThinkingLevel,
+                $message->deferred,
             ),
             $message instanceof ToolResultMessage => new ToolResultMessage(
                 $message->toolCallId,

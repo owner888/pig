@@ -292,6 +292,23 @@ final class AgentLoopTest extends TestCase
         $this->assertSame(StopReason::Error, $messages[1]->stopReason);
     }
 
+    public function testADeferredTurnEndsTheRunAsAFinishedOneDoes(): void
+    {
+        // Upstream's `"deferred"` stop reason: the provider took the request and will finish it
+        // later, and the message carries the handle to fetch it with. The loop treats it as it
+        // treats `stop` — not a failure, no tool calls, so the run ends after its `turn_end` — and
+        // the handle stays on the message for whatever fetches the result.
+        $handle = ['provider' => 'anthropic', 'modelId' => 'test-model', 'api' => 'anthropic-messages', 'id' => 'batch_1', 'pollAfterMs' => 5000];
+        $deferred = new AssistantMessage([], Api::AnthropicMessages, 'anthropic', 'test-model', new Usage(), StopReason::Deferred, deferred: $handle);
+
+        [$events, $messages] = $this->drive([$deferred], [new UserMessage('hi')]);
+
+        $this->assertSame(['TurnEndEvent', 'AgentEndEvent'], array_slice($events, -2));
+        $this->assertSame(StopReason::Deferred, $messages[1]->stopReason);
+        $this->assertSame($handle, $messages[1]->deferred);
+        $this->assertFalse(StopReason::Deferred->isFailure());
+    }
+
     public function testTheModelNeverSeesTheAppsOwnMessages(): void
     {
         $this->drive(

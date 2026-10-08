@@ -268,6 +268,7 @@ final class TransformMessages
             $message->endTurn,
             $message->diagnostics,
             $message->providerThinkingLevel,
+            $message->deferred,
         );
     }
 

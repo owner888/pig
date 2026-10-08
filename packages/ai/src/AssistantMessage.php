@@ -37,6 +37,9 @@ final readonly class AssistantMessage
      *        level used for this response" — set by `Anthropic` on a managed-effort model
      *        (`AnthropicCompat::$supportsMidConvoEffort`), which replays it in front of this turn on
      *        later requests. Null for every other response
+     * @param array<string, mixed>|null $deferred upstream's `DeferredHandle` on a `deferred` turn —
+     *        `{provider, modelId, api, id, expiresAt?, pollAfterMs?, data?}`, the provider's token for
+     *        the result it will produce later. Carried as written; see `StopReason::Deferred`
      *
      * The five after `rawStopReason` follow it for the same reason it is last: they are upstream's
      * optional fields, absent from JSON when null, and appended so no positional call changes.
@@ -56,6 +59,7 @@ final readonly class AssistantMessage
         public ?bool $endTurn = null,
         public ?array $diagnostics = null,
         public ?string $providerThinkingLevel = null,
+        public ?array $deferred = null,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();
     }

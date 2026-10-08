@@ -80,6 +80,17 @@ final class SseParserTest extends TestCase
         $this->assertSame([], $parser->feed("data: hello\r"));
     }
 
+    public function testAnEventKeepsTheLinesItWasMadeOfCommentsIncluded(): void
+    {
+        // Upstream's Anthropic decoder keeps them (`ServerSentEvent.raw`) to quote in the error for
+        // an event it cannot parse; a comment before an event belongs to it.
+        $parser = new SseParser();
+        $events = $parser->feed(": ping\nevent: x\ndata: a\ndata: b\n\ndata: c\n\n");
+
+        $this->assertSame([': ping', 'event: x', 'data: a', 'data: b'], $events[0]->raw);
+        $this->assertSame(['data: c'], $events[1]->raw);
+    }
+
     public function testIdAndRetryPersistAcrossEventsAsTheSpecSays(): void
     {
         $parser = new SseParser();

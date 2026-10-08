@@ -36,6 +36,7 @@ use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
+use Pig\Ai\Utils\ErrorBody;
 use Pig\Ai\Utils\ShortHash;
 use Pig\Ai\Utils\Utf8;
 use Pig\Async\Async;
@@ -108,9 +109,8 @@ final class OpenAiResponses
         $builder->setStopReason(StopReason::Pending);
         $signal = $options?->signal;
 
-        // The item that is open, as [index, kind]. Unlike chat-completions, the stream
-        // says when one starts and stops, so this is bookkeeping rather than guesswork.
-        $open = null;
+        // Upstream's `outputSlots`: the items still streaming, by `output_index` — see `dispatch()`.
+        $slots = [];
         // Upstream's per-call scratch buffers (`partialJson`, `customInput`), which only a finished
         // `output_item.done` removes: the content indexes of the tool calls still waiting for theirs.
         $unfinished = [];
@@ -119,9 +119,6 @@ final class OpenAiResponses
         $reasoningById = [];
         // Upstream's `sawTerminalResponseEvent`: `response.completed`, `.incomplete` or `.failed`.
         $sawTerminal = false;
-        // The body of a refused request, for the ChatGPT usage hint below.
-        $refusedBody = null;
-
         try {
             // Upstream's `grammarToolInputProperties`: tool name => the property a grammar tool's raw
             // input lives in, for the tools this request sends as OpenAI custom tools. Read when a
@@ -130,9 +127,7 @@ final class OpenAiResponses
             $response = $this->http->send($this->request($model, $context, $options, $grammar), $signal);
 
             if (!$response->isSuccessful()) {
-                $refusedBody = $response->body->all();
-
-                throw new ProviderError($this->explain($model, $response->status, $refusedBody));
+                throw new ProviderError($this->explain($model, $response->status, $response->body->all()));
             }
 
             $stream->push(new StartEvent($builder->snapshot()));
@@ -147,7 +142,7 @@ final class OpenAiResponses
                     }
 
                     $data = self::sdkEvent($event->type, $event->data);
-                    $open = $this->dispatch($data, $builder, $stream, $open, $grammar, $unfinished, $reasoningById, $sawTerminal);
+                    $this->dispatch($data, $builder, $stream, $slots, $grammar, $unfinished, $reasoningById, $sawTerminal);
 
                     // The end of upstream's `finalizeResponse()`, after the cost is worked out:
                     // `response.service_tier ?? options.serviceTier` scales it.
@@ -205,10 +200,8 @@ final class OpenAiResponses
 
             // Upstream: "Sign in with ChatGPT shares the subscription's usage limit with other apps."
             // Its test is the formatted message, which for a refused request is the SDK's JSON of the
-            // error body, code included. `explain()` keeps only the body's `message`, so the body
-            // itself is asked too — the same condition, read where pig still has it.
-            if (str_contains($message, 'subscription_sharing_usage_limit_exceeded')
-                || str_contains($refusedBody ?? '', 'subscription_sharing_usage_limit_exceeded')) {
+            // error object, code included — `explain()` writes the same.
+            if (str_contains($message, 'subscription_sharing_usage_limit_exceeded')) {
                 $message .= "\nCheck your ChatGPT usage: " . self::CHATGPT_USAGE_URL;
             }
 
@@ -316,45 +309,55 @@ final class OpenAiResponses
     }
 
     /**
-     * `$open` is `[index, kind]`, and for a custom (grammar) tool call a third entry: its input
-     * property and upstream's `GrammarToolInputJsonBuffer` — see `openedCustomCall()`.
+     * Upstream's `processResponsesStream()` loop body: one event, routed to the item it is about by
+     * its `output_index`.
+     *
+     * **A slot per `output_index`, as upstream keeps `outputSlots`.** The Responses API may stream
+     * several items at once — a reasoning item and a message, or two function calls — and every
+     * delta names the item it belongs to. pig used to keep one open item and route every delta to
+     * it, so a delta for the other item was dropped or appended to the wrong block, and an
+     * `output_item.done` closed whichever item happened to be open. A slot is `[content index, kind]`,
+     * and for a custom (grammar) tool call a third entry: its input property and upstream's
+     * `GrammarToolInputJsonBuffer` — see `openedCustomCall()`. A missing `output_index` is
+     * upstream's `undefined` key, which every such event shares.
      *
      * @param array<string, mixed> $data
-     * @param array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}|null $open
+     * @param array<int|string, array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}> $slots
      * @param array<string, string> $grammar
      * @param array<int, true> $unfinished the tool calls opened and not yet finished, by content index
      * @param array<string, int> $reasoningById a finished reasoning item's id => its content index
-     * @return array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}|null
      */
     private function dispatch(
         array $data,
         AssistantMessageBuilder $builder,
         AssistantMessageEventStream $stream,
-        ?array $open,
+        array &$slots,
         array $grammar = [],
         array &$unfinished = [],
         array &$reasoningById = [],
         bool &$sawTerminal = false,
-    ): ?array {
-        return match ($data['type'] ?? '') {
+    ): void {
+        $key = self::outputIndex($data);
+
+        match ($data['type'] ?? '') {
             // Upstream takes the response id from here and again from the terminal event.
-            'response.created' => $this->onCreated($data, $builder, $open),
-            'response.output_item.added' => $this->opening($this->onItemStart($data, $builder, $stream, $grammar), $unfinished),
-            'response.output_item.done' => $this->onItemEnd($data, $builder, $stream, $open, $unfinished, $reasoningById),
-            'response.reasoning_summary_text.delta' => $this->onDelta($data, $builder, $stream, $open, 'thinking'),
+            'response.created' => $this->onCreated($data, $builder),
+            'response.output_item.added' => $this->createSlot($key, is_array($data['item'] ?? null) ? $data['item'] : [], $builder, $stream, $slots, $grammar, $unfinished),
+            'response.reasoning_summary_text.delta' => $this->onDelta($data, $builder, $stream, $slots[$key] ?? null, 'thinking'),
             // One summary part ending and the next beginning is a paragraph break, and
             // nothing else in the stream says so.
-            'response.reasoning_summary_part.done' => $this->onBreak($builder, $stream, $open),
+            'response.reasoning_summary_part.done' => $this->onBreak($builder, $stream, $slots[$key] ?? null),
             // Raw reasoning text (models that expose it rather than a summary) streams as a
             // thinking delta too, as upstream's `response.reasoning_text.delta` arm does.
-            'response.reasoning_text.delta' => $this->onDelta($data, $builder, $stream, $open, 'thinking'),
-            'response.output_text.delta', 'response.refusal.delta' => $this->onDelta($data, $builder, $stream, $open, 'text'),
-            'response.function_call_arguments.delta' => $this->onArguments($data, $builder, $stream, $open),
-            'response.function_call_arguments.done' => $this->onArgumentsDone($data, $builder, $stream, $open),
+            'response.reasoning_text.delta' => $this->onDelta($data, $builder, $stream, $slots[$key] ?? null, 'thinking'),
+            'response.output_text.delta', 'response.refusal.delta' => $this->onDelta($data, $builder, $stream, $slots[$key] ?? null, 'text'),
+            'response.function_call_arguments.delta' => $this->onArguments($data, $builder, $stream, $slots[$key] ?? null),
+            'response.function_call_arguments.done' => $this->onArgumentsDone($data, $builder, $stream, $slots[$key] ?? null),
             // Upstream's two custom-tool-call input events: the raw text a grammar tool writes,
             // streamed, then whole.
-            'response.custom_tool_call_input.delta' => $this->onCustomInput($data, $builder, $stream, $open, false),
-            'response.custom_tool_call_input.done' => $this->onCustomInput($data, $builder, $stream, $open, true),
+            'response.custom_tool_call_input.delta' => $this->onCustomInput($data, $builder, $stream, $slots, $key, false),
+            'response.custom_tool_call_input.done' => $this->onCustomInput($data, $builder, $stream, $slots, $key, true),
+            'response.output_item.done' => $this->onItemEnd($key, $data, $builder, $stream, $slots, $grammar, $unfinished, $reasoningById),
             // **Both terminal events, and `response.incomplete` is the one that was missing.** It
             // is what the Responses API sends when the answer was cut off — `max_output_tokens`
             // reached, most often — and without it here the stream simply ended: `onCompleted()`
@@ -364,52 +367,80 @@ final class OpenAiResponses
             // usage at all** — the half-sentence read as the finished answer, and the turn cost
             // nothing in `/session` and the footer. Measured against the real API with a 16-token
             // budget: `stop` after 0 output tokens. Upstream's `finalizeResponse()` takes both.
-            'response.completed', 'response.incomplete' => $this->onCompleted($data, $builder, $open, $reasoningById, $sawTerminal),
+            'response.completed', 'response.incomplete' => $this->onCompleted($data, $builder, $reasoningById, $sawTerminal),
             // `throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error")` — the
             // template is never empty, so the fallback never applies and a missing field reads
             // `undefined`. Only a flat event without an `event: error` line gets here; see `sdkEvent()`.
             // It has no response, so the raw stop reason stays as it was, as upstream's does.
             'error' => throw new ProviderError('Error Code ' . self::template($data, 'code') . ': ' . self::template($data, 'message')),
             'response.failed' => $this->failed($data, $builder, $sawTerminal),
-            default => $open,
+            default => null,
         };
     }
 
     /**
-     * A tool call that opens is unfinished until its `output_item.done`.
+     * The event's `output_index`, or upstream's `undefined` key for an event that has none.
      *
-     * @param array{0: int, 1: string}|null $open
-     * @param array<int, true> $unfinished
-     * @return array{0: int, 1: string}|null
+     * @param array<string, mixed> $data
      */
-    private function opening(?array $open, array &$unfinished): ?array
+    private static function outputIndex(array $data): int|string
     {
-        if ($open !== null && $open[1] === 'toolCall') {
-            $unfinished[$open[0]] = true;
-        }
+        $index = $data['output_index'] ?? null;
 
-        return $open;
+        return is_int($index) ? $index : 'undefined';
     }
 
     /**
-     * @param array<string, mixed> $data
-     * @return array{0: int, 1: string}|null
+     * Upstream's `createSlot()`: a block for the item, its start event, and the slot under the
+     * item's `output_index`. A tool call is unfinished until its `output_item.done`. An item of a
+     * kind that has no block (a web search, say) gets no slot.
+     *
+     * @param array<string, mixed> $item
+     * @param array<int|string, array<int, mixed>> $slots
+     * @param array<string, string> $grammar
+     * @param array<int, true> $unfinished
+     * @return array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}|null
      */
-    private function onItemStart(array $data, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array $grammar = []): ?array
-    {
-        $item = $data['item'] ?? [];
+    private function createSlot(
+        int|string $key,
+        array $item,
+        AssistantMessageBuilder $builder,
+        AssistantMessageEventStream $stream,
+        array &$slots,
+        array $grammar,
+        array &$unfinished,
+    ): ?array {
         $wire = $builder->nextWire();
 
-        // Upstream's `createSlot()` runs `applyMessagePhaseStopReason(item)` for a message too.
-        self::applyMessagePhaseStopReason($item, $builder);
-
-        return match ($item['type'] ?? '') {
+        $slot = match ($item['type'] ?? '') {
             'reasoning' => $this->opened('thinking', $builder->startThinking($wire), $stream, $builder),
-            'message' => $this->opened('text', $builder->startText($wire), $stream, $builder),
+            // Upstream's `createSlot()` runs `applyMessagePhaseStopReason(item)` for a message.
+            'message' => $this->openedMessage($item, $builder, $stream, $wire),
             'function_call' => $this->openedCall($item, $builder, $stream, $wire),
             'custom_tool_call' => $this->openedCustomCall($item, $builder, $stream, $wire, $grammar),
             default => null,
         };
+
+        if ($slot === null) {
+            return null;
+        }
+
+        if ($slot[1] === 'toolCall') {
+            $unfinished[$slot[0]] = true;
+        }
+
+        return $slots[$key] = $slot;
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     * @return array{0: int, 1: string}
+     */
+    private function openedMessage(array $item, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, int $wire): array
+    {
+        self::applyMessagePhaseStopReason($item, $builder);
+
+        return $this->opened('text', $builder->startText($wire), $stream, $builder);
     }
 
     /**
@@ -447,51 +478,51 @@ final class OpenAiResponses
     /**
      * Upstream's `response.custom_tool_call_input.delta` and `.done` arms: the input so far plus the
      * delta, or the whole input, run through the JSON buffer, with a delta event when it says
-     * anything.
+     * anything. Only for a tool-call slot that is a custom call (`slot.block.customInput`).
+     *
+     * The slot is changed in place: its JSON buffer carries over to the next event.
      *
      * @param array<string, mixed> $data
-     * @param array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}|null $open
-     * @return array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}|null
+     * @param array<int|string, array<int, mixed>> $slots
      */
-    private function onCustomInput(array $data, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, ?array $open, bool $done): ?array
+    private function onCustomInput(array $data, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array &$slots, int|string $key, bool $done): void
     {
-        if ($open === null || $open[1] !== 'toolCall' || !isset($open[2])) {
-            return $open;
+        $slot = $slots[$key] ?? null;
+
+        if ($slot === null || $slot[1] !== 'toolCall' || !isset($slot[2])) {
+            return;
         }
 
         $next = $done
             ? (string) ($data['input'] ?? '')
-            : self::customInput($builder, $open) . (string) ($data['delta'] ?? '');
+            : self::customInput($builder, $slot) . (string) ($data['delta'] ?? '');
 
-        return $this->appendCustomInput($builder, $stream, $open, $next, $done);
+        $this->appendCustomInput($builder, $stream, $slots[$key], $next, $done);
     }
 
     /**
      * Upstream's `appendCustomToolCallInput()` plus `pushToolCallDelta()`.
      *
-     * @param array{0: int, 1: string, 2: array{property: string, buffer: array{input: string, started: bool, closed: bool}}} $open
-     * @return array{0: int, 1: string, 2: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}
+     * @param array{0: int, 1: string, 2: array{property: string, buffer: array{input: string, started: bool, closed: bool}}} $slot
      */
-    private function appendCustomInput(AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array $open, string $next, bool $close): array
+    private function appendCustomInput(AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array &$slot, string $next, bool $close): void
     {
-        $delta = ConstrainedSampling::appendGrammarToolInputJsonDelta($open[2]['buffer'], $open[2]['property'], $next, $close);
-        $builder->setJson($open[0], self::customArguments($open[2]['property'], $next));
+        $delta = ConstrainedSampling::appendGrammarToolInputJsonDelta($slot[2]['buffer'], $slot[2]['property'], $next, $close);
+        $builder->setJson($slot[0], self::customArguments($slot[2]['property'], $next));
 
         if ($delta !== null) {
-            $stream->push(new ToolCallDeltaEvent($open[0], $delta, $builder->snapshot()));
+            $stream->push(new ToolCallDeltaEvent($slot[0], $delta, $builder->snapshot()));
         }
-
-        return $open;
     }
 
     /**
      * Upstream's `getCustomToolCallInput()`: the input so far, read back from the arguments.
      *
-     * @param array{0: int, 1: string, 2: array{property: string, buffer: array{input: string, started: bool, closed: bool}}} $open
+     * @param array{0: int, 1: string, 2: array{property: string, buffer: array{input: string, started: bool, closed: bool}}} $slot
      */
-    private static function customInput(AssistantMessageBuilder $builder, array $open): string
+    private static function customInput(AssistantMessageBuilder $builder, array $slot): string
     {
-        $value = $builder->toolCallOf($open[0])->arguments[$open[2]['property']] ?? null;
+        $value = $builder->toolCallOf($slot[0])->arguments[$slot[2]['property']] ?? null;
 
         return is_string($value) ? $value : '';
     }
@@ -516,6 +547,9 @@ final class OpenAiResponses
     }
 
     /**
+     * Upstream's `function_call` arm of `createSlot()`: `partialJson: item.arguments || ""` — the
+     * arguments can arrive complete on the opening item rather than as deltas.
+     *
      * @param array<string, mixed> $item
      * @return array{0: int, 1: string}
      */
@@ -527,11 +561,10 @@ final class OpenAiResponses
             (string) ($item['name'] ?? ''),
         );
 
-        // Arguments can arrive complete on the opening item rather than as deltas.
         $arguments = $item['arguments'] ?? null;
 
         if (is_string($arguments) && $arguments !== '') {
-            $builder->append($index, 'json', $arguments);
+            $builder->setJson($index, $arguments);
         }
 
         // Upstream's `namespace` for a dynamically loaded or namespaced tool, when the item has one.
@@ -543,68 +576,65 @@ final class OpenAiResponses
     }
 
     /**
+     * A text or thinking delta for the slot it names. **An empty delta is still a delta**:
+     * upstream appends `event.delta` and pushes the event whatever it holds, and pig used to drop
+     * an empty one, so a listener counting deltas saw fewer than upstream's.
+     *
      * @param array<string, mixed> $data
-     * @param array{0: int, 1: string}|null $open
-     * @return array{0: int, 1: string}|null
+     * @param array{0: int, 1: string}|null $slot
      */
     private function onDelta(
         array $data,
         AssistantMessageBuilder $builder,
         AssistantMessageEventStream $stream,
-        ?array $open,
+        ?array $slot,
         string $kind,
-    ): ?array {
+    ): void {
         $delta = $data['delta'] ?? null;
 
-        if ($open === null || $open[1] !== $kind || !is_string($delta) || $delta === '') {
-            return $open;
+        if ($slot === null || $slot[1] !== $kind || !is_string($delta)) {
+            return;
         }
 
-        $builder->append($open[0], 'text', $delta);
+        $builder->append($slot[0], 'text', $delta);
         $stream->push($kind === 'thinking'
-            ? new ThinkingDeltaEvent($open[0], $delta, $builder->snapshot())
-            : new TextDeltaEvent($open[0], $delta, $builder->snapshot()));
-
-        return $open;
+            ? new ThinkingDeltaEvent($slot[0], $delta, $builder->snapshot())
+            : new TextDeltaEvent($slot[0], $delta, $builder->snapshot()));
     }
 
-    /**
-     * @param array{0: int, 1: string}|null $open
-     * @return array{0: int, 1: string}|null
-     */
-    private function onBreak(AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, ?array $open): ?array
+    /** @param array{0: int, 1: string}|null $slot */
+    private function onBreak(AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, ?array $slot): void
     {
-        if ($open === null || $open[1] !== 'thinking') {
-            return $open;
+        if ($slot === null || $slot[1] !== 'thinking') {
+            return;
         }
 
-        $builder->append($open[0], 'text', "\n\n");
-        $stream->push(new ThinkingDeltaEvent($open[0], "\n\n", $builder->snapshot()));
-
-        return $open;
+        $builder->append($slot[0], 'text', "\n\n");
+        $stream->push(new ThinkingDeltaEvent($slot[0], "\n\n", $builder->snapshot()));
     }
 
     /**
+     * Upstream's `response.function_call_arguments.delta` arm: a function-call slot (one with a JSON
+     * buffer, so not a custom call) takes the delta, and the event goes out even when the delta is
+     * empty — `pushToolCallDelta()` skips only an undefined one.
+     *
      * @param array<string, mixed> $data
-     * @param array{0: int, 1: string}|null $open
-     * @return array{0: int, 1: string}|null
+     * @param array{0: int, 1: string, 2?: mixed}|null $slot
      */
     private function onArguments(
         array $data,
         AssistantMessageBuilder $builder,
         AssistantMessageEventStream $stream,
-        ?array $open,
-    ): ?array {
+        ?array $slot,
+    ): void {
         $delta = $data['delta'] ?? null;
 
-        if ($open === null || $open[1] !== 'toolCall' || !is_string($delta) || $delta === '') {
-            return $open;
+        if ($slot === null || $slot[1] !== 'toolCall' || isset($slot[2]) || !is_string($delta)) {
+            return;
         }
 
-        $builder->append($open[0], 'json', $delta);
-        $stream->push(new ToolCallDeltaEvent($open[0], $delta, $builder->snapshot()));
-
-        return $open;
+        $builder->append($slot[0], 'json', $delta);
+        $stream->push(new ToolCallDeltaEvent($slot[0], $delta, $builder->snapshot()));
     }
 
     /**
@@ -615,54 +645,63 @@ final class OpenAiResponses
      * which has no JSON buffer upstream (`partialJson === undefined`).
      *
      * @param array<string, mixed> $data
-     * @param array{0: int, 1: string, 2?: mixed}|null $open
-     * @return array{0: int, 1: string, 2?: mixed}|null
+     * @param array{0: int, 1: string, 2?: mixed}|null $slot
      */
-    private function onArgumentsDone(array $data, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, ?array $open): ?array
+    private function onArgumentsDone(array $data, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, ?array $slot): void
     {
-        if ($open === null || $open[1] !== 'toolCall' || isset($open[2])) {
-            return $open;
+        if ($slot === null || $slot[1] !== 'toolCall' || isset($slot[2])) {
+            return;
         }
 
         $arguments = is_string($data['arguments'] ?? null) ? $data['arguments'] : '';
-        $previous = $builder->jsonOf($open[0]);
-        $builder->setJson($open[0], $arguments);
+        $previous = $builder->jsonOf($slot[0]);
+        $builder->setJson($slot[0], $arguments);
 
         if (str_starts_with($arguments, $previous)) {
             $delta = substr($arguments, strlen($previous));
 
             if ($delta !== '') {
-                $stream->push(new ToolCallDeltaEvent($open[0], $delta, $builder->snapshot()));
+                $stream->push(new ToolCallDeltaEvent($slot[0], $delta, $builder->snapshot()));
             }
         }
-
-        return $open;
     }
 
     /**
+     * Upstream's `response.output_item.done` arm: the item's slot — **created now when no
+     * `output_item.added` came for it** (`getOrCreateSlot()`), so an endpoint that sends only the
+     * finished item still produces its block — finished from the item, and removed. The item's
+     * type and the slot's kind must agree; when they do not, nothing happens and the slot stays.
+     *
      * @param array<string, mixed> $data
-     * @param array{0: int, 1: string}|null $open
+     * @param array<int|string, array<int, mixed>> $slots
+     * @param array<string, string> $grammar
      * @param array<int, true> $unfinished
+     * @param array<string, int> $reasoningById
      */
     private function onItemEnd(
+        int|string $key,
         array $data,
         AssistantMessageBuilder $builder,
         AssistantMessageEventStream $stream,
-        ?array $open,
-        array &$unfinished = [],
-        array &$reasoningById = [],
-    ): ?array {
-        $item = $data['item'] ?? [];
+        array &$slots,
+        array $grammar,
+        array &$unfinished,
+        array &$reasoningById,
+    ): void {
+        $item = is_array($data['item'] ?? null) ? $data['item'] : [];
+        $type = $item['type'] ?? null;
 
         self::applyMessagePhaseStopReason($item, $builder);
 
-        if ($open === null) {
-            return null;
+        $slot = $slots[$key] ?? $this->createSlot($key, $item, $builder, $stream, $slots, $grammar, $unfinished);
+
+        if ($slot === null) {
+            return;
         }
 
-        [$index, $kind] = $open;
+        [$index, $kind] = $slot;
 
-        if ($kind === 'thinking') {
+        if ($type === 'reasoning' && $kind === 'thinking') {
             // Upstream rebuilds the thinking text from the finished item:
             // `summaryText = item.summary?.map((s) => s.text).join("\n\n") || ""`, the same for
             // `item.content`, then `summaryText || contentText || slot.block.thinking`. The
@@ -687,11 +726,12 @@ final class OpenAiResponses
             }
 
             $stream->push(new ThinkingEndEvent($index, $builder->textOf($index), $builder->snapshot()));
+            unset($slots[$key]);
 
-            return null;
+            return;
         }
 
-        if ($kind === 'text') {
+        if ($type === 'message' && $kind === 'text') {
             // Upstream rebuilds the text from the finished item rather than trusting the deltas:
             // `item.content?.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("") || ""`.
             // Every `output_text` part and every `refusal` part, in order, joined with nothing —
@@ -712,72 +752,66 @@ final class OpenAiResponses
             // phase, so `assistant()` can send the phase back on the same message next turn.
             $builder->setSignature($index, self::encodeTextSignatureV1($item));
             $stream->push(new TextEndEvent($index, $builder->textOf($index), $builder->snapshot()));
+            unset($slots[$key]);
 
-            return null;
+            return;
         }
 
-        $builder->setToolCall(
-            $index,
-            $this->joinIds((string) ($item['call_id'] ?? ''), (string) ($item['id'] ?? '')),
-            (string) ($item['name'] ?? ''),
-        );
+        if ($type === 'function_call' && $kind === 'toolCall' && !isset($slot[2])) {
+            // `parseStreamingJson(item.arguments || slot.block.partialJson || "{}")`: the finished
+            // item's own arguments are the call — a stream that sent no deltas, which this API
+            // allows and a compatible endpoint does, otherwise leaves it with none. The id and the
+            // name are the ones the slot was opened with; upstream does not read them again here.
+            $arguments = $item['arguments'] ?? null;
 
-        // `if (item.namespace !== undefined) slot.block.namespace = item.namespace`, and the call is
-        // finished — upstream deletes its scratch buffer here.
-        if (is_string($item['namespace'] ?? null)) {
-            $builder->setNamespace($index, $item['namespace']);
-        }
+            if (is_string($arguments) && $arguments !== '') {
+                $builder->setJson($index, $arguments);
+            }
 
-        unset($unfinished[$index]);
+            // `if (item.namespace !== undefined) slot.block.namespace = item.namespace`, and the call
+            // is finished — upstream deletes its scratch buffer here.
+            if (is_string($item['namespace'] ?? null)) {
+                $builder->setNamespace($index, $item['namespace']);
+            }
 
-        // Upstream's `custom_tool_call` arm: the item's own input closes the JSON (`item.input ??`
-        // the input so far), then the call ends like any other.
-        if (($item['type'] ?? null) === 'custom_tool_call' && isset($open[2])) {
-            $input = $item['input'] ?? null;
-            $this->appendCustomInput($builder, $stream, $open, is_string($input) ? $input : self::customInput($builder, $open), true);
+            unset($unfinished[$index]);
             $stream->push(new ToolCallEndEvent($index, $builder->toolCallOf($index), $builder->snapshot()));
+            unset($slots[$key]);
 
-            return null;
+            return;
         }
 
-        // The finished item's own arguments are the call, and they were being ignored: the deltas
-        // are usually the same JSON, but a stream that sent none — which this API allows and a
-        // compatible endpoint does — left the call with no arguments at all. Replaced rather than
-        // appended, because the usual case is the same JSON arriving twice. Upstream reads the
-        // item here too, and reads nothing else.
-        $arguments = $item['arguments'] ?? null;
+        if ($type === 'custom_tool_call' && $kind === 'toolCall' && isset($slot[2])) {
+            // Upstream's `custom_tool_call` arm: the item's own input closes the JSON (`item.input ??`
+            // the input so far), then the call ends like any other.
+            $input = $item['input'] ?? null;
+            $this->appendCustomInput($builder, $stream, $slot, is_string($input) ? $input : self::customInput($builder, $slot), true);
 
-        if (is_string($arguments) && $arguments !== '') {
-            $builder->setJson($index, $arguments);
+            if (is_string($item['namespace'] ?? null)) {
+                $builder->setNamespace($index, $item['namespace']);
+            }
+
+            unset($unfinished[$index]);
+            $stream->push(new ToolCallEndEvent($index, $builder->toolCallOf($index), $builder->snapshot()));
+            unset($slots[$key]);
         }
-
-        $stream->push(new ToolCallEndEvent($index, $builder->toolCallOf($index), $builder->snapshot()));
-
-        return null;
     }
 
-    /**
-     * @param array<string, mixed> $data
-     * @param array{0: int, 1: string}|null $open
-     * @return array{0: int, 1: string}|null
-     */
-    private function onCreated(array $data, AssistantMessageBuilder $builder, ?array $open): ?array
+    /** @param array<string, mixed> $data */
+    private function onCreated(array $data, AssistantMessageBuilder $builder): void
     {
         $id = $data['response']['id'] ?? null;
 
         if (is_string($id)) {
             $builder->setResponseId($id);
         }
-
-        return $open;
     }
 
     /**
      * @param array<string, mixed> $data
-     * @param array{0: int, 1: string}|null $open
-     * @return array{0: int, 1: string}|null
+     * @param array<string, int> $reasoningById
      */
-    private function onCompleted(array $data, AssistantMessageBuilder $builder, ?array $open, array $reasoningById = [], bool &$sawTerminal = false): ?array
+    private function onCompleted(array $data, AssistantMessageBuilder $builder, array $reasoningById = [], bool &$sawTerminal = false): void
     {
         $sawTerminal = true;
         $response = $data['response'] ?? [];
@@ -810,8 +844,6 @@ final class OpenAiResponses
         }
 
         $builder->setStopReason($reason);
-
-        return $open;
     }
 
     /**
@@ -982,12 +1014,18 @@ final class OpenAiResponses
         };
     }
 
+    /**
+     * Upstream's `catch`: `formatProviderError(normalizeProviderError(error), "<OpenAI | provider> API
+     * error")` over the `openai` SDK's `APIError` — `OpenAI API error (429): {"message":…,"code":…}`,
+     * the error object as JSON, or `… (502): 502 <body text>` when the body is not a JSON error. It
+     * used to be pig's own `<provider> returned <status>: <error.message>`, which dropped the code.
+     */
     private function explain(Model $model, int $status, string $body): string
     {
-        $decoded = json_decode($body, true);
-        $message = is_array($decoded) ? ($decoded['error']['message'] ?? null) : null;
-
-        return "{$model->provider} returned {$status}: " . (is_string($message) ? $message : trim($body));
+        return ErrorBody::format(
+            ErrorBody::openAiApiError($status, $body),
+            ($model->provider === 'openai' ? 'OpenAI' : $model->provider) . ' API error',
+        );
     }
 
     // ---- the request ---------------------------------------------------------------------

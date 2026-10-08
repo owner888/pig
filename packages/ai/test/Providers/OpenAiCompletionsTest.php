@@ -770,10 +770,18 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertFalse($compat->store);
     }
 
-    public function testMistralGetsMaxTokensUnderItsOlderName(): void
+    public function testMistralsHostIsNotOneOfThisApisQuirksAnyMore(): void
     {
-        $this->assertSame('max_tokens', OpenAiCompat::detect('https://api.mistral.ai/v1')->maxTokensField);
-        $this->assertSame('max_completion_tokens', OpenAiCompat::detect('https://api.groq.com/openai/v1')->maxTokensField);
+        // Mistral speaks its own API now (`Providers\Mistral`), as upstream's does, and upstream's
+        // `detectCompat()` no longer names it. pig kept the four rules its detection had before the
+        // move — `max_tokens`, the tool result's name, thinking as text, nine-character tool ids —
+        // which applied to any endpoint whose URL said `mistral.ai`.
+        $compat = OpenAiCompat::detect('https://api.mistral.ai/v1');
+
+        $this->assertSame('max_completion_tokens', $compat->maxTokensField);
+        $this->assertFalse($compat->toolResultName);
+        $this->assertFalse($compat->thinkingAsText);
+        $this->assertTrue($compat->store);
     }
 
     /**
@@ -1041,46 +1049,180 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame('', $this->server->receivedJson()['messages'][1]['reasoning_content']);
     }
 
-    public function testMistralsToolIdsAreCutAndPaddedToExactlyNine(): void
+    public function testAToolIdGoesOutAsItIsWhateverTheHost(): void
     {
-        // Detected rather than hand-built: what Mistral needs is several flags at once,
-        // and picking them one at a time is how a test passes against a config nobody has.
-        $compat = OpenAiCompat::detect('https://api.mistral.ai/v1');
+        // The nine-character Mistral ids were the one id rule this API had of its own, and upstream
+        // dropped it with Mistral's move — `Providers\Mistral` makes them now (`MistralTest`).
         $context = new Context([
             new UserMessage('hi'),
             $this->assistant([new ToolCall('call_abc-123456789', 'read', [])]),
             new ToolResultMessage('call_abc-123456789', 'read', [new TextContent('ok')]),
         ]);
 
-        $this->send($context, $this->model(compat: $compat));
+        $this->send($context, $this->model(compat: OpenAiCompat::detect('https://api.mistral.ai/v1')));
 
         $messages = $this->server->receivedJson()['messages'];
-        $sent = $messages[1]['tool_calls'][0]['id'];
-
-        $this->assertSame(9, strlen($sent));
-        $this->assertSame(1, preg_match('/^[a-zA-Z0-9]+$/', $sent), "{$sent} is not alphanumeric");
-
-        // Shortened separately for the call and the result, so it has to be the same
-        // answer both times or nothing lines up.
-        $this->assertSame($sent, $messages[2]['tool_call_id']);
-        $this->assertSame('read', $messages[2]['name']);
+        $this->assertSame('call_abc-123456789', $messages[1]['tool_calls'][0]['id']);
+        $this->assertSame('call_abc-123456789', $messages[2]['tool_call_id']);
+        $this->assertArrayNotHasKey('name', $messages[2]);
     }
 
-    public function testAShortToolIdIsPaddedDeterministically(): void
+    public function testAStreamThatEndsWithoutAFinishReasonIsAnErrorNotAnAnswer(): void
     {
-        $compat = OpenAiCompat::detect('https://api.mistral.ai/v1');
-        $context = new Context([
-            new UserMessage('hi'),
-            $this->assistant([new ToolCall('ab', 'read', [])]),
-            new ToolResultMessage('ab', 'read', [new TextContent('ok')]),
-        ]);
+        // Upstream's output starts at `stopReason: "pending"`, and a stream that ends with no
+        // `finish_reason` throws `Stream ended without finish_reason`. pig's builder started at
+        // `stop`, so a connection cut mid-answer came back as a finished one — half a sentence, no
+        // usage — and the agent went on.
+        $url = $this->serve([['choices' => [['delta' => ['content' => 'half a sen']]]]]);
 
-        $this->send($context, $this->model(compat: $compat));
+        [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
 
-        $messages = $this->server->receivedJson()['messages'];
+        $this->assertSame('ErrorEvent', end($types));
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('Stream ended without finish_reason', $message->errorMessage);
+        $this->assertSame('half a sen', $message->content[0]->text);
+    }
 
-        $this->assertSame(9, strlen($messages[1]['tool_calls'][0]['id']));
-        $this->assertSame($messages[1]['tool_calls'][0]['id'], $messages[2]['tool_call_id']);
+    public function testAnEndpointThatSendsNoFinishReasonIsFinishedWhenItsStreamIs(): void
+    {
+        // `supportsFinishReason: false` — "When false, pi infers stop or toolUse when the stream
+        // ends." A turn that made a call is `toolUse`, one that did not is `stop`.
+        $compat = new OpenAiCompat(supportsFinishReason: false);
+
+        $url = $this->serve([['choices' => [['delta' => ['content' => 'done']]]]]);
+        $message = Async::run(fn (): AssistantMessage => (new OpenAiCompletions())
+            ->stream($this->model(baseUrl: $url, compat: $compat), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'k'))
+            ->result()->await());
+        $this->assertSame(StopReason::Stop, $message->stopReason);
+
+        $this->server = new CannedServer();
+        $url = $this->serve([['choices' => [['delta' => ['tool_calls' => [['index' => 0, 'id' => 'c1', 'function' => ['name' => 'read', 'arguments' => '{}']]]]]]]]);
+        $message = Async::run(fn (): AssistantMessage => (new OpenAiCompletions())
+            ->stream($this->model(baseUrl: $url, compat: $compat), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'k'))
+            ->result()->await());
+        $this->assertSame(StopReason::ToolUse, $message->stopReason);
+    }
+
+    public function testAFinishReasonNobodyMappedIsAnErrorThatSaysWhich(): void
+    {
+        // Upstream's `mapStopReason()`: `stop`/`end`, `length`, a call — and anything else is
+        // `Provider finish_reason: <reason>`. pig read an unknown reason as a clean `stop` and
+        // `content_filter` as an error with no words in it.
+        foreach (['content_filter', 'network_error', 'weird'] as $reason) {
+            $url = $this->serve([['choices' => [['delta' => ['content' => 'x'], 'finish_reason' => $reason]]]]);
+
+            [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+            $this->assertSame(StopReason::Error, $message->stopReason, $reason);
+            $this->assertSame("Provider finish_reason: {$reason}", $message->errorMessage, $reason);
+            $this->assertSame($reason, $message->rawStopReason, $reason);
+        }
+
+        $this->server = new CannedServer();
+        $url = $this->serve([['choices' => [['delta' => ['content' => 'x'], 'finish_reason' => 'end']]]]);
+        $this->assertSame(StopReason::Stop, $this->collect($url, new Context([new UserMessage('hi')]))[1]->stopReason);
+    }
+
+    public function testUsageInTheStreamIsAskedForUnlessTheCompatSaysNot(): void
+    {
+        // `if (compat.supportsUsageInStreaming !== false) params.stream_options = …` — an endpoint
+        // that rejects `stream_options` can say so; pig sent it to every endpoint.
+        [, $body] = $this->sendWith($this->model(), new OpenAiOptions(apiKey: 'k'));
+        $this->assertSame(['include_usage' => true], $body['stream_options']);
+
+        $this->server = new CannedServer();
+        [, $body] = $this->sendWith($this->model(compat: new OpenAiCompat(supportsUsageInStreaming: false)), new OpenAiOptions(apiKey: 'k'));
+        $this->assertArrayNotHasKey('stream_options', $body);
+    }
+
+    public function testZaiIsAskedToStreamToolCallsWhereItsCompatSaysSo(): void
+    {
+        // `compat.zaiToolStream` puts `tool_stream: true` beside the tools — z.ai streams a call's
+        // arguments only when asked. Not without tools, and not for a model that does not say so.
+        $tool = new Tool('read', 'Read a file', ['type' => 'object', 'properties' => []]);
+        $context = new Context([new UserMessage('hi')], tools: [$tool]);
+
+        [, $body] = $this->sendWith($this->model(compat: new OpenAiCompat(zaiToolStream: true)), new OpenAiOptions(apiKey: 'k'), context: $context);
+        $this->assertTrue($body['tool_stream']);
+
+        $this->server = new CannedServer();
+        [, $body] = $this->sendWith($this->model(compat: new OpenAiCompat(zaiToolStream: true)), new OpenAiOptions(apiKey: 'k'));
+        $this->assertArrayNotHasKey('tool_stream', $body);
+
+        $this->server = new CannedServer();
+        [, $body] = $this->sendWith($this->model(), new OpenAiOptions(apiKey: 'k'), context: $context);
+        $this->assertArrayNotHasKey('tool_stream', $body);
+    }
+
+    public function testVllmsPriorityAndTheThinkingBudgetFieldGoOutAsTopLevelFields(): void
+    {
+        // `vllmPriority` as `priority`, and the reasoning budget under `thinkingTokenBudgetField` —
+        // or `thinking_token_budget` for `supportsThinkingTokenBudget` — with the same clamped budget
+        // `{"$var": "thinking.budget"}` reads: medium's 8,192, under a 16,384 ceiling.
+        $model = $this->model(reasoning: true, compat: new OpenAiCompat(vllmPriority: -5, thinkingTokenBudgetField: 'thinking_budget'));
+        [, $body] = $this->sendWith($model, new OpenAiOptions(maxTokens: 16_384, apiKey: 'k', reasoning: ReasoningEffort::Medium));
+        $this->assertSame(-5, $body['priority']);
+        $this->assertSame(8192, $body['thinking_budget']);
+
+        $model = $this->model(reasoning: true, compat: new OpenAiCompat(supportsThinkingTokenBudget: true));
+        $this->server = new CannedServer();
+        [, $body] = $this->sendWith($model, new OpenAiOptions(maxTokens: 16_384, apiKey: 'k', reasoning: ReasoningEffort::Low));
+        $this->assertSame(2048, $body['thinking_token_budget']);
+        $this->assertArrayNotHasKey('priority', $body);
+
+        // No thinking, no budget.
+        $this->server = new CannedServer();
+        [, $body] = $this->sendWith($model, new OpenAiOptions(maxTokens: 16_384, apiKey: 'k'));
+        $this->assertArrayNotHasKey('thinking_token_budget', $body);
+    }
+
+    public function testTheNewCompatKeysAreLaidOverDetectionKeyByKey(): void
+    {
+        // `getCompat()`: each key `model.compat.x ?? detected.x`, and `vllmPriority` the model's alone.
+        $detected = OpenAiCompat::detect('https://example.test/v1');
+        $this->assertTrue($detected->supportsUsageInStreaming);
+        $this->assertTrue($detected->supportsFinishReason);
+        $this->assertFalse($detected->zaiToolStream);
+        $this->assertFalse($detected->supportsThinkingTokenBudget);
+        $this->assertNull($detected->thinkingTokenBudgetField);
+        $this->assertNull($detected->vllmPriority);
+
+        $resolved = OpenAiCompat::resolve($this->model(compat: new OpenAiCompat(supportsFinishReason: false, vllmPriority: 2.5)));
+        $this->assertFalse($resolved->supportsFinishReason);
+        $this->assertTrue($resolved->supportsUsageInStreaming);
+        $this->assertSame(2.5, $resolved->vllmPriority);
+    }
+
+    public function testARefusedRequestReadsAsUpstreamsSdkErrorDoes(): void
+    {
+        // `formatProviderError(normalizeProviderError(error))` over the `openai` SDK's `APIError`,
+        // no prefix on this API: `<status>: <the error object as JSON>`, and OpenRouter's
+        // `metadata.raw` on a line of its own when the message does not already hold it. pig used
+        // to say `<provider> returned <status>: <message>`, which dropped the code and the type.
+        $body = '{"error":{"message":"bad things","type":"invalid_request_error","metadata":{"raw":"upstream said no"}}}';
+        $url = $this->server->start(["HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: " . strlen($body) . "\r\n\r\n" . $body]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(
+            '400: {"message":"bad things","type":"invalid_request_error","metadata":{"raw":"upstream said no"}}',
+            $message->errorMessage,
+        );
+
+        // A body that is not JSON is the SDK's own message, status and text.
+        $this->server = new CannedServer();
+        $url = $this->server->start(["HTTP/1.1 502 Bad Gateway\r\nContent-Length: 7\r\n\r\nupstream"]);
+        $this->assertSame('502 upstrea', $this->collect($url, new Context([new UserMessage('hi')]))[1]->errorMessage);
+
+        // And the raw metadata is added when the formatted message lacks it: a quote inside it is
+        // escaped in the JSON, so the text itself is not there.
+        $body = '{"error":{"message":"m","metadata":{"raw":"say \\"no\\""}}}';
+        $this->server = new CannedServer();
+        $url = $this->server->start(["HTTP/1.1 400 Bad Request\r\nContent-Length: " . strlen($body) . "\r\n\r\n" . $body]);
+        $this->assertSame(
+            '400: {"message":"m","metadata":{"raw":"say \\"no\\""}}' . "\nsay \"no\"",
+            $this->collect($url, new Context([new UserMessage('hi')]))[1]->errorMessage,
+        );
     }
 
     public function testAnEndpointWithNoThinkingFieldGetsItAsText(): void

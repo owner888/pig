@@ -8,7 +8,7 @@ namespace Pig\Ai;
 final readonly class DoneEvent implements AssistantMessageEvent
 {
     /**
-     * @param StopReason $reason Stop, Length or ToolUse — a failure arrives as ErrorEvent instead
+     * @param StopReason $reason Stop, Length, ToolUse or Deferred — a failure arrives as ErrorEvent instead
      */
     public function __construct(
         public StopReason $reason,

@@ -942,7 +942,7 @@ output at 4096 and cannot reason, so `--model claude-3-haiku-20240307` built a r
 provider rejects, from a flag that looked like it had worked.
 
 `Providers\OpenAiCompletions` is upstream's `openai-completions.ts`, and it is worth more than
-the one name on it: Groq, Cerebras, xAI, Zai, Mistral, OpenRouter and GitHub Copilot's Gemini and
+the one name on it: Groq, Cerebras, xAI, Zai, OpenRouter and GitHub Copilot's Gemini and
 Kimi models all answer this shape (Copilot's Claude speaks `anthropic-messages` and its `gpt-`,
 `grok-`, `oswe` and `mai-` models `openai-responses`, as upstream's generator routes them). Structurally it differs from `Anthropic` in one way that matters — **Anthropic
 numbers its content blocks and says when each opens and closes; this does not.** A block runs
@@ -951,17 +951,19 @@ and that is the only real complexity in the file. `AssistantMessageBuilder` grew
 and `setToolCall()` for it: OpenAI numbers nothing, and a tool call's id and name arrive in
 whichever delta they arrive in.
 
-`Ai\OpenAiCompat` is the table of ways an "OpenAI-compatible" endpoint is not one. Mistral
-wants tool ids of exactly nine alphanumeric characters, Grok rejects `reasoning_effort`,
-Cerebras rejects `store`. None of that is documented anywhere as a difference; it is what a 400 looks like
+`Ai\OpenAiCompat` is the table of ways an "OpenAI-compatible" endpoint is not one. Grok rejects
+`reasoning_effort`, Cerebras rejects `store`, z.ai streams tool calls only with `tool_stream`. None of that is documented anywhere as a difference; it is what a 400 looks like
 after you have sent it. A table per endpoint rather than one rule, for the same reason the tool
 archive names are a table — see that note above. `detect()` is upstream's `detectCompat()` flag by
-flag (provider name or URL; only DeepSeek's URL check ignores case), plus the Mistral rules upstream
-dropped when Mistral moved to its own API, and a model's own `compat` is laid over it **key by key**
+flag (provider name or URL; only DeepSeek's URL check ignores case), and a model's own `compat` is laid over it **key by key**
 by `resolve()` — upstream's `getCompat()`. Every field is nullable and null means "not said".
 `openRouterRouting` and `vercelGatewayRouting` are upstream's two routing objects: read off the
 model's own compat (not the resolved one), sent as `provider` and `providerOptions.gateway`, and
 merged provider → model one level deep in `models.json` like the template values.
+Mistral is not on this API at all: `Providers\Mistral` is upstream's `mistral-conversations.ts`
+(thinking as content chunks, `reasoning_effort` from the model's map or `prompt_mode` for one
+without, nine-character tool ids it makes itself, `Mistral API error (<status>): <body>`), and the
+four Mistral rules `detect()` used to keep from before upstream's move are gone.
 Caching on completions is upstream's too: `prompt_cache_key` (the session id, 64 code points) for a
 base URL containing `api.openai.com` unless `cacheRetention` is `none`, and anywhere for `long` where
 `supportsLongCacheRetention` (detected false for Together, Cloudflare, NVIDIA, Ant Ling), with
@@ -2531,11 +2533,11 @@ Six things that took a decision:
   `data:{…}`. Putting upstream's rule back in pig fails one test in the ugliest possible way: the
   turn returns `stopReason: stop` with **zero content**, because the `done` line in that fixture
   happens to have a space and the content lines do not. pig takes the gemini spelling of both — one
-  optional space, and a line that is not JSON is skipped rather than fatal, so a `: keep-alive`
-  comment cannot kill a working stream.
-- **These are the only two hand-rolled event-stream readers in pi at all.** Everywhere else the
-  Anthropic, OpenAI and Google SDKs parse it, which is why upstream never wrote the parser pig had
-  to write — and why `GoogleGeminiCli` here uses `SseParser` while this does not: Google's Code
+  optional space. A line that is not JSON ends the turn, as upstream's `JSON.parse` does — a
+  `: keep-alive` comment and a blank `data:` never reach the parse, so what that refuses is a broken
+  event.
+- **These were the only two hand-rolled event-stream readers in pi at the time** (HEAD has since
+  added Anthropic's and Mistral's). The OpenAI and Google SDKs parse the rest — and that is why `GoogleGeminiCli` here uses `SseParser` while this does not: Google's Code
   Assist frames properly and can be checked, a gateway cannot.
 - **A stream that ends without `done` or `error` is a failure**, as upstream's: `Connection closed by
   proxy server before the response completed`. The partial starts at `StopReason::Pending`, as
@@ -3345,8 +3347,10 @@ overflow however retryable the rest of it looks — a 429 that says "prompt is t
 
 **`Session\Retry` reads the status code, where upstream reads the prose.** Upstream matches
 the error message against `/overloaded|rate.?limit|429|500|.../i` because its providers word
-failures however they like. All four of pig's providers write
-`"<provider> returned <status>: <message>"`, so the number is right there — 408, 429, 500,
+failures however they like. pig's providers write `"<provider> returned <status>: <message>"`
+(Anthropic, Google) or upstream's `formatProviderError()` text (`OpenAI API error (<status>): …`,
+`Mistral API error (<status>): …`, completions' bare `<status>: …`), and `statusOf()` reads the
+number out of each — 408, 429, 500,
 502, 503, 504 and 529 are waited out, and everything else a provider returns is about the
 request, which will not change by being sent again. The word list survives underneath for the
 failures that never reached HTTP at all: a socket that died mid-stream has no status to read.
@@ -3989,9 +3993,9 @@ than left to be rediscovered.
 
 `pi-ai` does not implement a provider protocol at all. `@anthropic-ai/sdk`, `openai`,
 `@google/genai` and `@mistralai/mistralai` are in its `dependencies`, and each one builds the
-request, reads the event stream and hands back typed events. Upstream hand-writes an event-stream
-reader in exactly **two** places in the whole repository — `google-gemini-cli.ts`, because Code
-Assist has no SDK, and `agent/proxy.ts`. Everywhere else an SDK does it.
+request, reads the event stream and hands back typed events — except where upstream has since
+written its own: at HEAD `anthropic-messages.ts` and `mistral-conversations.ts` call `fetch` and
+parse the event stream by hand, as `agent/proxy.ts` does.
 
 pig hand-writes all of it: 4,734 lines across `Providers/` and `Http/`, with 144 tests over them.
 That is not a preference. As of the date on this section:
@@ -6592,8 +6596,7 @@ NO  max_tokens stops it   it came back as stop after 145 output tokens against a
 
 So **no pig request to DeepSeek had ever been bounded**: not `SimpleStreamOptions(maxTokens: …)`, not
 the model's declared `maxTokens`, not the compaction summariser's. Nothing failed, nothing was
-logged, and the only symptom is a bill. `deepseek.com` joins `mistral.ai` and `chutes.ai` on the
-`max_tokens` row.
+logged, and the only symptom is a bill. `deepseek.com` joins `chutes.ai` on the `max_tokens` row.
 
 **An endpoint that quietly drops a field is worse than one that refuses it, and only a number tells
 them apart.** The first run reported `it came back as stop rather than length`, which reads like a
@@ -7592,11 +7595,24 @@ base URL, and rewrite the rows. Five things about it are the decisions rather th
   `add` overrides. Upstream says users opt into the full window through `modelOverrides`; pig has no
   `modelOverrides`, so the way back to it is a `models.json` provider of one's own.
 - **models.dev's `reasoning_options` are read** for the providers upstream records them for (not Google,
-  not Mistral): `getEffortThinkingLevelMap()` becomes the row's `effortLevelMap`, and `Models` merges it
+  not Mistral, whose rows take a built map instead — below): `getEffortThinkingLevelMap()` becomes the row's `effortLevelMap`, and `Models` merges it
   where upstream's `applyModelsDevReasoningOptionMetadata()` does — after the Anthropic compat arm,
   before the id rules — only when `supportsDirectReasoningEffort()` (Responses; adaptive Anthropic;
   completions with `thinkingFormat: "openai"` and `supportsReasoningEffort`). The rows carry none
   until the next regeneration on a machine that reaches models.dev.
+- **Google, Mistral and z.ai rows carry a built `thinkingLevelMap`**, as upstream's generator builds
+  it where it makes the row: Google's `getGoogleThinkingLevelMap()` (the verified efforts, else Gemma
+  4's `{off: null, minimal: "MINIMAL", low: null, medium: null, high: "HIGH"}`; the `-latest` aliases
+  read the model they name), Mistral's efforts (`reasoning_effort` at run time, `prompt_mode` for a
+  reasoning model without), z.ai's efforts with GLM-5.2's `off: "none"`. A measured correction in
+  `OVERRIDES` merges into the map rather than replacing it. z.ai's rows are read from models.dev's
+  `zai-coding-plan` entry (the plan's endpoint is pig's `zai`), priced from `zai`'s.
+- **Copilot rows carry models.dev's list prices and GitHub's extended windows**, as upstream's do:
+  `cost: getModelsDevCost(m.cost)`, and `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS` as a rule over every
+  row (`copilotTemporaryOverrides()`) — 1,000,000, whatever models.dev says. Upstream's
+  `missingCopilotModels` (Opus 5.5, GPT-6 Sol and Luna) are `add` overrides.
+- **Only Copilot's `deprecated` models are left out**, as upstream's generator leaves them out among
+  the providers pig generates.
 - **`inputLimits` and `promptCache` are upstream's generator metadata**, written in `Models::table()`
   (`inputLimits()`, `promptCache()`) like the maps: per-provider image limits plus the 2000px / 4.5 MiB
   resize profile on every image model, and `{short: 300, long: 3600}` on direct Anthropic. Upstream's
@@ -7724,7 +7740,7 @@ changes nothing, and it arrived on the mechanism's first opportunity to use it. 
 **Which left the `fix` arm with no entry, and that was worth not shrugging at** — an untested arm in
 the thing that rewrites the registry is what this entry is about. So upstream HEAD was read for a
 *live* correction instead of deleting the two tests, and there is one:
-`GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS`. Measured against the regenerated rows, four of its ten are
+`GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS`. Measured against the regenerated rows, four of its ids were
 short:
 
 ```
@@ -7737,15 +7753,10 @@ gpt-5.3-codex      only 400,000
 GitHub's own table gives those the 1,000,000-token window. **A context window is where compaction
 fires**, so a fifth of the real figure means pig summarising a conversation that had four times the
 room — the failure the deleted `spotValues` docblock described in as many words ("too small
-summarises a conversation that had room"). Four `fix` entries, upstream's reason carried with them,
-and the check behind that reason is **inherited and not repeated here**, the same standing as
-`EXCLUDED`.
-
-One gap recorded rather than papered over: upstream keeps that as a *set*, so it also covers ids
-models.dev does not carry for Copilot yet, while these are per-id. Six of the ten would report
-"changes nothing" every run, which is noise, so the four that are live are the entries — and a *new*
-Copilot model arriving with a too-small window is therefore not caught by itself. The tell is a
-Copilot row whose window looks small beside its siblings.
+summarises a conversation that had room"). The check behind upstream's list is **inherited and not
+repeated here**, the same standing as `EXCLUDED`. It is a rule now, as upstream's is — every listed
+id gets 1,000,000 on every run (`copilotTemporaryOverrides()`) — so it also covers an id models.dev
+lists later, and the five it listed at 1,050,000 rather than GitHub's figure.
 
 ### Eighteen of Gemini's twenty finish reasons were an error with no words in it
 
@@ -7868,9 +7879,10 @@ for; for a model newer than the anchor, declare it in `models.json` first.
 
 Seventeenth, and the narrowest kind of porting bug: a regex ported with its subject left behind.
 `Overflow::NO_BODY` matches `"400 status code (no body)"` — the **OpenAI SDK's** phrasing, which is
-what upstream reads. pig has no SDK: all five of its providers write
-`"<who> returned <status>: <message or body>"`, so a 4xx with an empty body ends at the colon and
-that pattern could not fire.
+what upstream reads. pig's providers then all wrote `"<who> returned <status>: <message or body>"`,
+so a 4xx with an empty body ended at the colon and that pattern could not fire. (Both OpenAI
+providers write the SDK's phrasing now, through `Utils\ErrorBody`; Anthropic and Google still write
+the other shape, which `EMPTY_BODY` is for.)
 
 Cerebras and Mistral answer an oversized prompt with exactly that — a bare 400 and no body — so the
 one case the pattern exists for was the one it missed. `Retry::worthRetrying()` then found a
@@ -7891,7 +7903,7 @@ one optional space, multi-line `data:`, comments and CRLF; `PartialJson` is a ha
 for the `partial-json` package, and it has now been run **against** it — `partial-json@0.1.7`, every
 prefix of a corpus of realistic tool arguments, two differences and both accounted for in its
 docblock. `Retry` differs from upstream deliberately and says so: it reads the status out of
-pig's own message shape instead of matching bare numbers anywhere in the prose, and adds 408 and
+the message shapes pig's providers write instead of matching bare numbers anywhere in the prose, and adds 408 and
 529 — Anthropic's real "overloaded" — to upstream's list.
 
 ### `Agent::continue()` turned a misuse into a fabricated turn in somebody's conversation
@@ -8501,13 +8513,14 @@ should have prevented it is the one that caused it.** `CustomModels::compat()` r
 > `OpenAiCompat` has four more … a file that uses them is a pig file, which is the trade and it is
 > stated.
 
-Upstream's `OpenAICompat` in `types.ts` has **all eight**, and the four it supposedly lacks are
-right there with a `requires` prefix on each: `requiresToolResultName`,
+Upstream's `OpenAICompat` in `types.ts` had **all eight** then, and the four it supposedly lacked
+were right there with a `requires` prefix on each: `requiresToolResultName`,
 `requiresAssistantAfterToolResult`, `requiresThinkingAsText`, `requiresMistralToolIds`. pig read
 them without the prefix, so a `models.json` written for pi had four of its eight settings silently
 ignored — and the last of the four is the one that matters most, because a Mistral-shaped endpoint
 rejects any tool id that is not exactly nine alphanumeric characters. Somebody who had configured
-their proxy correctly for pi got a 400 out of pig with nothing on screen to connect it to.
+their proxy correctly for pi got a 400 out of pig with nothing on screen to connect it to. (Upstream
+has since dropped `requiresMistralToolIds` with Mistral's move to its own API, and pig with it.)
 
 Three things worth taking from it:
 
@@ -10770,11 +10783,12 @@ Three things came out of it, and the first is worse than the question that was a
 - **Which levels a model refuses has no pattern in its name.** MINIMAL is refused on 3.7, 3.8 and
   both Pro ids and accepted on 3.5, 3.6, 3.1 Flash Lite and 3.5 Flash Lite; `off` is refused on Pro
   and 3.5 Flash Lite, ignored on 3.7/3.8, honoured on the rest. So it is **data, per row**: the
-  Google table gained an optional tenth cell, a `thinkingLevelMap` — the same machinery the
-  Antigravity rows already use — and `ThinkingLevel::clampedFor()` moves `off` and `minimal` up to
-  `low` *before* a request is built. The map comes from `scripts/generate-models.php`'s `OVERRIDES`,
-  each with the measurement as its `why`, because models.dev knows nothing about refusals and a
-  regeneration must not lose them. A row with nothing to say keeps its nine cells.
+  Google rows carry a `thinkingLevelMap` — the same machinery the Antigravity rows already use — and
+  `ThinkingLevel::clampedFor()` moves `off` and `minimal` up to `low` *before* a request is built.
+  The measured refusals are `scripts/generate-models.php`'s `OVERRIDES`, each with the measurement
+  as its `why`, merged into the map the generator builds from models.dev's verified efforts
+  (upstream's `getGoogleThinkingLevelMap()`), so a regeneration does not lose them. A row with
+  nothing to say keeps its nine cells.
 
 **And the generator's own report was lying about it**, which is worth more than the fix: the first
 regeneration printed `antigravity/gemini-3.8-flash: levels {…} → []` for every Antigravity row, as
@@ -11381,7 +11395,7 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 
 **避坑规则**：
 - `detect($baseUrl, $provider, $modelId)` 逐项照 upstream `detectCompat()` 抄，provider 名和 URL 都要传；只有 DeepSeek 的 URL 判定不分大小写。
-- Mistral 规则是 pig 自己的（upstream 已改走 `mistral-conversations`），改 detect 时别顺手删。
+- Mistral 不走这个 API：它是 `Providers\Mistral`（upstream 的 `mistral-conversations`），`detect()` 里不再有 Mistral 规则。
 - 测试：`OpenAiCompletionsTest::testEveryEndpointUpstreamNamesIsDetectedAsUpstreamDetectsIt`、`testDeepSeekIsNonStandardTheWayUpstreamDetectsIt`、`testDeepSeekGetsItUnderTheOlderNameToo`。
 
 ### `compat` 块整块替换检测结果
@@ -11708,8 +11722,118 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 
 **避坑规则**：
 - 校验走 `CustomModels::schemaErrors()`，消息与 TypeBox 1.3.27 一致（`must be number`、`must have required properties …`、`must be >= 1`）；pig 只拒这个模型，不拒整个文件。
-- JSON 的 `{}` 和 `[]` 在 PHP 里都是 `[]`，按 schema 要的那种算。
+- schema 校验读保留对象的那份解码（`json_decode($raw, false)`），`{}` 和 `[]` 照 upstream 区分开。
 - 测试：`CustomModelsTest::testACostTierIsValidatedWithUpstreamsSchemaMessages`、`testInputLimitsAndPromptCacheAreReadAndCheckedAsUpstreamsSchemaChecksThem`。
+
+### Copilot 按 $0 计费、扩展窗口靠逐条修补
+
+**症状**：经 GitHub Copilot 的会话花费恒为 $0；新上的 1M 窗口 Copilot 模型仍按 models.dev 的小窗口压缩；upstream 手加的 Copilot 模型（Claude Opus 5.5、GPT-6 Sol/Luna）在 pig 里不存在。
+
+**根因**：upstream `getModelsDevCost()` 给 Copilot 也写 models.dev 的标价；`GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS` 里的 id 一律 `contextWindow: 1_000_000`；`missingCopilotModels` 补 models.dev 还没有的行。pig 的生成器把 Copilot 价格写成 0，窗口靠 OVERRIDES 一条条改。
+
+**避坑规则**：
+- 扩展窗口只改 `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS`，不要再写按 id 的 fix 行；手加模型放 OVERRIDES 的 add 行，models.dev 有了就删。
+- 测试：`GenerateModelsTest::testCopilotRowsCarryModelsDevsListPricesAsUpstreamsGeneratorWritesThem`、`testCopilotsExtendedWindowIsUpstreamsRuleOverEveryListedId`、`testUpstreamsMissingCopilotModelsAreAddedByHandUntilTheCatalogueHasThem`，`ModelsTest::testACopilotConversationIsPricedAtModelsDevsListPricesAsUpstreamPricesIt`、`testCopilotsExtendedWindowsAreUpstreamsOneMillionForEveryListedId`。
+
+### Mistral 走 chat completions，工具 id 和思考参数都是 pig 自己猜的
+
+**症状**：Mistral 模型经 `openai-completions` 发请求，工具 id 被 pig 改写成 9 位，推理模型不收 `reasoning_effort` / `prompt_mode`；`detect()` 看到 `mistral.ai` 就开一堆特例，自定义 Mistral 兼容端点也被波及。
+
+**根因**：upstream 生成器把 mistral 行写成 `api: "mistral-conversations"`、`baseUrl: "https://api.mistral.ai"`，由 `api/mistral-conversations.ts` 发 Mistral 自己的形状（9 位 id 只在这里做，effort 有表才发 `reasoning_effort`，否则 `prompt_mode: "reasoning"`）；completions 的 `detectCompat()` 没有任何 Mistral 分支。
+
+**避坑规则**：
+- Mistral 的特殊处理只放 `Providers/Mistral.php`；`OpenAiCompat` 不认主机名 `mistral.ai`，`requiresMistralToolIds` 已删。
+- 测试：`MistralTest` 全部，`ModelsTest::testMistralsModelsSpeakMistralsOwnApiAsUpstreamsGeneratorRoutesThem`，`OpenAiCompletionsTest::testMistralsHostIsNotOneOfThisApisQuirksAnyMore`、`testAToolIdGoesOutAsItIsWhateverTheHost`。
+
+### Google / Gemma 的思考级别表不是 upstream 的
+
+**症状**：Gemma 4 等只认 `thinking_level` 两档的模型收到 pig 夹出来的 `low` / `medium`，被 400 拒；Gemini `-latest` 别名价格和表跟着错的源模型走；`off` 对不能关思考的模型也发出去。
+
+**根因**：upstream `getGoogleThinkingLevelMap()` 从 models.dev 的 `reasoning_options` 建表写进行里，`-latest` 别名取指向的模型；运行时 `streamSimpleGoogle` 用 `clampThinkingLevel()` 按行里的表夹。pig 生成器不建表，`Stream::gemini()` 只夹到 high。
+
+**避坑规则**：
+- 行里的 `thinkingLevelMap` 由生成器写，测出来的拒绝级别再合并进去；`Stream::gemini()` 只用 `$model->clampThinkingLevel()`。
+- 测试：`GenerateModelsTest::testGoogleRowsTakeUpstreamsGoogleThinkingLevelMap`、`testALevelTheEndpointRefusesIsMergedIntoTheRowsThinkingLevelMap`。
+
+### Z.ai 读错 models.dev 条目
+
+**症状**：Z.ai 编程套餐的模型缺行、窗口和思考开关不对，工具调用不流式。
+
+**根因**：upstream `processZaiModels()` 读 `zai-coding-plan` 条目、价格取 `zai` 条目的，GLM-5.2 不能 `off`，除 `ZAI_TOOL_STREAM_UNSUPPORTED_MODELS` 外都 `zaiToolStream: true`、`thinkingFormat: "zai"`。pig 读的是 `zai`。
+
+**避坑规则**：
+- 生成器 `SOURCE['zai'] = 'zai-coding-plan'`；`Models.php` 里的 Z.ai 行要等下一次重新生成才换成新源（models.dev 当前不可达）。
+- 测试：`GenerateModelsTest::testZaiIsReadFromTheCodingPlansEntryAndPricedFromZaisOwn`，`ModelsTest::testZaisModelsSayTheirThinkingFormatAndStreamTheirToolCalls`，`OpenAiCompletionsTest::testZaiIsAskedToStreamToolCallsWhereItsCompatSaysSo`。
+
+### Responses 并发 item 串流、只到 `done` 的 item 丢失、空 delta 被吞
+
+**症状**：同一响应里两个 item 交错流（如推理和消息、两个工具调用），delta 落进错的块；端点只发 `output_item.done` 不发 `added` 时那段输出整个丢掉；空字符串 delta 不发事件；被拒请求的消息不是 upstream 的 `OpenAI API error (N): {...}`。
+
+**根因**：upstream `processResponsesStream()` 按 `output_index` 建槽，`done` 时 `getOrCreateSlot()`；delta 只判 `typeof === "string"`；错误经 `formatProviderError(normalizeProviderError(err), "OpenAI API error")`。pig 只有一个“当前块”。
+
+**避坑规则**：
+- 事件一律按 `output_index` 找槽（缺省键 `'undefined'`），不要回到“当前块”；`done` 不重读 id / name。
+- 错误文本走 `Utils\ErrorBody`，不要手拼。
+- 测试：`OpenAiResponsesTest::testTwoItemsStreamingAtOnceEachGetTheirOwnDeltas`、`testAnItemThatOnlyArrivesFinishedStillBecomesABlock`、`testAFinishedCallKeepsTheIdItWasOpenedWith`、`testAnEmptyDeltaIsStillADelta`、`testARefusedRequestReadsAsUpstreamsSdkErrorDoes`。
+
+### chat completions 把没有 finish_reason 的断流当成功
+
+**症状**：流在中途断开（没有 `finish_reason`）时回合按 `stop` 收尾，截断的回答当完整回答；未知 finish_reason 被当 `stop`；不支持 `stream_options` 的端点被 400 拒；vLLM 优先级、思考预算字段、Z.ai 工具流无法配置。
+
+**根因**：upstream 消息从 `pending` 开始，流尽时 `supportsFinishReason !== false` 且未收到 finish_reason 就报 `Stream ended without finish_reason`；`mapStopReason()` 默认分支报 `Provider finish_reason: X`；`stream_options` 看 `supportsUsageInStreaming`；`vllmPriority` / `thinkingTokenBudgetField` / `zaiToolStream` 是 compat 键。
+
+**避坑规则**：
+- 不支持 finish_reason 的端点写 `compat.supportsFinishReason: false`，不要改回默认成功。
+- 测试：`OpenAiCompletionsTest::testAStreamThatEndsWithoutAFinishReasonIsAnErrorNotAnAnswer`、`testAnEndpointThatSendsNoFinishReasonIsFinishedWhenItsStreamIs`、`testAFinishReasonNobodyMappedIsAnErrorThatSaysWhich`、`testUsageInTheStreamIsAskedForUnlessTheCompatSaysNot`、`testVllmsPriorityAndTheThinkingBudgetFieldGoOutAsTopLevelFields`、`testTheNewCompatKeysAreLaidOverDetectionKeyByKey`、`testARefusedRequestReadsAsUpstreamsSdkErrorDoes`。
+
+### Google 无 finish reason 的流当成功、错误 finish reason 立即抛
+
+**症状**：Gemini 流中途断开时截断的回答按 `stop` 收尾；`finishReason` 是安全拦截等错误值时，后面同一流里的用量和内容丢失。
+
+**根因**：upstream `google.ts` 从 `pending` 开始，流尽仍是 `pending` 报 `Google stream ended without a finish reason`，错误 finish reason 读到流尾再报 `Provider stopped with: X`。
+
+**避坑规则**：
+- `GoogleShared::onChunk(..., deferErrors: true)` 只给 `Google.php` 用；Antigravity 扩展仍走旧的立即抛。
+- 测试：`GoogleTest::testAStreamThatEndsWithoutAFinishReasonIsAnErrorNotAnAnswer`、`testAnErrorFinishReasonIsReadToTheEndOfTheStreamBeforeItEndsTheTurn`。
+
+### Anthropic 坏 SSE 事件静默跳过
+
+**症状**：Anthropic 流里一条解析不了的事件被丢掉，回合照常结束但少了内容；含原始控制字符的事件也被丢。
+
+**根因**：upstream 只处理消息事件，`parseJsonWithRepair()` 先修再解析，仍失败就抛 `Could not parse Anthropic SSE event <type>: <msg>; data=<data>; raw=<raw>`。
+
+**避坑规则**：
+- 解析走 `Utils\JsonRepair::parse()`；`SseEvent::$raw` 保留原始行供消息使用。
+- 测试：`AnthropicTest::testAnEventThatCannotBeParsedEndsTheTurnAndSaysWhatItWas`、`testARawControlCharacterInAnEventIsRepairedRatherThanFatal`，`SseParserTest::testAnEventKeepsTheLinesItWasMadeOfCommentsIncluded`。
+
+### StreamProxy 的错误文本不是 upstream 的
+
+**症状**：网关发来非 JSON 行时 pig 跳过继续读；delta 落到别种块时报 pig 自己的话；网关 `error` 事件没有 `errorMessage` 时 pig 填默认文本。
+
+**根因**：upstream `JSON.parse` 失败即抛，块类型不符抛 `Received text_delta for non-text content` 等，`error` 事件原样拷 `errorMessage`（可以没有）。
+
+**避坑规则**：
+- 测试：`StreamProxyTest::testALineThatIsNotJsonEndsTheTurnAsUpstreamsJsonParseDoes`、`testAnEventAgainstABlockOfAnotherKindEndsTheTurnInUpstreamsWords`、`testAnErrorEventWithNoMessageLeavesTheTurnWithoutOne`。
+
+### models.json 的 cost 缺基础价格、备用模型列表不校验
+
+**症状**：`cost` 只写 `input` 时其余按 0 计费；`compat.allowedFallbackModels` 写超过 3 项、空 provider 或缺 cost 也被接受；`"cost": {}` 和 `"cost": []` 被当成一回事。
+
+**根因**：upstream `ModelCostSchema` 四个基础价格必填（不限非负），`allowedFallbackModels` 用 `maxItems: 3`、`minLength: 1` 的 schema 校验，TypeBox 区分对象和数组。
+
+**避坑规则**：
+- 校验读 `json_decode($raw, false)` 的对象，不要用数组解码判断类型；provider 级的 `allowedFallbackModels` 错误拒整个 provider。
+- 测试：`CustomModelsTest::testAPriceThatIsNotANumberIsRefusedRatherThanReadAsFree`、`testANegativePriceIsWhatUpstreamsSchemaAllows`、`testACostTierIsValidatedWithUpstreamsSchemaMessages`、`testTheCachingSessionAndFallbackKeysAreReadUnderUpstreamsNames`。
+
+### `deferred` 停止原因不存在
+
+**症状**：提供方以 `deferred` 结束的回合（后台续跑的句柄）在会话文件里读回时被当成 `stop`（`StopReason::tryFrom()` 失败后的默认值），句柄丢失；提供方也无法报告这种结束。
+
+**根因**：upstream `StopReason` 含 `"deferred"`，`AssistantMessage.deferred` 携带句柄，agent loop 把它当正常结束。
+
+**避坑规则**：
+- 新增停止原因时同步 `MessageJson`、`TransformMessages`、`SessionManager`、`AgentSession` 的拷贝点。
+- 测试：`MessageTest::testADeferredTurnAndItsHandleSurviveTheSessionFile`，`AgentLoopTest::testADeferredTurnEndsTheRunAsAFinishedOneDoes`。
 
 ## Version floor: PHP >= 8.3
 

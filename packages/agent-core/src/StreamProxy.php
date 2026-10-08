@@ -297,7 +297,6 @@ final class StreamProxy
                 'requiresToolResultName' => $model->compat->toolResultName,
                 'requiresAssistantAfterToolResult' => $model->compat->assistantAfterToolResult,
                 'requiresThinkingAsText' => $model->compat->thinkingAsText,
-                'requiresMistralToolIds' => $model->compat->mistralToolIds,
                 'requiresReasoningContentOnAssistantMessages' => $model->compat->reasoningContentOnAssistantMessages,
                 'supportsStrictMode' => $model->compat->strictMode,
                 'thinkingFormat' => $model->compat->thinkingFormat,
@@ -314,6 +313,16 @@ final class StreamProxy
                 'supportsMaxOutputTokens' => $model->compat->supportsMaxOutputTokens,
                 'sendSessionAffinityHeaders' => $model->compat->sendSessionAffinityHeaders,
                 'cacheControlFormat' => $model->compat->cacheControlFormat,
+                'supportsUsageInStreaming' => $model->compat->supportsUsageInStreaming,
+                'supportsFinishReason' => $model->compat->supportsFinishReason,
+                'zaiToolStream' => $model->compat->zaiToolStream,
+                'thinkingTokenBudgetField' => $model->compat->thinkingTokenBudgetField,
+                'supportsThinkingTokenBudget' => $model->compat->supportsThinkingTokenBudget,
+                'vllmPriority' => $model->compat->vllmPriority,
+                'supportsMidConvoSystemMessages' => $model->compat->supportsMidConvoSystemMessages,
+                'supportsMidConvoToolAdditions' => $model->compat->supportsMidConvoToolAdditions,
+                'supportsToolSearch' => $model->compat->supportsToolSearch,
+                'supportsAdditionalTools' => $model->compat->supportsAdditionalTools,
             ], static fn (mixed $value): bool => $value !== null);
         }
 
@@ -449,13 +458,18 @@ final class StreamProxy
     /** @return bool true for `done` or `error`, the two that end the stream */
     private function dispatch(string $data, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream): bool
     {
+        // Upstream's `JSON.parse(data)`, which throws on a payload that is not JSON and so ends the
+        // turn through the catch. pig used to skip such a line; a `: keep-alive` comment and a blank
+        // `data:` never get here (`payload()` drops them), so what is left is a broken event. The
+        // message is PHP's JSON error where upstream's is V8's `SyntaxError`.
         $event = json_decode($data, true);
 
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new AgentError(json_last_error_msg());
+        }
+
         if (!is_array($event)) {
-            // A line that is not JSON is the gateway's mistake, not the conversation's. Upstream
-            // lets `JSON.parse` throw here, which ends the turn; a `: keep-alive` comment or a
-            // blank `data:` would then kill a working stream, so this skips instead.
-            return false;
+            $event = [];
         }
 
         $wire = isset($event['contentIndex']) ? (int) $event['contentIndex'] : -1;
@@ -509,9 +523,10 @@ final class StreamProxy
     /**
      * A delta against a block the gateway opened.
      *
-     * Upstream throws `Received text_delta for non-text content` when the block at that index is
-     * the wrong kind, and that throw ends the turn through its catch. Here a block the gateway
-     * never opened has no index at all, which is the same mistake arriving one step earlier.
+     * Upstream throws `Received text_delta for non-text content` (and the same for thinking and
+     * tool calls) when the block at that index is missing or of another kind, and that throw ends
+     * the turn through its catch. pig used to say `The proxy sent … for a block it never opened`,
+     * and wrote a delta into a block of the wrong kind.
      */
     private function append(
         AssistantMessageBuilder $builder,
@@ -523,8 +538,8 @@ final class StreamProxy
     ): void {
         $index = $builder->indexOf($wire);
 
-        if ($index === null) {
-            throw new AgentError("The proxy sent {$type} for a block it never opened ({$wire})");
+        if ($index === null || !self::isKind($builder, $index, $type)) {
+            throw new AgentError(self::wrongKind($type));
         }
 
         $builder->append($index, $field, $delta);
@@ -546,21 +561,45 @@ final class StreamProxy
     ): void {
         $index = $builder->indexOf($wire);
 
-        if ($index === null) {
-            throw new AgentError("The proxy sent {$type} for a block it never opened ({$wire})");
+        // Upstream: `Received text_end for non-text content`, `Received thinking_end for
+        // non-thinking content`.
+        if ($index === null || !self::isKind($builder, $index, $type)) {
+            throw new AgentError(self::wrongKind($type));
         }
 
-        // One field for both, as upstream has it: `contentSignature` closes text and thinking
-        // alike, and the block's own type decides what it means.
-        if (isset($event['contentSignature']) && is_string($event['contentSignature'])) {
-            $builder->setSignature($index, $event['contentSignature']);
-        }
+        // One field for both, as upstream has it: `content.textSignature = proxyEvent.contentSignature`
+        // (or `thinkingSignature`) — assigned whatever it is, so an event without one leaves none.
+        $builder->setSignature($index, is_string($event['contentSignature'] ?? null) ? $event['contentSignature'] : '');
 
         $stream->push(match ($type) {
             'thinking_end' => new ThinkingEndEvent($index, $builder->textOf($index), $builder->snapshot()),
             'toolcall_end' => new ToolCallEndEvent($index, $builder->toolCallOf($index), $builder->snapshot()),
             default => new TextEndEvent($index, $builder->textOf($index), $builder->snapshot()),
         });
+    }
+
+    /** Whether the block at `$index` is the kind an event of `$type` is for. */
+    private static function isKind(AssistantMessageBuilder $builder, int $index, string $type): bool
+    {
+        $block = $builder->snapshot()->content[$index] ?? null;
+
+        return match ($type) {
+            'text_delta', 'text_end' => $block instanceof \Pig\Ai\TextContent,
+            'thinking_delta', 'thinking_end' => $block instanceof \Pig\Ai\ThinkingContent,
+            default => $block instanceof ToolCall,
+        };
+    }
+
+    /** Upstream's words for an event against a block of another kind. */
+    private static function wrongKind(string $type): string
+    {
+        return match ($type) {
+            'text_delta' => 'Received text_delta for non-text content',
+            'text_end' => 'Received text_end for non-text content',
+            'thinking_delta' => 'Received thinking_delta for non-thinking content',
+            'thinking_end' => 'Received thinking_end for non-thinking content',
+            default => 'Received toolcall_delta for non-toolCall content',
+        };
     }
 
     /**
@@ -636,10 +675,11 @@ final class StreamProxy
     {
         $builder->setUsage(self::usage($event['usage'] ?? []), priced: true);
         self::providerThinkingLevel($builder, $event);
-        $builder->fail(
-            (string) ($event['errorMessage'] ?? 'The proxy reported an error with no message'),
-            ($event['reason'] ?? '') === 'aborted',
-        );
+        // `partial.stopReason = proxyEvent.reason; partial.errorMessage = proxyEvent.errorMessage` —
+        // an event without a message leaves the turn without one, as upstream's does. pig used to
+        // write `The proxy reported an error with no message` in its place.
+        $builder->setStopReason(($event['reason'] ?? '') === 'aborted' ? StopReason::Aborted : StopReason::Error);
+        $builder->setErrorMessage(is_string($event['errorMessage'] ?? null) ? $event['errorMessage'] : null);
         $failed = $builder->snapshot();
         $stream->push(new ErrorEvent($failed->stopReason, $failed));
         $stream->end();

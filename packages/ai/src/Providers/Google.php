@@ -13,6 +13,7 @@ use Pig\Ai\Http\SseParser;
 use Pig\Ai\Model;
 use Pig\Ai\ProviderError;
 use Pig\Ai\StartEvent;
+use Pig\Ai\StopReason;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Async\Async;
 use Throwable;
@@ -66,6 +67,8 @@ final class Google
         ?GoogleOptions $options,
     ): void {
         $builder = new AssistantMessageBuilder($model);
+        // Upstream's `stopReason: "pending"`: only a `finishReason` replaces it.
+        $builder->setStopReason(StopReason::Pending);
         $signal = $options?->signal;
         $open = null;
 
@@ -92,13 +95,26 @@ final class Google
                             $builder->setResponseId($data['responseId']);
                         }
 
-                        $open = GoogleShared::onChunk($data, $builder, $stream, $open);
+                        $open = GoogleShared::onChunk($data, $builder, $stream, $open, deferErrors: true);
                     }
                 }
             }
 
             GoogleShared::close($builder, $stream, $open);
             $signal?->throwIfAborted();
+
+            // Upstream's checks after the stream: a body that ended without a `finishReason` is a
+            // cut connection, not an answer — it used to come back as a clean `stop`; and an error
+            // reason (a safety block, a malformed call, …) ends the turn with the reason itself.
+            if ($builder->stopReason() === StopReason::Pending) {
+                throw new ProviderError('Google stream ended without a finish reason');
+            }
+
+            if ($builder->stopReason() === StopReason::Error || $builder->stopReason() === StopReason::Aborted) {
+                $raw = $builder->rawStopReason();
+
+                throw new ProviderError($raw !== null && $raw !== '' ? "Provider stopped with: {$raw}" : 'An unknown error occurred');
+            }
 
             $message = $builder->snapshot();
             $stream->push(new DoneEvent($message->stopReason, $message));

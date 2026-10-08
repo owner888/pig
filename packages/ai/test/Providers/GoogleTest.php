@@ -953,6 +953,37 @@ final class GoogleTest extends TestCase
         $this->assertNull($options->thinkingBudget);
     }
 
+    public function testAStreamThatEndsWithoutAFinishReasonIsAnErrorNotAnAnswer(): void
+    {
+        // Upstream's output starts at `stopReason: "pending"`, and a stream that ends with no
+        // `finishReason` throws `Google stream ended without a finish reason`. pig's builder started
+        // at `stop`, so a connection cut mid-answer came back as a finished one.
+        $url = $this->serve([['candidates' => [['content' => ['parts' => [['text' => 'half a sen']]]]]]]);
+
+        [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('ErrorEvent', end($types));
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('Google stream ended without a finish reason', $message->errorMessage);
+        $this->assertSame('half a sen', $message->content[0]->text);
+    }
+
+    public function testAnErrorFinishReasonIsReadToTheEndOfTheStreamBeforeItEndsTheTurn(): void
+    {
+        // Upstream records the error reason and reads on; the end-of-stream check throws `Provider
+        // stopped with: <raw reason>`. Usage that arrives after it is therefore still the turn's.
+        $url = $this->serve([
+            ['candidates' => [['content' => ['parts' => [['text' => 'x']]], 'finishReason' => 'SAFETY']]],
+            ['usageMetadata' => ['promptTokenCount' => 40, 'candidatesTokenCount' => 1, 'totalTokenCount' => 41]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('Provider stopped with: SAFETY', $message->errorMessage);
+        $this->assertSame('SAFETY', $message->rawStopReason);
+        $this->assertSame(40, $message->usage->input);
+    }
+
     public function testEveryGemini3ModelInTheTableTakesALevelAndNoneABudget(): void
     {
         // Measured, not read: one request per model and level against the public endpoint on
@@ -969,12 +1000,15 @@ final class GoogleTest extends TestCase
 
             $options = $this->translate($model, ReasoningEffort::Medium);
 
-            if ($options->thinkingLevel !== 'MEDIUM') {
+            // A level, whichever one the row's map clamps `medium` to: Nano Banana 2 Lite's has no
+            // MEDIUM, so it is asked for HIGH, as upstream's `clampThinkingLevel()` asks.
+            if ($options->thinkingLevel === null || $options->thinkingBudget !== null) {
                 $budgeted[] = $model->id;
             }
         }
 
         $this->assertSame([], $budgeted);
+        $this->assertSame('HIGH', $this->translate(Models::find('google', 'gemini-3.1-flash-lite-image'), ReasoningEffort::Medium)->thinkingLevel);
     }
 
     public function testAModelThatRefusesALevelSaysSoInItsRowRatherThanAtTheProvider(): void
@@ -1002,8 +1036,14 @@ final class GoogleTest extends TestCase
         $this->assertFalse($lite->hasThinkingLevel('off'));
         $this->assertTrue($lite->hasThinkingLevel('minimal'), 'measured: 3.5 Flash Lite takes MINIMAL');
 
-        // And a 3.x model the endpoint accepts everything on carries no map at all.
-        $this->assertSame([], $older->thinkingLevelMap);
+        // And a 3.x model the endpoint accepts everything on carries the catalogue's verified
+        // efforts — every level from MINIMAL to HIGH, and no `off`, which models.dev does not list
+        // for it. It used to carry no map, and with no map `off` was a zero budget.
+        foreach (['minimal', 'low', 'medium', 'high'] as $level) {
+            $this->assertTrue($older->hasThinkingLevel($level), $level);
+        }
+
+        $this->assertFalse($older->hasThinkingLevel('off'));
 
         // MEDIUM really is a level on Pro now (111 thinking tokens against LOW 87 and HIGH 142), so
         // upstream's fold of Pro to two levels is gone with the model it was measured on.
@@ -1016,11 +1056,22 @@ final class GoogleTest extends TestCase
         // gemini-3": `gemini-flash-latest`, `gemini-flash-lite-latest` and Gemma 4 (`gemma-4-*` and
         // `gemma4-*`) take a level. pig sent them `thinkingBudget: -1` — think as much as you like —
         // so `--thinking low` on any of them changed nothing.
-        foreach (['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it'] as $id) {
+        foreach (['gemini-flash-latest', 'gemini-flash-lite-latest'] as $id) {
             $options = $this->translate(Models::find('google', $id), ReasoningEffort::Low);
 
             $this->assertSame('LOW', $options->thinkingLevel, $id);
             $this->assertNull($options->thinkingBudget, $id);
+        }
+
+        // Gemma 4 takes a level too — but only MINIMAL and HIGH, which upstream's generator writes as
+        // its map (`getGoogleThinkingLevelMap()`), so `low` clamps up to HIGH as upstream's
+        // `clampThinkingLevel()` clamps it. pig used to send it LOW.
+        foreach (['gemma-4-31b-it', 'gemma-4-26b-a4b-it'] as $id) {
+            $options = $this->translate(Models::find('google', $id), ReasoningEffort::Low);
+
+            $this->assertSame('HIGH', $options->thinkingLevel, $id);
+            $this->assertNull($options->thinkingBudget, $id);
+            $this->assertSame('MINIMAL', $this->translate(Models::find('google', $id), ReasoningEffort::Minimal)->thinkingLevel, $id);
         }
 
         $this->assertSame('HIGH', $this->translate($this->model(reasoning: true, id: 'gemma4-e4b'), ReasoningEffort::High)->thinkingLevel);
@@ -1039,7 +1090,8 @@ final class GoogleTest extends TestCase
         $wanted = [
             'gemini-3.1-pro-preview' => ['thinkingLevel' => 'LOW'],
             'gemini-3.5-flash-lite' => ['thinkingLevel' => 'MINIMAL'],
-            'gemini-3.5-flash' => ['thinkingBudget' => 0],
+            // Its verified efforts list no `none`, so it has no `off` either now.
+            'gemini-3.5-flash' => ['thinkingLevel' => 'MINIMAL'],
             'gemini-2.5-pro' => ['thinkingBudget' => 0],
         ];
 

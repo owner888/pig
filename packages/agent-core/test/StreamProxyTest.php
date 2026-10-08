@@ -258,6 +258,47 @@ final class StreamProxyTest extends TestCase
         $this->assertSame('zai', $sent['compat']['thinkingFormat']);
     }
 
+    public function testTheCompatKeysPortedThisRoundTravelUnderUpstreamsNames(): void
+    {
+        // `supportsUsageInStreaming`, `supportsFinishReason`, `zaiToolStream`, the reasoning-budget
+        // field, `vllmPriority`, and the transcript and tool-search keys — so a gateway's
+        // `getCompat()` reads what the model said. `requiresMistralToolIds` is gone with upstream's.
+        $url = $this->server->start([self::sse([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]])]);
+        $proxy = new StreamProxy(rtrim($url, '/'), 't');
+        $model = self::model(new OpenAiCompat(
+            supportsUsageInStreaming: false,
+            supportsFinishReason: false,
+            zaiToolStream: true,
+            thinkingTokenBudgetField: 'thinking_budget',
+            supportsThinkingTokenBudget: true,
+            vllmPriority: 3,
+            supportsMidConvoSystemMessages: true,
+            supportsMidConvoToolAdditions: true,
+            supportsToolSearch: true,
+            supportsAdditionalTools: true,
+        ));
+        $context = new Context([new UserMessage([new TextContent('hi')])]);
+
+        Async::run(static function () use ($proxy, $model, $context): void {
+            foreach ($proxy->stream($model, $context) as $ignored) {
+                // Drain.
+            }
+        });
+
+        $this->assertSame([
+            'supportsUsageInStreaming' => false,
+            'supportsFinishReason' => false,
+            'zaiToolStream' => true,
+            'thinkingTokenBudgetField' => 'thinking_budget',
+            'supportsThinkingTokenBudget' => true,
+            'vllmPriority' => 3,
+            'supportsMidConvoSystemMessages' => true,
+            'supportsMidConvoToolAdditions' => true,
+            'supportsToolSearch' => true,
+            'supportsAdditionalTools' => true,
+        ], $this->server->receivedJson()['model']['compat']);
+    }
+
     public function testRoutingPreferencesTravelUnderUpstreamsKeyNames(): void
     {
         // `openRouterRouting` and `vercelGatewayRouting` are part of `model.compat`, which upstream
@@ -809,12 +850,57 @@ final class StreamProxyTest extends TestCase
         ]);
 
         // Upstream throws `Received text_delta for non-text content` and its catch turns that into
-        // an error event. Same shape, one step earlier: a block nobody opened has no index at all.
+        // an error event — for a block nobody opened and for one of another kind alike. pig used
+        // to say `… for a block it never opened (3)`, its own words.
         $this->assertSame(StopReason::Error, $message->stopReason);
-        $this->assertStringContainsString('text_delta for a block it never opened (3)', (string) $message->errorMessage);
+        $this->assertSame('Received text_delta for non-text content', $message->errorMessage);
     }
 
-    public function testALineThatIsNotJsonIsSkippedRatherThanFatal(): void
+    /** @return iterable<string, array{0: list<array<string, mixed>>, 1: string}> */
+    public static function eventsAgainstTheWrongBlock(): iterable
+    {
+        yield 'a text end for a thinking block' => [
+            [['type' => 'thinking_start', 'contentIndex' => 0], ['type' => 'text_end', 'contentIndex' => 0]],
+            'Received text_end for non-text content',
+        ];
+        yield 'a thinking end for nothing' => [
+            [['type' => 'thinking_end', 'contentIndex' => 1]],
+            'Received thinking_end for non-thinking content',
+        ];
+        yield 'a thinking delta for a text block' => [
+            [['type' => 'text_start', 'contentIndex' => 0], ['type' => 'thinking_delta', 'contentIndex' => 0, 'delta' => 'x']],
+            'Received thinking_delta for non-thinking content',
+        ];
+        yield 'a tool-call delta for a text block' => [
+            [['type' => 'text_start', 'contentIndex' => 0], ['type' => 'toolcall_delta', 'contentIndex' => 0, 'delta' => '{']],
+            'Received toolcall_delta for non-toolCall content',
+        ];
+    }
+
+    /** @param list<array<string, mixed>> $events */
+    #[\PHPUnit\Framework\Attributes\DataProvider('eventsAgainstTheWrongBlock')]
+    public function testAnEventAgainstABlockOfAnotherKindEndsTheTurnInUpstreamsWords(array $events, string $says): void
+    {
+        // A stray `text_end` or `thinking_end` used to be `The proxy sent text_end for a block it
+        // never opened (1)` when nothing was there, and closed a block of the other kind when one
+        // was. Upstream's arms check the block's type and throw these.
+        [$message] = $this->turn($events);
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame($says, $message->errorMessage);
+    }
+
+    public function testAnErrorEventWithNoMessageLeavesTheTurnWithoutOne(): void
+    {
+        // `partial.errorMessage = proxyEvent.errorMessage` — undefined when the gateway sent none.
+        // pig wrote `The proxy reported an error with no message`, words upstream never says.
+        [$message] = $this->turn([['type' => 'error', 'reason' => 'error', 'usage' => self::usage()]]);
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertNull($message->errorMessage);
+    }
+
+    public function testALineThatIsNotJsonEndsTheTurnAsUpstreamsJsonParseDoes(): void
     {
         $body = "data: not json at all\n"
             . ': a keep-alive comment' . "\n"
@@ -839,9 +925,13 @@ final class StreamProxyTest extends TestCase
             return $stream->result()->await();
         });
 
-        // Upstream lets `JSON.parse` throw here, which kills a working turn over a keep-alive.
-        $this->assertSame(StopReason::Stop, $message->stopReason);
-        $this->assertSame('ok', $message->content[0]->text);
+        // Upstream's `JSON.parse(data)` throws on the first line and its catch ends the turn. pig
+        // used to skip it — a documented divergence, on the grounds that a keep-alive would kill a
+        // working stream; but a `: comment` line and a blank `data:` never reach the parse, so what
+        // is skipped is a broken event. The message is PHP's JSON error where upstream's is V8's.
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('Syntax error', $message->errorMessage);
+        $this->assertSame([], $message->content);
     }
 
     public function testAnAbortEndsTheTurnAsAborted(): void

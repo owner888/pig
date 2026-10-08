@@ -226,6 +226,8 @@ final class AgentLoop
                 $message = self::streamAssistantResponse($context, $config, $signal, $emit, $streamFn);
                 $newMessages[] = $message;
 
+                // Upstream ends the run here on `error` and `aborted` only. A `deferred` turn goes on
+                // like a `stop`: it has no tool calls, so the run ends after its `turn_end`.
                 if ($message->stopReason->isFailure()) {
                     $emit(new TurnEndEvent($message, []));
                     $emit(new AgentEndEvent($newMessages));

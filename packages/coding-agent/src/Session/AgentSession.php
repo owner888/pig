@@ -488,6 +488,7 @@ final class AgentSession
             $message->endTurn,
             $message->diagnostics,
             $message->providerThinkingLevel,
+            $message->deferred,
         );
     }
 
