@@ -162,6 +162,38 @@ final class GoogleTest extends TestCase
         $this->assertSame(StopReason::ToolUse, $message->stopReason);
     }
 
+    public function testACallCutOffByTheTokenLimitIsALengthNotAToolUse(): void
+    {
+        // Upstream: only STOP with a call in it becomes `toolUse`. A call that MAX_TOKENS cut off
+        // is not one to run.
+        $url = $this->serve([
+            ['candidates' => [['content' => ['parts' => [
+                ['functionCall' => ['id' => 'c1', 'name' => 'echo', 'args' => ['value' => 'truncated']]],
+            ]], 'finishReason' => 'MAX_TOKENS']]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Length, $message->stopReason);
+        $this->assertNotSame([], $message->toolCalls());
+    }
+
+    public function testAMalformedCallIsAnErrorEvenWithACallPartInIt(): void
+    {
+        // Gemini said the call was malformed; running it anyway because a part came with it
+        // would be the opposite of what it said.
+        $url = $this->serve([
+            ['candidates' => [['content' => ['parts' => [
+                ['functionCall' => ['id' => 'c1', 'name' => 'echo', 'args' => ['value' => 'truncated']]],
+            ]], 'finishReason' => 'MALFORMED_FUNCTION_CALL']]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('Provider stopped with: MALFORMED_FUNCTION_CALL', $message->errorMessage);
+    }
+
     public function testASafetyBlockIsAnErrorHoweverPolitelyItIsPhrased(): void
     {
         $url = $this->serve([
@@ -174,10 +206,8 @@ final class GoogleTest extends TestCase
         // usable; only STOP and MAX_TOKENS do not.
         $this->assertSame(StopReason::Error, $message->stopReason);
 
-        // **And it says which one.** This assertion is the whole of the find below: the case
-        // passed for months on the line above alone, because `mapStopReason` answers `error`
-        // and leaves `errorMessage` null — which is an error with no text in it.
-        $this->assertSame('Gemini stopped with nothing usable: SAFETY', $message->errorMessage);
+        // **And it says which one**, in upstream's words (`google-raw-stop-reason.test.ts`).
+        $this->assertSame('Provider stopped with: SAFETY', $message->errorMessage);
     }
 
     /**
@@ -202,15 +232,15 @@ final class GoogleTest extends TestCase
     {
         // One per family, because the reasons are a flat enum and a `match` that got one of
         // them would look like it had them all.
-        yield 'a safety block' => ['SAFETY', 'Gemini stopped with nothing usable: SAFETY'];
-        yield 'recitation' => ['RECITATION', 'Gemini stopped with nothing usable: RECITATION'];
+        yield 'a safety block' => ['SAFETY', 'Provider stopped with: SAFETY'];
+        yield 'recitation' => ['RECITATION', 'Provider stopped with: RECITATION'];
         yield 'a malformed call' => [
             'MALFORMED_FUNCTION_CALL',
-            'Gemini stopped with nothing usable: MALFORMED_FUNCTION_CALL',
+            'Provider stopped with: MALFORMED_FUNCTION_CALL',
         ];
         yield 'a reason this pig has never heard of' => [
             'SOMETHING_NEW',
-            'Gemini stopped with nothing usable: SOMETHING_NEW',
+            'Provider stopped with: SOMETHING_NEW',
         ];
     }
 

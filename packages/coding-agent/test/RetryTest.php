@@ -183,7 +183,7 @@ final class RetryTest extends TestCase
         // it in front of these two for the first time, and neither should change its mind: a
         // safety block is not a wait-and-try-again, and it is not a conversation to compact.
         foreach (['SAFETY', 'RECITATION', 'MALFORMED_FUNCTION_CALL', 'OTHER', 'LANGUAGE'] as $reason) {
-            $refused = self::failed("Gemini stopped with nothing usable: {$reason}");
+            $refused = self::failed("Provider stopped with: {$reason}");
 
             $this->assertFalse(Retry::worthRetrying($refused, 1_000_000), $reason);
             $this->assertFalse(Overflow::happened($refused, 1_000_000), $reason);

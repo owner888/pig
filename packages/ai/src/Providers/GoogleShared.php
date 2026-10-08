@@ -160,32 +160,25 @@ final class GoogleShared
         }
 
         if (is_string($candidate['finishReason'] ?? null)) {
-            // A turn that called a tool is finished with the turn, not the task, and
-            // Gemini says STOP for both.
-            $reason = self::hasToolCall($builder->snapshot())
-                ? StopReason::ToolUse
-                : self::stopReason($candidate['finishReason']);
+            // Upstream `google-generative-ai.ts`: the reason is mapped first, and only a STOP
+            // with a tool call in it becomes `toolUse` — Gemini says STOP for a turn that called
+            // a tool and for one that finished. MAX_TOKENS with a call in it stays `length` (the
+            // call was cut off), and a MALFORMED_FUNCTION_CALL that still carried a call part
+            // stays an error rather than running what Gemini itself said was malformed.
+            $reason = self::stopReason($candidate['finishReason']);
+            if ($reason === StopReason::Stop && self::hasToolCall($builder->snapshot())) {
+                $reason = StopReason::ToolUse;
+            }
 
             if ($reason === StopReason::Error) {
-                // **The reason is the only thing there is to say, so it has to be said.** Eighteen
-                // of Gemini's twenty finish reasons mean the turn produced nothing usable, and the
-                // chunk that carries one carries no message anywhere — so upstream's
-                // `mapStopReason`, which answers `error` and stops there, leaves an
-                // `AssistantMessage` whose `errorMessage` is null. Measured consequence, on both
-                // sides: `Overflow::happened()` and `Retry::worthRetrying()` each test
-                // `errorMessage !== null` as their first condition, so such a turn is **neither
-                // compacted nor retried**, and what reaches the screen is an error with no text in
-                // it. A safety block and a malformed call then read alike, and the second is
-                // ordinary on Gemini 3 with tools.
-                //
-                // Thrown rather than assigned, which is what the blocked-prompt sibling twenty
-                // lines up already does for the same category of answer — and `fail()` keeps the
-                // content, so partial text survives the failure. Nothing here becomes retryable by
-                // accident: none of the reasons matches `Retry`'s word list, and the sentence
-                // carries no `returned <status>` for it to read.
+                // Upstream throws `Provider stopped with: <raw reason>` here, and so does this:
+                // the chunk that carries one of these reasons carries no message of its own, so
+                // the reason is the only thing there is to say. `fail()` keeps the content, so
+                // partial text survives. None of the reasons is in `Retry`'s word list, so none
+                // is retried — upstream's `isRetryableAssistantError` agrees.
                 self::close($builder, $stream, $open);
 
-                throw new ProviderError("Gemini stopped with nothing usable: {$candidate['finishReason']}");
+                throw new ProviderError("Provider stopped with: {$candidate['finishReason']}");
             }
 
             $builder->setStopReason($reason);

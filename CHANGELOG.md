@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.20] - 2026-10-08
+
+### Fixed
+
+- **Google / Gemini Stop Reason Mapping and Truncated Tool Call Handling**:
+  - Aligned stop reason priority with upstream pi's `google-generative-ai.ts`: mapped finish reasons prior to inspecting tool calls, ensuring only `STOP` finish reasons accompanied by tool calls transition to `StopReason::ToolUse`.
+  - Prevented truncated or corrupted tool calls from executing: calls cut off by `MAX_TOKENS` remain `StopReason::Length`, and calls carrying `MALFORMED_FUNCTION_CALL` remain `StopReason::Error`.
+  - Aligned Google raw stop reason error messages to upstream's format: `Provider stopped with: <raw reason>`.
+  - Added regression unit tests `testACallCutOffByTheTokenLimitIsALengthNotAToolUse` and `testAMalformedCallIsAnErrorEvenWithACallPartInIt` in `GoogleTest.php`.
+
 ## [0.4.19] - 2026-10-08
 
 ### Changed

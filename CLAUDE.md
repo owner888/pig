@@ -7587,14 +7587,21 @@ error with no text. A safety block, a recitation block and a malformed call are 
 to look at — and the last of those is ordinary on Gemini 3 with tools. The nearest thing to a
 diagnosis anybody had was the absence of one.
 
-Upstream's `mapStopReason` does the same and sets no message either, so **this is a divergence rather
-than a port correction** — and it is the shape the blocked-prompt case twenty lines up had already
-answered: `promptFeedback.blockReason` *throws* `Gemini refused the prompt: SAFETY`, which
-`Google::run()`'s catch turns into a real `errorMessage`. One of two siblings had the rule, which is
-the first shape from the index.
+Upstream now throws for these too, in `google-generative-ai.ts` / `google-vertex.ts`: `Provider
+stopped with: <raw reason>` (pinned by `google-raw-stop-reason.test.ts`), so pig throws the same
+sentence — `ProviderError("Provider stopped with: MALFORMED_FUNCTION_CALL")`. Upstream also only turns
+a **STOP** with a tool call in it into `toolUse`; `MAX_TOKENS` with a call stays `length` and an error
+reason with a call part stays an error, so `GoogleShared::onChunk()` maps the reason first and only
+then looks at the content. (Upstream additionally keeps the raw reason as
+`AssistantMessage.rawStopReason`; pig's `AssistantMessage` has no such field yet.)
 
-So the reason is thrown, in the sibling's words and its shape. Four things had to be got right and
-each has its own test, because each was a way to make the fix cost something:
+A `MALFORMED_FUNCTION_CALL` itself is Gemini's doing, not pig's: Gemini 3 sometimes writes the call as
+text (`call:default_api:bash{command:…}`) instead of a `functionCall` part and then reports the turn
+malformed. pi shows the same error for it and does not retry it (`isRetryableAssistantError` has no
+pattern for it), and neither does pig.
+
+Four things had to be got right and each has its own test, because each was a way to make the fix
+cost something:
 
 - **The usage is read before the finish reason now.** They ride on the same chunk, and throwing
   jumped over `usageMetadata` — measured at `input=0 output=0` on a prompt of 40 tokens. A turn the
@@ -7611,7 +7618,8 @@ each has its own test, because each was a way to make the fix cost something:
 - **`MAX_TOKENS` and `STOP` still say nothing**, or the fix would be "every finish reason throws".
 
 Regression tests: `GoogleTest::testAFinishReasonThatMeansNothingUsableSaysWhichOneItWas` (four cases,
-including a reason this pig has never heard of), `testARefusedTurnKeepsWhatItSaidAndWhatItCost`,
+including a reason this pig has never heard of), `testACallCutOffByTheTokenLimitIsALengthNotAToolUse`,
+`testAMalformedCallIsAnErrorEvenWithACallPartInIt`, `testARefusedTurnKeepsWhatItSaidAndWhatItCost`,
 `testTheTwoReasonsThatAreNotFailuresStillSayNothing`, the strengthened
 `testASafetyBlockIsAnErrorHoweverPolitelyItIsPhrased`, and
 `RetryTest::testAGeminiRefusalIsExplainedAndStillNotRetried`. Each end fails on its own mutation:
