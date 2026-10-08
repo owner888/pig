@@ -23,7 +23,7 @@ declare(strict_types=1);
  *   renewal so the extension's copy of a token does not go stale.
  * - **`before_retry`** is the 429 failover. A quota wall on one account is answered by switching
  *   to the next and retrying at once with the count reset — which used to be an `if provider ===
- *   'antigravity'` inside `AgentSession::waitAndCarryOn()`.
+ *   'antigravity'` inside `AgentSession::prepareRetry()`.
  * - **`registerHttpRoute('/api/accounts')`** is the web UI's accounts panel, which used to be
  *   written into `HttpServer`.
  *

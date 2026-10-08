@@ -171,7 +171,7 @@ final class Websocket implements ProtocolInterface
      */
     public static function encode(mixed $data, TcpConnection $connection): string
     {
-        $payload = is_string($data) ? $data : json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $payload = is_string($data) ? $data : json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
 
         return self::createFrame((string) $payload, self::OPCODE_TEXT);
     }

@@ -48,6 +48,8 @@ final class AgentLoop
      * @param list<mixed>                                     $prompts
      * @param Closure(mixed, Context, SimpleStreamOptions): mixed|null $streamFn a stand-in for
      *        the provider — a proxy backend, or a script in a test
+     * @param (Closure(AgentEvent): void)|null $emit called with each event, in this loop's fiber,
+     *        before the loop goes on — upstream's awaited `emit`. See `emitter()`.
      * @return EventStream<AgentEvent, list<mixed>>
      */
     public static function start(
@@ -56,8 +58,10 @@ final class AgentLoop
         AgentLoopConfig $config,
         ?AbortSignal $signal = null,
         ?Closure $streamFn = null,
+        ?Closure $emit = null,
     ): EventStream {
         $stream = self::newStream();
+        $emit = self::emitter($stream, $emit);
         $newMessages = $prompts;
         $current = new AgentContext(
             [...$context->messages, ...$prompts],
@@ -68,17 +72,18 @@ final class AgentLoop
         // The try/catch is the whole reason `fail()` exists: this body runs in a fiber of its
         // own, so a throw here — a provider that cannot resolve a hostname, a missing key —
         // does not reach the `foreach` in `Agent`, and the stream would simply never close.
-        Async::spawn(static function () use ($prompts, $current, &$newMessages, $config, $signal, $stream, $streamFn): void {
+        Async::spawn(static function () use ($prompts, $current, &$newMessages, $config, $signal, $stream, $streamFn, $emit): void {
             try {
-                $stream->push(new AgentStartEvent());
-                $stream->push(new TurnStartEvent());
+                $emit(new AgentStartEvent());
+                $emit(new TurnStartEvent());
 
                 foreach ($prompts as $prompt) {
-                    $stream->push(new MessageStartEvent($prompt));
-                    $stream->push(new MessageEndEvent($prompt));
+                    $emit(new MessageStartEvent($prompt));
+                    $emit(new MessageEndEvent($prompt));
                 }
 
-                self::run($current, $newMessages, $config, $signal, $stream, $streamFn);
+                self::run($current, $newMessages, $config, $signal, $emit, $streamFn);
+                $stream->end($newMessages);
             } catch (Throwable $error) {
                 $stream->fail($error);
             }
@@ -94,6 +99,7 @@ final class AgentLoop
      * or the provider rejects the request. Only the assistant case can be caught here,
      * since convertToLlm runs once per turn and not before this.
      *
+     * @param (Closure(AgentEvent): void)|null $emit as for `start()`
      * @return EventStream<AgentEvent, list<mixed>>
      */
     public static function continue(
@@ -101,6 +107,7 @@ final class AgentLoop
         AgentLoopConfig $config,
         ?AbortSignal $signal = null,
         ?Closure $streamFn = null,
+        ?Closure $emit = null,
     ): EventStream {
         if ($context->messages === []) {
             throw new AgentError('Cannot continue: no messages in context');
@@ -111,21 +118,58 @@ final class AgentLoop
         }
 
         $stream = self::newStream();
+        $emit = self::emitter($stream, $emit);
         $newMessages = [];
         $current = new AgentContext($context->messages, $context->systemPrompt, $context->tools);
 
-        Async::spawn(static function () use ($current, &$newMessages, $config, $signal, $stream, $streamFn): void {
+        Async::spawn(static function () use ($current, &$newMessages, $config, $signal, $stream, $streamFn, $emit): void {
             try {
-                $stream->push(new AgentStartEvent());
-                $stream->push(new TurnStartEvent());
+                $emit(new AgentStartEvent());
+                $emit(new TurnStartEvent());
 
-                self::run($current, $newMessages, $config, $signal, $stream, $streamFn);
+                self::run($current, $newMessages, $config, $signal, $emit, $streamFn);
+                $stream->end($newMessages);
             } catch (Throwable $error) {
                 $stream->fail($error);
             }
         });
 
         return $stream;
+    }
+
+    /**
+     * How the loop hands an event on.
+     *
+     * Without a listener: pushed onto the stream, for whoever iterates it — and the loop does not
+     * wait for them, so it can be several events ahead of its reader.
+     *
+     * With one — `Agent` passes its own — the listener runs here, in the loop's fiber, and the
+     * loop goes on only when it has returned. Upstream's `runAgentLoop(..., emit)`, which awaits
+     * every listener. It matters in two places: the queues are read *after* the `turn_end`
+     * listeners, so a message queued from one is in this run; and a listener that throws stops
+     * the loop where it is, where a reader that had fallen behind left the loop running tools
+     * for a run that had already ended. Only the run's end goes onto the stream then, for the
+     * result.
+     *
+     * @param EventStream<AgentEvent, list<mixed>> $stream
+     * @param (Closure(AgentEvent): void)|null     $listener
+     * @return Closure(AgentEvent): void
+     */
+    private static function emitter(EventStream $stream, ?Closure $listener): Closure
+    {
+        if ($listener === null) {
+            return static function (AgentEvent $event) use ($stream): void {
+                $stream->push($event);
+            };
+        }
+
+        return static function (AgentEvent $event) use ($stream, $listener): void {
+            $listener($event);
+
+            if ($event instanceof AgentEndEvent) {
+                $stream->push($event);
+            }
+        };
     }
 
     /** @return EventStream<AgentEvent, list<mixed>> */
@@ -138,15 +182,15 @@ final class AgentLoop
     }
 
     /**
-     * @param list<mixed>                          $newMessages
-     * @param EventStream<AgentEvent, list<mixed>> $stream
+     * @param list<mixed>               $newMessages
+     * @param Closure(AgentEvent): void $emit
      */
     private static function run(
         AgentContext $context,
         array &$newMessages,
         AgentLoopConfig $config,
         ?AbortSignal $signal,
-        EventStream $stream,
+        Closure $emit,
         ?Closure $streamFn,
     ): void {
         $firstTurn = true;
@@ -163,12 +207,12 @@ final class AgentLoop
                 if ($firstTurn) {
                     $firstTurn = false;
                 } else {
-                    $stream->push(new TurnStartEvent());
+                    $emit(new TurnStartEvent());
                 }
 
                 foreach ($pending as $message) {
-                    $stream->push(new MessageStartEvent($message));
-                    $stream->push(new MessageEndEvent($message));
+                    $emit(new MessageStartEvent($message));
+                    $emit(new MessageEndEvent($message));
                     $context->append($message);
                     $newMessages[] = $message;
                 }
@@ -179,13 +223,12 @@ final class AgentLoop
                     $context->tools = ($config->getTools)();
                 }
 
-                $message = self::streamAssistantResponse($context, $config, $signal, $stream, $streamFn);
+                $message = self::streamAssistantResponse($context, $config, $signal, $emit, $streamFn);
                 $newMessages[] = $message;
 
                 if ($message->stopReason->isFailure()) {
-                    $stream->push(new TurnEndEvent($message, []));
-                    $stream->push(new AgentEndEvent($newMessages));
-                    $stream->end($newMessages);
+                    $emit(new TurnEndEvent($message, []));
+                    $emit(new AgentEndEvent($newMessages));
 
                     return;
                 }
@@ -199,7 +242,7 @@ final class AgentLoop
                         $context,
                         $message,
                         $signal,
-                        $stream,
+                        $emit,
                         $config,
                     );
 
@@ -209,7 +252,7 @@ final class AgentLoop
                     }
                 }
 
-                $stream->push(new TurnEndEvent($message, $toolResults));
+                $emit(new TurnEndEvent($message, $toolResults));
 
                 if ($steeringAfterTools !== null && $steeringAfterTools !== []) {
                     $pending = $steeringAfterTools;
@@ -230,8 +273,7 @@ final class AgentLoop
             $pending = $followUp;
         }
 
-        $stream->push(new AgentEndEvent($newMessages));
-        $stream->end($newMessages);
+        $emit(new AgentEndEvent($newMessages));
     }
 
     /**
@@ -239,13 +281,13 @@ final class AgentLoop
      *
      * The one place the app's messages become LLM messages.
      *
-     * @param EventStream<AgentEvent, list<mixed>> $stream
+     * @param Closure(AgentEvent): void $emit
      */
     private static function streamAssistantResponse(
         AgentContext $context,
         AgentLoopConfig $config,
         ?AbortSignal $signal,
-        EventStream $stream,
+        Closure $emit,
         ?Closure $streamFn,
     ): AssistantMessage {
         $messages = $context->messages;
@@ -283,7 +325,7 @@ final class AgentLoop
             if ($event instanceof StartEvent) {
                 $context->append($event->partial);
                 $added = true;
-                $stream->push(new MessageStartEvent($event->partial));
+                $emit(new MessageStartEvent($event->partial));
 
                 continue;
             }
@@ -295,10 +337,10 @@ final class AgentLoop
                     $context->messages[count($context->messages) - 1] = $final;
                 } else {
                     $context->append($final);
-                    $stream->push(new MessageStartEvent($final));
+                    $emit(new MessageStartEvent($final));
                 }
 
-                $stream->push(new MessageEndEvent($final));
+                $emit(new MessageEndEvent($final));
 
                 return $final;
             }
@@ -307,7 +349,7 @@ final class AgentLoop
 
             if ($partial !== null && $added) {
                 $context->messages[count($context->messages) - 1] = $partial;
-                $stream->push(new MessageUpdateEvent($partial, $event));
+                $emit(new MessageUpdateEvent($partial, $event));
             }
         }
 
@@ -343,14 +385,14 @@ final class AgentLoop
      * result, saying they were skipped, because a tool_use with no tool_result is a
      * malformed conversation that the provider will reject on the next turn.
      *
-     * @param EventStream<AgentEvent, list<mixed>> $stream
+     * @param Closure(AgentEvent): void $emit
      * @return array{0: list<ToolResultMessage>, 1: list<mixed>|null}
      */
     private static function executeToolCalls(
         AgentContext $context,
         AssistantMessage $message,
         ?AbortSignal $signal,
-        EventStream $stream,
+        Closure $emit,
         AgentLoopConfig $config,
     ): array {
         $toolCalls = $message->toolCalls();
@@ -358,7 +400,7 @@ final class AgentLoop
         $steering = null;
 
         foreach ($toolCalls as $index => $toolCall) {
-            $stream->push(new ToolExecutionStartEvent($toolCall->id, $toolCall->name, $toolCall->arguments));
+            $emit(new ToolExecutionStartEvent($toolCall->id, $toolCall->name, $toolCall->arguments));
 
             $isError = false;
 
@@ -375,8 +417,8 @@ final class AgentLoop
                     $toolCall->id,
                     $arguments,
                     $signal,
-                    static function (AgentToolResult $partial) use ($stream, $toolCall): void {
-                        $stream->push(new ToolExecutionUpdateEvent(
+                    static function (AgentToolResult $partial) use ($emit, $toolCall): void {
+                        $emit(new ToolExecutionUpdateEvent(
                             $toolCall->id,
                             $toolCall->name,
                             $toolCall->arguments,
@@ -392,9 +434,9 @@ final class AgentLoop
                 $isError = true;
             }
 
-            $stream->push(new ToolExecutionEndEvent($toolCall->id, $toolCall->name, $result, $isError));
+            $emit(new ToolExecutionEndEvent($toolCall->id, $toolCall->name, $result, $isError));
 
-            $results[] = self::toolResult($toolCall, $result, $isError, $stream);
+            $results[] = self::toolResult($toolCall, $result, $isError, $emit);
 
             if ($config->getSteeringMessages === null) {
                 continue;
@@ -413,7 +455,7 @@ final class AgentLoop
                     $skipped,
                     new AgentToolResult([new TextContent('Skipped due to queued user message.')]),
                     true,
-                    $stream,
+                    $emit,
                     announce: true,
                 );
             }
@@ -424,18 +466,18 @@ final class AgentLoop
         return [$results, $steering];
     }
 
-    /** @param EventStream<AgentEvent, list<mixed>> $stream */
+    /** @param Closure(AgentEvent): void $emit */
     private static function toolResult(
         ToolCall $toolCall,
         AgentToolResult $result,
         bool $isError,
-        EventStream $stream,
+        Closure $emit,
         bool $announce = false,
     ): ToolResultMessage {
         if ($announce) {
             // A skipped call never ran, so its start and end are reported here instead.
-            $stream->push(new ToolExecutionStartEvent($toolCall->id, $toolCall->name, $toolCall->arguments));
-            $stream->push(new ToolExecutionEndEvent($toolCall->id, $toolCall->name, $result, true));
+            $emit(new ToolExecutionStartEvent($toolCall->id, $toolCall->name, $toolCall->arguments));
+            $emit(new ToolExecutionEndEvent($toolCall->id, $toolCall->name, $result, true));
         }
 
         $message = new ToolResultMessage(
@@ -446,8 +488,8 @@ final class AgentLoop
             $result->details,
         );
 
-        $stream->push(new MessageStartEvent($message));
-        $stream->push(new MessageEndEvent($message));
+        $emit(new MessageStartEvent($message));
+        $emit(new MessageEndEvent($message));
 
         return $message;
     }

@@ -3253,6 +3253,45 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('cancelled', $this->screen());
     }
 
+    public function testWhatIsTypedDuringARetryJoinsThatPromptAndItSettlesOnce(): void
+    {
+        // Enter during "Retrying (1/3) in …" used to send a prompt of its own: the session said it
+        // was not streaming between runs, so the text waited for the retried turn to settle and
+        // then ran — `agent_settled`, the "task complete" notification, and Working again at once.
+        // Upstream's session is streaming for the whole prompt, so the text is steering.
+        $settled = 0;
+        $api = new HookApi('.', 'test.php');
+        $api->on('agent_settled', static function () use (&$settled): void {
+            $settled++;
+        });
+
+        $this->start(
+            answers: [self::failed('Anthropic returned 503: overloaded'), 'here you go', 'never asked for'],
+            settings: Settings::inMemory(['retry' => ['baseDelayMs' => 200]]),
+            hooks: new HookRunner([new LoadedHook('test.php', 'test.php', $api)], $this->cwd),
+        );
+
+        $this->type('hi');
+        $this->type(self::ENTER);
+        self::turnTheLoop();
+
+        $this->assertTrue($this->session->isRetrying());
+
+        $this->type('also this');
+        $this->type(self::ENTER);
+        self::turnTheLoop();
+
+        $this->assertSame(['also this'], $this->session->queuedByKind()['steering']);
+        $this->assertSame(0, $settled);
+
+        for ($tick = 0; $tick < 200 && !$this->session->isIdle(); $tick++) {
+            Loop::get()->tick();
+        }
+
+        $this->assertSame([], $this->session->queued());
+        $this->assertSame(1, $settled, 'one prompt, one agent_settled');
+    }
+
     // ---- what a hook says -------------------------------------------------------------
 
     public function testAHooksMessageIsDrawnAsItsOwnThingNotAsSomethingYouSaid(): void

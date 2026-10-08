@@ -313,9 +313,9 @@ final class PrintModeTest extends TestCase
     public function testAnOverflowIsSummarisedRatherThanPrintedAsTheAnswer(): void
     {
         // The retry half of this is the test above; this is the same bug by the other door. A turn
-        // that outgrew the window comes back as an error, `afterTheRun()` spawns the summarisation
-        // that fixes it, and `prompt()` returning before that happens means the error is printed
-        // and the process exits — taking the compaction with it.
+        // that outgrew the window comes back as an error, the prompt's post-run loop summarises
+        // and sends it again, and `prompt()` returning before that happens means the error is
+        // printed and the process exits — taking the compaction with it.
         $this->answers = ['first', 'second', 'ignored', 'the summary', 'answered after summarising'];
         $this->failures = [null, null, 'prompt is too long: 213462 tokens > 200000 maximum'];
         $code = $this->execute(

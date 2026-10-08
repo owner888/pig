@@ -146,15 +146,6 @@ export class WebTerminal {
     this.viewportEl = this.element.querySelector("#web-term-viewport");
     this.cwdBadge = this.element.querySelector(".web-term-cwd");
 
-    if (typeof ResizeObserver !== "undefined") {
-      this.resizeObserver = new ResizeObserver(() => {
-        if (this.isOpen) {
-          this.fitActiveTab();
-        }
-      });
-      this.resizeObserver.observe(this.viewportEl);
-    }
-
     this.bindEvents();
     document.body.appendChild(this.element);
   }

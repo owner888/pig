@@ -1681,7 +1681,7 @@ surface asks for: decided by its first caller.
   (chained like `context`, through `HttpClient::observe()` — the one place every provider's bytes
   go), `after_provider_response` (status and headers, before the body), and `before_retry`, which
   is pig's own: the 429 account rotation used to be an `if provider === 'antigravity'` inside
-  `AgentSession::waitAndCarryOn()`, and is now the extension answering `BeforeRetryResult(delay:
+  `AgentSession::prepareRetry()`, and is now the extension answering `BeforeRetryResult(delay:
   0.5, resetAttempts: true)`. `model_select` and `thinking_level_select` came in the same batch.
   The observer is only installed when a hook listens (`HookRunner::listensToProviderTraffic()`),
   so a session with no provider hooks pays nothing per request.
@@ -3039,11 +3039,10 @@ Upstream's are two moments: `agent_end` is the end of a *run* and comes from the
 `agent_settled` comes from `_emitAgentSettled()`, after `_runAgentPrompt()`'s `while` loop over
 retries and continuations has nothing left to do, and the docs call it "final and notification-only;
 use it when an integration needs to know Pi will not continue automatically". pig's equivalent of
-that loop is `afterTheRun()` → `inTheBackground()` → `finishBackgroundWork()`, and the last of those
-is already the one place every ending of a prompt reaches — a clean run, the last retry, a retry
-escape stopped, a compaction that worked or did not — because `prompt()`'s `$settled` handle is
-released there. So that is where `agent_settled` goes out, before the handle is released so a `-p`
-exiting on `prompt()`'s return has let the hook run.
+that loop is `runAgentPrompt()`'s post-run loop, and its `finally` is the one place every ending of
+a prompt reaches — a clean run, the last retry, a retry escape stopped, a compaction that worked or
+did not. So that is where `emitAgentSettled()` is called, exactly once per prompt, and it tells the
+hooks before it resolves the idle wait, so a `-p` exiting on `prompt()`'s return has let the hook run.
 
 Two things worth keeping:
 
@@ -3155,7 +3154,8 @@ hook prints the warning on stderr, the answer on stdout, and loads no hook.
 
 A turn can fail for a reason that undoes itself — the provider is busy — or for a reason the
 *next* request can fix: the conversation outgrew the window. `AgentSession` handles both,
-after the run ends, from `afterTheRun()`.
+after the run ends, from `handlePostAgentRun()` in `runAgentPrompt()`'s post-run loop —
+`prepareRetry()` for the first, `compactForOverflow()` for the second.
 
 Which one it is, is decided by what the provider said, and the two are mutually exclusive on
 purpose. `Retry::worthRetrying()` asks `Overflow::happened()` first and answers false for an
@@ -3190,17 +3190,17 @@ Five things that are load-bearing rather than tidy:
 - **The failed message comes off the agent's state before the retry**, and stays in the session
   file. Leaving it would put "Anthropic returned 503" in the transcript for the model to read
   and try to make sense of.
-- **Everything spawns.** `afterTheRun()` runs inside the agent's own event fan-out, and
-  `continue()` starts another run — doing that there would re-enter the agent from inside its
-  own notification, and the sleeping cannot happen in a callback at all. Upstream reaches for
-  `setTimeout(..., 0)` "to break out of the event handler chain"; `Async::spawn` is the same
-  idea with a name that says why.
+- **Nothing is decided in the agent's event fan-out.** `handlePostAgentRun()` runs in the
+  prompt's own fiber after `agent->prompt()`/`continue()` has returned, as upstream's
+  `_handlePostAgentRun()` does inside `_runAgentPrompt()` — so the sleep blocks there, and the
+  next `continue()` does not re-enter the agent from inside its own notification.
 - **The sleep is abortable**, because eight seconds that escape cannot reach is eight seconds
   of a terminal that will not answer. A timer and an abort listener race to complete one
   `Deferred`; the timer is cancelled on an abort rather than left to fire into nothing, because
   a pending timer keeps `Loop::isIdle()` false and `bin/pig` would not exit.
-- **`prompt()` waits for a retry in progress.** A sleeping retry is not "streaming", so nothing
-  else would have stopped a message racing it into the same agent.
+- **`prompt()` waits for a retry in progress.** `isStreaming()` is true for the whole prompt,
+  sleep included, so the screen queues; a caller without a queue — RPC's `prompt`, `-p` with
+  several messages — waits for the prompt to settle rather than racing it into the same agent.
 - **The waits double** — 2s, 4s, 8s from `retry.baseDelayMs`. The failures this waits out are
   the ones where everybody else is also retrying, and a fixed delay brings the whole crowd back
   at once. **Unless the provider said when**: `Retry::statedDelay()` reads a stated reset time out
@@ -3312,7 +3312,7 @@ full bilingual client-side `I18N` dictionary with 101 symmetric keys (defaulting
 Telegram-style JSON import/export, `$pig->registerLocale()` on `ExtensionApi` with `/api/locales` aggregation, and in-session
 interactive `/web restart`, `/web status`, and `/web stop` controls;
 **⑤ Interactive Local PTY Terminals, SSH Node Workbench, and SFTP File Explorer (aligned with `youweichen/pi-web-ui` / `omp-web-ui`)**:
-- `Pig\CodingAgent\Web\Pty\PtyProcess` & `PtyManager`: Native `proc_open` with `['pty']` descriptor on macOS/Linux, 16ms output micro-batching via `Loop::delay()`, slave PTY device detection (`lsof` on Darwin, `/proc/$pid/fd/0` on Linux) with window size updating via `stty` + `SIGWINCH`, and 200KB scrollback buffering.
+- `Pig\CodingAgent\Web\Pty\PtyProcess` & `PtyManager`: Native `proc_open` with `['pty']` descriptors on macOS/Linux, started through a small PHP launcher (`PtyProcess::launcher()`) that `setsid()`s, opens the slave so the pty becomes the shell's controlling terminal (forkpty / node-pty semantics), `stty`s the initial size and execs the shell. Output is micro-batched for 16ms via `Loop::delay()` and handed on as whole UTF-8 characters (an unfinished tail waits for the next flush, invalid bytes become U+FFFD). Resizes `stty` the slave (found lazily: `lsof` on Darwin, `/proc/$pid/fd/0` on Linux, never the server's own tty) and the kernel sends the foreground job SIGWINCH. 200KB scrollback buffering.
 - `Pig\CodingAgent\Web\Node\NodeProfile` & `NodeManager`: SSH node inventory in `~/.pig/agent/nodes.json`, secret persistence in `~/.pig/agent/nodes-secrets.json` (chmod 0600), SHA-256 host key fingerprint detection (`ssh-keyscan` + `ssh-keygen -lf`), OpenSSH `~/.ssh/config` discovery, remote PTY terminal streaming (`ssh -tt`), and SFTP remote directory listing/reading/writing (capped at 512 KiB).
 - Frontend: Embedded `xterm.js` + `FitAddon` multi-tab terminal drawer in `WebTerminal.js`, and comprehensive `NodeWorkbench.js` modal with remote terminal tabs and SFTP file explorer/editor.
 
@@ -8684,8 +8684,8 @@ await this.waitForRetry();
 
 pig waited for a retry **on the way in** — `prompt()`'s first statement, with the reason beside it —
 and not on the way out. So `prompt()` returned the moment the agent's run ended, which for a turn
-that failed with a 503 is *before the answer exists*: `afterTheRun()` has spawned the retry and it
-has not slept yet.
+that failed with a 503 is *before the answer exists*: the retry has been decided and has not slept
+yet.
 
 Three of the four modes were only cosmetically wrong — the answer arrives, just after the call that
 asked for it, and the events carry it to the screen or the host. **`-p` is the one that ends the
@@ -8694,49 +8694,27 @@ process.** `PrintMode::run()` loops `prompt()`, then prints the last assistant m
 `Anthropic returned 503: overloaded` on standard error and exited 1, and the second attempt two
 seconds later, which would have worked, never happened. A script's whole answer, lost to a pause.
 
-Two things had to move for the one line to work:
-
-- **The `Deferred` is made in `afterTheRun()`, not one line into `waitAndCarryOn()`.** That body runs
-  a tick later, so at the moment `prompt()` wants to await it there was nothing there — upstream
-  creates its `_retryPromise` synchronously in the `agent_end` handler for the same reason.
-  `startRetrying()` is the one place both halves are made now, and making them at the decision also
-  closes the window the controller's own move closed once before: the moment after a retry is decided
-  and before anything can be told it is happening.
-- **And that window turned out to be reachable**, which is the find inside the find. With the pair
-  made a tick early, an `abortRetry()` arriving in that tick cleared both — and the spawned body then
-  made *fresh* ones and slept against a controller nobody holds. Escape answered, and unreachable for
-  the next half minute. `waitAndCarryOn()` returns instead when it finds them gone.
-  `compactAndCarryOn()`'s two failure endings gained a `finishRetrying()` for the mirror of it: a
-  retry whose next attempt overflows arrives there with somebody waiting on a run that is not coming.
+The fix is upstream's shape: `prompt()` runs the turn through `runAgentPrompt()`, whose post-run loop
+does the retry (`prepareRetry()`), the overflow summary (`compactForOverflow()`) and the queued
+messages in the caller's fiber, and only returns after `emitAgentSettled()`. So `prompt()` returns
+when the prompt has settled, and there is no handle to create early or release late.
 
 **Five retry tests had to change shape, and that is the real cost of the fix being in the right
 place.** `Async::run(fn () => $session->prompt('hi'))` was how every one of them got control back
 with a retry still in flight, and `prompt()` now does not return until the retries are done — so
 those tests either sat through a half-minute sleep or came back to a retry that was already over.
-They spawn now, through one documented helper, `startTurnAndParkOnTheRetry()`; and it waits for the
-**`RetryStartEvent`** rather than for `isRetrying()`, because the retry is decided a tick before the
-fiber that announces it and parks on the timer exists, so the flag arrives too early to see either.
+They spawn now, through one documented helper, `startTurnAndParkOnTheRetry()`, which waits for the
+**`RetryStartEvent`**: that is the moment the retry is parked on its timer.
 
-*One of them had been passing for the wrong reason all along*: `testAbortingStopsTheWaiting` aborted
-in that same one-tick window, so the sleep it is named after had never been reached, and the
-parked-sleep abort it was written to cover was untested. Both moments have a test now —
-`testARetryCalledOffBeforeItBeganDoesNotBeginAfterAll` for the decision and that one for the sleep.
-
-**And the overflow half is the same bug by the other door**, closed in the entry below once there was
-a name for the thing to wait on: a turn that outgrew the window comes back as an error too,
-`afterTheRun()` spawns the summarisation that fixes it, and `-p` printed `prompt is too long` and
-exited while that was still being spawned. `$settled` is now made before *either* kind of background
-work and released once nothing more is coming — which is at the tail of `afterTheRun()`, because an
-auto-compaction's carry-on never touches the retry counter and so had no other ending to be released
-by. `isRetrying()` moved onto `$retrying` in the same change, or it would have answered true every
-time the session summarised.
+**And the overflow half is the same bug by the other door**: a turn that outgrew the window comes
+back as an error too, and `-p` printed `prompt is too long` and exited before the summary that fixes
+it had run. The same loop covers it — `compactForOverflow()` runs before `prompt()` returns.
+`isRetrying()` is true only while `prepareRetry()` holds its controller, or it would answer true
+every time the session summarised.
 
 Regression tests: `PrintModeTest::testA503IsWaitedOutRatherThanPrintedAsTheAnswer` and
-`testAnOverflowIsSummarisedRatherThanPrintedAsTheAnswer` for what the person sees, and four mutations
-that pin the ends separately — dropping the `await`, dropping `startRetrying()`, dropping
-`startBackgroundWork()` on the overflow path, and dropping the release at the tail. The last of those
-fails as `The event loop ran out of work while the root coroutine was still suspended`, which is the
-honest shape of a handle nobody completes.
+`testAnOverflowIsSummarisedRatherThanPrintedAsTheAnswer` for what the person sees, and
+`AgentSettledTest` for the settle happening once, after the retries and the summary.
 
 ### A host could read the queue mode and never set it
 
@@ -9288,8 +9266,9 @@ Two rules fall out, and the second is the one that generalises:
 
 - A `catch` clause naming a class the file does not import is a `catch` that never fires.
 - **Anything inside `Async::spawn()` whose future nobody awaits must not be able to throw.**
-  `AgentSession::inTheBackground()` wraps the work and turns a throw into a `RetryEndEvent`,
-  so a bug in there is a reported failure rather than a session that stops mid-sentence.
+  The `runAgentPrompt()` that `AgentSession::sendHookMessage()` spawns for a hook's `triggerTurn`
+  catches a throw and reports it through `emitError()` as a `HookError`, so a bug in there is a
+  reported failure rather than a session that stops mid-sentence.
 
 ### An abort with nothing yet to abort reports a cancellation that did not happen
 
@@ -10833,7 +10812,7 @@ Unix 在 `proc_open` / `fork` 衍生进程时，子进程默认继承父进程�
 
 **现象**：pi 在当前模型 quota 用尽且 reset 很久以后时显示 `Quota reached. Please wait 15h7m17s. Next: switch models or try again after reset.`；pig 只显示 provider 原始错误（例如 Antigravity/Google 的 429、`RESOURCE_EXHAUSTED`、`Your quota will reset after …` 或 Antigravity 的 `Resets in …`），用户需要自己从 JSON/长句里看出下一步。TUI 还会把同一个失败显示两次：assistant error component 一次，`InteractiveMode::onMessageEnd()` 的 `sayError()` 又一次。
 
-**原因**：`Retry::statedDelay()` 能读 Google 的 `reset after …`，但漏了 Antigravity 真实的 `Resets in …`；`Retry::worthRetrying()` 会在超过 `MAX_STATED_WAIT` 时拒绝等待，但拒绝后没有规范化错误文案；`AgentSession` 直接 settle，UI/RPC/print/session file 都保留原始 provider 文案。更细的一层：失败 assistant 先通过 `MessageEndEvent` 写盘，再通过 `AgentEndEvent` 通知 UI，所以只在 `afterTheRun()` 改最后消息会修当前状态而漏掉 session file 和 `agent_end`。TUI 的重复是另一个 sibling 问题：`AssistantMessageComponent::update()` 已经会画 error，`onMessageEnd()` 只应在没有 streaming component 的畸形事件流里 fallback 到 `sayError()`。
+**原因**：`Retry::statedDelay()` 能读 Google 的 `reset after …`，但漏了 Antigravity 真实的 `Resets in …`；`Retry::worthRetrying()` 会在超过 `MAX_STATED_WAIT` 时拒绝等待，但拒绝后没有规范化错误文案；`AgentSession` 直接 settle，UI/RPC/print/session file 都保留原始 provider 文案。更细的一层：失败 assistant 先通过 `MessageEndEvent` 写盘，再通过 `AgentEndEvent` 通知 UI，所以只在 run 结束后的 `handlePostAgentRun()` 改最后消息会修当前状态而漏掉 session file 和 `agent_end`。TUI 的重复是另一个 sibling 问题：`AssistantMessageComponent::update()` 已经会画 error，`onMessageEnd()` 只应在没有 streaming component 的畸形事件流里 fallback 到 `sayError()`。
 
 **规则**：短 reset 仍然按 provider 指定时间重试；超过 `MAX_STATED_WAIT` 且错误像 quota/rate-limit 的，统一显示 pi 风格行动提示。规范化必须发生在 `MessageEndEvent` 写盘前，也必须反映到 `AgentEndEvent` 发给 UI 的 messages 上。同一个 assistant error 只能由一个 transcript component 负责显示；`sayError()` 是兜底，不是第二份渲染。
 
@@ -11059,6 +11038,31 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 **根因**：`compositeTuiLine()` 在两段之间插 `\e[0m\e]8;;\a`；`Ansi::at()` 只认 CSI，`]` `8` `;` `;` 被 `sliceByColumn()` 一类按列切的函数算成 4 列。upstream 的 `ansiCodeLength()` 认 OSC（`\e]`）和 APC（`\e_`），到 BEL 或 ST 结束。
 
 **避坑规则**：`Ansi::at()` 是所有按列切分的基础，它认的序列必须和 upstream `ansiCodeLength()` 一致。
+
+### agent_settled 在 Working 时提前触发（「任务已完成」通知弹在还在干活的屏幕上）
+
+**症状**：TUI 仍显示 Working…，system-notify 已弹「任务已完成 (Xs)」。典型触发：在 "Retrying…" 期间按 Enter；或 agent_end handler 里 sendMessage(triggerTurn)/sendUserMessage；或 run 收尾瞬间 steer/followUp（消息卡在队列里不被回答）。
+
+**根因**：pig 原来在 `AgentEndEvent` 的 fan-out 里决定重试/压缩/结束，并在每个不重试的 run 结束时 settle —— settle 是「每个 run」而不是「每个 prompt」。同时 `isStreaming()` 只看 agent 当前 run（重试 sleep、溢出压缩、run 之间都是 false，且 `Agent::finish()` 在 agent_end 监听器之前就清了 isStreaming），于是这些空档里进来的输入变成新 prompt：先 settle 旧的，再立刻 Working。另外 AgentLoop 生产者 fiber 跑在监听器前面：turn_end 里排队的消息漏读，监听器抛错后还在跑工具。
+
+**避坑规则**：
+- settle 只能出现在 `runAgentPrompt()` 的 finally（对应上游 `_runAgentPrompt` → `_emitAgentSettled`），一个 prompt 恰好一次；重试/溢出压缩/`agent.hasQueuedMessages()` 续跑都在它的 post-run 循环里，不准在 agent 事件回调里决定「之后做什么」。
+- `AgentSession::isStreaming()` = 上游 `_isAgentRunActive`（整个 prompt），不是 `agent->state->isStreaming`；新代码判断「能不能直接发」一律问 session。
+- Agent 的监听器必须在 loop 的 fiber 里同步跑完再继续（`AgentLoop::start/continue` 的 `$emit`），不要再用「另一个 fiber 迭代 EventStream」消费 agent 事件。
+- 改这块先跑 `AgentSettledTest`（记录 agent_start/agent_end/agent_settled 顺序）。
+
+### Web 终端里 vim 用不了（首屏不出来、输入没反应、Ctrl+C 无效）
+**症状**：`pig web` 的终端抽屉里敲 `vim file`，屏幕停在命令行不动（或只剩零星几块），之后按的键 vim 都收到了（`:wq` 能存盘）却不再刷新；Ctrl+C 停不下 `sleep`；bash 开头打印 "cannot set terminal process group … no job control"；`pig web` 停掉后端口还被残留的 shell 占着。
+**根因**（三处叠加）：
+- vendored `xterm.js`（5.5 ES module 构建）的 `requestMode()`（DECRQM，`CSI ? Ps $ p` 的回答）给枚举赋值到未声明的 `i`，模块是严格模式，第一次模式查询就在解析器里抛 ReferenceError，这次 write 后面的内容全丢。vim 启动就查模式（`?12$p` 光标闪烁），于是首屏和之后的重绘都没了。
+- pty 输出按 JSON 文本帧发，`json_encode()` 遇到任何非 UTF-8 字节就整帧返回 false（`(string) false` 是空帧）。pty 是字节流，读取会把「你」切成两半；vim 启动探测也会写出不成字符的字节——整帧连同 vim 首屏一起消失。
+- `proc_open` 只把 fd 0–2 指到 pty，子进程留在 pig 的 session 里，没有控制终端：^C/^Z 只是普通字节、resize 没有 SIGWINCH、bash 没有作业控制、`/dev/tty` 要么不存在（daemon）要么是启动 `pig web` 的那个终端；master 关闭时也没有 SIGHUP，交互 bash 不理 SIGTERM，残留下来连同继承的监听 socket 一起占住端口。另外 Linux 上 shell 退出后读 master 是 EIO（`fread` 返回 false），旧代码只认 EOF，watcher 空转 100% CPU、永远不报 exit。
+**避坑规则**：
+- shell 一律经 `PtyProcess::launcher()` 启动（setsid → 打开 slave 取得控制终端 → `stty` 初始尺寸 → exec），不要改回 `proc_open($shell)` 直跑；建不了 session 时它在终端第一行明说，不静默。
+- 发给浏览器的终端输出必须是完整 UTF-8：`flushOutput()` 留住未完的尾巴、`mb_scrub` 成 U+FFFD；`Websocket::encode()` 用 `JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR`，不许再出空帧。
+- 读 master 时 `false` 和 EOF 都是结束，都要 `cleanup()`。
+- 初始尺寸由 launcher 在 slave 上设；slave 名在第一次 resize 时才查，且必须是 pty slave、不能是服务器自己的 tty（刚 fork 时 `/proc/$pid/fd/0` 可能还是父进程的终端，`stty` 会改掉用户自己窗口的尺寸）。
+- 换/升级 `assets/js/vendor/xterm.js` 后先跑 `XtermBundleTest`；改 pty 先跑 `PtyProcessTest`（^C、前台进程组、初始尺寸、半个字符、非法字节、EIO 退出）。
 
 ## Version floor: PHP >= 8.3
 

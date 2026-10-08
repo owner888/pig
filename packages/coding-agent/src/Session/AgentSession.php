@@ -134,8 +134,24 @@ final class AgentSession
     /** Set while a retry is sleeping, so escape can call it off. */
     private ?AbortController $retrying = null;
 
-    /** Completed when the retrying is over, so `prompt()` can wait for it. */
-    private ?Deferred $settled = null;
+    /**
+     * A prompt is in progress, from the top of `runAgentPrompt()` to its `agent_settled`: the runs,
+     * and the retry sleeps, summaries and queued messages between them. Upstream's
+     * `_isAgentRunActive`, and what `isStreaming()` answers.
+     */
+    private bool $runActive = false;
+
+    /** Escape reached the prompt in progress, so its post-run loop stops. Upstream's `_agentRunAbortRequested`. */
+    private bool $runAbortRequested = false;
+
+    /** Set while the hooks hear `agent_settled`. Upstream's `_isEmittingAgentSettled`. */
+    private bool $emittingSettled = false;
+
+    /** @var list<Closure(): void> prompts asked for during `agent_settled`, run after it. Upstream's `_deferredSettledActions`. */
+    private array $deferredSettledActions = [];
+
+    /** Completed when the session is next idle, for whoever waits on that. Upstream's `_idleWaitPromise`. */
+    private ?Deferred $idle = null;
 
     /**
      * Set while a summariser is running, so escape can call it off.
@@ -389,10 +405,7 @@ final class AgentSession
 
     private function onAgentEvent(AgentEvent $event): void
     {
-        // Held-back commands join the conversation before the listeners see the end of
-        // the run, so a UI redrawing on that event already has them.
         if ($event instanceof AgentEndEvent) {
-            $this->flushBash();
             $event = $this->normaliseAgentEnd($event);
         }
 
@@ -423,12 +436,11 @@ final class AgentSession
             $listener($event);
         }
 
-        // Last, after the listeners have seen the end: whatever this decides to do next is a
-        // new run, and a UI redrawing on `AgentEndEvent` should have finished drawing the old
-        // one before the next one starts arriving.
-        if ($event instanceof AgentEndEvent) {
-            $this->afterTheRun();
-        }
+        // Nothing is decided here about what comes after the run — retry, summary, the queue.
+        // That is `runAgentPrompt()`'s loop, after `agent->prompt()` has returned, as upstream
+        // has it. Deciding it here, inside the run's own fan-out, is what made `agent_settled` a
+        // per-*run* event: it went out on every end that did not start a retry, including the
+        // ones with a queued message or a hook's turn about to run.
     }
 
     private function normaliseAgentEnd(AgentEndEvent $event): AgentEndEvent
@@ -572,13 +584,10 @@ final class AgentSession
         }
 
         // `agent_settled` is **not** emitted here. `AgentEndEvent` is the end of a *run*, and a
-        // prompt can be several runs: each failed attempt before a retry ends one, and so does
-        // the run an auto-compaction summarises. Upstream emits `agent_settled` once, from
-        // `_emitAgentSettled()` after `_runAgentPrompt()`'s retry loop; emitted beside
-        // `agent_end` it fired once per attempt, and a hook that notifies on it — the system
-        // notification extension — said "task complete" three times during a turn that was
-        // still retrying a 429. It goes out from `finishBackgroundWork()`, which is pig's "nothing
-        // more is coming".
+        // prompt can be several runs: each failed attempt before a retry ends one, so does the
+        // run an auto-compaction summarises, and so does a run with a message queued behind it.
+        // Upstream emits `agent_settled` once per prompt, from `_emitAgentSettled()` in the
+        // `finally` of `_runAgentPrompt()`; pig does the same from `emitAgentSettled()`.
     }
 
     // ---- what an extension can ask of the session ------------------------------------
@@ -655,7 +664,7 @@ final class AgentSession
     /** Nothing running and nothing about to: no turn, no retry, no summary. Upstream's `isIdle`. */
     public function isIdle(): bool
     {
-        return !$this->isStreaming() && $this->settled === null && $this->compacting === null;
+        return !$this->isStreaming() && $this->compacting === null;
     }
 
     /** The system prompt the next request carries. Upstream's `ctx.getSystemPrompt()`. */
@@ -1003,9 +1012,18 @@ final class AgentSession
             : $options->apiKey;
     }
 
+    /**
+     * Whether a prompt is in progress. Upstream's `isStreaming`, which is `_isAgentRunActive`.
+     *
+     * The whole prompt and not just the run in flight: the agent is not streaming during a retry's
+     * sleep, an overflow summary, or the moment between a run and the queued message that carries
+     * it on, and something sent in those gaps used to become a prompt of its own — which settled
+     * this one early, so the "task complete" notification went out over a screen still Working.
+     * Asked here, it is queued into the prompt in progress instead, as upstream queues it.
+     */
     public function isStreaming(): bool
     {
-        return $this->agent->state->isStreaming;
+        return $this->runActive;
     }
 
     /**
@@ -1057,10 +1075,14 @@ final class AgentSession
             return;
         }
 
-        // A retry that is sleeping is not "streaming", so nothing above would have stopped
-        // this — and sending now would race the retry into the same agent. Wait it out: it is
-        // seconds, and what the person typed goes after whatever the retry was rescuing.
-        $this->settled?->future->await();
+        // Between two runs of the prompt in progress — a retry sleeping, a summary being written —
+        // wait it out rather than refusing: it is seconds, and what was sent goes after whatever
+        // the retry was rescuing. pig's own difference: upstream refuses here as it does mid-run.
+        // The screen never gets here (it asks `isStreaming()` and queues), so this is for a
+        // caller without a queue — RPC's `prompt`, `pig -p` with several messages.
+        if ($this->runActive && !$this->agent->state->isStreaming) {
+            $this->waitForIdle();
+        }
 
         if ($this->isStreaming()) {
             throw new AgentError('Agent is already working. Use steer() or followUp().');
@@ -1088,22 +1110,19 @@ final class AgentSession
         // resumed conversation still has it.
         $note = $this->hooks?->emitBeforeAgentStart($text, $images);
 
+        // Held-back `!` commands go in before the prompt, as upstream's `prompt()` flushes them.
+        $this->flushBash();
+
+        // Returns when the prompt has settled — after its retries, its summary and whatever was
+        // queued behind it — so `bin/pig -p` exits with the answer and not with the 503 before it.
         if ($note === null || trim($note->text) === '') {
-            $this->agent->prompt($text, $images);
+            $this->runAgentPrompt(fn () => $this->agent->prompt($text, $images));
         } else {
-            $this->agent->prompt([
+            $this->runAgentPrompt(fn () => $this->agent->prompt([
                 new UserMessage($note->text),
                 new UserMessage([new TextContent($text), ...$images]),
-            ]);
+            ]));
         }
-
-        // And again on the way out, which is upstream's `await this.waitForRetry()` and is the
-        // half pig was missing: a turn that ended in a 503 has a retry spawned behind it, so a
-        // `prompt()` that returns here returns *before the answer exists*. `bin/pig -p` printed
-        // the 503 and exited 1 — and exiting took the retry with it — where the second attempt
-        // a second later would have worked. The three modes that stay running were only
-        // cosmetically wrong: the answer arrived, just after the call that asked for it.
-        $this->settled?->future->await();
     }
 
     /**
@@ -1189,6 +1208,9 @@ final class AgentSession
      */
     public function sendHookMessage(HookMessage $message, bool $triggerTurn = false): void
     {
+        // Working — which is the whole prompt, the gaps between its runs included. A message
+        // queued here is carried on by `runAgentPrompt()` when the run it arrived during has
+        // ended, as upstream's post-run loop does on `agent.hasQueuedMessages()`.
         if ($this->isStreaming()) {
             // Handed to the agent, which is the whole of what queuing means. This used to add the
             // text to `$this->followUps` and stop there — this session's own list of what is
@@ -1217,10 +1239,33 @@ final class AgentSession
             return;
         }
 
-        // Spawned, because this is almost always called from inside a handler that is itself
-        // inside a run's event fan-out — the same reason the retry spawns.
-        $this->inTheBackground(function (): void {
-            $this->agent->continue();
+        // Asked for while the hooks hear `agent_settled`: after them, as upstream defers it —
+        // its own prompt, with its own settle, once the one settling now has finished settling.
+        if ($this->emittingSettled) {
+            $this->deferredSettledActions[] = fn () => $this->runAgentPrompt(fn () => $this->agent->continue());
+
+            return;
+        }
+
+        // Spawned, because the caller is a hook's handler and `sendMessage()` does not wait for a
+        // turn. Busy from now rather than from when the fiber starts, as upstream's flag is set
+        // before its first `await`: a prompt sent in that tick would race this one into the agent.
+        $this->runActive = true;
+        $this->idle ??= new Deferred();
+
+        Async::spawn(function (): void {
+            try {
+                $this->runAgentPrompt(fn () => $this->agent->continue());
+            } catch (Throwable $problem) {
+                // Nobody awaits this fiber, so the hook that asked is told — the same channel
+                // as a handler that threw. Without hooks there is no one to tell, and the throw
+                // goes to the spawned future as it is.
+                if ($this->hooks === null) {
+                    throw $problem;
+                }
+
+                $this->hooks->emitError(new HookError('<session>', 'sendMessage', $problem->getMessage()));
+            }
         });
     }
 
@@ -1330,9 +1375,15 @@ final class AgentSession
         return $queued;
     }
 
-    /** Stop the current run; resolves once the agent is idle. */
+    /** Stop the prompt in progress; resolves once the session is idle. Upstream's `abort()`. */
     public function abort(): Future
     {
+        // The prompt's post-run loop stops too: escape is not "this run", it is "this request",
+        // and a queued message or a retry must not carry it on afterwards.
+        if ($this->runActive) {
+            $this->runAbortRequested = true;
+        }
+
         // Before the agent, because neither of these has an agent to interrupt: a retry that is
         // sleeping and a summariser that is running both happen *between* runs, with the last one
         // over and the next one not started. Escape has to reach all three, and reaching them from
@@ -1342,7 +1393,7 @@ final class AgentSession
         $this->abortCompaction();
         $this->agent->abort();
 
-        return $this->agent->waitForIdle();
+        return $this->idleFuture();
     }
 
     /** Drop one copy of $text, steering first — the order it would be sent in. */
@@ -1782,108 +1833,140 @@ final class AgentSession
         return $this->settings?->compactionReserveTokens(Compaction::RESERVE_TOKENS) ?? Compaction::RESERVE_TOKENS;
     }
 
-    // ---- picking a failed turn back up ------------------------------------------------
+    // ---- one prompt, from its first run to `agent_settled` -------------------------------
 
     /**
-     * The run is over. Was it over because something went wrong that can be undone?
+     * Run a prompt to the end: the run, then whatever it leaves to do, then `agent_settled`, once.
      *
-     * Two things can be, and they are told apart by what the provider said. A 503 means try
-     * again; "prompt is too long" means the request itself was the problem, and sending it
-     * again unchanged is the one thing guaranteed not to work — that one is summarised first.
+     * Upstream's `_runAgentPrompt()`, and the shape is upstream's:
      *
-     * Everything here spawns rather than runs. This is called from inside the agent's own
-     * event fan-out, and `continue()` starts another run: doing that here would re-enter the
-     * agent from inside its own notification, and the sleeping cannot happen in a callback at
-     * all. Upstream reaches for `setTimeout(..., 0)` "to break out of the event handler
-     * chain"; `Async::spawn` is the same idea with a name that says why.
+     *     agent.prompt(...)
+     *     while not aborted:
+     *         if _handlePostAgentRun():          retry, overflow summary, or a queued message
+     *             agent.continue(); continue
+     *         if not _runBeforeSettleBoundary(): break
+     *         agent.continue()
+     *     finally: flush held-back commands; _emitAgentSettled()
+     *
+     * pig has no `agent_before_settle` event, and upstream's boundary without a handler is
+     * `agent.hasQueuedMessages()`, which is what stands in its place below.
+     *
+     * Everything happens in the caller's fiber, after `$firstRun` has returned — not in the run's
+     * own event fan-out, which is where pig used to decide it, spawning the retry and settling on
+     * every `AgentEndEvent` that did not start one. That made `agent_settled` a per-*run* event:
+     * a hook's turn started from `agent_end`, a message queued as the run ended, a prompt sent
+     * during a retry's sleep — each settled the prompt and then ran more of it, so the system
+     * notification said "task complete" over a screen still saying Working.
+     *
+     * @param Closure(): void $firstRun `agent->prompt(...)` or `agent->continue()`
      */
-    private function afterTheRun(): void
+    private function runAgentPrompt(Closure $firstRun): void
     {
+        $this->runAbortRequested = false;
+        $this->runActive = true;
+        $this->idle ??= new Deferred();
+
+        try {
+            $firstRun();
+
+            while (!$this->runAbortRequested) {
+                if ($this->handlePostAgentRun()) {
+                    if ($this->runAbortRequested) {
+                        break;
+                    }
+
+                    $this->agent->continue();
+
+                    continue;
+                }
+
+                if ($this->runAbortRequested || !$this->agent->hasQueuedMessages()) {
+                    break;
+                }
+
+                $this->agent->continue();
+            }
+        } finally {
+            if ($this->runAbortRequested) {
+                $this->finishCancelledRetry();
+            }
+
+            $this->flushBash();
+            $this->emitAgentSettled();
+        }
+    }
+
+    /**
+     * The run is over. Is there more of this prompt to run? Upstream's `_handlePostAgentRun()`.
+     *
+     * Three things can carry a prompt on, told apart by how the run ended. A 503 means try again,
+     * after a sleep. "Prompt is too long" means the request itself was the problem, and sending
+     * it again unchanged is the one thing guaranteed not to work — that one is summarised first.
+     * And a message queued after the loop last looked — by an `agent_end` handler, or a key
+     * pressed as the run was ending — is the rest of the same request.
+     *
+     * @return bool true to `continue()` the agent
+     */
+    private function handlePostAgentRun(): bool
+    {
+        if ($this->runAbortRequested) {
+            $this->finishCancelledRetry();
+
+            return false;
+        }
+
         $messages = $this->messages();
         $last = $messages === [] ? null : $messages[count($messages) - 1];
 
         if (!$last instanceof AssistantMessage) {
-            $this->finishBackgroundWork();
-
-            return;
+            return $this->agent->hasQueuedMessages();
         }
 
         $window = $this->model()?->contextWindow;
 
+        // Before the retry check, where upstream has `_checkCompaction()` after it: pig's
+        // `Retry::worthRetrying()` does not exclude an overflow the way upstream's
+        // `_isRetryableError()` does, so the order is what keeps a too-long prompt from being
+        // sent again unchanged.
         if (Overflow::happened($last, $window)) {
-            $this->startBackgroundWork();
-            $this->inTheBackground(fn () => $this->compactAndCarryOn($last));
-
-            return;
+            return $this->compactForOverflow($last) && !$this->runAbortRequested;
         }
 
         if ($this->retryEnabled() && Retry::worthRetrying($last, $window)) {
-            // Created here rather than one line into `waitAndCarryOn()`, because that runs a
-            // tick later and `prompt()` awaits this on its way out of *this* call: a `Deferred`
-            // that does not exist yet cannot be waited for. It also closes the same window the
-            // controller's own move closed — the moment after a retry is decided and before
-            // anything can be told it is happening.
-            $this->startRetrying();
-            $this->inTheBackground(fn () => $this->waitAndCarryOn($last));
+            if ($this->prepareRetry($last)) {
+                return !$this->runAbortRequested;
+            }
 
-            return;
-        }
-
-        // A run that ended without failing, after one that did: the retrying worked.
-        if ($this->attempt > 0) {
+            if ($this->runAbortRequested) {
+                return false;
+            }
+        } elseif ($this->attempt > 0) {
+            // The run after a retry, and not one to retry again: it worked — or it failed in a way
+            // a retry does not fix, which upstream reports as the retrying's failure.
             $attempts = $this->attempt;
             $this->attempt = 0;
-            $this->announce(new RetryEndEvent(true, $attempts));
+            $failed = $last->stopReason === StopReason::Error;
+            $this->announce(new RetryEndEvent(!$failed, $attempts, $failed ? $last->errorMessage : null));
         }
 
-        // Nothing more is coming, so this is where a `prompt()` still waiting is let go —
-        // including after an auto-compaction that worked, whose own carry-on never touches the
-        // retry counter above and so has no other ending to be released by.
-        $this->finishBackgroundWork();
+        // The loop drains both queues before `agent_end`; anything queued after that needs a
+        // fresh run, and it is still this prompt's.
+        return !$this->runAbortRequested && $this->agent->hasQueuedMessages();
     }
 
     /**
-     * Run it in a fiber, and do not let it fail silently.
+     * Wait, then say to send the same turn again. Upstream's `_prepareRetry()`.
      *
-     * `Async::spawn` hands a throw to the future it returns, and nothing awaits this one — so
-     * without the catch, a bug in here is a session that simply stops, with the listeners
-     * left holding a `RetryStartEvent` that never ends. Which is exactly what happened:
-     * `Throwable` was not imported in this file, every `catch (Throwable)` in it was catching
-     * a class that does not exist, and the fibers died without a word. See the trap in
-     * CLAUDE.md about missing imports — this is the shape of it.
-     */
-    private function inTheBackground(Closure $work): void
-    {
-        Async::spawn(function () use ($work): void {
-            try {
-                $work();
-            } catch (Throwable $problem) {
-                $attempts = $this->attempt;
-                $this->attempt = 0;
-                $this->announce(new RetryEndEvent(false, $attempts, $problem->getMessage()));
-                $this->finishBackgroundWork();
-            }
-        });
-    }
-
-    /**
-     * Wait, then send the same turn again.
-     *
-     * The failed message is taken off the agent's state before the retry — it is an error, not
-     * an answer, and leaving it there would have the model reading its own failure as the
+     * The failed message is taken off the agent's state before the wait — it is an error, not an
+     * answer, and leaving it there would have the model reading its own failure as the
      * conversation. It stays in the session file, because it happened.
+     *
+     * @return bool true when the sleep ran out and the turn should go again; false when the retry
+     *              was given up, cancelled by a hook, or called off by escape — each of which has
+     *              already announced its `RetryEndEvent`
      */
-    private function waitAndCarryOn(AssistantMessage $failed): void
+    private function prepareRetry(AssistantMessage $failed): bool
     {
-        // Called off between the decision to retry and this fiber's first tick, which is a real
-        // window: `afterTheRun()` decides synchronously and this runs a tick later, and
-        // `abortRetry()` in between clears both halves. Making a fresh pair here would start a
-        // retry with a controller nobody holds — a sleep that escape has already been answered
-        // for and cannot reach again.
-        if ($this->retrying === null) {
-            return;
-        }
-
         $this->attempt++;
 
         $max = $this->settings?->retryMaxAttempts(Retry::MAX_ATTEMPTS) ?? Retry::MAX_ATTEMPTS;
@@ -1906,9 +1989,8 @@ final class AgentSession
         if ($decision?->cancel === true) {
             $this->attempt = 0;
             $this->announce(new RetryEndEvent(false, $max, $decision->reason ?? $error));
-            $this->finishBackgroundWork();
 
-            return;
+            return false;
         }
 
         if ($decision?->resetAttempts === true) {
@@ -1921,37 +2003,58 @@ final class AgentSession
         if ($this->attempt > $max) {
             $this->attempt = 0;
             $this->announce(new RetryEndEvent(false, $max, $error));
-            $this->finishBackgroundWork();
 
-            return;
+            return false;
         }
 
-        $this->announce(new RetryStartEvent($this->attempt, $max, $delay, $error));
-        $this->dropLastAssistantMessage();
+        // The controller exists for the announcement and the sleep both, so `isRetrying()` is
+        // true from the moment anything has been told a retry is happening until it is over.
+        $this->retrying = new AbortController();
 
-        $signal = $this->retrying?->signal;
+        try {
+            $this->announce(new RetryStartEvent($this->attempt, $max, $delay, $error));
+            $this->dropLastAssistantMessage();
 
-        if ($signal === null || !$this->sleep($delay, $signal)) {
-            // Escape, during the sleep. `abortRetry()` has already reset the counter and told
-            // everyone; there is nothing left to do but not send the request.
-            return;
+            if ($this->sleep($delay, $this->retrying->signal)) {
+                return true;
+            }
+        } finally {
+            $this->retrying = null;
         }
 
-        $this->carryOn();
+        // Escape, during the sleep — or before it, from a `RetryStartEvent` listener.
+        $attempts = $this->attempt;
+        $this->attempt = 0;
+        $this->announce(new RetryEndEvent(false, $attempts, 'Retrying was cancelled.'));
+
+        return false;
     }
 
     /**
-     * Summarise, then send the same turn again.
+     * A retry that escape stopped from outside the sleep — the run of a retried turn, aborted.
+     * Upstream's `_finishCancelledRetry()`: whoever drew "Retrying (2/3)" hears that it is over.
+     */
+    private function finishCancelledRetry(): void
+    {
+        if ($this->attempt === 0) {
+            return;
+        }
+
+        $attempts = $this->attempt;
+        $this->attempt = 0;
+        $this->announce(new RetryEndEvent(false, $attempts, 'Retrying was cancelled.'));
+    }
+
+    /**
+     * Summarise, then say to send the same turn again.
      *
      * The turn failed because the conversation outgrew the window, so the summary is the fix
      * and the retry is the point of doing it. A summary that fails or is cancelled ends it —
      * sending the same oversized request again would fail the same way.
      *
-     * Those two endings call `finishRetrying()`, which looks like a no-op and is not: a retry
-     * whose second attempt overflows arrives here with `settled` already pending, and whoever
-     * is waiting on it — `prompt()`, on its way out — would wait for a run that is not coming.
+     * @return bool true when there is a summary to carry on from
      */
-    private function compactAndCarryOn(AssistantMessage $failed): void
+    private function compactForOverflow(AssistantMessage $failed): bool
     {
         $error = $failed->errorMessage ?? 'The conversation outgrew the context window.';
 
@@ -1959,42 +2062,22 @@ final class AgentSession
         $this->dropLastAssistantMessage();
 
         try {
-            $summary = $this->compact(reason: 'overflow');
+            $summary = $this->compactNow(null, null, 'overflow');
         } catch (Throwable $problem) {
             $this->announce(new AutoCompactionEndEvent(false, false, null, $problem->getMessage()));
-            $this->finishBackgroundWork();
 
-            return;
+            return false;
         }
 
         if ($summary === null) {
             $this->announce(new AutoCompactionEndEvent(false, false, null, 'Summarising was cancelled.'));
-            $this->finishBackgroundWork();
 
-            return;
+            return false;
         }
 
         $this->announce(new AutoCompactionEndEvent(true, true, $summary));
-        $this->carryOn();
-    }
 
-    /** Run again from the conversation as it stands. A failure lands back in `afterTheRun()`. */
-    private function carryOn(): void
-    {
-        if ($this->retryAborted()) {
-            return;
-        }
-
-        try {
-            $this->agent->continue();
-        } catch (Throwable $problem) {
-            // `continue()` refuses when the agent is already working, which here means
-            // somebody typed while the retry was sleeping. Their turn is the one that should
-            // happen; this one is over.
-            $this->attempt = 0;
-            $this->announce(new RetryEndEvent(false, $this->attempt, $problem->getMessage()));
-            $this->finishBackgroundWork();
-        }
+        return true;
     }
 
     /**
@@ -2075,9 +2158,8 @@ final class AgentSession
     /**
      * Whether a retry is being waited out right now.
      *
-     * The controller and not `$settled`, which the two were interchangeable for until the waiting
-     * handle came to cover auto-compaction as well. A summarisation is not a retry, and a field
-     * that answered for both would have this method lying on the overflow path.
+     * The controller, which exists from the `RetryStartEvent` to the end of the sleep — upstream's
+     * `_retryAbortController`. A summarisation is not a retry and does not make this true.
      */
     public function isRetrying(): bool
     {
@@ -2085,76 +2167,74 @@ final class AgentSession
     }
 
     /**
-     * Stop retrying.
+     * Stop retrying. Upstream's `abortRetry()`.
      *
      * Safe to call when nothing is being retried, because that is how `abort()` calls it:
      * escape means stop, and whether there was a sleep to interrupt is not the caller's
-     * business.
+     * business. The sleeping `prepareRetry()` wakes, says the retrying was cancelled, and the
+     * prompt settles — or carries on with what was queued, if only the retry was called off.
      */
     public function abortRetry(): void
     {
-        // The controller, not the waiting handle: that is pending for an auto-compaction too, and
-        // escape during one must not announce a retry ending that no retry was having.
-        if ($this->retrying === null) {
+        $this->retrying?->abort();
+    }
+
+    /** Resolves when the session is next idle — at once, if it is. Upstream's `waitForIdle()`. */
+    private function idleFuture(): Future
+    {
+        if ($this->isIdle()) {
+            return Future::complete(null);
+        }
+
+        return ($this->idle ??= new Deferred())->future;
+    }
+
+    private function waitForIdle(): void
+    {
+        $this->idleFuture()->await();
+    }
+
+    /**
+     * The prompt is over: tell the hooks, run what they asked for, release whoever is waiting.
+     * Upstream's `_emitAgentSettled()`.
+     *
+     * The hooks first, as upstream emits before the idle wait resolves, so a `-p` that exits when
+     * `prompt()` returns has already let the notification hook run. Reached exactly once per
+     * prompt, from `runAgentPrompt()`'s `finally` — whichever way the prompt ended — and that is
+     * the property `agent_settled` promises: final, and once.
+     */
+    private function emitAgentSettled(): void
+    {
+        $this->runActive = false;
+        $this->emittingSettled = true;
+
+        try {
+            $this->hooks?->emit(new HookAgentSettled($this->messages()));
+        } finally {
+            $this->emittingSettled = false;
+        }
+
+        $deferred = $this->deferredSettledActions;
+        $this->deferredSettledActions = [];
+
+        try {
+            foreach ($deferred as $action) {
+                $action();
+            }
+        } finally {
+            $this->resolveIdleWaitIfIdle();
+        }
+    }
+
+    /** Upstream's `_resolveIdleWaitIfIdle()`, plus the quit an extension asked for while busy. */
+    private function resolveIdleWaitIfIdle(): void
+    {
+        if (!$this->isIdle()) {
             return;
         }
 
-        $attempts = $this->attempt;
-        $this->attempt = 0;
-        $this->retrying?->abort();
-        $this->announce(new RetryEndEvent(false, $attempts, 'Retrying was cancelled.'));
-        $this->finishBackgroundWork();
-    }
-
-    /** Whether escape has reached the retry that is running. */
-    private function retryAborted(): bool
-    {
-        return $this->retrying?->signal->aborted() ?? false;
-    }
-
-    /**
-     * `afterTheRun()` has started something, and `prompt()` may now wait for it.
-     *
-     * One handle for both kinds — a retry and an auto-compaction — because to whoever is waiting
-     * they are the same fact: the turn is not over yet. `bin/pig -p` is the caller that has to
-     * know, since when it stops waiting the process exits.
-     */
-    private function startBackgroundWork(): void
-    {
-        $this->settled ??= new Deferred();
-    }
-
-    /**
-     * The retry is on, and both halves of it exist from this moment.
-     *
-     * Both together, and for the whole retry rather than just the sleep. Created only around
-     * the sleep, there was a window — after `isRetrying()` became true and before the
-     * controller existed — where `abortRetry()` had nothing to abort: it said the retrying was
-     * cancelled and the retrying carried on anyway.
-     */
-    private function startRetrying(): void
-    {
-        $this->startBackgroundWork();
-        $this->retrying ??= new AbortController();
-    }
-
-    /**
-     * Nothing more is coming from `afterTheRun()`: tell the hooks the agent has settled, and
-     * release whoever is waiting.
-     *
-     * The hooks first, as upstream's `_emitAgentSettled()` emits before the idle wait resolves,
-     * so a `-p` that exits when `prompt()` returns has already let the notification hook run.
-     * Reached exactly once per prompt, from whichever ending the prompt has — a clean run, the
-     * last retry, a retry escape stopped, a compaction that worked or did not — and that is the
-     * property `agent_settled` promises: final, and once.
-     */
-    private function finishBackgroundWork(): void
-    {
-        $waiting = $this->settled;
-        $this->settled = null;
-        $this->retrying = null;
-
-        $this->hooks?->emit(new HookAgentSettled($this->messages()));
+        $waiting = $this->idle;
+        $this->idle = null;
 
         if ($waiting !== null && !$waiting->isComplete()) {
             $waiting->complete(null);
@@ -2186,6 +2266,16 @@ final class AgentSession
         if ($this->isStreaming()) {
             throw new AgentError('Agent is working. Let it finish, or press esc, then compact.');
         }
+
+        return $this->compactNow($instructions, $signal, $reason);
+    }
+
+    /**
+     * `compact()` without the "is a prompt in progress" check, for the one caller that is the
+     * prompt in progress: the overflow summary between a failed run and the one that retries it.
+     */
+    private function compactNow(?string $instructions, ?AbortSignal $signal, string $reason): ?CompactionSummary
+    {
 
         // One controller for both doors, so `isCompacting()` and `abortCompaction()` answer for a
         // summarisation whoever started it. A signal the caller brought is *forwarded* into it
@@ -2221,6 +2311,10 @@ final class AgentSession
             if ($listener !== null) {
                 $signal?->removeListener($listener);
             }
+
+            // A summary is part of "busy" (`isIdle()`), so its end can be the moment somebody
+            // waiting on `abort()` is let go. Inside a prompt this does nothing: still busy.
+            $this->resolveIdleWaitIfIdle();
         }
 
         if ($summary === null) {

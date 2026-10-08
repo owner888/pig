@@ -225,8 +225,14 @@ final class AgentSessionTest extends TestCase
     public function testAQueuedMessageLeavesTheQueueBeforeItsEventGoesOut(): void
     {
         $seen = null;
-        $session = $this->session(['one', 'two'], static function (Agent $agent) use (&$session): void {
-            if ($session->queued() === []) {
+        $steered = false;
+
+        // Once, by a flag: the agent's listeners now run before its loop goes on, so the queue is
+        // already empty again when the model is asked for the second answer — and steering
+        // whenever it is empty steered on every turn, for ever.
+        $session = $this->session(['one', 'two'], static function (Agent $agent) use (&$session, &$steered): void {
+            if (!$steered) {
+                $steered = true;
                 $session->steer('and also this');
             }
         });
@@ -1307,7 +1313,7 @@ final class AgentSessionTest extends TestCase
         $this->assertFileDoesNotExist((string) $session->store()?->path);
     }
 
-    public function testARetryCalledOffBeforeItBeganDoesNotBeginAfterAll(): void
+    public function testARetryCalledOffAsItIsAnnouncedNeverSleeps(): void
     {
         $session = $this->session(
             [],
@@ -1316,9 +1322,15 @@ final class AgentSessionTest extends TestCase
         );
 
         $starts = $ends = [];
-        $session->subscribe(static function (AgentEvent $event) use (&$starts, &$ends): void {
+        $session->subscribe(static function (AgentEvent $event) use ($session, &$starts, &$ends): void {
             if ($event instanceof RetryStartEvent) {
                 $starts[] = $event;
+
+                // The earliest escape can land: the retry is announced and its sleep not yet
+                // armed. This used to be a tick of its own — the retry was decided in the run's
+                // fan-out and slept in a fiber spawned from there — and is now the announcement
+                // itself, since the sleep follows it in the prompt's own fiber.
+                $session->abortRetry();
             }
 
             if ($event instanceof RetryEndEvent) {
@@ -1326,30 +1338,21 @@ final class AgentSessionTest extends TestCase
             }
         });
 
-        // Stopped at the *decision* rather than at the sleep, which is a tick of its own:
-        // `afterTheRun()` makes both halves of the retry synchronously and the fiber that
-        // announces it and parks on the timer runs afterwards. So this is the one moment where
-        // `abortRetry()` has something to clear and nothing yet to interrupt.
         Async::run(static function () use ($session): void {
             Async::spawn(static fn () => $session->prompt('hi'));
         });
-
-        for ($tick = 0; $tick < 200 && !$session->isRetrying(); $tick++) {
-            self::tickWithoutWaiting();
-        }
-
-        $session->abortRetry();
 
         for ($tick = 0; $tick < 50; $tick++) {
             self::tickWithoutWaiting();
         }
 
-        // Never began: the fiber found both halves cleared and stopped. Making a fresh pair
-        // there would have armed a half-minute sleep against a controller nobody holds — escape
-        // answered, and then unreachable for the rest of it.
-        $this->assertSame([], $starts);
+        // Never slept: the controller the announcement was made under is the one escape reached,
+        // so the half-minute timer was not armed against a controller nobody holds.
+        $this->assertCount(1, $starts);
         $this->assertCount(1, $ends);
+        $this->assertStringContainsString('cancelled', $ends[0]->error ?? '');
         $this->assertFalse($session->isRetrying());
+        $this->assertTrue($session->isIdle());
     }
 
     public function testAbortingWhenNothingIsBeingRetriedIsHarmless(): void

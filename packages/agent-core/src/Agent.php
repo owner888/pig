@@ -183,6 +183,18 @@ final class Agent
         $this->followUpQueue = [];
     }
 
+    /**
+     * Whether either queue still holds something. Upstream's `hasQueuedMessages()`.
+     *
+     * What the session asks after a run: the loop drains both queues before `agent_end`, but a
+     * message queued after its last look — by an `agent_end` handler, or a key pressed as the run
+     * was ending — is still here, and it belongs to the same prompt.
+     */
+    public function hasQueuedMessages(): bool
+    {
+        return $this->steeringQueue !== [] || $this->followUpQueue !== [];
+    }
+
     /** Stop the current run. Does nothing when idle. */
     public function abort(): void
     {
@@ -261,7 +273,26 @@ final class Agent
             throw new AgentError('No messages to continue from');
         }
 
+        // Upstream's `continue()`: from an assistant message there is nothing to answer, unless
+        // something is queued — then the queue is the next prompt, steering first. This is how a
+        // session carries a prompt on when a message was queued after the loop's last look.
         if ($this->state->messages[count($this->state->messages) - 1] instanceof AssistantMessage) {
+            $steering = $this->take($this->steeringQueue, $this->steeringMode);
+
+            if ($steering !== []) {
+                $this->run($steering, skipInitialSteeringPoll: true);
+
+                return;
+            }
+
+            $followUps = $this->take($this->followUpQueue, $this->followUpMode);
+
+            if ($followUps !== []) {
+                $this->run($followUps);
+
+                return;
+            }
+
             throw new AgentError('Cannot continue from an assistant message');
         }
 
@@ -286,8 +317,14 @@ final class Agent
         return [new UserMessage([new TextContent($input), ...$images])];
     }
 
+    /**
+     * Set for a run that starts from steering messages, so the loop's first look at the steering
+     * queue does not take the next one into the same turn. Upstream's `skipInitialSteeringPoll`.
+     */
+    private bool $skipInitialSteeringPoll = false;
+
     /** @param list<mixed>|null $prompts null continues from the existing context */
-    private function run(?array $prompts): void
+    private function run(?array $prompts, bool $skipInitialSteeringPoll = false): void
     {
         $model = $this->state->model;
 
@@ -297,6 +334,7 @@ final class Agent
 
         $this->running = new Deferred();
         $this->controller = new AbortController();
+        $this->skipInitialSteeringPoll = $skipInitialSteeringPoll;
         $this->state->isStreaming = true;
         $this->state->streamMessage = null;
         $this->state->error = null;
@@ -305,15 +343,22 @@ final class Agent
         $config = $this->config($model);
         $partial = null;
 
+        // Each event is applied and handed to the listeners *in the loop's fiber*, before the loop
+        // goes on — upstream's `runAgentLoop(..., emit)` with its awaited listeners. This used to
+        // iterate the loop's stream from here instead, and the loop does not wait for its reader:
+        // it read the queues before the `turn_end` listeners had run, and when a listener threw it
+        // went on running tools for a run that this side had already ended.
+        $emit = function (AgentEvent $event) use (&$partial): void {
+            $partial = $this->apply($event, $partial);
+            $this->emit($event);
+        };
+
         try {
             $stream = $prompts !== null
-                ? AgentLoop::start($prompts, $context, $config, $this->controller->signal, $this->options->streamFn)
-                : AgentLoop::continue($context, $config, $this->controller->signal, $this->options->streamFn);
+                ? AgentLoop::start($prompts, $context, $config, $this->controller->signal, $this->options->streamFn, $emit)
+                : AgentLoop::continue($context, $config, $this->controller->signal, $this->options->streamFn, $emit);
 
-            foreach ($stream as $event) {
-                $partial = $this->apply($event, $partial);
-                $this->emit($event);
-            }
+            $stream->result()->await();
 
             $this->keepUnfinished($partial);
         } catch (Throwable $error) {
@@ -356,7 +401,15 @@ final class Agent
             convertToLlm: $this->convertToLlm,
             reasoning: $this->state->thinkingLevel->toReasoning(),
             transformContext: $this->transformContext,
-            getSteeringMessages: fn (): array => $this->take($this->steeringQueue, $this->steeringMode),
+            getSteeringMessages: function (): array {
+                if ($this->skipInitialSteeringPoll) {
+                    $this->skipInitialSteeringPoll = false;
+
+                    return [];
+                }
+
+                return $this->take($this->steeringQueue, $this->steeringMode);
+            },
             getFollowUpMessages: fn (): array => $this->take($this->followUpQueue, $this->followUpMode),
             getApiKey: $this->options->getApiKey,
             apiKey: $this->options->apiKey,
@@ -438,9 +491,15 @@ final class Agent
         return $partial;
     }
 
+    /**
+     * The loop has nothing more to say. **Not** idle yet: upstream's `agent_end` reduction clears
+     * the streaming message only, and the run stays active until `run()`'s `finally`, after every
+     * listener of this event has returned. Clearing `isStreaming` here let an `agent_end` listener
+     * start a second run inside the first one's fan-out, whose state the first run's `finally`
+     * then cleared from under it.
+     */
     private function finish(mixed $partial): mixed
     {
-        $this->state->isStreaming = false;
         $this->state->streamMessage = null;
 
         return $partial;

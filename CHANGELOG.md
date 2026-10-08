@@ -43,6 +43,23 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.17] - 2026-10-08
+
+### Fixed
+
+- **Fixed Premature `agent_settled` Event Emissions During Active Prompt Runs**:
+  - Aligned prompt lifecycle architecture with upstream pi's `_runAgentPrompt()`: moved retry handling (`prepareRetry()`), overflow compaction (`compactForOverflow()`), and follow-up/steering queue execution into the main post-run loop of the caller's fiber rather than resolving on individual runs.
+  - Ensured `emitAgentSettled()` fires strictly in `runAgentPrompt()`'s `finally` block, firing exactly once per user prompt and eliminating bogus "Task Completed" desktop notifications while the agent is still actively working or retrying.
+  - Aligned `AgentSession::isStreaming()` to track the entire active prompt lifecycle matching upstream's `_isAgentRunActive`.
+  - Added dedicated unit tests in `AgentSettledTest.php`.
+- **Fixed WebTerminal PTY Process Isolation, Vim Rendering, and Job Control**:
+  - Implemented `PtyProcess::launcher()` executing `posix_setsid()`, opening slave devices as the session's controlling terminal (forkpty semantics), applying initial `stty` rows/cols, and executing shells under true job control.
+  - Enabled Ctrl+C (`SIGINT`), Ctrl+Z (`SIGTSTP`), and `SIGWINCH` window resizing for foreground child processes (e.g. Vim, less).
+  - Fixed UTF-8 chunk fragmenting across WebSocket text frames by buffering partial multibyte sequences in `PtyProcess::flushOutput()` and enforcing `JSON_INVALID_UTF8_SUBSTITUTE` in `Websocket::encode()`.
+  - Patched vendored `xterm.js` 5.5 to fix a fatal ReferenceError during DECRQM cursor blink mode queries (`?12$p`) when Vim launches.
+  - Fixed EIO read handling on Linux when slave closes, avoiding 100% CPU busy loops.
+  - Added dedicated test suites in `PtyProcessTest.php` and `XtermBundleTest.php`.
+
 ## [0.4.16] - 2026-10-08
 
 ### New Features

@@ -471,7 +471,9 @@ final class McpExtensionTest extends TestCase
         $this->turn();
         $screen = $this->screenOf($tui);
         $this->assertStringContainsString('MCP server fixture', $screen);
-        $this->assertStringContainsString(self::fixtureServer(), $screen);
+        // The path is one line of text the view wraps at 100 columns; where the checkout lives
+        // decides whether it fits, so it is compared with the wrap taken out.
+        $this->assertStringContainsString(self::fixtureServer(), implode('', array_map(trim(...), explode("\n", $screen))));
         $this->assertStringContainsString('State: connected · 1 tool', $screen);
         $this->assertMatchesRegularExpression('/Tools\s+1 offered/', $screen);
         $this->assertMatchesRegularExpression('/Disable\s+saved to the global mcp.json/', $screen);
