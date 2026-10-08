@@ -15,6 +15,7 @@ use Pig\Ai\Models;
 use Pig\Ai\Pricing;
 use Pig\Ai\Providers\Google;
 use Pig\Ai\Providers\GoogleOptions;
+use Pig\Ai\Providers\GoogleShared;
 use Pig\Ai\ReasoningEffort;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StopReason;
@@ -431,14 +432,38 @@ final class GoogleTest extends TestCase
         $this->assertSame('model', $this->server->receivedJson()['contents'][1]['role']);
     }
 
-    public function testJsonSchemaMetaDeclarationsAreStrippedFromAToolsParameters(): void
+    public function testTheDirectApiSendsTheSchemaAsWrittenInParametersJsonSchema(): void
+    {
+        // Upstream's `convertTools(tools, false, …)` for the direct API: `parametersJsonSchema`,
+        // full JSON Schema, untouched. This used to assert the meta-declarations were stripped,
+        // because pig sent the legacy OpenAPI `parameters`, which answers `Unknown name "$schema"`
+        // to the schema every MCP server writes. The stripping lives on for the Code Assist path
+        // (next test); here the field that takes JSON Schema is the one used.
+        $schema = [
+            '$schema' => 'http://json-schema.org/draft-07/schema#',
+            'type' => 'object',
+            'properties' => ['path' => ['type' => 'string', '$comment' => 'absolute'], 'opts' => ['$ref' => '#/$defs/opts']],
+            '$defs' => ['opts' => ['type' => 'object']],
+            'required' => ['path'],
+            'additionalProperties' => false,
+        ];
+        $context = new Context([new UserMessage('hi')], tools: [new Tool('read_text_file', 'Read a file', $schema)]);
+
+        $this->send($context);
+
+        $declared = $this->server->receivedJson()['tools'][0]['functionDeclarations'][0];
+
+        $this->assertArrayNotHasKey('parameters', $declared);
+        $this->assertSame($schema, $declared['parametersJsonSchema']);
+    }
+
+    public function testTheCodeAssistToolsStillStripJsonSchemaMetaDeclarations(): void
     {
         // What the TypeScript MCP SDK emits for every tool: `$schema` at the top and `$defs`
-        // underneath. Gemini's `parameters` is an OpenAPI 3.0 schema and answers
+        // underneath. The legacy `parameters` is an OpenAPI 3.0 schema and answers
         // `Unknown name "$schema"` — a 400 for every request, from the moment one MCP server
-        // connected. No built-in tool carries one, which is how upstream's `sanitizeForOpenApi`
-        // stayed unported until then.
-        $context = new Context([new UserMessage('hi')], tools: [new Tool('read_text_file', 'Read a file', [
+        // connected. `GoogleShared::tools()` is what `pig-antigravity` sends, and it still uses it.
+        $tools = GoogleShared::tools([new Tool('read_text_file', 'Read a file', [
             '$schema' => 'http://json-schema.org/draft-07/schema#',
             'type' => 'object',
             'properties' => ['path' => ['type' => 'string', '$comment' => 'absolute'], 'opts' => ['$ref' => '#/$defs/opts']],
@@ -447,15 +472,109 @@ final class GoogleTest extends TestCase
             'additionalProperties' => false,
         ])]);
 
-        $this->send($context);
-
-        $declared = $this->server->receivedJson()['tools'][0]['functionDeclarations'][0]['parameters'];
+        $declared = $tools[0]['functionDeclarations'][0]['parameters'];
 
         $this->assertArrayNotHasKey('$schema', $declared);
         $this->assertArrayNotHasKey('$defs', $declared);
         $this->assertArrayNotHasKey('$comment', $declared['properties']['path'], 'at every depth');
         $this->assertSame(['path'], $declared['required'], 'everything else stays');
         $this->assertFalse($declared['additionalProperties']);
+    }
+
+    public function testGeminiThreeCallsAStrictToolInValidatedMode(): void
+    {
+        // Upstream's `resolveGoogleFunctionCallingMode()`: a tool that asks for strict sampling,
+        // on a model that has it (`supportsGoogleStrictToolSampling()`: Gemini 3+), makes the
+        // mode `VALIDATED`, and the schema goes in its strict form — every property required,
+        // an optional one widened to take null. pig had no such mode and sent no `toolConfig`.
+        $strict = new Tool('read', 'Read a file', [
+            'type' => 'object',
+            'properties' => ['path' => ['type' => 'string'], 'limit' => ['type' => 'integer']],
+            'required' => ['path'],
+        ], ['type' => 'json_schema', 'strict' => 'prefer']);
+
+        $this->send(new Context([new UserMessage('hi')], tools: [$strict]), $this->model(id: 'gemini-3-pro-preview'));
+        $sent = $this->server->receivedJson();
+
+        $this->assertSame(['functionCallingConfig' => ['mode' => 'VALIDATED']], $sent['toolConfig']);
+        $this->assertSame([
+            'type' => 'object',
+            'properties' => ['path' => ['type' => 'string'], 'limit' => ['anyOf' => [['type' => 'integer'], ['type' => 'null']]]],
+            'required' => ['path', 'limit'],
+            'additionalProperties' => false,
+        ], $sent['tools'][0]['functionDeclarations'][0]['parametersJsonSchema']);
+
+        // `none` and `any` are said as asked even then.
+        $this->server = new CannedServer();
+        $this->send(
+            new Context([new UserMessage('hi')], tools: [$strict]),
+            $this->model(id: 'gemini-3-pro-preview'),
+            new GoogleOptions(apiKey: 'test-key', toolChoice: 'any'),
+        );
+        $this->assertSame('ANY', $this->server->receivedJson()['toolConfig']['functionCallingConfig']['mode']);
+    }
+
+    public function testBeforeGeminiThreeOrWithoutAStrictToolThereIsNoValidatedMode(): void
+    {
+        $strict = new Tool('read', 'Read a file', ['type' => 'object', 'properties' => ['path' => ['type' => 'string']]], ['type' => 'json_schema', 'strict' => 'prefer']);
+        $plain = new Tool('read', 'Read a file', ['type' => 'object', 'properties' => ['path' => ['type' => 'string']]]);
+
+        // Gemini 2.5 has no strict sampling: a `prefer` tool falls back, the schema goes as
+        // written, and with no tool choice no mode is said at all.
+        $this->send(new Context([new UserMessage('hi')], tools: [$strict]), $this->model(id: 'gemini-2.5-pro'));
+        $sent = $this->server->receivedJson();
+        $this->assertArrayNotHasKey('toolConfig', $sent);
+        $this->assertSame($strict->parameters, $sent['tools'][0]['functionDeclarations'][0]['parametersJsonSchema']);
+
+        // Gemini 3 with no tool asking for it: the same.
+        $this->server = new CannedServer();
+        $this->send(new Context([new UserMessage('hi')], tools: [$plain]), $this->model(id: 'gemini-3-pro-preview'));
+        $this->assertArrayNotHasKey('toolConfig', $this->server->receivedJson());
+    }
+
+    public function testFunctionCallingModeDecisionIsUpstreams(): void
+    {
+        $strict = new Tool('t', 'd', ['type' => 'object', 'properties' => []], ['type' => 'json_schema', 'strict' => 'prefer']);
+        $plain = new Tool('t', 'd', ['type' => 'object', 'properties' => []]);
+
+        $this->assertTrue(GoogleShared::supportsGoogleStrictToolSampling('gemini-3-flash'));
+        $this->assertTrue(GoogleShared::supportsGoogleStrictToolSampling('Gemini-Live-3.1'));
+        $this->assertFalse(GoogleShared::supportsGoogleStrictToolSampling('gemini-2.5-pro'));
+        $this->assertFalse(GoogleShared::supportsGoogleStrictToolSampling('claude-sonnet-4-5'));
+
+        $this->assertSame('VALIDATED', GoogleShared::resolveGoogleFunctionCallingMode([$plain, $strict], null, true));
+        $this->assertSame('VALIDATED', GoogleShared::resolveGoogleFunctionCallingMode([$strict], 'auto', true));
+        $this->assertSame('NONE', GoogleShared::resolveGoogleFunctionCallingMode([$strict], 'none', true));
+        $this->assertSame('AUTO', GoogleShared::resolveGoogleFunctionCallingMode([$strict], 'auto', false));
+        // `mapToolChoice()`'s default arm: an unknown choice is AUTO, not upper-cased.
+        $this->assertSame('AUTO', GoogleShared::resolveGoogleFunctionCallingMode([$plain], 'required', true));
+        $this->assertNull(GoogleShared::resolveGoogleFunctionCallingMode([$plain], null, true));
+    }
+
+    public function testARequiredStrictToolFailsTheTurnWhereStrictIsUnavailable(): void
+    {
+        // `strict: "require"` is upstream's "never send me loose": no strict mode, or a schema with
+        // no strict form, is an error rather than a silent fallback.
+        $require = new Tool('t', 'd', ['type' => 'object', 'properties' => []], ['type' => 'json_schema', 'strict' => 'require']);
+        $unstrictable = new Tool('u', 'd', ['type' => 'object', 'properties' => ['x' => ['oneOf' => [['type' => 'string']]]]], ['type' => 'json_schema', 'strict' => 'require']);
+
+        try {
+            GoogleShared::resolveGoogleFunctionCallingMode([$require], null, false);
+            $this->fail('expected a refusal');
+        } catch (\Pig\Ai\ProviderError $error) {
+            $this->assertSame('Tool "t" requires JSON-schema constrained sampling, but strict tools are unsupported.', $error->getMessage());
+        }
+
+        try {
+            GoogleShared::resolveGoogleFunctionCallingMode([$unstrictable], null, true);
+            $this->fail('expected a refusal');
+        } catch (\Pig\Ai\ProviderError $error) {
+            $this->assertSame('Tool "u" requires JSON-schema constrained sampling, but oneOf schemas are unsupported.', $error->getMessage());
+        }
+
+        // A `prefer` tool with the same schema simply is not strict.
+        $prefer = new Tool('u', 'd', $unstrictable->parameters, ['type' => 'json_schema', 'strict' => 'prefer']);
+        $this->assertNull(GoogleShared::resolveGoogleFunctionCallingMode([$prefer], null, true));
     }
 
     public function testConsecutiveToolResultsAreMergedIntoOneTurn(): void
@@ -656,7 +775,7 @@ final class GoogleTest extends TestCase
         $this->assertEquals([new TextContent('the answer', 'U0lHMQ==')], $message->content);
     }
 
-    public function testAnImageGoesInlineAndIsLeftOutForAModelThatCannotSeeOne(): void
+    public function testAnImageGoesInlineAndBecomesAPlaceholderForAModelThatCannotSeeOne(): void
     {
         $context = new Context([new UserMessage([new TextContent('look'), new ImageContent('AAA', 'image/png')])]);
 
@@ -665,7 +784,13 @@ final class GoogleTest extends TestCase
 
         $this->server = new CannedServer();
         $this->send($context, $this->model(images: false));
-        $this->assertCount(1, $this->server->receivedJson()['contents'][0]['parts']);
+        // Was a count of 1: the image was dropped without a word. Upstream's
+        // `downgradeUnsupportedImages()` leaves a line saying one was there, so the model can say
+        // it cannot see it rather than answer as though nothing had been attached.
+        $this->assertSame(
+            [['text' => 'look'], ['text' => '(image omitted: model does not support images)']],
+            $this->server->receivedJson()['contents'][0]['parts'],
+        );
     }
 
     public function testOnlyGeminiThreeTakesImagesInsideAToolResult(): void

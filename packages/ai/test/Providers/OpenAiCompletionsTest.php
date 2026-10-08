@@ -581,7 +581,7 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame([], $this->server->receivedJson()['tools']);
     }
 
-    public function testAnImageIsLeftOutForAModelThatCannotSeeOne(): void
+    public function testAnImageBecomesAPlaceholderForAModelThatCannotSeeOne(): void
     {
         $context = new Context([new UserMessage([new TextContent('look'), new \Pig\Ai\ImageContent('AAA', 'image/png')])]);
 
@@ -589,8 +589,12 @@ final class OpenAiCompletionsTest extends TestCase
 
         $parts = $this->server->receivedJson()['messages'][0]['content'];
 
-        $this->assertCount(1, $parts);
-        $this->assertSame('text', $parts[0]['type']);
+        // Was one part: the image vanished and the model was never told. Upstream's
+        // `downgradeUnsupportedImages()` puts a line of text in its place.
+        $this->assertSame([
+            ['type' => 'text', 'text' => 'look'],
+            ['type' => 'text', 'text' => '(image omitted: model does not support images)'],
+        ], $parts);
     }
 
     public function testAToolResultsImagesFollowAsAUserTurnOfTheirOwn(): void
@@ -771,6 +775,67 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertTrue($compat->store);
         $this->assertTrue($compat->developerRole);
         $this->assertTrue($compat->reasoningEffort);
+    }
+
+    public function testDeepSeekIsDetectedByNameOrHostAsNeedingReasoningContentOnEveryAssistantTurn(): void
+    {
+        // Upstream's `isDeepSeek`: the provider called `deepseek`, or `deepseek.com` anywhere in
+        // the URL, case aside. Nothing else gets the flag.
+        $this->assertTrue(OpenAiCompat::detect('https://api.deepseek.com/v1')->reasoningContentOnAssistantMessages);
+        $this->assertTrue(OpenAiCompat::detect('https://API.DeepSeek.com/v1')->reasoningContentOnAssistantMessages);
+        $this->assertTrue(OpenAiCompat::detect('http://127.0.0.1:8080/v1', 'deepseek')->reasoningContentOnAssistantMessages);
+        $this->assertFalse(OpenAiCompat::detect('https://api.openai.com/v1', 'openai')->reasoningContentOnAssistantMessages);
+    }
+
+    public function testDeepSeekGetsAnEmptyReasoningContentOnAReplayedTurnThatHadNoThinking(): void
+    {
+        // The 400 this fixes: DeepSeek's thinking mode wants `reasoning_content` on **every**
+        // assistant turn that goes back to it, and pig only wrote the field when the turn had
+        // thinking to put in it — so the first replayed tool-call turn without reasoning (or one
+        // from another provider) failed the whole conversation. Upstream adds `""`.
+        // The provider name is what is detected here, because the canned server's URL is not
+        // DeepSeek's.
+        $deepseek = new Model('deepseek-reasoner', 'DeepSeek', Api::OpenAiCompletions, 'deepseek', 'http://127.0.0.1:1', 64_000, 8_192, true);
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ToolCall('c1', 'read', ['path' => 'a'])]),
+            new ToolResultMessage('c1', 'read', [new TextContent('ok')]),
+            // Its own turn, so the thinking stays thinking rather than becoming text.
+            new AssistantMessage(
+                [new ThinkingContent('mine', 'reasoning_content'), new TextContent('done')],
+                Api::OpenAiCompletions,
+                'deepseek',
+                'deepseek-reasoner',
+                new Usage(),
+                StopReason::Stop,
+            ),
+            new UserMessage('more'),
+        ]);
+
+        $this->send($context, $deepseek);
+        $messages = $this->server->receivedJson()['messages'];
+
+        $this->assertSame('', $messages[1]['reasoning_content']);
+        // A turn that has its own reasoning keeps it; the empty one is only a filler.
+        $this->assertSame('mine', $messages[3]['reasoning_content']);
+    }
+
+    public function testTheReasoningContentFillerNeedsTheFlagAndAReasoningModel(): void
+    {
+        // Upstream's condition is the compat flag **and** `model.reasoning` — the model's
+        // capability, not whether this request thinks. Neither alone writes the field.
+        $context = new Context([new UserMessage('hi'), $this->assistant([new TextContent('hello')]), new UserMessage('more')]);
+
+        $this->send($context, $this->model(reasoning: false, compat: new OpenAiCompat(reasoningContentOnAssistantMessages: true)));
+        $this->assertArrayNotHasKey('reasoning_content', $this->server->receivedJson()['messages'][1]);
+
+        $this->server = new CannedServer();
+        $this->send($context, $this->model(reasoning: true));
+        $this->assertArrayNotHasKey('reasoning_content', $this->server->receivedJson()['messages'][1]);
+
+        $this->server = new CannedServer();
+        $this->send($context, $this->model(reasoning: true, compat: new OpenAiCompat(reasoningContentOnAssistantMessages: true)));
+        $this->assertSame('', $this->server->receivedJson()['messages'][1]['reasoning_content']);
     }
 
     public function testMistralsToolIdsAreCutAndPaddedToExactlyNine(): void

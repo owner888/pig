@@ -668,7 +668,7 @@ final class OpenAiCompletions
     /** @return array<string, mixed> */
     private function body(Model $model, Context $context, ?OpenAiOptions $options): array
     {
-        $compat = $model->compat ?? OpenAiCompat::detect($model->baseUrl);
+        $compat = $model->compat ?? OpenAiCompat::detect($model->baseUrl, $model->provider);
 
         $body = [
             'model' => $model->id,
@@ -828,8 +828,8 @@ final class OpenAiCompletions
             }
         }
 
-        // An empty turn is rejected outright, and a user message that was nothing but an
-        // image the model cannot see has nothing left in it.
+        // An empty turn is rejected outright. (An image the model cannot see no longer empties
+        // a turn: `TransformMessages` has already put a placeholder line in its place.)
         return $parts === [] ? [] : [['role' => 'user', 'content' => $parts]];
     }
 
@@ -951,6 +951,15 @@ final class OpenAiCompletions
         // Sent as the objects they arrived as: a string here is rejected.
         if ($preservedReasoningDetails !== null) {
             $out['reasoning_details'] = $preservedReasoningDetails;
+        }
+
+        // Upstream's `requiresReasoningContentOnAssistantMessages` arm, in its place — after the
+        // reasoning field and the details, before the empty-turn check (which looks only at
+        // content and calls, so this alone never keeps a turn). `model.reasoning` is the model's
+        // capability, not whether this request thinks: upstream reads it that way. A turn that
+        // already carries `reasoning_content` — its own thinking, written above — keeps it.
+        if ($compat->reasoningContentOnAssistantMessages && $model->reasoning && !array_key_exists('reasoning_content', $out)) {
+            $out['reasoning_content'] = '';
         }
 
         $empty = ($out['content'] === null || $out['content'] === '' || $out['content'] === [])

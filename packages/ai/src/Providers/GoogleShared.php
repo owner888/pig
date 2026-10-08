@@ -28,6 +28,7 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\Utf8;
 use stdClass;
 
@@ -226,7 +227,10 @@ final class GoogleShared
     }
 
     /**
-     * The tools, in the one-element list Gemini wants them in.
+     * The tools, in the one-element list Gemini wants them in, for the Code Assist path
+     * (`pig-antigravity`): the legacy `parameters` schema, meta-declarations stripped — upstream's
+     * `convertTools(tools, true)` minus strict sampling, which upstream's surviving callers only
+     * ask for on the direct API. The direct API goes through `convertTools()`.
      *
      * @param list<Tool> $tools
      * @return list<array<string, mixed>>
@@ -236,10 +240,103 @@ final class GoogleShared
         return [['functionDeclarations' => array_map(self::tool(...), $tools)]];
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * The Code Assist path's tool choice (`pig-antigravity`): the choice upper-cased into a mode.
+     *
+     * Not upstream's `resolveGoogleFunctionCallingMode()`, which only the direct API uses
+     * (`Google::body()`): upstream no longer has a Code Assist provider to compare against, and the
+     * one it had used the legacy `parameters` schema — see `tools()`.
+     *
+     * @return array<string, mixed>
+     */
     public static function toolConfig(string $choice): array
     {
         return ['functionCallingConfig' => ['mode' => strtoupper($choice)]];
+    }
+
+    /**
+     * Upstream's `convertTools(tools, useParameters = false, supportsStrictMode = true)`, literally.
+     *
+     * By default the schema goes in `parametersJsonSchema`, which takes full JSON Schema
+     * (`anyOf`, `const`, `$schema` and the rest) as written. `$useParameters` sends the legacy
+     * OpenAPI 3.0 `parameters` instead, stripped of JSON Schema's meta-declarations — what a Code
+     * Assist endpoint translating to Anthropic's `input_schema` needs. A tool that goes strict
+     * (`ConstrainedSampling`) is sent in its strict form either way.
+     *
+     * @param list<Tool> $tools
+     * @return list<array<string, mixed>>|null null for no tools, upstream's `undefined`
+     */
+    public static function convertTools(array $tools, bool $useParameters = false, bool $supportsStrictMode = true): ?array
+    {
+        if ($tools === []) {
+            return null;
+        }
+
+        return [[
+            'functionDeclarations' => array_map(static function (Tool $tool) use ($useParameters, $supportsStrictMode): array {
+                $strict = ConstrainedSampling::resolveJsonSchemaStrictSampling($tool, $supportsStrictMode);
+                $parameters = ConstrainedSampling::getJsonSchemaToolParameters($tool, $strict);
+
+                return [
+                    'name' => $tool->name,
+                    'description' => $tool->description,
+                    ...($useParameters
+                        ? ['parameters' => self::sanitizeForOpenApi($parameters)]
+                        : ['parametersJsonSchema' => $parameters]),
+                ];
+            }, $tools),
+        ]];
+    }
+
+    /** Upstream's `supportsGoogleStrictToolSampling()`: Gemini 3+ enforces required function parameters in validated tool-calling modes. */
+    public static function supportsGoogleStrictToolSampling(string $modelId): bool
+    {
+        $majorVersion = self::geminiMajorVersion($modelId);
+
+        return $majorVersion !== null && $majorVersion >= 3;
+    }
+
+    /** Upstream's `mapToolChoice()`: a tool choice as Gemini's `FunctionCallingConfigMode`; anything unknown is `AUTO`. */
+    public static function mapToolChoice(string $choice): string
+    {
+        return match ($choice) {
+            'none' => 'NONE',
+            'any' => 'ANY',
+            default => 'AUTO',
+        };
+    }
+
+    /**
+     * Upstream's `resolveGoogleFunctionCallingMode()`, literally.
+     *
+     * `none` and `any` are said as asked. Otherwise a tool that goes strict makes the mode
+     * `VALIDATED` — Gemini then holds the call to the schema, required parameters included — and
+     * with none, the choice is mapped when there is one and the mode left unsaid when not.
+     *
+     * @param list<Tool> $tools
+     */
+    public static function resolveGoogleFunctionCallingMode(array $tools, ?string $toolChoice, bool $supportsStrictMode): ?string
+    {
+        $useStrictMode = false;
+
+        foreach ($tools as $tool) {
+            if (ConstrainedSampling::resolveJsonSchemaStrictSampling($tool, $supportsStrictMode) === true) {
+                $useStrictMode = true;
+
+                break;
+            }
+        }
+
+        if ($toolChoice === 'none' || $toolChoice === 'any') {
+            return self::mapToolChoice($toolChoice);
+        }
+
+        if ($useStrictMode) {
+            return 'VALIDATED';
+        }
+
+        // JS truthiness: an empty string is no choice.
+        return $toolChoice !== null && $toolChoice !== '' ? self::mapToolChoice($toolChoice) : null;
     }
 
     /** @return array<string, mixed> */

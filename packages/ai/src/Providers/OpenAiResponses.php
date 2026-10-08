@@ -297,12 +297,21 @@ final class OpenAiResponses
         AssistantMessageEventStream $stream,
         ?array $open,
     ): ?array {
+        $item = $data['item'] ?? [];
+
+        // Upstream's `applyMessagePhaseStopReason(item)`, run on every finished item: a message
+        // marked `final_answer` sets `stop`. The terminal event's own mapping overwrites it
+        // afterwards (`onCompleted()`, upstream's `finalizeResponse()`), so the net effect is
+        // nil whenever the stream ends properly; it is here because upstream does it.
+        if (($item['type'] ?? null) === 'message' && ($item['phase'] ?? null) === 'final_answer') {
+            $builder->setStopReason(StopReason::Stop);
+        }
+
         if ($open === null) {
             return null;
         }
 
         [$index, $kind] = $open;
-        $item = $data['item'] ?? [];
 
         if ($kind === 'thinking') {
             // The whole item, kept verbatim: the summary is what a person reads, and the
@@ -314,6 +323,22 @@ final class OpenAiResponses
         }
 
         if ($kind === 'text') {
+            // Upstream rebuilds the text from the finished item rather than trusting the deltas:
+            // `item.content?.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("") || ""`.
+            // Every `output_text` part and every `refusal` part, in order, joined with nothing —
+            // the refusal is text the person must see. **The streamed text is discarded**, even
+            // when the item carries no content at all, which upstream turns into "".
+            $text = '';
+
+            foreach (is_array($item['content'] ?? null) ? $item['content'] : [] as $part) {
+                $piece = !is_array($part) ? null
+                    : (($part['type'] ?? null) === 'output_text' ? ($part['text'] ?? null) : ($part['refusal'] ?? null));
+                // JS `join()` writes undefined and null as ''.
+                $text .= is_string($piece) ? $piece : '';
+            }
+
+            $builder->setText($index, $text);
+
             // Upstream's `encodeTextSignatureV1(item.id, item.phase ?? undefined)`: the id *and* the
             // phase, so `assistant()` can send the phase back on the same message next turn.
             $builder->setSignature($index, self::encodeTextSignatureV1($item));

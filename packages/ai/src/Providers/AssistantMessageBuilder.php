@@ -164,6 +164,17 @@ final class AssistantMessageBuilder
     }
 
     /**
+     * Replace a text block's text, rather than adding to it.
+     *
+     * The same shape as `setSignature()`: OpenAI's responses API streams a message as deltas and
+     * then hands over the finished item, whose parts are the text upstream keeps.
+     */
+    public function setText(int $index, string $text): void
+    {
+        $this->blocks[$index]['text'] = $text;
+    }
+
+    /**
      * Replace a tool call's arguments with the authoritative JSON, rather than adding to it.
      *
      * The same shape as `setSignature()` and for the same reason: OpenAI's responses API streams
