@@ -43,20 +43,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## [0.4.27] - 2026-10-08
-
-### Fixed
-
-- **Fixed Linux / Ubuntu `dash` Incompatibility in RPC Client Child Launcher (`RpcClient`)**:
-  - Replaced hardcoded `/bin/sh` in `RpcClient::withoutInheritedFds()` with preferred `/bin/bash` (falling back to `/bin/sh` max fd 9).
-  - Eliminated fatal exit code 127 (`exec: 10: not found`) on Debian/Ubuntu systems where `/bin/sh` links to `dash` and rejects multi-digit file descriptor redirects, enabling RpcClient and WebMode sub-processes to spawn cleanly on Linux.
-- **Fixed Linux Extension Module Availability in Codemode Sandbox (`Sandbox`)**:
-  - Removed `-n` (no configuration files) from `Sandbox::command()`, ensuring shared extensions (like `ext-mbstring` on Ubuntu CI runners) load properly while retaining strict `-d` security overrides (`disable_functions`, `open_basedir`, and `memory_limit`).
-  - Added explicit `$result['ok']` assertion in `CodemodeTest` to prevent array key warnings on unexpected execution failures.
-- **Robust Child Session Binding Assertion in Web Mode Test (`WebModeTest`)**:
-  - Added safety assertion verifying `session_bound` before array indexing on `SessionPool::all()`, eliminating undefined array key warnings.
-
-## [0.4.27] - 2026-10-08
+## [0.4.28] - 2026-10-08
 
 ### New Features
 
@@ -72,6 +59,19 @@ Every release entry strictly follows upstream pi's format with version date and 
   - Implemented `downgradeUnsupportedImages()` in `TransformMessages::apply()`: automatically replaced images in user messages and tool results with structured placeholder notes (`(image omitted: model does not support images)` / `(tool image omitted: model does not support images)`) when targeting models without vision input, coalescing adjacent images into single lines.
 - **DeepSeek Reasoning Content Filler (`OpenAiCompat`)**:
   - Added `requiresReasoningContentOnAssistantMessages` compatibility detection for DeepSeek endpoints, automatically populating `reasoning_content: ""` on replayed assistant turns without reasoning content and eliminating 400 parameter errors.
+
+## [0.4.27] - 2026-10-08
+
+### Fixed
+
+- **Fixed Linux / Ubuntu `dash` Incompatibility in RPC Client Child Launcher (`RpcClient`)**:
+  - Replaced hardcoded `/bin/sh` in `RpcClient::withoutInheritedFds()` with preferred `/bin/bash` (falling back to `/bin/sh` max fd 9).
+  - Eliminated fatal exit code 127 (`exec: 10: not found`) on Debian/Ubuntu systems where `/bin/sh` links to `dash` and rejects multi-digit file descriptor redirects, enabling RpcClient and WebMode sub-processes to spawn cleanly on Linux.
+- **Fixed Linux Extension Module Availability in Codemode Sandbox (`Sandbox`)**:
+  - Removed `-n` (no configuration files) from `Sandbox::command()`, ensuring shared extensions (like `ext-mbstring` on Ubuntu CI runners) load properly while retaining strict `-d` security overrides (`disable_functions`, `open_basedir`, and `memory_limit`).
+  - Added explicit `$result['ok']` assertion in `CodemodeTest` to prevent array key warnings on unexpected execution failures.
+- **Robust Child Session Binding Assertion in Web Mode Test (`WebModeTest`)**:
+  - Added safety assertion verifying `session_bound` before array indexing on `SessionPool::all()`, eliminating undefined array key warnings.
 
 ## [0.4.26] - 2026-10-08
 
