@@ -46,12 +46,12 @@ final class OverflowTest extends TestCase
     {
         Loop::reset();
     }
-    private static function failed(string $error): AssistantMessage
+    private static function failed(string $error, string $provider = 'anthropic'): AssistantMessage
     {
         return new AssistantMessage(
             [new TextContent('')],
             Api::AnthropicMessages,
-            'anthropic',
+            $provider,
             'claude-test',
             new Usage(),
             StopReason::Error,
@@ -63,7 +63,7 @@ final class OverflowTest extends TestCase
     public static function realMessages(): iterable
     {
         yield 'Anthropic' => ['prompt is too long: 213462 tokens > 200000 maximum'];
-        yield 'z.ai CN' => ['zai returned 400: {"code":"1261","message":"Prompt exceeds max length"}'];
+        yield 'z.ai CN' => ['400: {"code":"1261","message":"Prompt exceeds max length"}'];
         yield 'OpenAI' => ['Your input exceeds the context window of this model'];
         yield 'Google' => ['The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)'];
         yield 'xAI' => ["This model's maximum prompt length is 131072 but the request contains 537812 tokens"];
@@ -80,40 +80,84 @@ final class OverflowTest extends TestCase
         $this->assertTrue(Overflow::happened(self::failed($error)));
     }
 
-    public function testTheBodilessFourHundredsCerebrasAndMistralSend(): void
+    public function testTheBodilessFourHundredsOnlyCountForCerebras(): void
     {
-        // No explanation at all, which is why the status is all there is to go on.
-        $this->assertTrue(Overflow::happened(self::failed('400 status code (no body)')));
-        $this->assertTrue(Overflow::happened(self::failed('413 status code (no body)')));
-        $this->assertTrue(Overflow::happened(self::failed('429 status code (no body)')));
+        // Upstream's `CEREBRAS_BODYLESS_OVERFLOW_PATTERN`, gated on `message.provider === "cerebras"`.
+        // pig used to take any provider's bodiless 400/413/429 for an overflow (and its own
+        // `<who> returned 4xx:` shape too): a bodiless 429 is a rate limit, and compacting a
+        // conversation because some gateway said nothing is a guess upstream stopped making.
+        $cerebras = static fn (string $error): AssistantMessage => self::failed($error, 'cerebras');
+
+        $this->assertTrue(Overflow::happened($cerebras('400 status code (no body)')));
+        $this->assertTrue(Overflow::happened($cerebras('413 status code (no body)')));
+        $this->assertFalse(Overflow::happened($cerebras('429 status code (no body)')));
+        $this->assertFalse(Overflow::happened(self::failed('400 status code (no body)')));
+        $this->assertFalse(Overflow::happened(self::failed('413 status code (no body)')));
     }
 
-    public function testTheWordingPigItselfProducesForABodilessFourHundred(): void
+    public function testCerebrasBodilessFourHundredThroughARealProvider(): void
     {
-        // The case above is the OpenAI SDK's wording, which is what upstream matches — and which pig
-        // did not write until its OpenAI providers took upstream's error text (`Utils\ErrorBody`):
-        // they said "<who> returned <status>: <body>", so a 400 with an empty body ended at the
-        // colon and the ported pattern could not fire, and an oversized prompt to Cerebras was
-        // retried three times with backoff instead of being compacted and sent again. Anthropic and
-        // Google still write that shape, which `EMPTY_BODY` still catches.
-        //
         // Through a real provider rather than by quoting the string, so the pattern and the message
-        // that has to match it cannot drift apart.
+        // that has to match it cannot drift apart: the completions provider writes the `openai`
+        // SDK's `400 status code (no body)` (`Utils\ErrorBody`).
         $message = $this->failedRequest(400, '');
 
         $this->assertSame('400 status code (no body)', $message->errorMessage);
         $this->assertTrue(Overflow::happened($message));
-        $this->assertTrue(Overflow::happened(self::failed('Anthropic returned 413: ')));
-
         $this->assertTrue(Overflow::happened($this->failedRequest(413, '')));
-        $this->assertTrue(Overflow::happened($this->failedRequest(429, '')));
+        $this->assertFalse(Overflow::happened($this->failedRequest(429, '')));
     }
 
     public function testAFiveHundredWithNoBodyIsNotAnOverflowEither(): void
     {
-        // Only the three statuses that mean "too much" are guessed at; a 500 is the provider
+        // Only the statuses that mean "too much" are guessed at; a 500 is the provider
         // having a bad day, and compacting the conversation would be answering the wrong question.
         $this->assertFalse(Overflow::happened($this->failedRequest(500, '')));
+    }
+
+    /** @return iterable<string, array{0: string}> */
+    public static function upstreamsLaterExamples(): iterable
+    {
+        // The examples upstream's table gained after pig's copy was made, from its own comment.
+        yield 'Anthropic byte size' => ['413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}'];
+        yield 'LiteLLM' => ["Requested token count exceeds the model's maximum context length of 131072 tokens"];
+        yield 'OpenAI-compatible' => ["Input length (265330) exceeds model's maximum context length (262144)."];
+        yield 'Poolside' => ['Input length 300000 exceeds the maximum allowed input length of 262144 tokens.'];
+        yield 'Together AI' => ["The input (300000 tokens) is longer than the model's context length (262144 tokens)."];
+        yield 'MiniMax' => ['invalid params, context window exceeds limit'];
+        yield 'Kimi For Coding' => ['Your request exceeded model token limit: 262144 (requested: 300000)'];
+        yield 'DS4' => ['Prompt has 300,000 tokens, but the configured context size is 262,144 tokens'];
+        yield 'Mistral' => ['Mistral API error (400): {"object":"error","message":"Prompt contains 300000 tokens and 0 draft tokens, too large for model with 262144 maximum context length","type":"invalid_request_message_error"}'];
+        yield 'z.ai' => ['{"code":"1261","message":"Prompt too long"}'];
+        yield 'DashScope' => ['Range of input length should be [1, 258048]'];
+        yield 'Ollama' => ['prompt too long; exceeded max context length by 1200 tokens'];
+        yield 'Bedrock' => ['Input is too long for requested model.'];
+    }
+
+    #[DataProvider('upstreamsLaterExamples')]
+    public function testUpstreamsLaterExamplesAreRecognised(string $error): void
+    {
+        $this->assertTrue(Overflow::happened(self::failed($error)));
+    }
+
+    public function testThrottlingThatMentionsTokensIsNotAnOverflow(): void
+    {
+        // Upstream's `NON_OVERFLOW_PATTERNS`: Bedrock's throttling says "Too many tokens", which the
+        // generic fallback would otherwise take for an overflow.
+        $this->assertFalse(Overflow::happened(self::failed('Throttling error: Too many tokens, please wait before trying again.')));
+        $this->assertFalse(Overflow::happened(self::failed('rate limit: too many tokens per minute')));
+        $this->assertTrue(Overflow::happened(self::failed('too many tokens in the prompt')));
+    }
+
+    public function testALengthStopThatFilledTheWindowWithNothingWrittenIsAnOverflow(): void
+    {
+        // Upstream's third case (Xiaomi MiMo): the prompt was cut to fit, nothing was written.
+        $filled = new AssistantMessage([new TextContent('')], Api::OpenAiCompletions, 'xiaomi', 'mimo', new Usage(198_100, 0), StopReason::Length);
+        $this->assertTrue(Overflow::happened($filled, 200_000));
+        // Something written, or a window not nearly full, is an ordinary length stop.
+        $this->assertFalse(Overflow::happened(new AssistantMessage([new TextContent('x')], Api::OpenAiCompletions, 'xiaomi', 'mimo', new Usage(198_100, 5), StopReason::Length), 200_000));
+        $this->assertFalse(Overflow::happened(new AssistantMessage([new TextContent('')], Api::OpenAiCompletions, 'xiaomi', 'mimo', new Usage(150_000, 0), StopReason::Length), 200_000));
+        $this->assertFalse(Overflow::happened($filled));
     }
 
     /** A real failed request, so the message under test is the one pig actually produces. */
@@ -147,12 +191,12 @@ final class OverflowTest extends TestCase
     public function testAFourHundredWithAnExplanationIsNotAssumedToBeAnOverflow(): void
     {
         // The guess is only for the bodiless ones. A 400 that says what is wrong has said it.
-        $this->assertFalse(Overflow::happened(self::failed('Anthropic returned 400: invalid tool schema')));
+        $this->assertFalse(Overflow::happened(self::failed('400 {"type":"error","error":{"type":"invalid_request_error","message":"invalid tool schema"}}')));
     }
 
     public function testAnOrdinaryFailureIsNotAnOverflow(): void
     {
-        $this->assertFalse(Overflow::happened(self::failed('Anthropic returned 503: overloaded')));
+        $this->assertFalse(Overflow::happened(self::failed('529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}')));
         $this->assertFalse(Overflow::happened(self::failed('The API key is not valid')));
     }
 

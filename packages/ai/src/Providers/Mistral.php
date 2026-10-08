@@ -10,6 +10,7 @@ use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
+use Pig\Ai\Http\Response;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\ProviderError;
@@ -34,9 +35,14 @@ use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
+use Pig\Ai\Utils\JsJson;
+use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\ShortHash;
 use Pig\Ai\Utils\Utf8;
+use Pig\Async\AbortController;
+use Pig\Async\AbortSignal;
 use Pig\Async\Async;
+use Pig\Async\Loop;
 use Throwable;
 
 /**
@@ -61,13 +67,13 @@ use Throwable;
  *
  * Upstream calls `fetch` itself rather than going through Mistral's SDK, and parses the event
  * stream by hand; so does this, with `HttpClient` and the same event-boundary rules
- * (`readMistralEvents()`), not `SseParser`.
+ * (`readMistralEvents()`), not `SseParser`. Like upstream it sends `User-Agent: pig (…)` first
+ * (`PigUserAgent`), and gives the response headers `timeoutMs` (60 s) to arrive — the headers only:
+ * the stream after them is never cut off by a fixed deadline, which upstream changed for long
+ * extended-thinking streams.
  *
- * Not ported, with the reason: upstream's `AbortSignal.timeout(options.timeoutMs ?? 60_000)` — an
- * absolute deadline over the request and the whole stream — because pig's stream options have no
- * `timeoutMs` and `HttpClient` carries its own read timeout; its `User-Agent: pi/<version>`, which
- * no pig provider sends; and the `onPayload`, `onResponse` and `onProviderStreamEvent` hooks, which
- * pig's stream options do not have for any provider.
+ * Not ported: the `onPayload`, `onResponse` and `onProviderStreamEvent` hooks and the per-request
+ * `headers`, which pig's stream options do not have for any provider.
  */
 final class Mistral
 {
@@ -124,12 +130,12 @@ final class Mistral
             );
 
             $payload = self::buildChatPayload($model, $context, $transformedMessages, $options);
-            $response = $this->http->send(new Request(
+            $response = $this->requestMistralStream(new Request(
                 'POST',
                 rtrim($model->baseUrl, '/') . '/v1/chat/completions',
                 self::buildMistralHeaders($model, $apiKey, $options),
                 self::encode($payload),
-            ), $signal);
+            ), $signal, $options?->timeoutMs ?? 60_000);
 
             if (!$response->isSuccessful()) {
                 throw new ProviderError(self::formatMistralHttpError($response->status, $response->body->all(), $response->reason));
@@ -166,13 +172,51 @@ final class Mistral
     }
 
     /**
+     * Upstream's `requestMistralStream()` up to the response: "The timeout covers only the wait for
+     * response headers. Long streams (e.g. extended thinking) must not be cut off by a fixed
+     * deadline; body stalls are left to the HTTP client idle timeout." A deadline that passes before
+     * the headers, with the caller's own signal not aborted, is `Mistral response headers timed out
+     * after <ms>ms`. The caller's signal keeps reaching the body afterwards; the deadline does not.
+     */
+    private function requestMistralStream(Request $request, ?AbortSignal $signal, int $timeoutMs): Response
+    {
+        $combined = new AbortController();
+        $timedOut = false;
+        $timer = Loop::get()->delay($timeoutMs / 1000, static function () use ($combined, &$timedOut): void {
+            $timedOut = true;
+            $combined->abort('Mistral response headers timed out');
+        });
+        $listener = $signal?->onAbort(static function (string $reason) use ($combined): void {
+            $combined->abort($reason);
+        });
+
+        try {
+            return $this->http->send($request, $combined->signal);
+        } catch (Throwable $error) {
+            if ($listener !== null) {
+                $signal?->removeListener($listener);
+            }
+
+            if ($timedOut && !($signal?->aborted() ?? false)) {
+                throw new ProviderError("Mistral response headers timed out after {$timeoutMs}ms", previous: $error);
+            }
+
+            throw $error;
+        } finally {
+            Loop::get()->cancel($timer);
+        }
+    }
+
+    /**
      * Upstream's `formatMistralError()` for its `MistralHttpError`: the trimmed body, cut at 4,000
      * characters, or — for an empty one — the error's message, which is the status text or
-     * `Request failed with status <status>`.
+     * `Request failed with status <status>`. The body is `response.text()`'s, trimmed as
+     * JavaScript trims.
      */
     private static function formatMistralHttpError(int $status, string $body, string $statusText): string
     {
-        $bodyText = trim($body);
+        $bodyText = JsJson::decodeUtf8($body);
+        $bodyText = JsJson::trim(str_starts_with($bodyText, "\u{FEFF}") ? substr($bodyText, 3) : $bodyText);
 
         if ($bodyText !== '') {
             return "Mistral API error ({$status}): " . ErrorBody::truncateErrorText($bodyText, self::MAX_MISTRAL_ERROR_BODY_CHARS);
@@ -236,7 +280,7 @@ final class Mistral
     }
 
     /**
-     * Upstream's `buildMistralHeaders()`: the four fixed headers, the model's own and then the
+     * Upstream's `buildMistralHeaders()`: the four fixed headers (`User-Agent` among them), the model's own and then the
      * request's over them (by name, whatever the case), and `x-affinity` — the session id — when
      * caching is on and neither set one.
      *
@@ -245,6 +289,8 @@ final class Mistral
     private static function buildMistralHeaders(Model $model, string $apiKey, ?MistralOptions $options): array
     {
         $headers = [
+            // Upstream's `"User-Agent": getPiUserAgent()`, which the model's own headers can replace.
+            'user-agent' => PigUserAgent::get(),
             'accept' => 'text/event-stream',
             'authorization' => "Bearer {$apiKey}",
             'content-type' => 'application/json',
@@ -556,8 +602,7 @@ final class Mistral
      * Upstream's `parseMistralEvent()`: the `data:` lines, each without the field name and its
      * leading whitespace, joined by newlines and trimmed. Nothing is null, `[DONE]` is true, and
      * anything else must be a JSON object with a `choices` list — `Invalid Mistral streaming event`
-     * when it is not, and the JSON parser's own error when it is not JSON (PHP's words where
-     * upstream's are V8's).
+     * when it is not, and V8's `SyntaxError` text when it is not JSON (`JsJson`).
      *
      * @return array<string, mixed>|true|null
      */
@@ -568,11 +613,11 @@ final class Mistral
 
         foreach ($lines as $line) {
             if (str_starts_with($line, 'data:')) {
-                $data[] = ltrim(substr($line, 5));
+                $data[] = JsJson::trimStart(substr($line, 5));
             }
         }
 
-        $data = trim(implode("\n", $data));
+        $data = JsJson::trim(implode("\n", $data));
 
         if ($data === '') {
             return null;
@@ -582,11 +627,7 @@ final class Mistral
             return true;
         }
 
-        $parsed = json_decode($data, true);
-
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new ProviderError(json_last_error_msg());
-        }
+        $parsed = JsJson::parse($data);
 
         if (!is_array($parsed) || array_is_list($parsed) || !is_array($parsed['choices'] ?? null) || !array_is_list($parsed['choices'])) {
             throw new ProviderError('Invalid Mistral streaming event');

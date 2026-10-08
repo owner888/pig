@@ -27,6 +27,7 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\PigUserAgent;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
@@ -305,13 +306,111 @@ final class GoogleTest extends TestCase
 
     public function testARefusedPromptIsAFailureAndNotAnEmptySuccess(): void
     {
-        // It comes back as a 200 with nothing in it but the reason.
+        // It comes back as a 200 with nothing in it but the reason. Upstream's Gemini path does not
+        // read `promptFeedback`: no candidate means no finish reason, and that is its error. pig
+        // used to say `Gemini refused the prompt: SAFETY` here, its own words; that rule now lives
+        // only in the Antigravity extension, which is pig's own.
         $url = $this->serve([['promptFeedback' => ['blockReason' => 'SAFETY']]]);
 
         [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
 
         $this->assertContains('ErrorEvent', $types);
-        $this->assertStringContainsString('SAFETY', (string) $message->errorMessage);
+        $this->assertSame('Google stream ended without a finish reason', $message->errorMessage);
+    }
+
+    /** @return iterable<string, array{0: string, 1: string, 2: string}> */
+    public static function refusedRequests(): iterable
+    {
+        // `@google/genai` 2.21.0's `throwErrorIfNotOK()`: a JSON response is `JSON.stringify` of the
+        // parsed body — compact, in the body's own key order — and anything else is wrapped as
+        // `{error: {message, code, status: statusText}}`. Upstream's `formatProviderError()` leaves
+        // that message alone. pig used to write `google returned <status>: <error.message>`.
+        yield 'a JSON error' => [
+            "HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json; charset=UTF-8\r\n",
+            "{\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Resource exhausted\",\n    \"status\": \"RESOURCE_EXHAUSTED\"\n  }\n}\n",
+            '{"error":{"code":429,"message":"Resource exhausted","status":"RESOURCE_EXHAUSTED"}}',
+        ];
+        yield 'not JSON' => [
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/html\r\n",
+            '<html>down</html>',
+            '{"error":{"message":"<html>down</html>","code":503,"status":"Service Unavailable"}}',
+        ];
+        // `response.json()` throws, and V8's `SyntaxError` is the error upstream reports.
+        yield 'said JSON, is not' => [
+            "HTTP/1.1 502 Bad Gateway\r\nContent-Type: application/json\r\n",
+            '<html>bad gateway</html>',
+            'Unexpected token \'<\', "<html>bad "... is not valid JSON',
+        ];
+    }
+
+    #[DataProvider('refusedRequests')]
+    public function testARefusedRequestReadsAsTheGenaiSdkWritesIt(string $head, string $body, string $expected): void
+    {
+        $url = $this->server->start([$head . 'Content-Length: ' . strlen($body) . "\r\n\r\n" . $body]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame($expected, $message->errorMessage);
+    }
+
+    /** @return iterable<string, array{0: list<string>, 1: string}> */
+    public static function brokenStreams(): iterable
+    {
+        // The SDK's `processStreamResponse()` and the `chunk.json()` after it. pig read the body
+        // with its own SSE parser and skipped whatever did not decode.
+        yield 'a payload that is not JSON' => [["data: {\"candidates\": [oops]}\n\n"], 'Unexpected token \'o\', ..."idates": [oops]}" is not valid JSON'];
+        yield 'an empty payload' => [["data:\n\n"], 'Unexpected end of JSON input'];
+        // `data:` lines are not joined as an event stream joins them: the event's remainder is one payload.
+        yield 'two data lines' => [["data: {\"a\":1}\ndata: {\"b\":2}\n\n"], 'Unexpected non-whitespace character after JSON at position 8 (line 2 column 1)'];
+        // A refusal sent as a bare JSON object inside a 200 stream.
+        yield 'an error object in the stream' => [
+            ['{"error":{"code":429,"message":"Quota","status":"RESOURCE_EXHAUSTED"}}'],
+            'got status: RESOURCE_EXHAUSTED. {"error":{"code":429,"message":"Quota","status":"RESOURCE_EXHAUSTED"}}',
+        ];
+        yield 'a body cut mid-event' => [["data: {\"candidates\": []}"], 'Incomplete JSON segment at the end'];
+        // An event that does not start with `data:` is passed over whole, its data line too.
+        yield 'an event line first' => [["event: message\ndata: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"], 'Google stream ended without a finish reason'];
+    }
+
+    /** @param list<string> $pieces */
+    #[DataProvider('brokenStreams')]
+    public function testTheStreamIsReadAsTheGenaiSdkReadsIt(array $pieces, string $expected): void
+    {
+        $url = $this->serveRaw($pieces);
+
+        [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('ErrorEvent', end($types));
+        $this->assertSame($expected, $message->errorMessage);
+    }
+
+    public function testEventsEndAtAnyOfTheSdksThreeDelimitersAndMayBeSplitAcrossReads(): void
+    {
+        $text = static fn (string $t, ?string $finish = null): string => (string) json_encode(['candidates' => [array_filter([
+            'content' => ['parts' => [['text' => $t]]],
+            'finishReason' => $finish,
+        ])]]);
+        $url = $this->serveRaw([
+            'data: ' . $text('a') . "\r\r",
+            'data: ' . substr($text('é'), 0, 40),
+            substr($text('é'), 40) . "\r\n\r\n",
+            ": a comment\n\n",
+            'data: ' . $text('c', 'STOP') . "\n\n",
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Stop, $message->stopReason);
+        $this->assertSame('aéc', self::textOf($message));
+    }
+
+    public function testTheUserAgentIsPis(): void
+    {
+        // `createClient()`: `{"User-Agent": getPiUserAgent(), ...model.headers}` as the SDK's headers.
+        $this->send(new Context([new UserMessage('hi')]));
+
+        $this->assertStringContainsString('user-agent: ' . PigUserAgent::get() . "\r\n", $this->server->receivedHead());
     }
 
     public function testACallsThoughtSignatureSurvivesIntoTheMessage(): void
@@ -1313,6 +1412,20 @@ final class GoogleTest extends TestCase
             new Pricing(input: 1.0, output: 2.0),
             thinkingLevelMap: $thinkingLevelMap,
         );
+    }
+
+    /** @param list<string> $pieces each written to the socket on its own, as one HTTP chunk */
+    private function serveRaw(array $pieces): string
+    {
+        $out = ["HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"];
+
+        foreach ($pieces as $piece) {
+            $out[] = sprintf("%x\r\n%s\r\n", strlen($piece), $piece);
+        }
+
+        $out[] = "0\r\n\r\n";
+
+        return $this->server->start($out);
     }
 
     /** @param list<array<string, mixed>> $chunks */

@@ -39,6 +39,8 @@ use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
+use Pig\Ai\Utils\ErrorBody;
+use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\JsonRepair;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Utf8;
@@ -237,7 +239,7 @@ final class Anthropic
      * data is not JSON even after the repair ends the turn with `Could not parse Anthropic SSE event
      * <event>: <why>; data=<data>; raw=<the event's lines joined by a literal \n>`. pig used to drop
      * such an event in silence and carry on, so a corrupted delta was simply missing from the answer.
-     * `<why>` is PHP's JSON error where upstream's is V8's.
+     * `<why>` is V8's `SyntaxError` text (`JsJson`), as upstream's is.
      */
     private static function parseEvent(SseEvent $event): mixed
     {
@@ -555,12 +557,16 @@ final class Anthropic
         };
     }
 
+    /**
+     * A refused request in upstream's words: the `@anthropic-ai/sdk` `APIError`'s message, which
+     * upstream's catch prints as it is — `<status> <the body's JSON>` for Anthropic's own
+     * `{"type":"error","error":{…}}`, `<status> <message>` for a body with a top-level `message`,
+     * `<status> <text>` for one that is not JSON, `<status> status code (no body)` for none. It used
+     * to be pig's own `Anthropic returned <status>: <error.message>`.
+     */
     private function explain(int $status, string $body): string
     {
-        $decoded = json_decode($body, true);
-        $message = is_array($decoded) ? ($decoded['error']['message'] ?? null) : null;
-
-        return "Anthropic returned {$status}: " . (is_string($message) ? $message : trim($body));
+        return ErrorBody::anthropicApiError($status, $body);
     }
 
     private function request(Model $model, Context $context, ?AnthropicOptions $options): Request
@@ -597,6 +603,9 @@ final class Anthropic
             // subscription token, an API key): `accept` and `anthropic-dangerous-direct-browser-access:
             // true` — the SDK refuses to run in a browser without the second, and upstream sends it
             // from everywhere. The SDK adds the other two itself.
+            // Upstream's `mergeClientHeaders()`: `User-Agent: pig (…)` under everything else, so a
+            // subscription token's `user-agent: claude-cli/…` and a model's own replace it.
+            'User-Agent' => PigUserAgent::get(),
             'accept' => 'application/json',
             'anthropic-dangerous-direct-browser-access' => 'true',
             'content-type' => 'application/json',

@@ -30,6 +30,7 @@ use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
 use Pig\Ai\Usage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\Utils\JsJson;
 use Pig\Ai\Utils\MessageJson;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
@@ -114,7 +115,7 @@ final class StreamProxy
             $response = $this->http->send($this->request($model, $context, $options), $signal);
 
             if (!$response->isSuccessful()) {
-                throw new AgentError($this->explain($response->status, $response->body->all()));
+                throw new AgentError($this->explain($response->status, $response->reason, $response->body->all()));
             }
 
             $stream->push(new StartEvent($builder->snapshot()));
@@ -281,6 +282,8 @@ final class StreamProxy
                     ],
                     $model->compat->allowedFallbackModels,
                 ),
+                'supportsMidConvoSystemMessages' => $model->compat->supportsMidConvoSystemMessages,
+                'supportsMidConvoToolChanges' => $model->compat->supportsMidConvoToolChanges,
             ], static fn (mixed $value): bool => $value !== null);
         } elseif ($model->compat !== null) {
             // Upstream's key names, one per pig field, and
@@ -401,13 +404,11 @@ final class StreamProxy
      * which of the two wires it sends cannot be checked, and only one of the two readers is right
      * either way.
      *
-     * **One leading space is optional, which upstream's copy of this gets wrong.** The same twelve
-     * lines exist twice in pi: `proxy.ts` tests `startsWith("data: ")` and slices 6, while
-     * `google-gemini-cli.ts` tests `startsWith("data:")` and slices 5 then trims. The event-stream
-     * spec makes the space after the colon optional and strips exactly one, so the second is
-     * correct and the first silently drops every event from a gateway that writes `data:{…}`. The
-     * turn would then end with no `done` — which is why the failure that used to be a silent empty
-     * message is now a named one.
+     * **A line is an event only when it starts with `data: `, space included** — upstream's
+     * `processLine()`: `if (!line.startsWith("data: ")) return; const data = line.slice(6).trim()`.
+     * pig used to take `data:{…}` without the space too, which upstream passes over; a gateway that
+     * wrote that would have worked here and ended "before the response completed" in pi, so the
+     * two disagreed about the same server. They agree now.
      *
      * @param iterable<string> $body
      * @return iterable<string>
@@ -440,17 +441,16 @@ final class StreamProxy
     }
 
     /**
-     * One `data:` line's payload, or null for anything else.
-     *
-     * A `\r` from a server writing CRLF goes with the trim, as does the one optional space.
+     * One `data: ` line's payload, or null for anything else — `line.slice(6).trim()`, JavaScript's
+     * trim, so a `\r` from a server writing CRLF goes with it.
      */
     private static function payload(string $line): ?string
     {
-        if (!str_starts_with($line, 'data:')) {
+        if (!str_starts_with($line, 'data: ')) {
             return null;
         }
 
-        $data = trim(substr($line, 5));
+        $data = JsJson::trim(substr($line, 6));
 
         return $data === '' ? null : $data;
     }
@@ -459,14 +459,10 @@ final class StreamProxy
     private function dispatch(string $data, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream): bool
     {
         // Upstream's `JSON.parse(data)`, which throws on a payload that is not JSON and so ends the
-        // turn through the catch. pig used to skip such a line; a `: keep-alive` comment and a blank
-        // `data:` never get here (`payload()` drops them), so what is left is a broken event. The
-        // message is PHP's JSON error where upstream's is V8's `SyntaxError`.
-        $event = json_decode($data, true);
-
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new AgentError(json_last_error_msg());
-        }
+        // turn through the catch with V8's `SyntaxError` text (`JsJson`). A `: keep-alive` comment
+        // and a blank `data: ` never get here (`payload()` drops them), so what is left is a broken
+        // event.
+        $event = JsJson::parse($data);
 
         if (!is_array($event)) {
             $event = [];
@@ -709,16 +705,27 @@ final class StreamProxy
         return MessageJson::decodeUsage(is_array($usage) ? $usage : []);
     }
 
-    /** A non-2xx, with the server's own `error` if it sent one — upstream's wording. */
-    private function explain(int $status, string $body): string
+    /**
+     * A non-2xx in upstream's words: `Proxy error: ${response.status} ${response.statusText}`, or
+     * `Proxy error: ${errorData.error}` when the body is JSON with a truthy `error` — whatever its
+     * type, as a template literal prints it. It used to drop the status text and read only a
+     * string `error`.
+     */
+    private function explain(int $status, string $reason, string $body): string
     {
-        $decoded = json_decode($body, true);
-
-        if (is_array($decoded) && isset($decoded['error']) && is_string($decoded['error'])) {
-            return 'Proxy error: ' . $decoded['error'];
+        try {
+            $errorData = JsJson::parse($body, false);
+        } catch (\JsonException) {
+            $errorData = null;
         }
 
-        return "Proxy error: {$status}";
+        $error = $errorData instanceof \stdClass ? ($errorData->error ?? null) : null;
+
+        if ($error !== null && $error !== false && $error !== '' && $error !== 0 && $error !== 0.0) {
+            return 'Proxy error: ' . JsJson::toString($error);
+        }
+
+        return "Proxy error: {$status} {$reason}";
     }
 
 }

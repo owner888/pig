@@ -22,6 +22,7 @@ use Pig\Ai\Http\SseParser;
 use Pig\Ai\Model;
 use Pig\Ai\ProviderError;
 use Pig\Ai\StartEvent;
+use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\Timestamp;
 use Pig\Ai\Utils\AssistantMessageEventStream;
@@ -152,6 +153,18 @@ final class AntigravityApi implements StreamApi
                     // A chunk with no `response` in it is Code Assist saying nothing rather than
                     // saying something unreadable.
                     if (is_array($data) && is_array($data['response'] ?? null)) {
+                        // A blocked prompt comes back as a 200 with nothing in it but the reason.
+                        // This provider's own rule: upstream's Gemini path has no such check (its
+                        // turn ends "without a finish reason"), so it lives here, not in `GoogleShared`.
+                        $blocked = $data['response']['promptFeedback']['blockReason'] ?? null;
+
+                        if (is_string($blocked)) {
+                            throw new ProviderError("Gemini refused the prompt: {$blocked}");
+                        }
+
+                        // As the direct Gemini path reads it: an error finish reason is recorded and
+                        // the rest of the stream — usage included — is read before the turn fails on
+                        // it below.
                         $open = GoogleShared::onChunk($data['response'], $builder, $stream, $open);
                     }
                 }
@@ -159,6 +172,14 @@ final class AntigravityApi implements StreamApi
 
             GoogleShared::close($builder, $stream, $open);
             $signal?->throwIfAborted();
+
+            // The direct Gemini path's check after the stream (`Google::run()`): an error reason
+            // ends the turn with the reason itself, once the whole body has been read.
+            if ($builder->stopReason() === StopReason::Error || $builder->stopReason() === StopReason::Aborted) {
+                $raw = $builder->rawStopReason();
+
+                throw new ProviderError($raw !== null && $raw !== '' ? "Provider stopped with: {$raw}" : 'An unknown error occurred');
+            }
 
             $message = $builder->snapshot();
             $stream->push(new DoneEvent($message->stopReason, $message));

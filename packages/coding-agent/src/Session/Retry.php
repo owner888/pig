@@ -17,9 +17,9 @@ use Pig\Ai\Utils\Overflow;
  *
  * **The status code, not the prose.** Upstream matches the error message against
  * `/overloaded|rate.?limit|429|500|502|503|504|.../i`, which is what it has: its providers
- * word failures however they like. pig's four providers all write
- * `"<provider> returned <status>: <message>"`, so the number is right there and reading it is
- * not a guess. The word list is still here underneath, for the failures that never reached
+ * word failures however they like. pig's providers word them exactly as upstream's do, and every
+ * one of those shapes puts the status somewhere fixed (`STATUS`), so the number is read rather
+ * than guessed at. The word list is still here underneath, for the failures that never reached
  * HTTP at all — a socket that died mid-stream has no status code to read.
  *
  * Ported from the auto-retry half of upstream's `core/agent-session.ts`.
@@ -56,12 +56,19 @@ final class Retry
     private const array RETRYABLE_STATUSES = [408, 429, 500, 502, 503, 504, 529];
 
     /**
-     * The shapes a refused request is written in: `Anthropic returned 429: rate limit exceeded`
-     * (Anthropic, Google), and upstream's `formatProviderError()` shapes the OpenAI and Mistral
-     * providers write — `OpenAI API error (429): {…}`, `Mistral API error (503): …`, and the
-     * completions API's unprefixed `429: {…}` / `429 status code (no body)`.
+     * The shapes a refused request is written in, upstream's each:
+     *
+     * - the SDK `APIError` message, `<status> <…>` — Anthropic's `429 {"type":"error",…}`, the
+     *   completions API's `429: {…}` and `429 status code (no body)`;
+     * - `formatProviderError()` with a prefix — `OpenAI API error (429): {…}`, `Mistral API error
+     *   (503): …`;
+     * - `@google/genai`'s, which is the error body's JSON, `{"error":{"code":429,…}}`, or a refusal
+     *   inside a 200 stream, `got status: RESOURCE_EXHAUSTED. {"error":{"code":429,…}}` — the
+     *   first `code` in the `error` object (a JSON-escaped message cannot fake one);
+     * - an extension's own `<who> returned <status>`.
      */
-    private const string STATUS = '/\breturned (\d{3})\b|\bAPI error \((\d{3})\)|^(\d{3})(?::| status code| )/';
+    private const string STATUS = '/\breturned (\d{3})\b|\bAPI error \((\d{3})\)|^(\d{3})(?::| status code| )'
+        . '|^(?:got status: [^.]*\. )?\{"error":\{.*?"code":(\d{3})\b/';
 
     /**
      * What a failure with no status code looks like.
@@ -127,7 +134,13 @@ final class Retry
         }
 
         // Whichever alternative matched; the others' groups are empty.
-        return (int) ($match[1] !== '' ? $match[1] : (($match[2] ?? '') !== '' ? $match[2] : $match[3]));
+        foreach (array_slice($match, 1) as $group) {
+            if ($group !== '') {
+                return (int) $group;
+            }
+        }
+
+        return null;
     }
 
     /**

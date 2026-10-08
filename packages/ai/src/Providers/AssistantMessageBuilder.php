@@ -209,6 +209,16 @@ final class AssistantMessageBuilder
     }
 
     /**
+     * Seed a tool call's argument JSON without reading it: the arguments stay what they were (`{}`
+     * for a call just opened) until the next delta or `setJson()` reparses. Upstream's Responses
+     * `createSlot()` does exactly this — `arguments: {}, partialJson: item.arguments || ""`.
+     */
+    public function seedJson(int $index, string $json): void
+    {
+        $this->blocks[$index]['json'] = $json;
+    }
+
+    /**
      * Fill in a tool call's id and name after it was opened.
      *
      * Anthropic names a tool call in the event that opens it. OpenAI does not have to:

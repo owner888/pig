@@ -37,6 +37,8 @@ use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
+use Pig\Ai\Utils\JsJson;
+use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\ShortHash;
 use Pig\Ai\Utils\Utf8;
 use Pig\Async\Async;
@@ -133,14 +135,18 @@ final class OpenAiCompletions
 
             foreach ($response->body as $chunk) {
                 foreach ($parser->feed($chunk) as $event) {
-                    // The stream ends with a literal `[DONE]`, which is not JSON.
-                    if (trim($event->data) === '[DONE]') {
-                        continue;
+                    // The `openai` SDK's `Stream`, which upstream's chunks come through: `[DONE]` ends
+                    // the stream whatever follows it, data that is not JSON is the SDK's fixed
+                    // `malformed server-sent event JSON` error, and an `error` in the data — OpenRouter
+                    // sends one mid-stream with a 200 — is an `APIError` (see `ErrorBody`). pig used
+                    // to skip the first two and read past the third.
+                    if ($event->data === '[DONE]') {
+                        break 2;
                     }
 
-                    $data = json_decode($event->data, true);
+                    $data = ErrorBody::openAiStreamEvent($event->type, $event->data, self::withRawMetadata(...));
 
-                    if (is_array($data)) {
+                    if ($data !== []) {
                         $open = $this->onChunk($data, $model, $builder, $stream, $open, $replay, $grammar, $hasFinishReason);
                     }
                 }
@@ -771,14 +777,31 @@ final class OpenAiCompletions
     private function explain(int $status, string $body): string
     {
         $norm = ErrorBody::openAiApiError($status, $body);
-        $message = ErrorBody::format($norm);
-        $raw = $norm['error'] instanceof \stdClass && ($norm['error']->metadata ?? null) instanceof \stdClass
-            ? ($norm['error']->metadata->raw ?? null)
+
+        return self::withRawMetadata(ErrorBody::format($norm), $norm['error']);
+    }
+
+    /**
+     * Upstream's catch after `formatProviderError()`: `(error as any)?.error?.metadata?.raw` — the
+     * `APIError`'s `error` — appended on a line of its own when the message does not already hold it.
+     */
+    private static function withRawMetadata(string $message, mixed $error): string
+    {
+        $raw = $error instanceof \stdClass && ($error->metadata ?? null) instanceof \stdClass
+            ? ($error->metadata->raw ?? null)
             : null;
 
         // `if (rawMetadata && !output.errorMessage.includes(String(rawMetadata)))`.
         if ($raw !== null && $raw !== false && $raw !== '' && $raw !== 0) {
-            $text = is_string($raw) ? $raw : (is_scalar($raw) ? (string) $raw : '[object Object]');
+            // `String(rawMetadata)`.
+            $text = match (true) {
+                is_string($raw) => $raw,
+                is_bool($raw) => $raw ? 'true' : 'false',
+                is_float($raw) => JsJson::number($raw),
+                is_int($raw) => (string) $raw,
+                is_array($raw) => implode(',', array_map(static fn (mixed $item): string => is_scalar($item) ? (string) $item : '', $raw)),
+                default => '[object Object]',
+            };
 
             if (!str_contains($message, $text)) {
                 $message .= "\n{$text}";
@@ -797,6 +820,8 @@ final class OpenAiCompletions
             'accept' => 'text/event-stream',
             'content-type' => 'application/json',
             'authorization' => 'Bearer ' . ($options?->apiKey ?? ''),
+            // Upstream's `{"User-Agent": getPiUserAgent(), ...model.headers}`.
+            'User-Agent' => PigUserAgent::get(),
             ...$model->headers,
             // After the model's own, which is upstream's order: a registry entry cannot turn off
             // the headers Copilot needs to accept the request at all.
@@ -1335,40 +1360,84 @@ final class OpenAiCompletions
             $out[] = ['role' => $role, 'content' => Utf8::sanitize($context->systemPrompt)];
         }
 
-        $previous = null;
-
         $normalizeToolCallId = fn (string $id): string => $this->normalizeToolCallId($id, $model);
+        $messages = array_values(TransformMessages::apply($context->messages, $model, $normalizeToolCallId));
+        // Upstream's `lastRole`: the role of the last message that produced output — a skipped empty
+        // user or assistant message leaves it as it was — and `"user"` after a run of tool results
+        // whose images went out as a user message.
+        $lastRole = null;
+        $count = count($messages);
 
-        foreach (TransformMessages::apply($context->messages, $model, $normalizeToolCallId) as $message) {
-            if ($compat->assistantAfterToolResult
-                && $previous instanceof ToolResultMessage
-                && $message instanceof UserMessage
-            ) {
+        for ($i = 0; $i < $count; $i++) {
+            $message = $messages[$i];
+
+            // "Some providers don't allow user messages directly after tool results. Insert a
+            // synthetic assistant message to bridge the gap."
+            if ($compat->assistantAfterToolResult && $lastRole === 'toolResult' && $message instanceof UserMessage) {
                 $out[] = ['role' => 'assistant', 'content' => 'I have processed the tool results.'];
             }
 
-            foreach ($this->convert($message, $model, $compat, $grammar) as $converted) {
-                $out[] = $converted;
+            if ($message instanceof ToolResultMessage) {
+                // Upstream groups a run of consecutive tool results: every `tool` message first, then
+                // the images of all of them in **one** user message after the run (behind the bridge
+                // when the endpoint wants one). pig used to put each result's images straight after
+                // that result, so a second result in the run followed a user message.
+                $imageBlocks = [];
+
+                for ($j = $i; $j < $count && $messages[$j] instanceof ToolResultMessage; $j++) {
+                    $out[] = $this->toolResult($messages[$j], $compat);
+
+                    if ($model->acceptsImages()) {
+                        foreach ($messages[$j]->content as $block) {
+                            if ($block instanceof ImageContent) {
+                                $imageBlocks[] = [
+                                    'type' => 'image_url',
+                                    'image_url' => ['url' => "data:{$block->mimeType};base64,{$block->data}"],
+                                ];
+                            }
+                        }
+                    }
+                }
+
+                $i = $j - 1;
+
+                if ($imageBlocks !== []) {
+                    if ($compat->assistantAfterToolResult) {
+                        $out[] = ['role' => 'assistant', 'content' => 'I have processed the tool results.'];
+                    }
+
+                    $out[] = [
+                        'role' => 'user',
+                        'content' => [['type' => 'text', 'text' => 'Attached image(s) from tool result:'], ...$imageBlocks],
+                    ];
+                    $lastRole = 'user';
+                } else {
+                    $lastRole = 'toolResult';
+                }
+
+                continue;
             }
 
-            $previous = $message;
+            $converted = match (true) {
+                $message instanceof UserMessage => $this->user($message, $model),
+                $message instanceof AssistantMessage => $this->assistant($message, $model, $compat, $grammar),
+                default => [],
+            };
+
+            // Upstream `continue`s past an empty user message and a contentless assistant one before
+            // `lastRole = msg.role`.
+            if ($converted === []) {
+                continue;
+            }
+
+            foreach ($converted as $item) {
+                $out[] = $item;
+            }
+
+            $lastRole = $message instanceof UserMessage ? 'user' : 'assistant';
         }
 
         return $out;
-    }
-
-    /**
-     * @param array<string, string> $grammar
-     * @return list<array<string, mixed>>
-     */
-    private function convert(mixed $message, Model $model, OpenAiCompat $compat, array $grammar = []): array
-    {
-        return match (true) {
-            $message instanceof UserMessage => $this->user($message, $model),
-            $message instanceof AssistantMessage => $this->assistant($message, $model, $compat, $grammar),
-            $message instanceof ToolResultMessage => $this->toolResult($message, $model, $compat),
-            default => [],
-        };
     }
 
     /** @return list<array<string, mixed>> */
@@ -1377,8 +1446,12 @@ final class OpenAiCompletions
         $parts = [];
 
         foreach ($message->content as $block) {
+            // `.filter((item) => item.type !== "text" || item.text.length > 0)`: an empty text part
+            // is dropped, not sent.
             if ($block instanceof TextContent) {
-                $parts[] = ['type' => 'text', 'text' => Utf8::sanitize($block->text)];
+                if ($block->text !== '') {
+                    $parts[] = ['type' => 'text', 'text' => Utf8::sanitize($block->text)];
+                }
 
                 continue;
             }
@@ -1545,29 +1618,33 @@ final class OpenAiCompletions
         return $empty ? [] : [$out];
     }
 
-    /** @return list<array<string, mixed>> */
-    private function toolResult(ToolResultMessage $message, Model $model, OpenAiCompat $compat): array
+    /**
+     * One tool result as a `tool` message. Its images go out after the whole run of results — see
+     * `messages()`.
+     *
+     * @return array<string, mixed>
+     */
+    private function toolResult(ToolResultMessage $message, OpenAiCompat $compat): array
     {
         $text = [];
-        $images = [];
+        $hasImages = false;
 
         foreach ($message->content as $block) {
             if ($block instanceof TextContent) {
                 $text[] = $block->text;
             } elseif ($block instanceof ImageContent) {
-                $images[] = $block;
+                $hasImages = true;
             }
         }
 
         // Upstream: `hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)"`,
         // where `hasText` is the *joined* text being non-empty — so a result whose only text block
-        // is "" counts as having none. pig said "(see attached image)" for every result without
-        // text, which told the model to look at an image that was not there.
+        // is "" counts as having none.
         $joined = implode("\n", $text);
 
         $result = [
             'role' => 'tool',
-            'content' => Utf8::sanitize($joined !== '' ? $joined : ($images !== [] ? '(see attached image)' : '(no tool output)')),
+            'content' => Utf8::sanitize($joined !== '' ? $joined : ($hasImages ? '(see attached image)' : '(no tool output)')),
             'tool_call_id' => $message->toolCallId,
         ];
 
@@ -1575,26 +1652,7 @@ final class OpenAiCompletions
             $result['name'] = $message->toolName;
         }
 
-        $out = [$result];
-
-        if ($images === [] || !$model->acceptsImages()) {
-            return $out;
-        }
-
-        // A tool result has nowhere to put an image, so the images follow as a user turn
-        // of their own.
-        $parts = [['type' => 'text', 'text' => 'Attached image(s) from tool result:']];
-
-        foreach ($images as $image) {
-            $parts[] = [
-                'type' => 'image_url',
-                'image_url' => ['url' => "data:{$image->mimeType};base64,{$image->data}"],
-            ];
-        }
-
-        $out[] = ['role' => 'user', 'content' => $parts];
-
-        return $out;
+        return $result;
     }
 
     /**

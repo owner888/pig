@@ -372,6 +372,30 @@ final class ModelsTest extends TestCase
         $this->assertSame(22.05, round($cost->total, 2));
     }
 
+    public function testMidConversationTranscriptKeysFollowUpstreamsGenerator(): void
+    {
+        // `getAnthropicMessagesCompat()`: both keys for the `anthropic` provider's models that
+        // `supportsAnthropicMidConvoSystemMessages()` names; only the system-message key for
+        // `opencode` and `github-copilot`, which "reject `tool_addition`/`tool_removal` blocks";
+        // neither elsewhere, and neither for an id the patterns leave out.
+        $both = AnthropicCompat::forBuiltIn('anthropic', 'claude-opus-4-8');
+        $this->assertTrue($both?->supportsMidConvoSystemMessages);
+        $this->assertTrue($both?->supportsMidConvoToolChanges);
+
+        $copilot = AnthropicCompat::forBuiltIn('github-copilot', 'claude-opus-4.8');
+        $this->assertTrue($copilot?->supportsMidConvoSystemMessages);
+        $this->assertNull($copilot?->supportsMidConvoToolChanges);
+
+        $this->assertNull(AnthropicCompat::forBuiltIn('openrouter', 'anthropic/claude-opus-4.8')?->supportsMidConvoSystemMessages);
+        $this->assertNull(AnthropicCompat::forBuiltIn('anthropic', 'claude-opus-4-7')?->supportsMidConvoSystemMessages);
+        $this->assertTrue(AnthropicCompat::forBuiltIn('anthropic', 'claude-fable-5-1-20260901')?->supportsMidConvoToolChanges);
+        $this->assertTrue(AnthropicCompat::forBuiltIn('anthropic', 'claude-fable-5')?->supportsMidConvoSystemMessages);
+        $this->assertNull(AnthropicCompat::forBuiltIn('anthropic', 'claude-sonnet-5')?->supportsMidConvoSystemMessages);
+
+        // And the built-in table carries them.
+        $this->assertTrue(Models::find(Models::ANTHROPIC, 'claude-opus-4-8')?->compat?->supportsMidConvoToolChanges);
+    }
+
     public function testClaudeHaikuFiveFiveIsUpstreamsHandAddedRowWithItsLongPromptTier(): void
     {
         // Upstream's generator adds it "until models.dev includes it": "Prompts over 100k input
@@ -385,12 +409,16 @@ final class ModelsTest extends TestCase
             $model->pricing,
         );
         // The compat and the map every 5.5 model gets: adaptive, no temperature, managed effort,
-        // strict tools, and the whole 5.5 map.
+        // strict tools, mid-conversation system messages and tool changes (upstream's generator
+        // `supportsAnthropicMidConvoSystemMessages()`, added to pig's compat since), and the whole
+        // 5.5 map.
         $this->assertEquals(new AnthropicCompat(
             forceAdaptiveThinking: true,
             strictTools: true,
             supportsTemperature: false,
             supportsMidConvoEffort: true,
+            supportsMidConvoSystemMessages: true,
+            supportsMidConvoToolChanges: true,
         ), $model->compat);
         $this->assertSame(
             ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'],

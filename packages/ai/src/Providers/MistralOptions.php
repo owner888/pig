@@ -17,6 +17,8 @@ final readonly class MistralOptions extends StreamOptions
      *        no effort levels (Magistral) is asked to think
      * @param string|null $reasoningEffort `none`, `low`, `medium`, `high` or `max`, sent as
      *        `reasoning_effort` — what a model whose `thinkingLevelMap` names its efforts is sent
+     * @param int|null $timeoutMs upstream's `timeoutMs`: how long to wait for the response headers,
+     *        60,000 when unset. Only the headers — a long stream is never cut off by it
      */
     public function __construct(
         ?float $temperature = null,
@@ -29,6 +31,7 @@ final readonly class MistralOptions extends StreamOptions
         ?string $cacheRetention = null,
         ?string $sessionId = null,
         ?array $metadata = null,
+        public ?int $timeoutMs = null,
     ) {
         parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata);
     }

@@ -43,6 +43,31 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.35] - 2026-10-08
+
+### New Features
+
+- **V8-Compatible JSON Parse Error Modeling (`Pig\Ai\Utils\JsJson`)**:
+  - Introduced `Pig\Ai\Utils\JsJson` reproducing V8's exact `JSON.parse` SyntaxError diagnostics (e.g. `Unexpected token 'x', "..." is not valid JSON`), bringing SSE chunk parsing, Mistral streams, and StreamProxy gateway error messages into exact parity with upstream pi.
+- **Provider HTTP SDK Error Formatting Alignment (`Pig\Ai\Utils\ErrorBody`, `Retry`)**:
+  - Formatted provider errors matching official SDK outputs: Anthropic matching `@anthropic-ai/sdk` (`401 {"type":"error",...}`), Gemini matching `@google/genai` (`{"error":{"code":429,...}}`), and OpenAI/Mistral via `ErrorBody`.
+  - Updated `Retry::STATUS` extraction to accurately detect HTTP status codes across all official SDK error formats.
+- **Upstream Context Overflow Alignment (`Overflow`, `NON_OVERFLOW_PATTERNS`)**:
+  - Expanded `Overflow` patterns to 25 entries matching upstream pi, adding specific matchers for Mistral, Kimi, MiniMax, and Together.
+  - Added `NON_OVERFLOW_PATTERNS` to ensure rate-limit and token-quota throttling messages are never mistakenly treated as context window overflows.
+  - Restricted bodiless 400/413 errors strictly to Cerebras and enabled Xiaomi MiMo 99% length-stop detection.
+- **Mistral Response Headers Timeout & Global Pig User-Agent (`PigUserAgent`, `Mistral`)**:
+  - Configured 60s response headers timeout for Mistral requests without cutting off long-running streams.
+  - Injected `User-Agent: pig (<platform> <release>; <arch>)` via `PigUserAgent::get()` across all provider requests, overridable by model-specific headers.
+
+### Fixed
+
+- **StreamProxy Protocol Parity & Status Text Preservation (`StreamProxy`)**:
+  - Strictly enforced `data: ` line prefix requirements matching upstream pi.
+  - Preserved status text in proxy error responses (`Proxy error: ${status} ${statusText}`).
+- **Antigravity Deferred Error Stream Processing (`AntigravityApi`)**:
+  - Deferred error finishReason evaluation until stream completion, ensuring usage metadata and content received on the terminal chunk are not lost.
+
 ## [0.4.34] - 2026-10-08
 
 ### New Features

@@ -24,6 +24,7 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\PigUserAgent;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
@@ -595,6 +596,124 @@ final class OpenAiCompletionsTest extends TestCase
             ['type' => 'text', 'text' => 'look'],
             ['type' => 'text', 'text' => '(image omitted: model does not support images)'],
         ], $parts);
+    }
+
+    public function testAToolResultRunsImagesGoOutTogetherAfterTheWholeRun(): void
+    {
+        // Upstream's `toolResult` arm walks the run of consecutive results: every `tool` message,
+        // then one user message with all their images — behind the bridge when the endpoint wants
+        // one — and `lastRole = "user"`, so the next user message is not bridged a second time.
+        // pig put each result's images straight after that result, so the second result followed a
+        // user message, which an endpoint pairing calls with results refuses.
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ToolCall('c1', 'shot', []), new ToolCall('c2', 'shot', []), new ToolCall('c3', 'read', [])]),
+            new ToolResultMessage('c1', 'shot', [new ImageContent('AAA', 'image/png')]),
+            new ToolResultMessage('c2', 'shot', [new TextContent('second'), new ImageContent('BBB', 'image/jpeg')]),
+            new ToolResultMessage('c3', 'read', [new TextContent('plain')]),
+            new UserMessage('next'),
+        ]);
+
+        $this->send($context, $this->model(images: true, compat: new OpenAiCompat(assistantAfterToolResult: true)));
+
+        $messages = array_slice($this->server->receivedJson()['messages'], 2);
+
+        $this->assertSame([
+            ['role' => 'tool', 'content' => '(see attached image)', 'tool_call_id' => 'c1'],
+            ['role' => 'tool', 'content' => 'second', 'tool_call_id' => 'c2'],
+            ['role' => 'tool', 'content' => 'plain', 'tool_call_id' => 'c3'],
+            ['role' => 'assistant', 'content' => 'I have processed the tool results.'],
+            ['role' => 'user', 'content' => [
+                ['type' => 'text', 'text' => 'Attached image(s) from tool result:'],
+                ['type' => 'image_url', 'image_url' => ['url' => 'data:image/png;base64,AAA']],
+                ['type' => 'image_url', 'image_url' => ['url' => 'data:image/jpeg;base64,BBB']],
+            ]],
+            ['role' => 'user', 'content' => [['type' => 'text', 'text' => 'next']]],
+        ], $messages);
+    }
+
+    public function testASkippedEmptyMessageDoesNotResetTheLastRole(): void
+    {
+        // Upstream `continue`s past an empty user message before `lastRole = msg.role`: a tool result,
+        // an empty user turn, then a real one still gets the bridge. And an empty text part is
+        // dropped from a user turn (`item.text.length > 0`), where pig sent it.
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ToolCall('c1', 'read', [])]),
+            new ToolResultMessage('c1', 'read', [new TextContent('ok')]),
+            new UserMessage([new TextContent('')]),
+            new UserMessage([new TextContent(''), new TextContent('go on')]),
+        ]);
+
+        $this->send($context, $this->model(compat: new OpenAiCompat(assistantAfterToolResult: true)));
+
+        $messages = array_slice($this->server->receivedJson()['messages'], 2);
+
+        $this->assertSame([
+            ['role' => 'tool', 'content' => 'ok', 'tool_call_id' => 'c1'],
+            ['role' => 'assistant', 'content' => 'I have processed the tool results.'],
+            ['role' => 'assistant', 'content' => 'I have processed the tool results.'],
+            ['role' => 'user', 'content' => [['type' => 'text', 'text' => 'go on']]],
+        ], $messages);
+    }
+
+    /** @return iterable<string, array{0: list<string>, 1: string}> */
+    public static function sdkStreamFailures(): iterable
+    {
+        // The `openai` SDK's `Stream` (7.19.0), which upstream's chunks come through. pig skipped
+        // data that did not decode and read straight past an `error` in a chunk.
+        yield 'data that is not JSON' => [["data: {oops\n\n"], 'Error reading response: malformed server-sent event JSON.'];
+        // OpenRouter's mid-stream failure, with a 200: an `APIError` with no status is its message,
+        // and upstream's catch appends `error.metadata.raw` on a line of its own.
+        yield 'an error in the chunk' => [
+            ['data: {"error":{"code":502,"message":"Provider returned error","metadata":{"raw":"upstream timeout"}}}' . "\n\n"],
+            "Provider returned error\nupstream timeout",
+        ];
+        yield 'an error event' => [["event: error\ndata: {\"message\":\"overloaded\"}\n\n"], 'overloaded'];
+    }
+
+    /** @param list<string> $events */
+    #[DataProvider('sdkStreamFailures')]
+    public function testTheStreamFailsWhereTheSdksStreamDoes(array $events, string $expected): void
+    {
+        $pieces = ["HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"];
+        $pieces[] = $this->chunk('data: ' . json_encode(['choices' => [['delta' => ['content' => 'par']]]]) . "\n\n");
+
+        foreach ($events as $event) {
+            $pieces[] = $this->chunk($event);
+        }
+
+        $pieces[] = "0\r\n\r\n";
+
+        [$types, $message] = $this->collect($this->server->start($pieces), new Context([new UserMessage('hi')]));
+
+        $this->assertSame('ErrorEvent', end($types));
+        $this->assertSame($expected, $message->errorMessage);
+        $this->assertSame('par', $message->content[0]->text);
+    }
+
+    public function testDoneEndsTheStreamWhateverFollows(): void
+    {
+        // `if (sse.data === '[DONE]') break`: what comes after is never read.
+        $url = $this->server->start([
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n",
+            $this->chunk('data: ' . json_encode(['choices' => [['delta' => ['content' => 'ok'], 'finish_reason' => 'stop']]]) . "\n\n"),
+            $this->chunk("data: [DONE]\n\n"),
+            $this->chunk("data: {not json at all\n\n"),
+            "0\r\n\r\n",
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Stop, $message->stopReason);
+        $this->assertSame('ok', $message->content[0]->text);
+    }
+
+    public function testTheUserAgentIsPisUnderTheModelsOwn(): void
+    {
+        [$head] = $this->sendWith($this->model(), new OpenAiOptions(apiKey: 'k'));
+
+        $this->assertStringContainsString('user-agent: ' . PigUserAgent::get() . "\r\n", $head);
     }
 
     public function testAToolResultsImagesFollowAsAUserTurnOfTheirOwn(): void

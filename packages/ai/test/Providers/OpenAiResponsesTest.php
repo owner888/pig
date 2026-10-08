@@ -20,9 +20,11 @@ use Pig\Ai\TextContent;
 use Pig\Ai\ThinkingContent;
 use Pig\Ai\Tool;
 use Pig\Ai\ToolCall;
+use Pig\Ai\ToolCallStartEvent;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\ShortHash;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -1380,6 +1382,64 @@ final class OpenAiResponsesTest extends TestCase
     }
 
     // ---- scaffolding -------------------------------------------------------------------------
+
+    public function testAFunctionCallOpensWithEmptyArgumentsAndItsItemsJsonIsReadLater(): void
+    {
+        // Upstream's `createSlot()`: `arguments: {}, partialJson: item.arguments || ""` — the JSON the
+        // `output_item.added` item already carries is not parsed when the slot opens; the first delta
+        // or the `output_item.done` reads it. pig parsed it on the spot, so `toolcall_start` carried
+        // arguments upstream's does not.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'output_index' => 0, 'item' => [
+                'type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'read', 'arguments' => '{"path":"a.txt"}',
+            ]],
+            ['type' => 'response.output_item.done', 'output_index' => 0, 'item' => [
+                'type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'read', 'arguments' => '',
+            ]],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [$started, $message] = Async::run(function () use ($url): array {
+            $stream = (new OpenAiResponses())->stream($this->model(baseUrl: $url), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'k'));
+            $started = null;
+
+            foreach ($stream as $event) {
+                if ($event instanceof ToolCallStartEvent) {
+                    $started = $event->partial->content[$event->contentIndex];
+                }
+            }
+
+            return [$started, $stream->result()->await()];
+        });
+
+        $this->assertInstanceOf(ToolCall::class, $started);
+        $this->assertSame([], $started->arguments);
+        // `parseStreamingJson(item.arguments || slot.block.partialJson || "{}")` at the end.
+        $this->assertSame(['path' => 'a.txt'], $message->content[0]->arguments);
+    }
+
+    public function testAReasoningSignatureThatIsNotJsonFailsTheRequestWithV8sMessage(): void
+    {
+        // `JSON.parse(block.thinkingSignature)` while the input is built, inside the stream's try:
+        // a corrupt signature is the turn's error. pig dropped it and sent the request without it.
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ThinkingContent('hm', '{"type":"reasoning",'), new TextContent('ok')]),
+            new UserMessage('again'),
+        ]);
+
+        [, $message] = $this->collect('http://127.0.0.1:1', $context);
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame("Expected double-quoted property name in JSON at position 20 (line 1 column 21)", $message->errorMessage);
+    }
+
+    public function testTheUserAgentIsPis(): void
+    {
+        [$head] = $this->capture($this->model(), new Context([new UserMessage('hi')]));
+
+        $this->assertStringContainsString('user-agent: ' . PigUserAgent::get() . "\r\n", $head);
+    }
 
     /** @param list<mixed> $content */
     private function assistant(array $content, StopReason $stop = StopReason::Stop): AssistantMessage

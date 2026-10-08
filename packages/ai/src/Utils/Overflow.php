@@ -23,77 +23,108 @@ use Pig\Ai\StopReason;
 final class Overflow
 {
     /**
-     * What each provider says when the prompt is too long.
+     * What each provider says when the prompt is too long — upstream's `OVERFLOW_PATTERNS`, in its
+     * order, each with the provider its comment names. The examples are upstream's:
      *
-     * The comment is the real message, not a description of it.
+     * - Anthropic: "prompt is too long: 213462 tokens > 200000 maximum", and for the byte-size limit
+     *   `413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}`
+     * - OpenAI: "Your input exceeds the context window of this model"
+     * - OpenAI/LiteLLM: "Requested token count exceeds the model's maximum context length of 131072 tokens"
+     * - OpenAI-compatible: "Input length (265330) exceeds model's maximum context length (262144)."
+     * - Google: "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)"
+     * - xAI: "This model's maximum prompt length is 131072 but the request contains 537812 tokens"
+     * - Groq: "Please reduce the length of the messages or completion"
+     * - OpenRouter: "This endpoint's maximum context length is X tokens. However, you requested about Y tokens"
+     * - OpenRouter/Poolside: "Input length X exceeds the maximum allowed input length of Y tokens."
+     * - Together AI: "The input (X tokens) is longer than the model's context length (Y tokens)."
+     * - llama.cpp: "the request exceeds the available context size, try increasing it"
+     * - LM Studio: "tokens to keep from the initial prompt is greater than the context length"
+     * - GitHub Copilot: "prompt token count of X exceeds the limit of Y"
+     * - MiniMax: "invalid params, context window exceeds limit"
+     * - Kimi For Coding: "Your request exceeded model token limit: X (requested: Y)"
+     * - DS4: "Prompt has X tokens, but the configured context size is Y tokens"
+     * - Mistral: "Prompt contains X tokens ... too large for model with Y maximum context length"
+     * - z.ai: `{"code":"1261","message":"Prompt too long"}`, `{"code":"1261","message":"Prompt exceeds max length"}` (CN)
+     * - DashScope/Qwen: "Range of input length should be [1, X]"
+     * - Ollama: "prompt too long; exceeded max context length by X tokens"
      *
      * @var list<array{0: string, 1: string}> the pattern, and who says it
      */
     private const array PATTERNS = [
-        // "prompt is too long: 213462 tokens > 200000 maximum"
-        ['/prompt is too long/i', 'Anthropic'],
-        // {"code":"1261","message":"Prompt exceeds max length"} — the CN endpoint's wording
-        ['/prompt exceeds max length/i', 'z.ai (CN)'],
-        // "Your input exceeds the context window of this model"
-        ['/exceeds the context window/i', 'OpenAI, both APIs'],
-        // "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)"
-        ['/input token count.*exceeds the maximum/i', 'Google'],
-        // "This model's maximum prompt length is 131072 but the request contains 537812 tokens"
-        ['/maximum prompt length is \d+/i', 'xAI'],
-        // "Please reduce the length of the messages or completion"
+        ['/prompt (?:is )?too long/i', 'Anthropic and z.ai token overflow'],
+        ['/prompt exceeds max length/i', 'z.ai CN endpoint token overflow'],
+        ['/request_too_large/i', 'Anthropic request byte-size overflow (HTTP 413)'],
+        ['/input is too long for requested model/i', 'Amazon Bedrock'],
+        ['/exceeds the context window/i', 'OpenAI (Completions & Responses API)'],
+        ["/exceeds (?:the )?(?:model'?s )?maximum context length(?: of [\\d,]+ tokens?|\\s*\\([\\d,]+\\))/i", 'OpenAI-compatible proxies (LiteLLM)'],
+        ['/input token count.*exceeds the maximum/i', 'Google (Gemini)'],
+        ['/maximum prompt length is \d+/i', 'xAI (Grok)'],
         ['/reduce the length of the messages/i', 'Groq'],
-        // "This endpoint's maximum context length is X tokens. However, you requested about Y"
-        ['/maximum context length is \d+ tokens/i', 'OpenRouter'],
-        // "prompt token count of X exceeds the limit of Y"
+        ['/maximum context length is \d+ tokens/i', 'OpenRouter (most backends)'],
+        ['/exceeds (?:the )?maximum allowed input length of [\d,]+ tokens?/i', 'OpenRouter/Poolside'],
+        ["/input \\(\\d+ tokens\\) is longer than the model'?s context length \\(\\d+ tokens\\)/i", 'Together AI'],
         ['/exceeds the limit of \d+/i', 'GitHub Copilot'],
-        // "the request exceeds the available context size, try increasing it"
-        ['/exceeds the available context size/i', 'llama.cpp'],
-        // "tokens to keep from the initial prompt is greater than the context length"
+        ['/exceeds the available context size/i', 'llama.cpp server'],
         ['/greater than the context length/i', 'LM Studio'],
-        // No example: these three are the generic net, for a provider nobody has measured yet.
-        ['/context length exceeded/i', 'anyone'],
-        ['/too many tokens/i', 'anyone'],
-        ['/token limit exceeded/i', 'anyone'],
+        ['/context window exceeds limit/i', 'MiniMax'],
+        ['/exceeded model token limit/i', 'Kimi For Coding'],
+        ['/too large for model with \d+ maximum context length/i', 'Mistral'],
+        ['/prompt has [\d,]+ tokens?, but the configured context size is [\d,]+ tokens?/i', 'DS4 server'],
+        ['/model_context_window_exceeded/i', 'z.ai non-standard finish_reason surfaced as error text'],
+        ['/prompt too long; exceeded (?:max )?context length/i', 'Ollama explicit overflow error'],
+        ['/range of input length should be/i', 'DashScope / Qwen Token Plan'],
+        ['/context[_ ]length[_ ]exceeded/i', 'Generic fallback'],
+        ['/too many tokens/i', 'Generic fallback'],
+        ['/token limit exceeded/i', 'Generic fallback'],
     ];
 
     /**
-     * Cerebras and Mistral send a 4xx with an empty body and no explanation at all.
-     *
-     * 429 is in there because those two use it for token-based rate limiting, which is what
-     * an oversized prompt looks like to them. It is a guess in a way the patterns above are
-     * not, and it is upstream's guess, kept because the alternative — retrying an oversized
-     * request three times with backoff — is worse than compacting one that did not need it.
+     * Upstream's `CEREBRAS_BODYLESS_OVERFLOW_PATTERN`: Cerebras answers an oversized prompt with a
+     * 400 or 413 and no body — `400 status code (no body)` in the `openai` SDK's words, which the
+     * completions provider writes too (`ErrorBody`). Only for the `cerebras` provider: from anyone
+     * else a bodiless 400 says nothing about size.
      */
-    private const string NO_BODY = '/\b4(00|13|29)\b.*\(no body\)/i';
+    private const string CEREBRAS_BODYLESS = '/^4(?:00|13)\s*(?:status code)?\s*\(no body\)/i';
 
     /**
-     * The same thing in pig's own words.
-     *
-     * `NO_BODY` above is the **OpenAI SDK's** phrasing, which is what upstream reads. Both OpenAI
-     * providers write it now, as upstream's do (`Utils\ErrorBody`); Anthropic and Google still say
-     * `"<who> returned <status>: <body>"`, so a 4xx with an empty body ends at the colon, which this
-     * catches. Anchored at the end, so a 400 that did explain itself is still not a guess.
+     * Upstream's `NON_OVERFLOW_PATTERNS`: an error matching one of these is not an overflow even when
+     * it matches a pattern above — Bedrock's throttling reads "Too many tokens, please wait before
+     * trying again", which the generic `too many tokens` would otherwise take for one.
      */
-    private const string EMPTY_BODY = '/\breturned 4(00|13|29):\s*$/i';
+    private const array NON_OVERFLOW_PATTERNS = [
+        '/^(Throttling error|Service unavailable):/i',
+        '/rate limit/i',
+        '/too many requests/i',
+    ];
 
     /**
-     * @param int|null $contextWindow needed only for the silent case below
+     * Upstream's `isContextOverflow()`.
+     *
+     * @param int|null $contextWindow needed only for the silent and the length-stop cases below
      */
     public static function happened(AssistantMessage $message, ?int $contextWindow = null): bool
     {
-        if ($message->stopReason === StopReason::Error && $message->errorMessage !== null) {
-            foreach (self::PATTERNS as [$pattern]) {
+        if ($message->stopReason === StopReason::Error && $message->errorMessage !== null && $message->errorMessage !== '') {
+            $isNonOverflow = false;
+
+            foreach (self::NON_OVERFLOW_PATTERNS as $pattern) {
                 if (preg_match($pattern, $message->errorMessage) === 1) {
-                    return true;
+                    $isNonOverflow = true;
+
+                    break;
                 }
             }
 
-            if (preg_match(self::NO_BODY, $message->errorMessage) === 1) {
-                return true;
-            }
+            if (!$isNonOverflow) {
+                foreach (self::PATTERNS as [$pattern]) {
+                    if (preg_match($pattern, $message->errorMessage) === 1) {
+                        return true;
+                    }
+                }
 
-            if (preg_match(self::EMPTY_BODY, $message->errorMessage) === 1) {
-                return true;
+                if ($message->provider === 'cerebras' && preg_match(self::CEREBRAS_BODYLESS, $message->errorMessage) === 1) {
+                    return true;
+                }
             }
         }
 
@@ -112,7 +143,17 @@ final class Overflow
         // the fourth shape from CLAUDE.md's index — a claim about a repository that a grep
         // refutes — pointed at upstream for once.
         if ($contextWindow !== null && $contextWindow > 0 && $message->stopReason === StopReason::Stop) {
-            return $message->usage->input + $message->usage->cacheRead > $contextWindow;
+            if ($message->usage->input + $message->usage->cacheRead > $contextWindow) {
+                return true;
+            }
+        }
+
+        // Upstream's third case, the length stop: Xiaomi MiMo cuts an oversized prompt down to fill
+        // the window and answers `length` with nothing written, because there was no room left.
+        if ($contextWindow !== null && $contextWindow > 0 && $message->stopReason === StopReason::Length && $message->usage->output === 0) {
+            if ($message->usage->input + $message->usage->cacheRead >= $contextWindow * 0.99) {
+                return true;
+            }
         }
 
         return false;

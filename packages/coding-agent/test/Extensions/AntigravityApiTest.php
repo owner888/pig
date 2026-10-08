@@ -6,11 +6,13 @@ namespace Pig\CodingAgent\Test\Extensions;
 
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
+use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
 use Pig\Ai\Model;
 use Pig\Ai\Pricing;
 use PigAntigravity\AntigravityApi as Antigravity;
 use Pig\Ai\Providers\GoogleOptions;
+use Pig\Ai\StopReason;
 use Pig\Ai\Tool;
 use Pig\Ai\UserMessage;
 use Pig\Async\Async;
@@ -293,6 +295,40 @@ final class AntigravityApiTest extends TestCase
 
         $this->assertStringContainsString('returned 400', (string) $message);
         $this->assertStringNotContainsString('quota', (string) $message);
+    }
+
+    public function testAnErrorFinishReasonIsReadToTheEndOfTheStreamBeforeTheTurnFails(): void
+    {
+        // As the direct Gemini path does (`google-generative-ai.ts`): the reason is recorded, the
+        // rest of the body is read, and only then does the turn fail on it. This provider used to
+        // throw on the chunk that carried the reason, so the usage after it was never counted.
+        $url = $this->serve([
+            ['response' => ['candidates' => [['content' => ['parts' => [['text' => 'part']]], 'finishReason' => 'SAFETY']]]],
+            ['response' => ['usageMetadata' => ['promptTokenCount' => 40, 'candidatesTokenCount' => 3, 'totalTokenCount' => 43]]],
+        ]);
+
+        $message = Async::run(function () use ($url): AssistantMessage {
+            $stream = (new Antigravity())->stream($this->model($url), new Context([new UserMessage('hi')]), new GoogleOptions(apiKey: self::key(), thinkingEnabled: false));
+
+            foreach ($stream as $ignored) {
+            }
+
+            return $stream->result()->await();
+        });
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('Provider stopped with: SAFETY', $message->errorMessage);
+        $this->assertSame(40, $message->usage->input);
+        $this->assertSame('part', $message->content[0]->text);
+    }
+
+    public function testABlockedPromptIsStillNamedHere(): void
+    {
+        // This provider's own rule, which moved here out of `GoogleShared` when the Gemini path took
+        // upstream's (no `promptFeedback` check there).
+        $url = $this->serve([['response' => ['promptFeedback' => ['blockReason' => 'SAFETY']]]]);
+
+        $this->assertSame('Gemini refused the prompt: SAFETY', $this->drain(new Antigravity(), $this->model($url), 'gemini-3-flash', null, new Context([new UserMessage('hi')])));
     }
 
     public function testAKeyThatIsNotATokenAndAProjectIsNamedRatherThanSent(): void

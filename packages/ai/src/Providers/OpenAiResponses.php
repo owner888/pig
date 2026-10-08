@@ -37,6 +37,8 @@ use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
 use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ErrorBody;
+use Pig\Ai\Utils\JsJson;
+use Pig\Ai\Utils\PigUserAgent;
 use Pig\Ai\Utils\ShortHash;
 use Pig\Ai\Utils\Utf8;
 use Pig\Async\Async;
@@ -141,7 +143,7 @@ final class OpenAiResponses
                         break 2;
                     }
 
-                    $data = self::sdkEvent($event->type, $event->data);
+                    $data = ErrorBody::openAiStreamEvent($event->type, $event->data);
                     $this->dispatch($data, $builder, $stream, $slots, $grammar, $unfinished, $reasoningById, $sawTerminal);
 
                     // The end of upstream's `finalizeResponse()`, after the cost is worked out:
@@ -210,70 +212,6 @@ final class OpenAiResponses
             $stream->push(new ErrorEvent($failed->stopReason, $failed));
             $stream->end();
         }
-    }
-
-    /**
-     * One event as upstream's code receives it: through the `openai` SDK's `Stream`, which stands
-     * between the SSE and `processResponsesStream()` and decides three things on its own (openai-node
-     * 7.19.0, `core/streaming.mjs`, the version pi pins):
-     *
-     * - data that is not JSON throws `Error reading response: malformed server-sent event JSON.`;
-     * - an `event: error` throws an `APIError` made of `data.error ?? data`;
-     * - any other event whose data has a truthy `error` throws an `APIError` made of that.
-     *
-     * An `APIError` with no status is `makeMessage()`'s text alone — the error's `message`, or its
-     * JSON when the message is not a string, or the whole error's JSON when it has none — and pi's
-     * `formatProviderError()` leaves a status-less error's message as it is. So a nested
-     * `{type: "error", error: {code, message}}`, which the live API sends, reads as its message, and
-     * only a flat `{type: "error", code, message}` without an `event: error` line reaches upstream's
-     * `Error Code <code>: <message>` arm in `dispatch()`.
-     *
-     * @return array<string, mixed>
-     */
-    private static function sdkEvent(string $sseEvent, string $raw): array
-    {
-        $data = json_decode($raw, true);
-
-        if ($data === null && json_last_error() !== JSON_ERROR_NONE) {
-            throw new ProviderError('Error reading response: malformed server-sent event JSON.');
-        }
-
-        if ($sseEvent === 'error') {
-            $object = json_decode($raw);
-
-            // `data?.error ?? data`: nullish, not truthy — an `error` of `false` or `""` is used.
-            throw new ProviderError(self::apiErrorMessage(
-                is_object($object) && ($object->error ?? null) !== null ? $object->error : $object,
-            ));
-        }
-
-        if (is_array($data) && self::truthy($data['error'] ?? null)) {
-            throw new ProviderError(self::apiErrorMessage(json_decode($raw)->error));
-        }
-
-        return is_array($data) ? $data : [];
-    }
-
-    /** The SDK's `APIError.makeMessage(undefined, error, undefined)`, over the JSON as objects. */
-    private static function apiErrorMessage(mixed $error): string
-    {
-        $message = is_object($error) ? ($error->message ?? null) : null;
-
-        if (self::truthy($message)) {
-            $text = is_string($message) ? $message : self::jsonStringify($message);
-        } elseif (self::truthy($error)) {
-            $text = self::jsonStringify($error);
-        } else {
-            $text = '';
-        }
-
-        return $text !== '' ? $text : '(no status code or body)';
-    }
-
-    /** `JSON.stringify` of a value decoded with objects kept as objects, so `{}` stays `{}`. */
-    private static function jsonStringify(mixed $value): string
-    {
-        return (string) json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
     }
 
     /** JavaScript truthiness for a decoded JSON value: an object or array is truthy even when empty. */
@@ -370,7 +308,7 @@ final class OpenAiResponses
             'response.completed', 'response.incomplete' => $this->onCompleted($data, $builder, $reasoningById, $sawTerminal),
             // `throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error")` — the
             // template is never empty, so the fallback never applies and a missing field reads
-            // `undefined`. Only a flat event without an `event: error` line gets here; see `sdkEvent()`.
+            // `undefined`. Only a flat event without an `event: error` line gets here; see `ErrorBody::openAiStreamEvent()`.
             // It has no response, so the raw stop reason stays as it was, as upstream's does.
             'error' => throw new ProviderError('Error Code ' . self::template($data, 'code') . ': ' . self::template($data, 'message')),
             'response.failed' => $this->failed($data, $builder, $sawTerminal),
@@ -561,11 +499,11 @@ final class OpenAiResponses
             (string) ($item['name'] ?? ''),
         );
 
+        // `arguments: {}, partialJson: item.arguments || ""`: what the item already carries is the
+        // start of the JSON, read with the first delta — not parsed here, so the call opens with
+        // `{}` as upstream's does. pig used to parse it on the spot.
         $arguments = $item['arguments'] ?? null;
-
-        if (is_string($arguments) && $arguments !== '') {
-            $builder->setJson($index, $arguments);
-        }
+        $builder->seedJson($index, is_string($arguments) ? $arguments : '');
 
         // Upstream's `namespace` for a dynamically loaded or namespaced tool, when the item has one.
         $builder->setNamespace($index, is_string($item['namespace'] ?? null) ? $item['namespace'] : null);
@@ -762,11 +700,10 @@ final class OpenAiResponses
             // item's own arguments are the call — a stream that sent no deltas, which this API
             // allows and a compatible endpoint does, otherwise leaves it with none. The id and the
             // name are the ones the slot was opened with; upstream does not read them again here.
+            // Always reparsed: the JSON seeded when the slot opened has not been read yet when no
+            // delta followed it.
             $arguments = $item['arguments'] ?? null;
-
-            if (is_string($arguments) && $arguments !== '') {
-                $builder->setJson($index, $arguments);
-            }
+            $builder->setJson($index, is_string($arguments) && $arguments !== '' ? $arguments : $builder->jsonOf($index));
 
             // `if (item.namespace !== undefined) slot.block.namespace = item.namespace`, and the call
             // is finished — upstream deletes its scratch buffer here.
@@ -1037,6 +974,8 @@ final class OpenAiResponses
             'accept' => 'text/event-stream',
             'content-type' => 'application/json',
             'authorization' => 'Bearer ' . ($options?->apiKey ?? ''),
+            // Upstream's `{"User-Agent": getPiUserAgent(), ...model.headers}`.
+            'User-Agent' => PigUserAgent::get(),
             ...$model->headers,
             // Copilot's models speak this API, not completions, so this is the provider that has to
             // send them — and it was the one that did not. See `Copilot`.
@@ -1389,12 +1328,10 @@ final class OpenAiResponses
 
         foreach ($message->content as $block) {
             if ($block instanceof ThinkingContent) {
+                // `JSON.parse(block.thinkingSignature)`, pushed as it parses: a signature that is not
+                // JSON fails the request with V8's message, where pig used to drop it in silence.
                 if ($block->thinkingSignature !== null && $block->thinkingSignature !== '') {
-                    $item = json_decode($block->thinkingSignature, true);
-
-                    if (is_array($item)) {
-                        $items[] = $item;
-                    }
+                    $items[] = JsJson::parse($block->thinkingSignature);
                 }
 
                 continue;

@@ -741,6 +741,23 @@ final class CustomModelsTest extends TestCase
         $this->assertTrue($model->compat->supportsMidConvoEffort);
     }
 
+    public function testAnAnthropicModelsMidConversationTranscriptKeysAreRead(): void
+    {
+        // Upstream's `AnthropicMessagesCompat` transcript keys, carried like the OpenAI ones: nothing
+        // in pig reads them yet, but a `models.json` that says them is understood and passed on.
+        $model = $this->load(self::provider([
+            'api' => 'anthropic-messages',
+            'models' => [self::model(['compat' => [
+                'supportsMidConvoSystemMessages' => true,
+                'supportsMidConvoToolChanges' => false,
+            ]])],
+        ]))->models[0];
+
+        $this->assertInstanceOf(AnthropicCompat::class, $model->compat);
+        $this->assertTrue($model->compat->supportsMidConvoSystemMessages);
+        $this->assertFalse($model->compat->supportsMidConvoToolChanges);
+    }
+
     // ---- the key ---------------------------------------------------------------------------
 
     public function testTheApiKeyIsAVariableNameBeforeItIsAKey(): void

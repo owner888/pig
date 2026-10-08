@@ -79,14 +79,27 @@ final class RetryTest extends TestCase
         $this->assertSame($expected, Retry::worthRetrying($message));
     }
 
-    public function testTheStatusIsReadFromTheShapeEveryProviderWrites(): void
+    public function testTheStatusIsReadFromAnExtensionsOwnShape(): void
     {
-        // All four providers build this line the same way, which is what makes reading the
-        // number out of it something better than a guess.
+        // `<who> returned <status>` is no built-in provider's wording any more (they all write
+        // upstream's), but an extension's — Antigravity's — still is.
         $this->assertSame(429, Retry::statusOf('Anthropic returned 429: rate limit exceeded'));
-        $this->assertSame(503, Retry::statusOf('google returned 503: The model is overloaded.'));
+        $this->assertSame(503, Retry::statusOf('antigravity returned 503: The model is overloaded.'));
         $this->assertSame(500, Retry::statusOf('groq returned 500: internal'));
-        $this->assertSame(502, Retry::statusOf('openai returned 502: bad gateway'));
+    }
+
+    public function testTheStatusIsReadFromTheSdksMessagesAnthropicAndGoogleNowWrite(): void
+    {
+        // Anthropic's is the `@anthropic-ai/sdk` `APIError` message, `<status> <body JSON>`.
+        $this->assertSame(529, Retry::statusOf('529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}'));
+        // Google's is `@google/genai`'s: the error body's JSON, the status as its `code`, and a
+        // refusal inside a 200 stream behind `got status: …`. A `"code":` inside the JSON-escaped
+        // message is not one: it reads `\"code\":`.
+        $this->assertSame(503, Retry::statusOf('{"error":{"code":503,"message":"The model is overloaded.","status":"UNAVAILABLE"}}'));
+        $this->assertSame(500, Retry::statusOf('{"error":{"message":"<html>oops</html>","code":500,"status":"Internal Server Error"}}'));
+        $this->assertSame(429, Retry::statusOf('got status: RESOURCE_EXHAUSTED. {"error":{"code":429,"message":"Quota","status":"RESOURCE_EXHAUSTED"}}'));
+        $this->assertSame(400, Retry::statusOf('{"error":{"message":"bad \\"code\\":503 here","code":400}}'));
+        $this->assertNull(Retry::statusOf('{"candidates":[],"code":503}'));
     }
 
     public function testTheStatusIsReadFromUpstreamsErrorShapesToo(): void

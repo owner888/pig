@@ -342,6 +342,25 @@ final class StreamProxyTest extends TestCase
         );
     }
 
+    public function testAnAnthropicModelsTranscriptKeysTravelUnderUpstreamsNames(): void
+    {
+        $url = $this->server->start([self::sse([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]])]);
+        $proxy = new StreamProxy(rtrim($url, '/'), 't');
+        $model = self::model(new AnthropicCompat(supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: false));
+        $context = new Context([new UserMessage([new TextContent('hi')])]);
+
+        Async::run(static function () use ($proxy, $model, $context): void {
+            foreach ($proxy->stream($model, $context) as $ignored) {
+                // Drain.
+            }
+        });
+
+        $this->assertSame(
+            ['supportsMidConvoSystemMessages' => true, 'supportsMidConvoToolChanges' => false],
+            $this->server->receivedJson()['model']['compat'],
+        );
+    }
+
     public function testTheContextGoesOverTheWireAsTheSessionFileWritesIt(): void
     {
         $context = new Context(
@@ -827,7 +846,9 @@ final class StreamProxyTest extends TestCase
             return $stream->result()->await();
         });
 
-        $this->assertSame('Proxy error: 502', $message->errorMessage);
+        // Upstream's `Proxy error: ${response.status} ${response.statusText}`; pig used to drop the
+        // status text.
+        $this->assertSame('Proxy error: 502 Bad Gateway', $message->errorMessage);
     }
 
     public function testAStreamThatEndsWithoutDoneIsAFailureAndNotASuccess(): void
@@ -928,9 +949,10 @@ final class StreamProxyTest extends TestCase
         // Upstream's `JSON.parse(data)` throws on the first line and its catch ends the turn. pig
         // used to skip it — a documented divergence, on the grounds that a keep-alive would kill a
         // working stream; but a `: comment` line and a blank `data:` never reach the parse, so what
-        // is skipped is a broken event. The message is PHP's JSON error where upstream's is V8's.
+        // is skipped is a broken event. The message is V8's, as `node -e 'JSON.parse("not json at
+        // all")'` prints it (`JsJson`); it was PHP's `Syntax error`.
         $this->assertSame(StopReason::Error, $message->stopReason);
-        $this->assertSame('Syntax error', $message->errorMessage);
+        $this->assertSame('Unexpected token \'o\', "not json at all" is not valid JSON', $message->errorMessage);
         $this->assertSame([], $message->content);
     }
 
@@ -1009,16 +1031,14 @@ final class StreamProxyTest extends TestCase
         $this->assertSame('done though', $message->content[0]->text);
     }
 
-    public function testDataWithNoSpaceAfterTheColonIsStillAnEvent(): void
+    public function testOnlyALineStartingWithDataAndASpaceIsAnEvent(): void
     {
-        // The event-stream spec makes that space optional and strips exactly one. Upstream's
-        // `proxy.ts` requires it (`startsWith("data: ")`, `slice(6)`) while its own
-        // `google-gemini-cli.ts` does not (`startsWith("data:")`, `slice(5).trim()`) — the same
-        // twelve lines written twice, one of them right. Putting upstream's rule back here is not a
-        // thought experiment: the `done` line below has three spaces, so it still passes
-        // `startsWith("data: ")` while the three content lines do not — and the turn comes back
-        // `stopReason: stop` with **zero content**. A successful-looking empty answer is the worst
-        // shape a failure can take, which is why this one costs a divergence.
+        // Upstream's `processLine()`: `if (!line.startsWith("data: ")) return; line.slice(6).trim()`.
+        // pig accepted `data:{…}` without the space too — a divergence it kept on purpose, because
+        // of exactly this body: the three content lines have no space and are passed over, the
+        // `done` line has three and is read, so the turn ends `stop` with **no content**. The
+        // developer asked for upstream's rule, so this is now that outcome, as pi would produce it
+        // against the same server.
         $body = 'data:' . json_encode(['type' => 'text_start', 'contentIndex' => 0]) . "\n"
             . 'data:' . json_encode(['type' => 'text_delta', 'contentIndex' => 0, 'delta' => 'tight']) . "\n"
             . 'data:' . json_encode(['type' => 'text_end', 'contentIndex' => 0]) . "\n"
@@ -1041,7 +1061,40 @@ final class StreamProxyTest extends TestCase
         });
 
         $this->assertSame(StopReason::Stop, $message->stopReason);
-        $this->assertSame('tight', $message->content[0]->text);
+        $this->assertSame([], $message->content);
+    }
+
+    public function testANon2xxErrorFieldIsPrintedAsATemplateLiteralWould(): void
+    {
+        // `if (errorData.error) errorMessage = `Proxy error: ${errorData.error}``: any truthy value,
+        // not only a string — pig read only a string `error` and fell back to the status otherwise.
+        $cases = [
+            ['{"error":{"code":1}}', 'Proxy error: [object Object]'],
+            ['{"error":["a","b"]}', 'Proxy error: a,b'],
+            ['{"error":42}', 'Proxy error: 42'],
+            ['{"error":""}', 'Proxy error: 500 Internal Server Error'],
+            ['{"error":false}', 'Proxy error: 500 Internal Server Error'],
+            ['not json', 'Proxy error: 500 Internal Server Error'],
+        ];
+
+        foreach ($cases as [$body, $expected]) {
+            $url = $this->server->start(["HTTP/1.1 500 Internal Server Error\r\nContent-Length: " . strlen($body) . "\r\n\r\n{$body}"]);
+            $proxy = new StreamProxy(rtrim($url, '/'), 't');
+            $model = self::model();
+            $context = new Context([new UserMessage([new TextContent('hi')])]);
+
+            $message = Async::run(static function () use ($proxy, $model, $context): AssistantMessage {
+                $stream = $proxy->stream($model, $context);
+
+                foreach ($stream as $ignored) {
+                    // Drain.
+                }
+
+                return $stream->result()->await();
+            });
+
+            $this->assertSame($expected, $message->errorMessage, $body);
+        }
     }
 
     public function testCrlfFramingIsReadToo(): void

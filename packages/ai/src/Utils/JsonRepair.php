@@ -22,17 +22,18 @@ final class JsonRepair
      * Upstream's `parseJsonWithRepair()`: `JSON.parse`, then the repaired text when it differs, else
      * the first error. Objects decode as arrays, as everywhere in pig's providers.
      *
-     * @throws JsonException with PHP's message where upstream's carries V8's
+     * @throws JsonException with V8's message (`JsJson`) — the repaired text's when the repair
+     *         changed something, as upstream's second `JSON.parse` is the one that throws then
      */
     public static function parse(string $json): mixed
     {
         try {
-            return json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+            return JsJson::parse($json);
         } catch (JsonException $error) {
             $repaired = self::repair($json);
 
             if ($repaired !== $json) {
-                return json_decode($repaired, true, flags: JSON_THROW_ON_ERROR);
+                return JsJson::parse($repaired);
             }
 
             throw $error;

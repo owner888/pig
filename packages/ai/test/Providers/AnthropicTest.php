@@ -31,6 +31,7 @@ use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\PigUserAgent;
 use Pig\Async\AbortController;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -243,6 +244,53 @@ final class AnthropicTest extends TestCase
         $this->assertSame(StopReason::Error, $events[0]->error->stopReason);
         $this->assertStringContainsString('401', (string) $events[0]->error->errorMessage);
         $this->assertStringContainsString('invalid key', (string) $events[0]->error->errorMessage);
+    }
+
+    /** @return iterable<string, array{0: string, 1: string, 2: string}> */
+    public static function refusedRequests(): iterable
+    {
+        // `@anthropic-ai/sdk` 0.129.0: `errJSON = safeJSON(errText)`, `makeStatusError(status, errJSON,
+        // errJSON ? undefined : errText)`, and `APIError.makeMessage()` — the whole body is the
+        // error, so Anthropic's own shape, which has no top-level `message`, prints as JSON.
+        yield 'Anthropic error body' => [
+            "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n",
+            '{"type":"error","error":{"type":"authentication_error","message":"invalid key"},"request_id":"req_1"}',
+            '401 {"type":"error","error":{"type":"authentication_error","message":"invalid key"},"request_id":"req_1"}',
+        ];
+        yield 'a top-level message' => ["HTTP/1.1 413 Payload Too Large\r\n", '{"message":"too big"}', '413 too big'];
+        yield 'not JSON' => ["HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/html\r\n", '<html>bad gateway</html>', '502 <html>bad gateway</html>'];
+        yield 'no body' => ["HTTP/1.1 500 Internal Server Error\r\n", '', '500 status code (no body)'];
+        yield 'JSON that is falsy' => ["HTTP/1.1 400 Bad Request\r\n", 'null', '400 null'];
+    }
+
+    #[DataProvider('refusedRequests')]
+    public function testARefusedRequestReadsAsTheSdksApiErrorMessage(string $head, string $body, string $expected): void
+    {
+        // Upstream's catch prints `error.message` as it is. pig used to write its own
+        // `Anthropic returned <status>: <error.message>`.
+        $url = $this->server->start([$head . 'Content-Length: ' . strlen($body) . "\r\n\r\n" . $body]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame($expected, $message->errorMessage);
+    }
+
+    public function testTheUserAgentIsPisUnderTheModelsAndClaudeCodesOwn(): void
+    {
+        // `mergeClientHeaders()`: `{"User-Agent": getPiUserAgent()}` first, then everything else.
+        [$head] = $this->capture($this->model(), new Context([new UserMessage('hi')]), $this->options());
+        $this->assertStringContainsString("user-agent: " . PigUserAgent::get() . "\r\n", $head);
+        $this->assertMatchesRegularExpression('/^pig \((darwin|linux|win32|[a-z]+) \S+; [a-z0-9_]+\)$/', PigUserAgent::get());
+
+        // A subscription token's `user-agent: claude-cli/…` replaces it, and so does a model's own.
+        [$head] = $this->capture($this->model(), new Context([new UserMessage('hi')]), new AnthropicOptions(apiKey: 'sk-ant-oat01-abc'));
+        $this->assertSame(1, preg_match_all('/^user-agent: /mi', $head));
+        $this->assertStringContainsString("user-agent: claude-cli/", $head);
+
+        $model = new Model('claude-sonnet-4-5', 'S', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 8_000, pricing: new Pricing(), headers: ['User-Agent' => 'custom/1']);
+        [$head] = $this->capture($model, new Context([new UserMessage('hi')]), $this->options());
+        $this->assertSame(1, preg_match_all('/^user-agent: /mi', $head));
+        $this->assertStringContainsString("user-agent: custom/1\r\n", $head);
     }
 
     public function testAbortingLeavesAnAbortedMessage(): void
@@ -1036,9 +1084,10 @@ final class AnthropicTest extends TestCase
         [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
 
         $this->assertSame(StopReason::Error, $message->stopReason);
-        // `<why>` is PHP's JSON error where upstream's is V8's; the rest is upstream's text.
+        // `<why>` is V8's own `SyntaxError` text, as `node -e 'JSON.parse(…)'` prints it (`JsJson`);
+        // it was PHP's `Syntax error` until the parse emulated V8's messages.
         $this->assertSame(
-            'Could not parse Anthropic SSE event content_block_delta: Syntax error; data={"type": broken; '
+            'Could not parse Anthropic SSE event content_block_delta: Unexpected token \'b\', "{"type": broken" is not valid JSON; data={"type": broken; '
                 . 'raw=: keep-alive\\nevent: content_block_delta\\ndata: {"type": broken',
             $message->errorMessage,
         );

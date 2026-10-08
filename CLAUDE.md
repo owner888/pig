@@ -2525,17 +2525,12 @@ Six things that took a decision:
   back to back it stalls or glues two together. The gateway's source is in neither repository, so
   which wire it sends cannot be checked, and only one of the two readers is right either way. Four
   tests hold it down: no blank lines, blank lines, CRLF, and an event split across two TCP reads.
-- **Two details around that reader *are* bugs upstream, and the proof is that pi contains the same
-  twelve lines twice.** `proxy.ts` tests `startsWith("data: ")` and slices 6; its own
-  `google-gemini-cli.ts` tests `startsWith("data:")`, slices 5 and trims, and wraps `JSON.parse` in
-  `try/catch { continue }`. The event-stream spec makes that space optional and strips exactly one,
-  so the gemini one is correct and `proxy.ts` silently drops every event from a gateway that writes
-  `data:{…}`. Putting upstream's rule back in pig fails one test in the ugliest possible way: the
-  turn returns `stopReason: stop` with **zero content**, because the `done` line in that fixture
-  happens to have a space and the content lines do not. pig takes the gemini spelling of both — one
-  optional space. A line that is not JSON ends the turn, as upstream's `JSON.parse` does — a
-  `: keep-alive` comment and a blank `data:` never reach the parse, so what that refuses is a broken
-  event.
+- **Only a line that starts with `data: `, space included, is an event** — upstream's
+  `processLine()`: `if (!line.startsWith("data: ")) return; line.slice(6).trim()` (JavaScript's
+  trim). A `data:{…}` line without the space is passed over, as it is in pi; against a body whose
+  content lines lack the space and whose `done` line has one, the turn ends `stop` with no content
+  in both. A line that is not JSON ends the turn with V8's `JSON.parse` message (`JsJson`), as
+  upstream's does — a `: keep-alive` comment and a blank `data: ` never reach the parse.
 - **These were the only two hand-rolled event-stream readers in pi at the time** (HEAD has since
   added Anthropic's and Mistral's). The OpenAI and Google SDKs parse the rest — and that is why `GoogleGeminiCli` here uses `SseParser` while this does not: Google's Code
   Assist frames properly and can be checked, a gateway cannot.
@@ -3347,10 +3342,10 @@ overflow however retryable the rest of it looks — a 429 that says "prompt is t
 
 **`Session\Retry` reads the status code, where upstream reads the prose.** Upstream matches
 the error message against `/overloaded|rate.?limit|429|500|.../i` because its providers word
-failures however they like. pig's providers write `"<provider> returned <status>: <message>"`
-(Anthropic, Google) or upstream's `formatProviderError()` text (`OpenAI API error (<status>): …`,
-`Mistral API error (<status>): …`, completions' bare `<status>: …`), and `statusOf()` reads the
-number out of each — 408, 429, 500,
+failures however they like. pig's providers write upstream's own text — the SDK `APIError`
+message `<status> …` (Anthropic, completions' `<status>: …`), `formatProviderError()`'s prefixed
+`OpenAI API error (<status>): …` / `Mistral API error (<status>): …`, and `@google/genai`'s error
+JSON `{"error":{"code":<status>,…}}` — and `statusOf()` reads the number out of each — 408, 429, 500,
 502, 503, 504 and 529 are waited out, and everything else a provider returns is about the
 request, which will not change by being sent again. The word list survives underneath for the
 failures that never reached HTTP at all: a socket that died mid-stream has no status to read.
@@ -3358,9 +3353,11 @@ failures that never reached HTTP at all: a socket that died mid-stream has no st
 **`Ai\Utils\Overflow` is a table of what each provider actually says**, ported from upstream's
 `ai/src/utils/overflow.ts` with its examples kept as comments. There is no status code for
 "too long" and no field in any response that says so; every provider says it in prose, two say
-it with an empty 4xx and no body at all, and z.ai does not say it — it accepts the oversized
-request, answers, and bills for more input tokens than the window holds, so the only evidence
-is the usage report. **A pattern with no example beside it is a guess**, and a guess here
+it with an empty 4xx and no body at all (only Cerebras's bodiless 400/413 is taken for one, by
+provider, as upstream does), z.ai does not say it — it accepts the oversized request, answers,
+and bills for more input tokens than the window holds, so the only evidence is the usage report —
+and Xiaomi MiMo cuts the prompt to fit and stops `length` with nothing written. A rate-limit or
+throttling message is never an overflow, whatever tokens it mentions (`NON_OVERFLOW_PATTERNS`). **A pattern with no example beside it is a guess**, and a guess here
 compacts a conversation that was fine.
 
 The four events are `RetryStartEvent`, `RetryEndEvent`, `AutoCompactionStartEvent` and
@@ -3373,7 +3370,7 @@ a loader that names the error and counts down, `--mode json` and RPC encode them
 Five things that are load-bearing rather than tidy:
 
 - **The failed message comes off the agent's state before the retry**, and stays in the session
-  file. Leaving it would put "Anthropic returned 503" in the transcript for the model to read
+  file. Leaving it would put a `529 {"type":"error",…}` in the transcript for the model to read
   and try to make sense of.
 - **Nothing is decided in the agent's event fan-out.** `handlePostAgentRun()` runs in the
   prompt's own fiber after `agent->prompt()`/`continue()` has returned, as upstream's
@@ -3991,11 +3988,19 @@ The five dependencies above were choices. **This one is not, and it is the large
 difference between the two trees**, so it is written down with the facts it was decided on rather
 than left to be rediscovered.
 
-`pi-ai` does not implement a provider protocol at all. `@anthropic-ai/sdk`, `openai`,
-`@google/genai` and `@mistralai/mistralai` are in its `dependencies`, and each one builds the
-request, reads the event stream and hands back typed events — except where upstream has since
-written its own: at HEAD `anthropic-messages.ts` and `mistral-conversations.ts` call `fetch` and
-parse the event stream by hand, as `agent/proxy.ts` does.
+`pi-ai` does not implement most provider protocols itself. `@anthropic-ai/sdk` (0.129.0), `openai`
+(7.19.0) and `@google/genai` (2.21.0) are in its `dependencies`, and each one builds the request,
+reads the event stream and hands back typed events — except where upstream has written its own: at
+HEAD `anthropic-messages.ts` sends through the SDK (`.asResponse()`) but parses the event stream by
+hand, and `mistral-conversations.ts` calls `fetch` and parses by hand, as `agent/proxy.ts` does.
+
+**What an SDK says is part of the port.** A refused request, a malformed event and a body that is not
+JSON reach the person (and `Retry`/`Overflow`) in the SDK's words — the `APIError` message, the
+`openai` stream's fixed `malformed server-sent event JSON` line, `@google/genai`'s error JSON and its
+`got status: …` / `Incomplete JSON segment at the end`, and V8's own `JSON.parse` text wherever the
+SDK lets a `SyntaxError` through. `Utils\ErrorBody` builds each SDK's error from the status and the
+raw body as that SDK's pinned version does, and `Utils\JsJson` produces V8's parse messages (swept
+against `node`); neither is pig's own wording.
 
 pig hand-writes all of it: 4,734 lines across `Providers/` and `Http/`, with 144 tests over them.
 That is not a preference. As of the date on this section:
@@ -7785,47 +7790,45 @@ to look at — and the last of those is ordinary on Gemini 3 with tools. The nea
 diagnosis anybody had was the absence of one.
 
 Upstream now throws for these too, in `google-generative-ai.ts` / `google-vertex.ts`: `Provider
-stopped with: <raw reason>` (pinned by `google-raw-stop-reason.test.ts`), so pig throws the same
-sentence — `ProviderError("Provider stopped with: MALFORMED_FUNCTION_CALL")`. Upstream also only turns
+stopped with: <raw reason>` (pinned by `google-raw-stop-reason.test.ts`) — once the whole stream has
+been read, from its check after the loop — so pig throws the same sentence from the same place
+(`Google::run()`, and Antigravity's, which reads its stream the same way). Upstream also only turns
 a **STOP** with a tool call in it into `toolUse`; `MAX_TOKENS` with a call stays `length` and an error
 reason with a call part stays an error, so `GoogleShared::onChunk()` maps the reason first and only
 then looks at the content. Upstream also keeps the raw reason as `AssistantMessage.rawStopReason`, and
 so does pig now (a trailing constructor parameter — `responseId`, `responseModel`, `endTurn` and
 `diagnostics` follow it the same way — written to JSON only when set): Anthropic's `stop_reason`,
 completions' `finish_reason`, responses' `status` / `status.incompleteReason` / failed status, and
-Gemini's `finishReason` (antigravity included, through `GoogleShared`). Gemini's is set **before** the
-throw, so the failed turn still carries `MALFORMED_FUNCTION_CALL`; `fail()` leaves it alone.
+Gemini's `finishReason` (antigravity included, through `GoogleShared`), so the failed turn still
+carries `MALFORMED_FUNCTION_CALL`; `fail()` leaves it alone.
 
 A `MALFORMED_FUNCTION_CALL` itself is Gemini's doing, not pig's: Gemini 3 sometimes writes the call as
 text (`call:default_api:bash{command:…}`) instead of a `functionCall` part and then reports the turn
 malformed. pi shows the same error for it and does not retry it (`isRetryableAssistantError` has no
 pattern for it), and neither does pig.
 
-Four things had to be got right and each has its own test, because each was a way to make the fix
-cost something:
+Three things had to be got right and each has its own test:
 
-- **The usage is read before the finish reason now.** They ride on the same chunk, and throwing
-  jumped over `usageMetadata` — measured at `input=0 output=0` on a prompt of 40 tokens. A turn the
-  provider refused was still billed for its input, which is
+- **The rest of the stream is read before the turn fails.** The usage can ride on the chunk with the
+  reason or after it; throwing on that chunk jumped over it — measured at `input=0 output=0` on a
+  prompt of 40 tokens. A turn the provider refused was still billed for its input, which is
   `testAnAbortedTurnKeepsTheUsageThatHadAlreadyArrived`'s rule from the other end: *a turn that
-  produced nothing did not therefore cost nothing.*
-- **The open block is closed before the throw.** `fail()` keeps the content, so partial text survives
-  — but without `close()` the events run `TextStart → TextDelta → Error` with no `TextEnd`, and a
-  consumer that pairs them has to guess.
+  produced nothing did not therefore cost nothing.* `GoogleShared::onChunk()` only records the reason;
+  both callers throw after the loop, with the open block already closed (`close()`), so the events
+  still pair `TextStart` with `TextEnd`.
 - **Nothing became retryable by accident.** None of the reason names matches `Retry::WORDS`
-  (`overloaded|rate.?limit|…`), the sentence carries no `returned <status>` for `statusOf()` to read,
-  and none matches an `Overflow` pattern — so a safety block is explained and still not waited out,
-  which is right, because asking again gets the same answer.
+  (`overloaded|rate.?limit|…`), the sentence carries no status for `statusOf()` to read, and none
+  matches an `Overflow` pattern — so a safety block is explained and still not waited out, which is
+  right, because asking again gets the same answer.
 - **`MAX_TOKENS` and `STOP` still say nothing**, or the fix would be "every finish reason throws".
 
 Regression tests: `GoogleTest::testAFinishReasonThatMeansNothingUsableSaysWhichOneItWas` (four cases,
 including a reason this pig has never heard of), `testACallCutOffByTheTokenLimitIsALengthNotAToolUse`,
 `testAMalformedCallIsAnErrorEvenWithACallPartInIt`, `testARefusedTurnKeepsWhatItSaidAndWhatItCost`,
 `testTheTwoReasonsThatAreNotFailuresStillSayNothing`, the strengthened
-`testASafetyBlockIsAnErrorHoweverPolitelyItIsPhrased`, and
-`RetryTest::testAGeminiRefusalIsExplainedAndStillNotRetried`. Each end fails on its own mutation:
-dropping the throw turns **six** red, reading the usage afterwards turns exactly the cost one red, and
-dropping `close()` turns exactly the event-order assertion red.
+`testASafetyBlockIsAnErrorHoweverPolitelyItIsPhrased`,
+`AntigravityApiTest::testAnErrorFinishReasonIsReadToTheEndOfTheStreamBeforeTheTurnFails`, and
+`RetryTest::testAGeminiRefusalIsExplainedAndStillNotRetried`.
 
 **And the old test is why this lasted.** `testASafetyBlockIsAnErrorHoweverPolitelyItIsPhrased`
 asserted `StopReason::Error` and nothing else, so it passed identically with a message and without
@@ -7875,29 +7878,25 @@ and a guess here compacts a conversation that was fine. `php test/live.php <prov
 prints the provider's own words when they are not recognised, which is what that argument was added
 for; for a model newer than the anchor, declare it in `models.json` first.
 
-### The overflow pattern for Cerebras and Mistral could never match pig's own words
+### The overflow pattern for Cerebras could never match pig's own words
 
 Seventeenth, and the narrowest kind of porting bug: a regex ported with its subject left behind.
-`Overflow::NO_BODY` matches `"400 status code (no body)"` — the **OpenAI SDK's** phrasing, which is
-what upstream reads. pig's providers then all wrote `"<who> returned <status>: <message or body>"`,
-so a 4xx with an empty body ended at the colon and that pattern could not fire. (Both OpenAI
-providers write the SDK's phrasing now, through `Utils\ErrorBody`; Anthropic and Google still write
-the other shape, which `EMPTY_BODY` is for.)
+Upstream's bodiless-4xx pattern matches `"400 status code (no body)"` — the **OpenAI SDK's**
+phrasing. pig's providers then wrote `"<who> returned <status>: <message or body>"`, so a 4xx with
+an empty body ended at the colon and the pattern could not fire, and `Retry::worthRetrying()` sent the
+same too-long request three more times with backoff where compaction was the answer.
 
-Cerebras and Mistral answer an oversized prompt with exactly that — a bare 400 and no body — so the
-one case the pattern exists for was the one it missed. `Retry::worthRetrying()` then found a
-retryable status and pig sent the same too-long request three more times with backoff before giving
-up, where compaction was the answer.
-
-`EMPTY_BODY` is pig's own wording, anchored at the end so a 400 that *did* explain itself is still
-not a guess, and `NO_BODY` stays for messages that come from somewhere else. **The test that was
-there asserted the SDK string**, which no provider here produces; the new one goes through a real
-provider and a canned 400, so the pattern and the message it has to match cannot drift apart again.
+Every built-in provider now writes upstream's own error text (the SDK messages, `Utils\ErrorBody`), so
+the pattern reads what it was written for, and `Overflow` is upstream's table as it stands: the
+bodiless pattern counts **only for the `cerebras` provider** and only for 400/413
+(`CEREBRAS_BODYLESS_OVERFLOW_PATTERN`); rate-limit and throttling text is never an overflow
+(`NON_OVERFLOW_PATTERNS`); and a `length` stop with nothing written and the window ≥99% full is one
+(Xiaomi MiMo). The test goes through a real provider and a canned 400, so the pattern and the message
+it has to match cannot drift apart again.
 
 Checked at the same time and found matching, so nobody has to check them twice: the other
 `packages/ai` utilities. `Utf8::sanitize()` handles what upstream's `sanitizeSurrogates()` handles
-and the CESU-8 surrogate case its docblock claims (verified, not assumed); `Overflow`'s table is
-upstream's, pattern for pattern; `Credentials`, `Provider` and all four OAuth flows carry upstream's
+and the CESU-8 surrogate case its docblock claims (verified, not assumed); `Credentials`, `Provider` and all four OAuth flows carry upstream's
 endpoints, client ids and the same five-minute renewal margin; `SseParser` follows the spec on the
 one optional space, multi-line `data:`, comments and CRLF; `PartialJson` is a hand-written stand-in
 for the `partial-json` package, and it has now been run **against** it — `partial-json@0.1.7`, every
@@ -8135,7 +8134,9 @@ sides: a delta with `input_tokens: null` keeps 1000, and a delta that does repor
 
 Twelfth. On the responses API a function call's arguments arrive as `function_call_arguments.delta`
 events **and** whole, as `arguments` on the `response.output_item.done` item. Upstream builds the
-finished `ToolCall` from that item (`JSON.parse(item.arguments)`); pig used only what the deltas had
+finished `ToolCall` from that item (`parseStreamingJson(item.arguments || partialJson || "{}")`, where
+`partialJson` starts as the `output_item.added` item's own `arguments`, unparsed until a delta or the
+`done` reads it); pig used only what the deltas had
 accumulated and never looked at the field. Usually the same JSON, so usually the same call — but a
 stream that sends no argument deltas, which this API allows and a compatible endpoint may do (Copilot
 speaks this API and implements it itself), left the call with **no arguments at all**.
@@ -8681,8 +8682,7 @@ error, it is a zero.
 **The image is the more interesting one, because upstream contradicts itself.** Its `toolResult` arm
 adds 4800 characters per image; its `user` arm counts only text and adds nothing. So the same
 screenshot is worth 1200 tokens if a tool returned it and nothing if somebody pasted it. pig counts
-4800 in both, which is the second time this port has taken the right one of upstream's two answers
-to the same question — the first was the `data:` prefix in `StreamProxy`. (Upstream's comment there
+4800 in both, taking the right one of upstream's two answers to the same question. (Upstream's comment there
 says "4000 chars, or 1200 tokens" while the code says 4800; 4800 is what divides into 1200, so the
 code is the half that was meant.)
 
@@ -11793,7 +11793,7 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 **根因**：upstream `google.ts` 从 `pending` 开始，流尽仍是 `pending` 报 `Google stream ended without a finish reason`，错误 finish reason 读到流尾再报 `Provider stopped with: X`。
 
 **避坑规则**：
-- `GoogleShared::onChunk(..., deferErrors: true)` 只给 `Google.php` 用；Antigravity 扩展仍走旧的立即抛。
+- `GoogleShared::onChunk()` 只记录 finish reason，不抛；`Google::run()` 和 Antigravity 都在读完流之后才抛 `Provider stopped with: X`。
 - 测试：`GoogleTest::testAStreamThatEndsWithoutAFinishReasonIsAnErrorNotAnAnswer`、`testAnErrorFinishReasonIsReadToTheEndOfTheStreamBeforeItEndsTheTurn`。
 
 ### Anthropic 坏 SSE 事件静默跳过
@@ -11834,6 +11834,80 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 **避坑规则**：
 - 新增停止原因时同步 `MessageJson`、`TransformMessages`、`SessionManager`、`AgentSession` 的拷贝点。
 - 测试：`MessageTest::testADeferredTurnAndItsHandleSurviveTheSessionFile`，`AgentLoopTest::testADeferredTurnEndsTheRunAsAFinishedOneDoes`。
+
+### JSON 解析错误的文字是 PHP 的，不是 V8 的
+
+**症状**：网关、Anthropic SSE、Mistral 流、Gemini 流里有一段不是 JSON 时，错误行写 `Syntax error`（PHP 的 `json_last_error_msg()`），pi 对同样的字节写 `Unexpected token 'x', "..." is not valid JSON` 之类。
+
+**根因**：upstream 这些地方直接 `JSON.parse`，把 V8 的 `SyntaxError` 原文交给用户；PHP 的解析器只有一句笼统的话。
+
+**避坑规则**：
+- 凡是 upstream 会把 `JSON.parse` 的错误交出去的地方，一律用 `Utils\JsJson::parse()`（抛带 V8 原文的 `JsonException`），不要用 `json_last_error_msg()`。
+- `openai` SDK 的流不透传 V8 文字（固定写 `Error reading response: malformed server-sent event JSON.`），走 `ErrorBody::openAiStreamEvent()`。
+- 改 `JsJson` 之后用 `node -e` 对照；测试：`JsJsonTest`（期望值全部是 node 的真实输出）。
+
+### Anthropic / Gemini 的 HTTP 错误文本是 pig 自己的话
+
+**症状**：Anthropic 拒绝请求时显示 `Anthropic returned 401: invalid key`，Gemini 显示 `google returned 429: ...`；pi 显示 SDK 的原文（`401 {"type":"error",...}`、`{"error":{"code":429,...}}`）。Gemini 流里坏掉的块被静默跳过，200 流里的错误对象、截断的末尾都不报错。
+
+**根因**：upstream 的 Anthropic 打印 `@anthropic-ai/sdk` `APIError` 的 message（整个响应体当 error），Gemini 打印 `@google/genai` `throwErrorIfNotOK()` 的 `JSON.stringify(errorBody)`；Gemini 的流由 SDK 的 `processStreamResponse()` 读，不是标准 SSE 解析。
+
+**避坑规则**：
+- 错误文本只从 `Utils\ErrorBody`（`anthropicApiError()`、`genaiApiError()`、`openAiApiError()`）来，不要手拼 `<who> returned <status>`。
+- `Retry::STATUS` 认得这些形状（包括 Gemini 错误 JSON 里的 `"code":N`）；新增错误形状时先加 `RetryTest` 用例。
+- Gemini 流走 `Google::sdkChunks()`，不要换回 `SseParser`。
+- 测试：`AnthropicTest::testARefusedRequestReadsAsTheSdksApiErrorMessage`，`GoogleTest::testARefusedRequestReadsAsTheGenaiSdkWritesIt`、`testTheStreamIsReadAsTheGenaiSdkReadsIt`，`RetryTest::testTheStatusIsReadFromTheSdksMessagesAnthropicAndGoogleNowWrite`。
+
+### chat completions 流里的错误对象被读过去、tool 结果的图片插在结果中间
+
+**症状**：OpenRouter 等在 200 流里发 `{"error":{...}}` 时 pig 忽略它继续读，最后报 `Stream ended without finish_reason`；连续几个带图的工具结果，图片的 user 消息夹在两个 `tool` 消息之间，部分端点拒绝。
+
+**根因**：upstream 的块经 `openai` SDK 的 `Stream`：`[DONE]` 即停，非 JSON 抛固定文字，`data.error` 抛 `APIError`（catch 再附 `metadata.raw`）。`convertMessages()` 把一串连续的工具结果先全部发成 `tool` 消息，再把所有图片合成一条 user 消息，`lastRole` 只在真正产出消息时更新。
+
+**避坑规则**：
+- 流事件走 `ErrorBody::openAiStreamEvent()`，两个 OpenAI 提供方共用。
+- 测试：`OpenAiCompletionsTest::testTheStreamFailsWhereTheSdksStreamDoes`、`testDoneEndsTheStreamWhateverFollows`、`testAToolResultRunsImagesGoOutTogetherAfterTheWholeRun`、`testASkippedEmptyMessageDoesNotResetTheLastRole`。
+
+### 上下文溢出表落后于 upstream，Mistral 溢出被重试
+
+**症状**：Mistral（`... too large for model with N maximum context length`）、Kimi、MiniMax、Together 等的溢出不被识别，pig 带退避重发同一个超长请求三次而不是压缩；任何提供方无响应体的 429 都被当成溢出。
+
+**根因**：`Overflow` 是旧版 upstream 表的拷贝，还带 pig 自己的 `EMPTY_BODY`。upstream 现在有 25 条模式、`NON_OVERFLOW_PATTERNS`、只对 `cerebras` 生效的无响应体 400/413，以及 Xiaomi MiMo 的 `length` 停止判定。
+
+**避坑规则**：
+- `Overflow` 逐条照抄 upstream `overflow.ts`，不加 pig 自己的模式。
+- 测试：`OverflowTest::testUpstreamsLaterExamplesAreRecognised`、`testTheBodilessFourHundredsOnlyCountForCerebras`、`testThrottlingThatMentionsTokensIsNotAnOverflow`、`testALengthStopThatFilledTheWindowWithNothingWrittenIsAnOverflow`。
+
+### Mistral 没有响应头超时，各提供方不发 User-Agent
+
+**症状**：Mistral 服务端迟迟不回响应头时，回合一直挂着；所有内置提供方的请求都没有 `User-Agent`。
+
+**根因**：upstream `requestMistralStream()` 给响应头 `timeoutMs ?? 60_000`（只管响应头，不截断长流），超时报 `Mistral response headers timed out after <ms>ms`；每个提供方都先发 `User-Agent: pi (<platform> <release>; <arch>)`（`getPiUserAgent()`），模型自己的头可以覆盖。pig 发的是 `pig (<platform> <release>; <arch>)`（`PigUserAgent::get()`，产品名按开发者要求用 `pig`，其余照搬）。
+
+**避坑规则**：
+- 头部超时只包 `HttpClient::send()`，拿到响应头就取消计时器；用户的 signal 继续作用于响应体。
+- `User-Agent` 放在头数组最前面（`PigUserAgent::get()`），Claude Code 订阅令牌和 Copilot 的 UA 在后面覆盖它。
+- 测试：`MistralTest::testTheResponseHeadersHaveTimeoutMsToArrive`、`testAStreamLongerThanTheTimeoutIsNotCutOff`、各提供方的 `testTheUserAgentIsPis*`。
+
+### StreamProxy 接受没有空格的 `data:` 行，错误文本少了状态文字
+
+**症状**：网关写 `data:{...}`（冒号后无空格）时 pig 照读，pi 跳过；非 2xx 时 pig 写 `Proxy error: 502`，pi 写 `Proxy error: 502 Bad Gateway`；`error` 字段不是字符串时 pig 不用它。
+
+**根因**：upstream `processLine()` 只认 `startsWith("data: ")`、`slice(6).trim()`；错误是 `Proxy error: ${status} ${statusText}`，`errorData.error` 为真值时用模板字符串打印它。
+
+**避坑规则**：
+- 照 upstream 只认 `data: `；不要以 SSE 规范为由放宽。
+- 测试：`StreamProxyTest::testOnlyALineStartingWithDataAndASpaceIsAnEvent`、`testANon2xxWithNoErrorFieldNamesTheStatus`、`testANon2xxErrorFieldIsPrintedAsATemplateLiteralWould`。
+
+### Antigravity 在错误 finish reason 那一块就抛，后面的用量丢失
+
+**症状**：Antigravity 上 Gemini 因安全拦截等结束时，同一流里之后才到的 `usageMetadata` 不计入，回合显示 0 输入。
+
+**根因**：直连 Gemini 早已照 upstream 读完流再抛，Antigravity 仍在 `onChunk` 里立即抛。
+
+**避坑规则**：
+- 两条 Gemini 路径的流尾检查保持一致；`promptFeedback.blockReason` 只在 Antigravity 里检查（upstream 的 Gemini 路径没有这一条）。
+- 测试：`AntigravityApiTest::testAnErrorFinishReasonIsReadToTheEndOfTheStreamBeforeTheTurnFails`、`testABlockedPromptIsStillNamedHere`。
 
 ## Version floor: PHP >= 8.3
 

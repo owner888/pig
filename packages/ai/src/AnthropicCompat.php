@@ -69,6 +69,14 @@ final readonly class AnthropicCompat
      *        upstream's `allowedFallbackModels`: the models Anthropic may answer with instead
      *        (server-side refusal fallback), sent as `fallbacks`, with the price a turn they answered
      *        is billed at. Absent or empty sends no `fallbacks`, which Anthropic requires then
+     * @param bool|null $supportsMidConvoSystemMessages the model takes system-role messages inside
+     *        the conversation — upstream's `supportsMidConvoSystemMessages` (default false; when
+     *        false, later system messages are folded into the top-level system prompt). Carried
+     *        for `models.json`, the generator and the proxy wire: pig's transcript has no system
+     *        message after the first, so nothing here reads it yet
+     * @param bool|null $supportsMidConvoToolChanges the model takes mid-conversation `tool_addition` and
+     *        `tool_removal` blocks — upstream's `supportsMidConvoToolChanges` (default false; needs
+     *        `supportsMidConvoSystemMessages`). Carried the same way, read by nothing yet
      */
     public function __construct(
         public ?bool $forceAdaptiveThinking = null,
@@ -82,6 +90,8 @@ final readonly class AnthropicCompat
         public ?bool $supportsCacheControlOnTools = null,
         public ?bool $allowEmptySignature = null,
         public ?array $allowedFallbackModels = null,
+        public ?bool $supportsMidConvoSystemMessages = null,
+        public ?bool $supportsMidConvoToolChanges = null,
     ) {
     }
 
@@ -100,6 +110,8 @@ final readonly class AnthropicCompat
             $this->supportsCacheControlOnTools,
             $this->allowEmptySignature,
             $allowedFallbackModels,
+            $this->supportsMidConvoSystemMessages,
+            $this->supportsMidConvoToolChanges,
         );
     }
 
@@ -155,16 +167,30 @@ final readonly class AnthropicCompat
     }
 
     /**
+     * Upstream's generator `supportsAnthropicMidConvoSystemMessages()`, copied: the id as written
+     * (no lower-casing, no provider prefix), three patterns.
+     */
+    public static function supportsMidConvoSystemMessagesModel(string $modelId): bool
+    {
+        return preg_match('/^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$/', $modelId) === 1
+            || preg_match('/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/', $modelId) === 1
+            || preg_match('/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/', $modelId) === 1;
+    }
+
+    /**
      * Upstream's generator `getAnthropicMessagesCompat()`, the keys of it pig has, plus the two
      * `applyThinkingLevelMetadata()` writes (`forceAdaptiveThinking`, `supportsTemperature: false`)
      * and `applyStrictToolCompatMetadata()`'s `supportsStrictTools` — everything upstream's generator
      * writes into a built-in `anthropic-messages` model's `compat`. Null when it writes nothing, as
      * upstream leaves `compat` off such a model.
      *
-     * Not ported: `supportsMidConvoSystemMessages`/`supportsMidConvoToolChanges` (pig's transcript has
-     * no system messages after the first). `allowEmptySignature` is written by upstream only for
-     * xiaomi and opencode, which pig has no built-in models of, and `allowedFallbackModels` needs the
-     * other rows' prices, so `Models::table()` adds it after every Anthropic row exists.
+     * `supportsMidConvoSystemMessages` and `supportsMidConvoToolChanges` for the `anthropic` provider's
+     * models that take them, and the first alone for `opencode` and `github-copilot` ("OpenCode Zen
+     * and GitHub Copilot forward mid-conversation system messages but reject
+     * `tool_addition`/`tool_removal` blocks, so tool changes stay top-level there"). Not ported:
+     * `allowEmptySignature` is written by upstream only for xiaomi and opencode's Qwen 3.8 Flash,
+     * which pig has no built-in models of, and `allowedFallbackModels` needs the other rows' prices,
+     * so `Models::table()` adds it after every Anthropic row exists.
      */
     public static function forBuiltIn(string $provider, string $modelId): ?self
     {
@@ -179,6 +205,9 @@ final readonly class AnthropicCompat
             supportsTemperature: self::isTemperatureUnsupportedModel($modelId) ? false : null,
             supportsEagerToolInputStreaming: in_array($key, self::EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED, true) ? false : null,
             supportsMidConvoEffort: $midConvoEffort ? true : null,
+            supportsMidConvoSystemMessages: in_array($provider, ['anthropic', 'opencode', 'github-copilot'], true)
+                && self::supportsMidConvoSystemMessagesModel($modelId) ? true : null,
+            supportsMidConvoToolChanges: $provider === 'anthropic' && self::supportsMidConvoSystemMessagesModel($modelId) ? true : null,
         );
 
         // `!==` per key and not `==` on the objects: loose comparison counts a `false` as equal to

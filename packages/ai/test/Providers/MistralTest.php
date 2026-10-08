@@ -24,6 +24,7 @@ use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\PigUserAgent;
 use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Test\CannedServer;
@@ -304,6 +305,77 @@ final class MistralTest extends TestCase
         $url = $this->server->start(["HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n"]);
 
         $this->assertSame('Mistral API error (503): Service Unavailable', $this->collect($url)[1]->errorMessage);
+    }
+
+    public function testAPayloadThatIsNotJsonEndsTheTurnWithV8sMessage(): void
+    {
+        // `JSON.parse(data)` in `parseMistralEvent()`; pig printed PHP's `Syntax error`.
+        $url = $this->server->start([
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n",
+            $this->chunk("data: {\"choices\": nope}\n\n"),
+            "0\r\n\r\n",
+        ]);
+
+        $this->assertSame('Unexpected token \'o\', "{"choices": nope}" is not valid JSON', $this->collect($url)[1]->errorMessage);
+    }
+
+    public function testTheResponseHeadersHaveTimeoutMsToArrive(): void
+    {
+        // Upstream: "The timeout covers only the wait for response headers", `timeoutMs ?? 60_000`,
+        // and a deadline that passes first is `Mistral response headers timed out after <ms>ms`.
+        $url = $this->server->start([], closeAfter: false);
+
+        $message = Async::run(function () use ($url): AssistantMessage {
+            $stream = (new Mistral())->stream($this->model(baseUrl: $url), new Context([new UserMessage('hi')]), new MistralOptions(apiKey: 'k', timeoutMs: 150));
+
+            foreach ($stream as $ignored) {
+            }
+
+            return $stream->result()->await();
+        });
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('Mistral response headers timed out after 150ms', $message->errorMessage);
+    }
+
+    public function testAStreamLongerThanTheTimeoutIsNotCutOff(): void
+    {
+        // "Long streams (e.g. extended thinking) must not be cut off by a fixed deadline": the
+        // pieces below arrive 10ms apart, well past a 30ms deadline, and all of them are read.
+        $pieces = ["HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"];
+
+        foreach (['a', 'b', 'c', 'd', 'e', 'f'] as $piece) {
+            $pieces[] = $this->chunk('data: ' . json_encode(['choices' => [['delta' => ['content' => $piece]]]]) . "\n\n");
+        }
+
+        $pieces[] = $this->chunk('data: ' . json_encode(['choices' => [['delta' => [], 'finish_reason' => 'stop']]]) . "\n\n");
+        $pieces[] = "0\r\n\r\n";
+        $url = $this->server->start($pieces);
+
+        $message = Async::run(function () use ($url): AssistantMessage {
+            $stream = (new Mistral())->stream($this->model(baseUrl: $url), new Context([new UserMessage('hi')]), new MistralOptions(apiKey: 'k', timeoutMs: 30));
+
+            foreach ($stream as $ignored) {
+            }
+
+            return $stream->result()->await();
+        });
+
+        $this->assertSame(StopReason::Stop, $message->stopReason);
+        $this->assertSame('abcdef', $message->content[0]->text);
+    }
+
+    public function testTheUserAgentIsPisUnderTheModelsOwn(): void
+    {
+        // `buildMistralHeaders()`: `"User-Agent": getPiUserAgent()` first, the model's headers over it.
+        [$head] = $this->capture($this->model(), new Context([new UserMessage('hi')]));
+        $this->assertStringContainsString('user-agent: ' . PigUserAgent::get() . "\r\n", $head);
+
+        $model = $this->model();
+        $model = new Model($model->id, $model->name, $model->api, $model->provider, $model->baseUrl, $model->contextWindow, $model->maxTokens, $model->reasoning, $model->input, $model->pricing, ['User-Agent' => 'mine/2']);
+        [$head] = $this->capture($model, new Context([new UserMessage('hi')]));
+        $this->assertSame(1, preg_match_all('/^user-agent: /mi', $head));
+        $this->assertStringContainsString("user-agent: mine/2\r\n", $head);
     }
 
     // ---- helpers -------------------------------------------------------------------------------

@@ -348,7 +348,14 @@ final class GoogleShared
     // ---- the response --------------------------------------------------------------------
 
     /**
-     * One chunk, as a Gemini candidate.
+     * One chunk, as a Gemini candidate — the body of upstream's `for await (const chunk of
+     * googleStream)` loop in `google-generative-ai.ts`, in its order: the parts, the finish reason,
+     * the usage.
+     *
+     * **An error finish reason does not end the stream here.** Upstream records it and reads on; its
+     * check after the loop is what throws `Provider stopped with: <raw reason>` — so the usage on the
+     * rest of the body still counts, and a turn Gemini refused is still billed for its input. Both
+     * callers (`Google::run()`, Antigravity's) make that check.
      *
      * Code Assist's chunks arrive under a `response` key; **the caller unwraps**, so that this
      * is handed the same thing from both providers rather than having to know which one it is
@@ -363,15 +370,7 @@ final class GoogleShared
         AssistantMessageBuilder $builder,
         AssistantMessageEventStream $stream,
         ?array $open,
-        bool $deferErrors = false,
     ): ?array {
-        // A blocked prompt comes back as a 200 with nothing in it but the reason.
-        $blocked = $data['promptFeedback']['blockReason'] ?? null;
-
-        if (is_string($blocked)) {
-            throw new ProviderError("Gemini refused the prompt: {$blocked}");
-        }
-
         $candidate = $data['candidates'][0] ?? [];
 
         foreach ($candidate['content']['parts'] ?? [] as $part) {
@@ -380,19 +379,7 @@ final class GoogleShared
             }
         }
 
-        // **Before the finish reason, because that one can throw.** The usage rides on the same
-        // chunk as the reason, so reading it afterwards loses it for exactly the turns that failed
-        // — and a turn Gemini refused was still billed for its input. Measured: with these two the
-        // other way round, a safety block came back `input=0 output=0` on a prompt of 40 tokens.
-        // The same fact `AnthropicTest::testAnAbortedTurnKeepsTheUsageThatHadAlreadyArrived` pins
-        // from the other end: a turn that produced nothing did not therefore cost nothing.
-        if (is_array($data['usageMetadata'] ?? null)) {
-            $builder->setUsage(self::usage($data['usageMetadata']));
-        }
-
         if (is_string($candidate['finishReason'] ?? null)) {
-            // Set before anything can throw, so a turn that fails on the reason below still says
-            // which reason it was: `fail()` leaves it alone, as upstream's catch leaves the field.
             $builder->setRawStopReason($candidate['finishReason']);
 
             // Upstream `google-generative-ai.ts`: the reason is mapped first, and only a STOP
@@ -405,20 +392,11 @@ final class GoogleShared
                 $reason = StopReason::ToolUse;
             }
 
-            // `google-generative-ai.ts` records the error reason and reads the rest of the stream; its
-            // end-of-stream check throws `Provider stopped with: <raw reason>` (`Google::run()`).
-            if ($reason === StopReason::Error && !$deferErrors) {
-                // Upstream throws `Provider stopped with: <raw reason>` here, and so does this:
-                // the chunk that carries one of these reasons carries no message of its own, so
-                // the reason is the only thing there is to say. `fail()` keeps the content, so
-                // partial text survives. None of the reasons is in `Retry`'s word list, so none
-                // is retried — upstream's `isRetryableAssistantError` agrees.
-                self::close($builder, $stream, $open);
-
-                throw new ProviderError("Provider stopped with: {$candidate['finishReason']}");
-            }
-
             $builder->setStopReason($reason);
+        }
+
+        if (is_array($data['usageMetadata'] ?? null)) {
+            $builder->setUsage(self::usage($data['usageMetadata']));
         }
 
         return $open;

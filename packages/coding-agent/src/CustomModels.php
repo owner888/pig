@@ -807,6 +807,8 @@ final readonly class CustomModels
                 supportsCacheControlOnTools: $flag('supportsCacheControlOnTools'),
                 allowEmptySignature: $flag('allowEmptySignature'),
                 allowedFallbackModels: self::allowedFallbackModels($compat['allowedFallbackModels'] ?? null),
+                supportsMidConvoSystemMessages: $flag('supportsMidConvoSystemMessages'),
+                supportsMidConvoToolChanges: $flag('supportsMidConvoToolChanges'),
             );
         }
 

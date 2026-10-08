@@ -810,8 +810,10 @@ final class Models
                 // Upstream's generator for a Copilot Claude (`api: "anthropic-messages"`):
                 // `forceAdaptiveThinking` and `supportsTemperature: false` by the same id rules
                 // as on Anthropic's own models, `supportsEagerToolInputStreaming: false` on the
-                // three it lists — and no `supportsStrictTools` (that is `provider ===
-                // "anthropic"` only) or `supportsMidConvoEffort` (`anthropic`/`openrouter` only).
+                // three it lists, `supportsMidConvoSystemMessages` (but not `…ToolChanges`, which
+                // Copilot rejects) on the ids that take it — and no `supportsStrictTools` (that is
+                // `provider === "anthropic"` only) or `supportsMidConvoEffort` (`anthropic`/
+                // `openrouter` only).
                 Api::AnthropicMessages => AnthropicCompat::forBuiltIn(self::COPILOT, $id),
                 // `applyOpenAIGrammarToolCompatMetadata()`: Copilot passes OpenAI's custom
                 // grammar tools through on the Responses API, for `gpt-<n>` with n >= 5; and

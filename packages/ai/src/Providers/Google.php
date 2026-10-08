@@ -9,12 +9,14 @@ use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
-use Pig\Ai\Http\SseParser;
 use Pig\Ai\Model;
 use Pig\Ai\ProviderError;
 use Pig\Ai\StartEvent;
 use Pig\Ai\StopReason;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\Utils\ErrorBody;
+use Pig\Ai\Utils\JsJson;
+use Pig\Ai\Utils\PigUserAgent;
 use Pig\Async\Async;
 use Throwable;
 
@@ -76,27 +78,27 @@ final class Google
             $response = $this->http->send($this->request($model, $context, $options), $signal);
 
             if (!$response->isSuccessful()) {
-                throw new ProviderError($this->explain($response->status, $response->body->all()));
+                throw new ProviderError(ErrorBody::genaiApiError(
+                    $response->status,
+                    $response->reason,
+                    $response->header('content-type'),
+                    $response->body->all(),
+                ));
             }
 
             $stream->push(new StartEvent($builder->snapshot()));
-            $parser = new SseParser();
 
-            foreach ($response->body as $chunk) {
-                foreach ($parser->feed($chunk) as $event) {
-                    $data = json_decode($event->data, true);
-
-                    if (is_array($data)) {
-                        // Upstream keeps the first non-empty `responseId` of the stream. Here and
-                        // not in `GoogleShared`, because `google-generative-ai.ts` is where upstream
-                        // does it; the Code Assist extension that shares the chunk code follows a
-                        // different upstream file.
-                        if ($builder->responseId() === null && is_string($data['responseId'] ?? null) && $data['responseId'] !== '') {
-                            $builder->setResponseId($data['responseId']);
-                        }
-
-                        $open = GoogleShared::onChunk($data, $builder, $stream, $open, deferErrors: true);
+            foreach (self::sdkChunks($response->body) as $data) {
+                if (is_array($data)) {
+                    // Upstream keeps the first non-empty `responseId` of the stream. Here and
+                    // not in `GoogleShared`, because `google-generative-ai.ts` is where upstream
+                    // does it; the Code Assist extension that shares the chunk code follows a
+                    // different upstream file.
+                    if ($builder->responseId() === null && is_string($data['responseId'] ?? null) && $data['responseId'] !== '') {
+                        $builder->setResponseId($data['responseId']);
                     }
+
+                    $open = GoogleShared::onChunk($data, $builder, $stream, $open);
                 }
             }
 
@@ -128,12 +130,129 @@ final class Google
         }
     }
 
-    private function explain(int $status, string $body): string
+    /**
+     * The chunks as `@google/genai` 2.21.0 hands them to upstream (`processStreamResponse()` and the
+     * `chunk.json()` after it), which is not an event-stream parser:
+     *
+     * - each piece read off the socket is first tried as JSON on its own, and one that is an object
+     *   with an `error` whose `code` is 400–599 throws `got status: <status>. <the piece's JSON>` — a
+     *   refusal Google sent with a 200;
+     * - events end at the first `\n\n`, `\r\r` or `\r\n\r\n`; an event that, trimmed, starts with
+     *   `data:` is the rest of it, trimmed — **one** payload, later lines and all — and anything else
+     *   (a comment, an `event:` line first) is passed over;
+     * - the payload is `JSON.parse`d, so one that is not JSON ends the turn with V8's message;
+     * - a body that ends with anything but white space left over is `Incomplete JSON segment at the
+     *   end`.
+     *
+     * pig used to read this body with its own SSE parser and skip what did not decode, so a garbled
+     * chunk went missing from the answer instead of failing the turn the way upstream's does.
+     *
+     * @param iterable<string> $body
+     * @return iterable<mixed> each payload, decoded with objects as arrays
+     */
+    private static function sdkChunks(iterable $body): iterable
     {
-        $decoded = json_decode($body, true);
-        $message = is_array($decoded) ? ($decoded['error']['message'] ?? null) : null;
+        $buffer = '';
+        // `TextDecoder.decode(value, {stream: true})`: a character cut between two reads waits here.
+        $pending = '';
 
-        return "google returned {$status}: " . (is_string($message) ? $message : trim($body));
+        foreach ($body as $bytes) {
+            [$chunkString, $pending] = self::decodeStreaming($pending . $bytes);
+
+            try {
+                $chunkJson = JsJson::parse($chunkString, false);
+            } catch (\JsonException) {
+                $chunkJson = null;
+            }
+
+            // `'error' in chunkJson`, then `code >= 400 && code < 600` as JavaScript compares.
+            if ($chunkJson instanceof \stdClass && property_exists($chunkJson, 'error')) {
+                $error = $chunkJson->error;
+                $code = self::jsNumber(is_object($error) && property_exists($error, 'code') ? $error->code : null);
+
+                if ($code !== null && $code >= 400 && $code < 600) {
+                    $status = is_object($error) && property_exists($error, 'status') ? JsJson::toString($error->status) : 'undefined';
+
+                    throw new ProviderError("got status: {$status}. " . JsJson::stringify($chunkJson));
+                }
+            }
+
+            $buffer .= $chunkString;
+
+            while (true) {
+                $index = null;
+                $length = 0;
+
+                foreach (["\n\n", "\r\r", "\r\n\r\n"] as $delimiter) {
+                    $at = strpos($buffer, $delimiter);
+
+                    if ($at !== false && ($index === null || $at < $index)) {
+                        $index = $at;
+                        $length = strlen($delimiter);
+                    }
+                }
+
+                if ($index === null) {
+                    break;
+                }
+
+                $event = JsJson::trim(substr($buffer, 0, $index));
+                $buffer = substr($buffer, $index + $length);
+
+                if (str_starts_with($event, 'data:')) {
+                    // `chunk.json()`: V8's `SyntaxError` for a payload that is not JSON.
+                    yield JsJson::parse(JsJson::trim(substr($event, 5)));
+                }
+            }
+        }
+
+        if (JsJson::trim($buffer) !== '') {
+            throw new ProviderError('Incomplete JSON segment at the end');
+        }
+    }
+
+    /**
+     * The complete UTF-8 characters at the front of `$bytes` (anything malformed as U+FFFD), and
+     * the start of a character still being read at the end.
+     *
+     * @return array{0: string, 1: string}
+     */
+    private static function decodeStreaming(string $bytes): array
+    {
+        $length = strlen($bytes);
+
+        // A lead byte in the last three whose sequence runs past the end is held back.
+        for ($back = 1; $back <= min(3, $length); $back++) {
+            $byte = ord($bytes[$length - $back]);
+
+            if ($byte < 0x80) {
+                break;
+            }
+
+            if ($byte >= 0xC0) {
+                $needs = $byte >= 0xF0 ? 4 : ($byte >= 0xE0 ? 3 : 2);
+
+                if ($needs > $back) {
+                    return [JsJson::decodeUtf8(substr($bytes, 0, $length - $back)), substr($bytes, $length - $back)];
+                }
+
+                break;
+            }
+        }
+
+        return [JsJson::decodeUtf8($bytes), ''];
+    }
+
+    /** JavaScript's `ToNumber` for a decoded JSON value, null where it is `NaN`. */
+    private static function jsNumber(mixed $value): ?float
+    {
+        return match (true) {
+            is_int($value), is_float($value) => (float) $value,
+            is_bool($value) => $value ? 1.0 : 0.0,
+            $value === null => 0.0,
+            is_string($value) => JsJson::trim($value) === '' ? 0.0 : (is_numeric(JsJson::trim($value)) ? (float) JsJson::trim($value) : null),
+            default => null,
+        };
     }
 
     // ---- the request ---------------------------------------------------------------------
@@ -144,6 +263,8 @@ final class Google
             'accept' => 'text/event-stream',
             'content-type' => 'application/json',
             'x-goog-api-key' => $options?->apiKey ?? '',
+            // Upstream's `createClient()`: `{"User-Agent": getPiUserAgent(), ...model.headers}`.
+            'User-Agent' => PigUserAgent::get(),
             ...$model->headers,
         ];
 
