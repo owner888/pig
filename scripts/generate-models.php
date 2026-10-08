@@ -97,6 +97,74 @@ const DIRECT = [
 ];
 
 /**
+ * Upstream's `OPENAI_LONG_CONTEXT_INPUT_THRESHOLD`: OpenAI bills a request over 272k input tokens at
+ * the long-context rates, and the capped models' window stops there.
+ */
+const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272_000;
+
+/**
+ * Upstream's `OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS`: "Keep direct OpenAI requests in the
+ * short-context pricing tier by default. Users can opt into the larger context through model
+ * overrides, so retain long-context cost metadata on the capped models." The window is what
+ * compaction fires against, so these compact before a request reaches the dearer tier.
+ */
+const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = [
+    'gpt-5.4',
+    'gpt-5.5',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'gpt-6-astra',
+    'gpt-6-sol',
+    'gpt-6-luna',
+    'gpt-6.1-sol',
+];
+
+/** Upstream's `OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS`: the `openai` rows that get the 272k tier. */
+const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = [
+    'gpt-5.4',
+    'gpt-5.4-pro',
+    'gpt-5.5',
+    'gpt-5.5-pro',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'gpt-6-astra',
+    'gpt-6-sol',
+    'gpt-6-luna',
+    'gpt-6.1-sol',
+];
+
+/**
+ * Upstream's `OPENAI_STANDARD_COSTS`, in a row's price keys: "Keep current OpenAI prices
+ * authoritative until models.dev and passthrough catalogs catch up."
+ * https://developers.openai.com/api/docs/pricing
+ *
+ * @var array<string, array{input: float, out: float, cacheRead: float, cacheWrite: float}>
+ */
+const OPENAI_STANDARD_COSTS = [
+    'gpt-5.6-luna' => ['input' => 0.2, 'out' => 1.2, 'cacheRead' => 0.02, 'cacheWrite' => 0.25],
+    'gpt-5.6-sol' => ['input' => 4.0, 'out' => 20.0, 'cacheRead' => 0.4, 'cacheWrite' => 5.0],
+    'gpt-5.6-terra' => ['input' => 2.0, 'out' => 12.0, 'cacheRead' => 0.2, 'cacheWrite' => 2.5],
+    'gpt-6-astra' => ['input' => 10.0, 'out' => 50.0, 'cacheRead' => 1.0, 'cacheWrite' => 12.5],
+    'gpt-6-luna' => ['input' => 0.1, 'out' => 0.5, 'cacheRead' => 0.01, 'cacheWrite' => 0.125],
+    'gpt-6-sol' => ['input' => 2.0, 'out' => 10.0, 'cacheRead' => 0.2, 'cacheWrite' => 2.5],
+    'gpt-6.1-sol' => ['input' => 2.0, 'out' => 10.0, 'cacheRead' => 0.1, 'cacheWrite' => 2.5],
+];
+
+/**
+ * The providers whose models.dev `reasoning_options` upstream records
+ * (`recordModelsDevReasoningOptions()`) for `applyModelsDevReasoningOptionMetadata()`, among the
+ * ones pig generates. Google and Mistral are not here because upstream does not record theirs:
+ * its Google rows take `getGoogleThinkingLevelMap()` when they are built, and Mistral speaks its
+ * own `mistral-conversations` API, which takes `getEffortThinkingLevelMap()` directly.
+ */
+const REASONING_OPTION_PROVIDERS = ['anthropic', 'openai', 'cerebras', 'groq', 'xai', 'zai', 'github-copilot'];
+
+/** Upstream's `THINKING_LEVELS` in `models-dev-reasoning-options.ts` — no `off`, which `none` stands for. */
+const EFFORT_THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+/**
  * What models.dev gets wrong, and what it does not carry yet.
  *
  * Upstream's own corrections, ported with their reasons rather than their values alone, because a
@@ -204,7 +272,48 @@ const OVERRIDES = [
             'input' => 1.25, 'out' => 10.0, 'cacheRead' => 0.125, 'cacheWrite' => 0.0,
         ],
     ],
+    // Upstream's `missingOpenAiModels` ("Add missing gpt models"): each at the 272k window and
+    // `OPENAI_STANDARD_COSTS`, added only when the catalogue lacks it. The long-context tier is not
+    // written here because `openAiTemporaryOverrides()` puts it on every one of these ids anyway —
+    // upstream's rows carry `withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id])`, the same value.
+    'openai/gpt-6.1-sol' => [
+        'kind' => 'add',
+        'why' => 'upstream adds it until models.dev lists it',
+        'row' => ['name' => 'GPT-6.1 Sol', 'reasoning' => true, 'images' => true, 'context' => 272_000, 'output' => 128_000, ...OPENAI_STANDARD_COSTS['gpt-6.1-sol']],
+    ],
+    'openai/gpt-6-astra' => [
+        'kind' => 'add',
+        'why' => 'upstream adds it until models.dev lists it',
+        'row' => ['name' => 'GPT-6 Astra', 'reasoning' => true, 'images' => true, 'context' => 272_000, 'output' => 128_000, ...OPENAI_STANDARD_COSTS['gpt-6-astra']],
+    ],
+    'openai/gpt-6-sol' => [
+        'kind' => 'add',
+        'why' => 'upstream adds it until models.dev lists it',
+        'row' => ['name' => 'GPT-6 Sol', 'reasoning' => true, 'images' => true, 'context' => 272_000, 'output' => 128_000, ...OPENAI_STANDARD_COSTS['gpt-6-sol']],
+    ],
+    'openai/gpt-6-luna' => [
+        'kind' => 'add',
+        'why' => 'upstream adds it until models.dev lists it',
+        'row' => ['name' => 'GPT-6 Luna', 'reasoning' => true, 'images' => true, 'context' => 272_000, 'output' => 128_000, ...OPENAI_STANDARD_COSTS['gpt-6-luna']],
+    ],
+    'openai/gpt-5.6-sol' => [
+        'kind' => 'add',
+        'why' => 'upstream adds it until models.dev lists it',
+        'row' => ['name' => 'GPT-5.6 Sol', 'reasoning' => true, 'images' => true, 'context' => 272_000, 'output' => 128_000, ...OPENAI_STANDARD_COSTS['gpt-5.6-sol']],
+    ],
+    'openai/gpt-5.6-terra' => [
+        'kind' => 'add',
+        'why' => 'upstream adds it until models.dev lists it',
+        'row' => ['name' => 'GPT-5.6 Terra', 'reasoning' => true, 'images' => true, 'context' => 272_000, 'output' => 128_000, ...OPENAI_STANDARD_COSTS['gpt-5.6-terra']],
+    ],
+    'openai/gpt-5.6-luna' => [
+        'kind' => 'add',
+        'why' => 'upstream adds it until models.dev lists it',
+        'row' => ['name' => 'GPT-5.6 Luna', 'reasoning' => true, 'images' => true, 'context' => 272_000, 'output' => 128_000, ...OPENAI_STANDARD_COSTS['gpt-5.6-luna']],
+    ],
 ];
+
+
 
 /**
  * Models the catalogue carries and pig does not offer.
@@ -348,6 +457,14 @@ function rowsFor(array $catalogue, string $provider): array
 
         $input = $model['modalities']['input'] ?? [];
         $tiers = tiers($model['cost'] ?? null);
+        // Upstream's `recordModelsDevReasoningOptions(provider, id, m)`, read back by
+        // `applyModelsDevReasoningOptionMetadata()`. That reader needs the model's api and compat
+        // (`supportsDirectReasoningEffort()`), which pig works out in `Models::table()` and not
+        // here — so what the row carries is the options' effort map, the part that depends on the
+        // catalogue alone, and `Models` decides whether it applies. See `effortLevelMap` there.
+        $effortLevelMap = in_array($provider, REASONING_OPTION_PROVIDERS, true) && is_array($model['reasoning_options'] ?? null)
+            ? getEffortThinkingLevelMap($model['reasoning_options'])
+            : null;
 
         $rows[$id] = [
             'name' => is_string($model['name'] ?? null) && $model['name'] !== '' ? $model['name'] : $id,
@@ -360,6 +477,7 @@ function rowsFor(array $catalogue, string $provider): array
             'cacheRead' => (float) ($model['cost']['cache_read'] ?? 0),
             'cacheWrite' => (float) ($model['cost']['cache_write'] ?? 0),
             ...($tiers === [] ? [] : ['tiers' => $tiers]),
+            ...($effortLevelMap === null ? [] : ['effortLevelMap' => $effortLevelMap]),
         ];
     }
 
@@ -406,6 +524,125 @@ function tiers(mixed $cost): array
     }
 
     return $tiers;
+}
+
+/**
+ * Upstream's `getEffortThinkingLevelMap()` (`scripts/models-dev-reasoning-options.ts`), literally:
+ * "Converts models.dev verified effort values into Pi's selectable thinking levels. Values without a
+ * Pi equivalent (`default` and JSON `null`) are intentionally omitted."
+ *
+ * Null (upstream's undefined) when no `effort` option lists a value, or none of the values listed
+ * is a pi level or `none`. Otherwise every key, in upstream's order: `off` is `"none"` when the
+ * model takes `none` and null when it does not, and each level is its own name or null.
+ *
+ * @param array<mixed> $options models.dev's `reasoning_options`
+ * @return array<string, string|null>|null
+ */
+function getEffortThinkingLevelMap(array $options): ?array
+{
+    $effortValues = [];
+
+    foreach ($options as $option) {
+        if (is_array($option) && ($option['type'] ?? null) === 'effort' && is_array($option['values'] ?? null)) {
+            $effortValues = [...$effortValues, ...array_values($option['values'])];
+        }
+    }
+
+    if ($effortValues === []) {
+        return null;
+    }
+
+    // `new Set(effortValues)` and `.has()`: strict, so a JSON null in the list is no level.
+    $supported = static fn (string $value): bool => in_array($value, $effortValues, true);
+    $anyLevel = false;
+
+    foreach (EFFORT_THINKING_LEVELS as $level) {
+        $anyLevel = $anyLevel || $supported($level);
+    }
+
+    if (!$anyLevel && !$supported('none')) {
+        return null;
+    }
+
+    $map = ['off' => $supported('none') ? 'none' : null];
+
+    foreach (EFFORT_THINKING_LEVELS as $level) {
+        $map[$level] = $supported($level) ? $level : null;
+    }
+
+    return $map;
+}
+
+/** Upstream's `roundCost()`: `Number(value.toFixed(6))`. */
+function roundCost(float $value): float
+{
+    return round($value, 6);
+}
+
+/**
+ * Upstream's `withOpenAiLongContextPricing(cost)`, on a row's price keys: the base kept, and one tier
+ * above `OPENAI_LONG_CONTEXT_INPUT_THRESHOLD` at twice the input and cache rates and one and a half
+ * times the output — replacing whatever tiers the row had, as upstream's `tiers: [...]` does.
+ *
+ * @param array<string, mixed> $row
+ * @return array<string, mixed>
+ */
+function withOpenAiLongContextPricing(array $row): array
+{
+    $row['tiers'] = [[
+        OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+        roundCost((float) $row['input'] * 2),
+        roundCost((float) $row['out'] * 1.5),
+        roundCost((float) $row['cacheRead'] * 2),
+        roundCost((float) $row['cacheWrite'] * 2),
+    ]];
+
+    return $row;
+}
+
+/**
+ * The `openai` lines of upstream's "Temporary overrides until upstream model metadata is corrected"
+ * loop in `generateModels()`, in its order, after the catalogue and the hand-written rows:
+ *
+ * - `OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS` get `contextWindow = OPENAI_LONG_CONTEXT_INPUT_THRESHOLD`
+ *   and `maxTokens = 128000` — the 272k cap, which is a window and so where compaction fires;
+ * - `OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS` get `withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id]
+ *   ?? cost)`;
+ * - `gpt-5-pro` gets `maxTokens = 128000`: "models.dev reports gpt-5-pro output as 272000 (a
+ *   duplicate of the input sub-limit); the actual max output is 128000."
+ *
+ * Applied every run, silently, as upstream applies them — they are rules, not corrections with a
+ * value that can go stale, so `OVERRIDES`' "changes nothing any more" report does not fit them.
+ * The loop's other lines are for providers pig does not generate, or are `OVERRIDES` already
+ * (Copilot's extended windows).
+ *
+ * @param array<string, array<string, mixed>> $rows
+ * @return array<string, array<string, mixed>>
+ */
+function openAiTemporaryOverrides(array $rows, string $provider): array
+{
+    if ($provider !== 'openai') {
+        return $rows;
+    }
+
+    foreach ($rows as $id => $row) {
+        if (in_array($id, OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS, true)) {
+            $row['context'] = OPENAI_LONG_CONTEXT_INPUT_THRESHOLD;
+            $row['output'] = 128_000;
+        }
+
+        if (in_array($id, OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS, true)) {
+            $row = withOpenAiLongContextPricing([...$row, ...(OPENAI_STANDARD_COSTS[$id] ?? [])]);
+        }
+
+        if ($id === 'gpt-5-pro') {
+            $row['output'] = 128_000;
+        }
+
+        $rows[$id] = $row;
+    }
+
+    return $rows;
 }
 
 /**
@@ -553,6 +790,11 @@ function render(array $rows, string $constant): string
                 static fn (array $tier): string => sprintf('[%s, %s, %s, %s, %s]', grouped((int) $tier[0]), money((float) $tier[1]), money((float) $tier[2]), money((float) $tier[3]), money((float) $tier[4])),
                 $row['tiers'],
             )) . ']';
+        }
+
+        // models.dev's verified efforts, under their own key in any table — see `rowsFor()`.
+        if (isset($row['effortLevelMap'])) {
+            $cells[] = "'effortLevelMap' => " . levelMap($row['effortLevelMap']);
         }
 
         $lines[] = sprintf("        %s => [%s],", var_export($id, true), implode(', ', $cells));
@@ -717,7 +959,7 @@ $counts = [];
 
 foreach (DIRECT as $provider => [$constant]) {
     printf("%s\n", $provider);
-    $rows = applyOverrides(fillLimits(rowsFor($catalogue, $provider), $provider, 4_096, 4_096), $provider);
+    $rows = openAiTemporaryOverrides(applyOverrides(fillLimits(rowsFor($catalogue, $provider), $provider, 4_096, 4_096), $provider), $provider);
 
     if ($provider === 'anthropic') {
         assertImages($rows);

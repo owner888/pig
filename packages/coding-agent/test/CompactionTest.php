@@ -106,6 +106,19 @@ final class CompactionTest extends TestCase
         $this->assertFalse(Compaction::shouldCompact(1_000_000, 0));
     }
 
+    public function testOpenAisLongContextModelsCompactBeforeTheLongContextPrice(): void
+    {
+        // Upstream caps gpt-5.4, gpt-5.5, the GPT-5.6 trio and GPT-6 at a 272,000 window "to keep
+        // direct OpenAI requests in the short-context pricing tier", and the window is the number
+        // compaction fires against. With models.dev's 1,050,000 a 300k-token gpt-5.5 conversation
+        // went on uncompacted, every turn billed at twice the input rate.
+        $model = \Pig\Ai\Models::find('openai', 'gpt-5.5');
+        $this->assertNotNull($model);
+
+        $this->assertTrue(Compaction::shouldCompact(272_000 - Compaction::RESERVE_TOKENS + 1, $model->contextWindow));
+        $this->assertFalse(Compaction::shouldCompact(272_000 - Compaction::RESERVE_TOKENS, $model->contextWindow));
+    }
+
     public function testTheUsageThatCountsIsTheLastTurnThatFinished(): void
     {
         $messages = [

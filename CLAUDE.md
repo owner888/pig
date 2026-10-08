@@ -962,6 +962,15 @@ by `resolve()` — upstream's `getCompat()`. Every field is nullable and null me
 `openRouterRouting` and `vercelGatewayRouting` are upstream's two routing objects: read off the
 model's own compat (not the resolved one), sent as `provider` and `providerOptions.gateway`, and
 merged provider → model one level deep in `models.json` like the template values.
+Caching on completions is upstream's too: `prompt_cache_key` (the session id, 64 code points) for a
+base URL containing `api.openai.com` unless `cacheRetention` is `none`, and anywhere for `long` where
+`supportsLongCacheRetention` (detected false for Together, Cloudflare, NVIDIA, Ant Ling), with
+`prompt_cache_retention: "24h"`; the session id as headers only where `sendSessionAffinityHeaders`
+(detected: OpenRouter) — `x-session-id` for the `openrouter` format, else `x-client-request-id` and
+`x-session-affinity` (plus `session_id` for `openai`); and `cacheControlFormat: "anthropic"` (detected:
+an OpenRouter `anthropic/…` model) puts Anthropic's `cache_control` on the system prompt, the last tool
+and the last conversation text, `ttl: "1h"` for `long`. `Stream::simple()` clamps the level to the
+model's map (`Model::clampThinkingLevel()`) for completions as for Responses.
 `thinkingFormat` decides how thinking is switched on and how hard — `reasoning_effort` (`openai`),
 `thinking: {type}` (`zai`, `deepseek`), `reasoning: {effort}` (`openrouter`), `enable_thinking`
 (`qwen`), `chat_template_kwargs` / `chat_template_args` with `$var` placeholders (`chat-template`,
@@ -1006,6 +1015,10 @@ adaptively with `block_binding: {prefix_mismatch_behavior: "drop_block"}` and to
 `high`, sends the two managed-effort betas, records the effort it was asked for on the answer
 (`AssistantMessage::$providerThinkingLevel`), and gets an effort-only system message in front of
 each earlier turn of its provider that recorded one, plus one with the current effort at the end.
+A turn starts at `StopReason::Pending` (upstream's `"pending"`) and only `message_delta`'s
+`stop_reason` replaces it: a body that ends without one fails with `Anthropic stream ended without a
+stop reason`, one that sent `message_start` and never `message_stop` with `Anthropic stream ended
+before message_stop`, and an `event: error` ends the turn with the event's data, whole, as the message.
 
 `Providers\TransformMessages` (upstream's `api/transform-messages.ts`) is what makes `/model`
 safe across models. Three things get cleaned up before any provider sees the history. First,
@@ -1067,12 +1080,30 @@ The request is upstream's `buildParams()`: `store: false` always; `prompt_cache_
 id, cut to 64 code points) unless `cacheRetention` is `none`, with `prompt_cache_retention: "24h"` for
 `long` — or, on the GPT-5.6-and-later models that take it (`supportsExplicitPromptCacheMode`),
 `prompt_cache_options` instead; `max_output_tokens` never below 16; `service_tier` and `tool_choice`
-when asked. The effort is what the model's `thinkingLevelMap` calls the level, and **thinking off is
-`reasoning: {effort: map.off ?? "none"}`** — nothing for a map whose `off` is null, nothing for
-Copilot. Only an `incomplete` whose reason is `max_output_tokens` is `length`; any other reason ends
-the turn as an error (`Response incomplete: <reason>`). A tool call whose `output_item.done` never
-arrived is refused rather than handed to the agent, and a call's `namespace` is kept and replayed to
-the same model.
+when asked. The system prompt is a `developer` turn for a reasoning model unless its compat says
+`supportsDeveloperRole: false`. The effort is what the model's `thinkingLevelMap` calls the level,
+with `summary: OpenAiOptions::$reasoningSummary ?? "auto"` (a summary asked for with no level asks for
+`medium`), and **thinking off is `reasoning: {effort: map.off ?? "none"}`** — nothing for a map whose
+`off` is null, nothing for Copilot. Upstream also merges `samplingParams` last; pig has none to merge.
+Only an `incomplete` whose reason is `max_output_tokens` is `length`; any other reason ends the turn
+as an error (`Response incomplete: <reason>`). A tool call whose `output_item.done` never arrived is
+refused rather than handed to the agent, and a call's `namespace` is kept and replayed to the same
+model; `function_call_arguments.done` replaces a call's arguments and sends the tail the deltas missed.
+Encrypted reasoning that only `response.completed`'s `output` carries (Azure) is written back into
+the stored item. The turn starts at `StopReason::Pending`: a body with no `response.completed`,
+`.incomplete` or `.failed` fails with `OpenAI Responses stream ended before a terminal response event`.
+
+**Errors read as upstream's do through the `openai` SDK** (`sdkEvent()`): an `event: error`, or any
+event whose data has a truthy `error`, is the SDK's `APIError` message — the error's `message`, or its
+JSON — so the live API's nested `{type: "error", error: {code, message}}` reads as the message alone;
+upstream's own `Error Code <code>: <message>` arm is reached only by a flat event with no `event:`
+line; `response.failed` is `<code || "unknown">: <message || "no message">`, `incomplete: <reason>`, or
+`Unknown error (no error details in response)`; non-JSON data is `Error reading response: malformed
+server-sent event JSON.` Any error carrying `subscription_sharing_usage_limit_exceeded` — in the
+message or in a refused request's body — gets `\nCheck your ChatGPT usage:
+https://chatgpt.com/settings/usage`. Upstream has `additional_tools` and tool-search items for tools
+added mid-conversation (`toolsAdded` on a later system message); pig's context has one system prompt
+and one tool list, so there is nothing to send them for.
 
 `Providers\Google` is upstream's `google.ts` — Gemini, and the shape furthest from the other
 three. A chunk carries a list of *parts*, and a part is text, or thinking (text with
@@ -2506,9 +2537,13 @@ Six things that took a decision:
   Anthropic, OpenAI and Google SDKs parse it, which is why upstream never wrote the parser pig had
   to write — and why `GoogleGeminiCli` here uses `SseParser` while this does not: Google's Code
   Assist frames properly and can be checked, a gateway cannot.
-- **A stream that ends without `done` is a failure.** `stopReason` defaults to `stop`, so a gateway
-  that died mid-sentence would otherwise be indistinguishable from a model that finished one. This
-  is a divergence: upstream calls `stream.end()` and reports success.
+- **A stream that ends without `done` or `error` is a failure**, as upstream's: `Connection closed by
+  proxy server before the response completed`. The partial starts at `StopReason::Pending`, as
+  upstream's does. `done` and `error` carry `providerThinkingLevel` onto the message, and
+  `toolcall_end` lays the server's finished `toolCall` over what the deltas built — and is ignored,
+  not fatal, for a block that is not a tool call. Of upstream's request options, `samplingParams`,
+  `headers`, `transport`, `thinkingBudgets` and `maxRetryDelayMs` are not sent: upstream's coding
+  agent fills them from settings, auth and the model, and pig has none of those settings or fields.
 - **An unknown `done` reason is a plain stop, and an unknown event type is ignored.** The turn did
   finish; refusing it over a word this pig does not know loses the work. Same rule as `JsonSchema`'s
   unknown keywords, applied to a wire protocol.
@@ -7548,6 +7583,25 @@ base URL, and rewrite the rows. Five things about it are the decisions rather th
   are supplied by hand. A number with no reason beside it is a number nobody can ever retire, so
   each carries one, and an override whose row the catalogue has since started carrying **says so**
   instead of shadowing it for ever.
+- **Upstream's `openai` temporary overrides are rules, applied every run** (`openAiTemporaryOverrides()`):
+  `OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS` (gpt-5.4, gpt-5.5, the GPT-5.6 trio, GPT-6, 6.1 Sol) get a
+  272,000 window and 128,000 output — the window is where compaction fires, so a conversation is
+  compacted before OpenAI's long-context price — `OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS` get
+  `withOpenAiLongContextPricing(OPENAI_STANDARD_COSTS[id] ?? cost)` (one tier above 272k: 2x input
+  and cache, 1.5x output), and gpt-5-pro's output is 128,000. Upstream's `missingOpenAiModels` are
+  `add` overrides. Upstream says users opt into the full window through `modelOverrides`; pig has no
+  `modelOverrides`, so the way back to it is a `models.json` provider of one's own.
+- **models.dev's `reasoning_options` are read** for the providers upstream records them for (not Google,
+  not Mistral): `getEffortThinkingLevelMap()` becomes the row's `effortLevelMap`, and `Models` merges it
+  where upstream's `applyModelsDevReasoningOptionMetadata()` does — after the Anthropic compat arm,
+  before the id rules — only when `supportsDirectReasoningEffort()` (Responses; adaptive Anthropic;
+  completions with `thinkingFormat: "openai"` and `supportsReasoningEffort`). The rows carry none
+  until the next regeneration on a machine that reaches models.dev.
+- **`inputLimits` and `promptCache` are upstream's generator metadata**, written in `Models::table()`
+  (`inputLimits()`, `promptCache()`) like the maps: per-provider image limits plus the 2000px / 4.5 MiB
+  resize profile on every image model, and `{short: 300, long: 3600}` on direct Anthropic. Upstream's
+  readers are its image preprocessing (agent session and `read`) and its cache warmer, none of which
+  pig has; `StreamProxy` sends both and `models.json` may set both.
 
 `--from <file>` reads a saved `api.json` and `--dry-run` prints the rows instead of writing them.
 Neither is a seam for a test: models.dev is unreachable from the dev container (`CONNECT tunnel
@@ -7560,7 +7614,7 @@ loaded before the rewrite, and it reloads the written file in a fresh process to
 comparison, because PHP cannot be told to forget a class it has already resolved. A regeneration
 nobody read is a registry nobody checked, which is the failure this whole entry is about.
 
-Regression tests: `GenerateModelsTest`, twelve cases, which **spawns the script** the way
+Regression tests: `GenerateModelsTest`, which **spawns the script** the way
 `RpcClientTest` spawns `bin/pig` and for the same reason. Four rules were mutated one at a time and
 each turns exactly one case red: the `tool_call` filter, the deprecated-Copilot skip, the api-by-id
 rule, and the empty-table guard. **The fourth appeared silent and was not** — the replacement text
@@ -7883,12 +7937,11 @@ as coverage.* `stopReason()` looked complete — it names `incomplete` — and n
 deliver that word. The one place to check is the caller's event list, which is the third time this
 file has arrived at *read the other end*.
 
-The same run also produced a bare **`unknown error`** for an oversized prompt, which is
-`errorText()` reading `$data['message']` on an `error` event that did not carry it there. Both
-shapes are read now — flat and nested under `error` — and **the fallback is the payload itself**
-rather than a sentence that describes nothing: `Overflow`'s table matches against a provider's own
-words, so a message that goes missing there is a conversation that could have been compacted and
-instead died.
+The same run also produced a bare **`unknown error`** for an oversized prompt, which was
+`errorText()` reading `$data['message']` on an `error` event that did not carry it there.
+`Overflow`'s table matches against a provider's own words, so a message that goes missing there is a
+conversation that could have been compacted and instead died. The event is now read the way the
+`openai` SDK reads it for upstream — see `OpenAiResponses::sdkEvent()` and the Responses paragraph.
 
 **Both fixes were then run against the real API and both hold**, and the second answered a question
 this entry had left open. The overflow case came back
@@ -7903,12 +7956,7 @@ usage intact — when its reason is `max_output_tokens`; any other reason is an 
 into a line of output.*
 
 Regression tests: `OpenAiResponsesTest::testAnIncompleteResponseIsLengthAndKeepsItsUsage`,
-`testAnErrorWithNoMessageWhereItBelongsIsNotCalledUnknown`,
-`testAnErrorWithNoMessageAnywhereCarriesWhatArrived`. **The second one was silent on its own
-mutation until a line was added**: asserting the sentence is in the message passes either way,
-because the fallback prints the whole payload and the payload contains the sentence. It asserts the
-fallback's own words are *absent* now — the third time this session that an assertion which held
-either way was caught by mutating the thing it was written for.
+`testAnErrorEventIsTheSdksMessageWithoutTheCode`, `testAnErrorWithNoMessageAnywhereCarriesWhatArrived`.
 
 ### A 404 for a model pig offers, and a cause that did not survive the second data point
 
@@ -8156,8 +8204,8 @@ are now the model's:
 
 - **xhigh** was clamped for every `openai-completions` model on the grounds that "xhigh is OpenAI's
   alone". True of the registry, false of a `models.json` proxy reselling `gpt-5.2` over
-  chat-completions — which is the common shape where the direct API is unreachable. Upstream asks
-  `supportsXhigh(model)` in both OpenAI arms; so does pig now.
+  chat-completions — which is the common shape where the direct API is unreachable. Upstream runs
+  `clampThinkingLevel(model, level)` over the model's map in both OpenAI arms; so does pig now.
 - **Gemini 3** was `str_contains($id, 'gemini-3')` in the public arm and upstream's two checks
   (`3-pro`, `3-flash`) in the one being added. Two arms of one file disagreeing about which models
   are Gemini 3 is the shape of every other find here. The public arm now asks upstream's
@@ -8482,7 +8530,7 @@ field names** — and a renamed or dropped field there is a wire difference with
 it. Checked one by one: the five `Api` values, twelve `KnownProvider` names, five reasoning levels,
 the four option fields and `reasoning` on top of them, all four content types including
 `textSignature`, `thinkingSignature` and `thoughtSignature`, `Usage`'s five counts and five costs,
-the five stop reasons, the three messages' fields, `Tool`, `Context`, **all twelve stream events**
+the stop reasons (pig now has upstream's `pending`; its `deferred` is not ported), the three messages' fields, `Tool`, `Context`, **all twelve stream events**
 down to `error` carrying its message under the field name `error` rather than `message`, and
 `Model`'s twelve. Two differences with no defect behind them, now written where they live:
 `ToolResultMessage`'s `isError` has a default where upstream requires it (every construction here
@@ -11589,6 +11637,79 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 **避坑规则**：
 - 改 `Model` / `Tool` / `StreamOptions` 字段时同步 `StreamProxy::encodeModel()` / `encodeContext()` / `request()`。
 - 测试：`StreamProxyTest::testTheContextGoesOverTheWireAsTheSessionFileWritesIt`、`testAToolsConstrainedSamplingTravelsWithIt`、`testTheThinkingLevelMapAndPriceTiersGoWithTheModel`、`testTheCacheAndSessionOptionsTravelAndUnsetOnesAreLeftOut`。
+
+### OpenAI gpt-5.4/5.5/5.6/6 的窗口是 1.05M，长上下文按原价算
+
+**症状**：`openai/gpt-5.5` 等模型对话涨到 27 万 token 以上也不压缩，之后每轮按两倍输入价计费，而 `/session` 和页脚按基础价报，少报一半；`gpt-5-pro` 的输出上限是 272,000。
+
+**根因**：upstream 生成器的临时覆盖把 `OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS` 的窗口设成 272,000（输出 128,000），`OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS` 加 `withOpenAiLongContextPricing()` 档位（272k 以上输入和缓存 2 倍、输出 1.5 倍，基价取 `OPENAI_STANDARD_COSTS`），`gpt-5-pro` 输出改 128,000；pig 的生成器没有这段。
+
+**避坑规则**：
+- 这些是生成器规则（`openAiTemporaryOverrides()`），每次重新生成都会套用；不要手改表里这些行的窗口和档位。
+- 只对 `openai` provider，Copilot 转售的同名模型不受影响。pig 没有 `modelOverrides`，要用完整窗口只能在 `models.json` 里自己声明。
+- 测试：`ModelsTest::testOpenAisLongContextModelsStopAt272kAndPriceWhatIsPastIt`，`GenerateModelsTest::testOpenAisLongContextModelsAreCappedAndPricedAsUpstreamsGeneratorWritesThem`，`CompactionTest::testOpenAisLongContextModelsCompactBeforeTheLongContextPrice`。
+
+### 流半路断开，半截回答当成正常结束
+
+**症状**：Anthropic 或 Responses 的连接在文字流到一半时断掉，回合以 `done`/`stop` 结束，半句话被当成完整回答，没有用量，agent 继续往下做；Anthropic 流中途的 `event: error`（如 overloaded）被忽略。
+
+**根因**：upstream 的输出从 `stopReason: "pending"` 开始，流结束仍是 pending 就抛 `… stream ended without a stop reason`；Anthropic 看到 `message_start` 没看到 `message_stop` 抛 `Anthropic stream ended before message_stop`，`event: error` 直接以 data 为消息抛出；Responses 没收到 `response.completed` / `.incomplete` / `.failed` 抛 `OpenAI Responses stream ended before a terminal response event`。pig 的 builder 默认是 `stop`。
+
+**避坑规则**：
+- 新 provider 若按 upstream 以 pending 起步，就在构造 builder 后 `setStopReason(StopReason::Pending)`，结束时检查；先 `throwIfAborted()` 再查这些（upstream 的中止在循环里就抛了）。
+- 测试固件要像真实流一样以 `message_stop` / 终止事件收尾，否则现在会失败。
+- 测试：`AnthropicTest::testAStreamThatEndsWithoutAStopReasonIsAnErrorNotAFinishedAnswer`、`testAStreamThatStartedAndNeverStoppedIsAnErrorEvenWithAStopReason`、`testAnErrorEventMidStreamIsTheTurnsErrorWordForWord`，`OpenAiResponsesTest::testABodyThatEndsWithNoTerminalEventIsAnErrorNotAnAnswer`。
+
+### Responses 的错误文本和 upstream 不一样，ChatGPT 额度错误不给链接
+
+**症状**：`response.failed` 显示成 "The response failed: …"，丢了错误码；SSE `error` 事件显示成 pig 自己的 `Error <code>: …`；Sign in with ChatGPT 额度用完时没有指向用量页面的提示。
+
+**根因**：upstream 经 `openai` SDK（7.19.0）读流：`event: error` 或 data 带真值 `error` 的事件直接成 `APIError`，消息是 `error.message`（没有就是 JSON）；只有没有 `event:` 行的扁平错误才走 `Error Code ${code}: ${message}`；`response.failed` 是 `${code || "unknown"}: ${message || "no message"}` / `incomplete: <reason>` / `Unknown error (no error details in response)`；错误含 `subscription_sharing_usage_limit_exceeded` 就追加 `\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage`。
+
+**避坑规则**：
+- 事件先过 `OpenAiResponses::sdkEvent()`，不要在 `dispatch()` 里自己解析错误形状。
+- ChatGPT 提示也查被拒请求的原始 body：`explain()` 只保留 `error.message`，upstream 的格式化消息里带着 code。
+- 测试：`OpenAiResponsesTest::testAnErrorEventIsTheSdksMessageWithoutTheCode`、`testAFlatErrorWithNoEventNameIsErrorCodeAndMessage`、`testAFailedResponseSaysCodeAndMessageAsUpstreamWritesThem`、`testASignInWithChatGptUsageLimitPointsAtTheUsagePage`。
+
+### Responses 丢 Azure 只在 `response.completed` 里给的加密推理，参数以 `.done` 为准
+
+**症状**：Azure 等只在终止事件里给 `encrypted_content` 的端点，下一轮回放的推理项没有加密内容，模型从头推理；只发 `function_call_arguments.done` 不发 delta 的端点，工具参数靠 `output_item.done` 才补齐，监听 delta 的界面看到的参数不全；compat 说 `supportsDeveloperRole: false` 的端点仍收到 `developer` 角色。
+
+**根因**：upstream `backfillReasoningSignatures()` 用 `response.completed.response.output` 回填推理项；`response.function_call_arguments.done` 用整段参数替换并补发缺的尾巴 delta；`instructionRole` 看 `compat.supportsDeveloperRole !== false`。
+
+**避坑规则**：
+- 推理块按 item id 记下（`$reasoningById`），回填只补没有 `encrypted_content` 的。
+- 测试：`OpenAiResponsesTest::testEncryptedReasoningOnlyTheTerminalResponseCarriesIsBackfilled`、`testTheFinishedArgumentsReplaceTheDeltasAndSendWhatTheyMissed`、`testTheSystemPromptIsASystemTurnWhereTheCompatSaysThereIsNoDeveloperRole`。
+
+### chat completions 不发 prompt cache key、会话亲和头和 Anthropic 缓存标记
+
+**症状**：经 OpenAI 自家 chat completions、OpenRouter 的 Claude 等模型，长对话每轮都按全价算输入；`cacheRetention: long` 不起作用；思考级别不按模型的表夹（如 Groq Qwen 3.6 只有 `high`，问 `low` 原样发出）。
+
+**根因**：upstream `buildParams()` 对含 `api.openai.com` 的地址（非 `none`）或 `long` 且支持长保留时发 `prompt_cache_key` / `prompt_cache_retention: "24h"`；`createClient()` 在 `sendSessionAffinityHeaders`（检测：OpenRouter）时发会话头；`cacheControlFormat: "anthropic"`（检测：OpenRouter 的 `anthropic/…`）给 system、最后一个工具、最后一条会话文本打 `cache_control`；`streamSimple()` 用 `clampThinkingLevel()`。pig 都没有，`Stream` 的 completions 分支只夹 xhigh。
+
+**避坑规则**：
+- 这四个键在 `OpenAiCompat::detect()` 里检测、`resolve()` 里按键覆盖；Responses 仍读模型自己的 compat 加运行时默认值。
+- 测试：`OpenAiCompletionsTest::testOpenAisOwnEndpointGetsThePromptCacheKeyUnlessCachingIsOff`、`testTheSessionGoesOutAsHeadersOnlyWhereTheCompatSaysSo`、`testAnAnthropicModelThroughOpenRouterGetsCacheControlMarks`、`testTheCachingAndSessionKeysAreDetectedAsUpstreamDetectsThem`，`StreamTest::testTheCompletionsApiGetsTheLevelClampedToTheModelsMapAsTheResponsesOneDoes`。
+
+### StreamProxy 丢网关的 `providerThinkingLevel` 和最终工具调用
+
+**症状**：经网关的 Opus 5 等回合不记 `providerThinkingLevel`，下一轮的 effort 提示不对；网关在 `toolcall_end` 里给的修正后的调用（id、参数、namespace）被忽略，执行的是 delta 拼出来的；网关断流时报 pig 自己的消息。
+
+**根因**：upstream `processProxyEvent()` 在 `done` / `error` 上拷贝 `providerThinkingLevel`，`toolcall_end` 做 `Object.assign(content, proxyEvent.toolCall)`，块不是工具调用时返回 undefined（不抛）；无终止事件时报 `Connection closed by proxy server before the response completed`。
+
+**避坑规则**：
+- 测试：`StreamProxyTest::testTheProvidersThinkingLevelComesBackOnDoneAndOnError`、`testTheServersFinishedToolCallReplacesWhatTheDeltasBuilt`、`testAToolCallEndForABlockThatIsNoToolCallIsIgnoredNotFatal`、`testAStreamThatEndsWithoutDoneIsAFailureAndNotASuccess`。
+
+### models.json 的价格档位写错时静默按 0 计费
+
+**症状**：`cost.tiers` 里少写 `output` 等字段，长提示的那部分按 0 计费；`inputTokensAbove` 写成字符串的档位被悄悄丢掉；`inputLimits` / `promptCache` 写了也不读。
+
+**根因**：upstream 用 TypeBox 校验 `ModelCostTierSchema`（五个字段必填、都是 number），错了整个文件报 `Invalid models.json schema:` 加 `<路径>: <消息>`；`inputLimits` / `promptCache` 按各自 schema 校验后原样传下去。
+
+**避坑规则**：
+- 校验走 `CustomModels::schemaErrors()`，消息与 TypeBox 1.3.27 一致（`must be number`、`must have required properties …`、`must be >= 1`）；pig 只拒这个模型，不拒整个文件。
+- JSON 的 `{}` 和 `[]` 在 PHP 里都是 `[]`，按 schema 要的那种算。
+- 测试：`CustomModelsTest::testACostTierIsValidatedWithUpstreamsSchemaMessages`、`testInputLimitsAndPromptCacheAreReadAndCheckedAsUpstreamsSchemaChecksThem`。
 
 ## Version floor: PHP >= 8.3
 

@@ -20,6 +20,11 @@ final readonly class OpenAiOptions extends StreamOptions
      * @param string|null $serviceTier upstream's `OpenAIResponsesOptions.serviceTier`, read by the
      *        Responses provider only: sent as `service_tier`, and the turn's cost scaled by the tier
      *        the response reports (else this one) — `flex` halves it, `priority` doubles it
+     * @param string|null $reasoningSummary upstream's `OpenAIResponsesOptions.reasoningSummary`
+     *        (`auto`, `detailed` or `concise`), read by the Responses provider only: sent as
+     *        `reasoning.summary`, `auto` when not given; given without a `reasoning` level it asks
+     *        for `medium` effort. Upstream's `streamSimple()` never sets it, so neither does
+     *        `Stream::simple()` — it is for a caller of `Stream::start()`
      */
     public function __construct(
         ?float $temperature = null,
@@ -32,6 +37,7 @@ final readonly class OpenAiOptions extends StreamOptions
         ?string $cacheRetention = null,
         ?string $sessionId = null,
         ?array $metadata = null,
+        public ?string $reasoningSummary = null,
     ) {
         parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata);
     }

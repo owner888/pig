@@ -126,6 +126,17 @@ final class StreamTest extends TestCase
         $this->assertSame('high', $body['reasoning_effort'] ?? null);
     }
 
+    public function testTheCompletionsApiGetsTheLevelClampedToTheModelsMapAsTheResponsesOneDoes(): void
+    {
+        // Upstream's `streamSimple()` in `openai-completions.ts`: `clampThinkingLevel(model, …)`,
+        // as the Responses arm does — not the old xhigh-only clamp, which passed `low` through to a
+        // model whose map says it has no `low`. Groq's Qwen 3.6 takes only `high`, which it calls
+        // `default`: asked for `low`, the nearest level up is `high`, sent as the map's word.
+        $body = $this->sendCompletions('qwen/qwen3.6-27b', ReasoningEffort::Low, ['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'default']);
+
+        $this->assertSame('default', $body['reasoning_effort'] ?? null);
+    }
+
     /**
      * @param array<string, string|null> $levels
      * @return array<string, mixed> the request body an openai-completions provider sent

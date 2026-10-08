@@ -144,6 +144,21 @@ final class Models
     ];
 
     /**
+     * Upstream's generator `ANTHROPIC_PROMPT_CACHE`, seconds per retention tier: "Anthropic ephemeral
+     * entries have a hard five-minute lifetime; `ttl: "1h"` extends it to one hour. Only direct
+     * Anthropic is annotated so cache warming does not assume equivalent behavior through proxies."
+     */
+    private const array ANTHROPIC_PROMPT_CACHE = ['short' => 300, 'long' => 3600];
+
+    /** Upstream's generator `DEFAULT_IMAGE_RESIZE`: 2000 × 2000, 4.5 MiB, JPEG quality 80. */
+    private const array DEFAULT_IMAGE_RESIZE = [
+        'maxWidth' => 2000,
+        'maxHeight' => 2000,
+        'maxBytes' => 4_718_592,
+        'jpegQuality' => 80,
+    ];
+
+    /**
      * provider => whether its built-in models take strict tools — upstream's generator, which
      * writes `supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia
      * && !isCerebras` into every built-in `openai-completions` model's `compat`, against a runtime
@@ -176,8 +191,11 @@ final class Models
      *
      * A row priced in tiers carries them under the key `tiers`, in every table: one
      * `[input tokens above, in, out, cache read, cache write]` per tier — upstream's `cost.tiers`.
+     * And a row whose models.dev entry lists verified efforts carries their map under the key
+     * `effortLevelMap`, in every table — the generator's `getEffortThinkingLevelMap()`, which
+     * `thinkingLevelMap()` merges where upstream's `applyModelsDevReasoningOptionMetadata()` would.
      *
-     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: float, 5: float, 6: float, 7: float, tiers?: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>}>
+     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: float, 5: float, 6: float, 7: float, tiers?: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>, effortLevelMap?: array<string, string|null>}>
      */
     private const array ANTHROPIC_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
@@ -298,7 +316,12 @@ final class Models
     /**
      * OpenAI's own, which speak the Responses API rather than chat-completions.
      *
-     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float}>
+     * The windows of gpt-5.4, gpt-5.5, the GPT-5.6 trio and GPT-6 are the generator's 272k cap
+     * (`openAiTemporaryOverrides()`, upstream's `OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS`) and not
+     * models.dev's 1,050,000 — the window is where compaction fires, so a conversation is compacted
+     * before it reaches OpenAI's long-context price, which the `tiers` on those rows record.
+     *
+     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: bool, 5: float, 6: float, 7: float, 8: float, tiers?: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>, effortLevelMap?: array<string, string|null>}>
      */
     private const array OPENAI_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
@@ -312,26 +335,26 @@ final class Models
         'gpt-5-chat-latest' => ['GPT-5 Chat Latest', 128_000, 16_384, false, true, 1.25, 10.0, 0.125, 0.0],
         'gpt-5-mini' => ['GPT-5 Mini', 400_000, 128_000, true, true, 0.25, 2.0, 0.025, 0.0],
         'gpt-5-nano' => ['GPT-5 Nano', 400_000, 128_000, true, true, 0.05, 0.4, 0.005, 0.0],
-        'gpt-5-pro' => ['GPT-5 Pro', 400_000, 272_000, true, true, 15.0, 120.0, 0.0, 0.0],
+        'gpt-5-pro' => ['GPT-5 Pro', 400_000, 128_000, true, true, 15.0, 120.0, 0.0, 0.0],
         'gpt-5.1' => ['GPT-5.1', 400_000, 128_000, true, true, 1.25, 10.0, 0.125, 0.0],
         'gpt-5.2' => ['GPT-5.2', 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0],
         'gpt-5.2-pro' => ['GPT-5.2 Pro', 400_000, 128_000, true, true, 21.0, 168.0, 0.0, 0.0],
         'gpt-5.3-codex' => ['GPT-5.3 Codex', 400_000, 128_000, true, true, 1.75, 14.0, 0.175, 0.0],
         'gpt-5.3-codex-spark' => ['GPT-5.3 Codex Spark', 128_000, 32_000, true, true, 1.75, 14.0, 0.175, 0.0],
-        'gpt-5.4' => ['GPT-5.4', 1_050_000, 128_000, true, true, 2.5, 15.0, 0.25, 0.0],
+        'gpt-5.4' => ['GPT-5.4', 272_000, 128_000, true, true, 2.5, 15.0, 0.25, 0.0, 'tiers' => [[272_000, 5.0, 22.5, 0.5, 0.0]]],
         'gpt-5.4-mini' => ['GPT-5.4 mini', 400_000, 128_000, true, true, 0.75, 4.5, 0.075, 0.0],
         'gpt-5.4-nano' => ['GPT-5.4 nano', 400_000, 128_000, true, true, 0.2, 1.25, 0.02, 0.0],
-        'gpt-5.4-pro' => ['GPT-5.4 Pro', 1_050_000, 128_000, true, true, 30.0, 180.0, 0.0, 0.0],
-        'gpt-5.5' => ['GPT-5.5', 1_050_000, 128_000, true, true, 5.0, 30.0, 0.5, 0.0],
-        'gpt-5.5-pro' => ['GPT-5.5 Pro', 1_050_000, 128_000, true, true, 30.0, 180.0, 0.0, 0.0],
+        'gpt-5.4-pro' => ['GPT-5.4 Pro', 1_050_000, 128_000, true, true, 30.0, 180.0, 0.0, 0.0, 'tiers' => [[272_000, 60.0, 270.0, 0.0, 0.0]]],
+        'gpt-5.5' => ['GPT-5.5', 272_000, 128_000, true, true, 5.0, 30.0, 0.5, 0.0, 'tiers' => [[272_000, 10.0, 45.0, 1.0, 0.0]]],
+        'gpt-5.5-pro' => ['GPT-5.5 Pro', 1_050_000, 128_000, true, true, 30.0, 180.0, 0.0, 0.0, 'tiers' => [[272_000, 60.0, 270.0, 0.0, 0.0]]],
         'gpt-5.6' => ['GPT-5.6', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0],
-        'gpt-5.6-luna' => ['GPT-5.6 Luna', 1_050_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25],
-        'gpt-5.6-sol' => ['GPT-5.6 Sol', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0],
-        'gpt-5.6-terra' => ['GPT-5.6 Terra', 1_050_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5],
-        'gpt-6-astra' => ['GPT-6 Astra', 1_050_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5],
-        'gpt-6-luna' => ['GPT-6 Luna', 1_050_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125],
-        'gpt-6-sol' => ['GPT-6 Sol', 1_050_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5],
-        'gpt-6.1-sol' => ['GPT-6.1 Sol', 1_050_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5],
+        'gpt-5.6-luna' => ['GPT-5.6 Luna', 272_000, 128_000, true, true, 0.2, 1.2, 0.02, 0.25, 'tiers' => [[272_000, 0.4, 1.8, 0.04, 0.5]]],
+        'gpt-5.6-sol' => ['GPT-5.6 Sol', 272_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0, 'tiers' => [[272_000, 8.0, 30.0, 0.8, 10.0]]],
+        'gpt-5.6-terra' => ['GPT-5.6 Terra', 272_000, 128_000, true, true, 2.0, 12.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 18.0, 0.4, 5.0]]],
+        'gpt-6-astra' => ['GPT-6 Astra', 272_000, 128_000, true, true, 10.0, 50.0, 1.0, 12.5, 'tiers' => [[272_000, 20.0, 75.0, 2.0, 25.0]]],
+        'gpt-6-luna' => ['GPT-6 Luna', 272_000, 128_000, true, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[272_000, 0.2, 0.75, 0.02, 0.25]]],
+        'gpt-6-sol' => ['GPT-6 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]]],
+        'gpt-6.1-sol' => ['GPT-6.1 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.2, 5.0]]],
         'gpt-daybreak-blue-latest' => ['Daybreak Blue', 1_050_000, 128_000, true, true, 4.0, 20.0, 0.4, 5.0],
         'gpt-daybreak-red-latest' => ['Daybreak Red', 400_000, 128_000, true, true, 12.5, 75.0, 1.25, 15.625],
         'gpt-realtime-2.1' => ['GPT-Realtime-2.1', 128_000, 32_000, true, true, 4.0, 24.0, 0.4, 0.0],
@@ -383,11 +406,12 @@ final class Models
      * completions shape, and which it is is a fact about the model rather than about the provider
      * — the generator's `copilotApi()`, upstream's rule.
      *
-     * **No pricing column.** Copilot is a subscription, so upstream's table is zeroes all the
-     * way across and so is this — `/session` says $0.00 for a Copilot conversation, which is
-     * the truth and not a number nobody filled in.
+     * **No pricing column.** Copilot is a subscription, and `/session` says $0.00 for a Copilot
+     * conversation. This is pig's and no longer upstream's: upstream's generated Copilot rows now
+     * carry models.dev's list prices (gpt-5.5 at 5/30 with the 272k tier, for one), so its cost
+     * for the same conversation is not zero.
      *
-     * @var array<string, array{0: string, 1: Api, 2: int, 3: int, 4: bool, 5: bool}>
+     * @var array<string, array{0: string, 1: Api, 2: int, 3: int, 4: bool, 5: bool, effortLevelMap?: array<string, string|null>}>
      */
     private const array COPILOT_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
@@ -589,6 +613,11 @@ final class Models
 
         foreach (self::ANTHROPIC_MODELS as $id => $row) {
             [$name, $window, $maxTokens, $reasoning, $in, $out, $read, $write] = $row;
+            // Upstream's generator: `supportsStrictTools: true` on every `anthropic` provider
+            // model (`applyStrictToolCompatMetadata()`), `forceAdaptiveThinking` and
+            // `supportsTemperature: false` by id, `supportsMidConvoEffort` by id — absent, not
+            // false, where it writes nothing. See `AnthropicCompat::forBuiltIn()`.
+            $compat = AnthropicCompat::forBuiltIn(self::ANTHROPIC, $id);
             $models[self::ANTHROPIC . '/' . $id] = new Model(
                 $id,
                 $name,
@@ -600,12 +629,15 @@ final class Models
                 $reasoning,
                 ['text', 'image'],
                 self::pricing($in, $out, $read, $write, $row['tiers'] ?? []),
-                // Upstream's generator: `supportsStrictTools: true` on every `anthropic` provider
-                // model (`applyStrictToolCompatMetadata()`), `forceAdaptiveThinking` and
-                // `supportsTemperature: false` by id, `supportsMidConvoEffort` by id — absent, not
-                // false, where it writes nothing. See `AnthropicCompat::forBuiltIn()`.
-                compat: AnthropicCompat::forBuiltIn(self::ANTHROPIC, $id),
-                thinkingLevelMap: self::thinkingLevelMap(self::ANTHROPIC, Api::AnthropicMessages, $id),
+                compat: $compat,
+                thinkingLevelMap: self::thinkingLevelMap(
+                    self::ANTHROPIC,
+                    Api::AnthropicMessages,
+                    $id,
+                    effortLevelMap: self::supportsDirectReasoningEffort(Api::AnthropicMessages, self::ANTHROPIC, self::ANTHROPIC_BASE_URL, $id, $compat) ? ($row['effortLevelMap'] ?? null) : null,
+                ),
+                inputLimits: self::inputLimits(self::ANTHROPIC, ['text', 'image'], $window),
+                promptCache: self::promptCache(self::ANTHROPIC, Api::AnthropicMessages),
             );
         }
 
@@ -613,6 +645,7 @@ final class Models
 
         foreach (self::OPENAI_MODELS as $id => $row) {
             [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write] = $row;
+            $input = $images ? ['text', 'image'] : ['text'];
             $models['openai/' . $id] = new Model(
                 $id,
                 $name,
@@ -622,7 +655,7 @@ final class Models
                 $window,
                 $maxTokens,
                 $reasoning,
-                $images ? ['text', 'image'] : ['text'],
+                $input,
                 self::pricing($in, $out, $read, $write, $row['tiers'] ?? []),
                 // Upstream's generator (`applyStrictToolCompatMetadata()`) gives every `openai`
                 // provider model on the Responses API `supportsStrictMode: true`,
@@ -634,12 +667,15 @@ final class Models
                     grammarTools: self::isGrammarToolModel($id) ? true : null,
                     supportsExplicitPromptCacheMode: $write > 0 ? true : null,
                 ),
-                thinkingLevelMap: self::thinkingLevelMap('openai', Api::OpenAiResponses, $id),
+                // `supportsDirectReasoningEffort()` is true for every Responses model.
+                thinkingLevelMap: self::thinkingLevelMap('openai', Api::OpenAiResponses, $id, effortLevelMap: $row['effortLevelMap'] ?? null),
+                inputLimits: self::inputLimits('openai', $input, $window),
             );
         }
 
         foreach (self::GOOGLE_MODELS as $id => $row) {
             [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write] = $row;
+            $input = $images ? ['text', 'image'] : ['text'];
 
             $models['google/' . $id] = new Model(
                 $id,
@@ -650,11 +686,12 @@ final class Models
                 $window,
                 $maxTokens,
                 $reasoning,
-                $images ? ['text', 'image'] : ['text'],
+                $input,
                 self::pricing($in, $out, $read, $write, $row['tiers'] ?? []),
                 // A tenth cell on the rows whose endpoint refuses a level — the generator's
                 // overrides put it there, from a measurement; see `scripts/generate-models.php`.
                 thinkingLevelMap: self::thinkingLevelMap('google', Api::GoogleGenerativeAi, $id, $row[9] ?? []),
+                inputLimits: self::inputLimits('google', $input, $window),
             );
         }
 
@@ -669,6 +706,8 @@ final class Models
         foreach ($compatible as $provider => $table) {
             foreach ($table as $id => $row) {
                 [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write] = $row;
+                $input = $images ? ['text', 'image'] : ['text'];
+                $compat = self::STRICT_MODE[$provider] ? new OpenAiCompat(strictMode: true) : null;
                 $models[$provider . '/' . $id] = new Model(
                     $id,
                     $name,
@@ -678,17 +717,38 @@ final class Models
                     $window,
                     $maxTokens,
                     $reasoning,
-                    $images ? ['text', 'image'] : ['text'],
+                    $input,
                     self::pricing($in, $out, $read, $write, $row['tiers'] ?? []),
-                    compat: self::STRICT_MODE[$provider] ? new OpenAiCompat(strictMode: true) : null,
-                    thinkingLevelMap: self::thinkingLevelMap($provider, Api::OpenAiCompletions, $id),
+                    compat: $compat,
+                    thinkingLevelMap: self::thinkingLevelMap(
+                        $provider,
+                        Api::OpenAiCompletions,
+                        $id,
+                        effortLevelMap: self::supportsDirectReasoningEffort(Api::OpenAiCompletions, $provider, self::OPENAI_COMPATIBLE[$provider], $id, $compat) ? ($row['effortLevelMap'] ?? null) : null,
+                    ),
+                    inputLimits: self::inputLimits($provider, $input, $window),
                 );
             }
         }
 
         // Last, so the table reads direct providers first — which is not what decides a bare
         // id (`RESOLD` is), but does decide the order `--list-models` and `/model` list them in.
-        foreach (self::COPILOT_MODELS as $id => [$name, $api, $window, $maxTokens, $reasoning, $images]) {
+        foreach (self::COPILOT_MODELS as $id => $row) {
+            [$name, $api, $window, $maxTokens, $reasoning, $images] = $row;
+            $input = $images ? ['text', 'image'] : ['text'];
+            $compat = match ($api) {
+                Api::OpenAiCompletions => self::copilotCompat(),
+                // Upstream's generator for a Copilot Claude (`api: "anthropic-messages"`):
+                // `forceAdaptiveThinking` and `supportsTemperature: false` by the same id rules
+                // as on Anthropic's own models, `supportsEagerToolInputStreaming: false` on the
+                // three it lists — and no `supportsStrictTools` (that is `provider ===
+                // "anthropic"` only) or `supportsMidConvoEffort` (`anthropic`/`openrouter` only).
+                Api::AnthropicMessages => AnthropicCompat::forBuiltIn(self::COPILOT, $id),
+                // `applyOpenAIGrammarToolCompatMetadata()`: Copilot passes OpenAI's custom
+                // grammar tools through on the Responses API, for `gpt-<n>` with n >= 5.
+                Api::OpenAiResponses => self::grammarToolsCompat($id),
+                default => null,
+            };
             $models[self::COPILOT . '/' . $id] = new Model(
                 $id,
                 $name,
@@ -698,23 +758,17 @@ final class Models
                 $window,
                 $maxTokens,
                 $reasoning,
-                $images ? ['text', 'image'] : ['text'],
+                $input,
                 new Pricing(),
                 self::COPILOT_HEADERS,
-                match ($api) {
-                    Api::OpenAiCompletions => self::copilotCompat(),
-                    // Upstream's generator for a Copilot Claude (`api: "anthropic-messages"`):
-                    // `forceAdaptiveThinking` and `supportsTemperature: false` by the same id rules
-                    // as on Anthropic's own models, `supportsEagerToolInputStreaming: false` on the
-                    // three it lists — and no `supportsStrictTools` (that is `provider ===
-                    // "anthropic"` only) or `supportsMidConvoEffort` (`anthropic`/`openrouter` only).
-                    Api::AnthropicMessages => AnthropicCompat::forBuiltIn(self::COPILOT, $id),
-                    // `applyOpenAIGrammarToolCompatMetadata()`: Copilot passes OpenAI's custom
-                    // grammar tools through on the Responses API, for `gpt-<n>` with n >= 5.
-                    Api::OpenAiResponses => self::grammarToolsCompat($id),
-                    default => null,
-                },
-                thinkingLevelMap: self::thinkingLevelMap(self::COPILOT, $api, $id),
+                $compat,
+                thinkingLevelMap: self::thinkingLevelMap(
+                    self::COPILOT,
+                    $api,
+                    $id,
+                    effortLevelMap: self::supportsDirectReasoningEffort($api, self::COPILOT, self::COPILOT_BASE_URL, $id, $compat) ? ($row['effortLevelMap'] ?? null) : null,
+                ),
+                inputLimits: self::inputLimits(self::COPILOT, $input, $window),
             );
         }
 
@@ -763,15 +817,16 @@ final class Models
      * agent has no `max` level, so those entries are carried as upstream writes them and nothing
      * offers them.
      *
-     * Not ported: `applyModelsDevReasoningOptionMetadata()`, which runs before all of this and
-     * turns models.dev's `reasoning_options` into a map for the Responses models. The generator does
-     * not read that field yet, so a model whose verified efforts differ from these rules — one that
-     * refuses `minimal`, say — is not told so here.
+     * Between 2 and 3, `applyModelsDevReasoningOptionMetadata()`: `$effortLevelMap`, the map the
+     * generator made of models.dev's `reasoning_options` (`getEffortThinkingLevelMap()`, written as
+     * the row's `effortLevelMap`), merged when the caller found `supportsDirectReasoningEffort()` true
+     * and null otherwise. The tables carry none until the next regeneration writes them.
      *
      * @param array<string, string|null> $base
+     * @param array<string, string|null>|null $effortLevelMap
      * @return array<string, string|null>
      */
-    private static function thinkingLevelMap(string $provider, Api $api, string $id, array $base = []): array
+    private static function thinkingLevelMap(string $provider, Api $api, string $id, array $base = [], ?array $effortLevelMap = null): array
     {
         $map = $base;
         $responses = $api === Api::OpenAiResponses;
@@ -785,6 +840,11 @@ final class Models
         // 2.
         if ($api === Api::AnthropicMessages && AnthropicCompat::forBuiltIn($provider, $id)?->supportsMidConvoEffort === true) {
             $map = [...$map, 'off' => null];
+        }
+
+        // `applyModelsDevReasoningOptionMetadata()`: `if (thinkingLevelMap) mergeThinkingLevelMap(…)`.
+        if ($effortLevelMap !== null) {
+            $map = [...$map, ...$effortLevelMap];
         }
 
         // 3.
@@ -876,6 +936,81 @@ final class Models
     }
 
     /**
+     * Upstream's generator `supportsDirectReasoningEffort(model)`, the gate on
+     * `applyModelsDevReasoningOptionMetadata()`: an Anthropic Messages model only with
+     * `forceAdaptiveThinking`, every Responses model, and a completions model whose compat — detected,
+     * then its own laid over it, as `OpenAiCompat::resolve()` does — says `thinkingFormat: "openai"`
+     * and `supportsReasoningEffort`. Any other API is false.
+     */
+    private static function supportsDirectReasoningEffort(Api $api, string $provider, string $baseUrl, string $id, OpenAiCompat|AnthropicCompat|null $compat): bool
+    {
+        if ($api === Api::AnthropicMessages) {
+            return $compat instanceof AnthropicCompat && $compat->forceAdaptiveThinking === true;
+        }
+
+        if ($api === Api::OpenAiResponses) {
+            return true;
+        }
+
+        if ($api !== Api::OpenAiCompletions) {
+            return false;
+        }
+
+        $detected = OpenAiCompat::detect($baseUrl, $provider, $id);
+        $explicit = $compat instanceof OpenAiCompat ? $compat : null;
+
+        return ($explicit?->thinkingFormat ?? $detected->thinkingFormat) === 'openai'
+            && ($explicit?->reasoningEffort ?? $detected->reasoningEffort) === true;
+    }
+
+    /**
+     * Upstream's generator `applyImageInputMetadata()`, for a built-in model: nothing for a model that
+     * takes no images; otherwise the provider's limits — Anthropic `{maxRequestBytes: 32 MiB, images:
+     * {maxPerRequest: 100 at a 200,000 window, else 600}}`, OpenAI `{maxRequestBytes: 512 MiB, images:
+     * {maxPerRequest: 1500}}`, Google `{maxRequestBytes: 20 MiB, images: {maxPerRequest: 3600}}` (and
+     * Bedrock's, which pig has no provider for) — with `DEFAULT_IMAGE_RESIZE` as the images' `resize`
+     * on every one: "Keep the generated default no less restrictive than coding-agent's historical
+     * image preprocessing. Provider limits can narrow this profile, but unknown providers retain the
+     * cache-safe 2000px / 4.5 MiB behavior."
+     *
+     * @param list<string> $input
+     * @return array<string, mixed>|null
+     */
+    private static function inputLimits(string $provider, array $input, int $contextWindow): ?array
+    {
+        if (!in_array('image', $input, true)) {
+            return null;
+        }
+
+        $providerLimits = match ($provider) {
+            self::ANTHROPIC => ['maxRequestBytes' => 32 * 1024 * 1024, 'images' => ['maxPerRequest' => $contextWindow === 200_000 ? 100 : 600]],
+            'amazon-bedrock' => ['images' => ['maxPerMessage' => 20]],
+            'openai' => ['maxRequestBytes' => 512 * 1024 * 1024, 'images' => ['maxPerRequest' => 1500]],
+            'google' => ['maxRequestBytes' => 20 * 1024 * 1024, 'images' => ['maxPerRequest' => 3600]],
+            default => [],
+        };
+
+        return [
+            ...$providerLimits,
+            'images' => [
+                ...($providerLimits['images'] ?? []),
+                'resize' => self::DEFAULT_IMAGE_RESIZE,
+            ],
+        ];
+    }
+
+    /**
+     * Upstream's generator `applyPromptCacheMetadata()`: direct Anthropic on its own API gets
+     * `ANTHROPIC_PROMPT_CACHE`, and nothing else gets anything — "Do not add OpenAI lifetimes yet."
+     *
+     * @return array{short: int, long: int}|null
+     */
+    private static function promptCache(string $provider, Api $api): ?array
+    {
+        return $provider === self::ANTHROPIC && $api === Api::AnthropicMessages ? self::ANTHROPIC_PROMPT_CACHE : null;
+    }
+
+    /**
      * Upstream's generator `applyAnthropicAllowedFallbackModelMetadata()`, over the `anthropic` rows:
      * each model in `ANTHROPIC_ALLOWED_FALLBACK_MODELS` that exists gets the fallbacks that exist —
      * only managed-effort ones for a managed-effort model — with their own prices, and nothing when
@@ -925,6 +1060,8 @@ final class Models
                 $model->headers,
                 $model->compat->withAllowedFallbackModels($allowed),
                 $model->thinkingLevelMap,
+                $model->inputLimits,
+                $model->promptCache,
             );
         }
 

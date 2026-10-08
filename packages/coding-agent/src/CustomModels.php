@@ -206,7 +206,7 @@ final readonly class CustomModels
             $headers['Authorization'] = 'Bearer ' . $resolved;
         }
 
-        foreach ($entries as $entry) {
+        foreach (array_values($entries) as $position => $entry) {
             if (!is_array($entry)) {
                 $problems[] = "{$where}: a model that is not an object";
 
@@ -221,6 +221,7 @@ final readonly class CustomModels
                 $config['api'] ?? null,
                 is_array($config['compat'] ?? null) ? $config['compat'] : [],
                 $entry,
+                "providers.{$name}.models.{$position}",
             );
 
             if (is_string($built)) {
@@ -242,6 +243,8 @@ final readonly class CustomModels
      * @param array<mixed>          $providerCompat the provider's `compat`, which a model's own
      *        overrides key by key — upstream's `mergeCompat(providerConfig.compat, definition.compat)`
      * @param array<mixed>          $entry
+     * @param string                $schemaPath upstream's validation path to this model,
+     *        `providers.<name>.models.<index>`, for the errors `schemaErrors()` reports
      */
     private static function model(
         string $where,
@@ -251,6 +254,7 @@ final readonly class CustomModels
         mixed $providerApi,
         array $providerCompat,
         array $entry,
+        string $schemaPath = '',
     ): Model|string {
         $id = $entry['id'] ?? null;
         $name = $entry['name'] ?? null;
@@ -311,6 +315,21 @@ final readonly class CustomModels
             }
         }
 
+        // Upstream's `ModelDefinitionSchema` for the three blocks below, checked the way its
+        // TypeBox schema checks them and reported in its words — `<path>: <message>`, the lines of
+        // its "Invalid models.json schema" — in the schema's order: `inputLimits`, `cost.tiers`,
+        // `promptCache`. Upstream refuses the whole file over one; pig refuses this model, as it
+        // does for everything else here, and names every error the schema found in it.
+        $schemaErrors = [
+            ...self::schemaErrors($entry['inputLimits'] ?? null, self::INPUT_LIMITS_SCHEMA, "{$schemaPath}.inputLimits", array_key_exists('inputLimits', $entry)),
+            ...self::schemaErrors(($cost ?? [])['tiers'] ?? null, ['type' => 'array', 'items' => self::COST_TIER_SCHEMA], "{$schemaPath}.cost.tiers", is_array($cost) && array_key_exists('tiers', $cost)),
+            ...self::schemaErrors($entry['promptCache'] ?? null, self::PROMPT_CACHE_SCHEMA, "{$schemaPath}.promptCache", array_key_exists('promptCache', $entry)),
+        ];
+
+        if ($schemaErrors !== []) {
+            return "{$where}, model \"{$id}\": invalid models.json schema: " . implode('; ', $schemaErrors);
+        }
+
         $input = [];
 
         foreach (is_array($entry['input'] ?? null) ? $entry['input'] : ['text'] as $accepted) {
@@ -338,7 +357,136 @@ final readonly class CustomModels
                 self::APIS[$api],
             ),
             self::thinkingLevelMap(is_array($entry['thinkingLevelMap'] ?? null) ? $entry['thinkingLevelMap'] : null),
+            // Upstream's `inputLimits: definition.inputLimits` and `promptCache: definition.promptCache`,
+            // as written — checked above, and given no defaults here, as upstream gives none.
+            is_array($entry['inputLimits'] ?? null) ? $entry['inputLimits'] : null,
+            is_array($entry['promptCache'] ?? null) ? $entry['promptCache'] : null,
         );
+    }
+
+    /** Upstream's `ModelCostTierSchema`: all five fields required, each a number. */
+    private const array COST_TIER_SCHEMA = [
+        'type' => 'object',
+        'required' => ['inputTokensAbove', 'input', 'output', 'cacheRead', 'cacheWrite'],
+        'properties' => [
+            'inputTokensAbove' => ['type' => 'number'],
+            'input' => ['type' => 'number'],
+            'output' => ['type' => 'number'],
+            'cacheRead' => ['type' => 'number'],
+            'cacheWrite' => ['type' => 'number'],
+        ],
+    ];
+
+    /** Upstream's `ModelPromptCacheSchema`: seconds per tier, each above zero. */
+    private const array PROMPT_CACHE_SCHEMA = [
+        'type' => 'object',
+        'properties' => [
+            'short' => ['type' => 'number', 'exclusiveMinimum' => 0],
+            'long' => ['type' => 'number', 'exclusiveMinimum' => 0],
+        ],
+    ];
+
+    /** Upstream's `ModelInputLimitsSchema` and its `ImageResizeSchema`. */
+    private const array INPUT_LIMITS_SCHEMA = [
+        'type' => 'object',
+        'properties' => [
+            'maxRequestBytes' => ['type' => 'integer', 'minimum' => 1],
+            'images' => [
+                'type' => 'object',
+                'properties' => [
+                    'resize' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'maxWidth' => ['type' => 'integer', 'minimum' => 1],
+                            'maxHeight' => ['type' => 'integer', 'minimum' => 1],
+                            'maxBytes' => ['type' => 'integer', 'minimum' => 1],
+                            'jpegQuality' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 100],
+                        ],
+                    ],
+                    'maxPerMessage' => ['type' => 'integer', 'minimum' => 1],
+                    'maxPerRequest' => ['type' => 'integer', 'minimum' => 1],
+                ],
+            ],
+        ],
+    ];
+
+    /**
+     * What upstream's TypeBox schema says about one value, as `formatValidationPath()` writes it:
+     * `<path>: <message>`, with TypeBox 1.3's English messages (`must be number`, `must be
+     * integer`, `must be object`, `must be array`, `must be > 0`, `must be >= 1`, `must be <= 100`,
+     * `must have required properties a, b`) — a `required` error's path naming the first property
+     * missing. Its order: an object's `required` before its properties, the properties in the
+     * schema's order, a list's items in theirs, and a number's type before its bounds — the bounds
+     * still checked on a number of the wrong kind (`0.5` is both `must be integer` and `must be >= 1`).
+     *
+     * JSON's `{}` and `[]` both decode to PHP's `[]`, which is taken as whichever the schema asks
+     * for; any other list where an object is wanted, or object where a list is, is the wrong type.
+     * An absent optional value (`$present` false) has nothing to say.
+     *
+     * @param array<string, mixed> $schema
+     * @return list<string>
+     */
+    private static function schemaErrors(mixed $value, array $schema, string $path, bool $present = true): array
+    {
+        if (!$present) {
+            return [];
+        }
+
+        $isNumber = (is_int($value) || is_float($value));
+
+        if ($schema['type'] === 'number' || $schema['type'] === 'integer') {
+            $errors = [];
+            $isInteger = is_int($value) || (is_float($value) && is_finite($value) && floor($value) === $value);
+
+            if (!$isNumber || ($schema['type'] === 'integer' && !$isInteger)) {
+                $errors[] = "{$path}: must be {$schema['type']}";
+            }
+
+            if ($isNumber && isset($schema['exclusiveMinimum']) && !($value > $schema['exclusiveMinimum'])) {
+                $errors[] = "{$path}: must be > {$schema['exclusiveMinimum']}";
+            }
+
+            if ($isNumber && isset($schema['minimum']) && !($value >= $schema['minimum'])) {
+                $errors[] = "{$path}: must be >= {$schema['minimum']}";
+            }
+
+            if ($isNumber && isset($schema['maximum']) && !($value <= $schema['maximum'])) {
+                $errors[] = "{$path}: must be <= {$schema['maximum']}";
+            }
+
+            return $errors;
+        }
+
+        if ($schema['type'] === 'array') {
+            if (!is_array($value) || !array_is_list($value)) {
+                return ["{$path}: must be array"];
+            }
+
+            $errors = [];
+
+            foreach ($value as $index => $item) {
+                $errors = [...$errors, ...self::schemaErrors($item, $schema['items'], "{$path}.{$index}")];
+            }
+
+            return $errors;
+        }
+
+        if (!is_array($value) || ($value !== [] && array_is_list($value))) {
+            return ["{$path}: must be object"];
+        }
+
+        $errors = [];
+        $missing = array_values(array_filter($schema['required'] ?? [], static fn (string $key): bool => !array_key_exists($key, $value)));
+
+        if ($missing !== []) {
+            $errors[] = "{$path}.{$missing[0]}: must have required properties " . implode(', ', $missing);
+        }
+
+        foreach ($schema['properties'] as $key => $property) {
+            $errors = [...$errors, ...self::schemaErrors($value[$key] ?? null, $property, "{$path}.{$key}", array_key_exists($key, $value))];
+        }
+
+        return $errors;
     }
 
     /**
@@ -403,19 +551,22 @@ final readonly class CustomModels
             : 0.0;
 
         // Upstream's `ModelCost.tiers`: `{inputTokensAbove, input, output, cacheRead, cacheWrite}`
-        // each, "the highest matching input threshold applies to the full request". A tier with no
-        // threshold is not one; a rate it leaves out is free, as the base price's are.
+        // each, "the highest matching input threshold applies to the full request". A model's tiers
+        // have passed `schemaErrors()` by now — all five fields, all numbers — so the guards here
+        // are for `allowedFallbackModels`' costs, which are not checked that way.
         $tiers = [];
 
         foreach (is_array($cost['tiers'] ?? null) ? $cost['tiers'] : [] as $tier) {
-            if (!is_array($tier) || !is_int($tier['inputTokensAbove'] ?? null)) {
+            if (!is_array($tier) || (!is_int($tier['inputTokensAbove'] ?? null) && !is_float($tier['inputTokensAbove'] ?? null))) {
                 continue;
             }
 
             $rate = static fn (string $key): float => is_int($tier[$key] ?? null) || is_float($tier[$key] ?? null)
                 ? (float) $tier[$key]
                 : 0.0;
-            $tiers[] = new PricingTier($tier['inputTokensAbove'], $rate('input'), $rate('output'), $rate('cacheRead'), $rate('cacheWrite'));
+            // `PricingTier` counts tokens in whole numbers; a fractional threshold is compared as
+            // the whole number below it, which no token count can tell apart.
+            $tiers[] = new PricingTier((int) $tier['inputTokensAbove'], $rate('input'), $rate('output'), $rate('cacheRead'), $rate('cacheWrite'));
         }
 
         return new Pricing($number('input'), $number('output'), $number('cacheRead'), $number('cacheWrite'), $tiers);
@@ -635,6 +786,9 @@ final readonly class CustomModels
             supportsLongCacheRetention: $flag('supportsLongCacheRetention'),
             supportsExplicitPromptCacheMode: $flag('supportsExplicitPromptCacheMode'),
             supportsMaxOutputTokens: $flag('supportsMaxOutputTokens'),
+            // Upstream's `OpenAICompletionsCompatSchema` keys for caching and session affinity.
+            sendSessionAffinityHeaders: $flag('sendSessionAffinityHeaders'),
+            cacheControlFormat: is_string($compat['cacheControlFormat'] ?? null) ? $compat['cacheControlFormat'] : null,
         );
     }
 

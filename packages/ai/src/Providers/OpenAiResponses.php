@@ -78,6 +78,9 @@ final class OpenAiResponses
     /** Upstream's `OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH`, in code points. */
     private const int PROMPT_CACHE_KEY_MAX_LENGTH = 64;
 
+    /** Upstream's `CHATGPT_USAGE_URL`, appended to a Sign in with ChatGPT usage-limit error. */
+    private const string CHATGPT_USAGE_URL = 'https://chatgpt.com/settings/usage';
+
     public function __construct(private readonly HttpClient $http = new HttpClient())
     {
     }
@@ -101,6 +104,8 @@ final class OpenAiResponses
         ?OpenAiOptions $options,
     ): void {
         $builder = new AssistantMessageBuilder($model);
+        // Upstream's `stopReason: "pending"`: only a terminal event's status replaces it.
+        $builder->setStopReason(StopReason::Pending);
         $signal = $options?->signal;
 
         // The item that is open, as [index, kind]. Unlike chat-completions, the stream
@@ -109,6 +114,13 @@ final class OpenAiResponses
         // Upstream's per-call scratch buffers (`partialJson`, `customInput`), which only a finished
         // `output_item.done` removes: the content indexes of the tool calls still waiting for theirs.
         $unfinished = [];
+        // Upstream's `reasoningBlocksById`: a finished reasoning item's id => its thinking block's
+        // content index, for `backfillReasoningSignatures()`.
+        $reasoningById = [];
+        // Upstream's `sawTerminalResponseEvent`: `response.completed`, `.incomplete` or `.failed`.
+        $sawTerminal = false;
+        // The body of a refused request, for the ChatGPT usage hint below.
+        $refusedBody = null;
 
         try {
             // Upstream's `grammarToolInputProperties`: tool name => the property a grammar tool's raw
@@ -118,7 +130,9 @@ final class OpenAiResponses
             $response = $this->http->send($this->request($model, $context, $options, $grammar), $signal);
 
             if (!$response->isSuccessful()) {
-                throw new ProviderError($this->explain($model, $response->status, $response->body->all()));
+                $refusedBody = $response->body->all();
+
+                throw new ProviderError($this->explain($model, $response->status, $refusedBody));
             }
 
             $stream->push(new StartEvent($builder->snapshot()));
@@ -126,22 +140,34 @@ final class OpenAiResponses
 
             foreach ($response->body as $chunk) {
                 foreach ($parser->feed($chunk) as $event) {
-                    $data = json_decode($event->data, true);
+                    // The SDK's completion sentinel: `if (sse.data === '[DONE]') break` — the stream
+                    // is over, whatever follows. Before the JSON parse, which would refuse it.
+                    if ($event->data === '[DONE]') {
+                        break 2;
+                    }
 
-                    if (is_array($data)) {
-                        $open = $this->dispatch($data, $builder, $stream, $open, $grammar, $unfinished);
+                    $data = self::sdkEvent($event->type, $event->data);
+                    $open = $this->dispatch($data, $builder, $stream, $open, $grammar, $unfinished, $reasoningById, $sawTerminal);
 
-                        // The end of upstream's `finalizeResponse()`, after the cost is worked out:
-                        // `response.service_tier ?? options.serviceTier` scales it.
-                        if (in_array($data['type'] ?? null, ['response.completed', 'response.incomplete'], true)) {
-                            $tier = $data['response']['service_tier'] ?? null;
-                            self::applyServiceTierPricing($builder, $model, is_string($tier) ? $tier : $options?->serviceTier);
-                        }
+                    // The end of upstream's `finalizeResponse()`, after the cost is worked out:
+                    // `response.service_tier ?? options.serviceTier` scales it.
+                    if (in_array($data['type'] ?? null, ['response.completed', 'response.incomplete'], true)) {
+                        $tier = $data['response']['service_tier'] ?? null;
+                        self::applyServiceTierPricing($builder, $model, is_string($tier) ? $tier : $options?->serviceTier);
                     }
                 }
             }
 
+            // Before the stream checks below because upstream's SDK throws the abort from inside
+            // the loop, so an aborted turn never reaches them; here the body just ends.
             $signal?->throwIfAborted();
+
+            // Upstream's `processResponsesStream()`: a body that ended with no `response.completed`,
+            // `.incomplete` or `.failed` is a cut connection, not an answer — it used to come back as
+            // a clean `stop` with whatever half-message had streamed and no usage.
+            if (!$sawTerminal) {
+                throw new ProviderError('OpenAI Responses stream ended before a terminal response event');
+            }
 
             // Upstream's `processResponsesStream()` tail: "The agent runs every tool call in the
             // final message. Refuse to hand over calls whose output_item.done never arrived: their
@@ -153,6 +179,10 @@ final class OpenAiResponses
 
                     throw new ProviderError("OpenAI Responses stream completed with an unfinished tool call: {$call->name} ({$call->id})");
                 }
+            }
+
+            if ($builder->stopReason() === StopReason::Pending) {
+                throw new ProviderError('OpenAI Responses stream ended without a stop reason');
             }
 
             // Upstream's `stream()`: an `error` or `aborted` stop reason — a failed or cancelled
@@ -171,11 +201,118 @@ final class OpenAiResponses
             $stream->end();
         } catch (Throwable $error) {
             // A provider never throws at its caller: the failure is the stream's result.
-            $builder->fail($error->getMessage(), $signal?->aborted() ?? false);
+            $message = $error->getMessage();
+
+            // Upstream: "Sign in with ChatGPT shares the subscription's usage limit with other apps."
+            // Its test is the formatted message, which for a refused request is the SDK's JSON of the
+            // error body, code included. `explain()` keeps only the body's `message`, so the body
+            // itself is asked too — the same condition, read where pig still has it.
+            if (str_contains($message, 'subscription_sharing_usage_limit_exceeded')
+                || str_contains($refusedBody ?? '', 'subscription_sharing_usage_limit_exceeded')) {
+                $message .= "\nCheck your ChatGPT usage: " . self::CHATGPT_USAGE_URL;
+            }
+
+            $builder->fail($message, $signal?->aborted() ?? false);
             $failed = $builder->snapshot();
             $stream->push(new ErrorEvent($failed->stopReason, $failed));
             $stream->end();
         }
+    }
+
+    /**
+     * One event as upstream's code receives it: through the `openai` SDK's `Stream`, which stands
+     * between the SSE and `processResponsesStream()` and decides three things on its own (openai-node
+     * 7.19.0, `core/streaming.mjs`, the version pi pins):
+     *
+     * - data that is not JSON throws `Error reading response: malformed server-sent event JSON.`;
+     * - an `event: error` throws an `APIError` made of `data.error ?? data`;
+     * - any other event whose data has a truthy `error` throws an `APIError` made of that.
+     *
+     * An `APIError` with no status is `makeMessage()`'s text alone — the error's `message`, or its
+     * JSON when the message is not a string, or the whole error's JSON when it has none — and pi's
+     * `formatProviderError()` leaves a status-less error's message as it is. So a nested
+     * `{type: "error", error: {code, message}}`, which the live API sends, reads as its message, and
+     * only a flat `{type: "error", code, message}` without an `event: error` line reaches upstream's
+     * `Error Code <code>: <message>` arm in `dispatch()`.
+     *
+     * @return array<string, mixed>
+     */
+    private static function sdkEvent(string $sseEvent, string $raw): array
+    {
+        $data = json_decode($raw, true);
+
+        if ($data === null && json_last_error() !== JSON_ERROR_NONE) {
+            throw new ProviderError('Error reading response: malformed server-sent event JSON.');
+        }
+
+        if ($sseEvent === 'error') {
+            $object = json_decode($raw);
+
+            // `data?.error ?? data`: nullish, not truthy — an `error` of `false` or `""` is used.
+            throw new ProviderError(self::apiErrorMessage(
+                is_object($object) && ($object->error ?? null) !== null ? $object->error : $object,
+            ));
+        }
+
+        if (is_array($data) && self::truthy($data['error'] ?? null)) {
+            throw new ProviderError(self::apiErrorMessage(json_decode($raw)->error));
+        }
+
+        return is_array($data) ? $data : [];
+    }
+
+    /** The SDK's `APIError.makeMessage(undefined, error, undefined)`, over the JSON as objects. */
+    private static function apiErrorMessage(mixed $error): string
+    {
+        $message = is_object($error) ? ($error->message ?? null) : null;
+
+        if (self::truthy($message)) {
+            $text = is_string($message) ? $message : self::jsonStringify($message);
+        } elseif (self::truthy($error)) {
+            $text = self::jsonStringify($error);
+        } else {
+            $text = '';
+        }
+
+        return $text !== '' ? $text : '(no status code or body)';
+    }
+
+    /** `JSON.stringify` of a value decoded with objects kept as objects, so `{}` stays `{}`. */
+    private static function jsonStringify(mixed $value): string
+    {
+        return (string) json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    }
+
+    /** JavaScript truthiness for a decoded JSON value: an object or array is truthy even when empty. */
+    private static function truthy(mixed $value): bool
+    {
+        return $value !== null && $value !== false && $value !== '' && $value !== 0 && $value !== 0.0;
+    }
+
+    /**
+     * A decoded JSON value as a JavaScript template literal writes it (`${value}`): a missing one is
+     * `undefined`, null `null`, a list its elements joined by commas, an object `[object Object]`.
+     */
+    private static function template(array $data, string $key): string
+    {
+        if (!array_key_exists($key, $data)) {
+            return 'undefined';
+        }
+
+        $value = $data[$key];
+
+        return match (true) {
+            $value === null => 'null',
+            is_bool($value) => $value ? 'true' : 'false',
+            is_string($value) => $value,
+            is_int($value) => (string) $value,
+            is_float($value) => is_finite($value) && floor($value) === $value && abs($value) < 1e21 ? (string) (int) $value : (string) $value,
+            is_array($value) && array_is_list($value) => implode(',', array_map(
+                static fn (mixed $item): string => $item === null ? '' : self::template(['v' => $item], 'v'),
+                $value,
+            )),
+            default => '[object Object]',
+        };
     }
 
     /**
@@ -186,6 +323,7 @@ final class OpenAiResponses
      * @param array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}|null $open
      * @param array<string, string> $grammar
      * @param array<int, true> $unfinished the tool calls opened and not yet finished, by content index
+     * @param array<string, int> $reasoningById a finished reasoning item's id => its content index
      * @return array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}|null
      */
     private function dispatch(
@@ -195,12 +333,14 @@ final class OpenAiResponses
         ?array $open,
         array $grammar = [],
         array &$unfinished = [],
+        array &$reasoningById = [],
+        bool &$sawTerminal = false,
     ): ?array {
         return match ($data['type'] ?? '') {
             // Upstream takes the response id from here and again from the terminal event.
             'response.created' => $this->onCreated($data, $builder, $open),
             'response.output_item.added' => $this->opening($this->onItemStart($data, $builder, $stream, $grammar), $unfinished),
-            'response.output_item.done' => $this->onItemEnd($data, $builder, $stream, $open, $unfinished),
+            'response.output_item.done' => $this->onItemEnd($data, $builder, $stream, $open, $unfinished, $reasoningById),
             'response.reasoning_summary_text.delta' => $this->onDelta($data, $builder, $stream, $open, 'thinking'),
             // One summary part ending and the next beginning is a paragraph break, and
             // nothing else in the stream says so.
@@ -210,6 +350,7 @@ final class OpenAiResponses
             'response.reasoning_text.delta' => $this->onDelta($data, $builder, $stream, $open, 'thinking'),
             'response.output_text.delta', 'response.refusal.delta' => $this->onDelta($data, $builder, $stream, $open, 'text'),
             'response.function_call_arguments.delta' => $this->onArguments($data, $builder, $stream, $open),
+            'response.function_call_arguments.done' => $this->onArgumentsDone($data, $builder, $stream, $open),
             // Upstream's two custom-tool-call input events: the raw text a grammar tool writes,
             // streamed, then whole.
             'response.custom_tool_call_input.delta' => $this->onCustomInput($data, $builder, $stream, $open, false),
@@ -222,10 +363,14 @@ final class OpenAiResponses
             // truncated by the output cap therefore came back as a clean `stop` carrying **no
             // usage at all** — the half-sentence read as the finished answer, and the turn cost
             // nothing in `/session` and the footer. Measured against the real API with a 16-token
-            // budget: `stop` after 0 output tokens. Upstream handles neither event.
-            'response.completed', 'response.incomplete' => $this->onCompleted($data, $builder, $open),
-            'error' => $this->raise($this->errorText($data), $data, $builder),
-            'response.failed' => $this->raise($this->failureText($data), $data, $builder),
+            // budget: `stop` after 0 output tokens. Upstream's `finalizeResponse()` takes both.
+            'response.completed', 'response.incomplete' => $this->onCompleted($data, $builder, $open, $reasoningById, $sawTerminal),
+            // `throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error")` — the
+            // template is never empty, so the fallback never applies and a missing field reads
+            // `undefined`. Only a flat event without an `event: error` line gets here; see `sdkEvent()`.
+            // It has no response, so the raw stop reason stays as it was, as upstream's does.
+            'error' => throw new ProviderError('Error Code ' . self::template($data, 'code') . ': ' . self::template($data, 'message')),
+            'response.failed' => $this->failed($data, $builder, $sawTerminal),
             default => $open,
         };
     }
@@ -254,6 +399,9 @@ final class OpenAiResponses
     {
         $item = $data['item'] ?? [];
         $wire = $builder->nextWire();
+
+        // Upstream's `createSlot()` runs `applyMessagePhaseStopReason(item)` for a message too.
+        self::applyMessagePhaseStopReason($item, $builder);
 
         return match ($item['type'] ?? '') {
             'reasoning' => $this->opened('thinking', $builder->startThinking($wire), $stream, $builder),
@@ -460,6 +608,38 @@ final class OpenAiResponses
     }
 
     /**
+     * Upstream's `response.function_call_arguments.done` arm: the event's whole `arguments` replace
+     * what the deltas built, and when they extend it the missing tail goes out as one more delta —
+     * so a stream that dropped or never sent deltas still ends with the full arguments, and a
+     * listener rebuilding them from deltas gets the same text. Not for a custom (grammar) call,
+     * which has no JSON buffer upstream (`partialJson === undefined`).
+     *
+     * @param array<string, mixed> $data
+     * @param array{0: int, 1: string, 2?: mixed}|null $open
+     * @return array{0: int, 1: string, 2?: mixed}|null
+     */
+    private function onArgumentsDone(array $data, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, ?array $open): ?array
+    {
+        if ($open === null || $open[1] !== 'toolCall' || isset($open[2])) {
+            return $open;
+        }
+
+        $arguments = is_string($data['arguments'] ?? null) ? $data['arguments'] : '';
+        $previous = $builder->jsonOf($open[0]);
+        $builder->setJson($open[0], $arguments);
+
+        if (str_starts_with($arguments, $previous)) {
+            $delta = substr($arguments, strlen($previous));
+
+            if ($delta !== '') {
+                $stream->push(new ToolCallDeltaEvent($open[0], $delta, $builder->snapshot()));
+            }
+        }
+
+        return $open;
+    }
+
+    /**
      * @param array<string, mixed> $data
      * @param array{0: int, 1: string}|null $open
      * @param array<int, true> $unfinished
@@ -470,16 +650,11 @@ final class OpenAiResponses
         AssistantMessageEventStream $stream,
         ?array $open,
         array &$unfinished = [],
+        array &$reasoningById = [],
     ): ?array {
         $item = $data['item'] ?? [];
 
-        // Upstream's `applyMessagePhaseStopReason(item)`, run on every finished item: a message
-        // marked `final_answer` sets `stop`. The terminal event's own mapping overwrites it
-        // afterwards (`onCompleted()`, upstream's `finalizeResponse()`), so the net effect is
-        // nil whenever the stream ends properly; it is here because upstream does it.
-        if (($item['type'] ?? null) === 'message' && ($item['phase'] ?? null) === 'final_answer') {
-            $builder->setStopReason(StopReason::Stop);
-        }
+        self::applyMessagePhaseStopReason($item, $builder);
 
         if ($open === null) {
             return null;
@@ -506,6 +681,11 @@ final class OpenAiResponses
             // The whole item, kept verbatim: the summary is what a person reads, and the
             // model wants its own encrypted reasoning back or it starts over.
             $builder->setSignature($index, (string) json_encode($item));
+
+            if (is_string($item['id'] ?? null)) {
+                $reasoningById[$item['id']] = $index;
+            }
+
             $stream->push(new ThinkingEndEvent($index, $builder->textOf($index), $builder->snapshot()));
 
             return null;
@@ -597,9 +777,11 @@ final class OpenAiResponses
      * @param array{0: int, 1: string}|null $open
      * @return array{0: int, 1: string}|null
      */
-    private function onCompleted(array $data, AssistantMessageBuilder $builder, ?array $open): ?array
+    private function onCompleted(array $data, AssistantMessageBuilder $builder, ?array $open, array $reasoningById = [], bool &$sawTerminal = false): ?array
     {
+        $sawTerminal = true;
         $response = $data['response'] ?? [];
+        self::backfillReasoningSignatures($builder, is_array($response['output'] ?? null) ? $response['output'] : [], $reasoningById);
 
         if (is_string($response['id'] ?? null) && $response['id'] !== '') {
             $builder->setResponseId($response['id']);
@@ -630,6 +812,84 @@ final class OpenAiResponses
         $builder->setStopReason($reason);
 
         return $open;
+    }
+
+    /**
+     * Upstream's `backfillReasoningSignatures()`: "Azure OpenAI can omit reasoning.encrypted_content
+     * from response.output_item.done and provide it only in response.completed.response.output.
+     * Backfill the persisted reasoning signature from the terminal response to keep store:false
+     * multi-turn replay stateless." A block that has no signature, or whose stored item already
+     * carries the encrypted content, is left alone.
+     *
+     * @param list<mixed> $output the terminal response's `output`
+     * @param array<string, int> $reasoningById
+     */
+    private static function backfillReasoningSignatures(AssistantMessageBuilder $builder, array $output, array $reasoningById): void
+    {
+        foreach ($output as $item) {
+            if (!is_array($item) || ($item['type'] ?? null) !== 'reasoning' || !self::truthy($item['encrypted_content'] ?? null)) {
+                continue;
+            }
+
+            $index = is_string($item['id'] ?? null) ? ($reasoningById[$item['id']] ?? null) : null;
+            $signature = $index === null ? '' : $builder->signatureOf($index);
+
+            if ($signature === '') {
+                continue;
+            }
+
+            $stored = json_decode($signature, true);
+
+            if (!is_array($stored) || self::truthy($stored['encrypted_content'] ?? null)) {
+                continue;
+            }
+
+            $builder->setSignature($index, (string) json_encode([...$stored, 'encrypted_content' => $item['encrypted_content']]));
+        }
+    }
+
+    /**
+     * Upstream's `applyMessagePhaseStopReason(item)`: a message item marked `final_answer` sets
+     * `stop`. The terminal event's own mapping overwrites it afterwards (`onCompleted()`, upstream's
+     * `finalizeResponse()`), so the net effect is nil whenever the stream ends properly.
+     *
+     * @param array<string, mixed> $item
+     */
+    private static function applyMessagePhaseStopReason(array $item, AssistantMessageBuilder $builder): void
+    {
+        if (($item['type'] ?? null) === 'message' && ($item['phase'] ?? null) === 'final_answer') {
+            $builder->setStopReason(StopReason::Stop);
+        }
+    }
+
+    /**
+     * Upstream's `response.failed` arm: the response's status as the raw stop reason, then
+     * `${error.code || "unknown"}: ${error.message || "no message"}` when it has an error,
+     * `incomplete: <reason>` when it has only `incomplete_details`, else
+     * `Unknown error (no error details in response)`.
+     *
+     * @param array<string, mixed> $data
+     */
+    private function failed(array $data, AssistantMessageBuilder $builder, bool &$sawTerminal): never
+    {
+        $sawTerminal = true;
+        $response = is_array($data['response'] ?? null) ? $data['response'] : [];
+        $builder->setRawStopReason(is_string($response['status'] ?? null) ? $response['status'] : null);
+        $error = $response['error'] ?? null;
+        $reason = is_array($response['incomplete_details'] ?? null) ? ($response['incomplete_details']['reason'] ?? null) : null;
+
+        if (self::truthy($error)) {
+            $error = is_array($error) ? $error : [];
+            $message = (self::truthy($error['code'] ?? null) ? self::template($error, 'code') : 'unknown')
+                . ': '
+                . (self::truthy($error['message'] ?? null) ? self::template($error, 'message') : 'no message');
+        } elseif (self::truthy($reason)) {
+            $message = 'incomplete: ' . self::template(['reason' => $reason], 'reason');
+        } else {
+            $message = 'Unknown error (no error details in response)';
+        }
+
+        throw new ProviderError($message);
     }
 
     /**
@@ -720,69 +980,6 @@ final class OpenAiResponses
             'in_progress', 'queued' => [StopReason::Stop, null],
             default => throw new ProviderError("Unhandled stop reason: {$status}"),
         };
-    }
-
-    /**
-     * What an `error` event says, whichever shape it says it in.
-     *
-     * The documented shape is flat — `{type, code, message, param}` — and **the live one is
-     * nested**, which is what a run against the real API settled: an oversized prompt used to come
-     * back as a bare `unknown error`, with no `Error <code>:` in front of it either, so neither
-     * field was at the documented path; with both paths read it is
-     * `Error context_length_exceeded: Your input exceeds the context window of this model.` So
-     * `{type: "error", error: {message, code}}` is what arrives, and reading only the documented
-     * shape loses the whole message.
-     *
-     * The fallback is **the payload itself** rather than a sentence that describes nothing: an
-     * error nobody can act on is worse than an ugly one, and the raw JSON is what says which shape
-     * to read next time — which is how the nesting above was established rather than guessed.
-     * `Overflow`'s table needs the provider's own words to match against, so a message that goes
-     * missing here is a conversation that could have been compacted and instead died: with the
-     * message back, `/exceeds the context window/i` matches, which is OpenAI's own row in that
-     * table and had never been verified against the API before.
-     *
-     * @param array<string, mixed> $data
-     */
-    private function errorText(array $data): string
-    {
-        $nested = is_array($data['error'] ?? null) ? $data['error'] : [];
-        $code = $data['code'] ?? $nested['code'] ?? null;
-        $message = $data['message'] ?? $nested['message'] ?? null;
-
-        if (!is_string($message) || $message === '') {
-            return 'an error with no message in it: ' . (json_encode($data) ?: 'unreadable');
-        }
-
-        return is_string($code) ? "Error {$code}: {$message}" : $message;
-    }
-
-    /**
-     * Throw for a failed response, keeping its status as the raw stop reason first.
-     *
-     * Upstream sets `output.rawStopReason = event.response?.status` before throwing, and the error
-     * message it then builds is the same object, so the status survives into the failed turn. Here
-     * the builder is what `fail()` snapshots, so setting it on the builder does the same. A bare
-     * `error` event has no response and therefore leaves it as it was, as upstream's does.
-     *
-     * @param array<string, mixed> $data
-     */
-    private function raise(string $message, array $data, AssistantMessageBuilder $builder): never
-    {
-        $status = $data['response']['status'] ?? null;
-
-        if (is_string($status)) {
-            $builder->setRawStopReason($status);
-        }
-
-        throw new ProviderError($message);
-    }
-
-    /** @param array<string, mixed> $data */
-    private function failureText(array $data): string
-    {
-        $message = $data['response']['error']['message'] ?? null;
-
-        return 'The response failed: ' . (is_string($message) ? $message : 'no reason given');
     }
 
     private function explain(Model $model, int $status, string $body): string
@@ -930,16 +1127,28 @@ final class OpenAiResponses
             $body['tool_choice'] = $options->toolChoice;
         }
 
+        // Upstream: `options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined)` —
+        // asking for a summary alone asks for `medium` effort, sent as it is rather than mapped.
+        $reasoningSummary = $options?->reasoningSummary;
+        $hasSummary = $reasoningSummary !== null && $reasoningSummary !== '';
+
+        // Upstream's `samplingParams` are merged into the request last here
+        // (`resolveSamplingParams()`); pig has no sampling parameters on a model or a request, so
+        // there is nothing to merge.
         if (!$model->reasoning) {
             return $body;
         }
 
-        if ($options?->reasoning !== null) {
+        if ($options?->reasoning !== null || $hasSummary) {
             // Upstream: `model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort`
             // — what the model calls the level, its own name when the map says nothing (`??`, so a
             // null entry also sends the name; `Stream::simple()` has clamped such a level away).
-            $level = $options->reasoning->value;
-            $body['reasoning'] = ['effort' => $model->thinkingLevelMap[$level] ?? $level, 'summary' => 'auto'];
+            $level = $options?->reasoning?->value;
+            $body['reasoning'] = [
+                'effort' => $level !== null ? ($model->thinkingLevelMap[$level] ?? $level) : 'medium',
+                // `options?.reasoningSummary || "auto"`.
+                'summary' => $hasSummary ? $reasoningSummary : 'auto',
+            ];
 
             // Without this the encrypted reasoning never comes back, and a thinking block
             // with nothing to replay is a thinking block that costs a turn to rebuild.
@@ -1031,7 +1240,10 @@ final class OpenAiResponses
 
         if ($context->systemPrompt !== null && $context->systemPrompt !== '') {
             $items[] = [
-                'role' => $model->reasoning ? 'developer' : 'system',
+                // Upstream's `instructionRole`: `model.reasoning && compat?.supportsDeveloperRole !==
+                // false ? "developer" : "system"` — a model whose compat says it has no developer role
+                // gets `system`, which an OpenAI-compatible Responses endpoint may be the only one of.
+                'role' => $model->reasoning && self::compat($model)?->developerRole !== false ? 'developer' : 'system',
                 'content' => Utf8::sanitize($context->systemPrompt),
             ];
         }

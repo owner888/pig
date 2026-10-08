@@ -61,6 +61,9 @@ use Throwable;
  */
 final class OpenAiCompletions
 {
+    /** Upstream's `OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH`, in code points (`clampOpenAIPromptCacheKey()`). */
+    private const int PROMPT_CACHE_KEY_MAX_LENGTH = 64;
+
     /** Where reasoning arrives, depending on who is answering. */
     private const array REASONING_FIELDS = ['reasoning_content', 'reasoning', 'reasoning_text'];
 
@@ -730,6 +733,26 @@ final class OpenAiCompletions
             ...Copilot::headers($model, $context),
         ];
 
+        // Upstream's `createClient()`: the session id, when caching is on (`cacheSessionId`), as
+        // headers — but only where `sendSessionAffinityHeaders` says (detected: OpenRouter), and
+        // then `x-session-id` for the `openrouter` format, otherwise `x-client-request-id` and
+        // `x-session-affinity`, with `session_id` too for `openai`.
+        $sessionId = ($options ?? new OpenAiOptions())->resolvedCacheRetention() === 'none' ? null : $options?->sessionId;
+        $compat = OpenAiCompat::resolve($model);
+
+        if ($sessionId !== null && $sessionId !== '' && $compat->sendSessionAffinityHeaders) {
+            if ($compat->sessionAffinityFormat === 'openrouter') {
+                $headers['x-session-id'] = $sessionId;
+            } else {
+                if ($compat->sessionAffinityFormat === 'openai') {
+                    $headers['session_id'] = $sessionId;
+                }
+
+                $headers['x-client-request-id'] = $sessionId;
+                $headers['x-session-affinity'] = $sessionId;
+            }
+        }
+
         return new Request(
             'POST',
             $this->endpoint($model, $options?->apiKey, '/chat/completions'),
@@ -757,13 +780,30 @@ final class OpenAiCompletions
     private function body(Model $model, Context $context, ?OpenAiOptions $options, array $grammar = []): array
     {
         $compat = OpenAiCompat::resolve($model);
+        $cacheRetention = ($options ?? new OpenAiOptions())->resolvedCacheRetention();
+        $supportsLongCacheRetention = $compat->supportsLongCacheRetention ?? true;
 
         $body = [
             'model' => $model->id,
             'messages' => $this->messages($model, $context, $compat, $grammar),
             'stream' => true,
-            'stream_options' => ['include_usage' => true],
         ];
+
+        // Upstream: `prompt_cache_key` — the session id, cut to 64 code points — for OpenAI's own
+        // endpoint unless caching is off, and anywhere for `long` where the endpoint takes long
+        // retention; `prompt_cache_retention: "24h"` for that second case. An undefined key is left
+        // out of the JSON, which is what null does here.
+        if ($options?->sessionId !== null
+            && ((str_contains($model->baseUrl, 'api.openai.com') && $cacheRetention !== 'none')
+                || ($cacheRetention === 'long' && $supportsLongCacheRetention))) {
+            $body['prompt_cache_key'] = mb_substr($options->sessionId, 0, self::PROMPT_CACHE_KEY_MAX_LENGTH);
+        }
+
+        if ($cacheRetention === 'long' && $supportsLongCacheRetention) {
+            $body['prompt_cache_retention'] = '24h';
+        }
+
+        $body['stream_options'] = ['include_usage' => true];
 
         if ($compat->store) {
             $body['store'] = false;
@@ -785,6 +825,14 @@ final class OpenAiCompletions
             $body['tools'] = [];
         }
 
+        // Upstream's `getCompatCacheControl()` and `applyAnthropicCacheControl()`: an endpoint that
+        // takes Anthropic's `cache_control` (OpenRouter's `anthropic/…` models) gets it on the system
+        // prompt, the last tool and the last conversation message with text, `ttl: "1h"` for `long`.
+        if ($compat->cacheControlFormat === 'anthropic' && $cacheRetention !== 'none') {
+            $cacheControl = ['type' => 'ephemeral', ...($cacheRetention === 'long' && $supportsLongCacheRetention ? ['ttl' => '1h'] : [])];
+            self::applyAnthropicCacheControl($body, $cacheControl);
+        }
+
         if ($options?->toolChoice !== null) {
             $body['tool_choice'] = $options->toolChoice;
         }
@@ -793,6 +841,76 @@ final class OpenAiCompletions
         $this->routing($body, $model);
 
         return $body;
+    }
+
+    /**
+     * Upstream's `applyAnthropicCacheControl()`: `addCacheControlToSystemPrompt()` (the first
+     * `system` or `developer` message), `addCacheControlToLastTool()`, then
+     * `addCacheControlToLastConversationMessage()` (the last `user`, `assistant` or `tool` message
+     * whose text could take it, walking back past one that could not).
+     *
+     * @param array<string, mixed> $body
+     * @param array<string, string> $cacheControl
+     */
+    private static function applyAnthropicCacheControl(array &$body, array $cacheControl): void
+    {
+        foreach ($body['messages'] as $i => $message) {
+            if ($message['role'] === 'system' || $message['role'] === 'developer') {
+                self::addCacheControlToTextContent($body['messages'][$i], $cacheControl);
+
+                break;
+            }
+        }
+
+        if (isset($body['tools']) && $body['tools'] !== []) {
+            $body['tools'][count($body['tools']) - 1]['cache_control'] = $cacheControl;
+        }
+
+        for ($i = count($body['messages']) - 1; $i >= 0; $i--) {
+            $role = $body['messages'][$i]['role'];
+
+            if (($role === 'user' || $role === 'assistant' || $role === 'tool')
+                && self::addCacheControlToTextContent($body['messages'][$i], $cacheControl)) {
+                return;
+            }
+        }
+    }
+
+    /**
+     * Upstream's `addCacheControlToTextContent()`: a non-empty string becomes one text part carrying
+     * the cache control; in a list of parts, the last text part takes it. False when there was
+     * nowhere to put it — an empty string, no content, or no text part.
+     *
+     * @param array<string, mixed> $message
+     * @param array<string, string> $cacheControl
+     */
+    private static function addCacheControlToTextContent(array &$message, array $cacheControl): bool
+    {
+        $content = $message['content'] ?? null;
+
+        if (is_string($content)) {
+            if ($content === '') {
+                return false;
+            }
+
+            $message['content'] = [['type' => 'text', 'text' => $content, 'cache_control' => $cacheControl]];
+
+            return true;
+        }
+
+        if (!is_array($content)) {
+            return false;
+        }
+
+        for ($i = count($content) - 1; $i >= 0; $i--) {
+            if (($content[$i]['type'] ?? null) === 'text') {
+                $message['content'][$i]['cache_control'] = $cacheControl;
+
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

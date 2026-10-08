@@ -24,6 +24,7 @@ use Pig\Ai\ThinkingDeltaEvent;
 use Pig\Ai\ThinkingEndEvent;
 use Pig\Ai\ThinkingStartEvent;
 use Pig\Ai\Tool;
+use Pig\Ai\ToolCall;
 use Pig\Ai\ToolCallDeltaEvent;
 use Pig\Ai\ToolCallEndEvent;
 use Pig\Ai\ToolCallStartEvent;
@@ -105,6 +106,8 @@ final class StreamProxy
         // `pig/ai`, and writing a second accumulator would be a second answer to "what does a
         // half-finished tool call look like".
         $builder = new AssistantMessageBuilder($model);
+        // Upstream's partial starts at `stopReason: "pending"`; only `done` or `error` replace it.
+        $builder->setStopReason(StopReason::Pending);
         $signal = $options?->signal;
 
         try {
@@ -131,10 +134,12 @@ final class StreamProxy
 
             $signal?->throwIfAborted();
 
-            // A gateway that stopped without a `done` left a turn half-finished, and a caller
-            // cannot tell that from a turn that ended: `stopReason` would still read `stop`.
+            // A gateway that stopped without a `done` left a turn half-finished. Upstream's words:
+            // "A clean EOF without a done/error event means the server dropped the response
+            // mid-stream. Surface it as an error instead of leaving consumers waiting on a result
+            // that never arrives."
             if (!$finished) {
-                throw new AgentError('The proxy ended the stream without a done event');
+                throw new AgentError('Connection closed by proxy server before the response completed');
             }
 
             $message = $builder->snapshot();
@@ -156,8 +161,16 @@ final class StreamProxy
      * `options` is upstream's `buildProxyRequestOptions()`, the fields of it pig's options have —
      * `temperature`, `maxTokens`, `reasoning` (the enum's own string, upstream's word for the same
      * level), `cacheRetention`, `sessionId` and `metadata` — each left out when unset, as
-     * `JSON.stringify` leaves out an `undefined`. Not sent because pig has no such option:
-     * `samplingParams`, `headers`, `transport`, `thinkingBudgets`, `maxRetryDelayMs`.
+     * `JSON.stringify` leaves out an `undefined`.
+     *
+     * The other five are not sent because nothing in pig has a value for them. Upstream's coding
+     * agent does set them: `transport`, `thinkingBudgets` and `maxRetryDelayMs` from its settings
+     * (`settingsManager.getTransport()`, `.getThinkingBudgets()`, `.getProviderRetrySettings()`) on
+     * every request, `headers` from the provider's resolved auth, and `samplingParams` from the
+     * model's own. pig has no transport choice (no WebSocket), no thinking-budget setting, no retry
+     * inside a provider (its retry is `Session\Retry`, around the whole turn), no per-request auth
+     * headers (a model's headers travel on `model.headers`), and no sampling parameters on a model.
+     * Each field arrives with the setting or model field that would fill it.
      *
      * `JSON_INVALID_UTF8_SUBSTITUTE` because a conversation holds whatever the tools read, and
      * `read` and `bash` hand back a file's own bytes. Without it one latin-1 log made
@@ -219,7 +232,9 @@ final class StreamProxy
  * JSON but because a diff against `types.ts` is how the next person checks this.
      *
      * `thinkingLevelMap` goes when the model has one — nulls and all, since a null is "this level
-     * does not exist" and the server clamps by it — and `cost.tiers` when the price has tiers.
+     * does not exist" and the server clamps by it — `cost.tiers` when the price has tiers, and
+     * `inputLimits` and `promptCache` when the model has them, under `BaseModel`'s and `Model`'s
+     * positions in `types.ts`.
      *
      * @return array<string, mixed>
      */
@@ -234,7 +249,9 @@ final class StreamProxy
             'reasoning' => $model->reasoning,
             ...($model->thinkingLevelMap === [] ? [] : ['thinkingLevelMap' => $model->thinkingLevelMap]),
             'input' => $model->input,
+            ...($model->inputLimits === null ? [] : ['inputLimits' => $model->inputLimits]),
             'cost' => self::encodeCost($model->pricing),
+            ...($model->promptCache === null ? [] : ['promptCache' => $model->promptCache]),
             'contextWindow' => $model->contextWindow,
             'maxTokens' => $model->maxTokens,
         ];
@@ -295,6 +312,8 @@ final class StreamProxy
                 'supportsLongCacheRetention' => $model->compat->supportsLongCacheRetention,
                 'supportsExplicitPromptCacheMode' => $model->compat->supportsExplicitPromptCacheMode,
                 'supportsMaxOutputTokens' => $model->compat->supportsMaxOutputTokens,
+                'sendSessionAffinityHeaders' => $model->compat->sendSessionAffinityHeaders,
+                'cacheControlFormat' => $model->compat->cacheControlFormat,
             ], static fn (mixed $value): bool => $value !== null);
         }
 
@@ -477,7 +496,7 @@ final class StreamProxy
             'toolcall_delta' => $this->append($builder, $stream, $wire, 'json', $delta, 'toolcall_delta'),
             'text_end' => $this->end($builder, $stream, $wire, 'text_end', $event),
             'thinking_end' => $this->end($builder, $stream, $wire, 'thinking_end', $event),
-            'toolcall_end' => $this->end($builder, $stream, $wire, 'toolcall_end', $event),
+            'toolcall_end' => $this->toolCallEnd($builder, $stream, $wire, $event),
             // Upstream warns to the console for an unknown type. There is no console to warn to
             // during a turn — it would land in the middle of the drawn screen — and an event this
             // does not know is one it has nothing to do about.
@@ -544,6 +563,45 @@ final class StreamProxy
         });
     }
 
+    /**
+     * Upstream's `toolcall_end` arm: `Object.assign(content, proxyEvent.toolCall)` — the server's
+     * finished call (id, name, arguments, and whatever else a `ToolCall` carries) over what the
+     * deltas built, scratch JSON dropped — and **nothing at all, not a throw**, when the block at
+     * that index is not a tool call: `return undefined`, where the text and thinking arms throw.
+     * pig used to close the call with only the deltas' arguments and ignore the event's call.
+     *
+     * @param array<string, mixed> $event
+     */
+    private function toolCallEnd(AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, int $wire, array $event): void
+    {
+        $index = $builder->indexOf($wire);
+
+        if ($index === null || $builder->snapshot()->content[$index] instanceof ToolCall === false) {
+            return;
+        }
+
+        $call = is_array($event['toolCall'] ?? null) ? $event['toolCall'] : [];
+        $builder->setToolCall(
+            $index,
+            is_string($call['id'] ?? null) ? $call['id'] : '',
+            is_string($call['name'] ?? null) ? $call['name'] : '',
+        );
+
+        if (is_array($call['arguments'] ?? null)) {
+            $builder->setJson($index, $call['arguments'] === [] ? '{}' : (string) json_encode($call['arguments'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE));
+        }
+
+        if (is_string($call['thoughtSignature'] ?? null)) {
+            $builder->setSignature($index, $call['thoughtSignature']);
+        }
+
+        if (is_string($call['namespace'] ?? null)) {
+            $builder->setNamespace($index, $call['namespace']);
+        }
+
+        $stream->push(new ToolCallEndEvent($index, $builder->toolCallOf($index), $builder->snapshot()));
+    }
+
     /** @param array<string, mixed> $event */
     private function done(AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array $event): void
     {
@@ -552,15 +610,32 @@ final class StreamProxy
         // finish, and refusing a finished turn over a word loses the work.
         $builder->setStopReason(StopReason::tryFrom((string) ($event['reason'] ?? '')) ?? StopReason::Stop);
         $builder->setUsage(self::usage($event['usage'] ?? []), priced: true);
+        self::providerThinkingLevel($builder, $event);
         $message = $builder->snapshot();
         $stream->push(new DoneEvent($message->stopReason, $message));
         $stream->end();
+    }
+
+    /**
+     * Upstream's `done` and `error` arms: `if (proxyEvent.providerThinkingLevel !== undefined)
+     * partial.providerThinkingLevel = proxyEvent.providerThinkingLevel` — the native effort the
+     * server's provider was asked for, which the agent reads to know whether a mid-conversation
+     * effort change still has to be sent.
+     *
+     * @param array<string, mixed> $event
+     */
+    private static function providerThinkingLevel(AssistantMessageBuilder $builder, array $event): void
+    {
+        if (is_string($event['providerThinkingLevel'] ?? null)) {
+            $builder->setProviderThinkingLevel($event['providerThinkingLevel']);
+        }
     }
 
     /** @param array<string, mixed> $event */
     private function failed(AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array $event): void
     {
         $builder->setUsage(self::usage($event['usage'] ?? []), priced: true);
+        self::providerThinkingLevel($builder, $event);
         $builder->fail(
             (string) ($event['errorMessage'] ?? 'The proxy reported an error with no message'),
             ($event['reason'] ?? '') === 'aborted',

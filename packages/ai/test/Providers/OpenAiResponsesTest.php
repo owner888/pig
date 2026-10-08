@@ -1406,13 +1406,17 @@ final class OpenAiResponsesTest extends TestCase
         $this->assertSame('failed', $message->rawStopReason);
     }
 
-    /** An error event with nothing at the documented path still says what arrived. */
-    public function testAnErrorWithNoMessageWhereItBelongsIsNotCalledUnknown(): void
+    /**
+     * An `event: error` reads the way upstream reads it, which is through the `openai` SDK: its
+     * `Stream` throws an `APIError` made of `data.error ?? data` before pi's own code sees the event,
+     * and a status-less `APIError` is its `message` and nothing else.
+     */
+    public function testAnErrorEventIsTheSdksMessageWithoutTheCode(): void
     {
-        // A live run produced a bare `unknown error` for an oversized prompt, which means the
-        // message was somewhere else. Both shapes are read now, and the payload is the fallback:
-        // `Overflow`'s table matches against the provider's own words, so a message that goes
-        // missing here is a conversation that could have been compacted and instead died.
+        // The live API's nested shape, which once came back as a bare `unknown error` because the
+        // message was not where pig looked. `Overflow`'s table matches the provider's own words, so
+        // the sentence has to survive whole; the code does not, because upstream does not keep it
+        // either — this used to assert pig's own `Error context_length_exceeded:` prefix.
         $url = $this->serve([['type' => 'error', 'error' => [
             'message' => 'Requested 300000 tokens, exceeds the context window',
             'code' => 'context_length_exceeded',
@@ -1421,25 +1425,237 @@ final class OpenAiResponsesTest extends TestCase
         [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
 
         $this->assertSame(StopReason::Error, $message->stopReason);
-        $this->assertStringContainsString('exceeds the context window', (string) $message->errorMessage);
-        $this->assertStringContainsString('context_length_exceeded', (string) $message->errorMessage);
+        $this->assertSame('Requested 300000 tokens, exceeds the context window', $message->errorMessage);
 
-        // **And it is the message rather than the payload printed around it.** Asserting only that
-        // the sentence is in there passes either way, because the fallback prints the whole JSON —
-        // which contains it. The mutation that reads the flat path alone was silent until this
-        // line, in a test written to catch exactly that mutation.
-        $this->assertStringNotContainsString('an error with no message in it', (string) $message->errorMessage);
+        // The documented flat shape under `event: error` is the same: `data.error` is absent, so
+        // the SDK makes its error of the whole event and reads its `message`.
+        $url = $this->serve([['type' => 'error', 'code' => 'server_error', 'message' => 'flat and named']]);
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $this->assertSame('flat and named', $message->errorMessage);
     }
 
-    /** And with the message nowhere at all, the payload itself is the message. */
+    /** With the message nowhere at all, the SDK's message is the error object's JSON. */
     public function testAnErrorWithNoMessageAnywhereCarriesWhatArrived(): void
     {
+        // `APIError.makeMessage()`: no `message` on the error, so `JSON.stringify(error)` — which is
+        // still better than a sentence that describes nothing, and is what upstream shows. This
+        // used to be pig's own "an error with no message in it: <json>".
         $url = $this->serve([['type' => 'error', 'detail' => 'a shape nobody documented']]);
 
         [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
 
-        $this->assertStringContainsString('an error with no message in it', (string) $message->errorMessage);
-        $this->assertStringContainsString('a shape nobody documented', (string) $message->errorMessage);
+        $this->assertSame('{"type":"error","detail":"a shape nobody documented"}', $message->errorMessage);
+    }
+
+    /** Upstream's own `error` arm: `Error Code ${event.code}: ${event.message}`, for an unnamed event. */
+    public function testAFlatErrorWithNoEventNameIsErrorCodeAndMessage(): void
+    {
+        // Only a server that sends no `event: error` line — a compatible endpoint or a proxy —
+        // reaches processResponsesStream's arm; the template never comes out empty, so its
+        // `|| "Unknown error"` never applies, and a missing field reads `undefined`.
+        $url = $this->serve([['type' => 'error', 'code' => 'rate_limit_exceeded', 'message' => 'Slow down']], named: false);
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $this->assertSame('Error Code rate_limit_exceeded: Slow down', $message->errorMessage);
+
+        $url = $this->serve([['type' => 'error', 'message' => 'no code at all']], named: false);
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $this->assertSame('Error Code undefined: no code at all', $message->errorMessage);
+    }
+
+    /** Upstream's `response.failed` text, each of its three forms. */
+    public function testAFailedResponseSaysCodeAndMessageAsUpstreamWritesThem(): void
+    {
+        // `${error.code || "unknown"}: ${error.message || "no message"}` — pig used to write
+        // "The response failed: <message>", dropping the code a person needs to look the failure up.
+        $url = $this->serve([['type' => 'response.failed', 'response' => [
+            'status' => 'failed', 'error' => ['code' => 'server_error', 'message' => 'The model crashed'],
+        ]]]);
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $this->assertSame('server_error: The model crashed', $message->errorMessage);
+        $this->assertSame('failed', $message->rawStopReason);
+
+        $url = $this->serve([['type' => 'response.failed', 'response' => ['status' => 'failed', 'error' => ['code' => '']]]]);
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $this->assertSame('unknown: no message', $message->errorMessage);
+
+        $url = $this->serve([['type' => 'response.failed', 'response' => ['status' => 'failed', 'incomplete_details' => ['reason' => 'max_output_tokens']]]]);
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $this->assertSame('incomplete: max_output_tokens', $message->errorMessage);
+
+        $url = $this->serve([['type' => 'response.failed', 'response' => ['status' => 'failed']]]);
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $this->assertSame('Unknown error (no error details in response)', $message->errorMessage);
+    }
+
+    // ---- how a stream ends ----------------------------------------------------------------
+
+    public function testABodyThatEndsWithNoTerminalEventIsAnErrorNotAnAnswer(): void
+    {
+        // Upstream's `processResponsesStream()`: "OpenAI Responses stream ended before a terminal
+        // response event". pig started the turn at `stop`, so a connection cut after the text had
+        // streamed — no `response.completed` — handed back half an answer as a finished one, with
+        // no usage, and the agent went on as if the model had said all it meant to.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => ['type' => 'message', 'id' => 'msg_1']],
+            ['type' => 'response.output_text.delta', 'delta' => 'The answer is'],
+        ]);
+
+        [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('ErrorEvent', $types[array_key_last($types)]);
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('OpenAI Responses stream ended before a terminal response event', $message->errorMessage);
+    }
+
+    public function testDataThatIsNotJsonFailsUnlessTheDoneSentinelEndedTheStream(): void
+    {
+        // Everything now goes through the SDK's rules, and the SDK stops at `data: [DONE]` before it
+        // parses anything — so a compatible server that sends one after `response.completed` ends
+        // cleanly instead of with "malformed server-sent event JSON".
+        $body = 'data: ' . json_encode(['type' => 'response.completed', 'response' => ['status' => 'completed']]) . "\n\ndata: [DONE]\n\ndata: not json\n\n";
+        $url = $this->server->start(["HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: " . strlen($body) . "\r\n\r\n" . $body]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Stop, $message->stopReason);
+        $this->assertNull($message->errorMessage);
+
+        // Without the sentinel, data that is not JSON is the SDK's `SyntaxError`, not skipped: pig
+        // used to skip it and carry on.
+        $this->server = new CannedServer();
+        $body = "data: not json\n\n" . 'data: ' . json_encode(['type' => 'response.completed', 'response' => ['status' => 'completed']]) . "\n\n";
+        $url = $this->server->start(["HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: " . strlen($body) . "\r\n\r\n" . $body]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('Error reading response: malformed server-sent event JSON.', $message->errorMessage);
+    }
+
+    public function testTheFinishedArgumentsReplaceTheDeltasAndSendWhatTheyMissed(): void
+    {
+        // Upstream's `response.function_call_arguments.done` arm: the whole arguments replace what
+        // the deltas built, and the tail the deltas never sent goes out as one more delta — so a
+        // listener that rebuilds the call from deltas ends with the same JSON as the call itself.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => ['type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'read']],
+            ['type' => 'response.function_call_arguments.delta', 'delta' => '{"path":'],
+            ['type' => 'response.function_call_arguments.done', 'arguments' => '{"path":"a.txt"}'],
+            ['type' => 'response.output_item.done', 'item' => ['type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'read']],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [$deltas, $message] = Async::run(function () use ($url): array {
+            $stream = (new OpenAiResponses())->stream($this->model(baseUrl: $url), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'test-key'));
+            $deltas = [];
+
+            foreach ($stream as $event) {
+                if ($event instanceof \Pig\Ai\ToolCallDeltaEvent) {
+                    $deltas[] = $event->delta;
+                }
+            }
+
+            return [$deltas, $stream->result()->await()];
+        });
+
+        $this->assertSame(['{"path":', '"a.txt"}'], $deltas);
+        $this->assertSame(['path' => 'a.txt'], $message->content[0]->arguments ?? null);
+        $this->assertSame(StopReason::ToolUse, $message->stopReason);
+    }
+
+    public function testEncryptedReasoningOnlyTheTerminalResponseCarriesIsBackfilled(): void
+    {
+        // Upstream's `backfillReasoningSignatures()`: "Azure OpenAI can omit
+        // reasoning.encrypted_content from response.output_item.done and provide it only in
+        // response.completed.response.output." Without it the stored item had no encrypted
+        // content, so the next turn replayed reasoning the model could not resume from.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => ['type' => 'reasoning', 'id' => 'rs_1']],
+            ['type' => 'response.output_item.done', 'item' => ['type' => 'reasoning', 'id' => 'rs_1', 'summary' => []]],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed', 'output' => [
+                ['type' => 'reasoning', 'id' => 'rs_1', 'encrypted_content' => 'ENC'],
+                ['type' => 'reasoning', 'id' => 'rs_unknown', 'encrypted_content' => 'NOT-OURS'],
+            ]]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $block = $message->content[0];
+        $this->assertInstanceOf(ThinkingContent::class, $block);
+        $this->assertSame(
+            ['type' => 'reasoning', 'id' => 'rs_1', 'summary' => [], 'encrypted_content' => 'ENC'],
+            json_decode((string) $block->thinkingSignature, true),
+        );
+
+        // One the item already carried is left as it came.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => ['type' => 'reasoning', 'id' => 'rs_1']],
+            ['type' => 'response.output_item.done', 'item' => ['type' => 'reasoning', 'id' => 'rs_1', 'encrypted_content' => 'FIRST']],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed', 'output' => [
+                ['type' => 'reasoning', 'id' => 'rs_1', 'encrypted_content' => 'SECOND'],
+            ]]],
+        ]);
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $this->assertSame('FIRST', json_decode((string) $message->content[0]->thinkingSignature, true)['encrypted_content'] ?? null);
+    }
+
+    public function testAReasoningSummaryIsAskedForAsTheCallerSaysAndDefaultsToAuto(): void
+    {
+        // Upstream's `reasoningSummary` option: sent as `reasoning.summary`, `auto` when not given,
+        // and given alone it asks for `medium` effort. pig always sent `auto`.
+        [, $body] = $this->capture($this->model(reasoning: true), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'test-key', reasoning: ReasoningEffort::High));
+        $this->assertSame(['effort' => 'high', 'summary' => 'auto'], $body['reasoning']);
+
+        [, $body] = $this->capture($this->model(reasoning: true), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'test-key', reasoning: ReasoningEffort::Low, reasoningSummary: 'detailed'));
+        $this->assertSame(['effort' => 'low', 'summary' => 'detailed'], $body['reasoning']);
+
+        [, $body] = $this->capture($this->model(reasoning: true), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'test-key', reasoningSummary: 'concise'));
+        $this->assertSame(['effort' => 'medium', 'summary' => 'concise'], $body['reasoning']);
+        $this->assertSame(['reasoning.encrypted_content'], $body['include']);
+    }
+
+    public function testTheSystemPromptIsASystemTurnWhereTheCompatSaysThereIsNoDeveloperRole(): void
+    {
+        // Upstream's `instructionRole`: `developer` for a reasoning model unless its compat says
+        // `supportsDeveloperRole: false`. pig read only `reasoning`, so a compatible endpoint that
+        // knows no `developer` role got one anyway.
+        $context = new Context([new UserMessage('hi')], 'Be brief.');
+
+        [, $body] = $this->capture($this->model(reasoning: true), $context);
+        $this->assertSame('developer', $body['input'][0]['role']);
+
+        [, $body] = $this->capture($this->model(reasoning: true, compat: new OpenAiCompat(developerRole: false)), $context);
+        $this->assertSame('system', $body['input'][0]['role']);
+    }
+
+    public function testASignInWithChatGptUsageLimitPointsAtTheUsagePage(): void
+    {
+        // Upstream: "Sign in with ChatGPT shares the subscription's usage limit with other apps",
+        // so an error carrying `subscription_sharing_usage_limit_exceeded` gets
+        // "\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage" — whether it came as the
+        // refused request's body or in the stream.
+        $body = '{"error":{"message":"You have hit your usage limit.","code":"subscription_sharing_usage_limit_exceeded"}}';
+        $url = $this->server->start([
+            "HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nContent-Length: " . strlen($body) . "\r\n\r\n" . $body,
+        ]);
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $this->assertStringContainsString('You have hit your usage limit.', (string) $message->errorMessage);
+        $this->assertStringEndsWith("\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage", (string) $message->errorMessage);
+
+        $this->server = new CannedServer();
+        $url = $this->serve([['type' => 'response.failed', 'response' => ['status' => 'failed', 'error' => [
+            'code' => 'subscription_sharing_usage_limit_exceeded', 'message' => 'Limit reached',
+        ]]]]);
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $this->assertSame(
+            "subscription_sharing_usage_limit_exceeded: Limit reached\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage",
+            $message->errorMessage,
+        );
+
+        // Any other error is left alone.
+        $this->server = new CannedServer();
+        $url = $this->serve([['type' => 'response.failed', 'response' => ['status' => 'failed', 'error' => ['code' => 'server_error', 'message' => 'x']]]]);
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $this->assertSame('server_error: x', $message->errorMessage);
     }
 
     // ---- what Copilot needs on top -----------------------------------------------------------
@@ -1629,12 +1845,13 @@ final class OpenAiResponsesTest extends TestCase
     }
 
     /** @param list<array<string, mixed>> $events */
-    private function serve(array $events): string
+    private function serve(array $events, bool $named = true): string
     {
         $pieces = ["HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"];
 
         foreach ($events as $event) {
-            $body = "event: {$event['type']}\ndata: " . json_encode($event) . "\n\n";
+            // `$named`: the `event:` line OpenAI writes, which a compatible server may leave out.
+            $body = ($named ? "event: {$event['type']}\n" : '') . 'data: ' . json_encode($event) . "\n\n";
             $pieces[] = sprintf("%x\r\n%s\r\n", strlen($body), $body);
         }
 

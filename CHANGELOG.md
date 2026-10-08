@@ -43,6 +43,34 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.33] - 2026-10-08
+
+### New Features
+
+- **OpenAI Short-Context Capped Models & Long-Context Tier Pricing (`generate-models.php`, `Models`, `PricingTier`)**:
+  - Aligned model generation overrides for `OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS` (gpt-5.4, gpt-5.5, GPT-5.6, GPT-6, 6.1 Sol), capping context windows at 272,000 (output 128,000) to trigger compaction before OpenAI's expensive long-context pricing threshold.
+  - Implemented `withOpenAiLongContextPricing()` for `OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS` (2x input/cache, 1.5x output past 272k) and set gpt-5-pro max output tokens to 128,000.
+- **Chat Completions Caching, Affinity Headers & Anthropic Markers (`OpenAiCompletions`, `OpenAiCompat`)**:
+  - Transmitted `prompt_cache_key` on `api.openai.com` endpoints and `x-session-id` on affinity-enabled providers (e.g. OpenRouter).
+  - Applied Anthropic `cache_control` markers on system prompt, final tool, and final user block when `cacheControlFormat` is `anthropic`.
+- **Strict Custom Model Pricing Tier & Limit Validation (`CustomModels`)**:
+  - Implemented TypeBox-compatible schema validation for `cost.tiers`, `inputLimits`, and `promptCache` in `models.json`, rejecting malformed numeric fields with diagnostic path errors instead of silently falling back to zero rates.
+
+### Fixed
+
+- **Premature Stream Termination Safeguards (`StopReason::Pending`, `Anthropic`, `OpenAiResponses`)**:
+  - Initialized stream builder stop reasons as `StopReason::Pending`.
+  - Converted uncompleted streams that terminate without `message_stop` / `stop_reason` or Responses terminal events into explicit provider errors (`Anthropic stream ended without a stop reason`, `OpenAI Responses stream ended before a terminal response event`) rather than misrepresenting aborted turns as successful completions.
+- **OpenAI Responses SDK Error Translation & ChatGPT Quota Deep Links (`OpenAiResponses`)**:
+  - Mapped SSE error events matching the `openai` SDK (`sdkEvent()`), unwrapping nested API error payloads cleanly.
+  - Appended `\nCheck your ChatGPT usage: https://chatgpt.com/settings/usage` when encountering `subscription_sharing_usage_limit_exceeded`.
+- **Azure Encrypted Reasoning Backfill & Arguments Completion (`OpenAiResponses`)**:
+  - Backfilled encrypted reasoning payloads from `response.completed.response.output` for endpoints (such as Azure) that omit encrypted content from delta items.
+  - Replaced partial arguments and dispatched missing deltas upon receiving `function_call_arguments.done`.
+- **StreamProxy Interrupted Connection Detection & Provider Thinking Level (`StreamProxy`)**:
+  - Detected proxy disconnections occurring without terminal `done` or `error` events, throwing `Connection closed by proxy server before the response completed`.
+  - Relayed `providerThinkingLevel` and updated final tool call snapshots on `toolcall_end`.
+
 ## [0.4.32] - 2026-10-08
 
 ### New Features

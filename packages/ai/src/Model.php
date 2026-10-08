@@ -32,6 +32,18 @@ final readonly class Model
      *        does not have that level at all, and a string is what to send instead. Upstream's
      *        `ThinkingLevelMap`, and the distinction is the whole of it — `??` flattens the first
      *        two into each other and is the wrong operator for reading this.
+     * @param array{maxRequestBytes?: int, images?: array{resize?: array{maxWidth?: int, maxHeight?: int, maxBytes?: int, jpegQuality?: int}, maxPerMessage?: int, maxPerRequest?: int}}|null $inputLimits
+     *        upstream's `inputLimits` (`ModelInputLimits`): "Provider input limits and cache-safe
+     *        preprocessing metadata" — the largest request in bytes, how many images one message or
+     *        one request may carry, and the resize profile an image gets before it enters the
+     *        history. Null is upstream's undefined. `Models` writes it the way upstream's generator
+     *        (`applyImageInputMetadata()`) does, `models.json` may say it; pig has no image
+     *        preprocessing that reads it yet (see CLAUDE.md), so it is carried and sent on.
+     * @param array{short?: int|float, long?: int|float}|null $promptCache upstream's `promptCache`
+     *        (`ModelPromptCache`): "Prompt cache lifetimes per retention tier. Unset when the
+     *        provider's cache behavior is unknown." Seconds per `cacheRetention` tier — direct
+     *        Anthropic is `{short: 300, long: 3600}`. Upstream's only reader is its cache warmer,
+     *        which pig does not have.
      */
     public function __construct(
         public string $id,
@@ -47,6 +59,8 @@ final readonly class Model
         public array $headers = [],
         public OpenAiCompat|AnthropicCompat|null $compat = null,
         public array $thinkingLevelMap = [],
+        public ?array $inputLimits = null,
+        public ?array $promptCache = null,
     ) {
     }
 

@@ -126,6 +126,9 @@ final class Anthropic
         ?AnthropicOptions $options,
     ): void {
         $builder = new AssistantMessageBuilder($model);
+        // Upstream's `stopReason: "pending"` on the output from the start: only `message_delta`'s
+        // `stop_reason` replaces it, so a stream that never sends one can be told from one that did.
+        $builder->setStopReason(StopReason::Pending);
         // Upstream: `providerThinkingLevel = model.compat?.supportsMidConvoEffort ? (options?.effort
         // ?? "high") : undefined`, on the output from the start — so a failed turn records it too.
         if (self::compat($model)?->supportsMidConvoEffort === true) {
@@ -149,15 +152,40 @@ final class Anthropic
 
             $stream->push(new StartEvent($builder->snapshot()));
             $parser = new SseParser();
+            // Upstream's `iterateAnthropicEvents()`: whether a `message_start` and a `message_stop`
+            // went by, read off each parsed event's own `type`.
+            $sawMessageStart = false;
+            $sawMessageEnd = false;
 
             foreach ($response->body as $chunk) {
                 foreach ($parser->feed($chunk) as $event) {
+                    // `if (sse.event === "error") throw new Error(sse.data)` — the event's data,
+                    // whole, is the message. An overloaded API sends this mid-stream with a 200.
+                    if ($event->type === 'error') {
+                        throw new ProviderError($event->data);
+                    }
+
+                    $type = json_decode($event->data, true)['type'] ?? null;
+                    $sawMessageStart = $sawMessageStart || $type === 'message_start';
+                    $sawMessageEnd = $sawMessageEnd || $type === 'message_stop';
                     $transformations = $this->dispatch($event, $model, $builder, $stream, $tools) ?? $transformations;
                 }
             }
 
             // An abort mid-stream ends the body quietly; say so rather than reporting success.
+            // Before the two checks below because upstream's reader throws "Request was aborted"
+            // from inside the loop, so an aborted turn never reaches them.
             $signal?->throwIfAborted();
+
+            if ($sawMessageStart && !$sawMessageEnd) {
+                throw new ProviderError('Anthropic stream ended before message_stop');
+            }
+
+            // A body that ended without a `stop_reason` — a connection cut, or a proxy that closed
+            // it early — used to be a clean `stop` carrying a half-finished answer.
+            if ($builder->stopReason() === StopReason::Pending) {
+                throw new ProviderError('Anthropic stream ended without a stop reason');
+            }
 
             // Upstream: `if (output.stopReason === "aborted" || output.stopReason === "error") throw
             // new Error(output.errorMessage || "An unknown error occurred")` — so a refusal or a
@@ -204,8 +232,8 @@ final class Anthropic
             'content_block_delta' => $this->onBlockDelta($data, $builder, $stream),
             'content_block_stop' => $this->onBlockStop($data, $builder, $stream),
             'message_delta' => $this->onMessageDelta($data, $builder),
-            // ping and message_stop carry nothing this port needs; an error arrives as a
-            // non-2xx status or as a stream that stops, both handled by the caller.
+            // ping and message_stop carry nothing this port needs; `run()` counts `message_stop`
+            // and throws on an `error` event before it gets here.
             default => null,
         };
 

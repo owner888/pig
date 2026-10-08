@@ -853,6 +853,42 @@ final class OpenAiCompletionsTest extends TestCase
     }
 
     /**
+     * Upstream's `detectCompat()` for the caching and session keys: session headers and the
+     * `openrouter` format for OpenRouter alone, no long cache retention on Together, Cloudflare,
+     * NVIDIA and Ant Ling, and Anthropic `cache_control` for an OpenRouter `anthropic/…` model. pig
+     * detected none of them — the completions provider sent no cache key and no session at all.
+     */
+    public function testTheCachingAndSessionKeysAreDetectedAsUpstreamDetectsThem(): void
+    {
+        // [url, provider, model id] => [sendSessionAffinityHeaders, sessionAffinityFormat, supportsLongCacheRetention, cacheControlFormat]
+        $table = [
+            'openrouter claude' => [['https://openrouter.ai/api/v1', 'openrouter', 'anthropic/claude-opus-4.8'], [true, 'openrouter', true, 'anthropic']],
+            'openrouter by url' => [['https://openrouter.ai/api/v1', 'x', 'anthropic/claude-opus-4.8'], [true, 'openrouter', true, null]],
+            'groq' => [['https://api.groq.com/openai/v1', 'groq', 'x'], [false, 'openai', true, null]],
+            'together' => [['https://api.together.xyz/v1', '', ''], [false, 'openai', false, null]],
+            'cf workers' => [['https://api.cloudflare.com/client/v4/accounts/a/ai/v1', '', ''], [false, 'openai', false, null]],
+            'cf gateway' => [['https://gateway.ai.cloudflare.com/v1/a/b/compat', '', ''], [false, 'openai', false, null]],
+            'nvidia' => [['https://integrate.api.nvidia.com/v1', '', ''], [false, 'openai', false, null]],
+            'ant-ling' => [['https://api.ant-ling.com/v1', '', ''], [false, 'openai', false, null]],
+        ];
+
+        foreach ($table as $name => [[$url, $provider, $id], $expected]) {
+            $compat = OpenAiCompat::detect($url, $provider, $id);
+
+            $this->assertSame(
+                $expected,
+                [$compat->sendSessionAffinityHeaders, $compat->sessionAffinityFormat, $compat->supportsLongCacheRetention, $compat->cacheControlFormat],
+                $name,
+            );
+        }
+
+        // And a model's own key wins over detection, as every other key's does.
+        $model = $this->model('https://openrouter.ai/api/v1', compat: new OpenAiCompat(sendSessionAffinityHeaders: false, supportsLongCacheRetention: false));
+        $this->assertFalse(OpenAiCompat::resolve($model)->sendSessionAffinityHeaders);
+        $this->assertFalse(OpenAiCompat::resolve($model)->supportsLongCacheRetention);
+    }
+
+    /**
      * Upstream's `getCompat()`: `model.compat.x ?? detected.x`, key by key. A block that says one
      * thing leaves the rest to detection — pig used to take any block as the whole answer, so
      * this DeepSeek model, whose block only asks for thinking as text, was sent `store` and the
@@ -1446,6 +1482,132 @@ final class OpenAiCompletionsTest extends TestCase
         $this->send(new Context([new UserMessage('hi')]));
 
         $this->assertArrayNotHasKey('temperature', $this->server->receivedJson());
+    }
+
+    // ---- prompt cache and session affinity ---------------------------------------------------
+
+    public function testOpenAisOwnEndpointGetsThePromptCacheKeyUnlessCachingIsOff(): void
+    {
+        // Upstream's `prompt_cache_key`: the session id, cut to 64 code points, for a base URL that
+        // contains `api.openai.com` — here as a path segment of the canned server, which is what
+        // upstream's `includes()` reads — and `cacheRetention` anything but `none`. pig sent none,
+        // so a long conversation through OpenAI's own chat completions cached by luck.
+        $long = str_repeat('é', 70);
+        $this->server = new CannedServer();
+        $body = $this->sendWith($this->model(), new OpenAiOptions(apiKey: 'test-key', sessionId: $long), '/api.openai.com/v1')[1];
+        $this->assertSame(str_repeat('é', 64), $body['prompt_cache_key']);
+        $this->assertArrayNotHasKey('prompt_cache_retention', $body);
+
+        $this->server = new CannedServer();
+        $body = $this->sendWith($this->model(), new OpenAiOptions(apiKey: 'test-key', cacheRetention: 'none', sessionId: 's1'), '/api.openai.com/v1')[1];
+        $this->assertArrayNotHasKey('prompt_cache_key', $body);
+
+        // Elsewhere only `long` asks, and then with `prompt_cache_retention: "24h"` too — unless the
+        // endpoint is one detection says cannot keep a long cache (Together, here).
+        $this->server = new CannedServer();
+        $body = $this->sendWith($this->model(), new OpenAiOptions(apiKey: 'test-key', sessionId: 's1'))[1];
+        $this->assertArrayNotHasKey('prompt_cache_key', $body);
+
+        $this->server = new CannedServer();
+        $body = $this->sendWith($this->model(), new OpenAiOptions(apiKey: 'test-key', cacheRetention: 'long', sessionId: 's1'))[1];
+        $this->assertSame('s1', $body['prompt_cache_key']);
+        $this->assertSame('24h', $body['prompt_cache_retention']);
+        // In upstream's key order: right after `stream`, before `stream_options`.
+        $this->assertSame(['model', 'messages', 'stream', 'prompt_cache_key', 'prompt_cache_retention', 'stream_options'], array_slice(array_keys($body), 0, 6));
+
+        $this->server = new CannedServer();
+        $body = $this->sendWith($this->model(compat: new OpenAiCompat(supportsLongCacheRetention: false)), new OpenAiOptions(apiKey: 'test-key', cacheRetention: 'long', sessionId: 's1'))[1];
+        $this->assertArrayNotHasKey('prompt_cache_key', $body);
+        $this->assertArrayNotHasKey('prompt_cache_retention', $body);
+    }
+
+    public function testTheSessionGoesOutAsHeadersOnlyWhereTheCompatSaysSo(): void
+    {
+        // Upstream's `sendSessionAffinityHeaders` (detected for OpenRouter alone) and
+        // `sessionAffinityFormat`: `x-session-id` for `openrouter`; otherwise `x-client-request-id`
+        // and `x-session-affinity`, plus `session_id` for `openai`. No session, or `none`, sends none.
+        $this->server = new CannedServer();
+        $head = $this->sendWith($this->model(), new OpenAiOptions(apiKey: 'test-key', sessionId: 's1'))[0];
+        $this->assertStringNotContainsStringIgnoringCase('x-client-request-id', $head);
+        $this->assertStringNotContainsStringIgnoringCase('x-session-id', $head);
+
+        $this->server = new CannedServer();
+        $head = $this->sendWith($this->model(compat: new OpenAiCompat(sendSessionAffinityHeaders: true)), new OpenAiOptions(apiKey: 'test-key', sessionId: 's1'))[0];
+        $this->assertStringContainsStringIgnoringCase("session_id: s1\r\n", $head);
+        $this->assertStringContainsStringIgnoringCase("x-client-request-id: s1\r\n", $head);
+        $this->assertStringContainsStringIgnoringCase("x-session-affinity: s1\r\n", $head);
+
+        $this->server = new CannedServer();
+        $head = $this->sendWith($this->model(compat: new OpenAiCompat(sendSessionAffinityHeaders: true, sessionAffinityFormat: 'openai-nosession')), new OpenAiOptions(apiKey: 'test-key', sessionId: 's1'))[0];
+        $this->assertStringNotContainsStringIgnoringCase('session_id: s1', $head);
+        $this->assertStringContainsStringIgnoringCase("x-session-affinity: s1\r\n", $head);
+
+        $this->server = new CannedServer();
+        $head = $this->sendWith($this->model(compat: new OpenAiCompat(sendSessionAffinityHeaders: true, sessionAffinityFormat: 'openrouter')), new OpenAiOptions(apiKey: 'test-key', cacheRetention: 'none', sessionId: 's1'))[0];
+        $this->assertStringNotContainsStringIgnoringCase('x-session-id', $head);
+
+        $this->server = new CannedServer();
+        $head = $this->sendWith($this->model(compat: new OpenAiCompat(sendSessionAffinityHeaders: true, sessionAffinityFormat: 'openrouter')), new OpenAiOptions(apiKey: 'test-key', sessionId: 's1'))[0];
+        $this->assertStringContainsStringIgnoringCase("x-session-id: s1\r\n", $head);
+        $this->assertStringNotContainsStringIgnoringCase('x-client-request-id', $head);
+    }
+
+    public function testAnAnthropicModelThroughOpenRouterGetsCacheControlMarks(): void
+    {
+        // Upstream's `cacheControlFormat: "anthropic"` (detected for OpenRouter's `anthropic/…`
+        // models): `cache_control` on the system prompt, the last tool and the last conversation
+        // text, with `ttl: "1h"` for `long`. Without it every OpenRouter Claude turn paid full price
+        // for the whole prompt.
+        $model = $this->model(compat: new OpenAiCompat(cacheControlFormat: 'anthropic'));
+        $context = new Context(
+            [new UserMessage('first'), $this->assistant([new TextContent('reply')]), new UserMessage('second')],
+            'Be brief.',
+            [new Tool('a', 'A', ['type' => 'object']), new Tool('b', 'B', ['type' => 'object'])],
+        );
+
+        $this->server = new CannedServer();
+        $body = $this->sendWith($model, new OpenAiOptions(apiKey: 'test-key', cacheRetention: 'long'), context: $context)[1];
+        $mark = ['type' => 'ephemeral', 'ttl' => '1h'];
+        $this->assertSame([['type' => 'text', 'text' => 'Be brief.', 'cache_control' => $mark]], $body['messages'][0]['content']);
+        $this->assertArrayNotHasKey('cache_control', $body['tools'][0]);
+        $this->assertSame($mark, $body['tools'][1]['cache_control']);
+        $this->assertSame($mark, $body['messages'][3]['content'][0]['cache_control']);
+        $this->assertArrayNotHasKey('cache_control', $body['messages'][1]['content'][0]);
+        $this->assertSame('reply', $body['messages'][2]['content'], 'only the last conversation message is marked');
+
+        // `short` marks without a TTL, and `none` marks nothing.
+        $this->server = new CannedServer();
+        $body = $this->sendWith($model, new OpenAiOptions(apiKey: 'test-key'), context: $context)[1];
+        $this->assertSame(['type' => 'ephemeral'], $body['tools'][1]['cache_control']);
+
+        $this->server = new CannedServer();
+        $body = $this->sendWith($model, new OpenAiOptions(apiKey: 'test-key', cacheRetention: 'none'), context: $context)[1];
+        $this->assertArrayNotHasKey('cache_control', $body['tools'][1]);
+        $this->assertSame('Be brief.', $body['messages'][0]['content']);
+    }
+
+    /**
+     * One request with these options, from a model whose base URL is the canned server's — with
+     * `$path` after it, so a test can put `api.openai.com` in the URL the way upstream reads it.
+     *
+     * @return array{0: string, 1: array<string, mixed>} the request's head and its JSON body
+     */
+    private function sendWith(Model $model, OpenAiOptions $options, string $path = '', ?Context $context = null): array
+    {
+        $url = rtrim($this->serve([['choices' => [['delta' => ['content' => 'ok'], 'finish_reason' => 'stop']]]]), '/') . $path;
+
+        Async::run(function () use ($url, $model, $options, $context): void {
+            $stream = (new OpenAiCompletions())->stream(
+                new Model($model->id, $model->name, $model->api, $model->provider, $url, $model->contextWindow, $model->maxTokens, $model->reasoning, $model->input, $model->pricing, $model->headers, $model->compat, $model->thinkingLevelMap),
+                $context ?? new Context([new UserMessage('hi')]),
+                $options,
+            );
+
+            foreach ($stream as $ignored) {
+            }
+        });
+
+        return [$this->server->receivedHead(), $this->server->receivedJson()];
     }
 
     private function send(

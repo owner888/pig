@@ -403,6 +403,36 @@ final class StreamProxyTest extends TestCase
         $this->assertArrayNotHasKey('tiers', $plain['cost']);
     }
 
+    public function testInputLimitsPromptCacheAndTheCachingCompatKeysGoWithTheModel(): void
+    {
+        // Upstream sends the model whole, `inputLimits` and `promptCache` included — the server's
+        // own cache warmer and image preprocessing read them — and a completions compat's caching
+        // and session keys under their `OpenAICompletionsCompat` names.
+        $model = new Model('m', 'M', Api::OpenAiCompletions, 'openrouter', 'https://openrouter.ai/api/v1', 200_000, 8_192,
+            compat: new OpenAiCompat(sendSessionAffinityHeaders: true, cacheControlFormat: 'anthropic'),
+            inputLimits: ['images' => ['maxPerRequest' => 5]],
+            promptCache: ['short' => 300, 'long' => 3600]);
+        $url = $this->server->start([self::sse([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]])]);
+        $proxy = new StreamProxy(rtrim($url, '/'), 't');
+
+        Async::run(static function () use ($proxy, $model): void {
+            foreach ($proxy->stream($model, new Context([new UserMessage([new TextContent('hi')])])) as $ignored) {
+            }
+        });
+
+        $sent = $this->server->receivedJson()['model'];
+        $this->assertSame(['images' => ['maxPerRequest' => 5]], $sent['inputLimits']);
+        $this->assertSame(['short' => 300, 'long' => 3600], $sent['promptCache']);
+        $this->assertSame(['sendSessionAffinityHeaders' => true, 'cacheControlFormat' => 'anthropic'], $sent['compat']);
+
+        // Neither key on a model that has neither.
+        $this->setUp();
+        $this->turn([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]]);
+        $plain = $this->server->receivedJson()['model'];
+        $this->assertArrayNotHasKey('inputLimits', $plain);
+        $this->assertArrayNotHasKey('promptCache', $plain);
+    }
+
     public function testAToolResultThatIsNotUtf8StillReachesTheGateway(): void
     {
         $context = new Context(
@@ -585,10 +615,69 @@ final class StreamProxyTest extends TestCase
         $this->assertSame('read', $message->content[0]->name);
         $this->assertSame(['path' => 'a.txt'], $message->content[0]->arguments);
 
-        // `toolcall_end` carries only the index on the wire — the tool call it names is the one pig
-        // built, which is the whole reason the deltas had to be accumulated rather than forwarded.
+        // A `toolcall_end` with no `toolCall` on it leaves the call the deltas built — upstream's
+        // `Object.assign(content, undefined)` changes nothing — which is why the deltas are
+        // accumulated rather than forwarded.
         $ends = array_values(array_filter($events, static fn (object $e): bool => $e instanceof ToolCallEndEvent));
         $this->assertSame('read', $ends[0]->toolCall->name);
+    }
+
+    public function testTheServersFinishedToolCallReplacesWhatTheDeltasBuilt(): void
+    {
+        // Upstream's `toolcall_end` arm: `Object.assign(content, proxyEvent.toolCall)`. The server's
+        // call is the finished one — its provider may have repaired the JSON, renamed the id, or
+        // added a namespace — and pig used to ignore it and run the call the deltas spelled.
+        [$message, $events] = $this->turn([
+            ['type' => 'toolcall_start', 'contentIndex' => 0, 'id' => 'call-9', 'toolName' => 'read'],
+            ['type' => 'toolcall_delta', 'contentIndex' => 0, 'delta' => '{"path":"a'],
+            ['type' => 'toolcall_end', 'contentIndex' => 0, 'toolCall' => [
+                'type' => 'toolCall', 'id' => 'call-9|fc_1', 'name' => 'read', 'arguments' => ['path' => 'a.txt', 'limit' => 5], 'namespace' => 'fs',
+            ]],
+            ['type' => 'done', 'reason' => 'toolUse', 'usage' => self::usage()],
+        ]);
+
+        $call = $message->content[0];
+        $this->assertInstanceOf(ToolCall::class, $call);
+        $this->assertSame('call-9|fc_1', $call->id);
+        $this->assertSame(['path' => 'a.txt', 'limit' => 5], $call->arguments);
+        $this->assertSame('fs', $call->namespace);
+
+        $ends = array_values(array_filter($events, static fn (object $e): bool => $e instanceof ToolCallEndEvent));
+        $this->assertSame(['path' => 'a.txt', 'limit' => 5], $ends[0]->toolCall->arguments);
+    }
+
+    public function testAToolCallEndForABlockThatIsNoToolCallIsIgnoredNotFatal(): void
+    {
+        // Upstream returns `undefined` for it — no event and no throw — where a stray `text_end`
+        // throws. pig threw for all three alike.
+        [$message, $events] = $this->turn([
+            ['type' => 'text_start', 'contentIndex' => 0],
+            ['type' => 'text_delta', 'contentIndex' => 0, 'delta' => 'hi'],
+            ['type' => 'toolcall_end', 'contentIndex' => 0, 'toolCall' => ['id' => 'x', 'name' => 'y', 'arguments' => []]],
+            ['type' => 'toolcall_end', 'contentIndex' => 7],
+            ['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()],
+        ]);
+
+        $this->assertSame(StopReason::Stop, $message->stopReason);
+        $this->assertSame([], array_values(array_filter($events, static fn (object $e): bool => $e instanceof ToolCallEndEvent)));
+    }
+
+    public function testTheProvidersThinkingLevelComesBackOnDoneAndOnError(): void
+    {
+        // Upstream's `done` and `error` arms copy `providerThinkingLevel` onto the message: the
+        // native effort the server's provider asked for, which the agent compares to know whether
+        // a mid-conversation effort change still has to be sent. pig dropped it, so a proxied
+        // Opus 5 turn looked as if no effort had been asked for.
+        [$message] = $this->turn([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage(), 'providerThinkingLevel' => 'medium']]);
+        $this->assertSame('medium', $message->providerThinkingLevel);
+
+        $this->setUp();
+        [$message] = $this->turn([['type' => 'error', 'reason' => 'error', 'errorMessage' => 'x', 'usage' => self::usage(), 'providerThinkingLevel' => 'high']]);
+        $this->assertSame('high', $message->providerThinkingLevel);
+
+        $this->setUp();
+        [$message] = $this->turn([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]]);
+        $this->assertNull($message->providerThinkingLevel);
     }
 
     public function testAHalfFinishedToolCallStillParses(): void
@@ -707,10 +796,10 @@ final class StreamProxyTest extends TestCase
             ['type' => 'text_delta', 'contentIndex' => 0, 'delta' => 'half'],
         ]);
 
-        // The failure this rules out: `stopReason` defaults to `stop`, so a gateway that died
-        // mid-sentence would otherwise look like a model that finished one.
+        // The failure this rules out: a gateway that died mid-sentence looking like a model that
+        // finished one. Upstream's words for it, which used to be pig's own "without a done event".
         $this->assertSame(StopReason::Error, $message->stopReason);
-        $this->assertStringContainsString('without a done event', (string) $message->errorMessage);
+        $this->assertSame('Connection closed by proxy server before the response completed', $message->errorMessage);
     }
 
     public function testADeltaForABlockNobodyOpenedIsNamed(): void

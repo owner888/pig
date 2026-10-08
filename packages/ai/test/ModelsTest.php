@@ -439,6 +439,129 @@ final class ModelsTest extends TestCase
         }
     }
 
+    public function testOpenAisLongContextModelsStopAt272kAndPriceWhatIsPastIt(): void
+    {
+        // Upstream's generator: "Keep direct OpenAI requests in the short-context pricing tier by
+        // default" — `OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS` get a 272,000 window. A window is where
+        // compaction fires, so pig used to let a gpt-5.5 conversation grow to 1,050,000 tokens and
+        // bill every turn past 272k at the long-context rate, which no row of the table recorded.
+        foreach (['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'] as $id) {
+            $model = Models::find('openai', $id);
+            $this->assertNotNull($model, $id);
+            $this->assertSame(272_000, $model->contextWindow, $id);
+            $this->assertSame(128_000, $model->maxTokens, $id);
+            // `withOpenAiLongContextPricing()`: one tier past 272k, input and cache at twice the
+            // base and output at one and a half times.
+            $this->assertEquals([new PricingTier(
+                272_000,
+                round($model->pricing->input * 2, 6),
+                round($model->pricing->output * 1.5, 6),
+                round($model->pricing->cacheRead * 2, 6),
+                round($model->pricing->cacheWrite * 2, 6),
+            )], $model->pricing->tiers, $id);
+        }
+
+        // The two Pro models keep their window and get the tier; `OPENAI_STANDARD_COSTS` is the base
+        // for the GPT-5.6 and GPT-6 rows.
+        $pro = Models::find('openai', 'gpt-5.5-pro');
+        $this->assertSame(1_050_000, $pro?->contextWindow);
+        $this->assertEquals([new PricingTier(272_000, 60.0, 270.0, 0.0, 0.0)], $pro->pricing->tiers);
+        $this->assertEquals(new Pricing(4.0, 20.0, 0.4, 5.0, [new PricingTier(272_000, 8.0, 30.0, 0.8, 10.0)]), Models::find('openai', 'gpt-5.6-sol')?->pricing);
+
+        // "models.dev reports gpt-5-pro output as 272000 (a duplicate of the input sub-limit); the
+        // actual max output is 128000."
+        $this->assertSame(128_000, Models::find('openai', 'gpt-5-pro')?->maxTokens);
+
+        // The cap is OpenAI's own endpoint only: Copilot resells gpt-5.5 at its own window.
+        $this->assertGreaterThan(272_000, Models::find(Models::COPILOT, 'gpt-5.5')?->contextWindow ?? 0);
+
+        // And the long-context rate applies to a whole request past the threshold.
+        $gpt55 = Models::find('openai', 'gpt-5.5');
+        $this->assertNotNull($gpt55);
+        $this->assertEqualsWithDelta(272_000 * 5.0 / 1_000_000, Models::cost($gpt55, new Usage(272_000, 0))->input, 1e-9);
+        $this->assertEqualsWithDelta(272_001 * 10.0 / 1_000_000, Models::cost($gpt55, new Usage(272_001, 0))->input, 1e-9);
+    }
+
+    public function testImageLimitsAndPromptCacheLifetimesAreWrittenAsUpstreamsGeneratorWritesThem(): void
+    {
+        // `applyImageInputMetadata()`: per-provider limits for a model that takes images, the
+        // 2000px / 4.5 MiB / q80 resize on every one, nothing on a text-only model.
+        $resize = ['maxWidth' => 2000, 'maxHeight' => 2000, 'maxBytes' => 4_718_592, 'jpegQuality' => 80];
+
+        $this->assertSame(
+            ['maxRequestBytes' => 33_554_432, 'images' => ['maxPerRequest' => 100, 'resize' => $resize]],
+            Models::find(Models::ANTHROPIC, 'claude-haiku-4-5')?->inputLimits,
+            'Anthropic at a 200,000 window: 100 images a request',
+        );
+        $this->assertSame(
+            ['maxRequestBytes' => 33_554_432, 'images' => ['maxPerRequest' => 600, 'resize' => $resize]],
+            Models::find(Models::ANTHROPIC, 'claude-opus-4-8')?->inputLimits,
+            'and 600 at any other',
+        );
+        $this->assertSame(
+            ['maxRequestBytes' => 536_870_912, 'images' => ['maxPerRequest' => 1500, 'resize' => $resize]],
+            Models::find('openai', 'gpt-5.5')?->inputLimits,
+        );
+        $this->assertSame(
+            ['maxRequestBytes' => 20_971_520, 'images' => ['maxPerRequest' => 3600, 'resize' => $resize]],
+            Models::find('google', 'gemini-2.5-pro')?->inputLimits,
+        );
+        // A provider with no limits of its own still gets the resize profile.
+        $this->assertSame(['images' => ['resize' => $resize]], Models::find(Models::COPILOT, 'gpt-5.5')?->inputLimits);
+
+        foreach (Models::all() as $model) {
+            if (!$model->acceptsImages()) {
+                $this->assertNull($model->inputLimits, "{$model->provider}/{$model->id} takes no images");
+            }
+        }
+
+        // `applyPromptCacheMetadata()`: direct Anthropic only, five minutes and an hour — "Do not add
+        // OpenAI lifetimes yet", and a proxy's cache is not assumed to behave the same.
+        foreach (Models::all() as $model) {
+            $this->assertSame(
+                $model->provider === Models::ANTHROPIC ? ['short' => 300, 'long' => 3600] : null,
+                $model->promptCache,
+                "{$model->provider}/{$model->id}",
+            );
+        }
+
+        // Fable 5 is rebuilt to carry its fallbacks, and keeps both through that.
+        $this->assertNotNull(Models::find(Models::ANTHROPIC, 'claude-fable-5')?->promptCache);
+        $this->assertNotNull(Models::find(Models::ANTHROPIC, 'claude-fable-5')?->inputLimits);
+    }
+
+    public function testModelsDevsVerifiedEffortsApplyOnlyWhereTheEffortIsSentDirectly(): void
+    {
+        // Upstream's `applyModelsDevReasoningOptionMetadata()`, gated by
+        // `supportsDirectReasoningEffort()` and run between the Anthropic compat arm and the
+        // id rules. The tables carry no `effortLevelMap` until the next regeneration, so the rule is
+        // driven here directly, with the map `getEffortThinkingLevelMap()` makes of
+        // `{type: "effort", values: ["none", "low", "medium", "high"]}`.
+        $effort = ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null];
+        $map = new \ReflectionMethod(Models::class, 'thinkingLevelMap');
+        $direct = new \ReflectionMethod(Models::class, 'supportsDirectReasoningEffort');
+
+        // Every Responses model takes it, and the id rules still come after it: gpt-5.2's `xhigh`.
+        $this->assertTrue($direct->invoke(null, Api::OpenAiResponses, 'openai', 'https://api.openai.com/v1', 'gpt-5.2', null));
+        $this->assertSame(
+            [...$effort, 'off' => 'none', 'xhigh' => 'xhigh'],
+            $map->invoke(null, 'openai', Api::OpenAiResponses, 'gpt-5.2', [], $effort),
+        );
+
+        // An Anthropic model only when it thinks adaptively.
+        $this->assertTrue($direct->invoke(null, Api::AnthropicMessages, 'anthropic', '', 'claude-opus-4-8', AnthropicCompat::forBuiltIn('anthropic', 'claude-opus-4-8')));
+        $this->assertFalse($direct->invoke(null, Api::AnthropicMessages, 'anthropic', '', 'claude-haiku-4-5', AnthropicCompat::forBuiltIn('anthropic', 'claude-haiku-4-5')));
+
+        // A completions endpoint only with `thinkingFormat: "openai"` and `supportsReasoningEffort`
+        // — Groq has both; xAI rejects `reasoning_effort` and Z.ai thinks in its own format.
+        $this->assertTrue($direct->invoke(null, Api::OpenAiCompletions, 'groq', 'https://api.groq.com/openai/v1', 'x', null));
+        $this->assertFalse($direct->invoke(null, Api::OpenAiCompletions, 'xai', 'https://api.x.ai/v1', 'x', null));
+        $this->assertFalse($direct->invoke(null, Api::OpenAiCompletions, 'zai', 'https://api.z.ai/api/coding/paas/v4', 'x', null));
+        // Copilot's completions compat says `reasoningEffort: false` outright.
+        $this->assertFalse($direct->invoke(null, Api::OpenAiCompletions, Models::COPILOT, 'https://api.individual.githubcopilot.com', 'x', new OpenAiCompat(reasoningEffort: false)));
+        $this->assertFalse($direct->invoke(null, Api::GoogleGenerativeAi, 'google', '', 'x', null));
+    }
+
     public function testTheUsageHandedInIsNotRewritten(): void
     {
         $model = self::anyFrom(Models::ANTHROPIC);

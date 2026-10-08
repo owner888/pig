@@ -60,18 +60,30 @@ final readonly class OpenAiCompat
      *        otherwise it falls back to an ordinary function tool. Read by both OpenAI providers, as
      *        upstream's completions and Responses compat both have the key
      *
-     * The four below are upstream's `OpenAIResponsesCompat` keys and only `OpenAiResponses` reads
-     * them; `detect()` says nothing about them, so each is the runtime default written beside it
-     * until a model says otherwise.
+     * The keys below are about caching and session affinity. `sessionAffinityFormat` and
+     * `supportsLongCacheRetention` are both APIs' keys: for `openai-completions` `detect()` works
+     * them out as upstream's `detectCompat()` does and `resolve()` lays the model's own over that;
+     * `OpenAiResponses` reads the model's own compat with its runtime default, as upstream's
+     * Responses `getCompat()` does. `sendSessionAffinityHeaders` and `cacheControlFormat` are
+     * completions keys; `supportsExplicitPromptCacheMode` and `supportsMaxOutputTokens` are Responses
+     * keys, which `detect()` says nothing about.
      *
      * @param string|null $sessionAffinityFormat `openai` sends the session id as `session_id` and
      *        `x-client-request-id`, `openai-nosession` as `x-client-request-id` alone, `openrouter`
-     *        as `x-session-id` (default: `openrouter` for OpenRouter, else `openai`)
+     *        as `x-session-id` (default: `openrouter` for OpenRouter, else `openai`); on completions
+     *        `x-session-affinity` goes with `x-client-request-id`, and only when
+     *        `sendSessionAffinityHeaders` says so
      * @param bool|null   $supportsLongCacheRetention `cacheRetention: long` may ask for the longer
-     *        prompt cache (default true)
+     *        prompt cache — `prompt_cache_retention: "24h"`, or Anthropic-style `ttl: "1h"` (default
+     *        true; on completions false for Together, Cloudflare, NVIDIA and Ant Ling)
      * @param bool|null   $supportsExplicitPromptCacheMode the model takes `prompt_cache_options`
      *        (OpenAI GPT-5.6 and later; default false, `Models` sets it as upstream's generator does)
      * @param bool|null   $supportsMaxOutputTokens the endpoint takes `max_output_tokens` (default true)
+     * @param bool|null   $sendSessionAffinityHeaders upstream's completions key: the session id goes
+     *        out as headers in `sessionAffinityFormat`'s shape (detected: OpenRouter only)
+     * @param string|null $cacheControlFormat upstream's completions key: `anthropic` puts Anthropic's
+     *        `cache_control` on the system prompt, the last tool and the last conversation text
+     *        (detected: an OpenRouter `anthropic/…` model)
      */
     public function __construct(
         public ?bool $store = null,
@@ -94,6 +106,8 @@ final readonly class OpenAiCompat
         public ?bool $supportsLongCacheRetention = null,
         public ?bool $supportsExplicitPromptCacheMode = null,
         public ?bool $supportsMaxOutputTokens = null,
+        public ?bool $sendSessionAffinityHeaders = null,
+        public ?string $cacheControlFormat = null,
     ) {
     }
 
@@ -137,10 +151,12 @@ final readonly class OpenAiCompat
             openRouterRouting: $explicit->openRouterRouting ?? [],
             vercelGatewayRouting: $explicit->vercelGatewayRouting ?? $detected->vercelGatewayRouting,
             grammarTools: $explicit->grammarTools ?? $detected->grammarTools,
-            sessionAffinityFormat: $explicit->sessionAffinityFormat,
-            supportsLongCacheRetention: $explicit->supportsLongCacheRetention,
+            sessionAffinityFormat: $explicit->sessionAffinityFormat ?? $detected->sessionAffinityFormat,
+            supportsLongCacheRetention: $explicit->supportsLongCacheRetention ?? $detected->supportsLongCacheRetention,
             supportsExplicitPromptCacheMode: $explicit->supportsExplicitPromptCacheMode,
             supportsMaxOutputTokens: $explicit->supportsMaxOutputTokens,
+            sendSessionAffinityHeaders: $explicit->sendSessionAffinityHeaders ?? $detected->sendSessionAffinityHeaders,
+            cacheControlFormat: $explicit->cacheControlFormat ?? $detected->cacheControlFormat,
         );
     }
 
@@ -253,6 +269,10 @@ final readonly class OpenAiCompat
             vercelGatewayRouting: [],
             // Upstream: `supportsOpenAIGrammarTools: false`, and only its generator turns it on.
             grammarTools: false,
+            sessionAffinityFormat: $isOpenRouter ? 'openrouter' : 'openai',
+            supportsLongCacheRetention: !($isTogether || $isCloudflareWorkersAi || $isCloudflareAiGateway || $isNvidia || $isAntLing),
+            sendSessionAffinityHeaders: $isOpenRouter,
+            cacheControlFormat: $provider === 'openrouter' && str_starts_with($modelId, 'anthropic/') ? 'anthropic' : null,
         );
     }
 }

@@ -481,6 +481,118 @@ final class CustomModelsTest extends TestCase
         $this->assertEquals([new PricingTier(200_000, 2.0, 4.0, 0.2, 0.0)], $model->pricing->tiers);
     }
 
+    /**
+     * A tier is checked as upstream's `ModelCostTierSchema` checks it, and the problem is said in
+     * its words. pig used to drop a tier with no integer threshold and read a missing rate as free —
+     * so `{"inputTokensAbove": 200000, "input": 6}` priced the long prompt's output at nothing,
+     * every turn, where upstream refuses the file and says which fields are missing.
+     */
+    #[DataProvider('everyWayATierCanBeWrong')]
+    public function testACostTierIsValidatedWithUpstreamsSchemaMessages(mixed $tiers, string $says): void
+    {
+        $custom = $this->load(self::provider(['models' => [self::model(['cost' => [
+            'input' => 3, 'output' => 15, 'cacheRead' => 0.3, 'cacheWrite' => 3.75, 'tiers' => $tiers,
+        ]])]]));
+
+        $this->assertSame([], $custom->models);
+        $this->assertCount(1, $custom->problems);
+        $this->assertStringEndsWith('model "qwen3-coder": invalid models.json schema: ' . $says, $custom->problems[0]);
+    }
+
+    /**
+     * The messages are TypeBox 1.3.27's — the version pi pins — as upstream's
+     * `formatValidationPath()` writes them, checked against TypeBox itself: a `required` error's
+     * path names the first missing property, `required` comes before the properties' own errors,
+     * and the properties go in the schema's order.
+     *
+     * @return iterable<string, array{0: mixed, 1: string}>
+     */
+    public static function everyWayATierCanBeWrong(): iterable
+    {
+        yield 'not a list' => [['a' => 1], 'providers.my-box.models.0.cost.tiers: must be array'];
+        yield 'a tier that is not an object' => [[5], 'providers.my-box.models.0.cost.tiers.0: must be object'];
+        yield 'an empty tier' => [[[]], 'providers.my-box.models.0.cost.tiers.0.inputTokensAbove: must have required properties inputTokensAbove, input, output, cacheRead, cacheWrite'];
+        yield 'rates left out' => [
+            [['inputTokensAbove' => 200_000, 'input' => 6]],
+            'providers.my-box.models.0.cost.tiers.0.output: must have required properties output, cacheRead, cacheWrite',
+        ];
+        yield 'a quoted rate' => [
+            [['inputTokensAbove' => 200_000, 'input' => '6', 'output' => 22.5, 'cacheRead' => 0.6, 'cacheWrite' => 7.5]],
+            'providers.my-box.models.0.cost.tiers.0.input: must be number',
+        ];
+        yield 'a null rate' => [
+            [['inputTokensAbove' => 200_000, 'input' => null, 'output' => 22.5, 'cacheRead' => 0.6, 'cacheWrite' => 7.5]],
+            'providers.my-box.models.0.cost.tiers.0.input: must be number',
+        ];
+        yield 'missing and wrong, both said' => [
+            [['inputTokensAbove' => '200000', 'input' => 6]],
+            'providers.my-box.models.0.cost.tiers.0.output: must have required properties output, cacheRead, cacheWrite; '
+                . 'providers.my-box.models.0.cost.tiers.0.inputTokensAbove: must be number',
+        ];
+        yield 'the second tier' => [
+            [
+                ['inputTokensAbove' => 1, 'input' => 1, 'output' => 1, 'cacheRead' => 1, 'cacheWrite' => 1],
+                ['inputTokensAbove' => true, 'input' => 1, 'output' => 1, 'cacheRead' => 1, 'cacheWrite' => 1],
+            ],
+            'providers.my-box.models.0.cost.tiers.1.inputTokensAbove: must be number',
+        ];
+    }
+
+    public function testATierTypeBoxWouldAcceptIsAccepted(): void
+    {
+        // `Type.Number()` and no more: a fractional threshold and a negative rate pass upstream, and
+        // so here. The threshold is compared in whole tokens, where 200000.5 and 200000 agree.
+        $model = $this->load(self::provider(['models' => [self::model(['cost' => [
+            'input' => 3, 'output' => 15, 'cacheRead' => 0.3, 'cacheWrite' => 3.75,
+            'tiers' => [['inputTokensAbove' => 200_000.5, 'input' => -1, 'output' => 22.5, 'cacheRead' => 0.6, 'cacheWrite' => 7.5, 'note' => 'extra keys are allowed']],
+        ]])]]))->models[0];
+
+        $this->assertEquals([new PricingTier(200_000, -1.0, 22.5, 0.6, 7.5)], $model->pricing->tiers);
+    }
+
+    public function testInputLimitsAndPromptCacheAreReadAndCheckedAsUpstreamsSchemaChecksThem(): void
+    {
+        // Upstream's `ModelDefinitionSchema` carries both; `provider-composer` hands them on as
+        // written, with no defaults. pig read neither, so a proxy that declared its cache lifetimes
+        // or its image limits lost them on the way in.
+        $model = $this->load(self::provider(['models' => [self::model([
+            'inputLimits' => ['maxRequestBytes' => 1_000_000, 'images' => ['maxPerRequest' => 4, 'resize' => ['maxWidth' => 1024, 'jpegQuality' => 80]]],
+            'promptCache' => ['short' => 300, 'long' => 3600.5],
+        ])]]))->models[0];
+
+        $this->assertSame(['maxRequestBytes' => 1_000_000, 'images' => ['maxPerRequest' => 4, 'resize' => ['maxWidth' => 1024, 'jpegQuality' => 80]]], $model->inputLimits);
+        $this->assertSame(['short' => 300, 'long' => 3600.5], $model->promptCache);
+        $this->assertNull($this->load(self::provider())->models[0]->promptCache, 'not said is not set');
+
+        // TypeBox's bounds and types, in the schema's order: `inputLimits` before `promptCache`, and
+        // a number of the wrong kind checked against its bound as well.
+        $custom = $this->load(self::provider(['models' => [self::model([
+            'promptCache' => ['short' => 0],
+            'inputLimits' => ['maxRequestBytes' => 0.5, 'images' => ['resize' => ['jpegQuality' => 101, 'maxWidth' => 0]]],
+        ])]]));
+        $this->assertSame([], $custom->models);
+        $this->assertStringEndsWith(
+            'invalid models.json schema: providers.my-box.models.0.inputLimits.maxRequestBytes: must be integer; '
+            . 'providers.my-box.models.0.inputLimits.maxRequestBytes: must be >= 1; '
+            . 'providers.my-box.models.0.inputLimits.images.resize.maxWidth: must be >= 1; '
+            . 'providers.my-box.models.0.inputLimits.images.resize.jpegQuality: must be <= 100; '
+            . 'providers.my-box.models.0.promptCache.short: must be > 0',
+            $custom->problems[0],
+        );
+    }
+
+    public function testTheCompletionsCachingAndSessionKeysAreReadUnderUpstreamsNames(): void
+    {
+        $model = $this->load(self::provider(['models' => [self::model(['compat' => [
+            'sendSessionAffinityHeaders' => true,
+            'cacheControlFormat' => 'anthropic',
+        ]])]]))->models[0];
+
+        $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
+        $this->assertTrue($model->compat->sendSessionAffinityHeaders);
+        $this->assertSame('anthropic', $model->compat->cacheControlFormat);
+    }
+
     public function testTheCachingSessionAndFallbackKeysAreReadUnderUpstreamsNames(): void
     {
         $anthropic = $this->load(self::provider([

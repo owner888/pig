@@ -158,6 +158,18 @@ final class AssistantMessageBuilder
         return $this->blocks[$index]['text'];
     }
 
+    /** A tool call's argument JSON so far — upstream's `partialJson`. */
+    public function jsonOf(int $index): string
+    {
+        return $this->blocks[$index]['json'];
+    }
+
+    /** A block's signature so far, `''` for none — upstream's `thinkingSignature` / `textSignature`. */
+    public function signatureOf(int $index): string
+    {
+        return $this->blocks[$index]['signature'];
+    }
+
     /**
      * Replace a block's signature, rather than adding to it.
      *

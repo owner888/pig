@@ -177,17 +177,17 @@ final class Stream
         $maxTokens = self::clampMaxTokensToContext($model, $context, $options?->maxTokens ?? $model->maxTokens);
         $apiKey = $options?->apiKey ?? self::envApiKey($model->provider);
         return match ($model->api) {
-            // The same question as for the responses arm below, and upstream asks it the same way
-            // in both: xhigh is a property of the *model*, not of the protocol it speaks. This used
-            // to clamp unconditionally — "xhigh is OpenAI's alone" — which is true of the models in
-            // the registry today and not of a `models.json` proxy that resells `gpt-5.2` over
-            // chat-completions, which is a common shape.
+            // Upstream's `streamSimple()` in `openai-completions.ts`, the same as the responses arm
+            // below: the level clamped to the ones the model has (`clampThinkingLevel()`, which
+            // reads the `thinkingLevelMap`), `off` meaning none, and the caller's `toolChoice`
+            // passed on. The provider then sends what the map calls the level.
             Api::OpenAiCompletions => new OpenAiOptions(
                 $options?->temperature,
                 $maxTokens,
                 $options?->signal,
                 $apiKey,
-                reasoning: $model->supportsXhigh() ? $options?->reasoning : $options?->reasoning?->clampToHigh(),
+                reasoning: self::clampedReasoning($model, $options?->reasoning),
+                toolChoice: $options?->toolChoice,
                 cacheRetention: $options?->cacheRetention,
                 sessionId: $options?->sessionId,
                 metadata: $options?->metadata,
@@ -295,7 +295,7 @@ final class Stream
     }
 
     /**
-     * Upstream's `clampThinkingLevel(model, reasoning)` for the Responses API, with `off` meaning no
+     * Upstream's `clampThinkingLevel(model, reasoning)` for both OpenAI APIs, with `off` meaning no
      * reasoning. pig has no `max` effort, so a clamp that would land there — a model whose map
      * offers `max` and not `xhigh`, asked for `xhigh` — is refused out loud rather than sent as
      * something else; the agent's own clamp (`ThinkingLevel::clampedFor()`) never asks that.
@@ -472,6 +472,7 @@ final class Stream
                 $options->cacheRetention,
                 $options->sessionId,
                 $options->metadata,
+                $options->reasoningSummary,
             );
         }
 

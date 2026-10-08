@@ -972,6 +972,53 @@ final class AnthropicTest extends TestCase
         $this->assertNull($plain->providerThinkingLevel);
     }
 
+    // ---- how a stream ends -----------------------------------------------------------------
+
+    public function testAStreamThatEndsWithoutAStopReasonIsAnErrorNotAFinishedAnswer(): void
+    {
+        // Upstream starts the output at `stopReason: "pending"` and throws when the stream ends with
+        // it still there. pig started at `stop`, so a connection cut after some text — no
+        // `message_delta`, no `message_stop`, no `message_start` either — came back as a clean
+        // answer, half a sentence and all, and the agent carried on as if the model had finished.
+        [$types, $message] = $this->collect($this->serveStream([
+            ['content_block_start', ['index' => 0, 'content_block' => ['type' => 'text']]],
+            ['content_block_delta', ['index' => 0, 'delta' => ['type' => 'text_delta', 'text' => 'The answer is']]],
+        ]), new Context([new UserMessage('hi')]));
+
+        $this->assertSame('ErrorEvent', $types[array_key_last($types)]);
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('Anthropic stream ended without a stop reason', $message->errorMessage);
+        // What did stream is kept on the failed turn, as upstream's output keeps it.
+        $this->assertSame('The answer is', $message->content[0]->text ?? null);
+    }
+
+    public function testAStreamThatStartedAndNeverStoppedIsAnErrorEvenWithAStopReason(): void
+    {
+        // Upstream's `iterateAnthropicEvents()`: a `message_start` with no `message_stop` after it is
+        // a stream that was cut — even when the `message_delta` with the stop reason made it through.
+        [, $message] = $this->collect($this->serveStream([
+            ['message_start', ['message' => ['usage' => ['input_tokens' => 3]]]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => ['output_tokens' => 1]]],
+        ]), new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('Anthropic stream ended before message_stop', $message->errorMessage);
+    }
+
+    public function testAnErrorEventMidStreamIsTheTurnsErrorWordForWord(): void
+    {
+        // `if (sse.event === "error") throw new Error(sse.data)`. Anthropic sends this with a 200
+        // when it is overloaded mid-answer; pig skipped it as an event it did not know, so the
+        // turn ended however the rest of the body happened to end.
+        [, $message] = $this->collect($this->serveStream([
+            ['message_start', ['message' => ['usage' => []]]],
+            ['error', ['error' => ['type' => 'overloaded_error', 'message' => 'Overloaded']]],
+        ]), new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}', $message->errorMessage);
+    }
+
     // ---- redacted thinking ----------------------------------------------------------------
 
     public function testARedactedThinkingBlockIsKeptAsThinkingWithItsPayloadInTheSignature(): void
@@ -988,6 +1035,10 @@ final class AnthropicTest extends TestCase
             ['content_block_delta', ['index' => 1, 'delta' => ['type' => 'text_delta', 'text' => 'done']]],
             ['content_block_stop', ['index' => 1]],
             ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => ['output_tokens' => 2]]],
+            // A stream that opened with `message_start` must close with `message_stop`, or upstream's
+            // reader throws "Anthropic stream ended before message_stop" — this fixture used to stop
+            // short of it, which only passed while pig did not check.
+            ['message_stop', []],
         ]);
 
         [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
@@ -1220,6 +1271,8 @@ final class AnthropicTest extends TestCase
                     ['type' => 'rewrite', 'reason' => null],
                 ],
             ]],
+            // Closed as a real stream is: see the redacted-thinking test.
+            ['message_stop', []],
         ]), new Context([new UserMessage('hi')]));
 
         $this->assertCount(1, $message->diagnostics ?? []);
@@ -1670,6 +1723,8 @@ final class AnthropicTest extends TestCase
             ['content_block_delta', ['index' => 1, 'delta' => ['type' => 'text_delta', 'text' => 'ok']]],
             ['content_block_stop', ['index' => 1]],
             ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => ['output_tokens' => 0]]],
+            // Closed as a real stream is: see the redacted-thinking test.
+            ['message_stop', []],
         ]);
 
         $this->assertSame(StopReason::Stop, $message->stopReason);

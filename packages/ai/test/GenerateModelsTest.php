@@ -231,6 +231,64 @@ final class GenerateModelsTest extends TestCase
         self::assertStringNotContainsString('claude-sonnet-4.6 corrected', $output);
     }
 
+    public function testModelsDevsVerifiedEffortsAreWrittenAsTheRowsEffortLevelMap(): void
+    {
+        // Upstream's `recordModelsDevReasoningOptions()` + `getEffortThinkingLevelMap()`: every
+        // level, in order — `off` is "none" when the model takes `none` — and values with no pi
+        // equivalent (`default`, JSON null) left out. `Models` merges it where upstream's
+        // `applyModelsDevReasoningOptionMetadata()` would, which is the next regeneration's effect.
+        $output = $this->generated();
+
+        self::assertStringContainsString(
+            "'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]]",
+            self::rowOf($output, 'gpt-5.5'),
+        );
+        self::assertStringContainsString(
+            "'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => null, 'xhigh' => null, 'max' => null]]",
+            self::rowOf($output, 'none-only'),
+        );
+
+        // Nothing a pi level answers to: no map at all, so the id rules alone decide.
+        self::assertStringNotContainsString('effortLevelMap', self::rowOf($output, 'only-default'));
+        // And Google's are not recorded upstream, so its row keeps its nine cells.
+        self::assertStringNotContainsString('effortLevelMap', self::rowOf($output, 'gemini-9-flash'));
+    }
+
+    public function testOpenAisLongContextModelsAreCappedAndPricedAsUpstreamsGeneratorWritesThem(): void
+    {
+        // Upstream's temporary overrides for `openai`: the 272k window and 128k output on
+        // `OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS`, and `withOpenAiLongContextPricing()` replacing
+        // whatever tiers models.dev listed — 2x input and cache, 1.5x output, above 272,000.
+        $output = $this->generated();
+
+        self::assertStringContainsString(
+            "'gpt-5.5' => ['GPT-5.5', 272_000, 128_000, true, true, 5.0, 30.0, 0.5, 0.0, 'tiers' => [[272_000, 10.0, 45.0, 1.0, 0.0]],",
+            $output,
+        );
+        // gpt-5-pro's output limit, which models.dev reports as the input sub-limit.
+        self::assertStringContainsString("'gpt-5-pro' => ['GPT-5 Pro', 400_000, 128_000,", $output);
+
+        // `missingOpenAiModels`: a GPT-6 the catalogue lacks is added at the cap, at
+        // `OPENAI_STANDARD_COSTS`, with the long-context tier.
+        self::assertStringContainsString('openai/gpt-6-sol added by hand', $output);
+        self::assertStringContainsString(
+            "'gpt-6-sol' => ['GPT-6 Sol', 272_000, 128_000, true, true, 2.0, 10.0, 0.2, 2.5, 'tiers' => [[272_000, 4.0, 15.0, 0.4, 5.0]]],",
+            $output,
+        );
+    }
+
+    /** The one rendered row for $id, which the dry run prints once per table. */
+    private static function rowOf(string $output, string $id): string
+    {
+        foreach (explode("\n", $output) as $line) {
+            if (str_starts_with($line, "        '{$id}' => [")) {
+                return $line;
+            }
+        }
+
+        self::fail("no row for {$id} in the dry run");
+    }
+
     public function testADryRunWritesNothing(): void
     {
         $before = (string) file_get_contents(__DIR__ . '/../src/Models.php');
@@ -340,6 +398,36 @@ final class GenerateModelsTest extends TestCase
                 'no-limits' => [
                     'name' => 'No Limits', 'tool_call' => true, 'modalities' => ['input' => ['text']],
                 ],
+                // One of upstream's capped, long-context-priced ids, as models.dev lists it: the full
+                // window, and a tier of models.dev's own that `withOpenAiLongContextPricing()` replaces.
+                // Its verified efforts are models.dev's `reasoning_options`, two options of which only
+                // the `effort` one says anything.
+                'gpt-5.5' => [
+                    'name' => 'GPT-5.5', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 1_050_000, 'output' => 128_000],
+                    'cost' => ['input' => 5, 'output' => 30, 'cache_read' => 0.5, 'tiers' => [
+                        ['tier' => ['type' => 'context', 'size' => 200_000], 'input' => 7],
+                    ]],
+                    'modalities' => ['input' => ['text', 'image']],
+                    'reasoning_options' => [
+                        ['type' => 'toggle'],
+                        ['type' => 'effort', 'values' => ['none', 'low', 'medium', 'high', 'xhigh', 'default', null]],
+                    ],
+                ],
+                // "models.dev reports gpt-5-pro output as 272000 (a duplicate of the input sub-limit)".
+                'gpt-5-pro' => [
+                    'name' => 'GPT-5 Pro', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 400_000, 'output' => 272_000],
+                    'cost' => ['input' => 15, 'output' => 120],
+                    'modalities' => ['input' => ['text', 'image']],
+                ],
+                // Efforts with no pi equivalent, and a budget with no efforts at all: no map.
+                'only-default' => [
+                    'name' => 'Only Default', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 128_000, 'output' => 8_192],
+                    'modalities' => ['input' => ['text']],
+                    'reasoning_options' => [['type' => 'effort', 'values' => ['default', null]], ['type' => 'budget_tokens', 'min' => 1024]],
+                ],
             ]],
             'google' => ['models' => [
                 'gemini-9-flash' => [
@@ -347,6 +435,9 @@ final class GenerateModelsTest extends TestCase
                     'limit' => ['context' => 1_048_576, 'output' => 65_536],
                     'cost' => ['input' => 0.3, 'output' => 2.5, 'cache_read' => 0.075],
                     'modalities' => ['input' => ['text', 'image']],
+                    // Upstream does not record Google's: its rows take `getGoogleThinkingLevelMap()`
+                    // where they are built, which pig does not port.
+                    'reasoning_options' => [['type' => 'effort', 'values' => ['low', 'high']]],
                 ],
                 // One the overrides carry a level map for, so the tenth cell can be seen rendered.
                 'gemini-3.1-pro-preview' => [
@@ -368,6 +459,13 @@ final class GenerateModelsTest extends TestCase
                     'name' => 'Llama X', 'tool_call' => true,
                     'limit' => ['context' => 131_072, 'output' => 8_192],
                     'cost' => $priced(0.05, 0.08),
+                ],
+                // `none` alone is enough for a map: it is off's word.
+                'none-only' => [
+                    'name' => 'None Only', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 131_072, 'output' => 8_192],
+                    'cost' => $priced(0.1, 0.2),
+                    'reasoning_options' => [['type' => 'effort', 'values' => ['none']]],
                 ],
             ]],
             'mistral' => ['models' => [

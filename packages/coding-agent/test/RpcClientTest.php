@@ -155,7 +155,10 @@ final class RpcClientTest extends TestCase
                 'type' => 'message_delta',
                 'delta' => ['stop_reason' => 'end_turn'],
                 'usage' => ['output_tokens' => 4],
-            ]) . "\\n\\n";
+            ]) . "\\n\\n"
+            // Closed the way Anthropic closes a stream: without it the turn is now
+            // "Anthropic stream ended before message_stop", as upstream's reader says.
+            . "event: message_stop\\ndata: " . json_encode(['type' => 'message_stop']) . "\\n\\n";
 
         fwrite(\$connection, "HTTP/1.1 200 OK\\r\\nContent-Type: text/event-stream\\r\\nContent-Length: "
             . strlen(\$body) . "\\r\\n\\r\\n" . \$body);
