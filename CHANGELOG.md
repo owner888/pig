@@ -43,6 +43,28 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.29] - 2026-10-08
+
+### New Features
+
+- **Strict Tool Sampling on Built-in Tools & Optional Parameter Null Normalization (`ToolArguments`, `BashTool`, `EditTool`, `ReadTool`, `WriteTool`)**:
+  - Configured built-in tools (`bash`, `edit`, `read`, `write`) with `['type' => 'json_schema', 'strict' => 'prefer']`, enabling strict schema enforcement on capable endpoints (Anthropic with `supportsStrictTools`, OpenAI with `supportsStrictMode`, Gemini 3+ `parametersJsonSchema`).
+  - Implemented upstream pi's `normalizeOptionalNulls()` in `ToolArguments::validate()`, dropping unrequired `null` arguments whose schemas reject null prior to schema checking, preventing spurious `limit: must be number` validation rejections when models omit optional parameters under strict sampling.
+- **Anthropic Adaptive Thinking & Strict Tools Metadata (`AnthropicCompat`, `Anthropic`)**:
+  - Replaced ad-hoc model ID string pattern checks with declarative `AnthropicCompat` metadata (`forceAdaptiveThinking`, `supportsStrictTools`), properly identifying Opus 4.6, Sonnet 4.6, Opus 5, and related adaptive models without warnings or missed adaptive configs.
+  - Omitted `interleaved-thinking` beta headers on non-thinking turns and adaptive thinking runs.
+- **OpenAI Completions Thinking Format Architecture (`OpenAiCompat`, `OpenAiCompletions`)**:
+  - Added support for diverse thinking formats matching upstream pi: `deepseek` (`thinking: {type}` + `reasoning_effort`), `zai` (`thinking: {type, clear_thinking: false}`), `openrouter` (`reasoning: {effort}`), `together` (`reasoning: {enabled}, reasoning_effort`), `qwen`, `chat-template`, and `baseten` with template argument interpolation.
+  - Fully aligned `OpenAiCompat::detect()` with upstream `detectCompat()`, matching both provider IDs and lowercased URLs for DeepSeek, z.ai, Moonshot, Together, NVIDIA, Cloudflare, Chutes, Cerebras, and OpenRouter.
+  - Enhanced `OpenAiCompat::resolve()` to merge `compat` settings key-by-key over detected settings, enabling model-level and provider-level `compat` overrides from `models.json`.
+
+### Fixed
+
+- **Authoritative Responses API Thinking Text Reconstruction (`OpenAiResponses`)**:
+  - Reconstructed reasoning text from finished `output_item.done` items (joining `summary` parts, then `content` raw reasoning text, falling back to streamed deltas), preventing trailing newlines from summary part delimiters and retaining raw reasoning text.
+- **Accurate Tool Result Output Placeholders (`OpenAiCompletions`, `OpenAiResponses`, `Google`)**:
+  - Output `(see attached image)` only when images are present without text, and emit `(no tool output)` or `""` for empty results, eliminating bogus image references.
+
 ## [0.4.28] - 2026-10-08
 
 ### New Features

@@ -35,6 +35,7 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ShortHash;
 use Pig\Ai\Utils\Utf8;
 use Pig\Async\Async;
@@ -668,7 +669,7 @@ final class OpenAiCompletions
     /** @return array<string, mixed> */
     private function body(Model $model, Context $context, ?OpenAiOptions $options): array
     {
-        $compat = $model->compat ?? OpenAiCompat::detect($model->baseUrl, $model->provider);
+        $compat = OpenAiCompat::resolve($model);
 
         $body = [
             'model' => $model->id,
@@ -690,7 +691,7 @@ final class OpenAiCompletions
         }
 
         if ($context->tools !== []) {
-            $body['tools'] = array_map($this->tool(...), $context->tools);
+            $body['tools'] = array_map(fn (Tool $tool): array => $this->tool($tool, $compat), $context->tools);
         } elseif ($this->hasToolHistory($context->messages)) {
             // A conversation holding tool calls is rejected by some proxies unless the
             // tools field is present, even with nothing in it.
@@ -701,31 +702,199 @@ final class OpenAiCompletions
             $body['tool_choice'] = $options->toolChoice;
         }
 
-        // Upstream's two default arms, and the operators are copied rather than tidied. The set
-        // arm uses `??`, so a level the map calls *null* still sends the level's own name here,
-        // while upstream's zai and baseten arms drop the field for the same null. That
-        // inconsistency is upstream's; it costs nothing because a null level never reaches a
-        // request — `ThinkingLevel::supportedBy()` has already kept it out of the picker.
-        //
-        // Keyed by the **effort** and not by the thinking level, because pig converts one to the
-        // other a layer above the provider (`ThinkingLevel::toReasoning()`), where upstream still
-        // has the level. The only key that differs is `minimal`, which pig has already sent as
-        // `low` by this point — and a `minimal` the map calls null is filtered out upstream of
-        // here anyway, so nothing reachable is lost.
-        if ($options?->reasoning !== null && $model->reasoning && $compat->reasoningEffort) {
-            $body['reasoning_effort'] = $model->thinkingEffort($options->reasoning->value) ?? $options->reasoning->value;
-        } elseif ($options?->reasoning === null && $model->reasoning && $compat->reasoningEffort) {
+        $this->thinking($body, $model, $compat, $options?->reasoning?->value);
+
+        return $body;
+    }
+
+    /**
+     * Upstream's `thinkingFormat` arms in `buildParams()`, one per format, in its order and with its
+     * operators. `$effort` is the requested level's wire name, null when thinking is off.
+     *
+     * The JS operators each have one PHP spelling here, because `thinkingLevelMap` has three states
+     * (see `Model::$thinkingLevelMap`):
+     * - `map[e] ?? e` is `$map[$e] ?? $e` — a null entry sends the level's own name;
+     * - `mapped === undefined ? e : mapped`, then `typeof === "string"`, is `Model::thinkingEffort()`
+     *   then `is_string()` — a null entry sends nothing;
+     * - `map?.off !== null` is "`off` is absent or a string".
+     *
+     * Keyed by the effort rather than the thinking level, because pig converts one to the other a
+     * layer above the provider (`ThinkingLevel::toReasoning()`), where upstream still has the level.
+     * The only key that differs is `minimal`, already sent as `low` by then.
+     *
+     * @param array<string, mixed> $body
+     */
+    private function thinking(array &$body, Model $model, OpenAiCompat $compat, ?string $effort): void
+    {
+        $map = $model->thinkingLevelMap;
+        $supportsReasoningEffort = (bool) $compat->reasoningEffort;
+        $offIsNotNull = !array_key_exists('off', $map) || $map['off'] !== null;
+        $budget = $this->thinkingBudget($body, $model, $effort);
+
+        if ($compat->thinkingFormat === 'zai' && $model->reasoning) {
+            $body['thinking'] = $effort !== null ? ['type' => 'enabled', 'clear_thinking' => false] : ['type' => 'disabled'];
+
+            if ($effort !== null && $supportsReasoningEffort) {
+                $mapped = $model->thinkingEffort($effort);
+
+                if (is_string($mapped)) {
+                    $body['reasoning_effort'] = $mapped;
+                }
+            }
+        } elseif ($compat->thinkingFormat === 'qwen' && $model->reasoning) {
+            $body['enable_thinking'] = $effort !== null;
+
+            if ($effort !== null && $supportsReasoningEffort) {
+                $mapped = $map[$effort] ?? $effort;
+
+                if (is_string($mapped)) {
+                    $body['reasoning_effort'] = $mapped;
+                }
+            }
+        } elseif ($compat->thinkingFormat === 'qwen-chat-template' && $model->reasoning) {
+            $body['chat_template_kwargs'] = ['enable_thinking' => $effort !== null, 'preserve_thinking' => true];
+        } elseif ($compat->thinkingFormat === 'chat-template' && $model->reasoning) {
+            $kwargs = self::chatTemplateValues($model, $effort, $compat->chatTemplateKwargs ?? [], $budget);
+
+            if ($kwargs !== null) {
+                $body['chat_template_kwargs'] = $kwargs;
+            }
+        } elseif ($compat->thinkingFormat === 'baseten' && $model->reasoning) {
+            $args = self::chatTemplateValues($model, $effort, $compat->chatTemplateArgs ?? [], $budget);
+
+            if ($args !== null) {
+                $body['chat_template_args'] = $args;
+            }
+
+            if ($supportsReasoningEffort) {
+                // `mapped = requested ? map[requested] : map.off`, undefined when absent; then
+                // `mapped === undefined ? requested : mapped`.
+                $key = $effort ?? 'off';
+                $mapped = array_key_exists($key, $map) ? $map[$key] : $effort;
+
+                if (is_string($mapped)) {
+                    $body['reasoning_effort'] = $mapped;
+                }
+            }
+        } elseif ($compat->thinkingFormat === 'deepseek' && $model->reasoning) {
+            if ($effort !== null) {
+                $body['thinking'] = ['type' => 'enabled'];
+            } elseif ($offIsNotNull) {
+                $body['thinking'] = ['type' => 'disabled'];
+            }
+
+            if ($effort !== null && $supportsReasoningEffort) {
+                $body['reasoning_effort'] = $map[$effort] ?? $effort;
+            }
+        } elseif ($compat->thinkingFormat === 'openrouter' && $model->reasoning) {
+            if ($effort !== null) {
+                $body['reasoning'] = ['effort' => $map[$effort] ?? $effort];
+            } elseif ($offIsNotNull) {
+                $body['reasoning'] = ['effort' => $map['off'] ?? 'none'];
+            }
+        } elseif ($compat->thinkingFormat === 'ant-ling' && $model->reasoning && $effort !== null) {
+            $mapped = $map[$effort] ?? null;
+
+            if (is_string($mapped)) {
+                $body['reasoning'] = ['effort' => $mapped];
+            }
+        } elseif ($compat->thinkingFormat === 'together' && $model->reasoning) {
+            $body['reasoning'] = ['enabled' => $effort !== null];
+
+            if ($effort !== null && $supportsReasoningEffort) {
+                $body['reasoning_effort'] = $map[$effort] ?? $effort;
+            }
+        } elseif ($compat->thinkingFormat === 'string-thinking' && $model->reasoning) {
+            if ($effort !== null) {
+                $body['thinking'] = $map[$effort] ?? $effort;
+            } elseif ($offIsNotNull) {
+                $body['thinking'] = $map['off'] ?? 'none';
+            }
+        } elseif ($effort !== null && $model->reasoning && $supportsReasoningEffort) {
+            // OpenAI-style `reasoning_effort` — upstream's two default arms. A `minimal` the map
+            // calls null is filtered out upstream of here (`ThinkingLevel::supportedBy()`).
+            $body['reasoning_effort'] = $map[$effort] ?? $effort;
+        } elseif ($effort === null && $model->reasoning && $supportsReasoningEffort) {
             // Thinking is off, and some endpoints want to be told so in their own word for it.
-            // Only a string: `off => null` means this model has no way to be told, and the field
-            // is left out rather than guessed at.
-            $off = $model->thinkingLevelMap['off'] ?? null;
+            // Only a string: `off => null` means this model has no way to be told.
+            $off = $map['off'] ?? null;
 
             if (is_string($off)) {
                 $body['reasoning_effort'] = $off;
             }
         }
+    }
 
-        return $body;
+    /**
+     * Upstream's `resolveClampedThinkingBudget()`: the default budget for the level (upstream's
+     * `DEFAULT_THINKING_BUDGETS`, `xhigh` clamped to `high`), cut so 1,024 tokens of the response
+     * ceiling are left for the answer, or null when that leaves nothing or thinking is off.
+     * pig's `OpenAiOptions` carries no `thinkingBudgets` of the caller's own, so the defaults are
+     * all there is. Only `{"$var": "thinking.budget"}` reads it — pig does not port upstream's
+     * separate `thinkingTokenBudgetField`.
+     *
+     * @param array<string, mixed> $body
+     */
+    private function thinkingBudget(array $body, Model $model, ?string $effort): ?int
+    {
+        if ($effort === null || !$model->reasoning) {
+            return null;
+        }
+
+        $ceiling = $body['max_tokens'] ?? $body['max_completion_tokens'] ?? $model->maxTokens;
+        $level = in_array($effort, ['xhigh', 'max'], true) ? 'high' : $effort;
+        $budget = min(
+            ['minimal' => 1024, 'low' => 2048, 'medium' => 8192, 'high' => 16384][$level] ?? 16384,
+            max(0, $ceiling - 1024),
+        );
+
+        return $budget > 0 ? $budget : null;
+    }
+
+    /**
+     * Upstream's `buildChatTemplateValues()` with `resolveChatTemplateKwargValue()`: a plain value
+     * goes as it is (null included); a `{"$var": …}` is filled in, and left out when it resolves to
+     * upstream's `undefined`. Null when nothing is left.
+     *
+     * @param array<string, mixed> $values
+     * @return array<string, mixed>|null
+     */
+    private static function chatTemplateValues(Model $model, ?string $effort, array $values, ?int $budget): ?array
+    {
+        $resolved = [];
+
+        foreach ($values as $key => $value) {
+            if (!is_array($value)) {
+                $resolved[$key] = $value;
+
+                continue;
+            }
+
+            if ($effort === null && ($value['omitWhenOff'] ?? false) === true) {
+                continue;
+            }
+
+            $variable = $value['$var'] ?? null;
+
+            if ($variable === 'thinking.enabled') {
+                $resolved[$key] = $effort !== null;
+            } elseif ($variable === 'thinking.budget') {
+                if ($budget !== null) {
+                    $resolved[$key] = $budget;
+                }
+            } else {
+                // `mapped = effort ? map[effort] : map.off`; undefined gives the effort (itself
+                // undefined when off), a string gives the string, null gives nothing.
+                $mapKey = $effort ?? 'off';
+                $mapped = array_key_exists($mapKey, $model->thinkingLevelMap) ? $model->thinkingLevelMap[$mapKey] : $effort;
+
+                if (is_string($mapped)) {
+                    $resolved[$key] = $mapped;
+                }
+            }
+        }
+
+        return $resolved !== [] ? $resolved : null;
     }
 
     /** @param list<mixed> $messages */
@@ -750,17 +919,31 @@ final class OpenAiCompletions
         return false;
     }
 
-    /** @return array<string, mixed> */
-    private function tool(Tool $tool): array
+    /**
+     * Upstream's `convertTools()`, the JSON-schema arm (pig sends no grammar tools).
+     *
+     * `compat.supportsStrictMode !== false` decides both whether a `constrainedSampling` tool can go
+     * strict and whether `strict` is sent at all — "only include strict if provider supports it.
+     * Some reject unknown fields." Where it is sent it is `strict ?? false`, so every tool of such
+     * a provider carries the field, strict or not.
+     *
+     * @return array<string, mixed>
+     */
+    private function tool(Tool $tool, OpenAiCompat $compat): array
     {
-        return [
-            'type' => 'function',
-            'function' => [
-                'name' => $tool->name,
-                'description' => $tool->description,
-                'parameters' => $tool->parameters,
-            ],
+        $supportsStrictMode = $compat->strictMode !== false;
+        $strict = ConstrainedSampling::resolveJsonSchemaStrictSampling($tool, $supportsStrictMode);
+        $function = [
+            'name' => $tool->name,
+            'description' => $tool->description,
+            'parameters' => ConstrainedSampling::getJsonSchemaToolParameters($tool, $strict),
         ];
+
+        if ($supportsStrictMode) {
+            $function['strict'] = $strict ?? false;
+        }
+
+        return ['type' => 'function', 'function' => $function];
     }
 
     /** @return list<array<string, mixed>> */
@@ -982,9 +1165,15 @@ final class OpenAiCompletions
             }
         }
 
+        // Upstream: `hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)"`,
+        // where `hasText` is the *joined* text being non-empty — so a result whose only text block
+        // is "" counts as having none. pig said "(see attached image)" for every result without
+        // text, which told the model to look at an image that was not there.
+        $joined = implode("\n", $text);
+
         $result = [
             'role' => 'tool',
-            'content' => Utf8::sanitize($text === [] ? '(see attached image)' : implode("\n", $text)),
+            'content' => Utf8::sanitize($joined !== '' ? $joined : ($images !== [] ? '(see attached image)' : '(no tool output)')),
             'tool_call_id' => $this->toolId($message->toolCallId, $compat),
         ];
 

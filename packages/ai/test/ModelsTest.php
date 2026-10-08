@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Pig\Ai\Test;
 
 use PHPUnit\Framework\TestCase;
+use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
 use Pig\Ai\Cost;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
+use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
 use Pig\Ai\Usage;
 
@@ -194,6 +196,57 @@ final class ModelsTest extends TestCase
         $this->assertNull(Models::get('no-such-model'));
         $this->assertNull(Models::find('openai', $model->id));
         $this->assertNotNull(Models::find(Models::ANTHROPIC, $model->id));
+    }
+
+    /**
+     * Which built-in models take strict tools, as upstream's generated catalogue says: OpenAI's own
+     * Responses models, and every `openai-completions` provider but Cerebras (and Moonshot,
+     * Together, Cloudflare's gateway and NVIDIA, which pig does not ship). Copilot's completions
+     * models too — detection at generation time gives them the flag. Everything else is false by
+     * default. Without this the `constrainedSampling` the built-in tools declare reached nothing.
+     */
+    public function testTheBuiltInModelsThatTakeStrictToolsSaySo(): void
+    {
+        foreach (Models::all() as $model) {
+            $expected = match (true) {
+                $model->api === Api::OpenAiResponses => $model->provider === 'openai',
+                $model->api === Api::OpenAiCompletions => $model->provider !== 'cerebras',
+                $model->api === Api::AnthropicMessages => $model->provider === Models::ANTHROPIC,
+                default => false,
+            };
+            $actual = match (true) {
+                $model->compat instanceof OpenAiCompat => $model->compat->strictMode ?? false,
+                $model->compat instanceof AnthropicCompat => $model->compat->strictTools ?? false,
+                default => false,
+            };
+
+            $this->assertSame($expected, $actual, "{$model->provider}/{$model->id}");
+        }
+    }
+
+    /**
+     * Upstream's generator sets `forceAdaptiveThinking` on the Anthropic-API models whose id
+     * `isAnthropicAdaptiveThinkingModel()` names, and on no other. pig decided this per request
+     * from four id fragments, which missed Opus 4.6, Sonnet 4.6 and Opus 5 — all sent a token
+     * budget they do not take.
+     */
+    public function testTheAnthropicModelsThatThinkAdaptivelySaySo(): void
+    {
+        $adaptive = [];
+
+        foreach (Models::all() as $model) {
+            if ($model->compat instanceof AnthropicCompat && $model->compat->forceAdaptiveThinking === true) {
+                $adaptive[] = $model->id;
+            }
+        }
+
+        foreach (['claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-5', 'claude-sonnet-4-6', 'claude-sonnet-5', 'claude-fable-5-1'] as $id) {
+            $this->assertContains($id, $adaptive);
+        }
+
+        foreach (['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5'] as $id) {
+            $this->assertNotContains($id, $adaptive, 'budget thinking, as upstream');
+        }
     }
 
     public function testOnlyTheProvidersThatCanBeTalkedToAreListed(): void

@@ -203,6 +203,26 @@ final class AgentLoopTest extends TestCase
         $this->assertSame([], $tool->calls);
     }
 
+    /**
+     * Strict sampling makes every optional parameter required-but-nullable, so a model that does
+     * not want `limit` sends `"limit": null`. Upstream's `validateToolArguments()` drops it first
+     * (`normalizeOptionalNulls()`), and the tool runs as if it had been left out; pig answered the
+     * call with "limit: must be integer" and the tool never ran.
+     */
+    public function testANullForAnOptionalParameterIsTheParameterLeftOut(): void
+    {
+        $tool = new ScriptedTool('read', static fn (): AgentToolResult => new AgentToolResult([new TextContent('ok')]));
+
+        [, $messages] = $this->drive(
+            [$this->wantsTool('read', ['path' => '/tmp/a.php', 'limit' => null]), $this->answer('done')],
+            [new UserMessage('read it')],
+            tools: [$tool],
+        );
+
+        $this->assertFalse($messages[2]->isError, $messages[2]->content[0]->text);
+        $this->assertSame([['path' => '/tmp/a.php']], $tool->calls, 'the null is gone, not passed on');
+    }
+
     public function testSteeringSkipsTheToolsThatHaveNotRunYet(): void
     {
         $tool = new ScriptedTool('read', static fn (array $args): AgentToolResult => new AgentToolResult(

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
+use Pig\Ai\AnthropicCompat;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\AssistantMessageDiagnostic;
 use Pig\Ai\Context;
@@ -36,6 +37,7 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\Utf8;
 use Pig\Async\Async;
 use Throwable;
@@ -60,6 +62,35 @@ final class Anthropic
     private const string ID_PATTERN = '/[^a-zA-Z0-9_-]/';
 
     private const int MAX_ID_LENGTH = 64;
+
+    /** Upstream's `ANTHROPIC_STRICT_UNSUPPORTED_KEYWORDS`. */
+    private const array STRICT_UNSUPPORTED_KEYWORDS = [
+        'minimum',
+        'maximum',
+        'exclusiveMinimum',
+        'exclusiveMaximum',
+        'multipleOf',
+        'maxItems',
+        'uniqueItems',
+        'minContains',
+        'maxContains',
+        'minProperties',
+        'maxProperties',
+    ];
+
+    /** Upstream's `ANTHROPIC_STRICT_STRING_FORMATS`. */
+    private const array STRICT_STRING_FORMATS = [
+        'date-time',
+        'time',
+        'date',
+        'duration',
+        'email',
+        'hostname',
+        'uri',
+        'ipv4',
+        'ipv6',
+        'uuid',
+    ];
 
     public function __construct(private readonly HttpClient $http = new HttpClient())
     {
@@ -400,7 +431,15 @@ final class Anthropic
 
         $beta = [self::FINE_GRAINED_STREAMING];
 
-        if ($options?->interleavedThinking ?? true) {
+        // Upstream: `model.reasoning && options?.thinkingEnabled === true && (options.interleavedThinking
+        // ?? true) && model.compat?.forceAdaptiveThinking !== true` — adaptive thinking interleaves
+        // without the beta, and a turn that does not think has nothing to interleave.
+        $forceAdaptiveThinking = $model->compat instanceof AnthropicCompat && $model->compat->forceAdaptiveThinking === true;
+
+        if ($model->reasoning
+            && ($options?->thinkingEnabled ?? false) === true
+            && ($options->interleavedThinking ?? true)
+            && !$forceAdaptiveThinking) {
             $beta[] = self::INTERLEAVED_THINKING;
         }
 
@@ -440,6 +479,7 @@ final class Anthropic
     /** @return array<string, mixed> */
     private function body(Model $model, Context $context, ?AnthropicOptions $options, bool $isOAuth): array
     {
+        $compat = $model->compat instanceof AnthropicCompat ? $model->compat : null;
         $body = [
             'model' => $model->id,
             'messages' => $this->messages($context, $model, $isOAuth),
@@ -458,17 +498,23 @@ final class Anthropic
         }
 
         if ($context->tools !== []) {
-            $body['tools'] = array_map(fn (Tool $tool): array => $this->tool($tool, $isOAuth), $context->tools);
+            // Upstream's `supportsStrictTools: model.compat?.supportsStrictTools ?? false`, which its
+            // generated catalogue sets on every `anthropic` provider model (`Models` does the same).
+            $supportsStrictTools = $compat?->strictTools ?? false;
+            $body['tools'] = array_map(
+                fn (Tool $tool): array => $this->tool($tool, $isOAuth, $supportsStrictTools),
+                $context->tools,
+            );
         }
 
         if (($options?->thinkingEnabled ?? false) && $model->reasoning) {
-            $isAdaptive = ($model->compat?->forceAdaptiveThinking ?? false)
-                || str_contains($model->id, 'fable')
-                || str_contains($model->id, 'opus-4-7')
-                || str_contains($model->id, 'opus-4-8')
-                || str_contains($model->id, 'sonnet-5');
-
-            if ($isAdaptive) {
+            // Upstream's `model.compat?.forceAdaptiveThinking === true`, and nothing else: no model id
+            // is looked at here. This used to read the flag off an `OpenAiCompat`, which has no such
+            // property — a PHP warning for any Anthropic model carrying a compat, and never true —
+            // and decided by four id fragments instead, missing Opus 4.6, Sonnet 4.6, Opus 5 and
+            // Haiku 5. The ids are now upstream's generator list, applied once where the built-in
+            // models are made (`AnthropicCompat::isAdaptiveThinkingModel()`, `Models`).
+            if ($compat?->forceAdaptiveThinking === true) {
                 $body['thinking'] = ['type' => 'adaptive'];
                 if ($options->effort !== null) {
                     $body['output_config'] = ['effort' => $options->effort];
@@ -505,17 +551,57 @@ final class Anthropic
     }
 
     /** @return array<string, mixed> */
-    private function tool(Tool $tool, bool $isOAuth): array
+    private function tool(Tool $tool, bool $isOAuth, bool $supportsStrictTools): array
     {
-        return [
+        // Upstream's `convertTools()`: a strict tool sends its whole strict schema with the legacy
+        // three keys laid over it (`{ ...parameters, ...legacyInputSchema }`) and `strict: true`;
+        // any other tool sends the legacy three alone, as before.
+        $strict = ConstrainedSampling::resolveJsonSchemaStrictSampling(
+            $tool,
+            $supportsStrictTools,
+            self::isStrictUnsupportedKeyword(...),
+        );
+        $parameters = ConstrainedSampling::getJsonSchemaToolParameters($tool, $strict);
+        $legacyInputSchema = [
+            'type' => 'object',
+            'properties' => $parameters['properties'] ?? new \stdClass(),
+            'required' => $parameters['required'] ?? [],
+        ];
+
+        $out = [
             'name' => $isOAuth ? ClaudeCode::nameOut($tool->name) : $tool->name,
             'description' => $tool->description,
-            'input_schema' => [
-                'type' => 'object',
-                'properties' => $tool->parameters['properties'] ?? new \stdClass(),
-                'required' => $tool->parameters['required'] ?? [],
-            ],
         ];
+
+        if ($strict === true) {
+            $out['strict'] = true;
+        }
+
+        $out['input_schema'] = $strict === true ? [...$parameters, ...$legacyInputSchema] : $legacyInputSchema;
+
+        return $out;
+    }
+
+    /**
+     * Upstream's `isAnthropicStrictUnsupportedKeyword`: what Anthropic's strict tool use answers
+     * with a 400 for the whole request, so a `prefer` tool using any of it is sent non-strict.
+     * https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations
+     */
+    private static function isStrictUnsupportedKeyword(string $key, mixed $value): bool
+    {
+        if (in_array($key, self::STRICT_UNSUPPORTED_KEYWORDS, true)) {
+            return true;
+        }
+
+        if ($key === 'minItems') {
+            return $value !== 0 && $value !== 1;
+        }
+
+        if ($key === 'format') {
+            return !is_string($value) || !in_array($value, self::STRICT_STRING_FORMATS, true);
+        }
+
+        return false;
     }
 
     /**

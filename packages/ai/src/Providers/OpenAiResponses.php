@@ -13,6 +13,7 @@ use Pig\Ai\Http\Request;
 use Pig\Ai\Http\SseParser;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
+use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\ProviderError;
 use Pig\Ai\StartEvent;
@@ -34,6 +35,7 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\AssistantMessageEventStream;
+use Pig\Ai\Utils\ConstrainedSampling;
 use Pig\Ai\Utils\ShortHash;
 use Pig\Ai\Utils\Utf8;
 use Pig\Async\Async;
@@ -153,6 +155,9 @@ final class OpenAiResponses
             // One summary part ending and the next beginning is a paragraph break, and
             // nothing else in the stream says so.
             'response.reasoning_summary_part.done' => $this->onBreak($builder, $stream, $open),
+            // Raw reasoning text (models that expose it rather than a summary) streams as a
+            // thinking delta too, as upstream's `response.reasoning_text.delta` arm does.
+            'response.reasoning_text.delta' => $this->onDelta($data, $builder, $stream, $open, 'thinking'),
             'response.output_text.delta', 'response.refusal.delta' => $this->onDelta($data, $builder, $stream, $open, 'text'),
             'response.function_call_arguments.delta' => $this->onArguments($data, $builder, $stream, $open),
             // **Both terminal events, and `response.incomplete` is the one that was missing.** It
@@ -314,6 +319,21 @@ final class OpenAiResponses
         [$index, $kind] = $open;
 
         if ($kind === 'thinking') {
+            // Upstream rebuilds the thinking text from the finished item:
+            // `summaryText = item.summary?.map((s) => s.text).join("\n\n") || ""`, the same for
+            // `item.content`, then `summaryText || contentText || slot.block.thinking`. The
+            // summary wins, the raw reasoning content is next, and only an item carrying
+            // neither keeps what the deltas built.
+            $text = self::joinReasoningTexts($item['summary'] ?? null);
+
+            if ($text === '') {
+                $text = self::joinReasoningTexts($item['content'] ?? null);
+            }
+
+            if ($text !== '') {
+                $builder->setText($index, $text);
+            }
+
             // The whole item, kept verbatim: the summary is what a person reads, and the
             // model wants its own encrypted reasoning back or it starts over.
             $builder->setSignature($index, (string) json_encode($item));
@@ -587,7 +607,14 @@ final class OpenAiResponses
         }
 
         if ($context->tools !== []) {
-            $body['tools'] = array_map($this->tool(...), $context->tools);
+            // Upstream's `supportsStrictMode: model.compat?.supportsStrictMode ?? false` — on for
+            // OpenAI's own models, which carry it in their `compat` (`Models`), and off for every
+            // other endpoint of this API unless its `compat` says so.
+            $supportsStrictMode = $model->compat instanceof OpenAiCompat && ($model->compat->strictMode ?? false);
+            $body['tools'] = array_map(
+                fn (Tool $tool): array => $this->tool($tool, $supportsStrictMode),
+                $context->tools,
+            );
         }
 
         if (!$model->reasoning) {
@@ -616,16 +643,30 @@ final class OpenAiResponses
         return $body;
     }
 
-    /** @return array<string, mixed> */
-    private function tool(Tool $tool): array
+    /**
+     * Upstream's `convertResponsesTools()`, the JSON-schema arm (pig sends no grammar tools).
+     *
+     * `strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode) ?? defaultStrict`, the
+     * default being `false`; the field is sent only where strict mode is supported. pig used to send
+     * `strict: null` on every tool, which is neither — and never the strict schema.
+     *
+     * @return array<string, mixed>
+     */
+    private function tool(Tool $tool, bool $supportsStrictMode): array
     {
-        return [
+        $strict = ConstrainedSampling::resolveJsonSchemaStrictSampling($tool, $supportsStrictMode) ?? false;
+        $function = [
             'type' => 'function',
             'name' => $tool->name,
             'description' => $tool->description,
-            'parameters' => $tool->parameters,
-            'strict' => null,
+            'parameters' => ConstrainedSampling::getJsonSchemaToolParameters($tool, $strict),
         ];
+
+        if ($supportsStrictMode) {
+            $function['strict'] = $strict;
+        }
+
+        return $function;
     }
 
     /**
@@ -820,10 +861,15 @@ final class OpenAiResponses
             }
         }
 
+        // Upstream's `convertToolResultOutput()`: `hasText ? textResult : images.length > 0 ?
+        // "(see attached image)" : "(no tool output)"`, `hasText` being the joined text non-empty.
+        // pig said "(see attached image)" for every result without text, image or not.
+        $joined = implode("\n", $text);
+
         $items = [[
             'type' => 'function_call_output',
             'call_id' => $callId,
-            'output' => Utf8::sanitize($text === [] ? '(see attached image)' : implode("\n", $text)),
+            'output' => Utf8::sanitize($joined !== '' ? $joined : ($images !== [] ? '(see attached image)' : '(no tool output)')),
         ]];
 
         $parts = $this->parts($images, $model);
@@ -838,6 +884,27 @@ final class OpenAiResponses
         }
 
         return $items;
+    }
+
+    /**
+     * Upstream's `parts?.map((p) => p.text).join("\n\n") || ""` for a reasoning item's
+     * `summary` or `content` list. JS `join()` writes undefined and null as "", so a part with
+     * no string text still contributes its separator.
+     */
+    private static function joinReasoningTexts(mixed $parts): string
+    {
+        if (!is_array($parts)) {
+            return '';
+        }
+
+        $texts = [];
+
+        foreach ($parts as $part) {
+            $piece = is_array($part) ? ($part['text'] ?? null) : null;
+            $texts[] = is_string($piece) ? $piece : '';
+        }
+
+        return implode("\n\n", $texts);
     }
 
     /**

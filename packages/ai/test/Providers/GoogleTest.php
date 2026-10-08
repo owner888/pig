@@ -793,6 +793,35 @@ final class GoogleTest extends TestCase
         );
     }
 
+    /**
+     * Upstream's `hasText` is the joined text being non-empty, so an image result whose only text
+     * block is "" still gets "(see attached image)" — pig counted the empty block as text and sent
+     * "". With nothing at all, upstream's Google converter sends "", not a placeholder.
+     */
+    public function testAnImageResultWithOnlyEmptyTextStillSaysThereIsAnImage(): void
+    {
+        $context = new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ToolCall('c1', 'shot', [])]),
+            new ToolResultMessage('c1', 'shot', [new TextContent(''), new ImageContent('AAA', 'image/png')]),
+        ]);
+
+        $this->send($context, $this->model(images: true, id: 'gemini-3-pro-preview'));
+        $contents = $this->server->receivedJson()['contents'];
+
+        $this->assertSame('(see attached image)', $contents[count($contents) - 1]['parts'][0]['functionResponse']['response']['output']);
+
+        $this->server = new CannedServer();
+        $this->send(new Context([
+            new UserMessage('hi'),
+            $this->assistant([new ToolCall('c1', 'bash', [])]),
+            new ToolResultMessage('c1', 'bash', []),
+        ]), $this->model(id: 'gemini-3-pro-preview'));
+        $contents = $this->server->receivedJson()['contents'];
+
+        $this->assertSame('', $contents[count($contents) - 1]['parts'][0]['functionResponse']['response']['output']);
+    }
+
     public function testOnlyGeminiThreeTakesImagesInsideAToolResult(): void
     {
         $context = new Context([

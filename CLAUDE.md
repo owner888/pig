@@ -954,7 +954,17 @@ whichever delta they arrive in.
 wants tool ids of exactly nine alphanumeric characters, Grok rejects `reasoning_effort`,
 Cerebras rejects `store`. None of that is documented anywhere as a difference; it is what a 400 looks like
 after you have sent it. A table per endpoint rather than one rule, for the same reason the tool
-archive names are a table — see that note above.
+archive names are a table — see that note above. `detect()` is upstream's `detectCompat()` flag by
+flag (provider name or URL; only DeepSeek's URL check ignores case), plus the Mistral rules upstream
+dropped when Mistral moved to its own API, and a model's own `compat` is laid over it **key by key**
+by `resolve()` — upstream's `getCompat()`. Every field is nullable and null means "not said".
+`thinkingFormat` decides how thinking is switched on and how hard — `reasoning_effort` (`openai`),
+`thinking: {type}` (`zai`, `deepseek`), `reasoning: {effort}` (`openrouter`), `enable_thinking`
+(`qwen`), `chat_template_kwargs` / `chat_template_args` with `$var` placeholders (`chat-template`,
+`qwen-chat-template`, `baseten`) and the rest of upstream's list — in `OpenAiCompletions::thinking()`,
+arm for arm. An `anthropic-messages` model carries `AnthropicCompat` instead (`forceAdaptiveThinking`,
+`supportsStrictTools`), which is metadata `Models` writes on the built-ins as upstream's generator
+does; nothing at request time looks at a Claude model's id.
 
 `Providers\TransformMessages` (upstream's `api/transform-messages.ts`) is what makes `/model`
 safe across models. Three things get cleaned up before any provider sees the history. First,
@@ -994,7 +1004,10 @@ no counterpart anywhere else:
   itself is encrypted and opaque, and the model wants its own item back verbatim or it reasons
   from nothing again. So the entire item is kept as the thinking block's signature and replayed
   as it came — which is what `TextContent::$textSignature` and the builder's `setSignature()`
-  are for. Asking for it at all needs `include: ["reasoning.encrypted_content"]`.
+  are for. Asking for it at all needs `include: ["reasoning.encrypted_content"]`. The thinking
+  *text* is rebuilt from the finished item too, as a message's text is: the `summary` parts joined
+  by a blank line, else the `content` parts (raw reasoning, which also streams as
+  `response.reasoning_text.delta`), else what the deltas built.
 - **A message item's id goes back with its phase.** A text block's `textSignature` is upstream's
   `TextSignatureV1` JSON, `{"v":1,"id":…,"phase":…}`; a plain id string from an older session is
   read as the id. No id gives `msg_pi_<msgIndex>` (`_<textBlockIndex>` after the first text block),
@@ -1071,10 +1084,8 @@ Tools on the direct API are upstream's `buildParams()`: `convertTools(tools, fal
 `parametersJsonSchema`, and `resolveGoogleFunctionCallingMode()` picks the mode — `none`/`any` as
 asked, else `VALIDATED` when any tool goes strict (`Tool::$constrainedSampling` of type
 `json_schema`, on a model where `supportsGoogleStrictToolSampling()` — Gemini 3+), else the mapped
-choice or nothing. Upstream's bash, edit, read and write ask for `strict: "prefer"`; pig's built-in
-tools do not yet, because the strict schema makes optional arguments arrive as `null`, and
-`ToolArguments` validates against the tool's own (loose) schema, which refuses it — `limit: null`
-is `limit: must be integer`. The Code Assist path (`pig-antigravity`) keeps
+choice or nothing. The built-in bash, edit, read and write ask for `strict: "prefer"`, as upstream's
+do, so a Gemini 3 coding session sends `VALIDATED`. The Code Assist path (`pig-antigravity`) keeps
 `tools()` and `toolConfig()`: upstream has no Code Assist provider left to compare against.
 
 It was an extraction and nothing else, which is what `GoogleTest`'s thirty-one cases passing
@@ -1970,15 +1981,17 @@ Five things decided here:
   endpoint reported `the model is priced at zero` and that was mistaken — in this file's own summary
   of it — for the field not existing at all. *A claim about what this repository does is worth a
   grep, which is the fourth shape from the index pointed at pig rather than at a docblock.*
-- **No `compat` block means null**, so `OpenAiCompat::detect()` still works it out from the URL
-  (and, for DeepSeek, the provider name). That is a better default than any set of flags: a local
+- **No `compat` block means null**, so `OpenAiCompat::detect()` still works it out from the
+  provider name and URL. That is a better default than any set of flags: a local
   llama.cpp gets what it needs with nothing written. A block uses **upstream's key names** so files
-  stay portable — the four `supports…`/`maxTokensField` ones and the `requires…` ones
-  (`requiresReasoningContentOnAssistantMessages` is the newest). A block replaces
-  detection whole rather than per key, unlike upstream's `getCompat()`: a key the block leaves out
-  takes its plain default, not the detected value. This
-  sentence used to say upstream had four of the eight and that the other four were pig's own; see
-  the trap entry on it.
+  stay portable — the `supports…`/`maxTokensField` ones, the `requires…` ones
+  (`requiresReasoningContentOnAssistantMessages`, `supportsStrictMode`), `thinkingFormat`,
+  `chatTemplateKwargs` and `chatTemplateArgs`; for an `anthropic-messages` model,
+  `forceAdaptiveThinking` and `supportsStrictTools`. A key the block leaves out
+  is null and detection decides it (`OpenAiCompat::resolve()`, upstream's `getCompat()`), and a
+  provider-level `compat` applies to each of its models with the model's own keys winning
+  (upstream's `mergeCompat()`). This sentence used to say upstream had four of the eight and that
+  the other four were pig's own; see the trap entry on it.
 
 `--list-models` moved to **after** this loads, which it had to: a listing that cannot show the model
 somebody just declared is a listing they will not trust about the rest either. It costs a
@@ -2004,6 +2017,12 @@ an assertion and a tool has a better place to check an email), `$ref` (needs a r
 guard, and a tool's parameters are self-contained everywhere in either tree), and
 `if`/`then`/`else`, `dependencies`, `patternProperties`, `propertyNames`, `contains` (nothing uses
 them).
+
+**Before the schema, a null for an optional parameter is dropped** — upstream's
+`normalizeOptionalNulls()`: present, null, not required, not a `$ref`, and its own schema rejects
+null. Strict sampling sends every optional parameter as null when the model leaves it out, and the
+tool's own schema still says `number`. pig does not port the rest of upstream's coercion
+(`Value.Convert`, `coerceWithJsonSchema()`): a `"10"` for a number is still refused.
 
 **An unknown keyword is ignored, never a failure.** That is the most important line in the file: a
 schema using something unimplemented has to keep working, or adding a keyword to a tool breaks the
@@ -2426,7 +2445,9 @@ Six things that took a decision:
 - **An unknown `done` reason is a plain stop, and an unknown event type is ignored.** The turn did
   finish; refusing it over a word this pig does not know loses the work. Same rule as `JsonSchema`'s
   unknown keywords, applied to a wire protocol.
-- **`model` goes over whole — `headers` and `compat` included, and `cost` not `pricing`.** The
+- **`model` goes over whole — `headers` and `compat` included, and `cost` not `pricing`.** `compat`
+  carries only the keys the model says, as upstream's `model.compat` does, so the server detects
+  the rest. The
   server reads the provider and api off it to decide who to call, and pig renamed `cost` to
   `pricing` internally while the wire keeps the name the server was written against. A custom
   provider's extra auth header therefore reaches the gateway; that is upstream's behaviour and it is
@@ -6505,10 +6526,9 @@ fires in either tool; declared smaller, both compact early. That is the first th
 a silent-overflow provider misbehaves, and the fourth shape from the index is why this paragraph
 exists: a claim about a repository is worth a grep, upstream's included.
 
-Regression tests: `OpenAiCompletionsTest::testDeepSeekGetsItUnderTheOlderNameToo`, which also pins
-that nothing *else* about the endpoint is treated as strict — it takes `store`, the `developer` role
-and `reasoning_effort` without complaint, so the one row is the whole difference. Taking
-`deepseek.com` off the row turns it red.
+Regression tests: `OpenAiCompletionsTest::testDeepSeekGetsItUnderTheOlderNameToo` (taking DeepSeek
+off the `max_tokens` row turns it red) and `testDeepSeekIsNonStandardTheWayUpstreamDetectsIt` — no
+`store`, no `developer` role, as upstream's `detectCompat()` has it.
 
 ### 1,633 mutations over the five providers, and an option none of them sent
 
@@ -11235,6 +11255,84 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 - 开关在 `OpenAiCompat::$reasoningContentOnAssistantMessages`，`detect($baseUrl, $provider)` 要传 provider 名；`models.json` 的 `compat` 用 upstream 拼写 `requiresReasoningContentOnAssistantMessages`，`StreamProxy` 也要带上。
 - 条件是模型能力 `model.reasoning`，不是本次请求是否思考；已有 `reasoning_content` 的轮次不覆盖。
 - 测试：`OpenAiCompletionsTest::testDeepSeekGetsAnEmptyReasoningContentOnAReplayedTurnThatHadNoThinking`、`testTheReasoningContentFillerNeedsTheFlagAndAReasoningModel`，`CustomModelsTest::testRequiresReasoningContentOnAssistantMessagesIsReadFromACompatBlock`。
+
+### Responses API 的思考文字只信流式 delta
+
+**症状**：走 OpenAI Responses API 的思考模型，思考块末尾多出一个空段落（`reasoning_summary_part.done` 补的 `\n\n`）；只给原始推理（`reasoning_text`）不给摘要的模型，思考块整块是空的。
+
+**根因**：upstream 在 `response.output_item.done` 上用完成的 reasoning item 重建思考文字：`summary` 各段 `join("\n\n")`，没有就用 `content` 各段，两者都空才保留 delta 拼出来的；还把 `response.reasoning_text.delta` 当思考 delta。pig 只把 item 存进签名，文字一直是 delta 拼的，也不认 `reasoning_text.delta`。
+
+**避坑规则**：
+- 完成的 item 是权威文字，思考块和文字块一样用 `setText()` 覆盖；顺序 `summary || content || 已流式的`，空数组不算有内容。
+- 签名照旧存整个 item，不因重建文字而改动。
+- 测试：`OpenAiResponsesTest::testTheFinishedReasoningItemsSummaryIsTheThinkingText`、`testRawReasoningContentIsTheThinkingWhenThereIsNoSummary`、`testAReasoningItemWithNothingToReadKeepsTheStreamedThinking`。
+
+### `OpenAiCompat::detect()` 和 upstream 的 `detectCompat()` 不是一张表
+
+**症状**：`models.json` 里写成 `https://API.DeepSeek.com` 的 DeepSeek 端点输出上限不生效（发的是会被忽略的 `max_completion_tokens`）；DeepSeek、z.ai、Moonshot、Together、NVIDIA 等端点被当成标准端点，收到 `store`、`developer` 角色、`reasoning_effort` 或 `max_completion_tokens`。
+
+**根因**：pig 的 `detect()` 只按 URL 认 cerebras/x.ai/mistral/chutes 四家为非标准，`deepseek.com` 只在 `maxTokensField` 一项上、且区分大小写；upstream 的 `isDeepSeek`（`baseUrl.toLowerCase()`）同时决定非标准、`max_tokens`、`reasoning_content` 补齐，另有 z.ai、Moonshot、Together、OpenRouter、Cloudflare、NVIDIA、Ant Ling、opencode 各自的 provider 名/URL 判定。
+
+**避坑规则**：
+- `detect($baseUrl, $provider, $modelId)` 逐项照 upstream `detectCompat()` 抄，provider 名和 URL 都要传；只有 DeepSeek 的 URL 判定不分大小写。
+- Mistral 规则是 pig 自己的（upstream 已改走 `mistral-conversations`），改 detect 时别顺手删。
+- 测试：`OpenAiCompletionsTest::testEveryEndpointUpstreamNamesIsDetectedAsUpstreamDetectsIt`、`testDeepSeekIsNonStandardTheWayUpstreamDetectsIt`、`testDeepSeekGetsItUnderTheOlderNameToo`。
+
+### `compat` 块整块替换检测结果
+
+**症状**：`models.json` 里给 DeepSeek 模型写了只有一个键的 `compat`（比如 `requiresThinkingAsText`），结果请求又带上了 `store`、`developer` 角色和 `max_completion_tokens`，`reasoning_content` 补齐也没了。
+
+**根因**：upstream `getCompat()` 是逐键 `model.compat.x ?? detected.x`；pig 只要有 `compat` 就整块替换检测结果，没写的键回落到普通默认值。provider 级的 `compat` 也完全不读（upstream `mergeCompat(providerConfig.compat, definition.compat)`）。
+
+**避坑规则**：
+- `OpenAiCompat` 每个字段可空，null 表示"没说"；provider 里只用 `OpenAiCompat::resolve($model)`，不要再写 `$model->compat ?? detect(...)`。
+- `CustomModels::compat()` 缺的键给 null，不给默认值；provider 级 `compat` 先铺、模型自己的键覆盖。`StreamProxy` 只发非 null 的键。
+- 测试：`OpenAiCompletionsTest::testAnExplicitCompatOverridesDetectionOnlyForTheKeysItSets`，`CustomModelsTest::testACompatBlockIsLaidOverDetectionKeyByKey`、`testAProviderCompatBlockAppliesToItsModelsAndAModelsOwnKeysWin`。
+
+### 空工具结果被说成"见附图"
+
+**症状**：命令什么都没输出（或工具结果只有一个空文本块）时，OpenAI 系模型收到的工具结果是 `(see attached image)`，跟着去找一张不存在的图。
+
+**根因**：upstream 按拼接后的文字长度判断 `hasText`，没有文字时有图才说 `(see attached image)`，没图说 `(no tool output)`（Completions、Responses）；Google 没图给 `""`。pig 用"有没有文本块"判断，而且无论有没有图都写 `(see attached image)`。
+
+**避坑规则**：
+- 先 `implode("\n", $text)` 再判断是否为空；占位文字按各 provider 照抄：Completions/Responses `(no tool output)`，Google `""`，Anthropic 没图时直接发拼接文字。
+- 测试：`OpenAiCompletionsTest::testAToolResultWithNothingInItSaysSoRatherThanPointingAtAnImage`、`OpenAiResponsesTest::testAToolResultWithNothingInItSaysSoRatherThanPointingAtAnImage`、`GoogleTest::testAnImageResultWithOnlyEmptyTextStillSaysThereIsAnImage`。
+
+### strict 采样下可选参数以 null 到达
+
+**症状**：内置 bash/edit/read/write 声明了 `constrainedSampling`（strict: prefer），Anthropic、OpenAI、Gemini 3 等支持 strict 的模型调用 `read` 时不想给 `limit`，发来 `"limit": null`，工具被拒：`limit: must be number`。
+
+**根因**：strict 变换把可选参数改成必填且可为 null；upstream `validateToolArguments()` 先跑 `normalizeOptionalNulls()`，按工具原始 schema 把"非必填、值为 null、本身不接受 null"的键删掉再校验。pig 的 `ToolArguments` 直接校验。
+
+**避坑规则**：
+- 给工具加 `constrainedSampling` 前确认 `ToolArguments::validate()` 的 null 归一化还在；归一化按工具原始 schema，不按 strict schema，必填参数的 null 照样报错。
+- 哪些模型支持 strict 照 upstream 的生成元数据：`anthropic` provider 的模型（`AnthropicCompat::$strictTools`）、`openai` 的 Responses 模型、除 Cerebras 外内置的 Completions 模型（含 Copilot）；`models.json` 默认不支持，可用 `supportsStrictMode`（Anthropic 用 `supportsStrictTools`）打开。
+- 测试：`ToolArgumentsTest`，`AgentLoopTest::testANullForAnOptionalParameterIsTheParameterLeftOut`，`StrictToolSamplingTest`。
+
+### z.ai / DeepSeek 收不到"要不要思考"
+
+**症状**：z.ai（GLM）关掉思考仍然在思考、照样计费；DeepSeek 关掉思考没有效果；OpenRouter、Qwen、Together 等走 `models.json` 的端点思考开关无效。
+
+**根因**：upstream 的 compat 有 `thinkingFormat`（detect：deepseek → `deepseek`，z.ai → `zai`，Together → `together`，Ant Ling → `ant-ling`，OpenRouter → `openrouter`，其余 `openai`），`buildParams()` 按格式发 `thinking: {type}`、`reasoning: {effort}`、`enable_thinking`、`chat_template_kwargs` 等；pig 只会发 `reasoning_effort`，而按 upstream 检测 z.ai 又不支持 `reasoning_effort`，结果什么都不发。
+
+**避坑规则**：
+- 思考参数只在 `OpenAiCompletions::thinking()` 里按 `thinkingFormat` 分支写，顺序和运算符照 upstream：`map[e] ?? e`、`Model::thinkingEffort()` + `is_string()`、"`off` 不存在或是字符串"三种读法别混。
+- 关闭思考也要按格式明说（`{type: "disabled"}`、`effort: "none"` 等），除非 `thinkingLevelMap` 把 `off` 设成 null。
+- `models.json` 键：`thinkingFormat`、`chatTemplateKwargs`、`chatTemplateArgs`（provider 和模型的两个模板对象按键合并）。
+- 测试：`OpenAiCompletionsTest::testZaiIsToldWhetherToThinkInItsOwnField`、`testDeepSeekIsToldWhetherToThinkAndHowHard`、`testEachThinkingFormatSaysItTheWayUpstreamDoes`、`testTheThinkingFormatIsDetectedAsUpstreamDetectsIt`，`CustomModelsTest::testAThinkingFormatAndItsTemplateValuesAreReadAndMergedKeyByKey`。
+
+### Anthropic 自适应思考靠模型 id 猜，还读了不存在的属性
+
+**症状**：Opus 4.6、Sonnet 4.6、Opus 5 开思考时发的是 `budget_tokens`，不是 adaptive；`anthropic-messages` 模型在 `models.json` 里写了 `compat` 时，思考请求触发 PHP 警告（`Undefined property ...::$forceAdaptiveThinking`）。
+
+**根因**：upstream 运行时只看 `model.compat?.forceAdaptiveThinking === true`，id 判断（`isAnthropicAdaptiveThinkingModel()`）只在生成模型表时把这个标记写进 Anthropic API 的内置模型；pig 在请求时用四个 id 片段判断，还从 `OpenAiCompat` 上读这个它没有的属性。interleaved-thinking beta 也该只在推理模型的思考轮、且非 adaptive 时才发。
+
+**避坑规则**：
+- Anthropic 的模型元数据放 `AnthropicCompat`（`forceAdaptiveThinking`、`strictTools`），`Models` 建表时按 upstream 的 id 列表写入；provider 里只读标记，不看 id。
+- `Model::$compat` 按 API 分类型，provider 读之前先 `instanceof`，别的 API 的 compat 当作没有。
+- `models.json` 里代理的新 Claude 要 adaptive 得写 `"forceAdaptiveThinking": true`，和 upstream 一样。
+- 测试：`AnthropicTest::testAModelWhoseCompatSaysAdaptiveThinksAdaptively`、`testWithoutTheFlagEvenAnAdaptiveIdGetsABudget`、`testAnAnthropicModelCarryingACompatBlockDoesNotWarn`、`testATurnThatDoesNotThinkAsksForNoInterleavedThinking`，`ModelsTest::testTheAnthropicModelsThatThinkAdaptivelySaySo`。
 
 ## Version floor: PHP >= 8.3
 

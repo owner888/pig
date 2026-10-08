@@ -6,12 +6,15 @@ namespace Pig\Ai\Test\Providers;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Model;
+use Pig\Ai\Models;
+use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
 use Pig\Ai\Providers\Anthropic;
 use Pig\Ai\Providers\AnthropicOptions;
@@ -542,6 +545,158 @@ final class AnthropicTest extends TestCase
         $this->assertStringContainsString('pong', strtolower($message->content[0]->text));
         $this->assertGreaterThanOrEqual(1, $deltas);
         $this->assertGreaterThanOrEqual(1, $message->usage->output);
+    }
+
+    // ---- strict tools ------------------------------------------------------------------------
+
+    /**
+     * Upstream's `convertTools()`: on a model with `supportsStrictTools` — which its catalogue
+     * gives every `anthropic` provider model, and `Models` does too — a tool asking for strict
+     * sampling goes out with `strict: true` and its strict schema, the legacy three keys laid over
+     * it. pig sent every tool as the legacy three, so the strict declaration on the built-in tools
+     * did nothing here.
+     */
+    public function testAStrictToolGoesOutStrictToAnthropicItself(): void
+    {
+        [, $body] = $this->capture($this->model(compat: new AnthropicCompat(strictTools: true)), new Context([new UserMessage('hi')], tools: [new Tool('read', 'Read a file', [
+            'type' => 'object',
+            'properties' => ['path' => ['type' => 'string'], 'limit' => ['type' => 'number']],
+            'required' => ['path'],
+        ], ['type' => 'json_schema', 'strict' => 'prefer'])]), $this->options());
+
+        $this->assertTrue($body['tools'][0]['strict']);
+        $this->assertSame([
+            'type' => 'object',
+            'properties' => ['path' => ['type' => 'string'], 'limit' => ['anyOf' => [['type' => 'number'], ['type' => 'null']]]],
+            'required' => ['path', 'limit'],
+            'additionalProperties' => false,
+        ], $body['tools'][0]['input_schema']);
+    }
+
+    /**
+     * A schema using a keyword Anthropic's strict mode answers with a 400 for the whole request
+     * (`minimum` here) is sent the old way — a `prefer` tool falls back rather than failing.
+     */
+    public function testAStrictToolWithAKeywordAnthropicRefusesFallsBackToTheLegacySchema(): void
+    {
+        $tool = new Tool('read', 'Read a file', [
+            'type' => 'object',
+            'properties' => ['path' => ['type' => 'string'], 'limit' => ['type' => 'number', 'minimum' => 1]],
+            'required' => ['path'],
+        ], ['type' => 'json_schema', 'strict' => 'prefer']);
+
+        [, $body] = $this->capture($this->model(compat: new AnthropicCompat(strictTools: true)), new Context([new UserMessage('hi')], tools: [$tool]), $this->options());
+
+        $this->assertArrayNotHasKey('strict', $body['tools'][0]);
+        $this->assertSame(['path'], $body['tools'][0]['input_schema']['required']);
+    }
+
+    /**
+     * Upstream's default is `supportsStrictTools: false`: a model whose compat does not say so —
+     * an Anthropic-shaped endpoint of anybody else's — gets the same tool unchanged.
+     */
+    public function testAnotherProviderOnTheAnthropicApiGetsNoStrictTools(): void
+    {
+        $url = $this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]]);
+        $model = new Model('claude-sonnet-4-5', 'Proxy', Api::AnthropicMessages, 'my-proxy', rtrim($url, '/'), 200_000, 63_000);
+        $context = new Context([new UserMessage('hi')], tools: [new Tool('read', 'Read a file', [
+            'type' => 'object',
+            'properties' => ['path' => ['type' => 'string'], 'limit' => ['type' => 'number']],
+            'required' => ['path'],
+        ], ['type' => 'json_schema', 'strict' => 'prefer'])]);
+
+        Async::run(function () use ($model, $context): void {
+            foreach ($this->anthropic()->stream($model, $context, $this->options()) as $ignored) {
+            }
+        });
+
+        $tool = $this->server->receivedJson()['tools'][0];
+
+        $this->assertArrayNotHasKey('strict', $tool);
+        $this->assertSame(['path'], $tool['input_schema']['required']);
+    }
+
+    // ---- adaptive thinking -------------------------------------------------------------------
+
+    /**
+     * Upstream's `forceAdaptiveThinking`: adaptive thinking plus `output_config.effort`, and no
+     * interleaved-thinking beta, because adaptive thinking interleaves without it.
+     */
+    public function testAModelWhoseCompatSaysAdaptiveThinksAdaptively(): void
+    {
+        [$head, $body] = $this->capture(
+            $this->model(compat: new AnthropicCompat(forceAdaptiveThinking: true)),
+            new Context([new UserMessage('hi')]),
+            new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true, thinkingBudgetTokens: 4096, effort: 'medium'),
+        );
+
+        $this->assertSame(['type' => 'adaptive'], $body['thinking']);
+        $this->assertSame(['effort' => 'medium'], $body['output_config']);
+        $this->assertStringNotContainsString('interleaved-thinking', $head);
+    }
+
+    /**
+     * Nothing at request time looks at the id any more: upstream decides adaptive by
+     * `model.compat?.forceAdaptiveThinking === true` alone, and its generator sets that on the
+     * built-in ids. pig matched four id fragments here, so a model the fragments named got adaptive
+     * thinking whatever its compat said — and Opus 4.6, which they did not name, got a budget.
+     */
+    public function testWithoutTheFlagEvenAnAdaptiveIdGetsABudget(): void
+    {
+        [$head, $body] = $this->capture(
+            $this->model(id: 'claude-opus-4-7'),
+            new Context([new UserMessage('hi')]),
+            new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true, thinkingBudgetTokens: 4096),
+        );
+
+        $this->assertSame(['type' => 'enabled', 'budget_tokens' => 4096], $body['thinking']);
+        $this->assertStringContainsString('interleaved-thinking', $head);
+
+        // And the built-in Opus 4.6 carries the flag, so it is sent adaptive.
+        $opus = Models::find(Models::ANTHROPIC, 'claude-opus-4-6');
+        $this->assertNotNull($opus);
+        $this->server = new CannedServer();
+        [, $body] = $this->capture(
+            $this->model(id: 'claude-opus-4-6', compat: $opus->compat),
+            new Context([new UserMessage('hi')]),
+            new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true, thinkingBudgetTokens: 4096),
+        );
+
+        $this->assertSame(['type' => 'adaptive'], $body['thinking']);
+    }
+
+    /**
+     * The read that used to be there was `$model->compat?->forceAdaptiveThinking` on an
+     * `OpenAiCompat`, a property it does not have: a PHP warning (a failure under this suite's
+     * `failOnWarning`) for any thinking turn of an Anthropic model carrying a compat block — which a
+     * `models.json` `compat` on an `anthropic-messages` model was. A compat of another API's type is
+     * now simply not this provider's.
+     */
+    public function testAnAnthropicModelCarryingACompatBlockDoesNotWarn(): void
+    {
+        foreach ([new OpenAiCompat(store: false), new AnthropicCompat()] as $compat) {
+            $this->server = new CannedServer();
+            [, $body] = $this->capture(
+                $this->model(compat: $compat),
+                new Context([new UserMessage('hi')], tools: [new Tool('read', 'Read', ['type' => 'object', 'properties' => []], ['type' => 'json_schema', 'strict' => 'prefer'])]),
+                new AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true, thinkingBudgetTokens: 2048),
+            );
+
+            $this->assertSame(['type' => 'enabled', 'budget_tokens' => 2048], $body['thinking'], $compat::class);
+            $this->assertArrayNotHasKey('strict', $body['tools'][0], $compat::class);
+        }
+    }
+
+    /**
+     * Upstream sends the interleaved-thinking beta only on a thinking turn of a reasoning model;
+     * pig sent it on every request.
+     */
+    public function testATurnThatDoesNotThinkAsksForNoInterleavedThinking(): void
+    {
+        [$head] = $this->capture($this->model(), new Context([new UserMessage('hi')]), $this->options());
+
+        $this->assertStringNotContainsString('interleaved-thinking', $head);
+        $this->assertStringContainsString('fine-grained-tool-streaming', $head);
     }
 
     // ---- redacted thinking ----------------------------------------------------------------
@@ -1103,10 +1258,14 @@ final class AnthropicTest extends TestCase
         return new AnthropicOptions(apiKey: 'test-key', signal: $controller?->signal);
     }
 
-    private function model(string $baseUrl = 'http://127.0.0.1:1', ?Pricing $pricing = null): Model
-    {
+    private function model(
+        string $baseUrl = 'http://127.0.0.1:1',
+        ?Pricing $pricing = null,
+        string $id = 'claude-sonnet-4-5',
+        OpenAiCompat|AnthropicCompat|null $compat = null,
+    ): Model {
         return new Model(
-            'claude-sonnet-4-5',
+            $id,
             'Claude Sonnet 4.5',
             Api::AnthropicMessages,
             'anthropic',
@@ -1115,7 +1274,41 @@ final class AnthropicTest extends TestCase
             63_000,
             reasoning: true,
             pricing: $pricing ?? new Pricing(input: 3.0, output: 15.0),
+            compat: $compat,
         );
+    }
+
+    /**
+     * One request to the canned server with whatever model and options a test needs; the model's
+     * base URL is replaced with the server's.
+     *
+     * @return array{0: string, 1: array<string, mixed>} the head and the decoded body that went out
+     */
+    private function capture(Model $model, Context $context, AnthropicOptions $options): array
+    {
+        $url = $this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]]);
+        $model = new Model(
+            $model->id,
+            $model->name,
+            $model->api,
+            $model->provider,
+            rtrim($url, '/'),
+            $model->contextWindow,
+            $model->maxTokens,
+            $model->reasoning,
+            $model->input,
+            $model->pricing,
+            $model->headers,
+            $model->compat,
+            $model->thinkingLevelMap,
+        );
+
+        Async::run(function () use ($model, $context, $options): void {
+            foreach ($this->anthropic()->stream($model, $context, $options) as $ignored) {
+            }
+        });
+
+        return [$this->server->receivedHead(), $this->server->receivedJson()];
     }
 
     /** @param list<array{0: string, 1: array<string, mixed>}> $events */

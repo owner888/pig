@@ -12,6 +12,7 @@ use Pig\Agent\AgentLoopConfig;
 use Pig\Agent\AgentTool;
 use Pig\Agent\AgentToolResult;
 use Pig\Agent\StreamProxy;
+use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
@@ -112,7 +113,7 @@ final class StreamProxyTest extends TestCase
         $this->listening = [];
     }
 
-    private static function model(?OpenAiCompat $compat = null, array $headers = []): Model
+    private static function model(OpenAiCompat|AnthropicCompat|null $compat = null, array $headers = []): Model
     {
         return new Model(
             'gateway-model',
@@ -225,7 +226,10 @@ final class StreamProxyTest extends TestCase
         $this->setUp();
         $url = $this->server->start([self::sse([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]])]);
         $proxy = new StreamProxy(rtrim($url, '/'), 't');
-        $model = self::model(new OpenAiCompat(store: false, maxTokensField: 'max_tokens'), ['X-Org' => 'acme']);
+        $model = self::model(
+            new OpenAiCompat(store: false, maxTokensField: 'max_tokens', reasoningContentOnAssistantMessages: false, thinkingFormat: 'zai'),
+            ['X-Org' => 'acme'],
+        );
         $context = new Context([new UserMessage([new TextContent('hi')])]);
 
         Async::run(static function () use ($proxy, $model, $context): void {
@@ -240,9 +244,35 @@ final class StreamProxyTest extends TestCase
         // Upstream's key names, one per field, so a `models.json` and this say the same thing.
         $this->assertFalse($sent['compat']['supportsStore']);
         $this->assertSame('max_tokens', $sent['compat']['maxTokensField']);
-        $this->assertFalse($sent['compat']['requiresMistralToolIds']);
         // The DeepSeek flag travels too, or a proxied DeepSeek turn loses it on the way.
         $this->assertFalse($sent['compat']['requiresReasoningContentOnAssistantMessages']);
+        // Only the keys the model says. This used to assert `requiresMistralToolIds: false` here,
+        // a key the model never set — the default written in its place. Upstream sends
+        // `model.compat` as it is, so an unset key is absent and the server detects it.
+        $this->assertSame(
+            ['supportsStore', 'maxTokensField', 'requiresReasoningContentOnAssistantMessages', 'thinkingFormat'],
+            array_keys($sent['compat']),
+        );
+        // `thinkingFormat` too, or a proxied z.ai turn is told to think in the wrong field.
+        $this->assertSame('zai', $sent['compat']['thinkingFormat']);
+    }
+
+    public function testAnAnthropicModelsCompatGoesUnderAnthropicsKeyNames(): void
+    {
+        // Upstream's `AnthropicMessagesCompat` names, and only what the model says. This model is
+        // an `anthropic-messages` one, which before carried an `OpenAiCompat` or nothing.
+        $url = $this->server->start([self::sse([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]])]);
+        $proxy = new StreamProxy(rtrim($url, '/'), 't');
+        $model = self::model(new AnthropicCompat(forceAdaptiveThinking: true));
+        $context = new Context([new UserMessage([new TextContent('hi')])]);
+
+        Async::run(static function () use ($proxy, $model, $context): void {
+            foreach ($proxy->stream($model, $context) as $ignored) {
+                // Drain.
+            }
+        });
+
+        $this->assertSame(['forceAdaptiveThinking' => true], $this->server->receivedJson()['model']['compat']);
     }
 
     public function testTheContextGoesOverTheWireAsTheSessionFileWritesIt(): void

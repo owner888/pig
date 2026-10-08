@@ -16,8 +16,12 @@ use Pig\Ai\Tool;
  * grammar tools, which pig does not send.
  *
  * A tool opts in through `Tool::$constrainedSampling` (`['type' => 'json_schema', 'strict' =>
- * 'prefer'|'require']`); a tool that says nothing is never strict. Upstream's provider for this
- * file's answer is Gemini 3+ (`GoogleShared::resolveGoogleFunctionCallingMode()`).
+ * 'prefer'|'require']`); a tool that says nothing is never strict. Every provider asks it, each
+ * with its own idea of whether strict mode is there: Anthropic (the `anthropic` provider's models,
+ * with its own refused keywords), OpenAI Completions and Responses (`OpenAiCompat::$strictMode`),
+ * and Gemini 3+ (`GoogleShared::resolveGoogleFunctionCallingMode()`). The built-in bash, edit,
+ * read and write ask for it; the nulls a strict call sends for what it leaves out are dropped by
+ * `Agent\ToolArguments` before validation.
  */
 final class ConstrainedSampling
 {

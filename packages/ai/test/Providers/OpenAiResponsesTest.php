@@ -10,6 +10,7 @@ use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
+use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
 use Pig\Ai\Providers\OpenAiOptions;
 use Pig\Ai\Providers\OpenAiResponses;
@@ -176,6 +177,79 @@ final class OpenAiResponsesTest extends TestCase
 
         // Nothing else in the stream says one thought ended and another began.
         $this->assertSame("first\n\nsecond", $message->content[0]->thinking);
+    }
+
+    /**
+     * Upstream rebuilds the thinking text from the finished reasoning item, the way it
+     * rebuilds a message's text: the summaries joined by a blank line. The deltas only had
+     * a part break *after* each part, so the streamed text ends in a dangling "\n\n" the
+     * finished item does not — and it is the finished item that is stored and shown.
+     */
+    public function testTheFinishedReasoningItemsSummaryIsTheThinkingText(): void
+    {
+        $item = [
+            'type' => 'reasoning',
+            'id' => 'rs_1',
+            'summary' => [['type' => 'summary_text', 'text' => 'first'], ['type' => 'summary_text', 'text' => 'second']],
+            'encrypted_content' => 'OPAQUE',
+        ];
+
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => ['type' => 'reasoning', 'id' => 'rs_1']],
+            ['type' => 'response.reasoning_summary_text.delta', 'delta' => 'fir'],
+            ['type' => 'response.reasoning_summary_part.done', 'part' => []],
+            ['type' => 'response.output_item.done', 'item' => $item],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame("first\n\nsecond", $message->content[0]->thinking);
+        // Replacing the text does not touch the signature: still the whole item.
+        $this->assertSame($item, json_decode((string) $message->content[0]->thinkingSignature, true));
+    }
+
+    /**
+     * `summaryText || contentText || streamed`: a model that exposes its raw reasoning rather
+     * than a summary (`reasoning_text.delta`, `item.content`) gets that as its thinking text,
+     * and an empty summary list does not outvote it.
+     */
+    public function testRawReasoningContentIsTheThinkingWhenThereIsNoSummary(): void
+    {
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => ['type' => 'reasoning', 'id' => 'rs_1']],
+            ['type' => 'response.reasoning_text.delta', 'delta' => 'streamed raw'],
+            ['type' => 'response.output_item.done', 'item' => [
+                'type' => 'reasoning',
+                'id' => 'rs_1',
+                'summary' => [],
+                'content' => [['type' => 'reasoning_text', 'text' => 'raw one'], ['type' => 'reasoning_text', 'text' => 'raw two']],
+            ]],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertContains('ThinkingDeltaEvent', $types);
+        $this->assertSame("raw one\n\nraw two", $message->content[0]->thinking);
+    }
+
+    /**
+     * An item with neither summary nor content text keeps what the deltas built, rather than
+     * wiping the thinking to "" the way a message item with no content wipes its text.
+     */
+    public function testAReasoningItemWithNothingToReadKeepsTheStreamedThinking(): void
+    {
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => ['type' => 'reasoning', 'id' => 'rs_1']],
+            ['type' => 'response.reasoning_text.delta', 'delta' => 'streamed raw'],
+            ['type' => 'response.output_item.done', 'item' => ['type' => 'reasoning', 'id' => 'rs_1', 'summary' => []]],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('streamed raw', $message->content[0]->thinking);
     }
 
     public function testAToolCallCarriesBothOfItsIds(): void
@@ -739,6 +813,27 @@ final class OpenAiResponsesTest extends TestCase
         $this->assertSame('input_image', $last['content'][1]['type']);
     }
 
+    /**
+     * Upstream's `convertToolResultOutput()`: "(no tool output)" when there is neither text nor an
+     * image, "(see attached image)" only when there is an image. pig said the image one for both.
+     */
+    public function testAToolResultWithNothingInItSaysSoRatherThanPointingAtAnImage(): void
+    {
+        foreach (['no blocks' => [], 'empty text' => [new TextContent('')]] as $case => $content) {
+            $this->server = new CannedServer();
+            $context = new Context([
+                new UserMessage('hi'),
+                $this->assistant([new ToolCall('call_1|fc_1', 'bash', [])]),
+                new ToolResultMessage('call_1|fc_1', 'bash', $content),
+            ]);
+
+            $this->send($context, $this->model(images: true));
+            $input = $this->server->receivedJson()['input'];
+
+            $this->assertSame('(no tool output)', $input[count($input) - 1]['output'], $case);
+        }
+    }
+
     public function testToolsGoOutAsFlatFunctions(): void
     {
         $tool = new Tool('read', 'Read a file', ['type' => 'object', 'properties' => []]);
@@ -750,6 +845,41 @@ final class OpenAiResponsesTest extends TestCase
         // Flat here, unlike chat-completions, where the same thing nests under `function`.
         $this->assertSame('function', $sent['type']);
         $this->assertSame('read', $sent['name']);
+    }
+
+    /**
+     * Upstream's `convertResponsesTools()` with `supportsStrictMode` from the model's compat:
+     * `strict` is the tool's strict answer or `false`, and the field is only there where strict
+     * mode is. pig sent `strict: null` on every tool to every endpoint — never the strict schema.
+     */
+    public function testAStrictToolGoesOutStrictWhereTheModelTakesStrictTools(): void
+    {
+        $plain = new Tool('ls', 'List', ['type' => 'object', 'properties' => ['path' => ['type' => 'string']]]);
+        $context = new Context([new UserMessage('hi')], null, [new Tool('read', 'Read a file', [
+            'type' => 'object',
+            'properties' => ['path' => ['type' => 'string'], 'limit' => ['type' => 'number']],
+            'required' => ['path'],
+        ], ['type' => 'json_schema', 'strict' => 'prefer']), $plain]);
+
+        $this->send($context, $this->model(compat: new OpenAiCompat(strictMode: true)));
+        $tools = $this->server->receivedJson()['tools'];
+
+        $this->assertTrue($tools[0]['strict']);
+        $this->assertSame([
+            'type' => 'object',
+            'properties' => ['path' => ['type' => 'string'], 'limit' => ['anyOf' => [['type' => 'number'], ['type' => 'null']]]],
+            'required' => ['path', 'limit'],
+            'additionalProperties' => false,
+        ], $tools[0]['parameters']);
+        $this->assertFalse($tools[1]['strict']);
+
+        // No compat — upstream's default, `supportsStrictMode: false` — and no field at all.
+        $this->server = new CannedServer();
+        $this->send($context, $this->model());
+        $tools = $this->server->receivedJson()['tools'];
+
+        $this->assertArrayNotHasKey('strict', $tools[0]);
+        $this->assertSame(['path'], $tools[0]['parameters']['required']);
     }
 
     // ---- scaffolding -------------------------------------------------------------------------
@@ -1034,7 +1164,9 @@ final class OpenAiResponsesTest extends TestCase
 
         Async::run(function () use ($url, $context, $model, $reasoning, $temperature): void {
             $stream = (new OpenAiResponses())->stream(
-                $this->model($url, $model->reasoning, $model->acceptsImages(), $model->id),
+                // The compat too — the same hazard as `OpenAiCompletionsTest::send()`'s field-by-field
+                // copy: a field left off here makes the feature look broken in whichever test needs it.
+                $this->model($url, $model->reasoning, $model->acceptsImages(), $model->id, $model->compat),
                 $context,
                 new OpenAiOptions(temperature: $temperature, apiKey: 'test-key', reasoning: $reasoning),
             );
@@ -1052,6 +1184,7 @@ final class OpenAiResponsesTest extends TestCase
         bool $reasoning = false,
         bool $images = true,
         string $id = 'test-model',
+        ?OpenAiCompat $compat = null,
     ): Model {
         return new Model(
             $id,
@@ -1064,6 +1197,7 @@ final class OpenAiResponsesTest extends TestCase
             $reasoning,
             $images ? ['text', 'image'] : ['text'],
             new Pricing(input: 1.0, output: 2.0),
+            compat: $compat,
         );
     }
 

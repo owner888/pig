@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent;
 
+use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
 use Pig\Ai\Model;
 use Pig\Ai\Models;
@@ -210,7 +211,15 @@ final readonly class CustomModels
                 continue;
             }
 
-            $built = self::model($where, $name, $baseUrl, $headers, $config['api'] ?? null, $entry);
+            $built = self::model(
+                $where,
+                $name,
+                $baseUrl,
+                $headers,
+                $config['api'] ?? null,
+                is_array($config['compat'] ?? null) ? $config['compat'] : [],
+                $entry,
+            );
 
             if (is_string($built)) {
                 $problems[] = $built;
@@ -228,6 +237,8 @@ final readonly class CustomModels
      * One model, or the line saying why not.
      *
      * @param array<string, string> $headers the provider's, which a model's own override
+     * @param array<mixed>          $providerCompat the provider's `compat`, which a model's own
+     *        overrides key by key — upstream's `mergeCompat(providerConfig.compat, definition.compat)`
      * @param array<mixed>          $entry
      */
     private static function model(
@@ -236,6 +247,7 @@ final readonly class CustomModels
         string $baseUrl,
         array $headers,
         mixed $providerApi,
+        array $providerCompat,
         array $entry,
     ): Model|string {
         $id = $entry['id'] ?? null;
@@ -317,7 +329,12 @@ final readonly class CustomModels
             $input === [] ? ['text'] : $input,
             self::pricing(is_array($entry['cost'] ?? null) ? $entry['cost'] : []),
             [...$headers, ...self::strings($entry['headers'] ?? null)],
-            self::compat(is_array($entry['compat'] ?? null) ? $entry['compat'] : null),
+            // Upstream's `mergeCompat()`: `{ ...base, ...override }`, the model's keys over the
+            // provider's. Detection then fills whatever neither says, in `OpenAiCompat::resolve()`.
+            self::compat(
+                self::mergeCompat($providerCompat, is_array($entry['compat'] ?? null) ? $entry['compat'] : []),
+                self::APIS[$api],
+            ),
             self::thinkingLevelMap(is_array($entry['thinkingLevelMap'] ?? null) ? $entry['thinkingLevelMap'] : null),
         );
     }
@@ -387,6 +404,38 @@ final readonly class CustomModels
     }
 
     /**
+     * Upstream's `mergeCompat(base, override)`: the override's keys over the base's, and the
+     * object-valued ones (`chatTemplateKwargs`, `chatTemplateArgs` — upstream also lists the two
+     * routing objects pig does not have) merged a level deeper rather than replaced.
+     *
+     * @param array<mixed> $base
+     * @param array<mixed> $override
+     * @return array<mixed>
+     */
+    private static function mergeCompat(array $base, array $override): array
+    {
+        if ($override === []) {
+            return $base;
+        }
+
+        $merged = [...$base, ...$override];
+
+        foreach (['chatTemplateKwargs', 'chatTemplateArgs'] as $key) {
+            $baseValue = $base[$key] ?? null;
+            $overrideValue = $override[$key] ?? null;
+
+            if (is_array($baseValue) || is_array($overrideValue)) {
+                $merged[$key] = [
+                    ...(is_array($baseValue) ? $baseValue : []),
+                    ...(is_array($overrideValue) ? $overrideValue : []),
+                ];
+            }
+        }
+
+        return $merged;
+    }
+
+    /**
      * The ways an OpenAI-compatible endpoint is not, as a file can say them.
      *
      * **Every key is upstream's spelling**, so a `models.json` written for pi works here
@@ -400,35 +449,67 @@ final readonly class CustomModels
      * format's old shape is: nobody has a pig `models.json` from a release, and a file that holds
      * both names for one flag is a file that can disagree with itself.
      *
-     * Absent means null, and null means `OpenAiCompat::detect()` works it out from the URL.
-     * That is a better default than any of these flags: a local llama.cpp gets the loose
-     * settings it needs without anybody writing a `compat` block at all.
+     * **A key the block leaves out is null, and null is "not said"**: `OpenAiCompat::resolve()`
+     * lays the block over what `detect()` works out from the provider and URL, key by key —
+     * upstream's `getCompat()`, `model.compat.x ?? detected.x`. This used to fill every missing
+     * key with a plain default instead, so a block setting one flag for a DeepSeek endpoint also
+     * switched `store`, the `developer` role and `max_completion_tokens` back on, which detection
+     * had turned off. A block that sets every key means what it always did.
+     *
+     * No block at all is null too, and detection then decides alone — a local llama.cpp gets
+     * the loose settings it needs without anybody writing a `compat` block.
      *
      * @param array<mixed>|null $compat
      */
-    private static function compat(?array $compat): ?OpenAiCompat
+    private static function compat(?array $compat, Api $api): OpenAiCompat|AnthropicCompat|null
     {
         if ($compat === null || $compat === []) {
             return null;
         }
 
-        $flag = static fn (string $key, bool $fallback): bool => is_bool($compat[$key] ?? null)
-            ? $compat[$key]
-            : $fallback;
+        $flag = static fn (string $key): ?bool => is_bool($compat[$key] ?? null) ? $compat[$key] : null;
+
+        // Upstream types `compat` by the model's API, and an `anthropic-messages` model's block is
+        // `AnthropicMessagesCompat`: `forceAdaptiveThinking` is how a proxy serving an adaptive-only
+        // Claude says so, since nothing at request time looks at the id.
+        if ($api === Api::AnthropicMessages) {
+            return new AnthropicCompat(
+                forceAdaptiveThinking: $flag('forceAdaptiveThinking'),
+                strictTools: $flag('supportsStrictTools'),
+            );
+        }
 
         $maxTokensField = $compat['maxTokensField'] ?? null;
 
         return new OpenAiCompat(
-            store: $flag('supportsStore', true),
-            developerRole: $flag('supportsDeveloperRole', true),
-            reasoningEffort: $flag('supportsReasoningEffort', true),
-            maxTokensField: $maxTokensField === 'max_tokens' ? 'max_tokens' : 'max_completion_tokens',
-            toolResultName: $flag('requiresToolResultName', false),
-            assistantAfterToolResult: $flag('requiresAssistantAfterToolResult', false),
-            thinkingAsText: $flag('requiresThinkingAsText', false),
-            mistralToolIds: $flag('requiresMistralToolIds', false),
-            reasoningContentOnAssistantMessages: $flag('requiresReasoningContentOnAssistantMessages', false),
+            store: $flag('supportsStore'),
+            developerRole: $flag('supportsDeveloperRole'),
+            reasoningEffort: $flag('supportsReasoningEffort'),
+            // A string that is neither name still means `max_completion_tokens`, as it does
+            // upstream, where only `=== "max_tokens"` sends the older field.
+            maxTokensField: is_string($maxTokensField)
+                ? ($maxTokensField === 'max_tokens' ? 'max_tokens' : 'max_completion_tokens')
+                : null,
+            toolResultName: $flag('requiresToolResultName'),
+            assistantAfterToolResult: $flag('requiresAssistantAfterToolResult'),
+            thinkingAsText: $flag('requiresThinkingAsText'),
+            mistralToolIds: $flag('requiresMistralToolIds'),
+            reasoningContentOnAssistantMessages: $flag('requiresReasoningContentOnAssistantMessages'),
+            strictMode: $flag('supportsStrictMode'),
+            thinkingFormat: is_string($compat['thinkingFormat'] ?? null) ? $compat['thinkingFormat'] : null,
+            chatTemplateKwargs: self::templateValues($compat['chatTemplateKwargs'] ?? null),
+            chatTemplateArgs: self::templateValues($compat['chatTemplateArgs'] ?? null),
         );
+    }
+
+    /**
+     * `chatTemplateKwargs` / `chatTemplateArgs`: a JSON object, or not said. A list is not one.
+     *
+     * @return array<string, mixed>|null
+     */
+    private static function templateValues(mixed $values): ?array
+    {
+        return is_array($values) && ($values === [] || !array_is_list($values)) ? $values : null;
     }
 
     /** `MY_BOX_KEY`, `DEEPSEEK_API_KEY` — what an environment variable is called and no key is. */

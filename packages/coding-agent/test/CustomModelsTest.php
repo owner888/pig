@@ -6,8 +6,10 @@ namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
 use Pig\Ai\Models;
+use Pig\Ai\OpenAiCompat;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CustomModels;
 
@@ -271,8 +273,11 @@ final class CustomModelsTest extends TestCase
         $this->assertNotNull($model->compat);
         $this->assertFalse($model->compat->store);
         $this->assertFalse($model->compat->reasoningEffort);
-        $this->assertTrue($model->compat->developerRole, 'unmentioned keys keep their default');
         $this->assertSame('max_tokens', $model->compat->maxTokensField);
+        // An unmentioned key is null — "not said" — and detection decides it later
+        // (`OpenAiCompat::resolve()`). This used to assert `true`, the default it was filled
+        // with, which is what made a one-key block switch detection off for every other key.
+        $this->assertNull($model->compat->developerRole, 'unmentioned keys are left to detection');
     }
 
     public function testTheFourKeysWithARequiresPrefixAreUpstreamsToo(): void
@@ -312,7 +317,87 @@ final class CustomModelsTest extends TestCase
         ]])]]))->models[0];
 
         $this->assertNotNull($plain->compat);
-        $this->assertFalse($plain->compat->reasoningContentOnAssistantMessages, 'unmentioned keys keep their default');
+        // Null and not `false`: left to detection, which turns it on for DeepSeek. The old
+        // `false` here meant a DeepSeek model whose block only said `supportsStore` lost the flag.
+        $this->assertNull($plain->compat->reasoningContentOnAssistantMessages, 'unmentioned keys are left to detection');
+    }
+
+    /**
+     * The fix end to end: a DeepSeek endpoint declared with a `compat` block that says one thing
+     * still gets everything detection says about DeepSeek for the rest — upstream's
+     * `getCompat()`, `model.compat.x ?? detected.x`. Before, the block replaced detection, so
+     * this model was sent `store`, the `developer` role and `max_completion_tokens` (which
+     * DeepSeek ignores, leaving the output uncapped) and lost the `reasoning_content` filler.
+     */
+    public function testACompatBlockIsLaidOverDetectionKeyByKey(): void
+    {
+        $model = $this->load(self::provider([
+            'baseUrl' => 'https://api.deepseek.com/v1',
+            'models' => [self::model(['reasoning' => true, 'compat' => ['requiresThinkingAsText' => true]])],
+        ]))->models[0];
+
+        $resolved = OpenAiCompat::resolve($model);
+
+        $this->assertTrue($resolved->thinkingAsText, 'what the block says');
+        $this->assertFalse($resolved->store);
+        $this->assertFalse($resolved->developerRole);
+        $this->assertSame('max_tokens', $resolved->maxTokensField);
+        $this->assertTrue($resolved->reasoningContentOnAssistantMessages);
+    }
+
+    /**
+     * Upstream's `mergeCompat(providerConfig.compat, definition.compat)`: a provider-level block
+     * applies to each of its models, and a model's own keys win over it. pig read only the
+     * model's, so a block written once for the provider — the way pi's docs show it — did nothing.
+     */
+    public function testAProviderCompatBlockAppliesToItsModelsAndAModelsOwnKeysWin(): void
+    {
+        $models = $this->load(self::provider([
+            'compat' => ['supportsStore' => false, 'maxTokensField' => 'max_tokens'],
+            'models' => [
+                self::model(),
+                self::model(['id' => 'other', 'compat' => ['maxTokensField' => 'max_completion_tokens']]),
+            ],
+        ]))->models;
+
+        $this->assertFalse($models[0]->compat?->store);
+        $this->assertSame('max_tokens', $models[0]->compat?->maxTokensField);
+        $this->assertFalse($models[1]->compat?->store, 'the provider\'s key, which the model does not set');
+        $this->assertSame('max_completion_tokens', $models[1]->compat?->maxTokensField, 'the model\'s own key');
+    }
+
+    /**
+     * `thinkingFormat` and its template values, under upstream's names. A provider's
+     * `chatTemplateKwargs` and a model's are merged a level deeper rather than one replacing the
+     * other — upstream's `mergeCompat()` treats the template objects that way.
+     */
+    public function testAThinkingFormatAndItsTemplateValuesAreReadAndMergedKeyByKey(): void
+    {
+        $model = $this->load(self::provider([
+            'compat' => ['thinkingFormat' => 'chat-template', 'chatTemplateKwargs' => ['a' => 1, 'b' => 2]],
+            'models' => [self::model(['compat' => ['chatTemplateKwargs' => ['b' => 3, 'c' => ['$var' => 'thinking.enabled']]]])],
+        ]))->models[0];
+
+        $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
+        $this->assertSame('chat-template', $model->compat->thinkingFormat);
+        $this->assertSame(['a' => 1, 'b' => 3, 'c' => ['$var' => 'thinking.enabled']], $model->compat->chatTemplateKwargs);
+        $this->assertNull($model->compat->chatTemplateArgs, 'not said');
+    }
+
+    /**
+     * An `anthropic-messages` model's block is upstream's `AnthropicMessagesCompat`: the way to say
+     * a proxied Claude takes adaptive thinking only, now that nothing at request time reads the id.
+     */
+    public function testAnAnthropicModelsCompatBlockIsAnthropicsOwn(): void
+    {
+        $model = $this->load(self::provider([
+            'api' => 'anthropic-messages',
+            'models' => [self::model(['compat' => ['forceAdaptiveThinking' => true, 'supportsStrictTools' => true]])],
+        ]))->models[0];
+
+        $this->assertInstanceOf(AnthropicCompat::class, $model->compat);
+        $this->assertTrue($model->compat->forceAdaptiveThinking);
+        $this->assertTrue($model->compat->strictTools);
     }
 
     // ---- the key ---------------------------------------------------------------------------

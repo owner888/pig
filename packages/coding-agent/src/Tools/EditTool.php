@@ -64,6 +64,11 @@ final class EditTool implements AgentTool
                 ],
                 'required' => ['path', 'oldText', 'newText'],
             ],
+            // Upstream's `constrainedSampling: { type: "json_schema", strict: "prefer" }` on bash,
+            // edit, read and write (and on none of grep, find or ls): strict sampling where the
+            // provider has it, the schema as written where it does not. Under strict sampling an
+            // optional parameter arrives as null, which `ToolArguments` drops before validation.
+            ['type' => 'json_schema', 'strict' => 'prefer'],
         );
     }
 

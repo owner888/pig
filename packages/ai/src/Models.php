@@ -96,6 +96,22 @@ final class Models
      */
     private const array RESOLD = [self::COPILOT];
 
+    /**
+     * provider => whether its built-in models take strict tools — upstream's generator, which
+     * writes `supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia
+     * && !isCerebras` into every built-in `openai-completions` model's `compat`, against a runtime
+     * default of false. Cerebras is the one here it leaves out. Mistral is pig's: upstream reaches
+     * it through its own `mistral-conversations` API, which sends `strict: strict ?? false` on every
+     * tool — strict mode always on, which is what `true` here gives it.
+     */
+    private const array STRICT_MODE = [
+        'cerebras' => false,
+        'groq' => true,
+        'mistral' => true,
+        'xai' => true,
+        'zai' => true,
+    ];
+
     /** provider => where its OpenAI-compatible endpoint lives. */
     private const array OPENAI_COMPATIBLE = [
         'cerebras' => 'https://api.cerebras.ai/v1',
@@ -534,6 +550,13 @@ final class Models
                 $reasoning,
                 ['text', 'image'],
                 new Pricing($in, $out, $read, $write),
+                // Upstream's generator: `supportsStrictTools: true` on every `anthropic` provider
+                // model (`applyStrictToolCompatMetadata()`), and `forceAdaptiveThinking: true` on
+                // the ids `isAnthropicAdaptiveThinkingModel()` names — absent, not false, elsewhere.
+                compat: new AnthropicCompat(
+                    forceAdaptiveThinking: AnthropicCompat::isAdaptiveThinkingModel($id) ? true : null,
+                    strictTools: true,
+                ),
             );
         }
 
@@ -549,6 +572,9 @@ final class Models
                 $reasoning,
                 $images ? ['text', 'image'] : ['text'],
                 new Pricing($in, $out, $read, $write),
+                // Upstream's generator (`applyStrictToolCompatMetadata()`) gives every `openai`
+                // provider model on the Responses API `supportsStrictMode: true`.
+                compat: new OpenAiCompat(strictMode: true),
             );
         }
 
@@ -593,6 +619,7 @@ final class Models
                     $reasoning,
                     $images ? ['text', 'image'] : ['text'],
                     new Pricing($in, $out, $read, $write),
+                    compat: self::STRICT_MODE[$provider] ? new OpenAiCompat(strictMode: true) : null,
                 );
             }
         }
@@ -641,6 +668,8 @@ final class Models
      */
     private static function copilotCompat(): OpenAiCompat
     {
-        return new OpenAiCompat(store: false, developerRole: false, reasoningEffort: false);
+        // `strictMode` is upstream's generated metadata rather than its Copilot block: detection
+        // at generation time gives every Copilot completions model `supportsStrictMode: true`.
+        return new OpenAiCompat(store: false, developerRole: false, reasoningEffort: false, strictMode: true);
     }
 }

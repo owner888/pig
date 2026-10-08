@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Agent;
 
+use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
@@ -234,11 +235,20 @@ final class StreamProxy
             $encoded['headers'] = $model->headers;
         }
 
-        if ($model->compat !== null) {
+        if ($model->compat instanceof AnthropicCompat) {
+            // Upstream's `AnthropicMessagesCompat` names, again only the keys the model says.
+            $encoded['compat'] = array_filter([
+                'forceAdaptiveThinking' => $model->compat->forceAdaptiveThinking,
+                'supportsStrictTools' => $model->compat->strictTools,
+            ], static fn (mixed $value): bool => $value !== null);
+        } elseif ($model->compat !== null) {
             // Upstream's key names, one per pig field, and
             // `CustomModels` reads and writes the same names, so a `models.json`, a session file
-            // and this request all say the same thing.
-            $encoded['compat'] = [
+            // and this request all say the same thing. **Only the keys the model says**: upstream
+            // sends `model.compat` as it is, and a key it leaves undefined is absent from the
+            // JSON, so the server's `getCompat()` detects that one for itself. Writing a null —
+            // or a default — in its place would be pig deciding what upstream leaves to detection.
+            $encoded['compat'] = array_filter([
                 'supportsStore' => $model->compat->store,
                 'supportsDeveloperRole' => $model->compat->developerRole,
                 'supportsReasoningEffort' => $model->compat->reasoningEffort,
@@ -248,7 +258,12 @@ final class StreamProxy
                 'requiresThinkingAsText' => $model->compat->thinkingAsText,
                 'requiresMistralToolIds' => $model->compat->mistralToolIds,
                 'requiresReasoningContentOnAssistantMessages' => $model->compat->reasoningContentOnAssistantMessages,
-            ];
+                'supportsStrictMode' => $model->compat->strictMode,
+                'thinkingFormat' => $model->compat->thinkingFormat,
+                // `{}` and not `[]` when empty: the server reads an object.
+                'chatTemplateKwargs' => $model->compat->chatTemplateKwargs === [] ? new \stdClass() : $model->compat->chatTemplateKwargs,
+                'chatTemplateArgs' => $model->compat->chatTemplateArgs === [] ? new \stdClass() : $model->compat->chatTemplateArgs,
+            ], static fn (mixed $value): bool => $value !== null);
         }
 
         return $encoded;

@@ -617,6 +617,29 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame('image_url', $last['content'][1]['type']);
     }
 
+    /**
+     * Upstream says "(no tool output)" for a result with neither text nor an image, and "(see
+     * attached image)" only when there is an image. pig said the image one for both, so a command
+     * that printed nothing came back to the model as a pointer to a picture that did not exist.
+     * A lone empty text block counts as no text: upstream tests the joined text's length.
+     */
+    public function testAToolResultWithNothingInItSaysSoRatherThanPointingAtAnImage(): void
+    {
+        foreach (['no blocks' => [], 'empty text' => [new TextContent('')]] as $case => $content) {
+            $this->server = new CannedServer();
+            $context = new Context([
+                new UserMessage('hi'),
+                $this->assistant([new ToolCall('c1', 'bash', [])]),
+                new ToolResultMessage('c1', 'bash', $content),
+            ]);
+
+            $this->send($context, $this->model(images: true));
+            $messages = $this->server->receivedJson()['messages'];
+
+            $this->assertSame('(no tool output)', $messages[count($messages) - 1]['content'], $case);
+        }
+    }
+
     public function testAnEmptyAssistantTurnIsLeftOutEntirely(): void
     {
         // What an aborted turn leaves behind. Every endpoint rejects a turn with neither
@@ -767,14 +790,102 @@ final class OpenAiCompletionsTest extends TestCase
     public function testDeepSeekGetsItUnderTheOlderNameToo(): void
     {
         $this->assertSame('max_tokens', OpenAiCompat::detect('https://api.deepseek.com/v1')->maxTokensField);
+        // Upstream's `isDeepSeek` lowercases the URL, and it decides this flag like every other:
+        // pig used to match `deepseek.com` case-sensitively here, so `API.DeepSeek.com` got
+        // `max_completion_tokens` — the field DeepSeek silently ignores.
+        $this->assertSame('max_tokens', OpenAiCompat::detect('https://API.DeepSeek.com/v1')->maxTokensField);
+        $this->assertSame('max_tokens', OpenAiCompat::detect('http://127.0.0.1:8080/v1', 'deepseek')->maxTokensField);
+    }
 
-        // And nothing else about it is treated as strict: it takes `store`, the `developer` role
-        // and `reasoning_effort` without complaint.
-        $compat = OpenAiCompat::detect('https://api.deepseek.com/v1');
+    /**
+     * DeepSeek is one of upstream's non-standard endpoints: no `store`, no `developer` role. This
+     * test used to assert the opposite — "it takes `store`, the `developer` role and
+     * `reasoning_effort` without complaint" — which was pig's guess and not upstream's
+     * `detectCompat()`, where `isDeepSeek` is in `isNonStandard`. `reasoning_effort` it does keep.
+     */
+    public function testDeepSeekIsNonStandardTheWayUpstreamDetectsIt(): void
+    {
+        foreach ([['https://api.deepseek.com/v1', ''], ['https://API.DEEPSEEK.COM/v1', ''], ['http://127.0.0.1:1', 'deepseek']] as [$url, $provider]) {
+            $compat = OpenAiCompat::detect($url, $provider);
 
-        $this->assertTrue($compat->store);
-        $this->assertTrue($compat->developerRole);
-        $this->assertTrue($compat->reasoningEffort);
+            $this->assertFalse($compat->store, $url);
+            $this->assertFalse($compat->developerRole, $url);
+            $this->assertTrue($compat->reasoningEffort, $url);
+        }
+    }
+
+    /**
+     * Upstream's `detectCompat()` row by row, for the keys pig has. Every one of these was either
+     * missing from pig's table or decided by the URL alone where upstream also takes the provider
+     * name — z.ai was treated as fully standard, so it was sent `store`, the `developer` role,
+     * `reasoning_effort` and `max_completion_tokens`, all four of which upstream withholds.
+     */
+    public function testEveryEndpointUpstreamNamesIsDetectedAsUpstreamDetectsIt(): void
+    {
+        // [url, provider, model id] => [store, developerRole, reasoningEffort, maxTokensField]
+        $table = [
+            'z.ai' => [['https://api.z.ai/api/coding/paas/v4', 'zai', ''], [false, false, false, 'max_tokens']],
+            'bigmodel' => [['https://open.bigmodel.cn/api/paas/v4', 'x', ''], [false, false, false, 'max_tokens']],
+            'moonshot' => [['https://api.moonshot.ai/v1', '', ''], [false, false, false, 'max_tokens']],
+            'together' => [['https://api.together.xyz/v1', '', ''], [false, false, false, 'max_tokens']],
+            'nvidia' => [['https://integrate.api.nvidia.com/v1', '', ''], [false, false, false, 'max_tokens']],
+            'ant-ling' => [['https://api.ant-ling.com/v1', '', ''], [false, false, false, 'max_tokens']],
+            'cf gateway' => [['https://gateway.ai.cloudflare.com/v1/a/b/compat', '', ''], [false, false, false, 'max_tokens']],
+            'cf workers' => [['https://api.cloudflare.com/client/v4/accounts/a/ai/v1', '', ''], [false, false, true, 'max_completion_tokens']],
+            'chutes' => [['https://llm.chutes.ai/v1', '', ''], [false, false, true, 'max_tokens']],
+            'cerebras' => [['http://127.0.0.1:1', 'cerebras', ''], [false, false, true, 'max_completion_tokens']],
+            'xai by name' => [['http://127.0.0.1:1', 'xai', ''], [false, false, false, 'max_completion_tokens']],
+            'opencode' => [['https://opencode.ai/zen/v1', '', ''], [false, false, true, 'max_completion_tokens']],
+            'openrouter' => [['https://openrouter.ai/api/v1', '', 'deepseek/deepseek-r1'], [true, false, true, 'max_completion_tokens']],
+            'openrouter openai' => [['https://openrouter.ai/api/v1', '', 'openai/gpt-5'], [true, true, true, 'max_completion_tokens']],
+            'groq' => [['https://api.groq.com/openai/v1', 'groq', ''], [true, true, true, 'max_completion_tokens']],
+        ];
+
+        foreach ($table as $name => [[$url, $provider, $id], [$store, $developerRole, $reasoningEffort, $field]]) {
+            $compat = OpenAiCompat::detect($url, $provider, $id);
+
+            $this->assertSame(
+                [$store, $developerRole, $reasoningEffort, $field],
+                [$compat->store, $compat->developerRole, $compat->reasoningEffort, $compat->maxTokensField],
+                $name,
+            );
+        }
+    }
+
+    /**
+     * Upstream's `getCompat()`: `model.compat.x ?? detected.x`, key by key. A block that says one
+     * thing leaves the rest to detection — pig used to take any block as the whole answer, so
+     * this DeepSeek model, whose block only asks for thinking as text, was sent `store` and the
+     * `developer` role and had its output cap under the name DeepSeek ignores.
+     */
+    public function testAnExplicitCompatOverridesDetectionOnlyForTheKeysItSets(): void
+    {
+        $model = new Model(
+            'deepseek-reasoner',
+            'DeepSeek',
+            Api::OpenAiCompletions,
+            'deepseek',
+            'http://127.0.0.1:1',
+            64_000,
+            8_192,
+            true,
+            compat: new OpenAiCompat(thinkingAsText: true),
+        );
+
+        $resolved = OpenAiCompat::resolve($model);
+
+        $this->assertTrue($resolved->thinkingAsText, 'the key the block sets');
+        $this->assertFalse($resolved->store, 'detected');
+        $this->assertFalse($resolved->developerRole, 'detected');
+        $this->assertSame('max_tokens', $resolved->maxTokensField, 'detected');
+        $this->assertTrue($resolved->reasoningContentOnAssistantMessages, 'detected');
+
+        // And on the wire, which is what the endpoint answers to.
+        $this->send(new Context([new UserMessage('hi')], systemPrompt: 'be brief'), $model);
+        $body = $this->server->receivedJson();
+
+        $this->assertArrayNotHasKey('store', $body);
+        $this->assertSame('system', $body['messages'][0]['role']);
     }
 
     public function testDeepSeekIsDetectedByNameOrHostAsNeedingReasoningContentOnEveryAssistantTurn(): void
@@ -919,6 +1030,180 @@ final class OpenAiCompletionsTest extends TestCase
         $this->send(new Context([new UserMessage('hi')]), $model);
 
         $this->assertFalse(array_key_exists('store', $this->server->receivedJson()));
+    }
+
+    /**
+     * Upstream's `convertTools()`: where `compat.supportsStrictMode` is not false, every tool
+     * carries `strict` — true with the strict schema for one asking for it, false for the rest.
+     * Detection says false ("OpenAI compatibility alone does not imply strict JSON-schema tool
+     * support"), and then no tool carries the field at all, because some endpoints reject it.
+     */
+    public function testStrictToolsGoOutStrictOnlyWhereTheCompatSaysTheEndpointTakesThem(): void
+    {
+        $plain = new Tool('ls', 'List', ['type' => 'object', 'properties' => ['path' => ['type' => 'string']]]);
+        $context = new Context([new UserMessage('hi')], tools: [new Tool('read', 'Read a file', [
+            'type' => 'object',
+            'properties' => ['path' => ['type' => 'string'], 'limit' => ['type' => 'number']],
+            'required' => ['path'],
+        ], ['type' => 'json_schema', 'strict' => 'prefer']), $plain]);
+
+        $this->send($context, $this->model(compat: new OpenAiCompat(strictMode: true)));
+        $tools = $this->server->receivedJson()['tools'];
+
+        $this->assertTrue($tools[0]['function']['strict']);
+        $this->assertSame([
+            'type' => 'object',
+            'properties' => ['path' => ['type' => 'string'], 'limit' => ['anyOf' => [['type' => 'number'], ['type' => 'null']]]],
+            'required' => ['path', 'limit'],
+            'additionalProperties' => false,
+        ], $tools[0]['function']['parameters']);
+        $this->assertFalse($tools[1]['function']['strict'], 'every tool says, strict or not');
+        $this->assertSame(['type' => 'object', 'properties' => ['path' => ['type' => 'string']]], $tools[1]['function']['parameters']);
+
+        $this->server = new CannedServer();
+        $this->send($context, $this->model());
+        $tools = $this->server->receivedJson()['tools'];
+
+        $this->assertArrayNotHasKey('strict', $tools[0]['function']);
+        $this->assertSame(['path'], $tools[0]['function']['parameters']['required'], 'the schema as written');
+    }
+
+    // ---- how thinking is switched on: `thinkingFormat` ---------------------------------------
+
+    /**
+     * Upstream's detected `thinkingFormat`: `deepseek`, `zai`, `together`, `ant-ling`,
+     * `openrouter`, else `openai`, in that order of precedence.
+     */
+    public function testTheThinkingFormatIsDetectedAsUpstreamDetectsIt(): void
+    {
+        $this->assertSame('deepseek', OpenAiCompat::detect('https://api.deepseek.com/v1')->thinkingFormat);
+        $this->assertSame('zai', OpenAiCompat::detect('https://api.z.ai/api/coding/paas/v4', 'zai')->thinkingFormat);
+        $this->assertSame('together', OpenAiCompat::detect('https://api.together.xyz/v1')->thinkingFormat);
+        $this->assertSame('ant-ling', OpenAiCompat::detect('https://api.ant-ling.com/v1')->thinkingFormat);
+        $this->assertSame('openrouter', OpenAiCompat::detect('https://openrouter.ai/api/v1')->thinkingFormat);
+        $this->assertSame('openai', OpenAiCompat::detect('https://api.groq.com/openai/v1', 'groq')->thinkingFormat);
+    }
+
+    /**
+     * The regression the detection port caused and this closes: z.ai is told whether to think in
+     * its own field, `thinking: {type}`. Detection now withholds `reasoning_effort` from it, as
+     * upstream does, and without the `zai` format nothing at all said whether to think — so a
+     * turn with thinking off still thought (GLM's default) and was billed for it.
+     */
+    public function testZaiIsToldWhetherToThinkInItsOwnField(): void
+    {
+        $zai = new Model('glm-4.6', 'GLM', Api::OpenAiCompletions, 'zai', 'http://127.0.0.1:1', 200_000, 8_192, true);
+
+        $this->send(new Context([new UserMessage('hi')]), $zai, ReasoningEffort::High);
+        $body = $this->server->receivedJson();
+
+        $this->assertSame(['type' => 'enabled', 'clear_thinking' => false], $body['thinking']);
+        $this->assertArrayNotHasKey('reasoning_effort', $body, 'supportsReasoningEffort is false for z.ai');
+
+        $this->server = new CannedServer();
+        $this->send(new Context([new UserMessage('hi')]), $zai);
+
+        $this->assertSame(['type' => 'disabled'], $this->server->receivedJson()['thinking']);
+    }
+
+    /**
+     * DeepSeek: `thinking: {type}` plus `reasoning_effort`, and thinking off is said out loud
+     * unless the model's map calls `off` null — a model that cannot stop thinking is not told to.
+     */
+    public function testDeepSeekIsToldWhetherToThinkAndHowHard(): void
+    {
+        $deepseek = new Model('deepseek-v4', 'DeepSeek', Api::OpenAiCompletions, 'deepseek', 'http://127.0.0.1:1', 64_000, 8_192, true);
+
+        $this->send(new Context([new UserMessage('hi')]), $deepseek, ReasoningEffort::High);
+        $body = $this->server->receivedJson();
+
+        $this->assertSame(['type' => 'enabled'], $body['thinking']);
+        $this->assertSame('high', $body['reasoning_effort']);
+
+        $this->server = new CannedServer();
+        $this->send(new Context([new UserMessage('hi')]), $deepseek);
+        $body = $this->server->receivedJson();
+
+        $this->assertSame(['type' => 'disabled'], $body['thinking']);
+        $this->assertArrayNotHasKey('reasoning_effort', $body);
+
+        $this->server = new CannedServer();
+        $this->send(new Context([new UserMessage('hi')]), $this->model(
+            reasoning: true,
+            compat: new OpenAiCompat(thinkingFormat: 'deepseek'),
+            thinkingLevelMap: ['off' => null],
+        ));
+
+        $this->assertArrayNotHasKey('thinking', $this->server->receivedJson());
+    }
+
+    /**
+     * The other formats, each as upstream's `buildParams()` writes it, on and off. A model that does
+     * not reason gets none of them.
+     *
+     * @param array<string, mixed>       $compat
+     * @param array<string, string|null> $map
+     * @param array<string, mixed>       $on    fields expected with thinking at `high`
+     * @param array<string, mixed>       $off   fields expected with thinking off
+     */
+    #[DataProvider('thinkingFormats')]
+    public function testEachThinkingFormatSaysItTheWayUpstreamDoes(array $compat, array $map, array $on, array $off): void
+    {
+        $model = $this->model(reasoning: true, compat: new OpenAiCompat(...$compat), thinkingLevelMap: $map);
+        $fields = ['thinking', 'enable_thinking', 'chat_template_kwargs', 'chat_template_args', 'reasoning', 'reasoning_effort'];
+
+        $this->send(new Context([new UserMessage('hi')]), $model, ReasoningEffort::High);
+        $this->assertSame($on, array_intersect_key($this->server->receivedJson(), array_flip($fields)), 'on');
+
+        $this->server = new CannedServer();
+        $this->send(new Context([new UserMessage('hi')]), $model);
+        $this->assertSame($off, array_intersect_key($this->server->receivedJson(), array_flip($fields)), 'off');
+
+        $this->server = new CannedServer();
+        $this->send(new Context([new UserMessage('hi')]), $this->model(compat: new OpenAiCompat(...$compat), thinkingLevelMap: $map), ReasoningEffort::High);
+        $this->assertSame([], array_intersect_key($this->server->receivedJson(), array_flip($fields)), 'not a reasoning model');
+    }
+
+    /** @return iterable<string, array{0: array<string, mixed>, 1: array<string, string|null>, 2: array<string, mixed>, 3: array<string, mixed>}> */
+    public static function thinkingFormats(): iterable
+    {
+        yield 'qwen' => [['thinkingFormat' => 'qwen'], [], ['enable_thinking' => true, 'reasoning_effort' => 'high'], ['enable_thinking' => false]];
+        yield 'qwen-chat-template' => [
+            ['thinkingFormat' => 'qwen-chat-template'],
+            [],
+            ['chat_template_kwargs' => ['enable_thinking' => true, 'preserve_thinking' => true]],
+            ['chat_template_kwargs' => ['enable_thinking' => false, 'preserve_thinking' => true]],
+        ];
+        yield 'openrouter' => [['thinkingFormat' => 'openrouter'], [], ['reasoning' => ['effort' => 'high']], ['reasoning' => ['effort' => 'none']]];
+        yield 'together' => [
+            ['thinkingFormat' => 'together'],
+            [],
+            ['reasoning' => ['enabled' => true], 'reasoning_effort' => 'high'],
+            ['reasoning' => ['enabled' => false]],
+        ];
+        yield 'string-thinking' => [['thinkingFormat' => 'string-thinking'], ['off' => 'minimal'], ['thinking' => 'high'], ['thinking' => 'minimal']];
+        // Only a mapped effort is sent, and nothing when off.
+        yield 'ant-ling' => [['thinkingFormat' => 'ant-ling'], ['high' => 'deep'], ['reasoning' => ['effort' => 'deep']], []];
+        // `$var`s are filled in; `omitWhenOff` drops one when thinking is off; a plain value goes as
+        // it is. The budget is upstream's default for `high`, 16,384, under a 16,384-token ceiling
+        // less the 1,024 kept for the answer.
+        yield 'chat-template' => [
+            ['thinkingFormat' => 'chat-template', 'chatTemplateKwargs' => [
+                'enable_thinking' => ['$var' => 'thinking.enabled'],
+                'effort' => ['$var' => 'thinking.effort', 'omitWhenOff' => true],
+                'budget' => ['$var' => 'thinking.budget'],
+                'fixed' => 'yes',
+            ]],
+            [],
+            ['chat_template_kwargs' => ['enable_thinking' => true, 'effort' => 'high', 'budget' => 15_360, 'fixed' => 'yes']],
+            ['chat_template_kwargs' => ['enable_thinking' => false, 'fixed' => 'yes']],
+        ];
+        yield 'baseten' => [
+            ['thinkingFormat' => 'baseten', 'chatTemplateArgs' => ['enable_thinking' => ['$var' => 'thinking.enabled']]],
+            ['off' => 'none'],
+            ['chat_template_args' => ['enable_thinking' => true], 'reasoning_effort' => 'high'],
+            ['chat_template_args' => ['enable_thinking' => false], 'reasoning_effort' => 'none'],
+        ];
     }
 
     // ---- what Copilot needs on top -----------------------------------------------------------
