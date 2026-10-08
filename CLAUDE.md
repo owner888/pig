@@ -7593,7 +7593,8 @@ sentence — `ProviderError("Provider stopped with: MALFORMED_FUNCTION_CALL")`. 
 a **STOP** with a tool call in it into `toolUse`; `MAX_TOKENS` with a call stays `length` and an error
 reason with a call part stays an error, so `GoogleShared::onChunk()` maps the reason first and only
 then looks at the content. Upstream also keeps the raw reason as `AssistantMessage.rawStopReason`, and
-so does pig now (last constructor parameter, written to JSON only when set): Anthropic's `stop_reason`,
+so does pig now (a trailing constructor parameter — `responseId`, `responseModel`, `endTurn` and
+`diagnostics` follow it the same way — written to JSON only when set): Anthropic's `stop_reason`,
 completions' `finish_reason`, responses' `status` / `status.incompleteReason` / failed status, and
 Gemini's `finishReason` (antigravity included, through `GoogleShared`). Gemini's is set **before** the
 throw, so the failed turn still carries `MALFORMED_FUNCTION_CALL`; `fail()` leaves it alone.
@@ -11076,6 +11077,18 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 - launcher exec shell 前必须关掉 fd 0–2 以外所有继承来的 fd（PHP 关不了裸 fd 号，经 `/bin/bash -c 'exec N<&- …; exec "$0" "$@"'`；POSIX sh 只认到 9）。
 - `vendor/` 下的 xterm 文件只能原样拷自 npm 官方包（`@xterm/xterm` 的 `lib/xterm.mjs`、`css/xterm.css`，`@xterm/addon-fit` 的 `lib/addon-fit.mjs`），不改、不重新打包；升级时换文件并更新 `VendoredXtermTest` 里的 sha256。
 - 改 pty 先跑 `PtyProcessTest`（^C、前台进程组、初始尺寸、半个字符、非法字节、继承 fd、EIO 退出）和 `PtyTest`。
+
+### Anthropic 的 `redacted_thinking` 块被丢掉，下一轮重放的不是模型写的那一轮
+
+**症状**：Anthropic 在思考被安全策略隐去时发 `content_block_start` 的 `{type: "redacted_thinking", data: "<加密载荷>"}`；pig 的消息里没有这一块，会话文件里也没有，下一次请求把这一轮原样发回时少了它——发回去的不是模型写的那一轮，多轮推理的连续性断掉。
+
+**根因**：`Anthropic::onBlockStart()` 的 `match` 只认 `text` / `thinking` / `tool_use`，`redacted_thinking` 落到 `default => null`，块直接消失；`ThinkingContent` 也没有 `redacted` 字段可存。upstream（`anthropic-messages.ts`）把它存成 `thinking: "[Reasoning redacted]"`、`thinkingSignature: data`、`redacted: true`，回放给 Anthropic 时还原成 `{type: "redacted_thinking", data}`；`transform-messages.ts` 只在 provider、API、model 三者都相同时保留，否则整块丢弃（不转成 `<thinking>` 文本）。
+
+**避坑规则**：
+- provider 的块类型 `match` 里遇到不认识的类型，先查 upstream 是不是存成了别的形状，不能默认丢；能回放的东西丢了是协议错误，不是显示问题。
+- 隐去的思考：`thinking` 只放占位文字（TUI / HTML / Markdown 导出只显示这个），加密载荷只在 `thinkingSignature`；`Anthropic::assistantBlocks()` 先判断 `redacted === true` 再做空文本检查。
+- `TransformMessages` 里同 provider+API 但 model 不同时也要去掉 redacted 块（`withoutRedacted()`），跨 provider 直接丢弃。
+- 新加的可选字段（`ThinkingContent::$redacted`、`AssistantMessage` 的 `responseId` / `responseModel` / `endTurn` / `diagnostics`、`Usage` 的 `reasoning` / `cacheWrite1h`）全部照 `rawStopReason` 的做法：构造参数加在最后、JSON 里为 null 就不写键、所有逐字段复制 `new AssistantMessage(` 的地方（`TransformMessages`、`SessionManager::withContent()`、`AgentSession::normaliseFinalMessage()`）都要带上。测试在 `AnthropicTest` 和 `MessageTest`。
 
 ## Version floor: PHP >= 8.3
 

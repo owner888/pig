@@ -6,6 +6,7 @@ namespace Pig\Ai\Providers;
 
 use Pig\Ai\AssistantContent;
 use Pig\Ai\AssistantMessage;
+use Pig\Ai\AssistantMessageDiagnostic;
 use Pig\Ai\Model;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
@@ -32,7 +33,7 @@ final class AssistantMessageBuilder
 {
     /**
      * @var list<array{wire: int, type: string, text: string, signature: string,
-     *      id: string, name: string, json: string, arguments: array<string, mixed>}>
+     *      id: string, name: string, json: string, arguments: array<string, mixed>, redacted: bool}>
      */
     private array $blocks = [];
 
@@ -43,6 +44,13 @@ final class AssistantMessageBuilder
     private ?string $errorMessage = null;
 
     private ?string $rawStopReason = null;
+
+    private ?string $responseId = null;
+
+    private ?string $responseModel = null;
+
+    /** @var list<AssistantMessageDiagnostic>|null */
+    private ?array $diagnostics = null;
 
     private readonly int $timestamp;
 
@@ -61,6 +69,23 @@ final class AssistantMessageBuilder
     public function startThinking(int $wire): int
     {
         return $this->push($wire, 'thinking');
+    }
+
+    /**
+     * A thinking block the provider withheld — Anthropic's `redacted_thinking`.
+     *
+     * Upstream's shape: the placeholder is the thinking, so whatever shows thinking shows that and
+     * never the payload, and the encrypted payload is the signature, which is what goes back. It
+     * arrives whole in the event that opens the block; no delta follows.
+     */
+    public function startRedactedThinking(int $wire, string $data): int
+    {
+        $index = $this->push($wire, 'thinking');
+        $this->blocks[$index]['text'] = '[Reasoning redacted]';
+        $this->blocks[$index]['signature'] = $data;
+        $this->blocks[$index]['redacted'] = true;
+
+        return $index;
     }
 
     public function startToolCall(int $wire, string $id, string $name): int
@@ -254,6 +279,34 @@ final class AssistantMessageBuilder
         return $this->rawStopReason;
     }
 
+    /** Upstream's `output.responseId`: the provider's id for this response. */
+    public function setResponseId(?string $id): void
+    {
+        $this->responseId = $id;
+    }
+
+    public function responseId(): ?string
+    {
+        return $this->responseId;
+    }
+
+    /** Upstream's `output.responseModel`; the provider decides when it differs, not this. */
+    public function setResponseModel(?string $model): void
+    {
+        $this->responseModel = $model;
+    }
+
+    public function responseModel(): ?string
+    {
+        return $this->responseModel;
+    }
+
+    /** Upstream's `appendAssistantMessageDiagnostic()`. */
+    public function addDiagnostic(AssistantMessageDiagnostic $diagnostic): void
+    {
+        $this->diagnostics = [...($this->diagnostics ?? []), $diagnostic];
+    }
+
     public function fail(string $message, bool $aborted): void
     {
         $this->stopReason = $aborted ? StopReason::Aborted : StopReason::Error;
@@ -272,16 +325,21 @@ final class AssistantMessageBuilder
             $this->errorMessage,
             $this->timestamp,
             $this->rawStopReason,
+            $this->responseId,
+            $this->responseModel,
+            null,
+            $this->diagnostics,
         );
     }
 
-    /** @param array{type: string, text: string, signature: string, id: string, name: string, arguments: array<string, mixed>} $block */
+    /** @param array{type: string, text: string, signature: string, id: string, name: string, arguments: array<string, mixed>, redacted: bool} $block */
     private function toContent(array $block): AssistantContent
     {
         return match ($block['type']) {
             'thinking' => new ThinkingContent(
                 $block['text'],
                 $block['signature'] === '' ? null : $block['signature'],
+                $block['redacted'] ? true : null,
             ),
             'toolCall' => self::call($block),
             // Text carries a signature too on the responses API: the message's own id,
@@ -301,6 +359,7 @@ final class AssistantMessageBuilder
             'name' => $name,
             'json' => '',
             'arguments' => [],
+            'redacted' => false,
         ];
 
         return count($this->blocks) - 1;

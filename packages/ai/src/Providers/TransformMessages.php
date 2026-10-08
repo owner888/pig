@@ -74,9 +74,12 @@ final class TransformMessages
                 continue;
             }
 
-            // Same provider and same API: it produced this, so it can read it back.
+            // Same provider and same API: it produced this, so it can read it back — all of it
+            // but withheld reasoning written by a *different* model of that provider. That is
+            // encrypted for the one model, and upstream keeps it only when provider, API and
+            // model all match.
             if ($message->provider === $model->provider && $message->api === $model->api) {
-                $out[] = $message;
+                $out[] = $message->model === $model->id ? $message : self::withoutRedacted($message);
 
                 continue;
             }
@@ -91,7 +94,12 @@ final class TransformMessages
 
             foreach ($message->content as $block) {
                 if ($block instanceof ThinkingContent) {
-                    $content[] = new TextContent("<thinking>\n{$block->thinking}\n</thinking>");
+                    // Withheld reasoning has no text to pass on — only a placeholder and a payload
+                    // no other model can read — so it is dropped, as upstream drops it, rather than
+                    // sent as a `<thinking>[Reasoning redacted]</thinking>` that says nothing.
+                    if ($block->redacted !== true) {
+                        $content[] = new TextContent("<thinking>\n{$block->thinking}\n</thinking>");
+                    }
 
                     continue;
                 }
@@ -110,20 +118,40 @@ final class TransformMessages
                 $content[] = $block;
             }
 
-            $out[] = new AssistantMessage(
-                $content,
-                $message->api,
-                $message->provider,
-                $message->model,
-                $message->usage,
-                $message->stopReason,
-                $message->errorMessage,
-                $message->timestamp,
-                $message->rawStopReason,
-            );
+            $out[] = self::withContent($message, $content);
         }
 
         return $out;
+    }
+
+    private static function withoutRedacted(AssistantMessage $message): AssistantMessage
+    {
+        $content = array_values(array_filter(
+            $message->content,
+            static fn (mixed $block): bool => !($block instanceof ThinkingContent && $block->redacted === true),
+        ));
+
+        return count($content) === count($message->content) ? $message : self::withContent($message, $content);
+    }
+
+    /** @param list<\Pig\Ai\AssistantContent> $content */
+    private static function withContent(AssistantMessage $message, array $content): AssistantMessage
+    {
+        return new AssistantMessage(
+            $content,
+            $message->api,
+            $message->provider,
+            $message->model,
+            $message->usage,
+            $message->stopReason,
+            $message->errorMessage,
+            $message->timestamp,
+            $message->rawStopReason,
+            $message->responseId,
+            $message->responseModel,
+            $message->endTurn,
+            $message->diagnostics,
+        );
     }
 
     /**

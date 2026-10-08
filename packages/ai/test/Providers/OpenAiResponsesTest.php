@@ -537,6 +537,50 @@ final class OpenAiResponsesTest extends TestCase
      * Found against the real API with a 16-token budget: `stop` after 0 output tokens. Two
      * symptoms, one missing arm. Upstream handles neither terminal event.
      */
+    public function testTheResponseIdComesFromCreatedAndTheReasoningSplitFromTheUsage(): void
+    {
+        // Upstream takes the id from `response.created` and again from the terminal event.
+        $url = $this->serve([
+            ['type' => 'response.created', 'response' => ['id' => 'resp_1', 'status' => 'in_progress']],
+            ['type' => 'response.output_item.added', 'output_index' => 0, 'item' => ['type' => 'message']],
+            ['type' => 'response.output_text.delta', 'output_index' => 0, 'delta' => 'hi'],
+            ['type' => 'response.completed', 'response' => [
+                'status' => 'completed',
+                'usage' => [
+                    'input_tokens' => 10,
+                    'output_tokens' => 20,
+                    'total_tokens' => 30,
+                    'output_tokens_details' => ['reasoning_tokens' => 12],
+                ],
+            ]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('resp_1', $message->responseId);
+        // A share of `output_tokens`, which already counts it.
+        $this->assertSame(12, $message->usage->reasoning);
+        $this->assertSame(20, $message->usage->output);
+
+        // A terminal event that names the response is believed over what came before, and a usage
+        // without the breakdown still says 0 rather than nothing — upstream's `|| 0`.
+        $this->server = new CannedServer();
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'output_index' => 0, 'item' => ['type' => 'message']],
+            ['type' => 'response.output_text.delta', 'output_index' => 0, 'delta' => 'hi'],
+            ['type' => 'response.completed', 'response' => [
+                'id' => 'resp_2',
+                'status' => 'completed',
+                'usage' => ['input_tokens' => 1, 'output_tokens' => 1, 'total_tokens' => 2],
+            ]],
+        ]);
+
+        [, $late] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('resp_2', $late->responseId);
+        $this->assertSame(0, $late->usage->reasoning);
+    }
+
     public function testAnIncompleteResponseIsLengthAndKeepsItsUsage(): void
     {
         $url = $this->serve([

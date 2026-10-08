@@ -229,13 +229,14 @@ final class GoogleShared
     public static function usage(array $usage): Usage
     {
         // Thinking is billed as output and reported separately, so it is added in here
-        // rather than left out of what the turn cost.
+        // rather than left out of what the turn cost — and kept as the reasoning split too.
         return new Usage(
             (int) ($usage['promptTokenCount'] ?? 0),
             (int) ($usage['candidatesTokenCount'] ?? 0) + (int) ($usage['thoughtsTokenCount'] ?? 0),
             (int) ($usage['cachedContentTokenCount'] ?? 0),
             0,
             (int) ($usage['totalTokenCount'] ?? 0),
+            reasoning: (int) ($usage['thoughtsTokenCount'] ?? 0),
         );
     }
 

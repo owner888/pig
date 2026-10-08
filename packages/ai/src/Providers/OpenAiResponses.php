@@ -138,6 +138,8 @@ final class OpenAiResponses
         ?array $open,
     ): ?array {
         return match ($data['type'] ?? '') {
+            // Upstream takes the response id from here and again from the terminal event.
+            'response.created' => $this->onCreated($data, $builder, $open),
             'response.output_item.added' => $this->onItemStart($data, $builder, $stream),
             'response.output_item.done' => $this->onItemEnd($data, $builder, $stream, $open),
             'response.reasoning_summary_text.delta' => $this->onDelta($data, $builder, $stream, $open, 'thinking'),
@@ -338,9 +340,29 @@ final class OpenAiResponses
      * @param array{0: int, 1: string}|null $open
      * @return array{0: int, 1: string}|null
      */
+    private function onCreated(array $data, AssistantMessageBuilder $builder, ?array $open): ?array
+    {
+        $id = $data['response']['id'] ?? null;
+
+        if (is_string($id)) {
+            $builder->setResponseId($id);
+        }
+
+        return $open;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @param array{0: int, 1: string}|null $open
+     * @return array{0: int, 1: string}|null
+     */
     private function onCompleted(array $data, AssistantMessageBuilder $builder, ?array $open): ?array
     {
         $response = $data['response'] ?? [];
+
+        if (is_string($response['id'] ?? null) && $response['id'] !== '') {
+            $builder->setResponseId($response['id']);
+        }
 
         if (is_array($response['usage'] ?? null)) {
             $builder->setUsage($this->usage($response['usage']));
@@ -383,13 +405,15 @@ final class OpenAiResponses
     {
         $cached = (int) ($usage['input_tokens_details']['cached_tokens'] ?? 0);
 
-        // `input_tokens` counts the cached ones too, so they come back out.
+        // `input_tokens` counts the cached ones too, so they come back out. Reasoning is a part
+        // of `output_tokens` already, and kept beside it — 0 when not reported, as upstream does.
         return new Usage(
             max(0, (int) ($usage['input_tokens'] ?? 0) - $cached),
             (int) ($usage['output_tokens'] ?? 0),
             $cached,
             0,
             (int) ($usage['total_tokens'] ?? 0),
+            reasoning: (int) ($usage['output_tokens_details']['reasoning_tokens'] ?? 0),
         );
     }
 

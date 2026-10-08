@@ -541,6 +541,281 @@ final class AnthropicTest extends TestCase
         $this->assertGreaterThanOrEqual(1, $message->usage->output);
     }
 
+    // ---- redacted thinking ----------------------------------------------------------------
+
+    public function testARedactedThinkingBlockIsKeptAsThinkingWithItsPayloadInTheSignature(): void
+    {
+        // **This block used to be dropped**: `onBlockStart()` knew `text`, `thinking` and
+        // `tool_use`, and Anthropic's `redacted_thinking` fell through to nothing. The turn then
+        // went back without it, which is not the turn the model wrote. Upstream keeps it as a
+        // thinking block whose text is a placeholder and whose signature is the opaque `data`.
+        $url = $this->serveStream([
+            ['message_start', ['message' => ['id' => 'msg_01', 'usage' => ['input_tokens' => 3]]]],
+            ['content_block_start', ['index' => 0, 'content_block' => ['type' => 'redacted_thinking', 'data' => 'ENCRYPTED-BLOB']]],
+            ['content_block_stop', ['index' => 0]],
+            ['content_block_start', ['index' => 1, 'content_block' => ['type' => 'text']]],
+            ['content_block_delta', ['index' => 1, 'delta' => ['type' => 'text_delta', 'text' => 'done']]],
+            ['content_block_stop', ['index' => 1]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => ['output_tokens' => 2]]],
+        ]);
+
+        [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(
+            ['StartEvent', 'ThinkingStartEvent', 'ThinkingEndEvent', 'TextStartEvent', 'TextDeltaEvent', 'TextEndEvent', 'DoneEvent'],
+            $types,
+        );
+
+        $block = $message->content[0];
+        $this->assertInstanceOf(ThinkingContent::class, $block);
+        $this->assertTrue($block->redacted);
+        $this->assertSame('ENCRYPTED-BLOB', $block->thinkingSignature);
+        // What a screen or an export shows is the placeholder, never the payload.
+        $this->assertSame('[Reasoning redacted]', $block->thinking);
+
+        // And an ordinary thinking block says nothing about redaction, as upstream leaves it out.
+        $this->assertNull((new ThinkingContent('x', 'sig'))->redacted);
+    }
+
+    public function testARedactedBlockGoesBackToTheSameModelAsRedactedThinking(): void
+    {
+        $body = $this->sendAndCapture(new Context([
+            new UserMessage('hi'),
+            $this->fromAnthropic([
+                new ThinkingContent('[Reasoning redacted]', 'ENCRYPTED-BLOB', true),
+                new TextContent('done'),
+            ], StopReason::Stop),
+            new UserMessage('go on'),
+        ]));
+
+        $this->assertSame(
+            ['type' => 'redacted_thinking', 'data' => 'ENCRYPTED-BLOB'],
+            $body['messages'][1]['content'][0],
+        );
+        $this->assertStringNotContainsString('[Reasoning redacted]', (string) json_encode($body));
+    }
+
+    public function testARedactedBlockFromAnotherModelOrProviderIsDroppedNotRewritten(): void
+    {
+        // Upstream `transform-messages.ts`: redacted thinking is encrypted for the model that
+        // wrote it, so it is kept only when provider, API *and* model match, and dropped otherwise
+        // — not turned into `<thinking>` text, since its only text is the placeholder.
+        $redacted = new ThinkingContent('[Reasoning redacted]', 'ENCRYPTED-BLOB', true);
+
+        $otherModel = new AssistantMessage(
+            [$redacted, new ThinkingContent('kept', 'SIG'), new TextContent('so')],
+            Api::AnthropicMessages,
+            'anthropic',
+            'claude-opus-4-1',
+            new Usage(),
+            StopReason::Stop,
+        );
+
+        $body = $this->sendAndCapture(new Context([new UserMessage('hi'), $otherModel, new UserMessage('go on')]));
+
+        $this->assertSame(['thinking', 'text'], array_column($body['messages'][1]['content'], 'type'));
+        $this->assertStringNotContainsString('ENCRYPTED-BLOB', (string) json_encode($body));
+
+        $this->server = new CannedServer();
+        $body = $this->sendAndCapture(new Context([
+            new UserMessage('hi'),
+            $this->fromGoogle([$redacted, new TextContent('so')]),
+            new UserMessage('go on'),
+        ]));
+
+        $this->assertSame([['type' => 'text', 'text' => 'so']], $body['messages'][1]['content']);
+    }
+
+    // ---- what the response says about itself -------------------------------------------------
+
+    public function testTheMessageIdIsTheResponseIdAndAnotherModelIsTheResponseModel(): void
+    {
+        $url = $this->serveStream([
+            ['message_start', ['message' => ['id' => 'msg_01', 'model' => 'claude-sonnet-4-5-20250929', 'usage' => []]]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('msg_01', $message->responseId);
+        $this->assertSame('claude-sonnet-4-5-20250929', $message->responseModel);
+        $this->assertSame('claude-sonnet-4-5', $message->model, 'the requested model stays the model');
+
+        // Upstream keeps the reported model only when it differs from the one asked for.
+        $this->server = new CannedServer();
+        $url = $this->serveStream([
+            ['message_start', ['message' => ['id' => 'msg_02', 'model' => 'claude-sonnet-4-5', 'usage' => []]]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]],
+        ]);
+
+        [, $same] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('msg_02', $same->responseId);
+        $this->assertNull($same->responseModel);
+    }
+
+    public function testThinkingTokensAreKeptAsTheReasoningShareOfTheOutput(): void
+    {
+        $url = $this->serveStream([
+            ['message_start', ['message' => ['usage' => ['input_tokens' => 10]]]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => [
+                'output_tokens' => 50,
+                'output_tokens_details' => ['thinking_tokens' => 30],
+            ]]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(30, $message->usage->reasoning);
+        $this->assertSame(50, $message->usage->output, 'a share of the output, not added to it');
+
+        // Not reported, not known: null rather than a 0 nobody said.
+        $this->server = new CannedServer();
+        [, $plain] = $this->collect($this->serveStream([
+            ['message_start', ['message' => ['usage' => ['input_tokens' => 10]]]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => ['output_tokens' => 5]]],
+        ]), new Context([new UserMessage('hi')]));
+
+        $this->assertNull($plain->usage->reasoning);
+    }
+
+    // ---- one-hour cache writes (upstream anthropic-cache-write-1h-cost.test.ts) --------------
+
+    public function testTheOneHourShareOfACacheWriteIsPricedAtTwiceTheInputRate(): void
+    {
+        // claude-opus-4-8's prices: input 5, cache write (five-minute) 6.25 per million. The
+        // one-hour write is twice the input, 10. 600k * 6.25 + 400k * 10 = 3.75 + 4.0 = 7.75.
+        [, $message] = $this->collect(
+            $this->serveStream($this->cacheWriteEvents(['ephemeral_5m_input_tokens' => 600_000, 'ephemeral_1h_input_tokens' => 400_000])),
+            new Context([new UserMessage('hi')]),
+            $this->opusPricing(),
+        );
+
+        $this->assertSame(1_000_000, $message->usage->cacheWrite);
+        $this->assertSame(400_000, $message->usage->cacheWrite1h);
+        $this->assertEqualsWithDelta(7.75, $message->usage->cost->cacheWrite, 1e-10);
+    }
+
+    public function testAOneHourWriteReportedOnlyInTheFinalDeltaIsStillPricedAsOne(): void
+    {
+        // Upstream's #9210: Vercel's AI Gateway puts the cache counts on `message_delta` and not
+        // on `message_start`, so the split has to be read from the delta as well.
+        [, $message] = $this->collect($this->serveStream([
+            ['message_start', ['message' => ['id' => 'msg_test', 'usage' => ['input_tokens' => 0, 'output_tokens' => 0]]]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => [
+                'input_tokens' => 3,
+                'output_tokens' => 4,
+                'cache_creation_input_tokens' => 6535,
+                'cache_creation' => ['ephemeral_5m_input_tokens' => 0, 'ephemeral_1h_input_tokens' => 6535],
+            ]]],
+        ]), new Context([new UserMessage('hi')]), $this->opusPricing());
+
+        $this->assertSame(6535, $message->usage->cacheWrite);
+        $this->assertSame(6535, $message->usage->cacheWrite1h);
+        $this->assertEqualsWithDelta(6535 * 5.0 * 2 / 1_000_000, $message->usage->cost->cacheWrite, 1e-10);
+    }
+
+    public function testWithNoSplitReportedTheWholeWriteIsPricedAtTheFiveMinuteRate(): void
+    {
+        [, $message] = $this->collect(
+            $this->serveStream($this->cacheWriteEvents(null)),
+            new Context([new UserMessage('hi')]),
+            $this->opusPricing(),
+        );
+
+        $this->assertSame(1_000_000, $message->usage->cacheWrite);
+        // 0 rather than unknown: upstream's `message_start` sets it with `|| 0`.
+        $this->assertSame(0, $message->usage->cacheWrite1h);
+        $this->assertEqualsWithDelta(6.25, $message->usage->cost->cacheWrite, 1e-10);
+    }
+
+    /**
+     * @param array<string, int>|null $cacheCreation
+     * @return list<array{0: string, 1: array<string, mixed>}>
+     */
+    private function cacheWriteEvents(?array $cacheCreation): array
+    {
+        $startUsage = [
+            'input_tokens' => 100,
+            'output_tokens' => 0,
+            'cache_read_input_tokens' => 0,
+            'cache_creation_input_tokens' => 1_000_000,
+        ];
+
+        if ($cacheCreation !== null) {
+            $startUsage['cache_creation'] = $cacheCreation;
+        }
+
+        return [
+            ['message_start', ['message' => ['id' => 'msg_test', 'usage' => $startUsage]]],
+            ['content_block_start', ['index' => 0, 'content_block' => ['type' => 'text', 'text' => '']]],
+            ['content_block_delta', ['index' => 0, 'delta' => ['type' => 'text_delta', 'text' => 'Hi']]],
+            ['content_block_stop', ['index' => 0]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => [
+                'input_tokens' => 100,
+                'output_tokens' => 5,
+                'cache_read_input_tokens' => 0,
+                'cache_creation_input_tokens' => 1_000_000,
+            ]]],
+            ['message_stop', []],
+        ];
+    }
+
+    private function opusPricing(): Pricing
+    {
+        return new Pricing(input: 5.0, output: 25.0, cacheRead: 0.5, cacheWrite: 6.25);
+    }
+
+    // ---- diagnostics ------------------------------------------------------------------------
+
+    public function testInputTransformationsTheApiReportsBecomeADiagnostic(): void
+    {
+        // Upstream's one Anthropic diagnostic: when the API says it rewrote the request, the turn
+        // records what, cut down to type, path and reason — the latest list wins, wherever it came.
+        [, $message] = $this->collect($this->serveStream([
+            ['message_start', ['message' => ['usage' => [], 'input_transformations' => [['type' => 'ignored']]]]],
+            ['message_delta', [
+                'delta' => ['stop_reason' => 'end_turn'],
+                'usage' => [],
+                'input_transformations' => [
+                    ['type' => 'drop', 'path' => 'messages.1.content.0', 'reason' => 'empty', 'extra' => 'not kept'],
+                    ['type' => 'rewrite', 'reason' => null],
+                ],
+            ]],
+        ]), new Context([new UserMessage('hi')]));
+
+        $this->assertCount(1, $message->diagnostics ?? []);
+        $diagnostic = $message->diagnostics[0];
+        $this->assertSame('anthropic_input_transformations', $diagnostic->type);
+        $this->assertNull($diagnostic->error);
+        $this->assertSame([
+            'transformations' => [
+                ['type' => 'drop', 'path' => 'messages.1.content.0', 'reason' => 'empty'],
+                ['type' => 'rewrite'],
+            ],
+        ], $diagnostic->details);
+    }
+
+    public function testNoTransformationsMeansNoDiagnostics(): void
+    {
+        [, $message] = $this->collect($this->serveStream([
+            ['message_start', ['message' => ['usage' => [], 'input_transformations' => []]]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]],
+        ]), new Context([new UserMessage('hi')]));
+
+        $this->assertNull($message->diagnostics);
+
+        // Nor on a turn that failed: upstream throws first and never records them.
+        $this->server = new CannedServer();
+        [, $refused] = $this->collect($this->serveStream([
+            ['message_start', ['message' => ['usage' => [], 'input_transformations' => [['type' => 'drop']]]]],
+            ['message_delta', ['delta' => ['stop_reason' => 'refusal'], 'usage' => []]],
+        ]), new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Error, $refused->stopReason);
+        $this->assertNull($refused->diagnostics);
+    }
+
     // ---- a conversation another provider started -------------------------------------------
 
     public function testAnotherProvidersThinkingGoesBackAsTaggedTextRatherThanAsSignedThinking(): void
@@ -646,7 +921,7 @@ final class AnthropicTest extends TestCase
     }
 
     /** @param list<mixed> $content */
-    private function fromAnthropic(array $content): AssistantMessage
+    private function fromAnthropic(array $content, StopReason $stop = StopReason::ToolUse): AssistantMessage
     {
         return new AssistantMessage(
             $content,
@@ -654,7 +929,7 @@ final class AnthropicTest extends TestCase
             'anthropic',
             'claude-sonnet-4-5',
             new Usage(),
-            StopReason::ToolUse,
+            $stop,
         );
     }
 
@@ -709,10 +984,10 @@ final class AnthropicTest extends TestCase
     }
 
     /** @return array{0: list<string>, 1: AssistantMessage} */
-    private function collect(string $url, Context $context): array
+    private function collect(string $url, Context $context, ?Pricing $pricing = null): array
     {
-        return Async::run(function () use ($url, $context): array {
-            $stream = $this->anthropic()->stream($this->model($url), $context, $this->options());
+        return Async::run(function () use ($url, $context, $pricing): array {
+            $stream = $this->anthropic()->stream($this->model($url, $pricing), $context, $this->options());
             $types = [];
 
             foreach ($stream as $event) {
@@ -733,7 +1008,7 @@ final class AnthropicTest extends TestCase
         return new AnthropicOptions(apiKey: 'test-key', signal: $controller?->signal);
     }
 
-    private function model(string $baseUrl = 'http://127.0.0.1:1'): Model
+    private function model(string $baseUrl = 'http://127.0.0.1:1', ?Pricing $pricing = null): Model
     {
         return new Model(
             'claude-sonnet-4-5',
@@ -744,7 +1019,7 @@ final class AnthropicTest extends TestCase
             200_000,
             63_000,
             reasoning: true,
-            pricing: new Pricing(input: 3.0, output: 15.0),
+            pricing: $pricing ?? new Pricing(input: 3.0, output: 15.0),
         );
     }
 

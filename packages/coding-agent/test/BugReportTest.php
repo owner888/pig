@@ -9,6 +9,7 @@ use Pig\Agent\Agent;
 use Pig\Agent\AgentOptions;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
+use Pig\Ai\AssistantMessageDiagnostic;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\Usage;
@@ -96,6 +97,41 @@ final class BugReportTest extends TestCase
         ]), Auth::inMemory(), '', includeTranscript: false);
 
         $this->assertStringNotContainsString('Raw stop reason', $plain);
+    }
+
+    public function testDiagnosticsOnAnyAssistantMessageAreListedWithoutTheConversation(): void
+    {
+        // Upstream's `diagnostics.json` collects every assistant message that carries
+        // diagnostics — a turn that succeeded included, since a recovery is worth reporting — and
+        // none of the text. Here they are a section of the one report.
+        $diagnosed = new AssistantMessage(
+            [new TextContent('the secret answer')],
+            Api::AnthropicMessages,
+            'anthropic',
+            'claude-sonnet-4-6',
+            new Usage(),
+            StopReason::Stop,
+            null,
+            null,
+            'end_turn',
+            diagnostics: [new AssistantMessageDiagnostic(
+                'anthropic_input_transformations',
+                1_700_000_000_000,
+                details: ['transformations' => [['type' => 'drop', 'path' => 'messages.0']]],
+            )],
+        );
+
+        $report = BugReport::build($this->session([new UserMessage('hi'), $diagnosed]), Auth::inMemory(), '', includeTranscript: false);
+
+        $this->assertStringContainsString('## Provider diagnostics', $report);
+        $this->assertStringContainsString('- anthropic/claude-sonnet-4-6 (stop):', $report);
+        $this->assertStringContainsString('`anthropic_input_transformations` {"transformations":[{"type":"drop","path":"messages.0"}]}', $report);
+        $this->assertStringNotContainsString('the secret answer', $report);
+
+        // And no section at all when nothing carried any.
+        $plain = BugReport::build($this->session([$this->assistant('ok', StopReason::Stop)]), Auth::inMemory(), '', includeTranscript: false);
+
+        $this->assertStringNotContainsString('Provider diagnostics', $plain);
     }
 
     public function testTheTranscriptIsOptInAndIsTheMarkdownExport(): void

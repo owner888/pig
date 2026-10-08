@@ -6,7 +6,9 @@ namespace Pig\Ai\Utils;
 
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
+use Pig\Ai\AssistantMessageDiagnostic;
 use Pig\Ai\Cost;
+use Pig\Ai\DiagnosticErrorInfo;
 use Pig\Ai\ImageContent;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
@@ -62,7 +64,7 @@ final class MessageJson
                 'stopReason' => $message->stopReason->value,
                 'errorMessage' => $message->errorMessage,
                 'timestamp' => $message->timestamp,
-            ] + self::rawStopReason($message),
+            ] + self::optional($message),
             $message instanceof ToolResultMessage => [
                 'role' => 'toolResult',
                 'toolCallId' => $message->toolCallId,
@@ -96,6 +98,10 @@ final class MessageJson
                 $entry['errorMessage'] ?? null,
                 $timestamp,
                 isset($entry['rawStopReason']) ? (string) $entry['rawStopReason'] : null,
+                isset($entry['responseId']) ? (string) $entry['responseId'] : null,
+                isset($entry['responseModel']) ? (string) $entry['responseModel'] : null,
+                isset($entry['endTurn']) ? (bool) $entry['endTurn'] : null,
+                is_array($entry['diagnostics'] ?? null) ? self::decodeDiagnostics($entry['diagnostics']) : null,
             ),
             'toolResult' => new ToolResultMessage(
                 (string) ($entry['toolCallId'] ?? ''),
@@ -110,17 +116,79 @@ final class MessageJson
     }
 
     /**
-     * `rawStopReason`, or nothing at all.
+     * The optional fields — `rawStopReason`, `responseId`, `responseModel`, `endTurn`,
+     * `diagnostics` — each one present or not there at all.
      *
-     * Upstream's field is optional and `JSON.stringify` drops an undefined one, so a message
-     * without it is written without the key rather than with a null — the shape a session file
-     * from before the field existed already has.
+     * Upstream's fields are optional and `JSON.stringify` drops an undefined one, so a message
+     * without them is written without the keys rather than with nulls — the shape a session file
+     * from before the fields existed already has.
      *
-     * @return array{rawStopReason?: string}
+     * @return array<string, mixed>
      */
-    private static function rawStopReason(AssistantMessage $message): array
+    private static function optional(AssistantMessage $message): array
     {
-        return $message->rawStopReason === null ? [] : ['rawStopReason' => $message->rawStopReason];
+        return array_filter([
+            'rawStopReason' => $message->rawStopReason,
+            'responseId' => $message->responseId,
+            'responseModel' => $message->responseModel,
+            'endTurn' => $message->endTurn,
+            'diagnostics' => $message->diagnostics === null
+                ? null
+                : array_map(self::encodeDiagnostic(...), $message->diagnostics),
+        ], static fn (mixed $value): bool => $value !== null);
+    }
+
+    /** @return array<string, mixed> upstream's `AssistantMessageDiagnostic`, absent fields left out */
+    private static function encodeDiagnostic(AssistantMessageDiagnostic $diagnostic): array
+    {
+        $error = $diagnostic->error === null ? null : array_filter([
+            'name' => $diagnostic->error->name,
+            'message' => $diagnostic->error->message,
+            'stack' => $diagnostic->error->stack,
+            'code' => $diagnostic->error->code,
+        ], static fn (mixed $value): bool => $value !== null);
+
+        return array_filter([
+            'type' => $diagnostic->type,
+            'timestamp' => $diagnostic->timestamp,
+            'error' => $error,
+            // `{}` and not `[]`, for the same reason as a tool call's arguments: it is an object.
+            'details' => $diagnostic->details === null
+                ? null
+                : ($diagnostic->details === [] ? new stdClass() : $diagnostic->details),
+        ], static fn (mixed $value): bool => $value !== null);
+    }
+
+    /**
+     * @param array<mixed> $diagnostics
+     * @return list<AssistantMessageDiagnostic>
+     */
+    private static function decodeDiagnostics(array $diagnostics): array
+    {
+        $out = [];
+
+        foreach ($diagnostics as $diagnostic) {
+            if (!is_array($diagnostic)) {
+                continue;
+            }
+
+            $error = is_array($diagnostic['error'] ?? null) ? $diagnostic['error'] : null;
+            $code = $error['code'] ?? null;
+
+            $out[] = new AssistantMessageDiagnostic(
+                (string) ($diagnostic['type'] ?? ''),
+                (int) ($diagnostic['timestamp'] ?? 0),
+                $error === null ? null : new DiagnosticErrorInfo(
+                    (string) ($error['message'] ?? ''),
+                    isset($error['name']) ? (string) $error['name'] : null,
+                    isset($error['stack']) ? (string) $error['stack'] : null,
+                    is_string($code) || is_int($code) ? $code : null,
+                ),
+                is_array($diagnostic['details'] ?? null) ? $diagnostic['details'] : null,
+            );
+        }
+
+        return $out;
     }
 
     /**
@@ -140,7 +208,7 @@ final class MessageJson
                     'type' => 'thinking',
                     'thinking' => $block->thinking,
                     'thinkingSignature' => $block->thinkingSignature,
-                ],
+                ] + ($block->redacted === null ? [] : ['redacted' => $block->redacted]),
                 $block instanceof ImageContent => [
                     'type' => 'image',
                     'data' => $block->data,
@@ -182,6 +250,7 @@ final class MessageJson
                 'thinking' => new ThinkingContent(
                     (string) ($block['thinking'] ?? ''),
                     $block['thinkingSignature'] ?? null,
+                    isset($block['redacted']) ? (bool) $block['redacted'] : null,
                 ),
                 'image' => new ImageContent(
                     (string) ($block['data'] ?? ''),
@@ -212,6 +281,11 @@ final class MessageJson
             'output' => $usage->output,
             'cacheRead' => $usage->cacheRead,
             'cacheWrite' => $usage->cacheWrite,
+        ] + array_filter([
+            // Upstream's optional splits, left out when the provider reported none.
+            'cacheWrite1h' => $usage->cacheWrite1h,
+            'reasoning' => $usage->reasoning,
+        ], static fn (?int $value): bool => $value !== null) + [
             'totalTokens' => $usage->totalTokens,
             'cost' => [
                 'input' => $usage->cost->input,
@@ -241,6 +315,8 @@ final class MessageJson
                 (float) ($cost['cacheWrite'] ?? 0),
                 (float) ($cost['total'] ?? 0),
             ),
+            isset($usage['reasoning']) ? (int) $usage['reasoning'] : null,
+            isset($usage['cacheWrite1h']) ? (int) $usage['cacheWrite1h'] : null,
         );
     }
 

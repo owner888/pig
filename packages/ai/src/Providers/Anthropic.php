@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\Ai\Providers;
 
 use Pig\Ai\AssistantMessage;
+use Pig\Ai\AssistantMessageDiagnostic;
 use Pig\Ai\Context;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
@@ -25,6 +26,7 @@ use Pig\Ai\ThinkingContent;
 use Pig\Ai\ThinkingDeltaEvent;
 use Pig\Ai\ThinkingEndEvent;
 use Pig\Ai\ThinkingStartEvent;
+use Pig\Ai\Timestamp;
 use Pig\Ai\Tool;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolCallDeltaEvent;
@@ -85,6 +87,9 @@ final class Anthropic
         // them too, so the name on a `tool_use` block is mapped back to the tool this request
         // declared. Decided once here, because `dispatch()` has no options to ask.
         $tools = ClaudeCode::isToken($options?->apiKey ?? '') ? $context->tools : [];
+        // What the API says it rewrote in the request, from `message_start` or a later
+        // `message_delta` — the last one wins, as upstream's single variable does.
+        $transformations = null;
 
         try {
             $response = $this->http->send($this->request($model, $context, $options), $signal);
@@ -98,12 +103,20 @@ final class Anthropic
 
             foreach ($response->body as $chunk) {
                 foreach ($parser->feed($chunk) as $event) {
-                    $this->dispatch($event, $builder, $stream, $tools);
+                    $transformations = $this->dispatch($event, $model, $builder, $stream, $tools) ?? $transformations;
                 }
             }
 
             // An abort mid-stream ends the body quietly; say so rather than reporting success.
             $signal?->throwIfAborted();
+
+            // Upstream records these only on a turn that finished, after its own throw for an
+            // error stop reason; pig does not throw for those (a refusal is an error message, not
+            // an exception), so the same condition is spelled out.
+            $stop = $builder->stopReason();
+            if ($transformations !== null && $transformations !== [] && $stop !== StopReason::Error && $stop !== StopReason::Aborted) {
+                $builder->addDiagnostic(self::inputTransformations($transformations));
+            }
 
             $message = $builder->snapshot();
             $stream->push(new DoneEvent($message->stopReason, $message));
@@ -117,17 +130,20 @@ final class Anthropic
         }
     }
 
-    /** @param list<Tool> $tools the request's tools when they went out under Claude Code's names, else empty */
-    private function dispatch(SseEvent $event, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array $tools = []): void
+    /**
+     * @param list<Tool> $tools the request's tools when they went out under Claude Code's names, else empty
+     * @return list<mixed>|null the event's `input_transformations`, when it carried a list of them
+     */
+    private function dispatch(SseEvent $event, Model $model, AssistantMessageBuilder $builder, AssistantMessageEventStream $stream, array $tools = []): ?array
     {
         $data = json_decode($event->data, true);
 
         if (!is_array($data)) {
-            return;
+            return null;
         }
 
         match ($event->type) {
-            'message_start' => $this->onMessageStart($data, $builder),
+            'message_start' => $this->onMessageStart($data, $model, $builder),
             'content_block_start' => $this->onBlockStart($data, $builder, $stream, $tools),
             'content_block_delta' => $this->onBlockDelta($data, $builder, $stream),
             'content_block_stop' => $this->onBlockStop($data, $builder, $stream),
@@ -136,13 +152,62 @@ final class Anthropic
             // non-2xx status or as a stream that stops, both handled by the caller.
             default => null,
         };
+
+        $transformations = match ($event->type) {
+            'message_start' => $data['message']['input_transformations'] ?? null,
+            'message_delta' => $data['input_transformations'] ?? null,
+            default => null,
+        };
+
+        return is_array($transformations) && array_is_list($transformations) ? $transformations : null;
+    }
+
+    /**
+     * Upstream's `anthropic_input_transformations` diagnostic: what the API changed in the request,
+     * each one cut down to its type, path and reason, with the ones it did not give left out.
+     *
+     * @param list<mixed> $transformations
+     */
+    private static function inputTransformations(array $transformations): AssistantMessageDiagnostic
+    {
+        $details = [];
+
+        foreach ($transformations as $transformation) {
+            $transformation = is_array($transformation) ? $transformation : [];
+            $details[] = array_filter([
+                'type' => $transformation['type'] ?? null,
+                'path' => $transformation['path'] ?? null,
+                'reason' => $transformation['reason'] ?? null,
+            ], static fn (mixed $value): bool => $value !== null);
+        }
+
+        return new AssistantMessageDiagnostic(
+            'anthropic_input_transformations',
+            Timestamp::nowMs(),
+            details: ['transformations' => $details],
+        );
     }
 
     /** @param array<string, mixed> $data */
-    private function onMessageStart(array $data, AssistantMessageBuilder $builder): void
+    private function onMessageStart(array $data, Model $requested, AssistantMessageBuilder $builder): void
     {
+        $message = is_array($data['message'] ?? null) ? $data['message'] : [];
+
+        if (is_string($message['id'] ?? null)) {
+            $builder->setResponseId($message['id']);
+        }
+
+        // Upstream's rule: the model Anthropic names is kept only when it is not the one asked
+        // for — an alias that resolved, or a fallback — so a message that has it is worth a look.
+        $model = $message['model'] ?? null;
+
+        if (is_string($model) && $model !== $requested->id) {
+            $builder->setResponseModel($model);
+        }
+
         // Captured here as well as at the end, so an aborted run still knows its input cost.
-        $builder->setUsage(self::update(new Usage(), $data['message']['usage'] ?? []));
+        // `cacheWrite1h` starts at 0 rather than unknown, as upstream's `|| 0` does here.
+        $builder->setUsage(self::update(new Usage(cacheWrite1h: 0), $message['usage'] ?? []));
     }
 
     /**
@@ -157,6 +222,14 @@ final class Anthropic
         match ($block['type'] ?? '') {
             'text' => $stream->push(new TextStartEvent($builder->startText($wire), $builder->snapshot())),
             'thinking' => $stream->push(new ThinkingStartEvent($builder->startThinking($wire), $builder->snapshot())),
+            // **These used to be dropped.** A redacted block is reasoning Anthropic withheld and
+            // encrypted; it has to go back with the turn it came in, and with no arm here it
+            // vanished — the next request replayed a turn that was not the one the model wrote.
+            // Upstream keeps it as a thinking block with `redacted: true`.
+            'redacted_thinking' => $stream->push(new ThinkingStartEvent(
+                $builder->startRedactedThinking($wire, (string) ($block['data'] ?? '')),
+                $builder->snapshot(),
+            )),
             'tool_use' => $stream->push(new ToolCallStartEvent(
                 $builder->startToolCall(
                     $wire,
@@ -264,6 +337,10 @@ final class Anthropic
      * updates them, and one that does not leaves them standing. Anthropic reports the components
      * and no total, which is what `AssistantMessageBuilder::setUsage()` adds up.
      *
+     * The two optional splits merge the same way: the one-hour share of the cache write
+     * (`cache_creation.ephemeral_1h_input_tokens` — Vercel's gateway sends it only on the delta)
+     * and the thinking share of the output (`output_tokens_details.thinking_tokens`).
+     *
      * @param array<string, mixed> $usage
      */
     private static function update(Usage $sofar, array $usage): Usage
@@ -273,11 +350,16 @@ final class Anthropic
             self::count($usage, 'output_tokens', $sofar->output),
             self::count($usage, 'cache_read_input_tokens', $sofar->cacheRead),
             self::count($usage, 'cache_creation_input_tokens', $sofar->cacheWrite),
+            reasoning: self::count((array) ($usage['output_tokens_details'] ?? []), 'thinking_tokens', $sofar->reasoning),
+            cacheWrite1h: self::count((array) ($usage['cache_creation'] ?? []), 'ephemeral_1h_input_tokens', $sofar->cacheWrite1h),
         );
     }
 
-    /** @param array<string, mixed> $usage */
-    private static function count(array $usage, string $key, int $sofar): int
+    /**
+     * @param array<string, mixed> $usage
+     * @return ($sofar is int ? int : int|null)
+     */
+    private static function count(array $usage, string $key, ?int $sofar): ?int
     {
         $value = $usage[$key] ?? null;
 
@@ -532,6 +614,15 @@ final class Anthropic
             }
 
             if ($content instanceof ThinkingContent) {
+                // Withheld reasoning goes back as Anthropic sent it: the encrypted payload, under
+                // its own type. `TransformMessages` has already dropped it if this is not the
+                // model that wrote it, which is the only one that can read it.
+                if ($content->redacted === true) {
+                    $blocks[] = ['type' => 'redacted_thinking', 'data' => $content->thinkingSignature ?? ''];
+
+                    continue;
+                }
+
                 if (trim($content->thinking) === '') {
                     continue;
                 }

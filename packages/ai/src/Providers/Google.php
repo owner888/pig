@@ -84,6 +84,14 @@ final class Google
                     $data = json_decode($event->data, true);
 
                     if (is_array($data)) {
+                        // Upstream keeps the first non-empty `responseId` of the stream. Here and
+                        // not in `GoogleShared`, because `google-generative-ai.ts` is where upstream
+                        // does it; the Code Assist extension that shares the chunk code follows a
+                        // different upstream file.
+                        if ($builder->responseId() === null && is_string($data['responseId'] ?? null) && $data['responseId'] !== '') {
+                            $builder->setResponseId($data['responseId']);
+                        }
+
                         $open = GoogleShared::onChunk($data, $builder, $stream, $open);
                     }
                 }

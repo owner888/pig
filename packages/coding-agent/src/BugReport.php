@@ -75,6 +75,30 @@ final class BugReport
             }
         }
 
+        $diagnosed = self::diagnosed($session);
+
+        if ($diagnosed !== []) {
+            // Upstream's `diagnostics.json` lists every assistant message that carries any, failed
+            // or not, with the diagnostics whole and none of the conversation. Here it is the same
+            // list, as Markdown, because the report is one Markdown file.
+            $lines[] = '## Provider diagnostics';
+            $lines[] = '';
+
+            foreach ($diagnosed as $message) {
+                $lines[] = "- {$message->provider}/{$message->model} ({$message->stopReason->value}):";
+
+                foreach ($message->diagnostics ?? [] as $diagnostic) {
+                    $error = $diagnostic->error === null ? '' : ': ' . $diagnostic->error->message;
+                    $details = $diagnostic->details === null
+                        ? ''
+                        : ' ' . json_encode($diagnostic->details, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    $lines[] = "  - `{$diagnostic->type}`{$error}{$details}";
+                }
+            }
+
+            $lines[] = '';
+        }
+
         $crashes = CrashLog::read();
 
         if ($crashes !== []) {
@@ -199,6 +223,16 @@ final class BugReport
         }
 
         return null;
+    }
+
+    /** @return list<AssistantMessage> the assistant messages that carry diagnostics, oldest first */
+    private static function diagnosed(AgentSession $session): array
+    {
+        return array_values(array_filter(
+            $session->messages(),
+            static fn (mixed $message): bool => $message instanceof AssistantMessage
+                && ($message->diagnostics ?? []) !== [],
+        ));
     }
 
     /**

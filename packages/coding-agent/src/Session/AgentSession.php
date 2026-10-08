@@ -479,6 +479,10 @@ final class AgentSession
             $error,
             $message->timestamp,
             $message->rawStopReason,
+            $message->responseId,
+            $message->responseModel,
+            $message->endTurn,
+            $message->diagnostics,
         );
     }
 

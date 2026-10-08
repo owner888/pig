@@ -116,7 +116,7 @@ final class OpenAiCompletions
                     $data = json_decode($event->data, true);
 
                     if (is_array($data)) {
-                        $open = $this->onChunk($data, $builder, $stream, $open);
+                        $open = $this->onChunk($data, $model, $builder, $stream, $open);
                     }
                 }
             }
@@ -143,10 +143,24 @@ final class OpenAiCompletions
      */
     private function onChunk(
         array $data,
+        Model $model,
         AssistantMessageBuilder $builder,
         AssistantMessageEventStream $stream,
         ?array $open,
     ): ?array {
+        // Every chunk of one completion carries the same id; the first one that has it is kept,
+        // as upstream's `||=` does. The model, likewise, but only when it is not the one asked
+        // for — a router such as OpenRouter's `auto` names the model it picked here.
+        if ($builder->responseId() === null && is_string($data['id'] ?? null) && $data['id'] !== '') {
+            $builder->setResponseId($data['id']);
+        }
+
+        $answered = $data['model'] ?? null;
+
+        if ($builder->responseModel() === null && is_string($answered) && $answered !== '' && $answered !== $model->id) {
+            $builder->setResponseModel($answered);
+        }
+
         if (isset($data['usage']) && is_array($data['usage'])) {
             $builder->setUsage($this->usage($data['usage']));
         }
@@ -344,8 +358,9 @@ final class OpenAiCompletions
         $input = max(0, (int) ($usage['prompt_tokens'] ?? 0) - $cached);
 
         // Reasoning tokens are billed as output and some providers (Groq) leave them out
-        // of the total, so the total is added up here rather than read.
-        return new Usage($input, (int) ($usage['completion_tokens'] ?? 0) + $reasoning, $cached, 0);
+        // of the total, so the total is added up here rather than read. The split itself is
+        // kept as upstream keeps it — 0 when the provider reported none, never unknown.
+        return new Usage($input, (int) ($usage['completion_tokens'] ?? 0) + $reasoning, $cached, 0, reasoning: $reasoning);
     }
 
     private function stopReason(string $reason): StopReason

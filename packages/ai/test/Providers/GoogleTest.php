@@ -726,6 +726,31 @@ final class GoogleTest extends TestCase
         return $text;
     }
 
+    public function testTheFirstResponseIdIsKeptAndThoughtsAreTheReasoningSplit(): void
+    {
+        // Upstream keeps the first non-empty `responseId` of the stream, and reports
+        // `thoughtsTokenCount` as the reasoning share of an output that already includes it.
+        $url = $this->serve([
+            ['responseId' => 'resp-a', 'candidates' => [['content' => ['parts' => [['text' => 'hi']]]]]],
+            [
+                'responseId' => 'resp-b',
+                'candidates' => [['content' => ['parts' => []], 'finishReason' => 'STOP']],
+                'usageMetadata' => [
+                    'promptTokenCount' => 10,
+                    'candidatesTokenCount' => 3,
+                    'thoughtsTokenCount' => 7,
+                    'totalTokenCount' => 20,
+                ],
+            ],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('resp-a', $message->responseId);
+        $this->assertSame(7, $message->usage->reasoning);
+        $this->assertSame(10, $message->usage->output);
+    }
+
     /** @return array{0: list<string>, 1: AssistantMessage} */
     private function collect(string $url, Context $context): array
     {

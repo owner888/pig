@@ -229,6 +229,57 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame(115, $message->usage->totalTokens);
     }
 
+    public function testReasoningTokensAreKeptAsTheirOwnSplitAndZeroWhenNoneWereReported(): void
+    {
+        // Upstream's `usage.reasoning`: a provider that reports the breakdown always sets it,
+        // to 0 when there was none, so "no reasoning" and "never said" stay different things.
+        $url = $this->serve([
+            ['choices' => [['delta' => ['content' => 'hi'], 'finish_reason' => 'stop']]],
+            ['usage' => ['prompt_tokens' => 10, 'completion_tokens' => 10, 'completion_tokens_details' => ['reasoning_tokens' => 4]]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(4, $message->usage->reasoning);
+
+        $this->server = new CannedServer();
+        $url = $this->serve([
+            ['choices' => [['delta' => ['content' => 'hi'], 'finish_reason' => 'stop']]],
+            ['usage' => ['prompt_tokens' => 10, 'completion_tokens' => 10]],
+        ]);
+
+        [, $plain] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(0, $plain->usage->reasoning);
+    }
+
+    public function testTheFirstChunkIdIsTheResponseIdAndOnlyAnotherModelIsTheResponseModel(): void
+    {
+        // Every chunk of one completion carries the same id; upstream keeps the first it sees
+        // (`||=`), and the model only when it is not the one that was asked for — which is what a
+        // router reports when it picked something.
+        $url = $this->serve([
+            ['id' => '', 'model' => '', 'choices' => [['delta' => ['content' => 'h']]]],
+            ['id' => 'chatcmpl-1', 'model' => 'openrouter/picked-model', 'choices' => [['delta' => ['content' => 'i']]]],
+            ['id' => 'chatcmpl-2', 'model' => 'another', 'choices' => [['delta' => [], 'finish_reason' => 'stop']]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('chatcmpl-1', $message->responseId, 'an empty id is no id, and the first real one wins');
+        $this->assertSame('openrouter/picked-model', $message->responseModel);
+
+        $this->server = new CannedServer();
+        $url = $this->serve([
+            ['id' => 'chatcmpl-3', 'model' => 'test-model', 'choices' => [['delta' => ['content' => 'hi'], 'finish_reason' => 'stop']]],
+        ]);
+
+        [, $same] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('chatcmpl-3', $same->responseId);
+        $this->assertNull($same->responseModel, 'the model that was asked for is not worth repeating');
+    }
+
     public function testAFailureComesBackAsTheStreamsResultAndNotAsAThrow(): void
     {
         $url = $this->server->start([

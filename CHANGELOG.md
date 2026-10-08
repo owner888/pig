@@ -43,6 +43,18 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.22] - 2026-10-08
+
+### Fixed
+
+- **Anthropic `redacted_thinking` Block Support & Multi-Turn Continuation Integrity**:
+  - Parsed `redacted_thinking` content blocks from Anthropic into `ThinkingContent::$redacted`, keeping encrypted reasoning payloads intact within `thinkingSignature` and avoiding protocol dropouts on multi-turn reasoning conversations.
+  - Aligned `TransformMessages` to preserve redacted blocks across identical provider/model requests while stripping them across model changes without inventing fake thinking text.
+- **Full Assistant Response Metadata & Extended Token Accounting**:
+  - Added optional response metadata fields to `AssistantMessage` matching upstream pi: `responseId`, `responseModel`, `endTurn`, and `diagnostics` (`AssistantMessageDiagnostic`, `DiagnosticErrorInfo`).
+  - Added `reasoning` token tracking to `Usage` across all providers reporting thinking output tokens.
+  - Supported Anthropic 1-hour cache write tracking (`Usage::$cacheWrite1h`) and differential pricing calculation (2x base input rate).
+
 ## [0.4.21] - 2026-10-08
 
 ### Added
