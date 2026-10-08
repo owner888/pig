@@ -347,20 +347,42 @@ final class OpenAiCompletions
         };
     }
 
-    /** @param array<string, mixed> $usage */
+    /**
+     * Upstream's `parseChunkUsage()`.
+     *
+     * @param array<string, mixed> $usage
+     */
     private function usage(array $usage): Usage
     {
-        $cached = (int) ($usage['prompt_tokens_details']['cached_tokens'] ?? 0);
-        $reasoning = (int) ($usage['completion_tokens_details']['reasoning_tokens'] ?? 0);
+        // Cache reads: OpenAI and OpenRouter put them in `prompt_tokens_details.cached_tokens`,
+        // DeepSeek in `prompt_cache_hit_tokens`, Kimi in a top-level `cached_tokens` — first
+        // one present wins, as upstream's `??` chain. Cache writes only come from
+        // OpenRouter-compatible providers, as a count separate from the reads: they are not
+        // subtracted from `cached_tokens`, or a spec-compliant provider is under-reported.
+        $cacheRead = (int) ($usage['prompt_tokens_details']['cached_tokens']
+            ?? $usage['prompt_cache_hit_tokens']
+            ?? $usage['cached_tokens']
+            ?? 0);
+        $cacheWrite = (int) ($usage['prompt_tokens_details']['cache_write_tokens'] ?? 0);
 
-        // `prompt_tokens` includes the cached ones, so they are taken back out: input
-        // here means what was actually paid for at the input rate.
-        $input = max(0, (int) ($usage['prompt_tokens'] ?? 0) - $cached);
+        // `prompt_tokens` includes both, so they are taken back out: input here means what was
+        // paid for at the input rate.
+        $input = max(0, (int) ($usage['prompt_tokens'] ?? 0) - $cacheRead - $cacheWrite);
 
-        // Reasoning tokens are billed as output and some providers (Groq) leave them out
-        // of the total, so the total is added up here rather than read. The split itself is
-        // kept as upstream keeps it — 0 when the provider reported none, never unknown.
-        return new Usage($input, (int) ($usage['completion_tokens'] ?? 0) + $reasoning, $cached, 0, reasoning: $reasoning);
+        // `completion_tokens` already includes the reasoning tokens, so it is the output as it
+        // stands; adding `reasoning_tokens` again counts them twice. Upstream has no provider
+        // branch here — a provider that left reasoning out of `completion_tokens` would be
+        // under-counted there too. `reasoning` is the split, 0 when none was reported.
+        $output = (int) ($usage['completion_tokens'] ?? 0);
+
+        return new Usage(
+            $input,
+            $output,
+            $cacheRead,
+            $cacheWrite,
+            $input + $output + $cacheRead + $cacheWrite,
+            reasoning: (int) ($usage['completion_tokens_details']['reasoning_tokens'] ?? 0),
+        );
     }
 
     private function stopReason(string $reason): StopReason

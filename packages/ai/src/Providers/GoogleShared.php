@@ -228,15 +228,21 @@ final class GoogleShared
     /** @param array<string, mixed> $usage */
     public static function usage(array $usage): Usage
     {
-        // Thinking is billed as output and reported separately, so it is added in here
-        // rather than left out of what the turn cost — and kept as the reasoning split too.
+        // Upstream's arithmetic, from `google-generative-ai.ts`. `promptTokenCount` includes the
+        // cached tokens, so they are taken back out: input is what was paid for at the input
+        // rate. Thinking is billed as output and reported separately, so it is added in — and
+        // kept as the reasoning split too. The total is Google's own `totalTokenCount`, which
+        // already counts the cached tokens once inside the prompt.
+        $cached = (int) ($usage['cachedContentTokenCount'] ?? 0);
+        $thoughts = (int) ($usage['thoughtsTokenCount'] ?? 0);
+
         return new Usage(
-            (int) ($usage['promptTokenCount'] ?? 0),
-            (int) ($usage['candidatesTokenCount'] ?? 0) + (int) ($usage['thoughtsTokenCount'] ?? 0),
-            (int) ($usage['cachedContentTokenCount'] ?? 0),
+            (int) ($usage['promptTokenCount'] ?? 0) - $cached,
+            (int) ($usage['candidatesTokenCount'] ?? 0) + $thoughts,
+            $cached,
             0,
             (int) ($usage['totalTokenCount'] ?? 0),
-            reasoning: (int) ($usage['thoughtsTokenCount'] ?? 0),
+            reasoning: $thoughts,
         );
     }
 

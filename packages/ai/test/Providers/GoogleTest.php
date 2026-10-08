@@ -385,6 +385,10 @@ final class GoogleTest extends TestCase
         $this->assertSame(50, $message->usage->output);
         $this->assertSame(20, $message->usage->cacheRead);
 
+        // The cached 20 are taken out of the prompt, as upstream does: input is what was paid for
+        // at the input rate. Left in, they were priced twice — once as input, once as cache read.
+        $this->assertSame(80, $message->usage->input);
+
         // The number Google sent, not a sum of the parts: adding them up counts the cached tokens
         // twice, and `Compaction::contextTokens()` believes this figure — so a conversation with
         // most of its prompt cached looked far fuller than it was and got compacted early.

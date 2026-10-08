@@ -249,6 +249,53 @@ final class MessageTest extends TestCase
         $this->assertStringContainsString('why', $rewritten->content[0]->text);
     }
 
+    public function testAnotherModelOfTheSameProviderAndApiGetsNoSignaturesBack(): void
+    {
+        // Upstream's `isSameModel` compares provider, API *and* model id. Pig used to stop at
+        // provider and API, so `/model` from one Claude to another replayed thinking signed by
+        // the first one — and a signature is only valid for the model that made it.
+        $message = $this->assistant([
+            new ThinkingContent('why', 'SIG'),
+            new ThinkingContent('', 'ENCRYPTED-ONLY'),
+            new TextContent('so', 'TEXT-SIG'),
+            new ToolCall('c1', 'read', ['path' => 'a'], 'THOUGHT-SIG'),
+        ]);
+        $opus = new Model('claude-opus-4-1', 'Opus', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 8_192);
+
+        $rewritten = TransformMessages::apply([$message], $opus)[0];
+
+        $this->assertInstanceOf(AssistantMessage::class, $rewritten);
+        $this->assertCount(3, $rewritten->content);
+
+        // The thought becomes plain text, with no `<thinking>` tags for the model to mimic, and
+        // a signed block with no text has nothing left to carry, so it goes.
+        $this->assertEquals(new TextContent('why'), $rewritten->content[0]);
+
+        // Text keeps its words but not its signature; the call keeps everything but its thought
+        // signature.
+        $this->assertEquals(new TextContent('so'), $rewritten->content[1]);
+        $this->assertEquals(new ToolCall('c1', 'read', ['path' => 'a']), $rewritten->content[2]);
+    }
+
+    public function testTheSameModelGetsItsSignaturesBackAndOnlyLosesThinkingWithNothingInIt(): void
+    {
+        $sonnet = new Model('claude-sonnet-4-5', 'Sonnet', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 8_192);
+
+        $intact = $this->assistant([new ThinkingContent('why', 'SIG'), new TextContent('so', 'TEXT-SIG')]);
+
+        $this->assertSame($intact, TransformMessages::apply([$intact], $sonnet)[0], 'nothing to rewrite');
+
+        // Signed but empty is kept — OpenAI's encrypted reasoning has no text, and the signature
+        // is what is replayed. Unsigned and empty carries nothing, so upstream drops it even for
+        // the model that wrote it.
+        $signed = new ThinkingContent('', 'ENCRYPTED-ONLY');
+        $rewritten = TransformMessages::apply([$this->assistant([$signed, new ThinkingContent('  '), new TextContent('so')])], $sonnet)[0];
+
+        $this->assertInstanceOf(AssistantMessage::class, $rewritten);
+        $this->assertCount(2, $rewritten->content);
+        $this->assertSame($signed, $rewritten->content[0]);
+    }
+
     public function testOnlyXhighClampsDown(): void
     {
         $this->assertSame(ReasoningEffort::High, ReasoningEffort::Xhigh->clampToHigh());

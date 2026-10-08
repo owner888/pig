@@ -18,7 +18,7 @@ use Pig\Ai\UserMessage;
  * `/model` can change provider mid-session, which leaves two kinds of wreckage in the
  * history. This cleans up both, before any provider sees it.
  *
- * Ported from upstream's `providers/transorm-messages.ts` — the misspelling is theirs.
+ * Ported from upstream's `api/transform-messages.ts`.
  */
 final class TransformMessages
 {
@@ -37,12 +37,14 @@ final class TransformMessages
     }
 
     /**
-     * Rewrite what the new provider cannot read.
+     * Rewrite what the new model cannot read.
      *
-     * A thinking block belongs to the model that produced it — it is signed, and the
-     * signature means nothing anywhere else — so crossing providers it becomes text in
-     * `<thinking>` tags. The reasoning is not lost; it stops claiming to be reasoning
-     * this model did.
+     * Signatures belong to the model that produced them — a thinking signature, a text
+     * signature, a tool call's thought signature — and mean nothing to any other model, even
+     * one of the same provider behind the same API. So "same" is upstream's `isSameModel`:
+     * provider, API **and** model id all match. Only then do signatures travel. Otherwise a
+     * thought becomes plain text (upstream adds no tags, so the model does not learn to mimic
+     * them), a text block loses its signature, and a tool call loses its thought signature.
      *
      * @param list<mixed> $messages
      * @return list<mixed>
@@ -74,64 +76,79 @@ final class TransformMessages
                 continue;
             }
 
-            // Same provider and same API: it produced this, so it can read it back — all of it
-            // but withheld reasoning written by a *different* model of that provider. That is
-            // encrypted for the one model, and upstream keeps it only when provider, API and
-            // model all match.
-            if ($message->provider === $model->provider && $message->api === $model->api) {
-                $out[] = $message->model === $model->id ? $message : self::withoutRedacted($message);
-
-                continue;
-            }
+            $sameModel = $message->provider === $model->provider
+                && $message->api === $model->api
+                && $message->model === $model->id;
 
             // One provider, two of its own APIs: Copilot serves both, and the ids its
-            // responses API mints are rejected by its own completions API.
+            // responses API mints are rejected by its own completions API. Upstream does this
+            // through the `normalizeToolCallId` callback each provider passes in; pig keeps
+            // the one rule here.
             $renameIds = $message->provider === 'github-copilot'
                 && $model->provider === 'github-copilot'
                 && $message->api !== $model->api;
 
             $content = [];
+            $changed = false;
 
             foreach ($message->content as $block) {
-                if ($block instanceof ThinkingContent) {
-                    // Withheld reasoning has no text to pass on — only a placeholder and a payload
-                    // no other model can read — so it is dropped, as upstream drops it, rather than
-                    // sent as a `<thinking>[Reasoning redacted]</thinking>` that says nothing.
-                    if ($block->redacted !== true) {
-                        $content[] = new TextContent("<thinking>\n{$block->thinking}\n</thinking>");
-                    }
+                $next = match (true) {
+                    $block instanceof ThinkingContent => self::thinking($block, $sameModel),
+                    $block instanceof TextContent => $sameModel ? $block : new TextContent($block->text),
+                    $block instanceof ToolCall => self::toolCall($block, $sameModel, $renameIds, $renamedIds),
+                    default => $block,
+                };
 
-                    continue;
+                $changed = $changed || $next !== $block;
+
+                if ($next !== null) {
+                    $content[] = $next;
                 }
-
-                if ($block instanceof ToolCall && $renameIds) {
-                    $id = self::copilotId($block->id);
-
-                    if ($id !== $block->id) {
-                        $renamedIds[$block->id] = $id;
-                        $content[] = new ToolCall($id, $block->name, $block->arguments, $block->thoughtSignature);
-
-                        continue;
-                    }
-                }
-
-                $content[] = $block;
             }
 
-            $out[] = self::withContent($message, $content);
+            $out[] = $changed ? self::withContent($message, $content) : $message;
         }
 
         return $out;
     }
 
-    private static function withoutRedacted(AssistantMessage $message): AssistantMessage
+    /** Upstream's thinking branch, in its order. Null drops the block. */
+    private static function thinking(ThinkingContent $block, bool $sameModel): ThinkingContent|TextContent|null
     {
-        $content = array_values(array_filter(
-            $message->content,
-            static fn (mixed $block): bool => !($block instanceof ThinkingContent && $block->redacted === true),
-        ));
+        // Withheld reasoning is encrypted for the one model that wrote it, and has no text to
+        // pass on — only a placeholder — so anywhere else it is dropped.
+        if ($block->redacted === true) {
+            return $sameModel ? $block : null;
+        }
 
-        return count($content) === count($message->content) ? $message : self::withContent($message, $content);
+        // Signed thinking is kept for its own model even with no text: OpenAI's encrypted
+        // reasoning has none, and the signature is what gets replayed.
+        if ($sameModel && $block->thinkingSignature !== null && $block->thinkingSignature !== '') {
+            return $block;
+        }
+
+        if (trim($block->thinking) === '') {
+            return null;
+        }
+
+        return $sameModel ? $block : new TextContent($block->thinking);
+    }
+
+    /** @param array<string, string> $renamedIds */
+    private static function toolCall(ToolCall $block, bool $sameModel, bool $renameIds, array &$renamedIds): ToolCall
+    {
+        $signature = !$sameModel && $block->thoughtSignature !== null && $block->thoughtSignature !== ''
+            ? null
+            : $block->thoughtSignature;
+        $id = $renameIds ? self::copilotId($block->id) : $block->id;
+
+        if ($id !== $block->id) {
+            $renamedIds[$block->id] = $id;
+        }
+
+        return $id === $block->id && $signature === $block->thoughtSignature
+            ? $block
+            : new ToolCall($id, $block->name, $block->arguments, $signature);
     }
 
     /** @param list<\Pig\Ai\AssistantContent> $content */

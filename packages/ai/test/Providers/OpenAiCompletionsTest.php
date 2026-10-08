@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Test\Providers;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Api;
 use Pig\Ai\AssistantMessage;
@@ -206,7 +207,7 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame('c1', $assistant['tool_calls'][0]['id']);
     }
 
-    public function testCachedTokensAreTakenOutOfTheInputTheyWereCountedIn(): void
+    public function testCachedTokensAreTakenOutOfTheInputAndReasoningIsNotAddedToTheOutputTwice(): void
     {
         $url = $this->serve([
             ['choices' => [['delta' => ['content' => 'hi'], 'finish_reason' => 'stop']]],
@@ -221,12 +222,70 @@ final class OpenAiCompletionsTest extends TestCase
         [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
 
         // `prompt_tokens` includes the cached ones; input here means what was paid for
-        // at the input rate. Reasoning is billed as output, and Groq leaves it out of
-        // the total, so the total is added up rather than read.
+        // at the input rate.
         $this->assertSame(60, $message->usage->input);
         $this->assertSame(40, $message->usage->cacheRead);
-        $this->assertSame(15, $message->usage->output);
-        $this->assertSame(115, $message->usage->totalTokens);
+
+        // `completion_tokens` already includes the 5 reasoning tokens. This used to be 15: pig
+        // added `reasoning_tokens` on top as a Groq workaround, which upstream does not do, and
+        // every OpenAI-compatible reasoning turn was billed and counted with its thinking twice.
+        $this->assertSame(10, $message->usage->output);
+        $this->assertSame(5, $message->usage->reasoning);
+        $this->assertSame(110, $message->usage->totalTokens);
+    }
+
+    /** @return iterable<string, array{array<string, mixed>, int}> */
+    public static function cacheReadFields(): iterable
+    {
+        // Upstream's list: providers disagree on where the cache hits go.
+        yield 'OpenAI / OpenRouter' => [['prompt_tokens_details' => ['cached_tokens' => 30]], 30];
+        yield 'DeepSeek' => [['prompt_cache_hit_tokens' => 30], 30];
+        yield 'Kimi' => [['cached_tokens' => 30], 30];
+
+        // The first one present wins, in that order — even a 0, as with upstream's `??`.
+        yield 'details beat DeepSeek and Kimi' => [
+            ['prompt_tokens_details' => ['cached_tokens' => 0], 'prompt_cache_hit_tokens' => 30, 'cached_tokens' => 20],
+            0,
+        ];
+        yield 'DeepSeek beats Kimi' => [['prompt_cache_hit_tokens' => 30, 'cached_tokens' => 20], 30];
+    }
+
+    /** @param array<string, mixed> $fields */
+    #[DataProvider('cacheReadFields')]
+    public function testCacheReadsAreFoundWhereverTheProviderPutsThem(array $fields, int $cacheRead): void
+    {
+        $url = $this->serve([
+            ['choices' => [['delta' => ['content' => 'hi'], 'finish_reason' => 'stop']]],
+            ['usage' => ['prompt_tokens' => 100, 'completion_tokens' => 10] + $fields],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        // Reading only `prompt_tokens_details` missed DeepSeek's and Kimi's cache hits entirely,
+        // so they were priced as fresh input.
+        $this->assertSame($cacheRead, $message->usage->cacheRead);
+        $this->assertSame(100 - $cacheRead, $message->usage->input);
+    }
+
+    public function testCacheWritesAreTheirOwnCountAndAreNotSubtractedFromTheReads(): void
+    {
+        // OpenRouter-compatible providers report writes beside the reads. Both are inside
+        // `prompt_tokens`, so both come out of the input; the reads stay as reported.
+        $url = $this->serve([
+            ['choices' => [['delta' => ['content' => 'hi'], 'finish_reason' => 'stop']]],
+            ['usage' => [
+                'prompt_tokens' => 100,
+                'completion_tokens' => 10,
+                'prompt_tokens_details' => ['cached_tokens' => 30, 'cache_write_tokens' => 20],
+            ]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(50, $message->usage->input);
+        $this->assertSame(30, $message->usage->cacheRead);
+        $this->assertSame(20, $message->usage->cacheWrite);
+        $this->assertSame(110, $message->usage->totalTokens);
     }
 
     public function testReasoningTokensAreKeptAsTheirOwnSplitAndZeroWhenNoneWereReported(): void
@@ -430,7 +489,7 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame('c1', $messages[2]['tool_call_id']);
     }
 
-    public function testThinkingFromAnotherProviderBecomesTaggedText(): void
+    public function testThinkingFromAnotherProviderBecomesPlainText(): void
     {
         $context = new Context([
             new UserMessage('hi'),
@@ -450,9 +509,10 @@ final class OpenAiCompletionsTest extends TestCase
         $assistant = $this->server->receivedJson()['messages'][1];
 
         // A signed thinking block means nothing to a model that did not sign it, so it
-        // travels as text rather than claiming to be reasoning this model did.
-        $this->assertStringContainsString('<thinking>', $assistant['content'][0]['text']);
-        $this->assertStringContainsString('deep thoughts', $assistant['content'][0]['text']);
+        // travels as text rather than claiming to be reasoning this model did — untagged, as
+        // upstream sends it, so the model does not learn to mimic the tags.
+        $this->assertStringNotContainsString('<thinking>', (string) json_encode($assistant));
+        $this->assertStringContainsString('deep thoughts', (string) json_encode($assistant));
     }
 
     public function testReasoningEffortIsSentOnlyWhenTheModelReasons(): void

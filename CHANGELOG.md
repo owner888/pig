@@ -43,6 +43,19 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.23] - 2026-10-08
+
+### Fixed
+
+- **Accurate Model Signature Scrubbing Across Model Changes (`TransformMessages`)**:
+  - Aligned cross-model message sanitization with upstream pi's `isSameModel` rule: signatures (thinking signatures, text signatures, and tool thought signatures) are only preserved when provider, API, and model ID all match identically.
+  - Converted thinking blocks into clean plain text without synthetic tags when switching models, preventing models from mimicking tag structures.
+  - Automatically stripped redacted thinking blocks and empty thoughts when switching to a different model.
+- **Accurate Token Usage and Prompt Cache Accounting (`OpenAiCompletions`, `GoogleShared`)**:
+  - Fixed duplicate reasoning token counting in OpenAI-compatible completions by treating `completion_tokens` as the complete output figure and tracking `reasoning_tokens` strictly as a breakdown subset.
+  - Added support for provider-specific prompt cache hit keys: DeepSeek (`prompt_cache_hit_tokens`), Kimi (`cached_tokens`), and OpenRouter (`cache_write_tokens`).
+  - Subtracted `cachedContentTokenCount` from `promptTokenCount` in `GoogleShared::usage()` so cached tokens are accurately priced at the cache rate without double-billing.
+
 ## [0.4.22] - 2026-10-08
 
 ### Fixed

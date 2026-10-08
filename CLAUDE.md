@@ -957,11 +957,13 @@ an array. None of that is documented anywhere as a difference; it is what a 400 
 after you have sent it. A table per endpoint rather than one rule, for the same reason the tool
 archive names are a table — see that note above.
 
-`Providers\TransformMessages` (upstream's `transorm-messages.ts`, misspelling and all) is what
-makes `/model` safe across providers. Two things get cleaned up before any provider sees the
-history: a **thinking block from another provider becomes `<thinking>` text**, because it is
-signed and the signature means nothing anywhere else; and a **tool call with no result gets one
-invented** saying so, because an interrupted turn leaves a dangling call and every provider
+`Providers\TransformMessages` (upstream's `api/transform-messages.ts`) is what makes `/model`
+safe across models. Two things get cleaned up before any provider sees the history. First,
+**signatures only go back to the model that made them** — upstream's `isSameModel`, provider, API
+*and* model id all equal. For any other model, even another one of the same provider, a thinking
+block becomes plain text (no tags, so the model does not learn to mimic them), empty thinking and
+redacted thinking are dropped, a text block loses its `textSignature` and a tool call its
+`thoughtSignature`. Second, a **tool call with no result gets one invented** saying so, because an interrupted turn leaves a dangling call and every provider
 rejects the whole conversation rather than ignoring it. A stated "No result provided" is worse
 than the truth and far better than a request that cannot be sent at all.
 
@@ -7962,8 +7964,8 @@ speaks this API and implements it itself), left the call with **no arguments at 
 
 Thirteenth, and the clearest "wired at one end only" of the whole audit. Four places handle a tool
 call's `thoughtSignature`: `GoogleShared` reads it off the part, `setSignature()` stores it,
-`GoogleShared::messages()` writes it back into the request, and `TransformMessages` carries it
-across. The fifth — `AssistantMessageBuilder::toContent()`, the one place that *builds* the
+`GoogleShared::messages()` writes it back into the request, and `TransformMessages` keeps it for
+the model that made it. The fifth — `AssistantMessageBuilder::toContent()`, the one place that *builds* the
 `ToolCall` — constructed it with three arguments out of four, so `ToolCall::thoughtSignature` was
 always null for a call that came from a stream.
 
@@ -8055,11 +8057,8 @@ thoughts + 20 cached, which is not arithmetic Google does. Gemini would have sen
 invented to match the code under test is the same failure as a claim in this file that nobody
 diffed.
 
-Not changed, because it is upstream's too: the **cost** still charges `promptTokenCount` at the
-input rate *and* `cachedContentTokenCount` at the cache rate, so the cached part is paid for twice
-in the displayed cost. Upstream's `calculateCost` does exactly this with exactly these fields. It is
-a divergence from reality rather than from upstream, and it belongs in one place — here — until
-upstream moves.
+The **input** is `promptTokenCount - cachedContentTokenCount`, as upstream's
+`google-generative-ai.ts` computes it, so the cached part is priced once, at the cache rate.
 
 ### A hook's message sent mid-turn was queued where nothing reads it
 
@@ -11087,8 +11086,19 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 **避坑规则**：
 - provider 的块类型 `match` 里遇到不认识的类型，先查 upstream 是不是存成了别的形状，不能默认丢；能回放的东西丢了是协议错误，不是显示问题。
 - 隐去的思考：`thinking` 只放占位文字（TUI / HTML / Markdown 导出只显示这个），加密载荷只在 `thinkingSignature`；`Anthropic::assistantBlocks()` 先判断 `redacted === true` 再做空文本检查。
-- `TransformMessages` 里同 provider+API 但 model 不同时也要去掉 redacted 块（`withoutRedacted()`），跨 provider 直接丢弃。
+- `TransformMessages` 里 redacted 块只在 provider、API、model 三者都相同时保留，其余一律丢弃。
 - 新加的可选字段（`ThinkingContent::$redacted`、`AssistantMessage` 的 `responseId` / `responseModel` / `endTurn` / `diagnostics`、`Usage` 的 `reasoning` / `cacheWrite1h`）全部照 `rawStopReason` 的做法：构造参数加在最后、JSON 里为 null 就不写键、所有逐字段复制 `new AssistantMessage(` 的地方（`TransformMessages`、`SessionManager::withContent()`、`AgentSession::normaliseFinalMessage()`）都要带上。测试在 `AnthropicTest` 和 `MessageTest`。
+
+### OpenAI 兼容 / Gemini 的 token 用量：思考算两遍、缓存漏读或算两遍
+
+**症状**：OpenAI 兼容 provider 上带推理的一轮，`output` 比账单多出整段 `reasoning_tokens`；DeepSeek / Kimi 的缓存命中全按新输入计价，`cacheRead` 永远是 0；Gemini 的 `input` 里还含着已缓存的部分，同一批 token 既按输入价又按缓存价各算一次。
+
+**根因**：`OpenAiCompletions::usage()` 把 `completion_tokens + reasoning_tokens` 当输出（当年为 Groq 加的补丁），但 `completion_tokens` 本来就含推理，upstream 的 `parseChunkUsage()` 没有任何 provider 分支；缓存只读 `prompt_tokens_details.cached_tokens`，没有 DeepSeek 的 `prompt_cache_hit_tokens`、Kimi 的顶层 `cached_tokens` 和 OpenRouter 系的 `cache_write_tokens`。`GoogleShared::usage()` 没从 `promptTokenCount` 里减 `cachedContentTokenCount`。
+
+**避坑规则**：
+- 用量字段逐行照 upstream：completions 是 `output = completion_tokens`、`cacheRead = details.cached_tokens ?? prompt_cache_hit_tokens ?? cached_tokens`（第一个存在的赢，0 也算）、`cacheWrite = details.cache_write_tokens`、`input = max(0, prompt - cacheRead - cacheWrite)`、total 由四项相加；Google 是 `input = prompt - cached`、`output = candidates + thoughts`、total 直接读 `totalTokenCount`。
+- `reasoning` 只是 `output` 的子集，不再加进任何计数；想给某个 provider 加修正，先在 upstream 找到对应分支再移植。
+- 测试固定在 `OpenAiCompletionsTest`（缓存字段的 data provider、cache write、推理不重复计）和 `GoogleTest::testThinkingTokensAreCountedAsOutputBecauseTheyAreBilledAsOutput`。
 
 ## Version floor: PHP >= 8.3
 
