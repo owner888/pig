@@ -295,6 +295,26 @@ final class CustomModelsTest extends TestCase
         $this->assertTrue($model->compat->mistralToolIds);
     }
 
+    public function testRequiresReasoningContentOnAssistantMessagesIsReadFromACompatBlock(): void
+    {
+        // Upstream's compat key for DeepSeek-style endpoints. Detection only finds `deepseek.com`
+        // or a provider called `deepseek`; a proxy in front of DeepSeek needs to say it in
+        // `models.json`, and pig ignored the key, so that proxy kept answering 400.
+        $model = $this->load(self::provider(['models' => [self::model(['compat' => [
+            'requiresReasoningContentOnAssistantMessages' => true,
+        ]])]]))->models[0];
+
+        $this->assertNotNull($model->compat);
+        $this->assertTrue($model->compat->reasoningContentOnAssistantMessages);
+
+        $plain = $this->load(self::provider(['models' => [self::model(['compat' => [
+            'supportsStore' => false,
+        ]])]]))->models[0];
+
+        $this->assertNotNull($plain->compat);
+        $this->assertFalse($plain->compat->reasoningContentOnAssistantMessages, 'unmentioned keys keep their default');
+    }
+
     // ---- the key ---------------------------------------------------------------------------
 
     public function testTheApiKeyIsAVariableNameBeforeItIsAKey(): void

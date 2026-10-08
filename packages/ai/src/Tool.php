@@ -15,11 +15,16 @@ final readonly class Tool
     /**
      * @param array<string, mixed> $parameters JSON Schema for the arguments object.
      *        Upstream builds this with typebox; here it is the decoded schema itself.
+     * @param array<string, mixed>|false|null $constrainedSampling upstream's
+     *        `constrainedSampling?: false | ConstrainedSamplingConfig` — e.g.
+     *        `['type' => 'json_schema', 'strict' => 'prefer']` asks for strict sampling where the
+     *        provider has it (`Utils\ConstrainedSampling`). Null and false both mean no.
      */
     public function __construct(
         public string $name,
         public string $description,
         public array $parameters,
+        public array|false|null $constrainedSampling = null,
     ) {
     }
 }

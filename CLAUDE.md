@@ -1067,6 +1067,16 @@ tags. A call's `id`, on `functionCall` and `functionResponse` alike, goes only t
 tool result's images go inside its `functionResponse` unless the model is a Gemini older than 3
 (upstream's `supportsMultimodalFunctionResponse()`: not Gemini at all counts as yes).
 
+Tools on the direct API are upstream's `buildParams()`: `convertTools(tools, false, strict)` sends
+`parametersJsonSchema`, and `resolveGoogleFunctionCallingMode()` picks the mode — `none`/`any` as
+asked, else `VALIDATED` when any tool goes strict (`Tool::$constrainedSampling` of type
+`json_schema`, on a model where `supportsGoogleStrictToolSampling()` — Gemini 3+), else the mapped
+choice or nothing. Upstream's bash, edit, read and write ask for `strict: "prefer"`; pig's built-in
+tools do not yet, because the strict schema makes optional arguments arrive as `null`, and
+`ToolArguments` validates against the tool's own (loose) schema, which refuses it — `limit: null`
+is `limit: must be integer`. The Code Assist path (`pig-antigravity`) keeps
+`tools()` and `toolConfig()`: upstream has no Code Assist provider left to compare against.
+
 It was an extraction and nothing else, which is what `GoogleTest`'s thirty-one cases passing
 unchanged is the evidence for. A move that needed a test changed would have been a rewrite.
 
@@ -1960,10 +1970,13 @@ Five things decided here:
   endpoint reported `the model is priced at zero` and that was mistaken — in this file's own summary
   of it — for the field not existing at all. *A claim about what this repository does is worth a
   grep, which is the fourth shape from the index pointed at pig rather than at a docblock.*
-- **No `compat` block means null**, so `OpenAiCompat::detect()` still works it out from the URL.
-  That is a better default than any set of flags: a local llama.cpp gets what it needs with
-  nothing written. A block uses **all eight of upstream's key names** so files stay portable — the
-  four `supports…`/`maxTokensField` ones and the four upstream prefixes with `requires`. This
+- **No `compat` block means null**, so `OpenAiCompat::detect()` still works it out from the URL
+  (and, for DeepSeek, the provider name). That is a better default than any set of flags: a local
+  llama.cpp gets what it needs with nothing written. A block uses **upstream's key names** so files
+  stay portable — the four `supports…`/`maxTokensField` ones and the `requires…` ones
+  (`requiresReasoningContentOnAssistantMessages` is the newest). A block replaces
+  detection whole rather than per key, unlike upstream's `getCompat()`: a key the block leaves out
+  takes its plain default, not the detected value. This
   sentence used to say upstream had four of the eight and that the other four were pig's own; see
   the trap entry on it.
 
@@ -2855,8 +2868,11 @@ OpenAPI 3.0 schema and answered `Unknown name "$schema"` for every request — a
 session from the moment the server connected. Upstream has `sanitizeForOpenApi()` in
 `google-shared.ts` and it had never been ported, because no built-in tool carries a
 meta-declaration. The lesson is the one about fixtures that agree with the code: every tool schema
-in pig's tests was written by pig. Regression test:
-`GoogleTest::testJsonSchemaMetaDeclarationsAreStrippedFromAToolsParameters`.
+in pig's tests was written by pig. The direct Gemini API has since moved to upstream's
+`parametersJsonSchema` (full JSON Schema, sent as written — `GoogleShared::convertTools()`); the
+stripped `parameters` is what the Code Assist path (`GoogleShared::tools()`, `pig-antigravity`)
+still sends. Regression tests: `GoogleTest::testTheCodeAssistToolsStillStripJsonSchemaMetaDeclarations`,
+`testTheDirectApiSendsTheSchemaAsWrittenInParametersJsonSchema`.
 
 **The manager is one component whose contents are swapped**, and its `menu()` parks the caller on
 a `Deferred` the way every hook dialog does — which is what lets `$manage` read as upstream's loop
@@ -8024,7 +8040,9 @@ made for them is never the open one (it would end the call they arrived beside).
 
 The raw field on replay is upstream's too: its name is the **first** thinking block's signature,
 only when that is `reasoning`, `reasoning_content` or `reasoning_text`, and every thought goes in it
-joined by `\n`. While streaming, only the first non-empty of the three fields in a delta is read —
+joined by `\n`. An endpoint with `requiresReasoningContentOnAssistantMessages` (detected for DeepSeek;
+`OpenAiCompat::$reasoningContentOnAssistantMessages`) gets `reasoning_content: ""` on every replayed
+assistant turn of a reasoning model that did not already write one. While streaming, only the first non-empty of the three fields in a delta is read —
 chutes.ai sends the same text in two.
 
 Two differences in the completions provider that are **kept** rather than aligned, now that they are
@@ -11184,6 +11202,39 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 - 推理字段只读第一个非空的；回放字段名只取第一个非空思考块的签名，并且必须在 `REASONING_FIELDS` 里。
 - `reasoning_details` 存在思考块签名里（流结束时写入第一个思考块；没有就建一个不打开的思考块），旧会话挂在工具调用上的加密条目照 upstream 的 legacy 分支继续读。
 - 测试：`OpenAiCompletionsTest::testOnlyTheFirstReasoningFieldInADeltaIsRead`、`testReasoningDetailsAreKeptOnTheThinkingBlockAndMergedAsTheyStream`、`testTheFirstThinkingBlocksFieldCarriesEveryThoughtJoinedByANewline`。
+
+### Responses API 的拒答（refusal）文字丢失
+
+**症状**：gpt-5 等走 OpenAI Responses API 的模型拒答时，界面和会话里看不到拒答内容，或只看到部分文字；完成的 message item 里有、流式 delta 里不全的文字也会少一截。
+
+**根因**：upstream 在 `response.output_item.done` 用完成的 item 重建文本：`item.content.map(c => c.type === "output_text" ? c.text : c.refusal).join("")`，流式累积的文字被丢弃；pig 只保留了 delta 累积的文字，从不读完成 item 的 `content`。
+
+**避坑规则**：
+- 文本块以 `output_item.done` 的 `content` 为准（`AssistantMessageBuilder::setText()` 替换，不追加），`output_text` 和 `refusal` 两种 part 都要拼进去；item 没有 `content` 时按 upstream 置为 `""`，不回退到 delta。
+- 测试 fixture 的 `output_item.done` 要带真实形状的 `content`，否则测出来的是 pig 自己编的流。
+- 测试：`OpenAiResponsesTest::testTheFinishedMessageItemIsTheTextAndARefusalIsPartOfIt`、`testAFinishedMessageItemWithNoContentLeavesNoText`。
+
+### 不支持图片的模型收不到任何图片提示
+
+**症状**：给纯文本模型（`input` 里没有 `image`，如 DeepSeek）发截图或 `read` 一张图片，模型回答得像根本没有附件，或者对着空的工具结果胡编。
+
+**根因**：upstream `transformMessages()` 先跑 `downgradeUnsupportedImages()`，把用户消息和工具结果里的图片换成 `(image omitted: model does not support images)` / `(tool image omitted: model does not support images)`，连续多张合成一行；pig 只在各 provider 里按 `acceptsImages()` 把图片默默跳过。
+
+**避坑规则**：
+- 图片降级只在 `TransformMessages::apply()` 里做，provider 里的 `acceptsImages()` 判断保留但不能当成降级的地方。
+- 占位文字和去重规则照 upstream 字面：紧挨着占位文字的图片不再加一行。
+- 测试：`MessageTest::testAModelThatCannotSeeIsToldAnImageWasLeftOutAndARunIsOneLine`，`OpenAiCompletionsTest::testAnImageBecomesAPlaceholderForAModelThatCannotSeeOne`，`GoogleTest::testAnImageGoesInlineAndBecomesAPlaceholderForAModelThatCannotSeeOne`。
+
+### DeepSeek 回放没有思考的助手轮：400 缺 `reasoning_content`
+
+**症状**：DeepSeek 思考模型（`models.json` 里 `reasoning: true`）的会话，历史里出现一条没有思考内容的助手轮（只有工具调用、或从别的模型切过来的轮次）后，下一次请求 400，提示助手消息缺 `reasoning_content`。
+
+**根因**：upstream 的 compat 有 `requiresReasoningContentOnAssistantMessages`，`detectCompat()` 对 `provider === "deepseek"` 或 URL 含 `deepseek.com`（不分大小写）打开，回放时对 `model.reasoning` 的模型在每条还没有 `reasoning_content` 的助手消息上补 `""`；pig 的 `OpenAiCompat` 没有这个开关，只有思考块签名是 `reasoning_content` 时才写这个字段。
+
+**避坑规则**：
+- 开关在 `OpenAiCompat::$reasoningContentOnAssistantMessages`，`detect($baseUrl, $provider)` 要传 provider 名；`models.json` 的 `compat` 用 upstream 拼写 `requiresReasoningContentOnAssistantMessages`，`StreamProxy` 也要带上。
+- 条件是模型能力 `model.reasoning`，不是本次请求是否思考；已有 `reasoning_content` 的轮次不覆盖。
+- 测试：`OpenAiCompletionsTest::testDeepSeekGetsAnEmptyReasoningContentOnAReplayedTurnThatHadNoThinking`、`testTheReasoningContentFillerNeedsTheFlagAndAReasoningModel`，`CustomModelsTest::testRequiresReasoningContentOnAssistantMessagesIsReadFromACompatBlock`。
 
 ## Version floor: PHP >= 8.3
 

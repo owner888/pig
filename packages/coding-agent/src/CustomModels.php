@@ -389,10 +389,10 @@ final readonly class CustomModels
     /**
      * The ways an OpenAI-compatible endpoint is not, as a file can say them.
      *
-     * **All eight keys are upstream's spellings**, so a `models.json` written for pi works here
+     * **Every key is upstream's spelling**, so a `models.json` written for pi works here
      * unchanged. This used to read four of them under pig's own shorter names — the four upstream
-     * prefixes with `requires` — on the stated grounds that upstream only had four. It has all
-     * eight, in `types.ts`, and the note claiming otherwise is what stopped anybody checking:
+     * prefixes with `requires` — on the stated grounds that upstream only had four. It had more,
+     * in `types.ts`, and the note claiming otherwise is what stopped anybody checking:
      * `requiresMistralToolIds: true` in a pi file did nothing here, and that flag is the one that
      * cuts a tool id to the nine characters such an endpoint will accept.
      *
@@ -427,6 +427,7 @@ final readonly class CustomModels
             assistantAfterToolResult: $flag('requiresAssistantAfterToolResult', false),
             thinkingAsText: $flag('requiresThinkingAsText', false),
             mistralToolIds: $flag('requiresMistralToolIds', false),
+            reasoningContentOnAssistantMessages: $flag('requiresReasoningContentOnAssistantMessages', false),
         );
     }
 

@@ -43,6 +43,23 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.28] - 2026-10-08
+
+### New Features
+
+- **JSON-Schema Constrained Sampling Architecture (`ConstrainedSampling`, `UnsupportedStrictJsonSchema`)**:
+  - Fully ported upstream pi's strict JSON schema transformation engine (`makeStrictJsonSchema`), enforcing `additionalProperties: false`, required property backfilling, and optional-to-null union expansion for strict tools on supported models (e.g. Gemini 3+ `parametersJsonSchema`).
+  - Added `Tool::$constrainedSampling` supporting `json_schema` strict sampling configurations (`prefer` vs `require`).
+
+### Fixed
+
+- **OpenAI Responses API Refusal and Finished Output Text Reconstruction**:
+  - Reconstructed complete assistant text from `response.output_item.done` items, combining both `output_text` and `refusal` segments and preventing refusal messages from being dropped.
+- **Graceful Image Downgrade for Text-Only Models (`TransformMessages`)**:
+  - Implemented `downgradeUnsupportedImages()` in `TransformMessages::apply()`: automatically replaced images in user messages and tool results with structured placeholder notes (`(image omitted: model does not support images)` / `(tool image omitted: model does not support images)`) when targeting models without vision input, coalescing adjacent images into single lines.
+- **DeepSeek Reasoning Content Filler (`OpenAiCompat`)**:
+  - Added `requiresReasoningContentOnAssistantMessages` compatibility detection for DeepSeek endpoints, automatically populating `reasoning_content: ""` on replayed assistant turns without reasoning content and eliminating 400 parameter errors.
+
 ## [0.4.27] - 2026-10-08
 
 ### Fixed

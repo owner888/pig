@@ -237,10 +237,12 @@ final class StreamProxyTest extends TestCase
         $sent = $this->server->receivedJson()['model'];
 
         $this->assertSame(['X-Org' => 'acme'], $sent['headers']);
-        // Upstream's eight key names, all eight, so a `models.json` and this say the same thing.
+        // Upstream's key names, one per field, so a `models.json` and this say the same thing.
         $this->assertFalse($sent['compat']['supportsStore']);
         $this->assertSame('max_tokens', $sent['compat']['maxTokensField']);
         $this->assertFalse($sent['compat']['requiresMistralToolIds']);
+        // The DeepSeek flag travels too, or a proxied DeepSeek turn loses it on the way.
+        $this->assertFalse($sent['compat']['requiresReasoningContentOnAssistantMessages']);
     }
 
     public function testTheContextGoesOverTheWireAsTheSessionFileWritesIt(): void

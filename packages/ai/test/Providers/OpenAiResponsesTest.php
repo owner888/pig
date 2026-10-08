@@ -52,7 +52,11 @@ final class OpenAiResponsesTest extends TestCase
             ['type' => 'response.output_item.added', 'item' => ['type' => 'message', 'id' => 'msg_1']],
             ['type' => 'response.output_text.delta', 'delta' => 'Hel'],
             ['type' => 'response.output_text.delta', 'delta' => 'lo'],
-            ['type' => 'response.output_item.done', 'item' => ['type' => 'message', 'id' => 'msg_1']],
+            // The finished item repeats the text whole, as OpenAI sends it; that copy is the one
+            // kept (see testTheFinishedMessageItemIsTheTextAndARefusalIsPartOfIt).
+            ['type' => 'response.output_item.done', 'item' => ['type' => 'message', 'id' => 'msg_1', 'content' => [
+                ['type' => 'output_text', 'text' => 'Hello', 'annotations' => []],
+            ]]],
             ['type' => 'response.completed', 'response' => [
                 'status' => 'completed',
                 'usage' => ['input_tokens' => 20, 'output_tokens' => 5, 'total_tokens' => 25],
@@ -77,6 +81,62 @@ final class OpenAiResponsesTest extends TestCase
         // writes so the item's `phase` can travel with the id (see the phase tests below).
         $this->assertSame('{"v":1,"id":"msg_1"}', $message->content[0]->textSignature);
         $this->assertSame(StopReason::Stop, $message->stopReason);
+    }
+
+    public function testTheFinishedMessageItemIsTheTextAndARefusalIsPartOfIt(): void
+    {
+        // Upstream's `output_item.done` arm rebuilds the block from the finished item:
+        // `item.content.map(c => c.type === "output_text" ? c.text : c.refusal).join("")`. pig kept
+        // the streamed deltas instead, so a refusal that arrived only on the finished item — or a
+        // stream whose deltas fell short of the item — left the person with less than OpenAI said.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => ['type' => 'message', 'id' => 'msg_1']],
+            ['type' => 'response.output_text.delta', 'delta' => 'Part'],
+            ['type' => 'response.output_item.done', 'item' => ['type' => 'message', 'id' => 'msg_1', 'content' => [
+                ['type' => 'output_text', 'text' => 'Partly. '],
+                ['type' => 'refusal', 'refusal' => 'I cannot help with the rest.'],
+            ]]],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('Partly. I cannot help with the rest.', $message->content[0]->text);
+    }
+
+    public function testAFinishedMessageItemWithNoContentLeavesNoText(): void
+    {
+        // Upstream's `?.map(...).join("") || ""`: an item with no `content` replaces the streamed
+        // text with "", it does not fall back to it. Pinned so a "keep the deltas when the item
+        // is empty" fallback is a deliberate departure and not a drift.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => ['type' => 'message', 'id' => 'msg_1']],
+            ['type' => 'response.output_text.delta', 'delta' => 'streamed'],
+            ['type' => 'response.output_item.done', 'item' => ['type' => 'message', 'id' => 'msg_1']],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame('', $message->content[0]->text);
+    }
+
+    public function testAFinalAnswerPhaseDoesNotOutvoteTheTerminalStatus(): void
+    {
+        // Upstream sets `stop` when a `final_answer` message finishes, and then the terminal
+        // event maps its own status over it. The net result is the status's: `incomplete` is
+        // still `length` after a `final_answer` item.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => ['type' => 'message', 'id' => 'msg_1']],
+            ['type' => 'response.output_item.done', 'item' => ['type' => 'message', 'id' => 'msg_1', 'phase' => 'final_answer', 'content' => [
+                ['type' => 'output_text', 'text' => 'cut sho'],
+            ]]],
+            ['type' => 'response.incomplete', 'response' => ['status' => 'incomplete', 'incomplete_details' => ['reason' => 'max_output_tokens']]],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Length, $message->stopReason);
     }
 
     public function testAReasoningItemIsKeptWholeAndNotJustItsSummary(): void
@@ -214,7 +274,9 @@ final class OpenAiResponsesTest extends TestCase
         $url = $this->serve([
             ['type' => 'response.output_item.added', 'item' => ['type' => 'message', 'id' => 'msg_1']],
             ['type' => 'response.output_text.delta', 'delta' => 'half an ans'],
-            ['type' => 'response.output_item.done', 'item' => ['type' => 'message', 'id' => 'msg_1']],
+            ['type' => 'response.output_item.done', 'item' => ['type' => 'message', 'id' => 'msg_1', 'content' => [
+                ['type' => 'output_text', 'text' => 'half an ans'],
+            ]]],
             ['type' => 'response.completed', 'response' => ['status' => 'incomplete']],
         ]);
 
@@ -417,7 +479,9 @@ final class OpenAiResponsesTest extends TestCase
         $url = $this->serve([
             ['type' => 'response.output_item.added', 'item' => ['type' => 'message', 'id' => 'msg_1']],
             ['type' => 'response.output_text.delta', 'delta' => 'checking'],
-            ['type' => 'response.output_item.done', 'item' => ['type' => 'message', 'id' => 'msg_1', 'phase' => 'commentary']],
+            ['type' => 'response.output_item.done', 'item' => ['type' => 'message', 'id' => 'msg_1', 'phase' => 'commentary', 'content' => [
+                ['type' => 'output_text', 'text' => 'checking'],
+            ]]],
             ['type' => 'response.completed', 'response' => ['status' => 'completed']],
         ]);
 

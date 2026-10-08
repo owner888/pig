@@ -30,6 +30,9 @@ final readonly class OpenAiCompat
      * @param bool   $assistantAfterToolResult insert a filler turn between a result and a user message
      * @param bool   $thinkingAsText   thinking goes back as untagged text, one part ahead of the answer, rather than a field
      * @param bool   $mistralToolIds   tool ids are cut and padded to exactly nine characters
+     * @param bool   $reasoningContentOnAssistantMessages every replayed assistant turn of a reasoning
+     *        model carries `reasoning_content`, empty when there is none — upstream's
+     *        `requiresReasoningContentOnAssistantMessages`, which DeepSeek needs
      */
     public function __construct(
         public bool $store = true,
@@ -40,6 +43,7 @@ final readonly class OpenAiCompat
         public bool $assistantAfterToolResult = false,
         public bool $thinkingAsText = false,
         public bool $mistralToolIds = false,
+        public bool $reasoningContentOnAssistantMessages = false,
     ) {
     }
 
@@ -48,9 +52,14 @@ final readonly class OpenAiCompat
      *
      * The URL rather than the provider name, because the same provider name can point at
      * a proxy and a local server, and what matters is what is answering.
+     *
+     * `$provider` is for the one flag upstream also decides by name: its `isDeepSeek` is
+     * `provider === "deepseek" || baseUrl.toLowerCase().includes("deepseek.com")`.
      */
-    public static function detect(string $baseUrl): self
+    public static function detect(string $baseUrl, string $provider = ''): self
     {
+        $isDeepSeek = $provider === 'deepseek' || str_contains(strtolower($baseUrl), 'deepseek.com');
+
         $strict = self::hostContains($baseUrl, ['cerebras.ai', 'api.x.ai', 'mistral.ai', 'chutes.ai']);
         $mistral = self::hostContains($baseUrl, ['mistral.ai']);
 
@@ -74,6 +83,10 @@ final readonly class OpenAiCompat
             assistantAfterToolResult: false,
             thinkingAsText: $mistral,
             mistralToolIds: $mistral,
+            // Upstream's `requiresReasoningContentOnAssistantMessages: isDeepSeek`. DeepSeek's
+            // thinking mode answers a replayed assistant turn without `reasoning_content` with a
+            // 400 — and pig only ever writes that field when the turn had thinking to put in it.
+            reasoningContentOnAssistantMessages: $isDeepSeek,
         );
     }
 

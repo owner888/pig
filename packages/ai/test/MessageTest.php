@@ -18,6 +18,7 @@ use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
 use Pig\Ai\ThinkingContent;
 use Pig\Ai\ToolCall;
+use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\MessageJson;
@@ -294,6 +295,51 @@ final class MessageTest extends TestCase
         $this->assertInstanceOf(AssistantMessage::class, $rewritten);
         $this->assertCount(2, $rewritten->content);
         $this->assertSame($signed, $rewritten->content[0]);
+    }
+
+    public function testAModelThatCannotSeeIsToldAnImageWasLeftOutAndARunIsOneLine(): void
+    {
+        // Upstream's `downgradeUnsupportedImages()`. pig dropped the images in each provider and
+        // said nothing, so a text-only model asked "what does this screenshot show?" answered as
+        // if no screenshot existed. Two images in a row — or an image right after the placeholder
+        // itself, which is what a history that went through here once looks like — are one line.
+        $textOnly = new Model('deepseek-chat', 'DeepSeek', Api::OpenAiCompletions, 'deepseek', 'http://127.0.0.1:1', 64_000, 8_192, input: ['text']);
+        $user = '(image omitted: model does not support images)';
+        $tool = '(tool image omitted: model does not support images)';
+
+        $out = TransformMessages::apply([
+            new UserMessage([
+                new TextContent('look'),
+                new ImageContent('AAA', 'image/png'),
+                new ImageContent('BBB', 'image/png'),
+                new TextContent('and'),
+                new TextContent($user),
+                new ImageContent('CCC', 'image/png'),
+            ], 5),
+            $this->assistant([new ToolCall('c1', 'read', ['path' => 'a.png'])]),
+            new ToolResultMessage('c1', 'read', [new ImageContent('DDD', 'image/png')], false, null, 7),
+        ], $textOnly);
+
+        $this->assertInstanceOf(UserMessage::class, $out[0]);
+        $this->assertEquals(
+            [new TextContent('look'), new TextContent($user), new TextContent('and'), new TextContent($user)],
+            $out[0]->content,
+        );
+        $this->assertSame(5, $out[0]->timestamp);
+
+        // A tool result says so in its own words, and keeps everything else it had.
+        $this->assertInstanceOf(ToolResultMessage::class, $out[2]);
+        $this->assertEquals([new TextContent($tool)], $out[2]->content);
+        $this->assertSame(['c1', 'read', false, 7], [$out[2]->toolCallId, $out[2]->toolName, $out[2]->isError, $out[2]->timestamp]);
+    }
+
+    public function testAModelThatCanSeeGetsItsImagesUntouched(): void
+    {
+        // Upstream's `if (model.input.includes("image")) return messages`.
+        $vision = new Model('claude-sonnet-4-5', 'Sonnet', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 8_192, input: ['text', 'image']);
+        $message = new UserMessage([new TextContent('look'), new ImageContent('AAA', 'image/png')]);
+
+        $this->assertSame($message, TransformMessages::apply([$message], $vision)[0]);
     }
 
     public function testOnlyXhighClampsDown(): void

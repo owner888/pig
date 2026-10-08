@@ -235,7 +235,7 @@ final class StreamProxy
         }
 
         if ($model->compat !== null) {
-            // Upstream's eight key names, all of them — pig's eight fields map one to one, and
+            // Upstream's key names, one per pig field, and
             // `CustomModels` reads and writes the same names, so a `models.json`, a session file
             // and this request all say the same thing.
             $encoded['compat'] = [
@@ -247,6 +247,7 @@ final class StreamProxy
                 'requiresAssistantAfterToolResult' => $model->compat->assistantAfterToolResult,
                 'requiresThinkingAsText' => $model->compat->thinkingAsText,
                 'requiresMistralToolIds' => $model->compat->mistralToolIds,
+                'requiresReasoningContentOnAssistantMessages' => $model->compat->reasoningContentOnAssistantMessages,
             ];
         }
 

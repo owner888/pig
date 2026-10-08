@@ -167,12 +167,20 @@ final class Google
             $body['systemInstruction'] = GoogleShared::systemInstruction($context->systemPrompt);
         }
 
-        if ($context->tools !== []) {
-            $body['tools'] = GoogleShared::tools($context->tools);
+        // Upstream's `buildParams()`: Gemini 3+ takes strict tools, and a strict tool makes the
+        // calling mode `VALIDATED` unless the caller said `none` or `any`. The schema goes as
+        // `parametersJsonSchema`, full JSON Schema as written (`convertTools(tools, false, …)`).
+        $supportsStrictMode = GoogleShared::supportsGoogleStrictToolSampling($model->id);
+        $functionCallingMode = $context->tools !== []
+            ? GoogleShared::resolveGoogleFunctionCallingMode($context->tools, $options?->toolChoice, $supportsStrictMode)
+            : null;
 
-            if ($options?->toolChoice !== null) {
-                $body['toolConfig'] = GoogleShared::toolConfig($options->toolChoice);
-            }
+        if ($context->tools !== []) {
+            $body['tools'] = GoogleShared::convertTools($context->tools, false, $supportsStrictMode);
+        }
+
+        if ($functionCallingMode !== null) {
+            $body['toolConfig'] = ['functionCallingConfig' => ['mode' => $functionCallingMode]];
         }
 
         if ($model->reasoning) {

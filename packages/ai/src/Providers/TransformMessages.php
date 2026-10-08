@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\Ai\Providers;
 
 use Pig\Ai\AssistantMessage;
+use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\StopReason;
 use Pig\Ai\TextContent;
@@ -25,6 +26,12 @@ final class TransformMessages
 {
     private const string NO_RESULT = 'No result provided';
 
+    /** Upstream's `NON_VISION_USER_IMAGE_PLACEHOLDER`. */
+    private const string NON_VISION_USER_IMAGE_PLACEHOLDER = '(image omitted: model does not support images)';
+
+    /** Upstream's `NON_VISION_TOOL_IMAGE_PLACEHOLDER`. */
+    private const string NON_VISION_TOOL_IMAGE_PLACEHOLDER = '(tool image omitted: model does not support images)';
+
     /**
      * Upstream's `transformMessages(messages, model, normalizeToolCallId?)`.
      *
@@ -41,7 +48,83 @@ final class TransformMessages
      */
     public static function apply(array $messages, Model $model, ?\Closure $normalizeToolCallId = null): array
     {
-        return self::fillOrphanedCalls(self::retarget($messages, $model, $normalizeToolCallId));
+        return self::fillOrphanedCalls(self::retarget(
+            self::downgradeUnsupportedImages($messages, $model),
+            $model,
+            $normalizeToolCallId,
+        ));
+    }
+
+    /**
+     * Upstream's `downgradeUnsupportedImages()`: for a model whose `input` has no `image`, every
+     * image in a user message or a tool result becomes a line of text saying it was left out.
+     *
+     * Before this, the images were simply not sent — each provider skips an `ImageContent` the
+     * model cannot read — so the model never learned there had been one, and answered "what is in
+     * this screenshot?" as if nothing had been attached. Assistant messages are left alone, as
+     * upstream leaves them.
+     *
+     * @param list<mixed> $messages
+     * @return list<mixed>
+     */
+    private static function downgradeUnsupportedImages(array $messages, Model $model): array
+    {
+        if ($model->acceptsImages()) {
+            return $messages;
+        }
+
+        return array_map(static function (mixed $message): mixed {
+            if ($message instanceof UserMessage) {
+                return new UserMessage(
+                    self::replaceImagesWithPlaceholder($message->content, self::NON_VISION_USER_IMAGE_PLACEHOLDER),
+                    $message->timestamp,
+                );
+            }
+
+            if ($message instanceof ToolResultMessage) {
+                return new ToolResultMessage(
+                    $message->toolCallId,
+                    $message->toolName,
+                    self::replaceImagesWithPlaceholder($message->content, self::NON_VISION_TOOL_IMAGE_PLACEHOLDER),
+                    $message->isError,
+                    $message->details,
+                    $message->timestamp,
+                );
+            }
+
+            return $message;
+        }, $messages);
+    }
+
+    /**
+     * Upstream's `replaceImagesWithPlaceholder()`, literally: a run of images is **one**
+     * placeholder, and so is an image right after a text block that already *is* the placeholder —
+     * the second time a history goes through here, or a run split by nothing.
+     *
+     * @param list<mixed> $content
+     * @return list<mixed>
+     */
+    private static function replaceImagesWithPlaceholder(array $content, string $placeholder): array
+    {
+        $result = [];
+        $previousWasPlaceholder = false;
+
+        foreach ($content as $block) {
+            if ($block instanceof ImageContent) {
+                if (!$previousWasPlaceholder) {
+                    $result[] = new TextContent($placeholder);
+                }
+
+                $previousWasPlaceholder = true;
+
+                continue;
+            }
+
+            $result[] = $block;
+            $previousWasPlaceholder = $block instanceof TextContent && $block->text === $placeholder;
+        }
+
+        return $result;
     }
 
     /**
