@@ -41,6 +41,35 @@ final class ThinkingLevelTest extends TestCase
         $this->assertNotContains(ThinkingLevel::Xhigh, ThinkingLevel::supportedBy($this->model()));
     }
 
+    public function testCopilotsGptSixOffersXhighAndClampsByItsMap(): void
+    {
+        // The built-in rows carry upstream's generator maps now: Copilot's GPT-6 Sol has `xhigh`,
+        // no `minimal` and an `off` it calls `none`, so the picker offers xhigh and a request for
+        // minimal comes up to low. Before, the row had no map and the picker had no xhigh for it.
+        $model = \Pig\Ai\Models::find('github-copilot', 'gpt-6-sol');
+        $this->assertNotNull($model);
+
+        $this->assertSame(
+            [ThinkingLevel::Off, ThinkingLevel::Low, ThinkingLevel::Medium, ThinkingLevel::High, ThinkingLevel::Xhigh],
+            ThinkingLevel::supportedBy($model),
+        );
+        $this->assertSame(ThinkingLevel::Low, ThinkingLevel::clampedFor($model, ThinkingLevel::Minimal));
+
+        // And gpt-5, which cannot be switched off, is not offered off.
+        $gpt5 = \Pig\Ai\Models::find('openai', 'gpt-5');
+        $this->assertNotNull($gpt5);
+        $this->assertSame(ThinkingLevel::Minimal, ThinkingLevel::clampedFor($gpt5, ThinkingLevel::Off));
+    }
+
+    public function testEveryLevelButOffReachesTheProviderUnderItsOwnName(): void
+    {
+        $this->assertNull(ThinkingLevel::Off->toReasoning());
+
+        foreach ([ThinkingLevel::Minimal, ThinkingLevel::Low, ThinkingLevel::Medium, ThinkingLevel::High, ThinkingLevel::Xhigh] as $level) {
+            $this->assertSame($level->value, $level->toReasoning()?->value);
+        }
+    }
+
     public function testALevelTheMapNullsIsNotOffered(): void
     {
         $levels = ThinkingLevel::supportedBy($this->model(map: ['off' => null, 'minimal' => null]));

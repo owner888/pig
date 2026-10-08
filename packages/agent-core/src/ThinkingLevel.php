@@ -11,8 +11,10 @@ use Pig\Ai\ReasoningEffort;
  * How hard the agent should think, as a UI setting.
  *
  * One level apart from `ReasoningEffort`: this is what a person toggles, that is what a
- * provider is told. They almost line up, and the place they do not is deliberate —
- * upstream sends `minimal` as `low`, because no provider treats "barely think" usefully.
+ * provider is told. Every level but `off` goes through under its own name — upstream's agent
+ * passes `thinkingLevel === "off" ? undefined : thinkingLevel` — so `minimal` reaches the
+ * provider as `minimal`: Anthropic's budget for it is 1,024 tokens, a Copilot model's map can
+ * say `minimal: "low"`, and OpenAI takes the word itself.
  */
 enum ThinkingLevel: string
 {
@@ -27,7 +29,7 @@ enum ThinkingLevel: string
     {
         return match ($this) {
             self::Off => null,
-            self::Minimal => ReasoningEffort::Low,
+            self::Minimal => ReasoningEffort::Minimal,
             self::Low => ReasoningEffort::Low,
             self::Medium => ReasoningEffort::Medium,
             self::High => ReasoningEffort::High,

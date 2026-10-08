@@ -224,7 +224,9 @@ final class MessageJson
                     // back to a provider — Anthropic refuses an `input` that is a list.
                     'arguments' => $block->arguments === [] ? new stdClass() : $block->arguments,
                     'thoughtSignature' => $block->thoughtSignature,
-                ],
+                    // Upstream writes the key only when the call has one (`...(item.namespace !==
+                    // undefined ? { namespace } : {})`), so a call without one reads as before.
+                ] + ($block->namespace === null ? [] : ['namespace' => $block->namespace]),
                 default => null,
             };
 
@@ -263,6 +265,7 @@ final class MessageJson
                     (string) ($block['name'] ?? ''),
                     (array) ($block['arguments'] ?? []),
                     $block['thoughtSignature'] ?? null,
+                    is_string($block['namespace'] ?? null) ? $block['namespace'] : null,
                 ),
                 default => null,
             };

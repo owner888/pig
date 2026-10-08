@@ -34,7 +34,10 @@ final readonly class GoogleOptions extends StreamOptions
         public ?int $thinkingBudget = null,
         public ?string $thinkingLevel = null,
         public ?string $toolChoice = null,
+        ?string $cacheRetention = null,
+        ?string $sessionId = null,
+        ?array $metadata = null,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata);
     }
 }

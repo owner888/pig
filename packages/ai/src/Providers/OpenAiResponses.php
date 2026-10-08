@@ -72,6 +72,12 @@ final class OpenAiResponses
      */
     private const array TOOL_CALL_PROVIDERS = ['openai', 'openai-codex', 'opencode'];
 
+    /** Upstream's `OPENAI_RESPONSES_MIN_OUTPUT_TOKENS`: "OpenAI Responses rejects max_output_tokens below 16". */
+    private const int MIN_OUTPUT_TOKENS = 16;
+
+    /** Upstream's `OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH`, in code points. */
+    private const int PROMPT_CACHE_KEY_MAX_LENGTH = 64;
+
     public function __construct(private readonly HttpClient $http = new HttpClient())
     {
     }
@@ -100,6 +106,9 @@ final class OpenAiResponses
         // The item that is open, as [index, kind]. Unlike chat-completions, the stream
         // says when one starts and stops, so this is bookkeeping rather than guesswork.
         $open = null;
+        // Upstream's per-call scratch buffers (`partialJson`, `customInput`), which only a finished
+        // `output_item.done` removes: the content indexes of the tool calls still waiting for theirs.
+        $unfinished = [];
 
         try {
             // Upstream's `grammarToolInputProperties`: tool name => the property a grammar tool's raw
@@ -120,12 +129,42 @@ final class OpenAiResponses
                     $data = json_decode($event->data, true);
 
                     if (is_array($data)) {
-                        $open = $this->dispatch($data, $builder, $stream, $open, $grammar);
+                        $open = $this->dispatch($data, $builder, $stream, $open, $grammar, $unfinished);
+
+                        // The end of upstream's `finalizeResponse()`, after the cost is worked out:
+                        // `response.service_tier ?? options.serviceTier` scales it.
+                        if (in_array($data['type'] ?? null, ['response.completed', 'response.incomplete'], true)) {
+                            $tier = $data['response']['service_tier'] ?? null;
+                            self::applyServiceTierPricing($builder, $model, is_string($tier) ? $tier : $options?->serviceTier);
+                        }
                     }
                 }
             }
 
             $signal?->throwIfAborted();
+
+            // Upstream's `processResponsesStream()` tail: "The agent runs every tool call in the
+            // final message. Refuse to hand over calls whose output_item.done never arrived: their
+            // arguments may be cut off or mixed up, e.g. when a non-compliant server omits
+            // output_index."
+            if ($builder->stopReason() === StopReason::ToolUse) {
+                foreach (array_keys($unfinished) as $index) {
+                    $call = $builder->toolCallOf($index);
+
+                    throw new ProviderError("OpenAI Responses stream completed with an unfinished tool call: {$call->name} ({$call->id})");
+                }
+            }
+
+            // Upstream's `stream()`: an `error` or `aborted` stop reason — a failed or cancelled
+            // status, or an `incomplete` one for any reason but the output cap — ends the turn as
+            // an error with the message `finalizeResponse()` recorded.
+            $stop = $builder->stopReason();
+
+            if ($stop === StopReason::Error || $stop === StopReason::Aborted) {
+                $message = $builder->errorMessage();
+
+                throw new ProviderError($message !== null && $message !== '' ? $message : 'An unknown error occurred');
+            }
 
             $message = $builder->snapshot();
             $stream->push(new DoneEvent($message->stopReason, $message));
@@ -146,6 +185,7 @@ final class OpenAiResponses
      * @param array<string, mixed> $data
      * @param array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}|null $open
      * @param array<string, string> $grammar
+     * @param array<int, true> $unfinished the tool calls opened and not yet finished, by content index
      * @return array{0: int, 1: string, 2?: array{property: string, buffer: array{input: string, started: bool, closed: bool}}}|null
      */
     private function dispatch(
@@ -154,12 +194,13 @@ final class OpenAiResponses
         AssistantMessageEventStream $stream,
         ?array $open,
         array $grammar = [],
+        array &$unfinished = [],
     ): ?array {
         return match ($data['type'] ?? '') {
             // Upstream takes the response id from here and again from the terminal event.
             'response.created' => $this->onCreated($data, $builder, $open),
-            'response.output_item.added' => $this->onItemStart($data, $builder, $stream, $grammar),
-            'response.output_item.done' => $this->onItemEnd($data, $builder, $stream, $open),
+            'response.output_item.added' => $this->opening($this->onItemStart($data, $builder, $stream, $grammar), $unfinished),
+            'response.output_item.done' => $this->onItemEnd($data, $builder, $stream, $open, $unfinished),
             'response.reasoning_summary_text.delta' => $this->onDelta($data, $builder, $stream, $open, 'thinking'),
             // One summary part ending and the next beginning is a paragraph break, and
             // nothing else in the stream says so.
@@ -187,6 +228,22 @@ final class OpenAiResponses
             'response.failed' => $this->raise($this->failureText($data), $data, $builder),
             default => $open,
         };
+    }
+
+    /**
+     * A tool call that opens is unfinished until its `output_item.done`.
+     *
+     * @param array{0: int, 1: string}|null $open
+     * @param array<int, true> $unfinished
+     * @return array{0: int, 1: string}|null
+     */
+    private function opening(?array $open, array &$unfinished): ?array
+    {
+        if ($open !== null && $open[1] === 'toolCall') {
+            $unfinished[$open[0]] = true;
+        }
+
+        return $open;
     }
 
     /**
@@ -232,6 +289,8 @@ final class OpenAiResponses
         // input already on the item goes out with the first delta.
         $input = $item['input'] ?? null;
         $builder->setJson($index, self::customArguments($property, is_string($input) ? $input : ''));
+        // `...(item.namespace !== undefined ? { namespace: item.namespace } : {})`.
+        $builder->setNamespace($index, is_string($item['namespace'] ?? null) ? $item['namespace'] : null);
         $stream->push(new ToolCallStartEvent($index, $builder->snapshot()));
 
         return [$index, 'toolCall', ['property' => $property, 'buffer' => ConstrainedSampling::newGrammarToolInputJsonBuffer()]];
@@ -327,6 +386,9 @@ final class OpenAiResponses
             $builder->append($index, 'json', $arguments);
         }
 
+        // Upstream's `namespace` for a dynamically loaded or namespaced tool, when the item has one.
+        $builder->setNamespace($index, is_string($item['namespace'] ?? null) ? $item['namespace'] : null);
+
         $stream->push(new ToolCallStartEvent($index, $builder->snapshot()));
 
         return [$index, 'toolCall'];
@@ -400,12 +462,14 @@ final class OpenAiResponses
     /**
      * @param array<string, mixed> $data
      * @param array{0: int, 1: string}|null $open
+     * @param array<int, true> $unfinished
      */
     private function onItemEnd(
         array $data,
         AssistantMessageBuilder $builder,
         AssistantMessageEventStream $stream,
         ?array $open,
+        array &$unfinished = [],
     ): ?array {
         $item = $data['item'] ?? [];
 
@@ -478,6 +542,14 @@ final class OpenAiResponses
             (string) ($item['name'] ?? ''),
         );
 
+        // `if (item.namespace !== undefined) slot.block.namespace = item.namespace`, and the call is
+        // finished — upstream deletes its scratch buffer here.
+        if (is_string($item['namespace'] ?? null)) {
+            $builder->setNamespace($index, $item['namespace']);
+        }
+
+        unset($unfinished[$index]);
+
         // Upstream's `custom_tool_call` arm: the item's own input closes the JSON (`item.input ??`
         // the input so far), then the call ends like any other.
         if (($item['type'] ?? null) === 'custom_tool_call' && isset($open[2])) {
@@ -545,7 +617,9 @@ final class OpenAiResponses
         // cannot tell apart.
         $builder->setRawStopReason(is_string($incomplete) && $incomplete !== '' ? "{$status}.{$incomplete}" : $status);
 
-        $reason = $this->stopReason($status);
+        [$reason, $errorMessage] = $this->stopReason($status, is_string($incomplete) && $incomplete !== '' ? $incomplete : null);
+        // `if (mappedStop.errorMessage === undefined) delete output.errorMessage; else …`.
+        $builder->setErrorMessage($errorMessage);
 
         // A response that made tool calls is finished with the turn, not with the task,
         // and the status alone does not say which.
@@ -556,6 +630,42 @@ final class OpenAiResponses
         $builder->setStopReason($reason);
 
         return $open;
+    }
+
+    /**
+     * Upstream's `applyServiceTierPricing()`: the cost scaled by the tier the response reports, else
+     * the one asked for — `flex` 0.5, `priority` and `fast` 2 (2.5 for gpt-5.5), anything else as
+     * it is.
+     */
+    private static function applyServiceTierPricing(AssistantMessageBuilder $builder, Model $model, ?string $serviceTier): void
+    {
+        $multiplier = match ($serviceTier) {
+            'flex' => 0.5,
+            'priority', 'fast' => $model->id === 'gpt-5.5' ? 2.5 : 2.0,
+            default => 1.0,
+        };
+
+        if ($multiplier === 1.0) {
+            return;
+        }
+
+        $usage = $builder->snapshot()->usage;
+        $cost = $usage->cost;
+        $input = $cost->input * $multiplier;
+        $output = $cost->output * $multiplier;
+        $cacheRead = $cost->cacheRead * $multiplier;
+        $cacheWrite = $cost->cacheWrite * $multiplier;
+
+        $builder->setUsage(new Usage(
+            $usage->input,
+            $usage->output,
+            $usage->cacheRead,
+            $usage->cacheWrite,
+            $usage->totalTokens,
+            new \Pig\Ai\Cost($input, $output, $cacheRead, $cacheWrite, $input + $output + $cacheRead + $cacheWrite),
+            $usage->reasoning,
+            $usage->cacheWrite1h,
+        ), priced: true);
     }
 
     private function hasToolCall(AssistantMessage $message): bool
@@ -573,27 +683,42 @@ final class OpenAiResponses
     private function usage(array $usage): Usage
     {
         $cached = (int) ($usage['input_tokens_details']['cached_tokens'] ?? 0);
+        $cacheWrite = (int) ($usage['input_tokens_details']['cache_write_tokens'] ?? 0);
 
-        // `input_tokens` counts the cached ones too, so they come back out. Reasoning is a part
-        // of `output_tokens` already, and kept beside it — 0 when not reported, as upstream does.
+        // Upstream: "OpenAI includes cached and cache-write tokens in input_tokens, so subtract
+        // both." Reasoning is a part of `output_tokens` already, and kept beside it — 0 when not
+        // reported, as upstream does.
         return new Usage(
-            max(0, (int) ($usage['input_tokens'] ?? 0) - $cached),
+            max(0, (int) ($usage['input_tokens'] ?? 0) - $cached - $cacheWrite),
             (int) ($usage['output_tokens'] ?? 0),
             $cached,
-            0,
+            $cacheWrite,
             (int) ($usage['total_tokens'] ?? 0),
             reasoning: (int) ($usage['output_tokens_details']['reasoning_tokens'] ?? 0),
         );
     }
 
-    private function stopReason(string $status): StopReason
+    /**
+     * Upstream's `mapStopReason(status, incompleteReason)`: **only `max_output_tokens` is `length`.**
+     * Any other `incomplete` — `content_filter`, say — is an error, `Response incomplete: <reason>`,
+     * or `Response incomplete without a provider reason` when there is none; pig used to read every
+     * one of them as a cut-off answer. No status at all is `stop`.
+     *
+     * @return array{0: StopReason, 1: string|null}
+     */
+    private function stopReason(string $status, ?string $incompleteReason = null): array
     {
         return match ($status) {
-            'completed' => StopReason::Stop,
-            'incomplete' => StopReason::Length,
-            'failed', 'cancelled' => StopReason::Error,
-            // in_progress and queued should not arrive on a completed response.
-            default => StopReason::Stop,
+            'completed', '' => [StopReason::Stop, null],
+            'incomplete' => $incompleteReason === 'max_output_tokens'
+                ? [StopReason::Length, null]
+                : [StopReason::Error, $incompleteReason !== null
+                    ? "Response incomplete: {$incompleteReason}"
+                    : 'Response incomplete without a provider reason'],
+            'failed', 'cancelled' => [StopReason::Error, null],
+            // "These two are wonky ..."
+            'in_progress', 'queued' => [StopReason::Stop, null],
+            default => throw new ProviderError("Unhandled stop reason: {$status}"),
         };
     }
 
@@ -683,6 +808,27 @@ final class OpenAiResponses
             ...Copilot::headers($model, $context),
         ];
 
+        // Upstream's `createClient()`: the session id, when caching is on (`cacheSessionId`), as the
+        // compat's `sessionAffinityFormat` names it — `x-session-id` for OpenRouter; otherwise
+        // `x-client-request-id`, and `session_id` too for the `openai` format. After the model's
+        // and Copilot's headers, as upstream assigns them.
+        $sessionId = $options?->resolvedCacheRetention() === 'none' ? null : $options?->sessionId;
+
+        if ($sessionId !== null && $sessionId !== '') {
+            $format = self::compat($model)?->sessionAffinityFormat
+                ?? ($model->provider === 'openrouter' || str_contains($model->baseUrl, 'openrouter.ai') ? 'openrouter' : 'openai');
+
+            if ($format === 'openrouter') {
+                $headers['x-session-id'] = $sessionId;
+            } else {
+                if ($format === 'openai') {
+                    $headers['session_id'] = $sessionId;
+                }
+
+                $headers['x-client-request-id'] = $sessionId;
+            }
+        }
+
         return new Request(
             'POST',
             $this->endpoint($model, $options?->apiKey, '/responses'),
@@ -710,6 +856,16 @@ final class OpenAiResponses
     private function body(Model $model, Context $context, ?OpenAiOptions $options, array $grammar = []): array
     {
         $input = $this->input($model, $context, $grammar);
+        $compat = self::compat($model);
+        $cacheRetention = ($options ?? new OpenAiOptions())->resolvedCacheRetention();
+        $supportsLongCacheRetention = $compat?->supportsLongCacheRetention ?? true;
+        $supportsExplicitPromptCacheMode = $compat?->supportsExplicitPromptCacheMode ?? false;
+        // Upstream's `isChatGPTSignIn()`: "Sign in with ChatGPT rejects these request fields" —
+        // OpenAI's own endpoint with a credential that is not an `sk-` API key.
+        $omitUnsupportedFields = $model->provider === 'openai'
+            && $model->baseUrl === 'https://api.openai.com/v1'
+            && $options?->apiKey !== null
+            && !str_starts_with($options->apiKey, 'sk-');
 
         $body = [
             'model' => $model->id,
@@ -717,12 +873,45 @@ final class OpenAiResponses
             'stream' => true,
         ];
 
-        if ($options?->maxTokens !== null) {
-            $body['max_output_tokens'] = $options->maxTokens;
+        // Upstream: `prompt_cache_key: cacheRetention === "none" ? undefined :
+        // clampOpenAIPromptCacheKey(options?.sessionId)` — the session id, cut to 64 code points.
+        if ($cacheRetention !== 'none' && $options?->sessionId !== null) {
+            $body['prompt_cache_key'] = mb_substr($options->sessionId, 0, self::PROMPT_CACHE_KEY_MAX_LENGTH);
         }
 
-        if ($options?->temperature !== null) {
+        // `getPromptCacheRetention()`: `24h` for `long`, where the model takes long retention and
+        // has no explicit cache mode.
+        if (!$omitUnsupportedFields && $cacheRetention === 'long' && $supportsLongCacheRetention && !$supportsExplicitPromptCacheMode) {
+            $body['prompt_cache_retention'] = '24h';
+        }
+
+        // `getPromptCacheOptions()`, for the GPT-5.6-and-later models that take it: `none` asks for
+        // the explicit mode (nothing cached unless asked), `long` for a 30-minute TTL.
+        if (!$omitUnsupportedFields && $supportsExplicitPromptCacheMode) {
+            if ($cacheRetention === 'none') {
+                $body['prompt_cache_options'] = ['mode' => 'explicit'];
+            } elseif ($cacheRetention === 'long' && $supportsLongCacheRetention) {
+                $body['prompt_cache_options'] = ['ttl' => '30m'];
+            }
+        }
+
+        // Upstream's `store: false` on every request: the conversation is replayed whole each turn
+        // (reasoning items included), so nothing needs keeping on OpenAI's side.
+        $body['store'] = false;
+
+        // `if (options?.maxTokens && compat.supportsMaxOutputTokens && !omitUnsupportedFields)
+        // params.max_output_tokens = Math.max(options.maxTokens, 16)` — the API refuses less than 16,
+        // and a 0 sends nothing.
+        if ($options?->maxTokens && ($compat?->supportsMaxOutputTokens ?? true) && !$omitUnsupportedFields) {
+            $body['max_output_tokens'] = max($options->maxTokens, self::MIN_OUTPUT_TOKENS);
+        }
+
+        if ($options?->temperature !== null && !$omitUnsupportedFields) {
             $body['temperature'] = $options->temperature;
+        }
+
+        if ($options?->serviceTier !== null) {
+            $body['service_tier'] = $options->serviceTier;
         }
 
         if ($context->tools !== []) {
@@ -737,30 +926,44 @@ final class OpenAiResponses
             );
         }
 
+        if ($options?->toolChoice !== null) {
+            $body['tool_choice'] = $options->toolChoice;
+        }
+
         if (!$model->reasoning) {
             return $body;
         }
 
         if ($options?->reasoning !== null) {
-            $body['reasoning'] = ['effort' => $options->reasoning->value, 'summary' => 'auto'];
+            // Upstream: `model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort`
+            // — what the model calls the level, its own name when the map says nothing (`??`, so a
+            // null entry also sends the name; `Stream::simple()` has clamped such a level away).
+            $level = $options->reasoning->value;
+            $body['reasoning'] = ['effort' => $model->thinkingLevelMap[$level] ?? $level, 'summary' => 'auto'];
 
             // Without this the encrypted reasoning never comes back, and a thinking block
             // with nothing to replay is a thinking block that costs a turn to rebuild.
             $body['include'] = ['reasoning.encrypted_content'];
-
-            return $body;
+        } elseif ($model->provider !== 'github-copilot' && $model->hasThinkingLevel('off')) {
+            // Upstream's off arm: `model.provider !== "github-copilot" && model.thinkingLevelMap?.off
+            // !== null` sends `reasoning: {effort: map.off ?? "none"}` — `none` for gpt-5.1 and later,
+            // nothing for a model whose map says it cannot be switched off (`off: null`, every
+            // other gpt-5). This replaces the `# Juice: 0 !important` developer message pig used to
+            // append for every gpt-5, which upstream no longer sends.
+            $body['reasoning'] = ['effort' => $model->thinkingLevelMap['off'] ?? 'none'];
         }
 
-        // gpt-5 has no way to say "do not reason". Upstream found that this is what
-        // turning it off looks like; there is no documented alternative.
-        if (str_starts_with($model->id, 'gpt-5')) {
-            $body['input'][] = [
-                'role' => 'developer',
-                'content' => [['type' => 'input_text', 'text' => '# Juice: 0 !important']],
-            ];
+        if ($model->provider === 'xai') {
+            $body['include'] = ['reasoning.encrypted_content'];
         }
 
         return $body;
+    }
+
+    /** The model's `OpenAiCompat`, or null — a compat of another API's type says nothing here. */
+    private static function compat(Model $model): ?OpenAiCompat
+    {
+        return $model->compat instanceof OpenAiCompat ? $model->compat : null;
     }
 
     /**
@@ -925,10 +1128,14 @@ final class OpenAiResponses
         $items = [];
         $textBlockIndex = 0;
 
-        // Upstream's `isDifferentModel`: this provider and API, another model.
+        // Upstream's `isDifferentModel`: this provider and API, another model; and `isSameModel`,
+        // the only case a call's `namespace` goes back.
         $differentModel = $message->provider === $model->provider
             && $message->api === $model->api
             && $message->model !== $model->id;
+        $sameModel = $message->provider === $model->provider
+            && $message->api === $model->api
+            && $message->model === $model->id;
 
         foreach ($message->content as $block) {
             if ($block instanceof ThinkingContent) {
@@ -995,6 +1202,7 @@ final class OpenAiResponses
                         'call_id' => $callId,
                         'name' => $block->name,
                         'input' => Utf8::sanitize(ConstrainedSampling::getGrammarToolInput($block->name, $block->arguments, $customInputProperty)),
+                        ...($sameModel && $block->namespace !== null ? ['namespace' => $block->namespace] : []),
                     ];
 
                     continue;
@@ -1008,6 +1216,7 @@ final class OpenAiResponses
                     'name' => $block->name,
                     // `{}` and not `[]` — see the same line in `OpenAiCompletions`.
                     'arguments' => $block->arguments === [] ? '{}' : $this->encode($block->arguments),
+                    ...($sameModel && $block->namespace !== null ? ['namespace' => $block->namespace] : []),
                 ];
             }
         }

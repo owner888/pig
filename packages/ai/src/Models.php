@@ -113,6 +113,37 @@ final class Models
     ];
 
     /**
+     * Upstream's generator `OPENAI_RESPONSES_NONE_REASONING_MODELS`: the `openai` Responses models
+     * whose `off` is the effort `none` (`applyThinkingLevelMetadata()`).
+     */
+    private const array OPENAI_RESPONSES_NONE_REASONING_MODELS = [
+        'gpt-5.1',
+        'gpt-5.2',
+        'gpt-5.3-codex',
+        'gpt-5.4',
+        'gpt-5.4-mini',
+        'gpt-5.4-nano',
+        'gpt-5.5',
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-6-sol',
+        'gpt-6-luna',
+    ];
+
+    /**
+     * Upstream's generator `ANTHROPIC_ALLOWED_FALLBACK_MODELS`: model => the models Anthropic may
+     * answer with in its place (server-side refusal fallback). Each becomes an
+     * `AnthropicCompat::$allowedFallbackModels` entry with the fallback row's own price, and for a
+     * `supportsMidConvoEffort` model only fallbacks that are managed-effort too — so Opus 5's single
+     * candidate, Opus 4.8, is dropped and Opus 5 sends no `fallbacks` at all.
+     */
+    private const array ANTHROPIC_ALLOWED_FALLBACK_MODELS = [
+        'claude-fable-5' => ['claude-opus-4-8', 'claude-opus-5'],
+        'claude-opus-5' => ['claude-opus-4-8'],
+    ];
+
+    /**
      * provider => whether its built-in models take strict tools — upstream's generator, which
      * writes `supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia
      * && !isCerebras` into every built-in `openai-completions` model's `compat`, against a runtime
@@ -143,7 +174,10 @@ final class Models
      * A table rather than 21 constructor calls: the shape is the same every time, and a
      * column that is wrong is easier to see in a column than in a paragraph.
      *
-     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: float, 5: float, 6: float, 7: float}>
+     * A row priced in tiers carries them under the key `tiers`, in every table: one
+     * `[input tokens above, in, out, cache read, cache write]` per tier — upstream's `cost.tiers`.
+     *
+     * @var array<string, array{0: string, 1: int, 2: int, 3: bool, 4: float, 5: float, 6: float, 7: float, tiers?: list<array{0: int, 1: float, 2: float, 3: float, 4: float}>}>
      */
     private const array ANTHROPIC_MODELS = [
         // >>> generated from models.dev — rewritten by scripts/generate-models.php
@@ -151,6 +185,7 @@ final class Models
         'claude-fable-5-1' => ['Claude Fable 5.1', 1_000_000, 128_000, true, 10.0, 50.0, 0.25, 12.5],
         'claude-haiku-4-5' => ['Claude Haiku 4.5 (latest)', 200_000, 64_000, true, 1.0, 5.0, 0.1, 1.25],
         'claude-haiku-4-5-20251001' => ['Claude Haiku 4.5', 200_000, 64_000, true, 1.0, 5.0, 0.1, 1.25],
+        'claude-haiku-5-5' => ['Claude Haiku 5.5', 1_000_000, 128_000, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],
         'claude-opus-4-5' => ['Claude Opus 4.5 (latest)', 200_000, 64_000, true, 5.0, 25.0, 0.5, 6.25],
         'claude-opus-4-5-20251101' => ['Claude Opus 4.5', 200_000, 64_000, true, 5.0, 25.0, 0.5, 6.25],
         'claude-opus-4-6' => ['Claude Opus 4.6', 1_000_000, 128_000, true, 5.0, 25.0, 0.5, 6.25],
@@ -538,12 +573,9 @@ final class Models
      */
     public static function cost(Model $model, Usage $usage): Cost
     {
-        $input = $model->pricing->input / 1_000_000 * $usage->input;
-        $output = $model->pricing->output / 1_000_000 * $usage->output;
-        $cacheRead = $model->pricing->cacheRead / 1_000_000 * $usage->cacheRead;
-        $cacheWrite = $model->pricing->cacheWrite / 1_000_000 * $usage->cacheWrite;
-
-        return new Cost($input, $output, $cacheRead, $cacheWrite, $input + $output + $cacheRead + $cacheWrite);
+        // One rule, `Usage::withCost()`'s — tiers and the one-hour write included — rather than a
+        // second copy here that knew neither.
+        return $usage->withCost($model)->cost;
     }
 
     /** @return array<string, Model> keyed by "provider/id", which is unique by construction */
@@ -555,7 +587,8 @@ final class Models
 
         $models = [];
 
-        foreach (self::ANTHROPIC_MODELS as $id => [$name, $window, $maxTokens, $reasoning, $in, $out, $read, $write]) {
+        foreach (self::ANTHROPIC_MODELS as $id => $row) {
+            [$name, $window, $maxTokens, $reasoning, $in, $out, $read, $write] = $row;
             $models[self::ANTHROPIC . '/' . $id] = new Model(
                 $id,
                 $name,
@@ -566,17 +599,20 @@ final class Models
                 $maxTokens,
                 $reasoning,
                 ['text', 'image'],
-                new Pricing($in, $out, $read, $write),
+                self::pricing($in, $out, $read, $write, $row['tiers'] ?? []),
                 // Upstream's generator: `supportsStrictTools: true` on every `anthropic` provider
                 // model (`applyStrictToolCompatMetadata()`), `forceAdaptiveThinking` and
                 // `supportsTemperature: false` by id, `supportsMidConvoEffort` by id — absent, not
                 // false, where it writes nothing. See `AnthropicCompat::forBuiltIn()`.
                 compat: AnthropicCompat::forBuiltIn(self::ANTHROPIC, $id),
-                thinkingLevelMap: self::anthropicThinkingLevelMap(self::ANTHROPIC, $id),
+                thinkingLevelMap: self::thinkingLevelMap(self::ANTHROPIC, Api::AnthropicMessages, $id),
             );
         }
 
-        foreach (self::OPENAI_MODELS as $id => [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write]) {
+        $models = self::withAllowedFallbackModels($models);
+
+        foreach (self::OPENAI_MODELS as $id => $row) {
+            [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write] = $row;
             $models['openai/' . $id] = new Model(
                 $id,
                 $name,
@@ -587,12 +623,18 @@ final class Models
                 $maxTokens,
                 $reasoning,
                 $images ? ['text', 'image'] : ['text'],
-                new Pricing($in, $out, $read, $write),
+                self::pricing($in, $out, $read, $write, $row['tiers'] ?? []),
                 // Upstream's generator (`applyStrictToolCompatMetadata()`) gives every `openai`
-                // provider model on the Responses API `supportsStrictMode: true`, and
+                // provider model on the Responses API `supportsStrictMode: true`,
                 // `applyOpenAIGrammarToolCompatMetadata()` gives `gpt-<n>` with n >= 5
-                // `supportsOpenAIGrammarTools: true`.
-                compat: new OpenAiCompat(strictMode: true, grammarTools: self::isGrammarToolModel($id) ? true : null),
+                // `supportsOpenAIGrammarTools: true`, and `applyOpenAIExplicitPromptCacheMetadata()`
+                // gives the ones that charge for cache writes (GPT-5.6 on) `supportsExplicitPromptCacheMode`.
+                compat: new OpenAiCompat(
+                    strictMode: true,
+                    grammarTools: self::isGrammarToolModel($id) ? true : null,
+                    supportsExplicitPromptCacheMode: $write > 0 ? true : null,
+                ),
+                thinkingLevelMap: self::thinkingLevelMap('openai', Api::OpenAiResponses, $id),
             );
         }
 
@@ -609,10 +651,10 @@ final class Models
                 $maxTokens,
                 $reasoning,
                 $images ? ['text', 'image'] : ['text'],
-                new Pricing($in, $out, $read, $write),
+                self::pricing($in, $out, $read, $write, $row['tiers'] ?? []),
                 // A tenth cell on the rows whose endpoint refuses a level — the generator's
                 // overrides put it there, from a measurement; see `scripts/generate-models.php`.
-                thinkingLevelMap: $row[9] ?? [],
+                thinkingLevelMap: self::thinkingLevelMap('google', Api::GoogleGenerativeAi, $id, $row[9] ?? []),
             );
         }
 
@@ -625,7 +667,8 @@ final class Models
         ];
 
         foreach ($compatible as $provider => $table) {
-            foreach ($table as $id => [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write]) {
+            foreach ($table as $id => $row) {
+                [$name, $window, $maxTokens, $reasoning, $images, $in, $out, $read, $write] = $row;
                 $models[$provider . '/' . $id] = new Model(
                     $id,
                     $name,
@@ -636,8 +679,9 @@ final class Models
                     $maxTokens,
                     $reasoning,
                     $images ? ['text', 'image'] : ['text'],
-                    new Pricing($in, $out, $read, $write),
+                    self::pricing($in, $out, $read, $write, $row['tiers'] ?? []),
                     compat: self::STRICT_MODE[$provider] ? new OpenAiCompat(strictMode: true) : null,
+                    thinkingLevelMap: self::thinkingLevelMap($provider, Api::OpenAiCompletions, $id),
                 );
             }
         }
@@ -670,7 +714,7 @@ final class Models
                     Api::OpenAiResponses => self::grammarToolsCompat($id),
                     default => null,
                 },
-                thinkingLevelMap: $api === Api::AnthropicMessages ? self::anthropicThinkingLevelMap(self::COPILOT, $id) : [],
+                thinkingLevelMap: self::thinkingLevelMap(self::COPILOT, $api, $id),
             );
         }
 
@@ -689,33 +733,48 @@ final class Models
     }
 
     /**
-     * What upstream's generator writes into a built-in `anthropic-messages` model's
-     * `thinkingLevelMap`, merge for merge and in its order (a later merge wins a key):
+     * What upstream's generator writes into a built-in model's `thinkingLevelMap`, merge for merge
+     * and in its order (a later merge wins a key), over `$base` — the map a generated row already
+     * carries (Google's measured overrides):
      *
      * 1. the temporary 5.5 override in `generateModels()` — `anthropic/claude-opus-5-5`,
      *    `claude-sonnet-5-5`, `claude-haiku-5-5` and Copilot's `claude-opus-5.5` get the whole map
      *    `{off: null, minimal: null, low, medium, high, xhigh, max}`;
      * 2. `applyAnthropicMessagesCompatMetadata()` — `{off: null}` on a `supportsMidConvoEffort` model;
-     * 3. `applyThinkingLevelMetadata()`'s Anthropic arms — `{max}` on Opus/Sonnet 4.6, `{xhigh, max}`
-     *    on Opus 4.7/4.8/5, Sonnet 5 and Haiku 5, `{off: null, xhigh, max}` on Fable 5 — and then
-     *    `GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES` for a Copilot id.
+     * 3. `applyThinkingLevelMetadata()`, every arm that can match a provider pig has:
+     *    - a Responses `gpt-5…` gets `{off: null}`; GPT-6 Astra/Sol/Luna and 6.1 Sol on the Responses
+     *      API get `{off: "none" | null, minimal: null, low, medium, high, xhigh, max}` (Astra and
+     *      6.1 Sol reject `none`, so `off: null`);
+     *    - a Copilot `gpt-5…` gets `{minimal: "low"}`;
+     *    - `openai`'s Responses models in `OPENAI_RESPONSES_NONE_REASONING_MODELS` get `{off: "none"}`;
+     *    - an xAI Responses model with no map yet gets `{off: null, minimal: null}` (pig's xAI rows are
+     *      on completions, so this only matters for a future table);
+     *    - `supportsOpenAiXhigh()` ids — gpt-5.2/5.3/5.4/5.5/5.6, gpt-6 — get `{xhigh}` whatever their
+     *      API, and `supportsOpenAiMax()` ones — gpt-5.6 and gpt-6 on an OpenAI API — `{max}`;
+     *    - `openai/gpt-5.5` gets `{minimal: null}`, a `…gpt-5.5-pro` `{off, minimal, low: null}`;
+     *    - the Anthropic arms — `{max}` on Opus/Sonnet 4.6, `{xhigh, max}` on Opus 4.7/4.8/5, Sonnet 5
+     *      and Haiku 5, `{off: null, xhigh, max}` on Fable 5;
+     *    - `groq/qwen/qwen3.6-27b` gets `{minimal, low, medium: null, high: "default"}`;
+     *    - and last `GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES` for a Copilot id.
      *
-     * A string value is the effort name sent for that level (`Stream::anthropicEffort()`, upstream's
-     * `mapThinkingLevelToEffort()`), null means the model does not have the level, and a level the
-     * map leaves out is offered under its own name — except `xhigh`, which is offered only when the
-     * map names it (`Model::supportsXhigh()`, upstream's `getSupportedThinkingLevels()`). pig has no
-     * `max` thinking level, so the `max` entries are carried as upstream writes them and nothing
-     * reads them yet.
+     * A string value is what is sent for that level, null means the model does not have the level,
+     * and a level the map leaves out is offered under its own name — except `xhigh` and `max`,
+     * which are offered only when the map names them (`Model::supportedThinkingLevels()`). pig's
+     * agent has no `max` level, so those entries are carried as upstream writes them and nothing
+     * offers them.
      *
-     * models.dev's `reasoning_options` add nothing here upstream: `applyModelsDevReasoningOptionMetadata()`
-     * runs before `forceAdaptiveThinking` is written, so `supportsDirectReasoningEffort()` says no
-     * for every Claude.
+     * Not ported: `applyModelsDevReasoningOptionMetadata()`, which runs before all of this and
+     * turns models.dev's `reasoning_options` into a map for the Responses models. The generator does
+     * not read that field yet, so a model whose verified efforts differ from these rules — one that
+     * refuses `minimal`, say — is not told so here.
      *
+     * @param array<string, string|null> $base
      * @return array<string, string|null>
      */
-    private static function anthropicThinkingLevelMap(string $provider, string $id): array
+    private static function thinkingLevelMap(string $provider, Api $api, string $id, array $base = []): array
     {
-        $map = [];
+        $map = $base;
+        $responses = $api === Api::OpenAiResponses;
 
         // 1. `// models.dev may list Opus 5.5, Sonnet 5.5, and Haiku 5.5 before their effort metadata is complete.`
         if (($provider === self::ANTHROPIC && in_array($id, ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], true))
@@ -724,12 +783,62 @@ final class Models
         }
 
         // 2.
-        if (AnthropicCompat::forBuiltIn($provider, $id)?->supportsMidConvoEffort === true) {
+        if ($api === Api::AnthropicMessages && AnthropicCompat::forBuiltIn($provider, $id)?->supportsMidConvoEffort === true) {
             $map = [...$map, 'off' => null];
         }
 
-        // 3. `// - "max" is available on all adaptive-thinking Claude models.`
-        //    `// - "xhigh" is only available on Opus 4.7/4.8/5, Sonnet 5, Haiku 5.5, and Fable 5.`
+        // 3.
+        if ($responses && str_starts_with($id, 'gpt-5')) {
+            $map = [...$map, 'off' => null];
+        }
+
+        if ($responses && in_array($id, ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'], true)) {
+            $map = [
+                ...$map,
+                // `// GPT-6 Astra and GPT-6.1 Sol reject reasoning.effort "none".`
+                'off' => $id === 'gpt-6-astra' || $id === 'gpt-6.1-sol' ? null : 'none',
+                'minimal' => null,
+                'low' => 'low',
+                'medium' => 'medium',
+                'high' => 'high',
+                'xhigh' => 'xhigh',
+                'max' => 'max',
+            ];
+        }
+
+        if ($provider === self::COPILOT && str_starts_with($id, 'gpt-5')) {
+            $map = [...$map, 'minimal' => 'low'];
+        }
+
+        if ($responses && $provider === 'openai' && in_array($id, self::OPENAI_RESPONSES_NONE_REASONING_MODELS, true)) {
+            $map = [...$map, 'off' => 'none'];
+        }
+
+        // `// xAI models without verified effort options must not send the undocumented "none"/"minimal" efforts.`
+        if ($provider === 'xai' && $responses && $map === []) {
+            $map = ['off' => null, 'minimal' => null];
+        }
+
+        // `supportsOpenAiXhigh(model.id)`.
+        if (self::containsAny($id, ['gpt-5.2', 'gpt-5.3', 'gpt-5.4', 'gpt-5.5', 'gpt-5.6', 'gpt-6'])) {
+            $map = [...$map, 'xhigh' => 'xhigh'];
+        }
+
+        // `supportsOpenAiMax(model)`: the four OpenAI APIs upstream has; pig has two of them.
+        if (self::containsAny($id, ['gpt-5.6', 'gpt-6']) && ($responses || $api === Api::OpenAiCompletions)) {
+            $map = [...$map, 'max' => 'max'];
+        }
+
+        if ($provider === 'openai' && $id === 'gpt-5.5') {
+            $map = [...$map, 'minimal' => null];
+        }
+
+        if (str_ends_with($id, 'gpt-5.5-pro')) {
+            $map = [...$map, 'off' => null, 'minimal' => null, 'low' => null];
+        }
+
+        // `// - "max" is available on all adaptive-thinking Claude models.`
+        // `// - "xhigh" is only available on Opus 4.7/4.8/5, Sonnet 5, Haiku 5.5, and Fable 5.`
         if (self::containsAny($id, ['opus-4-6', 'opus-4.6', 'sonnet-4-6', 'sonnet-4.6'])) {
             $map = [...$map, 'max' => 'max'];
         }
@@ -742,11 +851,84 @@ final class Models
             $map = [...$map, 'off' => null, 'xhigh' => 'xhigh', 'max' => 'max'];
         }
 
+        if ($provider === 'groq' && $id === 'qwen/qwen3.6-27b') {
+            $map = [...$map, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'default'];
+        }
+
         if ($provider === self::COPILOT) {
             $map = [...$map, ...(self::COPILOT_THINKING_LEVEL_OVERRIDES[$id] ?? [])];
         }
 
         return $map;
+    }
+
+    /**
+     * A row's price: the four rates, and the tiers a row carries under `tiers`.
+     *
+     * @param list<array{0: int, 1: float, 2: float, 3: float, 4: float}> $tiers
+     */
+    private static function pricing(float $in, float $out, float $read, float $write, array $tiers = []): Pricing
+    {
+        return new Pricing($in, $out, $read, $write, array_map(
+            static fn (array $tier): PricingTier => new PricingTier(...$tier),
+            $tiers,
+        ));
+    }
+
+    /**
+     * Upstream's generator `applyAnthropicAllowedFallbackModelMetadata()`, over the `anthropic` rows:
+     * each model in `ANTHROPIC_ALLOWED_FALLBACK_MODELS` that exists gets the fallbacks that exist —
+     * only managed-effort ones for a managed-effort model — with their own prices, and nothing when
+     * none is left.
+     *
+     * @param array<string, Model> $models
+     * @return array<string, Model>
+     */
+    private static function withAllowedFallbackModels(array $models): array
+    {
+        foreach (self::ANTHROPIC_ALLOWED_FALLBACK_MODELS as $id => $fallbackIds) {
+            $model = $models[self::ANTHROPIC . '/' . $id] ?? null;
+
+            if ($model === null || !$model->compat instanceof AnthropicCompat) {
+                continue;
+            }
+
+            if ($model->compat->supportsMidConvoEffort === true) {
+                $fallbackIds = array_values(array_filter($fallbackIds, AnthropicCompat::supportsMidConvoEffortModel(...)));
+            }
+
+            $allowed = [];
+
+            foreach ($fallbackIds as $fallbackId) {
+                $fallback = $models[self::ANTHROPIC . '/' . $fallbackId] ?? null;
+
+                if ($fallback !== null) {
+                    $allowed[] = ['provider' => $fallback->provider, 'model' => $fallback->id, 'cost' => $fallback->pricing];
+                }
+            }
+
+            if ($allowed === []) {
+                continue;
+            }
+
+            $models[self::ANTHROPIC . '/' . $id] = new Model(
+                $model->id,
+                $model->name,
+                $model->api,
+                $model->provider,
+                $model->baseUrl,
+                $model->contextWindow,
+                $model->maxTokens,
+                $model->reasoning,
+                $model->input,
+                $model->pricing,
+                $model->headers,
+                $model->compat->withAllowedFallbackModels($allowed),
+                $model->thinkingLevelMap,
+            );
+        }
+
+        return $models;
     }
 
     /**

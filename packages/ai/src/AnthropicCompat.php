@@ -52,6 +52,23 @@ final readonly class AnthropicCompat
      *        `supportsMidConvoEffort` (default false): always adaptive thinking with
      *        `block_binding`, the effort said by effort-only system messages around the turns, and
      *        no `temperature`. See `Anthropic::body()`
+     * @param bool|null $supportsLongCacheRetention `cacheRetention: long` sends `cache_control.ttl:
+     *        "1h"` — upstream's `supportsLongCacheRetention` (default true)
+     * @param bool|null $sendSessionAffinityHeaders the session id goes out as a header, for a
+     *        provider that routes the cache by it — upstream's `sendSessionAffinityHeaders` (default:
+     *        true for OpenRouter, by provider or URL, false otherwise)
+     * @param string|null $sessionAffinityFormat `openrouter` names that header `x-session-id`;
+     *        unset it is `x-session-affinity` — upstream's `sessionAffinityFormat` (default
+     *        `openrouter` for OpenRouter)
+     * @param bool|null $supportsCacheControlOnTools the last tool carries the `cache_control`
+     *        breakpoint — upstream's `supportsCacheControlOnTools` (default true)
+     * @param bool|null $allowEmptySignature thinking with no signature is replayed as `thinking` with
+     *        `signature: ""` rather than turned into text — upstream's `allowEmptySignature`
+     *        (default false), for the compatible providers that emit and accept that
+     * @param list<array{provider: string, model: string, cost: Pricing}>|null $allowedFallbackModels
+     *        upstream's `allowedFallbackModels`: the models Anthropic may answer with instead
+     *        (server-side refusal fallback), sent as `fallbacks`, with the price a turn they answered
+     *        is billed at. Absent or empty sends no `fallbacks`, which Anthropic requires then
      */
     public function __construct(
         public ?bool $forceAdaptiveThinking = null,
@@ -59,7 +76,31 @@ final readonly class AnthropicCompat
         public ?bool $supportsTemperature = null,
         public ?bool $supportsEagerToolInputStreaming = null,
         public ?bool $supportsMidConvoEffort = null,
+        public ?bool $supportsLongCacheRetention = null,
+        public ?bool $sendSessionAffinityHeaders = null,
+        public ?string $sessionAffinityFormat = null,
+        public ?bool $supportsCacheControlOnTools = null,
+        public ?bool $allowEmptySignature = null,
+        public ?array $allowedFallbackModels = null,
     ) {
+    }
+
+    /** The same compat with `allowedFallbackModels` set — upstream's `mergeAnthropicMessagesCompat()` for that key. */
+    public function withAllowedFallbackModels(array $allowedFallbackModels): self
+    {
+        return new self(
+            $this->forceAdaptiveThinking,
+            $this->strictTools,
+            $this->supportsTemperature,
+            $this->supportsEagerToolInputStreaming,
+            $this->supportsMidConvoEffort,
+            $this->supportsLongCacheRetention,
+            $this->sendSessionAffinityHeaders,
+            $this->sessionAffinityFormat,
+            $this->supportsCacheControlOnTools,
+            $this->allowEmptySignature,
+            $allowedFallbackModels,
+        );
     }
 
     /**
@@ -121,8 +162,9 @@ final readonly class AnthropicCompat
      * upstream leaves `compat` off such a model.
      *
      * Not ported: `supportsMidConvoSystemMessages`/`supportsMidConvoToolChanges` (pig's transcript has
-     * no mid-conversation system messages), `allowEmptySignature` (xiaomi/opencode only) and
-     * `allowedFallbackModels` (server-side fallback) — see CLAUDE.md.
+     * no system messages after the first). `allowEmptySignature` is written by upstream only for
+     * xiaomi and opencode, which pig has no built-in models of, and `allowedFallbackModels` needs the
+     * other rows' prices, so `Models::table()` adds it after every Anthropic row exists.
      */
     public static function forBuiltIn(string $provider, string $modelId): ?self
     {
@@ -141,6 +183,6 @@ final readonly class AnthropicCompat
 
         // `!==` per key and not `==` on the objects: loose comparison counts a `false` as equal to
         // the null of "not said", which would drop exactly the flags that switch something off.
-        return array_filter(get_object_vars($compat), static fn (?bool $flag): bool => $flag !== null) === [] ? null : $compat;
+        return array_filter(get_object_vars($compat), static fn (mixed $flag): bool => $flag !== null) === [] ? null : $compat;
     }
 }

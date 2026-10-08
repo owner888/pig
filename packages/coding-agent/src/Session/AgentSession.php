@@ -205,6 +205,9 @@ final class AgentSession
         $this->fileCommands = $fileCommands;
         $this->modelScope = $modelScope;
         $this->unsubscribeAgent = $this->agent->subscribe($this->onAgentEvent(...));
+        // Upstream's agent carries the session manager's id as its `sessionId`; pig's session
+        // identity is the file's, so a session that is not written down has none.
+        $this->agent->sessionId = $store?->id;
 
         // What was chosen last time, applied here rather than by whoever built the agent: this
         // is the class that holds both the agent and the settings, and `setQueueMode()` right
@@ -304,6 +307,7 @@ final class AgentSession
     public function writeTo(?SessionManager $store): void
     {
         $this->store = $store;
+        $this->agent->sessionId = $store?->id;
         $this->hooks?->setStore($store);
     }
 

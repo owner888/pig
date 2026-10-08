@@ -845,7 +845,7 @@ final class OpenAiCompletions
      *
      * Keyed by the effort rather than the thinking level, because pig converts one to the other a
      * layer above the provider (`ThinkingLevel::toReasoning()`), where upstream still has the level.
-     * The only key that differs is `minimal`, already sent as `low` by then.
+     * The two spell every level the same, `minimal` included.
      *
      * @param array<string, mixed> $body
      */
@@ -989,6 +989,13 @@ final class OpenAiCompletions
         $resolved = [];
 
         foreach ($values as $key => $value) {
+            // `typeof value !== "object" || value === null`: a plain value. An empty object read from
+            // `models.json` arrives as `stdClass` (`CustomModels` keeps `{}` as `{}`), and is an
+            // object to upstream like any other — one with no `$var`.
+            if ($value instanceof \stdClass) {
+                $value = (array) $value;
+            }
+
             if (!is_array($value)) {
                 $resolved[$key] = $value;
 

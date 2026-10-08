@@ -182,6 +182,19 @@ const OVERRIDES = [
         'why' => 'only works in thinking mode, and MINIMAL is refused',
         'row' => ['thinkingLevelMap' => ['off' => null, 'minimal' => null]],
     ],
+    // Upstream's own hand-added row: "Add Claude Haiku 5.5 until models.dev includes it. Prompts
+    // over 100k input tokens are billed at 5x for the whole request."
+    // https://platform.claude.com/docs/en/models/haiku-5-5/overview
+    'anthropic/claude-haiku-5-5' => [
+        'kind' => 'add',
+        'why' => 'models.dev does not list it yet',
+        'row' => [
+            'name' => 'Claude Haiku 5.5', 'reasoning' => true, 'images' => true,
+            'context' => 1_000_000, 'output' => 128_000,
+            'input' => 0.1, 'out' => 0.5, 'cacheRead' => 0.01, 'cacheWrite' => 0.125,
+            'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]],
+        ],
+    ],
     'openai/gpt-5-chat-latest' => [
         'kind' => 'add',
         'why' => 'models.dev does not list it',
@@ -334,6 +347,7 @@ function rowsFor(array $catalogue, string $provider): array
         }
 
         $input = $model['modalities']['input'] ?? [];
+        $tiers = tiers($model['cost'] ?? null);
 
         $rows[$id] = [
             'name' => is_string($model['name'] ?? null) && $model['name'] !== '' ? $model['name'] : $id,
@@ -345,12 +359,53 @@ function rowsFor(array $catalogue, string $provider): array
             'out' => (float) ($model['cost']['output'] ?? 0),
             'cacheRead' => (float) ($model['cost']['cache_read'] ?? 0),
             'cacheWrite' => (float) ($model['cost']['cache_write'] ?? 0),
+            ...($tiers === [] ? [] : ['tiers' => $tiers]),
         ];
     }
 
     ksort($rows);
 
     return $rows;
+}
+
+/**
+ * Upstream's `getModelsDevCost()` tiers: each `cost.tiers` entry whose `tier` is `{type: "context",
+ * size}` becomes `[size, in, out, cache read, cache write]`, a rate it does not list keeping the base
+ * price ("Rates a tier does not list keep the base price"); anything else is skipped.
+ *
+ * @return list<array{0: int, 1: float, 2: float, 3: float, 4: float}>
+ */
+function tiers(mixed $cost): array
+{
+    if (!is_array($cost) || !is_array($cost['tiers'] ?? null)) {
+        return [];
+    }
+
+    $base = [
+        (float) ($cost['input'] ?? 0),
+        (float) ($cost['output'] ?? 0),
+        (float) ($cost['cache_read'] ?? 0),
+        (float) ($cost['cache_write'] ?? 0),
+    ];
+    $tiers = [];
+
+    foreach ($cost['tiers'] as $tier) {
+        $context = is_array($tier) ? ($tier['tier'] ?? null) : null;
+
+        if (!is_array($context) || ($context['type'] ?? null) !== 'context' || !is_numeric($context['size'] ?? null)) {
+            continue;
+        }
+
+        $tiers[] = [
+            (int) $context['size'],
+            is_numeric($tier['input'] ?? null) ? (float) $tier['input'] : $base[0],
+            is_numeric($tier['output'] ?? null) ? (float) $tier['output'] : $base[1],
+            is_numeric($tier['cache_read'] ?? null) ? (float) $tier['cache_read'] : $base[2],
+            is_numeric($tier['cache_write'] ?? null) ? (float) $tier['cache_write'] : $base[3],
+        ];
+    }
+
+    return $tiers;
 }
 
 /**
@@ -491,6 +546,15 @@ function render(array $rows, string $constant): string
             $cells[] = levelMap($row['thinkingLevelMap']);
         }
 
+        // Tiers under their own key, in any table but Copilot's (which has no prices): positions
+        // after the fixed columns are already the Google map's.
+        if ($constant !== 'COPILOT_MODELS' && ($row['tiers'] ?? []) !== []) {
+            $cells[] = "'tiers' => [" . implode(', ', array_map(
+                static fn (array $tier): string => sprintf('[%s, %s, %s, %s, %s]', grouped((int) $tier[0]), money((float) $tier[1]), money((float) $tier[2]), money((float) $tier[3]), money((float) $tier[4])),
+                $row['tiers'],
+            )) . ']';
+        }
+
         $lines[] = sprintf("        %s => [%s],", var_export($id, true), implode(', ', $cells));
     }
 
@@ -607,6 +671,10 @@ function report(array $before, array $after): void
             }
         }
 
+        if (json_encode($was->pricing->tiers) !== json_encode($model->pricing->tiers)) {
+            $fields[] = sprintf('tiers %s → %s', json_encode($was->pricing->tiers), json_encode($model->pricing->tiers));
+        }
+
         if ($fields !== []) {
             $moved[$key] = $fields;
         }
@@ -714,7 +782,8 @@ $reload = sprintf(
         . 'foreach (Pig\Ai\Models::all() as $m) { echo $m->provider, "/", $m->id, "\t", $m->name, "\t",'
         . '$m->contextWindow, "\t", $m->maxTokens, "\t", $m->reasoning ? 1 : 0, "\t",'
         . '$m->acceptsImages() ? 1 : 0, "\t", $m->pricing->input, "\t", $m->pricing->output, "\t",'
-        . '$m->pricing->cacheRead, "\t", $m->pricing->cacheWrite, "\t", json_encode($m->thinkingLevelMap), "\n"; }',
+        . '$m->pricing->cacheRead, "\t", $m->pricing->cacheWrite, "\t", json_encode($m->thinkingLevelMap), "\t",'
+        . 'json_encode(array_map(static fn ($t) => [$t->inputTokensAbove, $t->input, $t->output, $t->cacheRead, $t->cacheWrite], $m->pricing->tiers)), "\n"; }',
     ),
 );
 
@@ -727,7 +796,7 @@ if ($status !== 0) {
 $after = [];
 
 foreach ($output as $line) {
-    [$key, $name, $window, $max, $reasoning, $images, $in, $out, $read, $write, $levels] = explode("\t", $line);
+    [$key, $name, $window, $max, $reasoning, $images, $in, $out, $read, $write, $levels, $tiers] = explode("\t", $line);
     [$provider, $id] = explode('/', $key, 2);
     $after[$key] = new Model(
         $id,
@@ -739,7 +808,10 @@ foreach ($output as $line) {
         (int) $max,
         $reasoning === '1',
         $images === '1' ? ['text', 'image'] : ['text'],
-        new Pig\Ai\Pricing((float) $in, (float) $out, (float) $read, (float) $write),
+        new Pig\Ai\Pricing((float) $in, (float) $out, (float) $read, (float) $write, array_map(
+            static fn (array $tier): Pig\Ai\PricingTier => new Pig\Ai\PricingTier((int) $tier[0], (float) $tier[1], (float) $tier[2], (float) $tier[3], (float) $tier[4]),
+            (array) json_decode($tiers, true),
+        )),
         // `[]` encodes as a list and decodes as one, which is the same empty map.
         thinkingLevelMap: (array) json_decode($levels, true),
     );

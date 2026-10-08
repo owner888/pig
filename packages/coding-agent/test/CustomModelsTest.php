@@ -10,6 +10,8 @@ use Pig\Ai\AnthropicCompat;
 use Pig\Ai\Api;
 use Pig\Ai\Models;
 use Pig\Ai\OpenAiCompat;
+use Pig\Ai\Pricing;
+use Pig\Ai\PricingTier;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CustomModels;
 
@@ -446,6 +448,82 @@ final class CustomModelsTest extends TestCase
         $empty = $this->load(self::provider(['compat' => ['openRouterRouting' => new \stdClass()]]))->models[0];
         $this->assertInstanceOf(OpenAiCompat::class, $empty->compat);
         $this->assertSame([], $empty->compat->openRouterRouting);
+    }
+
+    public function testANestedEmptyObjectInTheTemplateValuesStaysAnObjectToo(): void
+    {
+        // The same object-preserving read, for every object-valued compat key and not only the two
+        // routing ones: `chatTemplateKwargs` and `chatTemplateArgs` reach the wire whole through
+        // `StreamProxy`, and a nested `{}` in them went out as `[]`.
+        $model = $this->load(self::provider([
+            'compat' => [
+                'thinkingFormat' => 'chat-template',
+                'chatTemplateKwargs' => ['options' => ['extra' => new \stdClass()], 'flags' => []],
+                'chatTemplateArgs' => ['empty' => new \stdClass()],
+            ],
+        ]))->models[0];
+
+        $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
+        $this->assertSame('{"options":{"extra":{}},"flags":[]}', json_encode($model->compat->chatTemplateKwargs));
+        $this->assertSame('{"empty":{}}', json_encode($model->compat->chatTemplateArgs));
+    }
+
+    public function testATieredPriceIsReadFromTheCostBlock(): void
+    {
+        // Upstream's `cost.tiers`, which `Usage::withCost()` now prices by.
+        $model = $this->load(self::provider([
+            'models' => [self::model(['cost' => [
+                'input' => 1, 'output' => 2,
+                'tiers' => [['inputTokensAbove' => 200_000, 'input' => 2, 'output' => 4, 'cacheRead' => 0.2, 'cacheWrite' => 0]],
+            ]])],
+        ]))->models[0];
+
+        $this->assertEquals([new PricingTier(200_000, 2.0, 4.0, 0.2, 0.0)], $model->pricing->tiers);
+    }
+
+    public function testTheCachingSessionAndFallbackKeysAreReadUnderUpstreamsNames(): void
+    {
+        $anthropic = $this->load(self::provider([
+            'api' => 'anthropic-messages',
+            'models' => [self::model(['compat' => [
+                'supportsLongCacheRetention' => false,
+                'sendSessionAffinityHeaders' => true,
+                'sessionAffinityFormat' => 'openrouter',
+                'supportsCacheControlOnTools' => false,
+                'allowEmptySignature' => true,
+                'allowedFallbackModels' => [
+                    ['provider' => 'my-box', 'model' => 'backup', 'cost' => ['input' => 1, 'output' => 2]],
+                    ['model' => 'no provider, so left out'],
+                ],
+            ]])],
+        ]))->models[0];
+
+        $this->assertInstanceOf(AnthropicCompat::class, $anthropic->compat);
+        $this->assertFalse($anthropic->compat->supportsLongCacheRetention);
+        $this->assertTrue($anthropic->compat->sendSessionAffinityHeaders);
+        $this->assertSame('openrouter', $anthropic->compat->sessionAffinityFormat);
+        $this->assertFalse($anthropic->compat->supportsCacheControlOnTools);
+        $this->assertTrue($anthropic->compat->allowEmptySignature);
+        $this->assertEquals(
+            [['provider' => 'my-box', 'model' => 'backup', 'cost' => new Pricing(1.0, 2.0)]],
+            $anthropic->compat->allowedFallbackModels,
+        );
+
+        $responses = $this->load(self::provider([
+            'api' => 'openai-responses',
+            'models' => [self::model(['compat' => [
+                'sessionAffinityFormat' => 'openai-nosession',
+                'supportsLongCacheRetention' => false,
+                'supportsExplicitPromptCacheMode' => true,
+                'supportsMaxOutputTokens' => false,
+            ]])],
+        ]))->models[0];
+
+        $this->assertInstanceOf(OpenAiCompat::class, $responses->compat);
+        $this->assertSame('openai-nosession', $responses->compat->sessionAffinityFormat);
+        $this->assertFalse($responses->compat->supportsLongCacheRetention);
+        $this->assertTrue($responses->compat->supportsExplicitPromptCacheMode);
+        $this->assertFalse($responses->compat->supportsMaxOutputTokens);
     }
 
     /**

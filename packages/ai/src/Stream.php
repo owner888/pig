@@ -27,8 +27,25 @@ use Pig\Ai\Utils\AssistantMessageEventStream;
  */
 final class Stream
 {
-    /** Upstream caps the default here rather than at the model's own ceiling. */
-    private const int DEFAULT_MAX_TOKENS = 32_000;
+    /** Upstream's `CONTEXT_SAFETY_TOKENS`: what `clampMaxTokensToContext()` keeps clear of the window. */
+    private const int CONTEXT_SAFETY_TOKENS = 4096;
+
+    /** Upstream's `MIN_MAX_TOKENS`. */
+    private const int MIN_MAX_TOKENS = 1;
+
+    /**
+     * Upstream's `MIN_ANSWER_TOKENS`: "Tokens always left for the answer when a thinking budget
+     * shares the response ceiling."
+     */
+    private const int MIN_ANSWER_TOKENS = 1024;
+
+    /** Upstream's `DEFAULT_THINKING_BUDGETS`, for the token-budget thinking models. */
+    private const array DEFAULT_THINKING_BUDGETS = [
+        'minimal' => 1024,
+        'low' => 2048,
+        'medium' => 8192,
+        'high' => 16384,
+    ];
 
     /**
      * Provider-independent options, mapped and sent.
@@ -37,7 +54,7 @@ final class Stream
      */
     public static function simple(Model $model, Context $context, ?SimpleStreamOptions $options = null): AssistantMessageEventStream
     {
-        return self::start($model, $context, self::translate($model, $options));
+        return self::start($model, $context, self::translate($model, $context, $options));
     }
 
     /**
@@ -97,7 +114,15 @@ final class Stream
             return $options;
         }
 
-        return new StreamOptions($options?->temperature, $options?->maxTokens, $options?->signal, $apiKey);
+        return new StreamOptions(
+            $options?->temperature,
+            $options?->maxTokens,
+            $options?->signal,
+            $apiKey,
+            $options?->cacheRetention,
+            $options?->sessionId,
+            $options?->metadata,
+        );
     }
 
     /**
@@ -142,11 +167,15 @@ final class Stream
      * default is an exhaustiveness check that throws. Without a `default`, a new `Api` case fails
      * here loudly instead of quietly asking the provider for its defaults.
      */
-    private static function translate(Model $model, ?SimpleStreamOptions $options): StreamOptions
+    private static function translate(Model $model, Context $context, ?SimpleStreamOptions $options): StreamOptions
     {
-        $maxTokens = $options?->maxTokens ?? min($model->maxTokens, self::DEFAULT_MAX_TOKENS);
+        // Upstream's `buildBaseOptions()`, which every one of its `streamSimple()`s starts from:
+        // `maxTokens: clampMaxTokensToContext(model, context, options?.maxTokens ?? model.maxTokens)`.
+        // The model's own ceiling when nobody said, cut to the room the conversation leaves. This
+        // used to be `min(model.maxTokens, 32_000)` here and `intdiv(model.maxTokens, 3)` in
+        // `Anthropic`, neither of which upstream has any more.
+        $maxTokens = self::clampMaxTokensToContext($model, $context, $options?->maxTokens ?? $model->maxTokens);
         $apiKey = $options?->apiKey ?? self::envApiKey($model->provider);
-
         return match ($model->api) {
             // The same question as for the responses arm below, and upstream asks it the same way
             // in both: xhigh is a property of the *model*, not of the protocol it speaks. This used
@@ -159,30 +188,132 @@ final class Stream
                 $options?->signal,
                 $apiKey,
                 reasoning: $model->supportsXhigh() ? $options?->reasoning : $options?->reasoning?->clampToHigh(),
+                cacheRetention: $options?->cacheRetention,
+                sessionId: $options?->sessionId,
+                metadata: $options?->metadata,
             ),
+            // Upstream's `streamSimple()` in `openai-responses.ts`: the level clamped to the ones
+            // the model has (`clampThinkingLevel()`, which reads the `thinkingLevelMap`), `off`
+            // meaning none, and the caller's `toolChoice` passed on.
             Api::OpenAiResponses => new OpenAiOptions(
                 $options?->temperature,
                 $maxTokens,
                 $options?->signal,
                 $apiKey,
-                reasoning: $model->supportsXhigh() ? $options?->reasoning : $options?->reasoning?->clampToHigh(),
+                reasoning: self::clampedReasoning($model, $options?->reasoning),
+                toolChoice: $options?->toolChoice,
+                cacheRetention: $options?->cacheRetention,
+                sessionId: $options?->sessionId,
+                metadata: $options?->metadata,
             ),
             Api::GoogleGenerativeAi => self::gemini($model, $options, $maxTokens, $apiKey),
-            Api::AnthropicMessages => new AnthropicOptions(
-                $options?->temperature,
-                $maxTokens,
-                $options?->signal,
-                $apiKey,
-                // No reasoning asked for means thinking off, stated rather than left to the
-                // provider's default — upstream's `streamSimple()` passes `thinkingEnabled: false`,
-                // which `Anthropic` sends as `thinking: {type: "disabled"}`.
-                thinkingEnabled: $options?->reasoning !== null,
-                thinkingBudgetTokens: self::anthropicBudget($options?->reasoning),
-                effort: self::anthropicEffort($model, $options?->reasoning),
-            ),
+            Api::AnthropicMessages => self::anthropicSimple($model, $context, $options, $maxTokens, $apiKey),
             Api::Extension => self::extensionApi($model)->translate($model, $options, $apiKey
                 ?? throw new ProviderError("No API key for provider: {$model->provider}")),
         };
+    }
+
+    /**
+     * Upstream's `clampMaxTokensToContext()`: the request's ceiling, cut so the conversation plus
+     * the answer plus 4,096 tokens of slack fit in the window — never below 1. A model with no
+     * window (0) is not cut.
+     */
+    private static function clampMaxTokensToContext(Model $model, Context $context, int $maxTokens): int
+    {
+        if ($model->contextWindow <= 0) {
+            return max(self::MIN_MAX_TOKENS, $maxTokens);
+        }
+
+        $available = $model->contextWindow - Utils\Estimate::contextTokens($context) - self::CONTEXT_SAFETY_TOKENS;
+
+        return min($maxTokens, max(self::MIN_MAX_TOKENS, $available));
+    }
+
+    /**
+     * Upstream's `streamSimple()` in `anthropic-messages.ts`, arm for arm.
+     *
+     * - No reasoning asked for: `thinkingEnabled: false`, which `Anthropic` sends as `thinking:
+     *   {type: "disabled"}` unless the model cannot switch it off.
+     * - A `forceAdaptiveThinking` model: an effort level (`mapThinkingLevelToEffort()`).
+     * - Anything else thinks on a token budget: upstream's `adjustMaxTokensForThinking()` raises
+     *   the ceiling by the level's budget (minimal 1,024, low 2,048, medium 8,192, high 16,384;
+     *   xhigh and max count as high) up to the model's own, keeps 1,024 for the answer when the
+     *   budget would take it all, clamps the result to the context again, and the budget to what
+     *   is left above 1,024.
+     *
+     * Upstream's caller-supplied `thinkingBudgets` are not ported: nothing in pig sets them.
+     */
+    private static function anthropicSimple(Model $model, Context $context, ?SimpleStreamOptions $options, int $maxTokens, ?string $apiKey): AnthropicOptions
+    {
+        $base = [$options?->temperature, $maxTokens, $options?->signal, $apiKey];
+        $reasoning = $options?->reasoning;
+        $toolChoice = $options?->toolChoice;
+
+        if ($reasoning === null) {
+            return new AnthropicOptions(...$base, thinkingEnabled: false, toolChoice: $toolChoice, cacheRetention: $options?->cacheRetention, sessionId: $options?->sessionId, metadata: $options?->metadata);
+        }
+
+        $compat = $model->compat instanceof AnthropicCompat ? $model->compat : null;
+
+        if ($compat?->forceAdaptiveThinking === true) {
+            return new AnthropicOptions(
+                ...$base,
+                thinkingEnabled: true,
+                effort: self::anthropicEffort($model, $reasoning),
+                toolChoice: $toolChoice,
+                cacheRetention: $options?->cacheRetention,
+                sessionId: $options?->sessionId,
+                metadata: $options?->metadata,
+            );
+        }
+
+        // `adjustMaxTokensForThinking(base.maxTokens, model.maxTokens, reasoning)`: the base is
+        // always set here (`buildBaseOptions()` sets it), so the ceiling is the base plus the budget,
+        // capped at the model's.
+        $level = in_array($reasoning->value, ['xhigh', 'max'], true) ? 'high' : $reasoning->value;
+        $thinkingBudget = self::DEFAULT_THINKING_BUDGETS[$level];
+        $adjusted = min($maxTokens + $thinkingBudget, $model->maxTokens);
+
+        if ($adjusted <= $thinkingBudget) {
+            $thinkingBudget = min($thinkingBudget, max(0, $adjusted - self::MIN_ANSWER_TOKENS));
+        }
+
+        $ceiling = self::clampMaxTokensToContext($model, $context, $adjusted);
+
+        return new AnthropicOptions(
+            $options?->temperature,
+            $ceiling,
+            $options?->signal,
+            $apiKey,
+            thinkingEnabled: true,
+            thinkingBudgetTokens: min($thinkingBudget, max(0, $ceiling - self::MIN_ANSWER_TOKENS)),
+            toolChoice: $toolChoice,
+            cacheRetention: $options?->cacheRetention,
+            sessionId: $options?->sessionId,
+            metadata: $options?->metadata,
+        );
+    }
+
+    /**
+     * Upstream's `clampThinkingLevel(model, reasoning)` for the Responses API, with `off` meaning no
+     * reasoning. pig has no `max` effort, so a clamp that would land there — a model whose map
+     * offers `max` and not `xhigh`, asked for `xhigh` — is refused out loud rather than sent as
+     * something else; the agent's own clamp (`ThinkingLevel::clampedFor()`) never asks that.
+     */
+    private static function clampedReasoning(Model $model, ?ReasoningEffort $reasoning): ?ReasoningEffort
+    {
+        if ($reasoning === null) {
+            return null;
+        }
+
+        $clamped = $model->clampThinkingLevel($reasoning->value);
+
+        if ($clamped === 'off') {
+            return null;
+        }
+
+        return ReasoningEffort::tryFrom($clamped)
+            ?? throw new ProviderError("{$model->provider}/{$model->id} has no '{$reasoning->value}' thinking level, and its nearest, '{$clamped}', is not one pig can send");
     }
 
     private static function anthropic(?StreamOptions $options, string $apiKey): AnthropicOptions
@@ -201,12 +332,28 @@ final class Stream
                 // `google()` says this helper does.
                 $options->effort,
                 $options->thinkingDisplay,
+                $options->toolChoice,
+                $options->cacheRetention,
+                $options->sessionId,
+                $options->metadata,
             );
         }
 
-        return new AnthropicOptions($options?->temperature, $options?->maxTokens, $options?->signal, $apiKey);
+        return new AnthropicOptions(
+            $options?->temperature,
+            $options?->maxTokens,
+            $options?->signal,
+            $apiKey,
+            cacheRetention: $options?->cacheRetention,
+            sessionId: $options?->sessionId,
+            metadata: $options?->metadata,
+        );
     }
 
+    /**
+     * Upstream's `mapThinkingLevelToEffort()`: the model's `thinkingLevelMap` entry when it is a
+     * string, else minimal and low are `low`, medium `medium`, anything else `high`.
+     */
     private static function anthropicEffort(Model $model, ?ReasoningEffort $reasoning): string
     {
         $mapped = $reasoning !== null ? ($model->thinkingLevelMap[$reasoning->value] ?? null) : null;
@@ -240,7 +387,7 @@ final class Stream
         $effort = $options?->reasoning?->clampToHigh();
 
         if ($effort === null) {
-            return new GoogleOptions(...$base, thinkingEnabled: false);
+            return new GoogleOptions(...$base, thinkingEnabled: false, cacheRetention: $options?->cacheRetention, sessionId: $options?->sessionId, metadata: $options?->metadata);
         }
 
         $resolvedLevel = GoogleShared::resolveGoogleThinkingLevel($model, $effort->value);
@@ -249,10 +396,10 @@ final class Stream
         // `str_contains($id, 'gemini-3')`, which matched every 3.x id but missed
         // `gemini-flash-latest`, `gemini-flash-lite-latest` and Gemma 4, which all take a level too.
         if (GoogleShared::usesGoogleThinkingLevel($model)) {
-            return new GoogleOptions(...$base, thinkingEnabled: true, thinkingLevel: GoogleShared::toGoogleThinkingLevel($resolvedLevel));
+            return new GoogleOptions(...$base, thinkingEnabled: true, thinkingLevel: GoogleShared::toGoogleThinkingLevel($resolvedLevel), cacheRetention: $options?->cacheRetention, sessionId: $options?->sessionId, metadata: $options?->metadata);
         }
 
-        return new GoogleOptions(...$base, thinkingEnabled: true, thinkingBudget: self::geminiBudget($model, $resolvedLevel));
+        return new GoogleOptions(...$base, thinkingEnabled: true, thinkingBudget: self::geminiBudget($model, $resolvedLevel), cacheRetention: $options?->cacheRetention, sessionId: $options?->sessionId, metadata: $options?->metadata);
     }
 
     /**
@@ -293,10 +440,21 @@ final class Stream
                 $options->thinkingBudget,
                 $options->thinkingLevel,
                 $options->toolChoice,
+                $options->cacheRetention,
+                $options->sessionId,
+                $options->metadata,
             );
         }
 
-        return new GoogleOptions($options?->temperature, $options?->maxTokens, $options?->signal, $apiKey);
+        return new GoogleOptions(
+            $options?->temperature,
+            $options?->maxTokens,
+            $options?->signal,
+            $apiKey,
+            cacheRetention: $options?->cacheRetention,
+            sessionId: $options?->sessionId,
+            metadata: $options?->metadata,
+        );
     }
 
     /** The same shape as `anthropic()`: the key is resolved late, everything else is kept. */
@@ -310,20 +468,21 @@ final class Stream
                 $apiKey,
                 $options->reasoning,
                 $options->toolChoice,
+                $options->serviceTier,
+                $options->cacheRetention,
+                $options->sessionId,
+                $options->metadata,
             );
         }
 
-        return new OpenAiOptions($options?->temperature, $options?->maxTokens, $options?->signal, $apiKey);
-    }
-
-    /** Anthropic spends reasoning as a token budget rather than an effort level. */
-    private static function anthropicBudget(?ReasoningEffort $reasoning): int
-    {
-        return match ($reasoning?->clampToHigh()) {
-            ReasoningEffort::Low => 2048,
-            ReasoningEffort::Medium => 8192,
-            ReasoningEffort::High => 16384,
-            default => 1024,
-        };
+        return new OpenAiOptions(
+            $options?->temperature,
+            $options?->maxTokens,
+            $options?->signal,
+            $apiKey,
+            cacheRetention: $options?->cacheRetention,
+            sessionId: $options?->sessionId,
+            metadata: $options?->metadata,
+        );
     }
 }

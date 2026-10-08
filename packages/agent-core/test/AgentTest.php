@@ -332,8 +332,23 @@ final class AgentTest extends TestCase
 
         Async::run(static fn () => $agent->prompt('hi'));
 
-        // "Barely think" is sent as low: no provider does anything useful with less.
-        $this->assertSame(ReasoningEffort::Low, $this->options[0]->reasoning);
+        // `minimal` goes through as `minimal`, as upstream's agent passes it: Anthropic's budget for
+        // it is 1,024 tokens against low's 2,048, and a model's map can rename it (Copilot's
+        // `minimal: "low"`). This used to assert `low` — pig's agent turned minimal into low
+        // before any provider saw it, so the minimal budget and those maps were never reached.
+        $this->assertSame(ReasoningEffort::Minimal, $this->options[0]->reasoning);
+    }
+
+    public function testTheAgentsSessionIdReachesEveryRequest(): void
+    {
+        // Upstream's `Agent.sessionId` → `AgentLoopConfig.sessionId` → the request's `sessionId`,
+        // which Anthropic's session affinity and the Responses API's `prompt_cache_key` key on.
+        $agent = $this->agent(['ok']);
+        $agent->sessionId = 'session-7';
+
+        Async::run(static fn () => $agent->prompt('hi'));
+
+        $this->assertSame('session-7', $this->options[0]->sessionId);
     }
 
     public function testThinkingOffSendsNoReasoningAtAll(): void

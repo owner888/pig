@@ -59,6 +59,19 @@ final readonly class OpenAiCompat
      *        with a Lark or regex grammar — upstream's `supportsOpenAIGrammarTools`, default false;
      *        otherwise it falls back to an ordinary function tool. Read by both OpenAI providers, as
      *        upstream's completions and Responses compat both have the key
+     *
+     * The four below are upstream's `OpenAIResponsesCompat` keys and only `OpenAiResponses` reads
+     * them; `detect()` says nothing about them, so each is the runtime default written beside it
+     * until a model says otherwise.
+     *
+     * @param string|null $sessionAffinityFormat `openai` sends the session id as `session_id` and
+     *        `x-client-request-id`, `openai-nosession` as `x-client-request-id` alone, `openrouter`
+     *        as `x-session-id` (default: `openrouter` for OpenRouter, else `openai`)
+     * @param bool|null   $supportsLongCacheRetention `cacheRetention: long` may ask for the longer
+     *        prompt cache (default true)
+     * @param bool|null   $supportsExplicitPromptCacheMode the model takes `prompt_cache_options`
+     *        (OpenAI GPT-5.6 and later; default false, `Models` sets it as upstream's generator does)
+     * @param bool|null   $supportsMaxOutputTokens the endpoint takes `max_output_tokens` (default true)
      */
     public function __construct(
         public ?bool $store = null,
@@ -77,6 +90,10 @@ final readonly class OpenAiCompat
         public ?array $openRouterRouting = null,
         public ?array $vercelGatewayRouting = null,
         public ?bool $grammarTools = null,
+        public ?string $sessionAffinityFormat = null,
+        public ?bool $supportsLongCacheRetention = null,
+        public ?bool $supportsExplicitPromptCacheMode = null,
+        public ?bool $supportsMaxOutputTokens = null,
     ) {
     }
 
@@ -120,6 +137,10 @@ final readonly class OpenAiCompat
             openRouterRouting: $explicit->openRouterRouting ?? [],
             vercelGatewayRouting: $explicit->vercelGatewayRouting ?? $detected->vercelGatewayRouting,
             grammarTools: $explicit->grammarTools ?? $detected->grammarTools,
+            sessionAffinityFormat: $explicit->sessionAffinityFormat,
+            supportsLongCacheRetention: $explicit->supportsLongCacheRetention,
+            supportsExplicitPromptCacheMode: $explicit->supportsExplicitPromptCacheMode,
+            supportsMaxOutputTokens: $explicit->supportsMaxOutputTokens,
         );
     }
 

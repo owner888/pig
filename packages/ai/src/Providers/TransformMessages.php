@@ -245,7 +245,9 @@ final class TransformMessages
 
         return $id === $block->id && $signature === $block->thoughtSignature
             ? $block
-            : new ToolCall($id, $block->name, $block->arguments, $signature);
+            // Upstream spreads the call (`{ ...toolCall, id }`), so everything else on it — its
+            // `namespace` included — goes along.
+            : new ToolCall($id, $block->name, $block->arguments, $signature, $block->namespace);
     }
 
     /** @param list<\Pig\Ai\AssistantContent> $content */

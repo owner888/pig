@@ -10,6 +10,7 @@ use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
+use Pig\Ai\PricingTier;
 
 /**
  * Providers declared in a file, so somebody's own endpoint does not need a release.
@@ -114,7 +115,7 @@ final readonly class CustomModels
 
         try {
             $decoded = json_decode($raw, true, flags: JSON_THROW_ON_ERROR);
-            $decoded = self::keepRoutingObjects($decoded, json_decode($raw, false, flags: JSON_THROW_ON_ERROR));
+            $decoded = self::keepCompatObjects($decoded, json_decode($raw, false, flags: JSON_THROW_ON_ERROR));
         } catch (\JsonException $error) {
             return new self([], [], ["{$path} is not valid JSON: {$error->getMessage()}"]);
         }
@@ -401,28 +402,52 @@ final readonly class CustomModels
             ? (float) $cost[$key]
             : 0.0;
 
-        return new Pricing($number('input'), $number('output'), $number('cacheRead'), $number('cacheWrite'));
+        // Upstream's `ModelCost.tiers`: `{inputTokensAbove, input, output, cacheRead, cacheWrite}`
+        // each, "the highest matching input threshold applies to the full request". A tier with no
+        // threshold is not one; a rate it leaves out is free, as the base price's are.
+        $tiers = [];
+
+        foreach (is_array($cost['tiers'] ?? null) ? $cost['tiers'] : [] as $tier) {
+            if (!is_array($tier) || !is_int($tier['inputTokensAbove'] ?? null)) {
+                continue;
+            }
+
+            $rate = static fn (string $key): float => is_int($tier[$key] ?? null) || is_float($tier[$key] ?? null)
+                ? (float) $tier[$key]
+                : 0.0;
+            $tiers[] = new PricingTier($tier['inputTokensAbove'], $rate('input'), $rate('output'), $rate('cacheRead'), $rate('cacheWrite'));
+        }
+
+        return new Pricing($number('input'), $number('output'), $number('cacheRead'), $number('cacheWrite'), $tiers);
     }
 
-    /** The `compat` keys whose value is sent on the wire as the file wrote it. */
-    private const array ROUTING_KEYS = ['openRouterRouting', 'vercelGatewayRouting'];
+    /**
+     * The object-valued `compat` keys — upstream's `mergeCompat()` list — whose value reaches the
+     * wire as the file wrote it: the two routing objects, sent as the request's `provider` and
+     * `providerOptions.gateway`, and the two template-value objects, which `StreamProxy` sends
+     * whole and `OpenAiCompletions` reads value by value.
+     */
+    private const array OBJECT_KEYS = ['openRouterRouting', 'vercelGatewayRouting', 'chatTemplateKwargs', 'chatTemplateArgs'];
 
     /**
-     * The routing objects, re-read from the document with **its objects kept as objects**.
+     * The object-valued `compat` keys, re-read from the document with **its objects kept as objects**.
      *
-     * Upstream passes `openRouterRouting` through to the request's `provider` field exactly as the
-     * file wrote it. Decoded into PHP arrays, `{}` and `[]` are the same value, and a nested empty
-     * object — `"max_price": {}`, `"sort": {}` — went out as `[]`, which is not the JSON the file
-     * said and not a shape OpenRouter documents. So each routing value is taken from a second,
-     * object-preserving decode of the same text, where every non-empty object becomes an array
-     * again and an empty one stays an object (`stdClass`, which `json_encode` writes as `{}`).
-     * The value itself stays an array — `{}` there is `[]`, which every reader already treats as
-     * the empty object — so only what is inside it changes.
+     * Upstream passes these on exactly as the file wrote them. Decoded into PHP arrays, `{}` and
+     * `[]` are the same value, and a nested empty object — `"max_price": {}` in a routing object,
+     * `"options": {}` in `chatTemplateKwargs` — went out as `[]`, which is not the JSON the file
+     * said. So each of these values is taken from a second, object-preserving decode of the same
+     * text, where every non-empty object becomes an array again and an empty one stays an object
+     * (`stdClass`, which `json_encode` writes as `{}`). The value itself stays an array — `{}` there
+     * is `[]`, which every reader already treats as the empty object — so only what is inside it
+     * changes.
+     *
+     * This used to cover the two routing keys only, and the template values went out with every
+     * nested `{}` turned into `[]`.
      *
      * @param array<mixed> $decoded the document as arrays
      * @return array<mixed>
      */
-    private static function keepRoutingObjects(mixed $decoded, mixed $objects): mixed
+    private static function keepCompatObjects(mixed $decoded, mixed $objects): mixed
     {
         if (!is_array($decoded) || !is_array($decoded['providers'] ?? null) || !($objects instanceof \stdClass)) {
             return $decoded;
@@ -435,13 +460,13 @@ final readonly class CustomModels
                 continue;
             }
 
-            $decoded['providers'][$name] = self::withRoutingObjects($provider, $providerObject);
+            $decoded['providers'][$name] = self::withCompatObjects($provider, $providerObject);
 
             foreach (is_array($provider['models'] ?? null) ? $provider['models'] : [] as $index => $model) {
                 $modelObject = is_array($providerObject->models ?? null) ? ($providerObject->models[$index] ?? null) : null;
 
                 if (is_array($model) && $modelObject instanceof \stdClass) {
-                    $decoded['providers'][$name]['models'][$index] = self::withRoutingObjects($model, $modelObject);
+                    $decoded['providers'][$name]['models'][$index] = self::withCompatObjects($model, $modelObject);
                 }
             }
         }
@@ -453,7 +478,7 @@ final readonly class CustomModels
      * @param array<mixed> $entry a provider or a model, as arrays
      * @return array<mixed>
      */
-    private static function withRoutingObjects(array $entry, \stdClass $object): array
+    private static function withCompatObjects(array $entry, \stdClass $object): array
     {
         $compat = $object->compat ?? null;
 
@@ -461,7 +486,7 @@ final readonly class CustomModels
             return $entry;
         }
 
-        foreach (self::ROUTING_KEYS as $key) {
+        foreach (self::OBJECT_KEYS as $key) {
             $value = $compat->{$key} ?? null;
 
             if ($value instanceof \stdClass) {
@@ -511,7 +536,7 @@ final readonly class CustomModels
 
         $merged = [...$base, ...$override];
 
-        foreach (['openRouterRouting', 'vercelGatewayRouting', 'chatTemplateKwargs', 'chatTemplateArgs'] as $key) {
+        foreach (self::OBJECT_KEYS as $key) {
             $baseValue = $base[$key] ?? null;
             $overrideValue = $override[$key] ?? null;
 
@@ -570,6 +595,12 @@ final readonly class CustomModels
                 supportsTemperature: $flag('supportsTemperature'),
                 supportsEagerToolInputStreaming: $flag('supportsEagerToolInputStreaming'),
                 supportsMidConvoEffort: $flag('supportsMidConvoEffort'),
+                supportsLongCacheRetention: $flag('supportsLongCacheRetention'),
+                sendSessionAffinityHeaders: $flag('sendSessionAffinityHeaders'),
+                sessionAffinityFormat: is_string($compat['sessionAffinityFormat'] ?? null) ? $compat['sessionAffinityFormat'] : null,
+                supportsCacheControlOnTools: $flag('supportsCacheControlOnTools'),
+                allowEmptySignature: $flag('allowEmptySignature'),
+                allowedFallbackModels: self::allowedFallbackModels($compat['allowedFallbackModels'] ?? null),
             );
         }
 
@@ -599,7 +630,42 @@ final readonly class CustomModels
             openRouterRouting: self::templateValues($compat['openRouterRouting'] ?? null),
             vercelGatewayRouting: self::templateValues($compat['vercelGatewayRouting'] ?? null),
             grammarTools: $flag('supportsOpenAIGrammarTools'),
+            // `OpenAIResponsesCompat`'s keys, which the Responses provider reads.
+            sessionAffinityFormat: is_string($compat['sessionAffinityFormat'] ?? null) ? $compat['sessionAffinityFormat'] : null,
+            supportsLongCacheRetention: $flag('supportsLongCacheRetention'),
+            supportsExplicitPromptCacheMode: $flag('supportsExplicitPromptCacheMode'),
+            supportsMaxOutputTokens: $flag('supportsMaxOutputTokens'),
         );
+    }
+
+    /**
+     * Upstream's `allowedFallbackModels`: a list of `{provider, model, cost}`, an entry missing the
+     * two names left out. Not said is null; a list with nothing usable in it is empty, which sends
+     * no `fallbacks`.
+     *
+     * @return list<array{provider: string, model: string, cost: Pricing}>|null
+     */
+    private static function allowedFallbackModels(mixed $entries): ?array
+    {
+        if (!is_array($entries) || !array_is_list($entries)) {
+            return null;
+        }
+
+        $allowed = [];
+
+        foreach ($entries as $entry) {
+            if (!is_array($entry) || !is_string($entry['provider'] ?? null) || !is_string($entry['model'] ?? null)) {
+                continue;
+            }
+
+            $allowed[] = [
+                'provider' => $entry['provider'],
+                'model' => $entry['model'],
+                'cost' => self::pricing(is_array($entry['cost'] ?? null) ? $entry['cost'] : []),
+            ];
+        }
+
+        return $allowed;
     }
 
     /**

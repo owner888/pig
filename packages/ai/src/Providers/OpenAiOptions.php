@@ -16,6 +16,11 @@ use Pig\Async\AbortSignal;
  */
 final readonly class OpenAiOptions extends StreamOptions
 {
+    /**
+     * @param string|null $serviceTier upstream's `OpenAIResponsesOptions.serviceTier`, read by the
+     *        Responses provider only: sent as `service_tier`, and the turn's cost scaled by the tier
+     *        the response reports (else this one) — `flex` halves it, `priority` doubles it
+     */
     public function __construct(
         ?float $temperature = null,
         ?int $maxTokens = null,
@@ -23,7 +28,11 @@ final readonly class OpenAiOptions extends StreamOptions
         ?string $apiKey = null,
         public ?ReasoningEffort $reasoning = null,
         public ?string $toolChoice = null,
+        public ?string $serviceTier = null,
+        ?string $cacheRetention = null,
+        ?string $sessionId = null,
+        ?array $metadata = null,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata);
     }
 }

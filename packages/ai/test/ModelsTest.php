@@ -12,6 +12,7 @@ use Pig\Ai\Model;
 use Pig\Ai\Models;
 use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
+use Pig\Ai\PricingTier;
 use Pig\Ai\Usage;
 
 /**
@@ -328,6 +329,114 @@ final class ModelsTest extends TestCase
         $this->assertSame(0.3, $cost->cacheRead);
         $this->assertSame(3.75, $cost->cacheWrite);
         $this->assertSame(22.05, round($cost->total, 2));
+    }
+
+    public function testClaudeHaikuFiveFiveIsUpstreamsHandAddedRowWithItsLongPromptTier(): void
+    {
+        // Upstream's generator adds it "until models.dev includes it": "Prompts over 100k input
+        // tokens are billed at 5x for the whole request."
+        $model = Models::find(Models::ANTHROPIC, 'claude-haiku-5-5');
+
+        $this->assertNotNull($model);
+        $this->assertSame([1_000_000, 128_000, true], [$model->contextWindow, $model->maxTokens, $model->reasoning]);
+        $this->assertEquals(
+            new Pricing(0.1, 0.5, 0.01, 0.125, [new PricingTier(100_000, 0.5, 2.5, 0.05, 0.625)]),
+            $model->pricing,
+        );
+        // The compat and the map every 5.5 model gets: adaptive, no temperature, managed effort,
+        // strict tools, and the whole 5.5 map.
+        $this->assertEquals(new AnthropicCompat(
+            forceAdaptiveThinking: true,
+            strictTools: true,
+            supportsTemperature: false,
+            supportsMidConvoEffort: true,
+        ), $model->compat);
+        $this->assertSame(
+            ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'],
+            $model->thinkingLevelMap,
+        );
+    }
+
+    public function testATierPricesTheWholeRequestOnceItsThresholdIsPassed(): void
+    {
+        // Upstream's `calculateCost()`: input + cache read + cache write picks the tier, the
+        // highest threshold strictly exceeded wins, and its rates bill every token of the request.
+        $model = Models::find(Models::ANTHROPIC, 'claude-haiku-5-5');
+        $this->assertNotNull($model);
+
+        $at = Models::cost($model, new Usage(100_000, 1_000_000));
+        $this->assertEqualsWithDelta(0.01, $at->input, 1e-12, 'at the threshold: base rates');
+        $this->assertEqualsWithDelta(0.5, $at->output, 1e-12);
+
+        $past = Models::cost($model, new Usage(90_000, 1_000_000, 10_001));
+        $this->assertEqualsWithDelta(0.045, $past->input, 1e-12, 'past it, counting the cache read: the tier');
+        $this->assertEqualsWithDelta(2.5, $past->output, 1e-12);
+        $this->assertEqualsWithDelta(0.05 * 10_001 / 1_000_000, $past->cacheRead, 1e-12);
+
+        // A one-hour write is twice the tier's input rate, as it is twice the base one.
+        $long = (new Usage(200_000, 0, 0, 1_000_000, cacheWrite1h: 1_000_000))->withCost($model);
+        $this->assertEqualsWithDelta(1.0, $long->cost->cacheWrite, 1e-12);
+    }
+
+    public function testFableFiveMayFallBackToTheOpusModelsAndOpusFiveToNone(): void
+    {
+        // Upstream's `ANTHROPIC_ALLOWED_FALLBACK_MODELS`, priced from the fallbacks' own rows. Opus 5
+        // is a managed-effort model, so only managed-effort fallbacks count, and Opus 4.8 is not one.
+        $fable = Models::find(Models::ANTHROPIC, 'claude-fable-5');
+        $this->assertInstanceOf(AnthropicCompat::class, $fable?->compat);
+        $this->assertSame(
+            [['anthropic', 'claude-opus-4-8'], ['anthropic', 'claude-opus-5']],
+            array_map(static fn (array $f): array => [$f['provider'], $f['model']], $fable->compat->allowedFallbackModels ?? []),
+        );
+        $this->assertEquals(Models::find(Models::ANTHROPIC, 'claude-opus-5')?->pricing, $fable->compat->allowedFallbackModels[1]['cost']);
+
+        $opus = Models::find(Models::ANTHROPIC, 'claude-opus-5');
+        $this->assertInstanceOf(AnthropicCompat::class, $opus?->compat);
+        $this->assertNull($opus->compat->allowedFallbackModels);
+    }
+
+    public function testOpenAiAndCopilotGptModelsCarryUpstreamsThinkingLevelMaps(): void
+    {
+        // Upstream's `applyThinkingLevelMetadata()` OpenAI arms. pig's OpenAI rows carried no map,
+        // so `off` was offered on gpt-5 (which cannot be switched off) and xhigh came from an id
+        // list that named three models.
+        foreach ([
+            ['openai', 'gpt-5', ['off' => null]],
+            ['openai', 'gpt-5.1', ['off' => 'none']],
+            ['openai', 'gpt-5.2', ['off' => 'none', 'xhigh' => 'xhigh']],
+            ['openai', 'gpt-5.5', ['off' => 'none', 'xhigh' => 'xhigh', 'minimal' => null]],
+            ['openai', 'gpt-5.5-pro', ['off' => null, 'xhigh' => 'xhigh', 'minimal' => null, 'low' => null]],
+            ['openai', 'gpt-5.6-sol', ['off' => 'none', 'xhigh' => 'xhigh', 'max' => 'max']],
+            ['openai', 'gpt-6-astra', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+            ['openai', 'gpt-6-sol', ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+            ['openai', 'o3', []],
+            [Models::COPILOT, 'gpt-5-mini', ['off' => null, 'minimal' => 'low']],
+            [Models::COPILOT, 'gpt-5.4', ['off' => null, 'minimal' => 'low', 'xhigh' => 'xhigh']],
+            [Models::COPILOT, 'gpt-6-sol', ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+            [Models::COPILOT, 'gpt-6.1-sol', ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        ] as [$provider, $id, $map]) {
+            $model = Models::find($provider, $id);
+            $this->assertNotNull($model, "{$provider}/{$id}");
+            $this->assertSame($map, $model->thinkingLevelMap, "{$provider}/{$id}");
+        }
+
+        // What the map is for: Copilot's GPT-6 offers xhigh, and gpt-5 does not offer off.
+        $this->assertTrue(Models::find(Models::COPILOT, 'gpt-6-sol')?->supportsXhigh());
+        $this->assertNotContains('off', Models::find('openai', 'gpt-5')?->supportedThinkingLevels() ?? []);
+    }
+
+    public function testTheOpenAiModelsThatChargeForCacheWritesTakeTheExplicitCacheMode(): void
+    {
+        // Upstream's `applyOpenAIExplicitPromptCacheMetadata()`: OpenAI's Responses models with a
+        // cache-write price — GPT-5.6 and later — accept `prompt_cache_options`; older ones reject it.
+        foreach (self::of('openai') as $model) {
+            $this->assertInstanceOf(OpenAiCompat::class, $model->compat);
+            $this->assertSame(
+                $model->pricing->cacheWrite > 0 ? true : null,
+                $model->compat->supportsExplicitPromptCacheMode,
+                $model->id,
+            );
+        }
     }
 
     public function testTheUsageHandedInIsNotRewritten(): void

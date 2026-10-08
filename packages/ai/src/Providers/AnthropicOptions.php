@@ -7,12 +7,7 @@ namespace Pig\Ai\Providers;
 use Pig\Ai\StreamOptions;
 use Pig\Async\AbortSignal;
 
-/**
- * Anthropic's own knobs on top of the shared ones.
- *
- * Upstream also carries `toolChoice`; nothing sets it yet, so it is left out until
- * something does.
- */
+/** Anthropic's own knobs on top of the shared ones — upstream's `AnthropicOptions`. */
 final readonly class AnthropicOptions extends StreamOptions
 {
     /**
@@ -23,6 +18,10 @@ final readonly class AnthropicOptions extends StreamOptions
      *        `Stream::simple()` always says true or false, as upstream's `streamSimple()` does
      * @param string|null $thinkingDisplay upstream's `thinkingDisplay`: `summarized` or `omitted`,
      *        sent as `thinking.display` on a thinking turn. Null is upstream's default, `summarized`
+     * @param string|array{type: 'tool', name: string}|null $toolChoice upstream's `toolChoice`:
+     *        `auto`, `any` or `none`, sent as `tool_choice: {type}`, or `['type' => 'tool', 'name' =>
+     *        …]` to force one tool, sent as it is. Null sends nothing (Anthropic's default, `auto`).
+     *        `Stream::simple()` fills it from `SimpleStreamOptions::$toolChoice`
      */
     public function __construct(
         ?float $temperature = null,
@@ -34,7 +33,11 @@ final readonly class AnthropicOptions extends StreamOptions
         public bool $interleavedThinking = true,
         public ?string $effort = null,
         public ?string $thinkingDisplay = null,
+        public string|array|null $toolChoice = null,
+        ?string $cacheRetention = null,
+        ?string $sessionId = null,
+        ?array $metadata = null,
     ) {
-        parent::__construct($temperature, $maxTokens, $signal, $apiKey);
+        parent::__construct($temperature, $maxTokens, $signal, $apiKey, $cacheRetention, $sessionId, $metadata);
     }
 }

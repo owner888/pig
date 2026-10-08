@@ -33,7 +33,8 @@ final class AssistantMessageBuilder
 {
     /**
      * @var list<array{wire: int, type: string, text: string, signature: string,
-     *      id: string, name: string, json: string, arguments: array<string, mixed>, redacted: bool}>
+     *      id: string, name: string, json: string, arguments: array<string, mixed>, redacted: bool,
+     *      namespace: string|null}>
      */
     private array $blocks = [];
 
@@ -54,12 +55,16 @@ final class AssistantMessageBuilder
 
     private ?string $providerThinkingLevel = null;
 
+    /** The model usage is priced at — `$model` unless `priceAs()` said otherwise. */
+    private Model $pricedAs;
+
     private readonly int $timestamp;
 
     public function __construct(private readonly Model $model)
     {
         $this->usage = new Usage();
         $this->timestamp = Timestamp::nowMs();
+        $this->pricedAs = $model;
     }
 
     /** @return int the position in the content list */
@@ -209,6 +214,12 @@ final class AssistantMessageBuilder
         }
     }
 
+    /** Upstream's `ToolCall.namespace`, which the Responses API puts on a call's item. */
+    public function setNamespace(int $index, ?string $namespace): void
+    {
+        $this->blocks[$index]['namespace'] = $namespace;
+    }
+
     public function toolCallOf(int $index): ToolCall
     {
         return self::call($this->blocks[$index]);
@@ -233,6 +244,7 @@ final class AssistantMessageBuilder
             $block['name'],
             $block['arguments'],
             $block['signature'] === '' ? null : $block['signature'],
+            $block['namespace'] ?? null,
         );
     }
 
@@ -262,7 +274,17 @@ final class AssistantMessageBuilder
     {
         $counted = $usage->totalTokens > 0 ? $usage : $usage->withTotalTokens();
 
-        $this->usage = $priced ? $counted : $counted->withCost($this->model);
+        $this->usage = $priced ? $counted : $counted->withCost($this->pricedAs);
+    }
+
+    /**
+     * Price this response's usage as $model — upstream's `usageModel`, which Anthropic's provider
+     * swaps in when a server-side fallback answered (`{...model, id: responseModel, cost:
+     * fallbackCost}`). The message still names the model that was asked for.
+     */
+    public function priceAs(Model $model): void
+    {
+        $this->pricedAs = $model;
     }
 
     public function setStopReason(StopReason $reason): void
@@ -326,6 +348,20 @@ final class AssistantMessageBuilder
         $this->diagnostics = [...($this->diagnostics ?? []), $diagnostic];
     }
 
+    /**
+     * Upstream's `output.errorMessage` set without ending anything — what a provider records when a
+     * stop reason maps to `error` (Anthropic's refusal), before it throws with that same message.
+     */
+    public function setErrorMessage(?string $message): void
+    {
+        $this->errorMessage = $message;
+    }
+
+    public function errorMessage(): ?string
+    {
+        return $this->errorMessage;
+    }
+
     public function fail(string $message, bool $aborted): void
     {
         $this->stopReason = $aborted ? StopReason::Aborted : StopReason::Error;
@@ -380,6 +416,7 @@ final class AssistantMessageBuilder
             'json' => '',
             'arguments' => [],
             'redacted' => false,
+            'namespace' => null,
         ];
 
         return count($this->blocks) - 1;

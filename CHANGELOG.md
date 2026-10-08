@@ -43,6 +43,30 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.32] - 2026-10-08
+
+### New Features
+
+- **Context-Aware `max_tokens` Headroom Clamping & Budget Adjustment (`Estimate`, `Stream`)**:
+  - Introduced `Pig\Ai\Utils\Estimate` to calculate approximate token consumption from message character counts (~3.5 UTF-16 characters per token).
+  - Implemented upstream pi's `clampMaxTokensToContext()` and `adjustMaxTokensForThinking()`: automatically clamping `maxTokens` to the context window headroom and expanding budget-thinking allocations up to model ceilings while safeguarding 1,024 tokens for final responses, preventing Anthropic 400 budget-exceed errors.
+- **Anthropic Tool-Inclusive Cache Breakpoints & Session Affinity (`Anthropic`, `AgentSession`, `SimpleStreamOptions`)**:
+  - Injected ephemeral cache breakpoints across system prompt, the final tool declaration (when supported), and the final user block, supporting 1-hour cache retention (`cacheRetention: long` / `PI_CACHE_RETENTION=long`).
+  - Propagated active session file IDs through `Agent` into stream options, transmitting `x-session-affinity` / `x-session-id` headers and Responses `prompt_cache_key` for sticky provider caching.
+- **Comprehensive Upstream Thinking Level Maps for Claude & GPT Models (`Models`, `ThinkingLevel`)**:
+  - Fully populated `thinkingLevelMap` across Anthropic, OpenAI, and Copilot GPT models matching upstream pi's generator (`applyThinkingLevelMetadata()`), unlocking `xhigh` on capable models (Opus 4.7+, gpt-5.2+, GPT-6) and properly respecting `off: null` restrictions on non-disableable reasoning models.
+- **Full-Fidelity Gateway Context & Model Serialization (`StreamProxy`, `PricingTier`)**:
+  - Serialized context as upstream transcripts (system message with prompt and `toolsAdded`) with complete tool definitions, forwarding model `thinkingLevelMap`, `PricingTier` pricing tiers, and session parameters over `StreamProxy`.
+
+### Fixed
+
+- **Authoritative OpenAI Responses Thinking & Incomplete Status Mapping (`OpenAiResponses`, `Models`)**:
+  - Replaced legacy `# Juice: 0` prompt hack with official `reasoning: {effort: map.off ?? "none"}` matching upstream `thinkingLevelMap` definitions.
+  - Enforced a minimum `max_output_tokens` of 16, avoiding API rejections on minimal budgets.
+  - Mapped only `max_output_tokens` incomplete statuses to `StopReason::Length`, while treating other truncation causes as actionable `Response incomplete: <reason>` errors.
+- **Anthropic Refusal, Sensitive, and Unknown Stop Reason Handling (`Anthropic`)**:
+  - Correctly intercepted `refusal` and `sensitive` stop reasons, converting them to error events with full explanatory details rather than letting sessions silently succeed with missing turns.
+
 ## [0.4.31] - 2026-10-08
 
 ### New Features

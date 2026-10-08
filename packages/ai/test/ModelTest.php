@@ -90,20 +90,42 @@ final class ModelTest extends TestCase
         $this->assertFalse($this->thinking(['xhigh' => null])->supportsXhigh());
     }
 
-    public function testWithNoMapXhighStillComesFromTheIdList(): void
+    public function testWithNoMapXhighIsNotOfferedWhateverTheId(): void
     {
-        // pig's generated tables carry no maps, so dropping this would quietly take a level away
-        // from the three models that have it.
-        $this->assertTrue($this->thinking([], 'gpt-5.2')->supportsXhigh());
+        // This used to assert that `gpt-5.2` with no map still had xhigh, from an id list kept
+        // because pig's generated OpenAI rows carried no maps. `Models` now writes upstream's
+        // generator maps on those rows (`xhigh` from gpt-5.2 on), so the list is gone and the rule
+        // is upstream's `getSupportedThinkingLevels()`: xhigh only when the map names it.
+        $this->assertFalse($this->thinking([], 'gpt-5.2')->supportsXhigh());
         $this->assertFalse($this->thinking([], 'claude-sonnet-4-5')->supportsXhigh());
     }
 
-    public function testAMapSayingNoBeatsTheIdListRatherThanBeingOverruledByIt(): void
+    public function testAMapSayingNoIsTakenAtItsWord(): void
     {
-        // The two are not an either-or: the list is the *fallback*, so a `models.json` that
-        // redeclares one of those ids with `"xhigh": null` is taken at its word. Written as
-        // `idList || map` this passes every other test in this file and quietly ignores the file.
         $this->assertFalse($this->thinking(['xhigh' => null], 'gpt-5.2')->supportsXhigh());
+    }
+
+    public function testTheSupportedLevelsAreUpstreamsSevenFilteredByTheMap(): void
+    {
+        // `getSupportedThinkingLevels()`: off for a model that does not reason; otherwise every
+        // level the map does not null, xhigh and max only when it names them.
+        $this->assertSame(['off', 'minimal', 'low', 'medium', 'high'], $this->thinking([])->supportedThinkingLevels());
+        $this->assertSame(
+            ['low', 'medium', 'high', 'xhigh', 'max'],
+            $this->thinking(['off' => null, 'minimal' => null, 'xhigh' => 'xhigh', 'max' => 'max'])->supportedThinkingLevels(),
+        );
+    }
+
+    public function testClampingGoesUpFromTheRequestFirstThenDown(): void
+    {
+        // `clampThinkingLevel()`: a model that refuses `minimal` gets `low`, not `off` — refusing
+        // the amount is not refusing to think. And `xhigh` on a model without it comes down to high.
+        $model = $this->thinking(['off' => null, 'minimal' => null]);
+
+        $this->assertSame('low', $model->clampThinkingLevel('minimal'));
+        $this->assertSame('low', $model->clampThinkingLevel('off'));
+        $this->assertSame('high', $model->clampThinkingLevel('xhigh'));
+        $this->assertSame('medium', $model->clampThinkingLevel('medium'));
     }
 
     /** @param array<string, string|null> $map */

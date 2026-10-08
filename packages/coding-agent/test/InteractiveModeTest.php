@@ -1864,8 +1864,9 @@ final class InteractiveModeTest extends TestCase
         $this->type('/model haiku:high');
         $this->type(self::ENTER);
 
-        // Switches for the current session
-        $this->assertSame('claude-haiku-4-5', $this->session->model()?->id);
+        // Switches for the current session. `haiku` now resolves to Claude Haiku 5.5, the row
+        // upstream's generator adds by hand and pig's table now carries; it used to be 4.5.
+        $this->assertSame('claude-haiku-5-5', $this->session->model()?->id);
         $this->assertSame(ThinkingLevel::High, $this->session->thinkingLevel());
 
         // Does NOT overwrite global settings.json (matching upstream pi)
@@ -2192,9 +2193,10 @@ final class InteractiveModeTest extends TestCase
         $this->type('/model haiku');
         $this->type(self::ENTER);
 
-        $this->assertSame('claude-haiku-4-5', $this->session->model()?->id);
+        // Haiku 5.5 since the table carries upstream's hand-added row (see the test above).
+        $this->assertSame('claude-haiku-5-5', $this->session->model()?->id);
         $this->assertStringNotContainsString('Pick a model', $this->screen());
-        $this->assertStringContainsString('Model: claude-haiku-4-5', $this->screen());
+        $this->assertStringContainsString('Model: claude-haiku-5-5', $this->screen());
     }
 
     public function testAThinkingLevelCanRideAlongWithTheModel(): void

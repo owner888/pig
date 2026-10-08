@@ -1100,7 +1100,9 @@ final class GoogleTest extends TestCase
         // method by itself — and PHP 8.5 deprecates the call, which `phpunit.xml`'s
         // `failOnDeprecation` turns into a failure. It was the one call of its kind in the tree.
         $method = new \ReflectionMethod(Stream::class, 'translate');
-        $options = $method->invoke(null, $model, new SimpleStreamOptions(apiKey: 'k', reasoning: $effort));
+        // The conversation is the third argument now: upstream's `buildBaseOptions()` clamps the
+        // answer's ceiling to the room the context leaves, so the translation needs to see it.
+        $options = $method->invoke(null, $model, new \Pig\Ai\Context([]), new SimpleStreamOptions(apiKey: 'k', reasoning: $effort));
 
         $this->assertInstanceOf(GoogleOptions::class, $options);
 

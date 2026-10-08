@@ -41,14 +41,16 @@ final readonly class Usage
      */
     public function withCost(Model $model): self
     {
+        // Upstream's tier rule (`Pricing::ratesFor()`): the input the whole request read picks the
+        // rates, and every line below is billed at them — not only the tokens past the threshold.
+        $rates = $model->pricing->ratesFor($this->input + $this->cacheRead + $this->cacheWrite);
         $longWrite = $this->cacheWrite1h ?? 0;
         $shortWrite = $this->cacheWrite - $longWrite;
 
-        $input = $model->pricing->input / 1_000_000 * $this->input;
-        $output = $model->pricing->output / 1_000_000 * $this->output;
-        $cacheRead = $model->pricing->cacheRead / 1_000_000 * $this->cacheRead;
-        $cacheWrite = $model->pricing->cacheWrite / 1_000_000 * $shortWrite
-            + $model->pricing->input * 2 / 1_000_000 * $longWrite;
+        $input = $rates->input / 1_000_000 * $this->input;
+        $output = $rates->output / 1_000_000 * $this->output;
+        $cacheRead = $rates->cacheRead / 1_000_000 * $this->cacheRead;
+        $cacheWrite = ($rates->cacheWrite * $shortWrite + $rates->input * 2 * $longWrite) / 1_000_000;
 
         return new self(
             $this->input,

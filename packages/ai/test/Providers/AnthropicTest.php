@@ -362,8 +362,10 @@ final class AnthropicTest extends TestCase
 
         $this->assertSame('claude-sonnet-4-5', $body['model']);
         $this->assertTrue($body['stream']);
-        // maxTokens unset, so a third of the model's ceiling.
-        $this->assertSame(21_000, $body['max_tokens']);
+        // maxTokens unset, so the model's own ceiling — upstream's `options?.maxTokens ??
+        // model.maxTokens`. This used to expect a third of it (`intdiv(maxTokens, 3)`), a default
+        // upstream does not have.
+        $this->assertSame(63_000, $body['max_tokens']);
         $this->assertSame('be brief', $body['system'][0]['text']);
         $this->assertSame('ephemeral', $body['system'][0]['cache_control']['type']);
         $this->assertSame('read', $body['tools'][0]['name']);
@@ -863,7 +865,9 @@ final class AnthropicTest extends TestCase
         $tool = new Tool('read', 'Read a file', ['type' => 'object', 'properties' => ['path' => ['type' => 'string']], 'required' => ['path']]);
         [$head, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')], tools: [$tool]), $this->options());
 
-        $this->assertSame(['name', 'description', 'eager_input_streaming', 'input_schema'], array_keys($body['tools'][0]));
+        // `cache_control` last: the one tool here is also the last tool, which carries the cache
+        // breakpoint (`testTheLastToolCarriesTheCacheBreakpoint`).
+        $this->assertSame(['name', 'description', 'eager_input_streaming', 'input_schema', 'cache_control'], array_keys($body['tools'][0]));
         $this->assertTrue($body['tools'][0]['eager_input_streaming']);
         $this->assertStringNotContainsString('fine-grained-tool-streaming', $head);
     }
@@ -1489,6 +1493,277 @@ final class AnthropicTest extends TestCase
         $this->assertStringNotContainsString('"input":[]', $this->server->received());
     }
 
+    // ---- caching, session affinity -----------------------------------------------------------
+
+    public function testTheLastToolCarriesTheCacheBreakpoint(): void
+    {
+        // Upstream's `convertTools(…, toolCacheControl)`: the breakpoint on the last tool puts the
+        // tool list in the cached prefix. pig marked the system prompt and the last user block and
+        // left every tool out, so a change anywhere after the system prompt re-billed the tools.
+        $tools = [
+            new Tool('read', 'Read a file', ['type' => 'object']),
+            new Tool('write', 'Write a file', ['type' => 'object']),
+        ];
+        [, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')], tools: $tools), $this->options());
+
+        $this->assertArrayNotHasKey('cache_control', $body['tools'][0]);
+        $this->assertSame(['type' => 'ephemeral'], $body['tools'][1]['cache_control']);
+
+        // A compat saying the endpoint refuses the field there: no breakpoint on any tool.
+        [, $body] = $this->capture(
+            $this->model(compat: new AnthropicCompat(supportsCacheControlOnTools: false)),
+            new Context([new UserMessage('hi')], tools: $tools),
+            $this->options(),
+        );
+        $this->assertArrayNotHasKey('cache_control', $body['tools'][1]);
+        $this->assertSame(['type' => 'ephemeral'], $body['messages'][0]['content'][0]['cache_control']);
+    }
+
+    public function testLongRetentionIsAnHourOnEveryBreakpointAndNoneMarksNothing(): void
+    {
+        // Upstream's `getCacheControl()`: `long` adds `ttl: "1h"` (no beta goes with it), `none`
+        // sends no `cache_control` at all. pig sent the five-minute marker whatever was asked.
+        $context = new Context([new UserMessage('hi')], 'be brief', [new Tool('read', 'Read a file', ['type' => 'object'])]);
+
+        [$head, $body] = $this->capture($this->model(), $context, new AnthropicOptions(apiKey: 'test-key', cacheRetention: 'long'));
+        $hour = ['type' => 'ephemeral', 'ttl' => '1h'];
+        $this->assertSame($hour, $body['system'][0]['cache_control']);
+        $this->assertSame($hour, $body['tools'][0]['cache_control']);
+        $this->assertSame($hour, $body['messages'][0]['content'][0]['cache_control']);
+        $this->assertStringNotContainsString('anthropic-beta', $head);
+
+        // A compat without long retention keeps the five-minute marker.
+        [, $body] = $this->capture(
+            $this->model(compat: new AnthropicCompat(supportsLongCacheRetention: false)),
+            $context,
+            new AnthropicOptions(apiKey: 'test-key', cacheRetention: 'long'),
+        );
+        $this->assertSame(['type' => 'ephemeral'], $body['system'][0]['cache_control']);
+
+        $this->capture($this->model(), $context, new AnthropicOptions(apiKey: 'test-key', cacheRetention: 'none'));
+        $this->assertStringNotContainsString('cache_control', $this->server->received());
+    }
+
+    public function testPiCacheRetentionLongIsTheDefaultWhenNothingIsSaid(): void
+    {
+        // `resolveCacheRetention()`: "Defaults to "short" and uses PI_CACHE_RETENTION for backward
+        // compatibility."
+        $saved = getenv('PI_CACHE_RETENTION');
+        putenv('PI_CACHE_RETENTION=long');
+
+        try {
+            [, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')], 'be brief'), $this->options());
+            $this->assertSame(['type' => 'ephemeral', 'ttl' => '1h'], $body['system'][0]['cache_control']);
+        } finally {
+            $saved === false ? putenv('PI_CACHE_RETENTION') : putenv("PI_CACHE_RETENTION={$saved}");
+        }
+    }
+
+    public function testTheSessionGoesOutAsAnAffinityHeaderWhereTheCompatAsksForIt(): void
+    {
+        // Upstream's `createClient()`: OpenRouter by default sends `x-session-id`; a compat with
+        // `sendSessionAffinityHeaders` sends `x-session-affinity` (Fireworks' replica routing);
+        // anything else, or caching off, sends none.
+        $context = new Context([new UserMessage('hi')]);
+
+        [$head] = $this->capture($this->model(provider: 'openrouter'), $context, new AnthropicOptions(apiKey: 'test-key', sessionId: 's-1'));
+        $this->assertStringContainsString('x-session-id: s-1', $head);
+
+        [$head] = $this->capture($this->model(compat: new AnthropicCompat(sendSessionAffinityHeaders: true)), $context, new AnthropicOptions(apiKey: 'test-key', sessionId: 's-1'));
+        $this->assertStringContainsString('x-session-affinity: s-1', $head);
+
+        [$head] = $this->capture($this->model(), $context, new AnthropicOptions(apiKey: 'test-key', sessionId: 's-1'));
+        $this->assertStringNotContainsString('s-1', $head);
+
+        [$head] = $this->capture($this->model(provider: 'openrouter'), $context, new AnthropicOptions(apiKey: 'test-key', cacheRetention: 'none', sessionId: 's-1'));
+        $this->assertStringNotContainsString('s-1', $head);
+    }
+
+    // ---- tool choice, metadata ----------------------------------------------------------------
+
+    public function testToolChoiceAndTheUserIdGoOutInAnthropicsShape(): void
+    {
+        [, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')]), new AnthropicOptions(
+            apiKey: 'test-key',
+            toolChoice: 'any',
+            metadata: ['user_id' => 'u-42', 'team' => 'not sent'],
+        ));
+
+        $this->assertSame(['type' => 'any'], $body['tool_choice']);
+        $this->assertSame(['user_id' => 'u-42'], $body['metadata']);
+
+        [, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')]), new AnthropicOptions(
+            apiKey: 'test-key',
+            toolChoice: ['type' => 'tool', 'name' => 'read'],
+            metadata: ['user_id' => 42],
+        ));
+
+        $this->assertSame(['type' => 'tool', 'name' => 'read'], $body['tool_choice']);
+        // Only a string `user_id` is sent.
+        $this->assertArrayNotHasKey('metadata', $body);
+    }
+
+    // ---- empty signatures ----------------------------------------------------------------------
+
+    public function testAnUnsignedThoughtIsTextUnlessTheCompatAllowsAnEmptySignature(): void
+    {
+        $history = new Context([
+            new UserMessage('hi'),
+            $this->fromAnthropic([new ThinkingContent('pondering', null), new TextContent('done')], StopReason::Stop),
+            new UserMessage('again'),
+        ]);
+
+        [, $body] = $this->capture($this->model(), $history, $this->options());
+        $this->assertSame(['type' => 'text', 'text' => 'pondering'], $body['messages'][1]['content'][0]);
+
+        [, $body] = $this->capture($this->model(compat: new AnthropicCompat(allowEmptySignature: true)), $history, $this->options());
+        $this->assertSame(['type' => 'thinking', 'thinking' => 'pondering', 'signature' => ''], $body['messages'][1]['content'][0]);
+    }
+
+    public function testASignedThoughtWithNoTextStillGoesBack(): void
+    {
+        // `thinkingDisplay: "omitted"` returns thinking blocks with an empty `thinking` and a real
+        // signature. Upstream skips a block only when it has neither; pig skipped every empty one,
+        // and the next request was missing the signed block it had been given.
+        $history = new Context([
+            new UserMessage('hi'),
+            $this->fromAnthropic([new ThinkingContent('', 'sig-1'), new TextContent('done')], StopReason::Stop),
+            new UserMessage('again'),
+        ]);
+
+        [, $body] = $this->capture($this->model(), $history, $this->options());
+
+        $this->assertSame(['type' => 'thinking', 'thinking' => '', 'signature' => 'sig-1'], $body['messages'][1]['content'][0]);
+    }
+
+    // ---- server-side fallback ------------------------------------------------------------------
+
+    public function testAModelWithFallbacksAsksForThemAndTheirBeta(): void
+    {
+        $model = $this->model(compat: new AnthropicCompat(allowedFallbackModels: [
+            ['provider' => 'anthropic', 'model' => 'claude-opus-4-8', 'cost' => new Pricing(5.0, 25.0)],
+        ]));
+
+        [$head, $body] = $this->capture($model, new Context([new UserMessage('hi')]), $this->options());
+
+        $this->assertSame([['model' => 'claude-opus-4-8']], $body['fallbacks']);
+        $this->assertStringContainsString('anthropic-beta: server-side-fallback-2026-07-01', $head);
+
+        // And a model with none sends neither — Anthropic rejects the field there.
+        [$head, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')]), $this->options());
+        $this->assertArrayNotHasKey('fallbacks', $body);
+        $this->assertStringNotContainsString('server-side-fallback', $head);
+    }
+
+    public function testATurnAFallbackAnsweredIsPricedAtTheFallbacksRate(): void
+    {
+        // Upstream's `usageModel`: the response names the model that answered, and its entry in
+        // `allowedFallbackModels` carries the price. The message still names the model asked for.
+        $model = $this->model(compat: new AnthropicCompat(allowedFallbackModels: [
+            ['provider' => 'anthropic', 'model' => 'claude-opus-4-8', 'cost' => new Pricing(input: 5.0, output: 25.0)],
+        ]));
+
+        $message = $this->collectWith($model, [
+            ['message_start', ['message' => ['id' => 'msg_1', 'model' => 'claude-opus-4-8', 'usage' => ['input_tokens' => 1_000_000]]]],
+            ['content_block_start', ['index' => 0, 'content_block' => ['type' => 'fallback']]],
+            ['content_block_start', ['index' => 1, 'content_block' => ['type' => 'text']]],
+            ['content_block_delta', ['index' => 1, 'delta' => ['type' => 'text_delta', 'text' => 'ok']]],
+            ['content_block_stop', ['index' => 1]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => ['output_tokens' => 0]]],
+        ]);
+
+        $this->assertSame(StopReason::Stop, $message->stopReason);
+        $this->assertSame('claude-opus-4-8', $message->responseModel);
+        $this->assertSame('claude-sonnet-4-5', $message->model);
+        // The fallback block before any output is news, not content.
+        $this->assertCount(1, $message->content);
+        $this->assertEqualsWithDelta(5.0, $message->usage->cost->input, 1e-9);
+    }
+
+    public function testAFallbackAfterOutputHasStartedEndsTheTurn(): void
+    {
+        $message = $this->collectWith($this->model(), [
+            ['message_start', ['message' => ['usage' => []]]],
+            ['content_block_start', ['index' => 0, 'content_block' => ['type' => 'text']]],
+            ['content_block_delta', ['index' => 0, 'delta' => ['type' => 'text_delta', 'text' => 'half']]],
+            ['content_block_start', ['index' => 1, 'content_block' => ['type' => 'fallback']]],
+            ['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]],
+        ]);
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('Anthropic performed an unsupported mid-output model fallback', $message->errorMessage);
+    }
+
+    // ---- stop reasons --------------------------------------------------------------------------
+
+    public function testARefusalEndsAsAnErrorThatCarriesItsExplanation(): void
+    {
+        // Upstream's `mapStopReason()` and the throw after the stream: `stop_details.explanation`,
+        // else "The model refused to complete the request", on an error event. pig ended a refusal
+        // as a `done` with no message at all.
+        [$types, $message] = $this->collect($this->serveStream([
+            ['message_delta', ['delta' => ['stop_reason' => 'refusal', 'stop_details' => ['explanation' => 'Not this one.']], 'usage' => []]],
+        ]), new Context([new UserMessage('hi')]));
+
+        $this->assertContains('ErrorEvent', $types);
+        $this->assertNotContains('DoneEvent', $types);
+        $this->assertSame('Not this one.', $message->errorMessage);
+        $this->assertSame('refusal', $message->rawStopReason);
+
+        $this->server = new CannedServer();
+        [, $message] = $this->collect($this->serveStream([
+            ['message_delta', ['delta' => ['stop_reason' => 'refusal'], 'usage' => []]],
+        ]), new Context([new UserMessage('hi')]));
+        $this->assertSame('The model refused to complete the request', $message->errorMessage);
+    }
+
+    public function testSensitiveIsAnErrorAndAnUnknownReasonIsNotASilentStop(): void
+    {
+        [, $message] = $this->collect($this->serveStream([
+            ['message_delta', ['delta' => ['stop_reason' => 'sensitive'], 'usage' => []]],
+        ]), new Context([new UserMessage('hi')]));
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('Provider stopped with: sensitive', $message->errorMessage);
+
+        // A reason the API adds later used to read as a clean `stop`; upstream throws.
+        $this->server = new CannedServer();
+        [, $message] = $this->collect($this->serveStream([
+            ['message_delta', ['delta' => ['stop_reason' => 'model_context_window_exceeded'], 'usage' => []]],
+        ]), new Context([new UserMessage('hi')]));
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('Unhandled stop reason: model_context_window_exceeded', $message->errorMessage);
+    }
+
+    /** @param list<array{0: string, 1: array<string, mixed>}> $events */
+    private function collectWith(Model $model, array $events): AssistantMessage
+    {
+        $url = $this->serveStream($events);
+        $model = new Model(
+            $model->id,
+            $model->name,
+            $model->api,
+            $model->provider,
+            rtrim($url, '/'),
+            $model->contextWindow,
+            $model->maxTokens,
+            $model->reasoning,
+            $model->input,
+            $model->pricing,
+            $model->headers,
+            $model->compat,
+            $model->thinkingLevelMap,
+        );
+
+        return Async::run(function () use ($model): AssistantMessage {
+            $stream = $this->anthropic()->stream($model, new Context([new UserMessage('hi')]), $this->options());
+
+            foreach ($stream as $ignored) {
+            }
+
+            return $stream->result()->await();
+        });
+    }
+
     private function sendAndCapture(Context $context, ?float $temperature = null): array
     {
         $url = $this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]]);
@@ -1532,12 +1807,13 @@ final class AnthropicTest extends TestCase
         ?Pricing $pricing = null,
         string $id = 'claude-sonnet-4-5',
         OpenAiCompat|AnthropicCompat|null $compat = null,
+        string $provider = 'anthropic',
     ): Model {
         return new Model(
             $id,
             'Claude Sonnet 4.5',
             Api::AnthropicMessages,
-            'anthropic',
+            $provider,
             rtrim($baseUrl, '/'),
             200_000,
             63_000,
@@ -1555,6 +1831,7 @@ final class AnthropicTest extends TestCase
      */
     private function capture(Model $model, Context $context, AnthropicOptions $options): array
     {
+        $this->server = new CannedServer();
         $url = $this->serveStream([['message_delta', ['delta' => ['stop_reason' => 'end_turn'], 'usage' => []]]]);
         $model = new Model(
             $model->id,

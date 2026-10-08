@@ -677,7 +677,9 @@ final class AgentSessionTest extends TestCase
         $ordinary = $this->session(['one'], null, $this->thinkingModel());
         $this->assertNotContains(ThinkingLevel::Xhigh, $ordinary->availableThinkingLevels());
 
-        $capable = $this->session(['one'], null, $this->thinkingModel('gpt-5.2'));
+        // The map says so, as upstream requires; the id alone used to (`gpt-5.2` was on an id list
+        // pig kept because its OpenAI rows had no maps — they carry upstream's now).
+        $capable = $this->session(['one'], null, $this->thinkingModel('gpt-5.2', ['xhigh' => 'xhigh']));
         $this->assertContains(ThinkingLevel::Xhigh, $capable->availableThinkingLevels());
     }
 
@@ -1200,6 +1202,25 @@ final class AgentSessionTest extends TestCase
         // A sleeping retry is not "streaming", so a guard on that alone leaves it running —
         // and what it is rescuing is a turn from the conversation just walked away from.
         $this->assertFalse($session->isRetrying());
+    }
+
+    public function testTheAgentCarriesTheSessionFilesIdAsItsSessionId(): void
+    {
+        // Upstream's agent is handed the session manager's id as `sessionId`, and every request
+        // carries it: Anthropic's session affinity and the Responses API's `prompt_cache_key` key on
+        // it. pig had no session id on a request at all. A switch of file switches it; a session
+        // that is not written down has none.
+        $store = SessionManager::create(sys_get_temp_dir());
+        $other = SessionManager::create(sys_get_temp_dir());
+        $session = $this->session([], store: $store);
+
+        $this->assertSame($store->id, $session->agent->sessionId);
+
+        $session->writeTo($other);
+        $this->assertSame($other->id, $session->agent->sessionId);
+
+        $session->writeTo(null);
+        $this->assertNull($session->agent->sessionId);
     }
 
     public function testSwitchingSessionStopsARetryThatWasStillWaiting(): void
@@ -2494,9 +2515,10 @@ final class AgentSessionTest extends TestCase
         return $text;
     }
 
-    private function thinkingModel(string $id = 'test-thinker'): Model
+    /** @param array<string, string|null> $levels */
+    private function thinkingModel(string $id = 'test-thinker', array $levels = []): Model
     {
-        return new Model($id, 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000, true);
+        return new Model($id, 'Test', Api::AnthropicMessages, 'anthropic', 'http://127.0.0.1:1', 200_000, 64_000, true, thinkingLevelMap: $levels);
     }
 
     /**

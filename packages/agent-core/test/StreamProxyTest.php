@@ -22,6 +22,7 @@ use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Model;
 use Pig\Ai\OpenAiCompat;
 use Pig\Ai\Pricing;
+use Pig\Ai\PricingTier;
 use Pig\Ai\ReasoningEffort;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StopReason;
@@ -323,17 +324,83 @@ final class StreamProxyTest extends TestCase
 
         $sent = $this->server->receivedJson()['context'];
 
+        // Upstream's `TranscriptContext`: `{messages}` only, the system prompt and the tools being
+        // its leading system message (`createInitialSystemMessage()`). This used to assert
+        // `systemPrompt` and `tools` beside the messages — pig's `Context`, which a gateway reading
+        // upstream's shape does not look for, so it ran the turn with neither.
+        $this->assertSame(['messages'], array_keys($sent));
+        $this->assertSame(['system', 'user', 'assistant', 'toolResult'], array_column($sent['messages'], 'role'));
+        $this->assertSame([
+            'role' => 'system',
+            'content' => 'be brief',
+            'toolsAdded' => [['name' => 'read', 'description' => 'Read a file', 'parameters' => [
+                'type' => 'object',
+                'required' => ['path'],
+            ]]],
+            'timestamp' => 0,
+        ], $sent['messages'][0]);
+
         // The same encoder the session file uses, which is the point of `MessageJson` existing.
-        $this->assertSame('be brief', $sent['systemPrompt']);
-        $this->assertSame(['user', 'assistant', 'toolResult'], array_column($sent['messages'], 'role'));
-        $this->assertSame('toolCall', $sent['messages'][1]['content'][0]['type']);
-        $this->assertSame(['path' => 'a.txt'], $sent['messages'][1]['content'][0]['arguments']);
-        $this->assertSame('call-1', $sent['messages'][2]['toolCallId']);
-        $this->assertSame(['lines' => 1], $sent['messages'][2]['details']);
-        $this->assertSame([['name' => 'read', 'description' => 'Read a file', 'parameters' => [
-            'type' => 'object',
-            'required' => ['path'],
-        ]]], $sent['tools']);
+        $this->assertSame('toolCall', $sent['messages'][2]['content'][0]['type']);
+        $this->assertSame(['path' => 'a.txt'], $sent['messages'][2]['content'][0]['arguments']);
+        $this->assertSame('call-1', $sent['messages'][3]['toolCallId']);
+        $this->assertSame(['lines' => 1], $sent['messages'][3]['details']);
+    }
+
+    public function testAToolsConstrainedSamplingTravelsWithIt(): void
+    {
+        // Upstream sends the `Tool` whole; pig dropped `constrainedSampling`, so a proxied tool that
+        // asked for strict or grammar sampling got neither.
+        $context = new Context(
+            [new UserMessage([new TextContent('hi')])],
+            null,
+            [new Tool('apply', 'Apply a patch', ['type' => 'object'], ['type' => 'json_schema', 'strict' => 'prefer'])],
+        );
+
+        $this->turn([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]], $context);
+
+        $system = $this->server->receivedJson()['context']['messages'][0];
+        // No prompt, so the content is upstream's `systemPrompt ?? ""`.
+        $this->assertSame('', $system['content']);
+        $this->assertSame(['type' => 'json_schema', 'strict' => 'prefer'], $system['toolsAdded'][0]['constrainedSampling']);
+    }
+
+    public function testNoPromptAndNoToolsMeansNoSystemMessage(): void
+    {
+        $this->turn([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]], new Context([new UserMessage([new TextContent('hi')])]));
+
+        $this->assertSame(['user'], array_column($this->server->receivedJson()['context']['messages'], 'role'));
+    }
+
+    public function testTheThinkingLevelMapAndPriceTiersGoWithTheModel(): void
+    {
+        // Upstream sends the model whole. Without `thinkingLevelMap` the server cannot clamp a
+        // level the model does not have, or name it the way the model does; without `tiers` it
+        // prices a long prompt at the short rate.
+        $model = new Model('claude-haiku-5-5', 'Claude Haiku 5.5', Api::AnthropicMessages, 'anthropic', 'https://api.anthropic.com', 1_000_000, 128_000, true,
+            pricing: new Pricing(0.1, 0.5, 0.01, 0.125, [new PricingTier(100_000, 0.5, 2.5, 0.05, 0.625)]),
+            compat: new AnthropicCompat(allowedFallbackModels: [['provider' => 'anthropic', 'model' => 'claude-opus-4-8', 'cost' => new Pricing(5.0, 25.0)]]),
+            thinkingLevelMap: ['off' => null, 'xhigh' => 'xhigh']);
+        $url = $this->server->start([self::sse([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]])]);
+        $proxy = new StreamProxy(rtrim($url, '/'), 't');
+
+        Async::run(static function () use ($proxy, $model): void {
+            foreach ($proxy->stream($model, new Context([new UserMessage([new TextContent('hi')])])) as $ignored) {
+            }
+        });
+
+        $sent = $this->server->receivedJson()['model'];
+        $this->assertSame(['off' => null, 'xhigh' => 'xhigh'], $sent['thinkingLevelMap']);
+        $this->assertSame([['inputTokensAbove' => 100_000, 'input' => 0.5, 'output' => 2.5, 'cacheRead' => 0.05, 'cacheWrite' => 0.625]], $sent['cost']['tiers']);
+        $this->assertSame('claude-opus-4-8', $sent['compat']['allowedFallbackModels'][0]['model']);
+        $this->assertSame(5, $sent['compat']['allowedFallbackModels'][0]['cost']['input']);
+
+        // A model with no map and a flat price sends neither key.
+        $this->setUp();
+        $this->turn([['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]]);
+        $plain = $this->server->receivedJson()['model'];
+        $this->assertArrayNotHasKey('thinkingLevelMap', $plain);
+        $this->assertArrayNotHasKey('tiers', $plain['cost']);
     }
 
     public function testAToolResultThatIsNotUtf8StillReachesTheGateway(): void
@@ -353,9 +420,26 @@ final class StreamProxyTest extends TestCase
         // then so did every turn after it, because the result stays in the conversation.
         $this->assertSame(StopReason::Stop, $message->stopReason, $message->errorMessage ?? '');
 
-        $text = $this->server->receivedJson()['context']['messages'][1]['content'][0]['text'];
+        // `[2]`: the system message carrying 'be brief' leads the transcript.
+        $text = $this->server->receivedJson()['context']['messages'][2]['content'][0]['text'];
         $this->assertStringContainsString('header', $text);
         $this->assertStringContainsString('footer', $text);
+    }
+
+    public function testTheCacheAndSessionOptionsTravelAndUnsetOnesAreLeftOut(): void
+    {
+        // Upstream's `buildProxyRequestOptions()` sends `cacheRetention`, `sessionId` and `metadata`
+        // too, and `JSON.stringify` leaves out whatever is undefined.
+        $this->turn(
+            [['type' => 'done', 'reason' => 'stop', 'usage' => self::usage()]],
+            null,
+            new SimpleStreamOptions(cacheRetention: 'long', sessionId: 's-9', metadata: ['user_id' => 'u']),
+        );
+
+        $this->assertSame(
+            ['cacheRetention' => 'long', 'sessionId' => 's-9', 'metadata' => ['user_id' => 'u']],
+            $this->server->receivedJson()['options'],
+        );
     }
 
     public function testTheOptionsGoOverAsThreeFields(): void
@@ -968,15 +1052,16 @@ final class StreamProxyTest extends TestCase
         // Two requests, and the second one carried the tool result back — which is the part a
         // gateway that ignores its input cannot prove on its own.
         $this->assertCount(2, $this->gatewayRequests);
+        // Each led by the system message carrying the prompt and the tool — upstream's transcript.
         $this->assertSame(
-            ['user'],
+            ['system', 'user'],
             array_column($this->gatewayRequests[0]['context']['messages'], 'role'),
         );
         $this->assertSame(
-            ['user', 'assistant', 'toolResult'],
+            ['system', 'user', 'assistant', 'toolResult'],
             array_column($this->gatewayRequests[1]['context']['messages'], 'role'),
         );
-        $this->assertSame('hello', $this->gatewayRequests[1]['context']['messages'][2]['content'][0]['text']);
+        $this->assertSame('hello', $this->gatewayRequests[1]['context']['messages'][3]['content'][0]['text']);
     }
 
     /**

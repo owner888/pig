@@ -135,6 +135,29 @@ final class GenerateModelsTest extends TestCase
         self::assertStringContainsString("'gpt-5-chat-latest' => ['GPT-5 Chat Latest',", $output);
     }
 
+    public function testACataloguesContextTierIsWrittenAsTheRowsTiers(): void
+    {
+        // Upstream's `getModelsDevCost()`: a `context` tier becomes `{inputTokensAbove: size, …}`,
+        // a rate it does not list keeping the base price; any other kind of tier is skipped.
+        self::assertStringContainsString(
+            "'tiered' => ['Tiered', 1_000_000, 64_000, true, 3.0, 15.0, 0.3, 3.75, 'tiers' => [[200_000, 6.0, 22.5, 0.3, 3.75]]],",
+            $this->generated(),
+        );
+    }
+
+    public function testClaudeHaikuFiveFiveIsAddedByHandWithItsTier(): void
+    {
+        // Upstream's own hand-added row, "until models.dev includes it", written exactly as the
+        // table carries it.
+        $output = $this->generated();
+
+        self::assertStringContainsString('anthropic/claude-haiku-5-5 added by hand', $output);
+        self::assertStringContainsString(
+            "'claude-haiku-5-5' => ['Claude Haiku 5.5', 1_000_000, 128_000, true, 0.1, 0.5, 0.01, 0.125, 'tiers' => [[100_000, 0.5, 2.5, 0.05, 0.625]]],",
+            $output,
+        );
+    }
+
     public function testAMissingLimitIsComplainedAboutRatherThanDefaultedQuietly(): void
     {
         // Upstream's `|| 4096` turns a missing window into a number small enough to make every
@@ -301,6 +324,16 @@ final class GenerateModelsTest extends TestCase
                     'name' => 'Text Only', 'tool_call' => true,
                     'limit' => ['context' => 200_000, 'output' => 8_192],
                     'cost' => $priced(1, 2), 'modalities' => ['input' => ['text']],
+                ],
+                // A long-context tier, as models.dev writes one, and one of a kind upstream skips.
+                'tiered' => [
+                    'name' => 'Tiered', 'tool_call' => true, 'reasoning' => true,
+                    'limit' => ['context' => 1_000_000, 'output' => 64_000],
+                    'cost' => ['input' => 3, 'output' => 15, 'cache_read' => 0.3, 'cache_write' => 3.75, 'tiers' => [
+                        ['tier' => ['type' => 'context', 'size' => 200_000], 'input' => 6, 'output' => 22.5],
+                        ['tier' => ['type' => 'batch'], 'input' => 1],
+                    ]],
+                    'modalities' => ['input' => ['text', 'image']],
                 ],
             ]],
             'openai' => ['models' => [

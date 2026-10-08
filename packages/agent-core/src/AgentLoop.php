@@ -313,6 +313,7 @@ final class AgentLoop
             $signal,
             $apiKey,
             $config->reasoning,
+            sessionId: $config->sessionId,
         );
 
         $response = $streamFn !== null

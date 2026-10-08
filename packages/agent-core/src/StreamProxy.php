@@ -11,6 +11,8 @@ use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Model;
+use Pig\Ai\Pricing;
+use Pig\Ai\PricingTier;
 use Pig\Ai\Providers\AssistantMessageBuilder;
 use Pig\Ai\SimpleStreamOptions;
 use Pig\Ai\StartEvent;
@@ -50,9 +52,10 @@ use Throwable;
  *
  * The wire shape is upstream's exactly, so a gateway written for pi serves pig unchanged:
  * `POST {proxyUrl}/api/stream`, `Authorization: Bearer …`, and a body of
- * `{model, context, options: {temperature, maxTokens, reasoning}}`. That is why the request is
- * built from `Ai\Utils\MessageJson` — the same encoder the session file uses, because upstream
- * sends the same objects to both and a second hand-written notion of a message would drift from it.
+ * `{model, context: {messages}, options}` — the context as upstream's normalised transcript, whose
+ * first message is the system prompt and the tools. That is why the request is built from
+ * `Ai\Utils\MessageJson` — the same encoder the session file uses, because upstream sends the same
+ * objects to both and a second hand-written notion of a message would drift from it.
  *
  * `model` goes over the wire whole, `baseUrl` and all, because upstream's server reads the
  * provider and api off it to decide who to call. A gateway is therefore as trusted as the provider
@@ -150,8 +153,11 @@ final class StreamProxy
     /**
      * The request, in upstream's shape.
      *
-     * `reasoning` is the enum's own string, which is what upstream sends: its `reasoning` is the
-     * same five words.
+     * `options` is upstream's `buildProxyRequestOptions()`, the fields of it pig's options have —
+     * `temperature`, `maxTokens`, `reasoning` (the enum's own string, upstream's word for the same
+     * level), `cacheRetention`, `sessionId` and `metadata` — each left out when unset, as
+     * `JSON.stringify` leaves out an `undefined`. Not sent because pig has no such option:
+     * `samplingParams`, `headers`, `transport`, `thinkingBudgets`, `maxRetryDelayMs`.
      *
      * `JSON_INVALID_UTF8_SUBSTITUTE` because a conversation holds whatever the tools read, and
      * `read` and `bash` hand back a file's own bytes. Without it one latin-1 log made
@@ -171,11 +177,14 @@ final class StreamProxy
         $body = json_encode([
             'model' => self::encodeModel($model),
             'context' => self::encodeContext($context),
-            'options' => [
+            'options' => (object) array_filter([
                 'temperature' => $options?->temperature,
                 'maxTokens' => $options?->maxTokens,
                 'reasoning' => $options?->reasoning?->value,
-            ],
+                'cacheRetention' => $options?->cacheRetention,
+                'sessionId' => $options?->sessionId,
+                'metadata' => $options?->metadata,
+            ], static fn (mixed $value): bool => $value !== null),
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
 
         if ($body === false) {
@@ -209,6 +218,9 @@ final class StreamProxy
  * `contextWindow` and `maxTokens` are sent as upstream orders them, not because order matters to
  * JSON but because a diff against `types.ts` is how the next person checks this.
      *
+     * `thinkingLevelMap` goes when the model has one — nulls and all, since a null is "this level
+     * does not exist" and the server clamps by it — and `cost.tiers` when the price has tiers.
+     *
      * @return array<string, mixed>
      */
     private static function encodeModel(Model $model): array
@@ -220,13 +232,9 @@ final class StreamProxy
             'provider' => $model->provider,
             'baseUrl' => $model->baseUrl,
             'reasoning' => $model->reasoning,
+            ...($model->thinkingLevelMap === [] ? [] : ['thinkingLevelMap' => $model->thinkingLevelMap]),
             'input' => $model->input,
-            'cost' => [
-                'input' => $model->pricing->input,
-                'output' => $model->pricing->output,
-                'cacheRead' => $model->pricing->cacheRead,
-                'cacheWrite' => $model->pricing->cacheWrite,
-            ],
+            'cost' => self::encodeCost($model->pricing),
             'contextWindow' => $model->contextWindow,
             'maxTokens' => $model->maxTokens,
         ];
@@ -243,6 +251,19 @@ final class StreamProxy
                 'supportsTemperature' => $model->compat->supportsTemperature,
                 'supportsEagerToolInputStreaming' => $model->compat->supportsEagerToolInputStreaming,
                 'supportsMidConvoEffort' => $model->compat->supportsMidConvoEffort,
+                'supportsLongCacheRetention' => $model->compat->supportsLongCacheRetention,
+                'sendSessionAffinityHeaders' => $model->compat->sendSessionAffinityHeaders,
+                'sessionAffinityFormat' => $model->compat->sessionAffinityFormat,
+                'supportsCacheControlOnTools' => $model->compat->supportsCacheControlOnTools,
+                'allowEmptySignature' => $model->compat->allowEmptySignature,
+                'allowedFallbackModels' => $model->compat->allowedFallbackModels === null ? null : array_map(
+                    static fn (array $fallback): array => [
+                        'provider' => $fallback['provider'],
+                        'model' => $fallback['model'],
+                        'cost' => self::encodeCost($fallback['cost']),
+                    ],
+                    $model->compat->allowedFallbackModels,
+                ),
             ], static fn (mixed $value): bool => $value !== null);
         } elseif ($model->compat !== null) {
             // Upstream's key names, one per pig field, and
@@ -269,27 +290,74 @@ final class StreamProxy
                 'openRouterRouting' => $model->compat->openRouterRouting === [] ? new \stdClass() : $model->compat->openRouterRouting,
                 'vercelGatewayRouting' => $model->compat->vercelGatewayRouting === [] ? new \stdClass() : $model->compat->vercelGatewayRouting,
                 'supportsOpenAIGrammarTools' => $model->compat->grammarTools,
+                // The Responses keys, under `OpenAIResponsesCompat`'s names.
+                'sessionAffinityFormat' => $model->compat->sessionAffinityFormat,
+                'supportsLongCacheRetention' => $model->compat->supportsLongCacheRetention,
+                'supportsExplicitPromptCacheMode' => $model->compat->supportsExplicitPromptCacheMode,
+                'supportsMaxOutputTokens' => $model->compat->supportsMaxOutputTokens,
             ], static fn (mixed $value): bool => $value !== null);
         }
 
         return $encoded;
     }
 
-    /** @return array<string, mixed> */
-    private static function encodeContext(Context $context): array
+    /**
+     * Upstream's `ModelCost`: the four rates, and `tiers` only when there are any.
+     *
+     * @return array<string, mixed>
+     */
+    private static function encodeCost(Pricing $pricing): array
     {
         return [
-            'systemPrompt' => $context->systemPrompt,
-            'messages' => array_values(array_filter(array_map(
-                MessageJson::encode(...),
-                $context->messages,
-            ), static fn (?array $message): bool => $message !== null)),
-            'tools' => array_map(static fn (Tool $tool): array => [
-                'name' => $tool->name,
-                'description' => $tool->description,
-                'parameters' => $tool->parameters,
-            ], $context->tools),
+            'input' => $pricing->input,
+            'output' => $pricing->output,
+            'cacheRead' => $pricing->cacheRead,
+            'cacheWrite' => $pricing->cacheWrite,
+            ...($pricing->tiers === [] ? [] : ['tiers' => array_map(static fn (PricingTier $tier): array => [
+                'inputTokensAbove' => $tier->inputTokensAbove,
+                'input' => $tier->input,
+                'output' => $tier->output,
+                'cacheRead' => $tier->cacheRead,
+                'cacheWrite' => $tier->cacheWrite,
+            ], $pricing->tiers)]),
         ];
+    }
+
+    /**
+     * The context as upstream sends it: a `TranscriptContext`, `{messages}`, whose first message is
+     * upstream's `createInitialSystemMessage()` — `{role: "system", content: <system prompt>,
+     * toolsAdded: <tools>, timestamp: 0}`, there only when there is a prompt or a tool, `toolsAdded`
+     * only when there are tools. pig keeps the two on `Context`, and used to send them as
+     * `systemPrompt` and `tools` beside the messages: a gateway reading upstream's shape saw neither.
+     *
+     * A tool is upstream's `Tool`: name, description, parameters, and `constrainedSampling` when it
+     * has one — without it a proxied tool that asked for strict or grammar sampling got neither.
+     *
+     * @return array<string, mixed>
+     */
+    private static function encodeContext(Context $context): array
+    {
+        $messages = array_values(array_filter(array_map(
+            MessageJson::encode(...),
+            $context->messages,
+        ), static fn (?array $message): bool => $message !== null));
+        $systemPrompt = $context->systemPrompt ?? '';
+
+        if ($systemPrompt !== '' || $context->tools !== []) {
+            array_unshift($messages, [
+                'role' => 'system',
+                'content' => $systemPrompt,
+                ...($context->tools === [] ? [] : ['toolsAdded' => array_map(static fn (Tool $tool): array => [
+                    'name' => $tool->name,
+                    'description' => $tool->description,
+                    'parameters' => $tool->parameters,
+                    ...($tool->constrainedSampling === null ? [] : ['constrainedSampling' => $tool->constrainedSampling]),
+                ], $context->tools)]),
+                'timestamp' => 0,
+            ]);
+        }
+
+        return ['messages' => $messages];
     }
 
     /**

@@ -974,11 +974,27 @@ extension's models carry the compat the extension wrote and nothing derived from
 spreads the definition. A thinking turn sends `display: "summarized"` unless
 `AnthropicOptions::$thinkingDisplay` says otherwise, and a turn without thinking (`thinkingEnabled:
 false`, which `Stream::simple()` always says) sends `thinking: {type: "disabled"}` unless the model's
-`thinkingLevelMap` has `off: null`. `Models::anthropicThinkingLevelMap()` writes each Claude's whole
-map as upstream's generator does — `max` on the adaptive 4.6 models, `xhigh`/`max` from Opus 4.7 on,
-`off: null` on Fable 5 and the managed-effort models, the full map on the 5.5 overrides, and
-Copilot's `minimal: "low"` overrides — so `xhigh` is offered exactly where upstream offers it (pig
-has no `max` level; those entries are carried and unread). `temperature` is left out of a thinking
+`thinkingLevelMap` has `off: null`. `Models::thinkingLevelMap()` writes each built-in model's whole
+map as upstream's generator (`applyThinkingLevelMetadata()`) does — for Claude `max` on the adaptive
+4.6 models, `xhigh`/`max` from Opus 4.7 on, `off: null` on Fable 5 and the managed-effort models, the
+full map on the 5.5 overrides and Copilot's `minimal: "low"` overrides; for OpenAI and Copilot GPT
+`off: null` on a Responses `gpt-5…`, `off: "none"` on upstream's none-reasoning list, `xhigh` from
+gpt-5.2 on, `max` on gpt-5.6/gpt-6, the whole GPT-6 maps, Copilot's `minimal: "low"` on `gpt-5…` —
+so `xhigh` is offered exactly where upstream offers it (pig has no `max` level; those entries are
+carried and unread). The `max_tokens` default is upstream's: `options.maxTokens ?? model.maxTokens`
+in the provider, and `Stream::simple()` always says — the model's ceiling cut to the room the
+conversation leaves (`clampMaxTokensToContext()`, `Utils\Estimate`), and on a budget-thinking turn
+raised by the budget (minimal 1,024, low 2,048, medium 8,192, high 16,384) up to the model's own, the
+budget cut to leave 1,024 for the answer. Caching is upstream's `getCacheControl()`: breakpoints on the
+system prompt, the **last tool** (unless `supportsCacheControlOnTools: false`) and the last user
+block, `ttl: "1h"` for `cacheRetention: long` (or `PI_CACHE_RETENTION=long`), none at all for `none`;
+the session id goes out as `x-session-affinity` (`x-session-id` for OpenRouter's format) where the
+compat asks for it. `toolChoice` and `metadata.user_id` go out as upstream sends them. A model with
+`allowedFallbackModels` (Fable 5 → Opus 4.8/5, as upstream's generator writes it) sends `fallbacks`
+and the `server-side-fallback` beta, a turn the fallback answered is priced at the fallback's rate, and
+a `fallback` block after output has started ends the turn. A refusal, a `sensitive` stop and an
+unknown stop reason all end as an error event with upstream's message; thinking with no signature
+goes back as text unless the compat says `allowEmptySignature`. `temperature` is left out of a thinking
 turn, of a managed-effort model's turn and of a model whose compat says `supportsTemperature: false`
 (Opus 4.7+). Each tool goes out with `eager_input_streaming: true`; the
 `fine-grained-tool-streaming` beta is sent only for a request with tools to a model whose compat
@@ -1047,8 +1063,16 @@ no counterpart anywhere else:
   `input_image` (`detail: "auto"`, data URL) per image; without images, or for a model that takes
   none, it is the string (text, else `(see attached image)`, else `(no tool output)`).
 
-`# Juice: 0 !important` is not a joke: gpt-5 has no documented way to turn reasoning off, and
-that developer message is what upstream found works.
+The request is upstream's `buildParams()`: `store: false` always; `prompt_cache_key` (the session
+id, cut to 64 code points) unless `cacheRetention` is `none`, with `prompt_cache_retention: "24h"` for
+`long` — or, on the GPT-5.6-and-later models that take it (`supportsExplicitPromptCacheMode`),
+`prompt_cache_options` instead; `max_output_tokens` never below 16; `service_tier` and `tool_choice`
+when asked. The effort is what the model's `thinkingLevelMap` calls the level, and **thinking off is
+`reasoning: {effort: map.off ?? "none"}`** — nothing for a map whose `off` is null, nothing for
+Copilot. Only an `incomplete` whose reason is `max_output_tokens` is `length`; any other reason ends
+the turn as an error (`Response incomplete: <reason>`). A tool call whose `output_item.done` never
+arrived is refused rather than handed to the agent, and a call's `namespace` is kept and replayed to
+the same model.
 
 `Providers\Google` is upstream's `google.ts` — Gemini, and the shape furthest from the other
 three. A chunk carries a list of *parts*, and a part is text, or thinking (text with
@@ -2437,7 +2461,11 @@ $agent = new Agent(new AgentOptions(streamFn: $proxy->stream(...)));
 ```
 
 The wire shape is upstream's, so a gateway written for pi serves pig unchanged: `POST
-{proxyUrl}/api/stream`, `Authorization: Bearer …`, a body of `{model, context, options}`, and
+{proxyUrl}/api/stream`, `Authorization: Bearer …`, a body of `{model, context, options}` — the
+model whole (its `thinkingLevelMap`, `cost.tiers` and every compat key included), the context as
+upstream's transcript `{messages}` led by a `system` message carrying the prompt and the tools
+(`constrainedSampling` and all), the options pig has (`temperature`, `maxTokens`, `reasoning`,
+`cacheRetention`, `sessionId`, `metadata`, each only when set) — and
 events back with the `partial` field stripped to save bandwidth — the client rebuilds it.
 
 **That rebuilding is the whole file.** `AssistantMessage` is readonly here, so there is no object to
@@ -7855,9 +7883,6 @@ as coverage.* `stopReason()` looked complete — it names `incomplete` — and n
 deliver that word. The one place to check is the caller's event list, which is the third time this
 file has arrived at *read the other end*.
 
-**Upstream handles neither event**, so this is a divergence rather than a port correction. Its
-stream ends the same way and its `stopReason` has the same unreachable arm.
-
 The same run also produced a bare **`unknown error`** for an oversized prompt, which is
 `errorText()` reading `$data['message']` on an `error` event that did not carry it there. Both
 shapes are read now — flat and nested under `error` — and **the fallback is the payload itself**
@@ -7873,7 +7898,8 @@ and the documented flat shape is not what arrives. Two things follow: reading on
 path loses the whole message, and `/exceeds the context window/i` — OpenAI's own row in
 `Ai\Utils\Overflow`, inherited from upstream and never checked against the API — **matches.** The
 truncation case came back `ok` as well: `response.incomplete` now ends the turn as `Length` with its
-usage intact. *The fallback that prints the payload is what turned "which shape is it" from a guess
+usage intact — when its reason is `max_output_tokens`; any other reason is an error, as upstream's
+`mapStopReason()` has it. *The fallback that prints the payload is what turned "which shape is it" from a guess
 into a line of output.*
 
 Regression tests: `OpenAiResponsesTest::testAnIncompleteResponseIsLengthAndKeepsItsUsage`,
@@ -8013,7 +8039,7 @@ Testing them needs one trick worth knowing: with a non-empty key, `endpoint()` a
 server never sees it. The tests pass an empty key, which is the branch that keeps the model's own
 base URL.
 
-Two deviations in the request bodies that are **deliberate** and now written down:
+One deviation in the request bodies that is **deliberate** and now written down:
 
 - **Gemini's public endpoint gets an explicit "no thinking"** (upstream's
   `getDisabledGoogleThinkingConfig()`) when nothing asked for thinking at all, where upstream sends
@@ -8021,10 +8047,6 @@ Two deviations in the request bodies that are **deliberate** and now written dow
   no — it thinks by default — so upstream's "off" is really "Gemini decides". pig says no. (The
   Code Assist endpoint is the opposite way round: it rejects a `thinkingConfig` on a model that
   cannot think, and reads its absence as none, so that one sends nothing.)
-- **The `# Juice: 0 !important` hack for gpt-5** keys off `$model->id` where upstream reads
-  `model.name`. Upstream's registry names are `GPT-5.2` and the like, so `startsWith("gpt-5")` on
-  the name is false and their own workaround never fires; pig's check is the one their comment
-  describes.
 
 ### Every Anthropic turn's input count was wiped out by its own last event
 
@@ -10453,12 +10475,8 @@ depends on `pig/async` and nothing else — it has never heard of `ThinkingLevel
 `supportsXhigh()`) and `ThinkingLevel` carries the enum half (`supportedBy()`, `clampedFor()`).
 Writing it the other way round inverts the package layering, and the first draft did.
 
-**`xhigh` keeps its hardcoded id list as a fallback**, which is a deviation. Upstream can insist
-xhigh be opted into through the map because every model it ships carries one; pig's generated
-tables carry none, so a model that says nothing falls back to the list and `gpt-5.2` keeps the
-level it has. The map still wins when it mentions xhigh at all — written as `idList || map` instead
-of `map ?: idList` it passes everything except a `models.json` that redeclares one of those three
-ids with `"xhigh": null`, which is the test that had to be added to kill that mutation.
+**`xhigh` is offered only when the map names it**, upstream's rule; `Models` writes the generator's
+maps on the OpenAI and Copilot GPT rows, so `gpt-5.2` and later have it from their row.
 
 **Two contracts were changed on purpose.**
 
@@ -11382,7 +11400,7 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 
 **避坑规则**：
 - `AnthropicOptions::$thinkingEnabled` 是三态：true 开、false 明说关、null 什么都不说；只有 false 才发 disabled。
-- 发 disabled 依赖 `off: null` 元数据：Fable 5、managed-effort 的 Claude、5.5 系列在 `Models::anthropicThinkingLevelMap()` 里标了，加新 Claude 时照 upstream 生成器补。
+- 发 disabled 依赖 `off: null` 元数据：Fable 5、managed-effort 的 Claude、5.5 系列在 `Models::thinkingLevelMap()` 里标了，加新 Claude 时照 upstream 生成器补。
 - 测试：`AnthropicTest::testThinkingSwitchedOffIsSaidRatherThanLeftToTheApi`、`testNothingIsSaidWhereOffIsNotALevelOrNothingWasAsked`、`testAThinkingTurnAsksForSummarizedThinkingUnlessTheCallerSaysOtherwise`，`ModelsTest::testTheClaudeModelsThatCannotStopThinkingSaySo`，`StreamTest::testReasoningBecomesAThinkingBudget`。
 
 ### models.json 的 OpenRouter / Vercel 路由偏好被丢掉
@@ -11393,7 +11411,7 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 
 **避坑规则**：
 - 读 `$model->compat`（模型自己说的），不读 `OpenAiCompat::resolve()` 的结果；`{}` 也算说了，发 `{}` 不发 `[]`。
-- 新增 compat 对象键时，`CustomModels::mergeCompat()` 的列表、`StreamProxy` 的编码一起改。
+- 新增 compat 对象键时，`CustomModels::OBJECT_KEYS`（合并和保留对象共用）、`StreamProxy` 的编码一起改。
 - 测试：`OpenAiCompletionsTest::testOpenRouterRoutingIsSentAsTheProviderField`、`testVercelGatewayRoutingIsSentAsTheGatewayOptions`，`CustomModelsTest::testRoutingObjectsAreReadAndMergedFromProviderToModelKeyByKey`，`StreamProxyTest::testRoutingPreferencesTravelUnderUpstreamsKeyNames`。
 
 ### Copilot 的 Claude 走了 chat completions
@@ -11475,7 +11493,7 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 **根因**：upstream 生成器给每个 Claude 写完整的 `thinkingLevelMap`（`max`、`xhigh`、5.5 的整张表、Copilot 的 `minimal: "low"`），`getSupportedThinkingLevels()` 只在表里写了 xhigh 时才提供它；pig 只抄了 `off: null`。
 
 **避坑规则**：
-- `Models::anthropicThinkingLevelMap()` 按 upstream 的合并顺序写（5.5 覆盖 → managed-effort 的 off → `applyThinkingLevelMetadata()` → Copilot 覆盖）。pig 没有 `max` 级别，`max` 条目只是数据。
+- `Models::thinkingLevelMap()` 按 upstream 的合并顺序写（5.5 覆盖 → managed-effort 的 off → `applyThinkingLevelMetadata()` → Copilot 覆盖），所有内置表都过它。pig 没有 `max` 级别，`max` 条目只是数据。
 - 测试：`ModelsTest::testEveryClaudeCarriesUpstreamsWholeThinkingLevelMap`。
 
 ### Opus 5 / Fable 5.1 等 managed-effort 模型的请求形状不对
@@ -11499,15 +11517,78 @@ TuiKeybindings::setKeybindings($this->keybindings->tuiKeybindings());
 - 期望值以 typebox 1.3.27 实测为准（upstream 锁定的版本），不要凭印象。
 - 测试：`ToolArgumentsTest::testABuiltInToolsArgumentsAreConvertedTheWayTypeBoxConvertsThem`，`StrictToolSamplingTest::testEveryBuiltInToolIsConvertedTheWayUpstreamsTypeBoxSchemasAre`。
 
-### models.json 路由值里的空对象发成了 `[]`
+### models.json 的 compat 对象值里的空对象发成了 `[]`
 
-**症状**：`"openRouterRouting": {"max_price": {}}` 之类，请求里变成 `"max_price": []`。
+**症状**：`"openRouterRouting": {"max_price": {}}`、`"chatTemplateKwargs": {"options": {}}` 之类，请求里（含经 `StreamProxy` 发给网关的 model）变成 `[]`。
 
 **根因**：`json_decode(..., true)` 分不出 `{}` 和 `[]`；upstream 原样转发文件里的对象。
 
 **避坑规则**：
-- `CustomModels::load()` 对两个路由键用保留对象的第二次解码重建（嵌套的空对象留成 `stdClass`）；顶层值仍是数组。
-- 测试：`CustomModelsTest::testANestedEmptyObjectInARoutingValueStaysAnObjectOnTheWire`。
+- `CustomModels::load()` 对 `OBJECT_KEYS`（两个路由键和 `chatTemplateKwargs` / `chatTemplateArgs`）用保留对象的第二次解码重建（嵌套的空对象留成 `stdClass`）；顶层值仍是数组。
+- `OpenAiCompletions::chatTemplateValues()` 把 `stdClass` 值当对象（没有 `$var` → 取 effort），和 upstream 的 `typeof value === "object"` 一致，不能当普通值原样发。
+- 测试：`CustomModelsTest::testANestedEmptyObjectInARoutingValueStaysAnObjectOnTheWire`、`testANestedEmptyObjectInTheTemplateValuesStaysAnObjectToo`，`OpenAiCompletionsTest` 的 `chat-template with an empty object`。
+
+### Anthropic 的 `max_tokens` 只有模型上限的三分之一，思考预算比上限还大
+
+**症状**：没传 `maxTokens` 时 Anthropic 请求的 `max_tokens` 是 `maxTokens / 3`，`Stream::simple()` 又统一封顶 32,000；传了 `maxTokens: 700` 再开 medium 思考，发出去 `max_tokens: 700` 带 8,192 的 `budget_tokens`，Anthropic 拒绝。`minimal` 思考级别在 agent 层就被改成了 `low`，1,024 的预算永远用不到。
+
+**根因**：upstream `buildBaseOptions()` 用 `clampMaxTokensToContext(model, context, options.maxTokens ?? model.maxTokens)`，Anthropic 的 `streamSimple()` 再用 `adjustMaxTokensForThinking()` 把预算加到上限里（最多到模型上限）、给回答留 1,024；provider 里是 `options.maxTokens ?? model.maxTokens`。upstream agent 原样传 `minimal`。
+
+**避坑规则**：
+- `Stream::translate()` 的上限一律 `clampMaxTokensToContext()`（`Utils\Estimate::contextTokens()`，3.5 字符一个 token，长度按 UTF-16），不要再加自己的封顶。
+- 预算表是 upstream 的 `DEFAULT_THINKING_BUDGETS`（minimal 1,024 / low 2,048 / medium 8,192 / high 16,384），`ThinkingLevel::toReasoning()` 每个级别按原名传。
+- 测试：`StreamTest::testMaxTokensDefaultsToTheModelsOwnCeiling`、`testTheCeilingIsCutToTheRoomTheConversationLeaves`、`testABudgetThinkingTurnRaisesTheCeilingByItsBudget`，`AgentTest::testTheThinkingLevelReachesTheProviderAsReasoning`，`EstimateTest`。
+
+### Anthropic 的拒答、`sensitive` 和新 stop reason 当成正常结束
+
+**症状**：`stop_reason: refusal` 的回合以 `done` 结束、没有任何说明；`sensitive` 和 API 新加的 stop reason 被当成 `stop`，agent 把被拦下的回合当完成继续干活。
+
+**根因**：upstream `mapStopReason()`：`refusal` → error，消息是 `stop_details.explanation` 或 "The model refused to complete the request"；`sensitive` → "Provider stopped with: sensitive"；未知值抛 `Unhandled stop reason: <reason>`；流结束后 stopReason 是 error 就抛出，以 error 事件结束。
+
+**避坑规则**：
+- `Anthropic::stopReason()` 不要有兜底成 `stop` 的 `default`；错误消息先记到 builder（`setErrorMessage()`），流结束后再抛。
+- 测试：`AnthropicTest::testARefusalEndsAsAnErrorThatCarriesItsExplanation`、`testSensitiveIsAnErrorAndAnUnknownReasonIsNotASilentStop`。
+
+### Anthropic 的缓存断点漏了工具，`cacheRetention` 不起作用
+
+**症状**：工具定义不在缓存前缀里；`cacheRetention: long` / `PI_CACHE_RETENTION=long` 没有一小时缓存，`none` 也照样打 `cache_control`；OpenRouter 等要 session 亲和头的端点收不到。
+
+**根因**：upstream `getCacheControl()` 按保留时长生成 `{type: "ephemeral", ttl?: "1h"}`，打在 system、最后一个工具、最后一个 user 块上；`createClient()` 在开缓存且 compat 要求时发 `x-session-affinity` / `x-session-id`。pig 写死了五分钟标记，工具上没有，也没有 session id。
+
+**避坑规则**：
+- 断点统一走 `Anthropic::cacheControl()`；`supportsCacheControlOnTools: false` 的模型工具上不打；1h 不需要 beta。
+- session id 从 `AgentSession`（会话文件的 id）→ `Agent::$sessionId` → `SimpleStreamOptions::$sessionId` 传下来，Responses 的 `prompt_cache_key` 也用它。
+- 测试：`AnthropicTest::testTheLastToolCarriesTheCacheBreakpoint`、`testLongRetentionIsAnHourOnEveryBreakpointAndNoneMarksNothing`、`testTheSessionGoesOutAsAnAffinityHeaderWhereTheCompatAsksForIt`，`AgentSessionTest::testTheAgentCarriesTheSessionFilesIdAsItsSessionId`。
+
+### Responses API 关思考靠 `# Juice: 0`，`incomplete` 一律当 `length`
+
+**症状**：gpt-5.x 关思考时多发一条 `# Juice: 0 !important` developer 消息，模型照样推理计费；内容过滤截断的回答显示成"写太长被截断"，agent 继续；`maxTokens` 小于 16 时 API 400；没收到 `output_item.done` 的半截工具调用被交给 agent 执行。
+
+**根因**：upstream 关思考发 `reasoning: {effort: map.off ?? "none"}`（Copilot 和 `off: null` 的模型不发），effort 取 `thinkingLevelMap[level] ?? level`；`mapStopReason()` 只把 `max_output_tokens` 映射成 length，其它原因是 `Response incomplete: <reason>` 错误；`max_output_tokens` 至少 16；流结束时 toolUse 但有未完成的调用就抛错。
+
+**避坑规则**：
+- OpenAI / Copilot GPT 的 `thinkingLevelMap` 由 `Models::thinkingLevelMap()` 按 upstream 生成器写，关思考和 effort 都只读这张表，不要按 id 判断。
+- 测试：`OpenAiResponsesTest::testThinkingOffIsTheMapsOffEffortAndNoLongerAJuiceMessage`、`testAnAnswerCutOffForAnyOtherReasonIsAnErrorThatSaysWhy`、`testMaxOutputTokensIsNeverBelowSixteen`、`testAToolCallWhoseItemNeverFinishedIsRefused`，`ModelsTest::testOpenAiAndCopilotGptModelsCarryUpstreamsThinkingLevelMaps`。
+
+### Copilot 的 GPT-6 选不到 xhigh
+
+**症状**：`github-copilot/gpt-6-sol` 等思考级别里没有 xhigh；`openai/gpt-5` 提供了它关不掉的 off。
+
+**根因**：pig 的 OpenAI / Copilot GPT 行没有 `thinkingLevelMap`，xhigh 靠一张只有三个 id 的旧列表；upstream 生成器给这些行写了完整的表（`off`、Copilot `minimal: "low"`、gpt-5.2+ 的 `xhigh`、gpt-5.6 / gpt-6 的 `max`、GPT-6 整表）。
+
+**避坑规则**：
+- xhigh 只看表（`Model::supportsXhigh()`），不要再加 id 列表；`models.json` 里的模型要自己写 `"xhigh": "xhigh"`。
+- 测试：`ThinkingLevelTest::testCopilotsGptSixOffersXhighAndClampsByItsMap`，`ModelTest::testWithNoMapXhighIsNotOfferedWhateverTheId`。
+
+### StreamProxy 发给网关的上下文和模型缺字段
+
+**症状**：按 upstream 写的网关收不到 system prompt 和工具（pig 发的是 `systemPrompt` / `tools` 平铺字段），工具的 `constrainedSampling`、模型的 `thinkingLevelMap`、价格分档都丢了，`cacheRetention` / `sessionId` / `metadata` 不传。
+
+**根因**：upstream `streamProxy()` 发的是 `TranscriptContext`（首条 `system` 消息带 prompt 和 `toolsAdded`），模型整个对象、`buildProxyRequestOptions()` 的全部字段（undefined 的省略）。
+
+**避坑规则**：
+- 改 `Model` / `Tool` / `StreamOptions` 字段时同步 `StreamProxy::encodeModel()` / `encodeContext()` / `request()`。
+- 测试：`StreamProxyTest::testTheContextGoesOverTheWireAsTheSessionFileWritesIt`、`testAToolsConstrainedSamplingTravelsWithIt`、`testTheThinkingLevelMapAndPriceTiersGoWithTheModel`、`testTheCacheAndSessionOptionsTravelAndUnsetOnesAreLeftOut`。
 
 ## Version floor: PHP >= 8.3
 

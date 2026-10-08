@@ -207,6 +207,33 @@ final class MessageTest extends TestCase
         $this->assertNull($decoded->content[0]->redacted);
     }
 
+    public function testAToolCallsNamespaceSurvivesTheSessionFileAndAnotherProvidersRewrite(): void
+    {
+        // Upstream's `ToolCall.namespace` is part of the call, so the session file keeps it and
+        // `transformMessages()` spreads it along with the call. A call without one is written
+        // without the key, as before it existed.
+        $call = new ToolCall('call_1|fc_1', 'search', ['q' => 'x'], null, 'mcp_docs');
+        $encoded = json_decode((string) json_encode(MessageJson::encode($this->assistant([$call]))), true);
+
+        $this->assertSame('mcp_docs', $encoded['content'][0]['namespace']);
+        $decoded = MessageJson::decode($encoded)->content[0];
+        $this->assertInstanceOf(ToolCall::class, $decoded);
+        $this->assertSame('mcp_docs', $decoded->namespace);
+
+        $plain = MessageJson::encode($this->assistant([new ToolCall('c', 'read', [])]));
+        $this->assertArrayNotHasKey('namespace', $plain['content'][0]);
+
+        $openai = new Model('gpt-5.2', 'GPT', Api::OpenAiResponses, 'openai', 'http://127.0.0.1:1', 400_000, 128_000);
+        $rewritten = TransformMessages::apply(
+            [$this->assistant([$call]), new ToolResultMessage('call_1|fc_1', 'search', [new TextContent('ok')])],
+            $openai,
+            static fn (string $id): string => str_replace('|', '-', $id),
+        )[0];
+        $this->assertInstanceOf(AssistantMessage::class, $rewritten);
+        $this->assertSame('call_1-fc_1', $rewritten->content[0]->id, 'the id was rewritten');
+        $this->assertSame('mcp_docs', $rewritten->content[0]->namespace);
+    }
+
     public function testAZeroReasoningSplitIsWrittenBecauseZeroIsWhatTheProviderSaid(): void
     {
         // A provider that reports the split and found no reasoning says 0; one that reports no

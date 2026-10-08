@@ -35,6 +35,13 @@ final class Agent
 {
     public AgentState $state;
 
+    /**
+     * Upstream's `Agent.sessionId`: handed to every request as `SimpleStreamOptions::$sessionId`, so
+     * a provider that routes or caches by session sees one per conversation. `AgentSession` sets it
+     * to the session file's id; null sends none.
+     */
+    public ?string $sessionId = null;
+
     /** @var array<int, Closure(AgentEvent): void> */
     private array $listeners = [];
 
@@ -414,6 +421,7 @@ final class Agent
             getApiKey: $this->options->getApiKey,
             apiKey: $this->options->apiKey,
             getTools: fn (): array => $this->state->tools,
+            sessionId: $this->sessionId,
         );
     }
 

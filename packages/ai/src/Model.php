@@ -13,8 +13,8 @@ namespace Pig\Ai;
  */
 final readonly class Model
 {
-    /** Models that accept the xhigh reasoning level. Everything else clamps to high. */
-    private const array XHIGH = ['gpt-5.1-codex-max', 'gpt-5.2', 'gpt-5.2-codex'];
+    /** Upstream's `EXTENDED_THINKING_LEVELS`, in effort order — `max` included, which pig's agent has no level for. */
+    public const array THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
     /**
      * @param string                $provider anthropic, openai, groq, … — free-form, since
@@ -86,19 +86,73 @@ final readonly class Model
     }
 
     /**
-     * Whether this model takes the xhigh level.
+     * Whether this model takes the xhigh level: the map names it, with a string.
      *
-     * The map wins when it mentions xhigh at all, which is upstream's rule. **The id list stays
-     * as the answer when it does not**, and that is a deviation about pig's own table rather than
-     * about the rule: upstream can insist xhigh be opted into because every model it ships carries
-     * a map, and pig's generated tables carry none. Drop the list and `gpt-5.2` silently loses a
-     * level it has.
+     * Upstream's `getSupportedThinkingLevels()` rule for `xhigh` and `max` — offered only when the
+     * map mentions them. **The id list that used to answer for a model with no `xhigh` key is
+     * gone**: it existed because pig's generated tables carried no maps for OpenAI, so `gpt-5.2`
+     * would have lost a level it has. `Models` now writes upstream's generator maps on those rows
+     * (`Models::thinkingLevelMap()`: `xhigh` for gpt-5.2 and later, gpt-6), so the reason for the
+     * deviation is gone and a `models.json` model has to say `xhigh` the way it does upstream.
      */
     public function supportsXhigh(): bool
     {
-        return array_key_exists('xhigh', $this->thinkingLevelMap)
-            ? $this->thinkingLevelMap['xhigh'] !== null
-            : in_array($this->id, self::XHIGH, true);
+        return array_key_exists('xhigh', $this->thinkingLevelMap) && $this->thinkingLevelMap['xhigh'] !== null;
+    }
+
+    /**
+     * Upstream's `getSupportedThinkingLevels()`, over upstream's seven levels: `off` alone for a model
+     * that does not reason; otherwise every level the map does not set to null, except `xhigh` and
+     * `max`, which need the map to name them.
+     *
+     * @return list<string>
+     */
+    public function supportedThinkingLevels(): array
+    {
+        if (!$this->reasoning) {
+            return ['off'];
+        }
+
+        return array_values(array_filter(self::THINKING_LEVELS, function (string $level): bool {
+            if (!array_key_exists($level, $this->thinkingLevelMap)) {
+                return $level !== 'xhigh' && $level !== 'max';
+            }
+
+            return $this->thinkingLevelMap[$level] !== null;
+        }));
+    }
+
+    /**
+     * Upstream's `clampThinkingLevel()`: $level when the model has it, else the nearest one it has —
+     * **up from the request first, then down**.
+     */
+    public function clampThinkingLevel(string $level): string
+    {
+        $available = $this->supportedThinkingLevels();
+
+        if (in_array($level, $available, true)) {
+            return $level;
+        }
+
+        $requested = array_search($level, self::THINKING_LEVELS, true);
+
+        if ($requested === false) {
+            return $available[0] ?? 'off';
+        }
+
+        for ($i = $requested, $end = count(self::THINKING_LEVELS); $i < $end; $i++) {
+            if (in_array(self::THINKING_LEVELS[$i], $available, true)) {
+                return self::THINKING_LEVELS[$i];
+            }
+        }
+
+        for ($i = $requested - 1; $i >= 0; $i--) {
+            if (in_array(self::THINKING_LEVELS[$i], $available, true)) {
+                return self::THINKING_LEVELS[$i];
+            }
+        }
+
+        return $available[0] ?? 'off';
     }
 
     public function is(self $other): bool

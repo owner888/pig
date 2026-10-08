@@ -1254,6 +1254,15 @@ final class OpenAiCompletionsTest extends TestCase
             ['chat_template_kwargs' => ['enable_thinking' => true, 'effort' => 'high', 'budget' => 15_360, 'fixed' => 'yes']],
             ['chat_template_kwargs' => ['enable_thinking' => false, 'fixed' => 'yes']],
         ];
+        // An empty object as a value — `models.json` now keeps it `{}` (a `stdClass`) rather than
+        // `[]` — is an object to upstream's `resolveChatTemplateKwargValue()` like any other: one
+        // with no `$var`, which resolves to the effort, and to nothing when thinking is off.
+        yield 'chat-template with an empty object' => [
+            ['thinkingFormat' => 'chat-template', 'chatTemplateKwargs' => ['level' => new \stdClass()]],
+            [],
+            ['chat_template_kwargs' => ['level' => 'high']],
+            [],
+        ];
         yield 'baseten' => [
             ['thinkingFormat' => 'baseten', 'chatTemplateArgs' => ['enable_thinking' => ['$var' => 'thinking.enabled']]],
             ['off' => 'none'],

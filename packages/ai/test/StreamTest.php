@@ -110,7 +110,9 @@ final class StreamTest extends TestCase
         // A `models.json` proxy reselling `gpt-5.2` over chat-completions — the common shape where
         // the direct API is unreachable. xhigh belongs to the model, not to the protocol, and the
         // completions arm used to clamp it away on the grounds that "xhigh is OpenAI's alone".
-        $body = $this->sendCompletions('gpt-5.2', ReasoningEffort::Xhigh);
+        // The model says so in its map, as upstream requires; the id alone no longer does
+        // (`ModelTest::testWithNoMapXhighIsNotOfferedWhateverTheId`).
+        $body = $this->sendCompletions('gpt-5.2', ReasoningEffort::Xhigh, ['xhigh' => 'xhigh']);
 
         $this->assertSame('xhigh', $body['reasoning_effort'] ?? null);
     }
@@ -124,8 +126,11 @@ final class StreamTest extends TestCase
         $this->assertSame('high', $body['reasoning_effort'] ?? null);
     }
 
-    /** @return array<string, mixed> the request body an openai-completions provider sent */
-    private function sendCompletions(string $id, ReasoningEffort $reasoning): array
+    /**
+     * @param array<string, string|null> $levels
+     * @return array<string, mixed> the request body an openai-completions provider sent
+     */
+    private function sendCompletions(string $id, ReasoningEffort $reasoning, array $levels = []): array
     {
         $chunk = 'data: ' . json_encode([
             'choices' => [['delta' => ['content' => 'ok'], 'finish_reason' => 'stop']],
@@ -148,6 +153,7 @@ final class StreamTest extends TestCase
             64_000,
             reasoning: true,
             pricing: new Pricing(),
+            thinkingLevelMap: $levels,
         );
 
         Async::run(function () use ($model, $reasoning): void {
@@ -160,11 +166,80 @@ final class StreamTest extends TestCase
         return $this->server->receivedJson();
     }
 
-    public function testMaxTokensDefaultsToTheSmallerOfTheModelAndTheCap(): void
+    public function testMaxTokensDefaultsToTheModelsOwnCeiling(): void
     {
-        // The model allows 63k; the unified default caps at 32k.
-        $this->assertSame(32_000, $this->sendAndCaptureBody(new SimpleStreamOptions(apiKey: 'k'))['max_tokens']);
+        // Upstream's `buildBaseOptions()`: `options?.maxTokens ?? model.maxTokens`, clamped to the
+        // context. This used to be capped at 32,000 here, a cap upstream no longer has.
+        $this->assertSame(63_000, $this->sendAndCaptureBody(new SimpleStreamOptions(apiKey: 'k'))['max_tokens']);
 
+        $this->restoreEnv();
+    }
+
+    public function testTheCeilingIsCutToTheRoomTheConversationLeaves(): void
+    {
+        // `clampMaxTokensToContext()`: window − the conversation's estimate − 4,096. A 70,000-token
+        // window and a 7,000-character message (3.5 characters a token, so 2,000) leave 63,904 —
+        // more than the model's 63,000, so that wins; at a 60,000-token window, 53,904 does.
+        $message = new UserMessage(str_repeat('x', 7_000));
+
+        $this->assertSame(63_000, $this->sendAndCaptureBody(new SimpleStreamOptions(apiKey: 'k'), $message, 70_000)['max_tokens']);
+        $this->server = new CannedServer();
+        $this->assertSame(53_904, $this->sendAndCaptureBody(new SimpleStreamOptions(apiKey: 'k'), $message, 60_000)['max_tokens']);
+
+        $this->restoreEnv();
+    }
+
+    public function testABudgetThinkingTurnRaisesTheCeilingByItsBudget(): void
+    {
+        // Upstream's `adjustMaxTokensForThinking()`: the caller's 700 is the answer, and the
+        // thinking budget goes on top of it (700 + 8,192), up to the model's ceiling — and the
+        // budget is cut to what is left above 1,024 for the answer. pig used to send `max_tokens:
+        // 700` with an 8,192-token budget, which Anthropic refuses: the budget must be smaller.
+        $body = $this->sendAndCaptureBody(new SimpleStreamOptions(maxTokens: 700, apiKey: 'k', reasoning: ReasoningEffort::Medium));
+
+        $this->assertSame(8_892, $body['max_tokens']);
+        $this->assertSame(7_868, $body['thinking']['budget_tokens']);
+
+        $this->restoreEnv();
+    }
+
+    public function testToolChoiceMetadataAndTheSessionReachAnthropic(): void
+    {
+        // Upstream's `streamSimple()` passes `toolChoice` and `buildBaseOptions()` passes
+        // `metadata`, `sessionId` and `cacheRetention` through to the provider.
+        $body = $this->sendAndCaptureBody(new SimpleStreamOptions(
+            apiKey: 'k',
+            toolChoice: 'none',
+            cacheRetention: 'none',
+            metadata: ['user_id' => 'u-1', 'ignored' => true],
+        ));
+
+        $this->assertSame(['type' => 'none'], $body['tool_choice']);
+        $this->assertSame(['user_id' => 'u-1'], $body['metadata']);
+        // `cacheRetention: none` reached the provider: no breakpoint anywhere.
+        $this->assertStringNotContainsString('cache_control', $this->server->received());
+
+        $this->restoreEnv();
+    }
+
+    public function testTheResponsesApiGetsTheLevelClampedToTheModelsMap(): void
+    {
+        // Upstream's `clampThinkingLevel()` in the Responses `streamSimple()`: gpt-5.5 has no
+        // `minimal` (its map says null), so the nearest level up, `low`, is what goes out.
+        $url = $this->server->start([
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n",
+            $this->chunk("data: " . json_encode(['type' => 'response.completed', 'response' => ['status' => 'completed']]) . "\n\n"),
+            "0\r\n\r\n",
+        ]);
+        $model = new Model('gpt-5.5', 'GPT-5.5', Api::OpenAiResponses, 'openai', rtrim($url, '/'), 400_000, 128_000, true,
+            thinkingLevelMap: ['off' => 'none', 'minimal' => null, 'xhigh' => 'xhigh']);
+
+        Async::run(function () use ($model): void {
+            foreach (Stream::simple($model, new Context([new UserMessage('hi')]), new SimpleStreamOptions(apiKey: 'k', reasoning: ReasoningEffort::Minimal)) as $ignored) {
+            }
+        });
+
+        $this->assertSame('low', $this->server->receivedJson()['reasoning']['effort']);
         $this->restoreEnv();
     }
 
@@ -186,7 +261,7 @@ final class StreamTest extends TestCase
     }
 
     /** @return array<string, mixed> the request body the provider actually sent */
-    private function sendAndCaptureBody(?SimpleStreamOptions $options): array
+    private function sendAndCaptureBody(?SimpleStreamOptions $options, ?UserMessage $message = null, int $window = 200_000): array
     {
         $url = $this->server->start([
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n",
@@ -198,8 +273,8 @@ final class StreamTest extends TestCase
             "0\r\n\r\n",
         ]);
 
-        Async::run(function () use ($url, $options): void {
-            foreach (Stream::simple($this->model($url), new Context([new UserMessage('hi')]), $options) as $ignored) {
+        Async::run(function () use ($url, $options, $message, $window): void {
+            foreach (Stream::simple($this->model($url, $window), new Context([$message ?? new UserMessage('hi')]), $options) as $ignored) {
             }
         });
 
@@ -211,7 +286,7 @@ final class StreamTest extends TestCase
         return sprintf("%x\r\n%s\r\n", strlen($body), $body);
     }
 
-    private function model(string $baseUrl = 'http://127.0.0.1:1'): Model
+    private function model(string $baseUrl = 'http://127.0.0.1:1', int $window = 200_000): Model
     {
         return new Model(
             'claude-sonnet-4-5',
@@ -219,7 +294,7 @@ final class StreamTest extends TestCase
             Api::AnthropicMessages,
             'anthropic',
             rtrim($baseUrl, '/'),
-            200_000,
+            $window,
             63_000,
             reasoning: true,
             pricing: new Pricing(input: 3.0, output: 15.0),

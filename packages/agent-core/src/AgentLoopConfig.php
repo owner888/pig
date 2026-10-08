@@ -36,6 +36,9 @@ final readonly class AgentLoopConfig
      *        starts; a tool that is registered *during* a run — `tool_search` loading an MCP
      *        tool is the case — has to reach the next request of the same run, and this is how.
      *        Upstream refreshes `context.tools` from `agent.state.tools` in `prepareRequest`.
+     * @param string|null $sessionId upstream's `AgentLoopConfig.sessionId`, passed on as the
+     *        request's `sessionId` — the key Anthropic's session affinity and the Responses API's
+     *        `prompt_cache_key` use
      */
     public function __construct(
         public Model $model,
@@ -49,6 +52,7 @@ final readonly class AgentLoopConfig
         public ?float $temperature = null,
         public ?int $maxTokens = null,
         public ?Closure $getTools = null,
+        public ?string $sessionId = null,
     ) {
     }
 }

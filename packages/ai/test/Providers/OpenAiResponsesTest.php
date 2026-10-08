@@ -345,18 +345,70 @@ final class OpenAiResponsesTest extends TestCase
 
     public function testRunningOutOfRoomIsLengthAndNotSuccess(): void
     {
+        // Only `max_output_tokens` is `length` — upstream's `mapStopReason()`. This used to send a
+        // bare `incomplete` and expect `length`; with no reason that is now an error (below).
         $url = $this->serve([
             ['type' => 'response.output_item.added', 'item' => ['type' => 'message', 'id' => 'msg_1']],
             ['type' => 'response.output_text.delta', 'delta' => 'half an ans'],
             ['type' => 'response.output_item.done', 'item' => ['type' => 'message', 'id' => 'msg_1', 'content' => [
                 ['type' => 'output_text', 'text' => 'half an ans'],
             ]]],
-            ['type' => 'response.completed', 'response' => ['status' => 'incomplete']],
+            ['type' => 'response.completed', 'response' => ['status' => 'incomplete', 'incomplete_details' => ['reason' => 'max_output_tokens']]],
         ]);
 
         [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
 
         $this->assertSame(StopReason::Length, $message->stopReason);
+    }
+
+    public function testAnAnswerCutOffForAnyOtherReasonIsAnErrorThatSaysWhy(): void
+    {
+        // A content filter stopping the answer is not "the answer ran long": pig read every
+        // `incomplete` as `length`, so a filtered turn looked like a truncated one and the agent
+        // carried on with it. Upstream ends it as an error naming the reason.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => ['type' => 'message', 'id' => 'msg_1']],
+            ['type' => 'response.output_item.done', 'item' => ['type' => 'message', 'id' => 'msg_1', 'content' => [
+                ['type' => 'output_text', 'text' => 'partial'],
+            ]]],
+            ['type' => 'response.incomplete', 'response' => ['status' => 'incomplete', 'incomplete_details' => ['reason' => 'content_filter']]],
+        ]);
+
+        [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertContains('ErrorEvent', $types);
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertSame('Response incomplete: content_filter', $message->errorMessage);
+        $this->assertSame('incomplete.content_filter', $message->rawStopReason);
+
+        $this->server = new CannedServer();
+        [, $bare] = $this->collect($this->serve([
+            ['type' => 'response.completed', 'response' => ['status' => 'incomplete']],
+        ]), new Context([new UserMessage('hi')]));
+
+        $this->assertSame('Response incomplete without a provider reason', $bare->errorMessage);
+    }
+
+    public function testAToolCallWhoseItemNeverFinishedIsRefused(): void
+    {
+        // Upstream: "The agent runs every tool call in the final message. Refuse to hand over calls
+        // whose output_item.done never arrived: their arguments may be cut off or mixed up". pig
+        // handed the half-built call to the agent, which ran it.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => [
+                'type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'bash',
+            ]],
+            ['type' => 'response.function_call_arguments.delta', 'delta' => '{"command":"rm -'],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [$types, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertContains('ErrorEvent', $types);
+        $this->assertSame(
+            'OpenAI Responses stream completed with an unfinished tool call: bash (call_1|fc_1)',
+            $message->errorMessage,
+        );
     }
 
     public function testCachedTokensAreTakenOutOfTheInputTheyWereCountedIn(): void
@@ -428,27 +480,177 @@ final class OpenAiResponsesTest extends TestCase
         $this->assertSame(['reasoning.encrypted_content'], $body['include']);
     }
 
-    public function testGptFiveIsToldNotToThinkTheOnlyWayItCanBe(): void
+    public function testThinkingOffIsTheMapsOffEffortAndNoLongerAJuiceMessage(): void
     {
-        $model = $this->model(reasoning: true, id: 'gpt-5.2');
+        // Upstream's off arm: `reasoning: {effort: map.off ?? "none"}` unless the map says `off:
+        // null` or the provider is Copilot. pig appended a `# Juice: 0 !important` developer
+        // message to every reasoning gpt-5 turn instead, which upstream no longer sends.
+        [, $body] = $this->capture($this->model(reasoning: true, id: 'gpt-5.2', levels: ['off' => 'none']), new Context([new UserMessage('hi')]));
 
-        $this->send(new Context([new UserMessage('hi')]), $model);
+        $this->assertSame(['effort' => 'none'], $body['reasoning']);
+        $this->assertSame(['user'], array_column($body['input'], 'role'));
+        $this->assertArrayNotHasKey('include', $body);
 
-        $input = $this->server->receivedJson()['input'];
-        $last = $input[count($input) - 1];
+        // No map at all: `?? "none"`.
+        [, $body] = $this->capture($this->model(reasoning: true, id: 'o3'), new Context([new UserMessage('hi')]));
+        $this->assertSame(['effort' => 'none'], $body['reasoning']);
 
-        // There is no documented way to turn it off; this is the one upstream found.
-        $this->assertSame('developer', $last['role']);
-        $this->assertStringContainsString('Juice: 0', $last['content'][0]['text']);
+        // A model that cannot be switched off (`off: null`, every gpt-5 before 5.1): nothing.
+        [, $body] = $this->capture($this->model(reasoning: true, id: 'gpt-5', levels: ['off' => null]), new Context([new UserMessage('hi')]));
+        $this->assertArrayNotHasKey('reasoning', $body);
+
+        // Copilot: nothing either, whatever the map says.
+        [, $body] = $this->capture($this->model(reasoning: true, id: 'gpt-6-sol', levels: ['off' => 'none'], provider: 'github-copilot'), new Context([new UserMessage('hi')]));
+        $this->assertArrayNotHasKey('reasoning', $body);
     }
 
-    public function testAModelThatDoesNotReasonIsNotSentTheJuiceHack(): void
+    public function testAModelThatDoesNotReasonIsToldNothingAboutReasoning(): void
     {
-        $this->send(new Context([new UserMessage('hi')]), $this->model(id: 'gpt-5.2'));
+        [, $body] = $this->capture($this->model(id: 'gpt-5.2'), new Context([new UserMessage('hi')]));
 
-        $input = $this->server->receivedJson()['input'];
+        $this->assertSame('user', $body['input'][count($body['input']) - 1]['role']);
+        $this->assertArrayNotHasKey('reasoning', $body);
+    }
 
-        $this->assertSame('user', $input[count($input) - 1]['role']);
+    public function testTheEffortIsWhatTheModelsMapCallsTheLevel(): void
+    {
+        // `model.thinkingLevelMap?.[effort] ?? effort`: pig sent the level's own name whatever
+        // the map said.
+        [, $body] = $this->capture(
+            $this->model(reasoning: true, levels: ['high' => 'maximal']),
+            new Context([new UserMessage('hi')]),
+            new OpenAiOptions(apiKey: 'test-key', reasoning: ReasoningEffort::High),
+        );
+
+        $this->assertSame(['effort' => 'maximal', 'summary' => 'auto'], $body['reasoning']);
+    }
+
+    public function testMaxOutputTokensIsNeverBelowSixteen(): void
+    {
+        // "OpenAI Responses rejects max_output_tokens below 16" — upstream raises it; pig sent the
+        // number as it came and the API answered 400.
+        [, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')]), new OpenAiOptions(maxTokens: 5, apiKey: 'test-key'));
+        $this->assertSame(16, $body['max_output_tokens']);
+
+        // A 0 is upstream's falsy `options?.maxTokens`: nothing is sent.
+        [, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')]), new OpenAiOptions(maxTokens: 0, apiKey: 'test-key'));
+        $this->assertArrayNotHasKey('max_output_tokens', $body);
+
+        // And an endpoint whose compat says it refuses the field gets none.
+        [, $body] = $this->capture(
+            $this->model(compat: new OpenAiCompat(supportsMaxOutputTokens: false)),
+            new Context([new UserMessage('hi')]),
+            new OpenAiOptions(maxTokens: 500, apiKey: 'test-key'),
+        );
+        $this->assertArrayNotHasKey('max_output_tokens', $body);
+    }
+
+    public function testEveryRequestSaysStoreFalse(): void
+    {
+        [, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')]));
+
+        $this->assertFalse($body['store']);
+    }
+
+    public function testTheSessionIsThePromptCacheKeyAndTheAffinityHeaders(): void
+    {
+        // Upstream: `prompt_cache_key` is the session id cut to 64 code points, and the client
+        // sends it as `session_id` and `x-client-request-id` for the `openai` format.
+        $session = str_repeat('é', 70);
+        [$head, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'test-key', sessionId: $session));
+
+        $this->assertSame(str_repeat('é', 64), $body['prompt_cache_key']);
+        $this->assertStringContainsString("session_id: {$session}", $head);
+        $this->assertStringContainsString("x-client-request-id: {$session}", $head);
+        $this->assertArrayNotHasKey('prompt_cache_retention', $body);
+
+        // `cacheRetention: none`: no key and no headers.
+        [$head, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'test-key', cacheRetention: 'none', sessionId: 's1'));
+        $this->assertArrayNotHasKey('prompt_cache_key', $body);
+        $this->assertStringNotContainsString('x-client-request-id', $head);
+
+        // OpenRouter's format is one header, `x-session-id`.
+        [$head] = $this->capture($this->model(provider: 'openrouter'), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'test-key', sessionId: 's1'));
+        $this->assertStringContainsString('x-session-id: s1', $head);
+        $this->assertStringNotContainsString('session_id', $head);
+    }
+
+    public function testLongRetentionIsTwentyFourHoursOrAThirtyMinuteExplicitCache(): void
+    {
+        [, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'sk-test', cacheRetention: 'long'));
+        $this->assertSame('24h', $body['prompt_cache_retention']);
+        $this->assertArrayNotHasKey('prompt_cache_options', $body);
+
+        // GPT-5.6 and later (`supportsExplicitPromptCacheMode`): `prompt_cache_options` instead —
+        // `{ttl: "30m"}` for long, `{mode: "explicit"}` for none.
+        $explicit = $this->model(compat: new OpenAiCompat(supportsExplicitPromptCacheMode: true));
+        [, $body] = $this->capture($explicit, new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'sk-test', cacheRetention: 'long'));
+        $this->assertSame(['ttl' => '30m'], $body['prompt_cache_options']);
+        $this->assertArrayNotHasKey('prompt_cache_retention', $body);
+
+        [, $body] = $this->capture($explicit, new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'sk-test', cacheRetention: 'none'));
+        $this->assertSame(['mode' => 'explicit'], $body['prompt_cache_options']);
+    }
+
+    public function testTheToolChoiceAndServiceTierGoOutAndTheTierPricesTheTurn(): void
+    {
+        $url = $this->serve([['type' => 'response.completed', 'response' => [
+            'status' => 'completed',
+            'service_tier' => 'flex',
+            'usage' => ['input_tokens' => 1_000_000, 'output_tokens' => 0, 'total_tokens' => 1_000_000],
+        ]]]);
+        $message = Async::run(function () use ($url) {
+            $stream = (new OpenAiResponses())->stream(
+                $this->model(baseUrl: $url),
+                new Context([new UserMessage('hi')]),
+                new OpenAiOptions(apiKey: 'test-key', toolChoice: 'none', serviceTier: 'priority'),
+            );
+
+            foreach ($stream as $ignored) {
+            }
+
+            return $stream->result()->await();
+        });
+        $body = $this->server->receivedJson();
+
+        $this->assertSame('none', $body['tool_choice']);
+        $this->assertSame('priority', $body['service_tier']);
+        // The tier the response reports wins over the one asked for: flex halves the $1/Mtok input.
+        $this->assertEqualsWithDelta(0.5, $message->usage->cost->input, 1e-9);
+        $this->assertEqualsWithDelta(0.5, $message->usage->cost->total, 1e-9);
+    }
+
+    public function testACallsNamespaceIsKeptAndGoesBackOnlyToTheSameModel(): void
+    {
+        // Upstream's `ToolCall.namespace`, "for calls to dynamically loaded or namespaced tools":
+        // read off the item, and replayed on it — but only to the model that made the call.
+        $url = $this->serve([
+            ['type' => 'response.output_item.added', 'item' => [
+                'type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'search', 'namespace' => 'mcp_docs',
+            ]],
+            ['type' => 'response.output_item.done', 'item' => [
+                'type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'search', 'arguments' => '{}', 'namespace' => 'mcp_docs',
+            ]],
+            ['type' => 'response.completed', 'response' => ['status' => 'completed']],
+        ]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+        $call = $message->content[0];
+        $this->assertInstanceOf(ToolCall::class, $call);
+        $this->assertSame('mcp_docs', $call->namespace);
+
+        $history = new Context([
+            new UserMessage('hi'),
+            $message,
+            new ToolResultMessage($call->id, 'search', [new TextContent('found')]),
+        ]);
+
+        [, $body] = $this->capture($this->model(), $history);
+        $this->assertSame('mcp_docs', $body['input'][1]['namespace']);
+
+        // Another model of the same provider: the call goes back without it.
+        [, $body] = $this->capture($this->model(id: 'other-model'), $history);
+        $this->assertArrayNotHasKey('namespace', $body['input'][1]);
     }
 
     public function testACallWithNoArgumentsGoesOutAsAnObjectAndNotAnEmptyList(): void
@@ -1364,18 +1566,21 @@ final class OpenAiResponsesTest extends TestCase
         });
     }
 
+    /** @param array<string, string|null> $levels */
     private function model(
         string $baseUrl = 'http://127.0.0.1:1',
         bool $reasoning = false,
         bool $images = true,
         string $id = 'test-model',
         ?OpenAiCompat $compat = null,
+        array $levels = [],
+        string $provider = 'openai',
     ): Model {
         return new Model(
             $id,
             'Test Model',
             Api::OpenAiResponses,
-            'openai',
+            $provider,
             rtrim($baseUrl, '/'),
             200_000,
             64_000,
@@ -1383,7 +1588,44 @@ final class OpenAiResponsesTest extends TestCase
             $images ? ['text', 'image'] : ['text'],
             new Pricing(input: 1.0, output: 2.0),
             compat: $compat,
+            thinkingLevelMap: $levels,
         );
+    }
+
+    /**
+     * One request with whatever model and options a test needs, every field of the model kept and
+     * only its base URL replaced with the canned server's.
+     *
+     * @return array{0: string, 1: array<string, mixed>} the head and the decoded body that went out
+     */
+    private function capture(Model $model, Context $context, ?OpenAiOptions $options = null): array
+    {
+        $this->server = new CannedServer();
+        $url = $this->serve([['type' => 'response.completed', 'response' => ['status' => 'completed']]]);
+        $model = new Model(
+            $model->id,
+            $model->name,
+            $model->api,
+            $model->provider,
+            rtrim($url, '/'),
+            $model->contextWindow,
+            $model->maxTokens,
+            $model->reasoning,
+            $model->input,
+            $model->pricing,
+            $model->headers,
+            $model->compat,
+            $model->thinkingLevelMap,
+        );
+
+        Async::run(function () use ($model, $context, $options): void {
+            $stream = (new OpenAiResponses())->stream($model, $context, $options ?? new OpenAiOptions(apiKey: 'test-key'));
+
+            foreach ($stream as $ignored) {
+            }
+        });
+
+        return [$this->server->receivedHead(), $this->server->receivedJson()];
     }
 
     /** @param list<array<string, mixed>> $events */

@@ -64,6 +64,8 @@ final class Anthropic
 
     private const string THINKING_BINDING_CONTROLS_BETA = 'thinking-binding-controls-2026-08-01';
 
+    private const string SERVER_SIDE_FALLBACK_BETA = 'server-side-fallback-2026-07-01';
+
     /** Upstream's `isAnthropicEffort()`: the effort names a managed-effort turn can be replayed with. */
     private const array ANTHROPIC_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
@@ -157,11 +159,18 @@ final class Anthropic
             // An abort mid-stream ends the body quietly; say so rather than reporting success.
             $signal?->throwIfAborted();
 
-            // Upstream records these only on a turn that finished, after its own throw for an
-            // error stop reason; pig does not throw for those (a refusal is an error message, not
-            // an exception), so the same condition is spelled out.
+            // Upstream: `if (output.stopReason === "aborted" || output.stopReason === "error") throw
+            // new Error(output.errorMessage || "An unknown error occurred")` — so a refusal or a
+            // `sensitive` stop ends as an error event carrying its explanation, not as a `done`.
             $stop = $builder->stopReason();
-            if ($transformations !== null && $transformations !== [] && $stop !== StopReason::Error && $stop !== StopReason::Aborted) {
+            if ($stop === StopReason::Error || $stop === StopReason::Aborted) {
+                $message = $builder->errorMessage();
+
+                throw new ProviderError($message !== null && $message !== '' ? $message : 'An unknown error occurred');
+            }
+
+            // Upstream records these only on a turn that finished, after that throw.
+            if ($transformations !== null && $transformations !== []) {
                 $builder->addDiagnostic(self::inputTransformations($transformations));
             }
 
@@ -250,6 +259,31 @@ final class Anthropic
 
         if (is_string($model) && $model !== $requested->id) {
             $builder->setResponseModel($model);
+
+            // Upstream's `usageModel`: a server-side fallback answered, so the turn is priced at
+            // the fallback's `cost` from `allowedFallbackModels` — the entry for this provider and
+            // that model — and at the requested model's when there is no such entry.
+            foreach (self::compat($requested)?->allowedFallbackModels ?? [] as $fallback) {
+                if (($fallback['provider'] ?? null) === $requested->provider && ($fallback['model'] ?? null) === $model) {
+                    $builder->priceAs(new Model(
+                        $model,
+                        $requested->name,
+                        $requested->api,
+                        $requested->provider,
+                        $requested->baseUrl,
+                        $requested->contextWindow,
+                        $requested->maxTokens,
+                        $requested->reasoning,
+                        $requested->input,
+                        $fallback['cost'],
+                        $requested->headers,
+                        $requested->compat,
+                        $requested->thinkingLevelMap,
+                    ));
+
+                    break;
+                }
+            }
         }
 
         // Captured here as well as at the end, so an aborted run still knows its input cost.
@@ -265,6 +299,17 @@ final class Anthropic
     {
         $wire = (int) ($data['index'] ?? 0);
         $block = $data['content_block'] ?? [];
+
+        // Upstream's `fallback` block: the model that answers changed. Before any output that is
+        // only news (the `message_start` model already says who answered); after some, the output
+        // so far came from another model, which upstream refuses rather than mixing the two.
+        if (($block['type'] ?? '') === 'fallback') {
+            if ($builder->snapshot()->content !== []) {
+                throw new ProviderError('Anthropic performed an unsupported mid-output model fallback');
+            }
+
+            return;
+        }
 
         match ($block['type'] ?? '') {
             'text' => $stream->push(new TextStartEvent($builder->startText($wire), $builder->snapshot())),
@@ -358,7 +403,12 @@ final class Anthropic
 
         if (is_string($reason)) {
             $builder->setRawStopReason($reason);
-            $builder->setStopReason($this->stopReason($reason));
+            [$stop, $errorMessage] = $this->stopReason($reason, $data['delta']['stop_details'] ?? null);
+            $builder->setStopReason($stop);
+
+            if ($errorMessage !== null) {
+                $builder->setErrorMessage($errorMessage);
+            }
         }
 
         // Merged with what `message_start` reported rather than replacing it — see `update()`.
@@ -413,18 +463,31 @@ final class Anthropic
         return is_numeric($value) ? (int) $value : $sofar;
     }
 
-    private function stopReason(string $reason): StopReason
+    /**
+     * Upstream's `mapStopReason()`: the stop reason, and the error message for the two that are
+     * errors. A refusal says why in `stop_details.explanation` when Anthropic gives one; `sensitive`
+     * ("Content flagged by safety filters (not yet in SDK types)") has a fixed sentence. **A reason
+     * this does not know throws** — upstream's "Unhandled stop reason", which ends the turn as an
+     * error — where pig used to read anything new as a clean `stop`.
+     *
+     * @return array{0: StopReason, 1: string|null}
+     */
+    private function stopReason(string $reason, mixed $stopDetails = null): array
     {
+        $explanation = is_array($stopDetails) ? ($stopDetails['explanation'] ?? null) : null;
+
         return match ($reason) {
-            'end_turn' => StopReason::Stop,
-            'max_tokens' => StopReason::Length,
-            'tool_use' => StopReason::ToolUse,
-            'refusal' => StopReason::Error,
+            'end_turn' => [StopReason::Stop, null],
+            'max_tokens' => [StopReason::Length, null],
+            'tool_use' => [StopReason::ToolUse, null],
+            // `stopDetails?.explanation || "The model refused to complete the request"`.
+            'refusal' => [StopReason::Error, is_string($explanation) && $explanation !== '' ? $explanation : 'The model refused to complete the request'],
             // pause_turn asks for a resubmit; treating it as a normal stop is good enough.
-            'pause_turn' => StopReason::Stop,
+            'pause_turn' => [StopReason::Stop, null],
             // We send no stop sequences, so this should not arrive.
-            'stop_sequence' => StopReason::Stop,
-            default => StopReason::Stop,
+            'stop_sequence' => [StopReason::Stop, null],
+            'sensitive' => [StopReason::Error, 'Provider stopped with: sensitive'],
+            default => throw new ProviderError("Unhandled stop reason: {$reason}"),
         };
     }
 
@@ -447,6 +510,24 @@ final class Anthropic
         // user agent, and the two betas in front — see `ClaudeCode`.
         $isOAuth = !$isCopilot && ClaudeCode::isToken($apiKey);
 
+        // Upstream's `createClient()` API-key arm only (not Copilot, not a subscription token): the
+        // session id as a header when caching is on and the model's compat asks for it —
+        // `sendSessionAffinityHeaders` (default: OpenRouter), named `x-session-id` for the
+        // `openrouter` format and `x-session-affinity` otherwise. Merged before the model's own
+        // headers, as upstream merges it.
+        $sessionAffinityHeaders = [];
+        $cacheSessionId = $options?->resolvedCacheRetention() === 'none' ? null : $options?->sessionId;
+
+        if (!$isCopilot && !$isOAuth && $cacheSessionId !== null && $cacheSessionId !== '') {
+            $isOpenRouter = $model->provider === 'openrouter' || str_contains($model->baseUrl, 'openrouter.ai');
+            $compat = self::compat($model);
+
+            if ($compat?->sendSessionAffinityHeaders ?? $isOpenRouter) {
+                $format = $compat?->sessionAffinityFormat ?? ($isOpenRouter ? 'openrouter' : null);
+                $sessionAffinityHeaders[$format === 'openrouter' ? 'x-session-id' : 'x-session-affinity'] = $cacheSessionId;
+            }
+        }
+
         $headers = [
             // Upstream's `createClient()` default headers, in all three of its arms (Copilot, a
             // subscription token, an API key): `accept` and `anthropic-dangerous-direct-browser-access:
@@ -462,6 +543,7 @@ final class Anthropic
                 $isOAuth => ClaudeCode::headers($apiKey),
                 default => ['x-api-key' => $apiKey],
             },
+            ...$sessionAffinityHeaders,
             ...$model->headers,
             // After the model's own, as upstream merges them (`model.headers, dynamicHeaders`):
             // `X-Initiator`, `Openai-Intent` and `Copilot-Vision-Request`, the same three the two
@@ -502,9 +584,9 @@ final class Anthropic
      * `interleaved-thinking` for a non-adaptive thinking turn; and the two managed-effort betas for a
      * `supportsMidConvoEffort` model.
      *
-     * Not ported, because pig has neither feature: `server-side-fallback` (`allowedFallbackModels`)
-     * and `inline-tools` (native mid-conversation tool changes). Upstream also reads `options.headers`;
-     * pig's options carry no headers.
+     * `server-side-fallback` goes with a model whose compat lists `allowedFallbackModels`. Not
+     * ported: `inline-tools` (native mid-conversation tool changes — pig's transcript has no system
+     * messages after the first). Upstream also reads `options.headers`; pig's options carry none.
      *
      * @return list<string>
      */
@@ -553,6 +635,11 @@ final class Anthropic
             && $options->interleavedThinking
             && $compat?->forceAdaptiveThinking !== true) {
             $features[] = self::INTERLEAVED_THINKING_BETA;
+        }
+
+        // Upstream's `shouldUseServerSideFallbackBeta()`.
+        if (($compat?->allowedFallbackModels ?? []) !== []) {
+            $features[] = self::SERVER_SIDE_FALLBACK_BETA;
         }
 
         if ($compat?->supportsMidConvoEffort === true) {
@@ -605,14 +692,19 @@ final class Anthropic
         // Upstream's `activeEffort = options?.effort ?? "high"`, said to a managed-effort model in the
         // system message that closes the conversation.
         $activeEffort = $options?->effort ?? 'high';
+        $cacheControl = self::cacheControl($model, $options);
         $body = [
             'model' => $model->id,
-            'messages' => $this->messages($context, $model, $isOAuth, $midConvoEffort ? $activeEffort : null),
-            'max_tokens' => $options?->maxTokens ?? intdiv($model->maxTokens, 3),
+            'messages' => $this->messages($context, $model, $isOAuth, $midConvoEffort ? $activeEffort : null, $cacheControl),
+            // Upstream's `max_tokens: options?.maxTokens ?? model.maxTokens`: the model's own ceiling
+            // when nobody said. `Stream::simple()` always says — the ceiling clamped to the room the
+            // context leaves, and on a budget-thinking turn raised by the budget — so this default
+            // is for a caller of `start()` that did not.
+            'max_tokens' => $options?->maxTokens ?? $model->maxTokens,
             'stream' => true,
         ];
 
-        $system = $this->system($context, $isOAuth);
+        $system = $this->system($context, $isOAuth, $cacheControl);
 
         if ($system !== []) {
             $body['system'] = $system;
@@ -639,6 +731,13 @@ final class Anthropic
                 fn (Tool $tool): array => $this->tool($tool, $isOAuth, $supportsEagerToolInputStreaming, $supportsStrictTools),
                 $context->tools,
             );
+
+            // Upstream's `convertTools(…, toolCacheControl)`: the cache breakpoint on the **last**
+            // tool, so the tool list is part of the cached prefix — unless the model's compat says
+            // its endpoint refuses the field there (`supportsCacheControlOnTools`, default true).
+            if ($cacheControl !== null && ($compat?->supportsCacheControlOnTools ?? true)) {
+                $body['tools'][count($body['tools']) - 1]['cache_control'] = $cacheControl;
+            }
         }
 
         // Upstream's `buildParams()` thinking block, arm for arm. Only a reasoning model is told
@@ -685,30 +784,76 @@ final class Anthropic
             }
         }
 
+        // Upstream: `metadata.user_id`, when it is a string, and nothing else of the metadata.
+        $userId = $options?->metadata['user_id'] ?? null;
+
+        if (is_string($userId)) {
+            $body['metadata'] = ['user_id' => $userId];
+        }
+
+        // Upstream: a string choice becomes `{type: choice}`; `{type: "tool", name}` goes as it is.
+        if ($options?->toolChoice !== null && $options->toolChoice !== '' && $options->toolChoice !== []) {
+            $body['tool_choice'] = is_string($options->toolChoice) ? ['type' => $options->toolChoice] : $options->toolChoice;
+        }
+
+        // Upstream: `fallbacks: allowedFallbackModels.map(({model}) => ({model}))`, only when there
+        // are any — Anthropic rejects the field for a model with no permitted fallback targets.
+        $fallbacks = $compat?->allowedFallbackModels ?? [];
+
+        if ($fallbacks !== []) {
+            $body['fallbacks'] = array_map(static fn (array $fallback): array => ['model' => $fallback['model']], $fallbacks);
+        }
+
         return $body;
     }
 
-    /** @return list<array<string, mixed>> */
-    private function system(Context $context, bool $isOAuth): array
+    /**
+     * Upstream's `getCacheControl()`: no breakpoints at all for `cacheRetention: none`; otherwise
+     * `{type: "ephemeral"}`, with `ttl: "1h"` for `long` on a model whose compat does not say it
+     * cannot (`supportsLongCacheRetention`, default true). No beta goes with the one-hour TTL.
+     *
+     * @return array{type: string, ttl?: string}|null
+     */
+    private static function cacheControl(Model $model, ?AnthropicOptions $options): ?array
+    {
+        $retention = $options?->resolvedCacheRetention() ?? (new AnthropicOptions())->resolvedCacheRetention();
+
+        if ($retention === 'none') {
+            return null;
+        }
+
+        $long = $retention === 'long' && (self::compat($model)?->supportsLongCacheRetention ?? true);
+
+        return $long ? ['type' => 'ephemeral', 'ttl' => '1h'] : ['type' => 'ephemeral'];
+    }
+
+    /**
+     * @param array<string, string>|null $cacheControl see `cacheControl()`
+     * @return list<array<string, mixed>>
+     */
+    private function system(Context $context, bool $isOAuth, ?array $cacheControl): array
     {
         $blocks = [];
 
         // An OAuth token is Claude Code's, and Anthropic requires the matching identity.
         if ($isOAuth) {
-            $blocks[] = $this->cachedText(ClaudeCode::IDENTITY);
+            $blocks[] = $this->cachedText(ClaudeCode::IDENTITY, $cacheControl);
         }
 
         if ($context->systemPrompt !== null && $context->systemPrompt !== '') {
-            $blocks[] = $this->cachedText(Utf8::sanitize($context->systemPrompt));
+            $blocks[] = $this->cachedText(Utf8::sanitize($context->systemPrompt), $cacheControl);
         }
 
         return $blocks;
     }
 
-    /** @return array<string, mixed> */
-    private function cachedText(string $text): array
+    /**
+     * @param array<string, string>|null $cacheControl
+     * @return array<string, mixed>
+     */
+    private function cachedText(string $text, ?array $cacheControl): array
     {
-        return ['type' => 'text', 'text' => $text, 'cache_control' => ['type' => 'ephemeral']];
+        return ['type' => 'text', 'text' => $text, ...($cacheControl === null ? [] : ['cache_control' => $cacheControl])];
     }
 
     /** @return array<string, mixed> */
@@ -790,10 +935,13 @@ final class Anthropic
      * asked for now at the end. The thinking each earlier turn did stays bound to the effort it was
      * done at, and the effort can change mid-conversation without a 400.
      *
+     * @param array<string, string>|null $cacheControl the breakpoint for the last user block — see
+     *        `cacheControl()`; null marks nothing
      * @return list<array<string, mixed>>
      */
-    private function messages(Context $context, Model $model, bool $isOAuth = false, ?string $activeEffort = null): array
+    private function messages(Context $context, Model $model, bool $isOAuth = false, ?string $activeEffort = null, ?array $cacheControl = null): array
     {
+        $allowEmptySignature = self::compat($model)?->allowEmptySignature ?? false;
         $out = [];
         // Upstream's `assistantLevels`: the index in `$out` of each such earlier turn, and its effort.
         $assistantLevels = [];
@@ -814,7 +962,7 @@ final class Anthropic
             }
 
             if ($message instanceof AssistantMessage) {
-                $blocks = $this->assistantBlocks($message, $isOAuth);
+                $blocks = $this->assistantBlocks($message, $isOAuth, $allowEmptySignature);
 
                 if ($blocks !== []) {
                     if ($activeEffort !== null
@@ -844,7 +992,7 @@ final class Anthropic
             }
         }
 
-        $this->cacheLastUserBlock($out);
+        $this->cacheLastUserBlock($out, $cacheControl);
 
         if ($activeEffort === null) {
             return $out;
@@ -888,7 +1036,7 @@ final class Anthropic
     }
 
     /** @return list<array<string, mixed>> */
-    private function assistantBlocks(AssistantMessage $message, bool $isOAuth = false): array
+    private function assistantBlocks(AssistantMessage $message, bool $isOAuth = false, bool $allowEmptySignature = false): array
     {
         $blocks = [];
 
@@ -911,20 +1059,29 @@ final class Anthropic
                     continue;
                 }
 
-                if (trim($content->thinking) === '') {
+                $hasThinkingSignature = $content->thinkingSignature !== null && trim($content->thinkingSignature) !== '';
+
+                // Upstream skips a block only when it has neither thinking nor a signature: a
+                // signed block with empty thinking (what `thinkingDisplay: omitted` sends back)
+                // still goes, signature and all.
+                if (trim($content->thinking) === '' && !$hasThinkingSignature) {
                     continue;
                 }
 
                 // Thinking with no signature — an aborted stream leaves that behind — is
                 // rejected by the API, and sending it as <thinking> text teaches the model
-                // to imitate the tags. Plain text keeps the content and neither problem.
-                $blocks[] = $content->thinkingSignature === null || trim($content->thinkingSignature) === ''
-                    ? ['type' => 'text', 'text' => Utf8::sanitize($content->thinking)]
-                    : [
+                // to imitate the tags. Plain text keeps the content and neither problem. A model
+                // whose compat says `allowEmptySignature` (an endpoint that emits and accepts empty
+                // signatures) gets it back as thinking with `signature: ""`, as upstream sends it.
+                $blocks[] = match (true) {
+                    $hasThinkingSignature => [
                         'type' => 'thinking',
                         'thinking' => Utf8::sanitize($content->thinking),
                         'signature' => $content->thinkingSignature,
-                    ];
+                    ],
+                    $allowEmptySignature => ['type' => 'thinking', 'thinking' => Utf8::sanitize($content->thinking), 'signature' => ''],
+                    default => ['type' => 'text', 'text' => Utf8::sanitize($content->thinking)],
+                };
 
                 continue;
             }
@@ -1008,15 +1165,17 @@ final class Anthropic
     }
 
     /**
-     * Mark the end of the conversation so the prefix can be cached next turn.
+     * Mark the end of the conversation so the prefix can be cached next turn — with upstream's
+     * `cacheControl`, so `cacheRetention: none` marks nothing and `long` marks it for an hour.
      *
      * @param list<array<string, mixed>> $messages
+     * @param array<string, string>|null $cacheControl
      */
-    private function cacheLastUserBlock(array &$messages): void
+    private function cacheLastUserBlock(array &$messages, ?array $cacheControl): void
     {
         $last = count($messages) - 1;
 
-        if ($last < 0 || $messages[$last]['role'] !== 'user' || !is_array($messages[$last]['content'])) {
+        if ($cacheControl === null || $last < 0 || $messages[$last]['role'] !== 'user' || !is_array($messages[$last]['content'])) {
             return;
         }
 
@@ -1024,7 +1183,7 @@ final class Anthropic
         $lastBlock = count($blocks) - 1;
 
         if ($lastBlock >= 0 && in_array($blocks[$lastBlock]['type'], ['text', 'image', 'tool_result'], true)) {
-            $blocks[$lastBlock]['cache_control'] = ['type' => 'ephemeral'];
+            $blocks[$lastBlock]['cache_control'] = $cacheControl;
             $messages[$last]['content'] = $blocks;
         }
     }
