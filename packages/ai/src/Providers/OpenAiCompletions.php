@@ -158,6 +158,7 @@ final class OpenAiCompletions
         }
 
         if (is_string($choice['finish_reason'] ?? null)) {
+            $builder->setRawStopReason($choice['finish_reason']);
             $builder->setStopReason($this->stopReason($choice['finish_reason']));
         }
 

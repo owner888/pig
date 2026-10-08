@@ -478,6 +478,7 @@ final class AgentSession
             $message->stopReason,
             $error,
             $message->timestamp,
+            $message->rawStopReason,
         );
     }
 

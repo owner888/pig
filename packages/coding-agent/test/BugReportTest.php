@@ -35,7 +35,7 @@ final class BugReportTest extends TestCase
         putenv('PIG_HOME');
     }
 
-    private function assistant(string $text, StopReason $stop, ?string $error = null): AssistantMessage
+    private function assistant(string $text, StopReason $stop, ?string $error = null, ?string $raw = null): AssistantMessage
     {
         return new AssistantMessage(
             $text === '' ? [] : [new TextContent($text)],
@@ -45,6 +45,8 @@ final class BugReportTest extends TestCase
             new Usage(),
             $stop,
             $error,
+            null,
+            $raw,
         );
     }
 
@@ -72,6 +74,28 @@ final class BugReportTest extends TestCase
         $this->assertStringContainsString('[1. PHP Runtime & Extensions]', $report);
         $this->assertStringNotContainsString('## Transcript', $report);
         $this->assertStringNotContainsString('sk-ant', $report);
+    }
+
+    public function testTheLastErrorCarriesTheProvidersRawStopReasonWhenItHasOne(): void
+    {
+        // Upstream's bug report puts `rawStopReason` in its per-message summary. pig's report has
+        // no such summary and the transcript is opt-in, so the reason rides with the error it
+        // explains — which is the only place a reader would look for it.
+        $session = $this->session([
+            new UserMessage('do the thing'),
+            $this->assistant('', StopReason::Error, 'Provider stopped with: MALFORMED_FUNCTION_CALL', 'MALFORMED_FUNCTION_CALL'),
+        ]);
+
+        $report = BugReport::build($session, Auth::inMemory(), '', includeTranscript: false);
+
+        $this->assertStringContainsString('- Raw stop reason: `MALFORMED_FUNCTION_CALL`', $report);
+
+        // And nothing at all for an error that came with none, rather than an empty line.
+        $plain = BugReport::build($this->session([
+            $this->assistant('', StopReason::Error, 'Anthropic returned 400: bad request'),
+        ]), Auth::inMemory(), '', includeTranscript: false);
+
+        $this->assertStringNotContainsString('Raw stop reason', $plain);
     }
 
     public function testTheTranscriptIsOptInAndIsTheMarkdownExport(): void

@@ -160,6 +160,10 @@ final class GoogleShared
         }
 
         if (is_string($candidate['finishReason'] ?? null)) {
+            // Set before anything can throw, so a turn that fails on the reason below still says
+            // which reason it was: `fail()` leaves it alone, as upstream's catch leaves the field.
+            $builder->setRawStopReason($candidate['finishReason']);
+
             // Upstream `google-generative-ai.ts`: the reason is mapped first, and only a STOP
             // with a tool call in it becomes `toolUse` — Gemini says STOP for a turn that called
             // a tool and for one that finished. MAX_TOKENS with a call in it stays `length` (the

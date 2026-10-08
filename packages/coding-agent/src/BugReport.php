@@ -55,15 +55,24 @@ final class BugReport
         $lines[] = '- Working directory: ' . $session->cwd();
         $lines[] = '';
 
-        $lastError = self::lastError($session);
+        $failed = self::lastFailure($session);
 
-        if ($lastError !== null) {
+        if ($failed !== null) {
             $lines[] = '## Last provider error';
             $lines[] = '';
             $lines[] = '```';
-            $lines[] = $lastError;
+            $lines[] = $failed->errorMessage ?? 'Error';
             $lines[] = '```';
             $lines[] = '';
+
+            // Upstream's per-message summary carries `rawStopReason` when the message has one; this
+            // report has no per-message summary, so it goes with the one message it does describe.
+            // It is what tells a Gemini `MALFORMED_FUNCTION_CALL` from a `SAFETY` without the
+            // transcript, which is opt-in.
+            if ($failed->rawStopReason !== null) {
+                $lines[] = "- Raw stop reason: `{$failed->rawStopReason}`";
+                $lines[] = '';
+            }
         }
 
         $crashes = CrashLog::read();
@@ -176,9 +185,16 @@ final class BugReport
     /** The newest assistant turn that ended in an error, as the provider worded it. */
     public static function lastError(AgentSession $session): ?string
     {
+        $failed = self::lastFailure($session);
+
+        return $failed === null ? null : ($failed->errorMessage ?? 'Error');
+    }
+
+    private static function lastFailure(AgentSession $session): ?AssistantMessage
+    {
         foreach (array_reverse($session->messages()) as $message) {
             if ($message instanceof AssistantMessage && $message->stopReason === StopReason::Error) {
-                return $message->errorMessage ?? 'Error';
+                return $message;
             }
         }
 

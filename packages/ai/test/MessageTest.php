@@ -15,6 +15,7 @@ use Pig\Ai\ThinkingContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\Usage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\MessageJson;
 
 final class MessageTest extends TestCase
 {
@@ -73,6 +74,36 @@ final class MessageTest extends TestCase
         $this->assertFalse(StopReason::Stop->isFailure());
         $this->assertFalse(StopReason::ToolUse->isFailure());
         $this->assertFalse(StopReason::Length->isFailure());
+    }
+
+    public function testTheRawStopReasonSurvivesTheTripToJsonAndBack(): void
+    {
+        $message = new AssistantMessage(
+            [new TextContent('')],
+            Api::GoogleGenerativeAi,
+            'google',
+            'gemini-2.5-pro',
+            new Usage(),
+            StopReason::Error,
+            'Provider stopped with: MALFORMED_FUNCTION_CALL',
+            1_700_000_000_000,
+            'MALFORMED_FUNCTION_CALL',
+        );
+
+        $encoded = MessageJson::encode($message);
+
+        $this->assertSame('MALFORMED_FUNCTION_CALL', $encoded['rawStopReason'] ?? null);
+        $this->assertSame('MALFORMED_FUNCTION_CALL', MessageJson::decode($encoded)->rawStopReason);
+    }
+
+    public function testAMessageWithNoRawStopReasonIsWrittenWithoutTheKey(): void
+    {
+        // Upstream's field is optional and `JSON.stringify` drops an undefined one, so the key is
+        // absent rather than null — the same shape a session file from before the field had.
+        $encoded = MessageJson::encode($this->assistant([new TextContent('hi')]));
+
+        $this->assertArrayNotHasKey('rawStopReason', $encoded);
+        $this->assertNull(MessageJson::decode($encoded)->rawStopReason);
     }
 
     public function testOnlyXhighClampsDown(): void

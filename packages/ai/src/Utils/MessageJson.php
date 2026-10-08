@@ -62,7 +62,7 @@ final class MessageJson
                 'stopReason' => $message->stopReason->value,
                 'errorMessage' => $message->errorMessage,
                 'timestamp' => $message->timestamp,
-            ],
+            ] + self::rawStopReason($message),
             $message instanceof ToolResultMessage => [
                 'role' => 'toolResult',
                 'toolCallId' => $message->toolCallId,
@@ -95,6 +95,7 @@ final class MessageJson
                 StopReason::tryFrom((string) ($entry['stopReason'] ?? '')) ?? StopReason::Stop,
                 $entry['errorMessage'] ?? null,
                 $timestamp,
+                isset($entry['rawStopReason']) ? (string) $entry['rawStopReason'] : null,
             ),
             'toolResult' => new ToolResultMessage(
                 (string) ($entry['toolCallId'] ?? ''),
@@ -106,6 +107,20 @@ final class MessageJson
             ),
             default => null,
         };
+    }
+
+    /**
+     * `rawStopReason`, or nothing at all.
+     *
+     * Upstream's field is optional and `JSON.stringify` drops an undefined one, so a message
+     * without it is written without the key rather than with a null — the shape a session file
+     * from before the field existed already has.
+     *
+     * @return array{rawStopReason?: string}
+     */
+    private static function rawStopReason(AssistantMessage $message): array
+    {
+        return $message->rawStopReason === null ? [] : ['rawStopReason' => $message->rawStopReason];
     }
 
     /**

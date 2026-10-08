@@ -119,6 +119,7 @@ final class TransformMessages
                 $message->stopReason,
                 $message->errorMessage,
                 $message->timestamp,
+                $message->rawStopReason,
             );
         }
 

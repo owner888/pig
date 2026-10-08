@@ -69,6 +69,8 @@ final class AnthropicTest extends TestCase
         ], $types);
 
         $this->assertSame(StopReason::Stop, $message->stopReason);
+        // Anthropic's own word, beside the mapped one — several of its reasons map to `stop`.
+        $this->assertSame('end_turn', $message->rawStopReason);
         $this->assertCount(1, $message->content);
         $this->assertInstanceOf(TextContent::class, $message->content[0]);
         $this->assertSame('Hello', $message->content[0]->text);

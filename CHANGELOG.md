@@ -43,6 +43,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [0.4.21] - 2026-10-08
+
+### Added
+
+- **Raw Provider Stop Reasons (`AssistantMessage::$rawStopReason`)**:
+  - Added `rawStopReason` property across `AssistantMessage`, `AssistantMessageBuilder`, and session persistence layer (`MessageJson`), recording unmapped provider-specific stop indicators.
+  - Recorded exact provider stop tokens: Anthropic (`stop_reason`), Google/Gemini (`finishReason`), OpenAI Completions (`finish_reason`), and OpenAI Responses (`status` / `incomplete_details.reason`).
+  - Included `rawStopReason` in `/bug` diagnostics reports to instantly differentiate Gemini `MALFORMED_FUNCTION_CALL` from safety blocks without requiring full transcript attachments.
+  - Transparently preserved `rawStopReason` during message transformations, model switches, and session resolution.
+
 ## [0.4.20] - 2026-10-08
 
 ### Fixed

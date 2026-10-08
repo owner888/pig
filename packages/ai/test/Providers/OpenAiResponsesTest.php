@@ -552,8 +552,36 @@ final class OpenAiResponsesTest extends TestCase
         [, $message] = $this->collect($url, new Context([new UserMessage('write a paragraph')]));
 
         $this->assertSame(StopReason::Length, $message->stopReason);
+        // `length` cannot say what ran out; the raw reason can, as upstream writes it.
+        $this->assertSame('incomplete.max_output_tokens', $message->rawStopReason);
         $this->assertSame(14, $message->usage->input);
         $this->assertSame(16, $message->usage->output);
+    }
+
+    public function testACompletedResponseKeepsItsStatusAsTheRawStopReason(): void
+    {
+        $url = $this->serve([['type' => 'response.completed', 'response' => ['status' => 'completed']]]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        // No incomplete details, so no suffix: the status alone.
+        $this->assertSame('completed', $message->rawStopReason);
+    }
+
+    public function testAFailedResponseKeepsItsStatusThroughTheError(): void
+    {
+        // Upstream sets the raw reason from the failed response's status and then throws; the
+        // error turn is built from the same state, so it still says `failed`.
+        $url = $this->serve([['type' => 'response.failed', 'response' => [
+            'status' => 'failed',
+            'error' => ['message' => 'the server had an error'],
+        ]]]);
+
+        [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
+
+        $this->assertSame(StopReason::Error, $message->stopReason);
+        $this->assertStringContainsString('the server had an error', (string) $message->errorMessage);
+        $this->assertSame('failed', $message->rawStopReason);
     }
 
     /** An error event with nothing at the documented path still says what arrived. */

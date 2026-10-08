@@ -20,6 +20,10 @@ final readonly class AssistantMessage
      * @param list<AssistantContent> $content
      * @param string                 $provider anthropic, openai, groq, … — free-form,
      *        since providers can be added without touching this package
+     * @param string|null            $rawStopReason the provider's own word for why it stopped
+     *        (`end_turn`, `length`, `incomplete.max_output_tokens`, `MALFORMED_FUNCTION_CALL`, …),
+     *        kept beside the mapped `stopReason` for debugging. Last so the positional calls that
+     *        predate it keep working; null when the provider sent none.
      */
     public function __construct(
         public array $content,
@@ -30,6 +34,7 @@ final readonly class AssistantMessage
         public StopReason $stopReason,
         public ?string $errorMessage = null,
         ?int $timestamp = null,
+        public ?string $rawStopReason = null,
     ) {
         $this->timestamp = $timestamp ?? Timestamp::nowMs();
     }

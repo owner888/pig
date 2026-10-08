@@ -7592,8 +7592,11 @@ stopped with: <raw reason>` (pinned by `google-raw-stop-reason.test.ts`), so pig
 sentence — `ProviderError("Provider stopped with: MALFORMED_FUNCTION_CALL")`. Upstream also only turns
 a **STOP** with a tool call in it into `toolUse`; `MAX_TOKENS` with a call stays `length` and an error
 reason with a call part stays an error, so `GoogleShared::onChunk()` maps the reason first and only
-then looks at the content. (Upstream additionally keeps the raw reason as
-`AssistantMessage.rawStopReason`; pig's `AssistantMessage` has no such field yet.)
+then looks at the content. Upstream also keeps the raw reason as `AssistantMessage.rawStopReason`, and
+so does pig now (last constructor parameter, written to JSON only when set): Anthropic's `stop_reason`,
+completions' `finish_reason`, responses' `status` / `status.incompleteReason` / failed status, and
+Gemini's `finishReason` (antigravity included, through `GoogleShared`). Gemini's is set **before** the
+throw, so the failed turn still carries `MALFORMED_FUNCTION_CALL`; `fail()` leaves it alone.
 
 A `MALFORMED_FUNCTION_CALL` itself is Gemini's doing, not pig's: Gemini 3 sometimes writes the call as
 text (`call:default_api:bash{command:…}`) instead of a `functionCall` part and then reports the turn

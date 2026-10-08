@@ -142,6 +142,8 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame('read', $message->content[0]->name);
         $this->assertSame(['path' => 'a.php'], $message->content[0]->arguments);
         $this->assertSame(StopReason::ToolUse, $message->stopReason);
+        // `finish_reason` as sent: `tool_calls` and `function_call` both map to `toolUse`.
+        $this->assertSame('tool_calls', $message->rawStopReason);
     }
 
     public function testASecondIdMeansASecondCallAndNotMoreOfTheFirst(): void

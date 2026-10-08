@@ -160,6 +160,8 @@ final class GoogleTest extends TestCase
 
         // Gemini says STOP either way, so the content is what tells them apart.
         $this->assertSame(StopReason::ToolUse, $message->stopReason);
+        // The mapped reason changed; the raw one is still what Gemini said.
+        $this->assertSame('STOP', $message->rawStopReason);
     }
 
     public function testACallCutOffByTheTokenLimitIsALengthNotAToolUse(): void
@@ -175,6 +177,7 @@ final class GoogleTest extends TestCase
         [, $message] = $this->collect($url, new Context([new UserMessage('hi')]));
 
         $this->assertSame(StopReason::Length, $message->stopReason);
+        $this->assertSame('MAX_TOKENS', $message->rawStopReason);
         $this->assertNotSame([], $message->toolCalls());
     }
 
@@ -192,6 +195,10 @@ final class GoogleTest extends TestCase
 
         $this->assertSame(StopReason::Error, $message->stopReason);
         $this->assertSame('Provider stopped with: MALFORMED_FUNCTION_CALL', $message->errorMessage);
+        // **The failed message still carries the raw reason.** It is set before the throw, and
+        // `fail()` only overwrites the mapped reason and the error text — upstream's catch does the
+        // same to its one mutable output object.
+        $this->assertSame('MALFORMED_FUNCTION_CALL', $message->rawStopReason);
     }
 
     public function testASafetyBlockIsAnErrorHoweverPolitelyItIsPhrased(): void

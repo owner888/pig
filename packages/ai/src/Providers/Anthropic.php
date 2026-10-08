@@ -237,6 +237,7 @@ final class Anthropic
         $reason = $data['delta']['stop_reason'] ?? null;
 
         if (is_string($reason)) {
+            $builder->setRawStopReason($reason);
             $builder->setStopReason($this->stopReason($reason));
         }
 

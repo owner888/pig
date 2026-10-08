@@ -156,8 +156,8 @@ final class OpenAiResponses
             // nothing in `/session` and the footer. Measured against the real API with a 16-token
             // budget: `stop` after 0 output tokens. Upstream handles neither event.
             'response.completed', 'response.incomplete' => $this->onCompleted($data, $builder, $open),
-            'error' => throw new ProviderError($this->errorText($data)),
-            'response.failed' => throw new ProviderError($this->failureText($data)),
+            'error' => $this->raise($this->errorText($data), $data, $builder),
+            'response.failed' => $this->raise($this->failureText($data), $data, $builder),
             default => $open,
         };
     }
@@ -346,7 +346,15 @@ final class OpenAiResponses
             $builder->setUsage($this->usage($response['usage']));
         }
 
-        $reason = $this->stopReason((string) ($response['status'] ?? ''));
+        $status = (string) ($response['status'] ?? '');
+        $incomplete = $response['incomplete_details']['reason'] ?? null;
+
+        // Upstream's `rawStopReason`: the status, and for a cut-off answer why it was cut off —
+        // `incomplete.max_output_tokens` or `incomplete.content_filter`, which the mapped `length`
+        // cannot tell apart.
+        $builder->setRawStopReason(is_string($incomplete) && $incomplete !== '' ? "{$status}.{$incomplete}" : $status);
+
+        $reason = $this->stopReason($status);
 
         // A response that made tool calls is finished with the turn, not with the task,
         // and the status alone does not say which.
@@ -428,6 +436,27 @@ final class OpenAiResponses
         }
 
         return is_string($code) ? "Error {$code}: {$message}" : $message;
+    }
+
+    /**
+     * Throw for a failed response, keeping its status as the raw stop reason first.
+     *
+     * Upstream sets `output.rawStopReason = event.response?.status` before throwing, and the error
+     * message it then builds is the same object, so the status survives into the failed turn. Here
+     * the builder is what `fail()` snapshots, so setting it on the builder does the same. A bare
+     * `error` event has no response and therefore leaves it as it was, as upstream's does.
+     *
+     * @param array<string, mixed> $data
+     */
+    private function raise(string $message, array $data, AssistantMessageBuilder $builder): never
+    {
+        $status = $data['response']['status'] ?? null;
+
+        if (is_string($status)) {
+            $builder->setRawStopReason($status);
+        }
+
+        throw new ProviderError($message);
     }
 
     /** @param array<string, mixed> $data */

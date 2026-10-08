@@ -42,6 +42,8 @@ final class AssistantMessageBuilder
 
     private ?string $errorMessage = null;
 
+    private ?string $rawStopReason = null;
+
     private readonly int $timestamp;
 
     public function __construct(private readonly Model $model)
@@ -235,6 +237,23 @@ final class AssistantMessageBuilder
         return $this->stopReason;
     }
 
+    /**
+     * The provider's own stop reason, unmapped — upstream's `output.rawStopReason`.
+     *
+     * Set separately from `setStopReason()` because the two do not always move together: Google's
+     * `STOP` with a tool call is pig's `toolUse`, and its `MALFORMED_FUNCTION_CALL` ends up as an
+     * error through `fail()`, which leaves this alone so the failed message still says why.
+     */
+    public function setRawStopReason(?string $reason): void
+    {
+        $this->rawStopReason = $reason;
+    }
+
+    public function rawStopReason(): ?string
+    {
+        return $this->rawStopReason;
+    }
+
     public function fail(string $message, bool $aborted): void
     {
         $this->stopReason = $aborted ? StopReason::Aborted : StopReason::Error;
@@ -252,6 +271,7 @@ final class AssistantMessageBuilder
             $this->stopReason,
             $this->errorMessage,
             $this->timestamp,
+            $this->rawStopReason,
         );
     }
 

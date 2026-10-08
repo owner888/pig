@@ -860,6 +860,7 @@ final class SessionManager
                 $message->stopReason,
                 $message->errorMessage,
                 $message->timestamp,
+                $message->rawStopReason,
             ),
             $message instanceof ToolResultMessage => new ToolResultMessage(
                 $message->toolCallId,
